@@ -33,9 +33,12 @@ export interface StartupLoadingIndicator {
 /**
  * Single-line ANSI loading indicator for the pre-TUI startup window, borrowed
  * from codex's UI-first startup design (codex-rs/tui keeps a dim placeholder
- * header until the session is configured). The grace delay keeps fast startups
- * flash-free; stop() must run before any other stdout writer (TUI, prompts,
- * help) takes over the terminal.
+ * header until the session is configured). The first frame is written in
+ * start() itself: the work it covers is synchronous module loading, which
+ * starves every timer until it is done, so a timer-driven first frame lands
+ * only after that work (measured: 2.27s to the first byte on a real pty). The
+ * grace delay now gates the animation only; stop() must run before any other
+ * stdout writer (TUI, prompts, help) takes over the terminal.
  */
 class AnsiStartupLoadingIndicator implements StartupLoadingIndicator {
 	private readonly writer: (chunk: string) => void;
@@ -75,6 +78,7 @@ class AnsiStartupLoadingIndicator implements StartupLoadingIndicator {
 			if (this.drawn) this.writer(CLEAR_LINE + SHOW_CURSOR);
 		};
 		process.on("exit", this.exitListener);
+		this.draw(true);
 		this.startGraceTimer();
 	}
 
@@ -98,6 +102,7 @@ class AnsiStartupLoadingIndicator implements StartupLoadingIndicator {
 		if (this.graceElapsed) {
 			this.beginAnimation();
 		} else {
+			this.draw(true);
 			this.startGraceTimer();
 		}
 	}
@@ -121,7 +126,7 @@ class AnsiStartupLoadingIndicator implements StartupLoadingIndicator {
 	}
 
 	private beginAnimation(): void {
-		this.draw(true);
+		if (!this.drawn) this.draw(true);
 		this.frameTimer = setInterval(() => {
 			this.frameIndex = (this.frameIndex + 1) % this.frames.length;
 			this.draw(false);

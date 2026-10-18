@@ -1,5 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { deadlineStopPendingSinceLastTurn } from "../../../turn-deadline.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import { isHumanInputMonitorNotification, type WakeSourceStateItem } from "../monitor-state-event.ts";
 import {
 	createGoalCacheWarmScheduleData,
 	estimateCacheWarmMetrics,
@@ -8,26 +10,37 @@ import {
 	type GoalCacheWarmMetrics,
 	type GoalCacheWarmupEntryData,
 	type LiveGoalCacheWarmupEntryData,
+	resolveGoalBackstopMaxSecondsForCache,
 	resolveGoalMonitorContinuationDelayMs,
+	resolveGoalPromptCacheLifetime,
 } from "./cache-warm.ts";
 import { subscribeGoalChannelState } from "./channel-state-subscriptions.ts";
+import { type GoalContinuationFireNowResult, publishGoalContinuationEvent } from "./rpc-wait-surface.ts";
 
-export { GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS } from "./cache-warm.ts";
+export {
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+	GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS,
+} from "./cache-warm.ts";
 
 import {
 	continuationTurnUsedTools,
 	evaluateGoalContinuation,
+	GOAL_TOOL_EFFECT_WINDOW,
 	GOAL_USER_GRACE_DELAY_MS,
 	type GoalContinuationInput,
 	type GoalContinuationPath,
 	hasGoalContinuationProgress,
+	hasGoalTodoProgress,
 	hashAssistantText,
+	isMalformedToolUseTurn,
 	normalizeAssistantText,
+	toolEffectFingerprint,
 } from "./continuation.ts";
 import { lastAssistantMessage } from "./last-assistant-message.ts";
 import {
 	admitAndQueueGoalContinuation,
 	buildCurrentGoalContinuationSignature,
+	isLastTurnStuckOnContextOverflow,
 	lastAssistantText,
 } from "./lifecycle-helpers.ts";
 import type {
@@ -39,13 +52,20 @@ import type {
 	ResumptionChannelCounts,
 	SystemAbortOptions,
 } from "./monitor-continuation-types.ts";
+import { findParkedGoalWait, type ParkedGoalWait } from "./parked-wait.ts";
 import { buildContinuationPrompt, buildGoalStallNotice, buildTruncationRecoveryPrompt } from "./prompt.ts";
+import { PROVIDER_RETRY_BASE_MS, providerRetryAt, providerRetryDelayMs } from "./provider-retry.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
 import { resetContinuationStreak } from "./store.ts";
 import { goalStoreRef } from "./store-ref.ts";
 import { collectAssistantUsage } from "./turn-usage.ts";
 import type { Goal, TokenUsageSnapshot } from "./types.ts";
 import type { GoalWaitTicker } from "./wait-ticker.ts";
+
+/** Wake source the ask-user extension publishes while an async question is pending. */
+const ASK_USER_WAKE_SOURCE = "ask-user";
+/** `askUser.timeoutMinutes` default (settings-manager.ts), used when the session exposes no ask-user settings. */
+const ASK_USER_DEFAULT_TIMEOUT_MINUTES = 30;
 
 export const GOAL_CONTINUATION_SCHEDULED_EVENT = "goal_continuation_scheduled";
 export const GOAL_CONTINUATION_RESUMED_EVENT = "goal_continuation_resumed";
@@ -63,11 +83,13 @@ export class MonitorAwareGoalContinuation {
 	#goal: Goal | null = null;
 	#timer: ReturnType<typeof setTimeout> | undefined;
 	#scheduledContinuationKind: DelayedContinuationKind | undefined;
+	#armedDrainFire = false;
 	#channelStateUnsubscribers: Array<() => void> = [];
 	#lastAgentEndMessages: readonly AgentMessage[] = [];
 	#consecutiveLengthRecoveries = new Map<string, number>();
 	#recentNormalizedOutputHashes: string[] = [];
 	#toollessContinuationStreak = 0;
+	#recentToolEffects: string[] = [];
 	#toollessStreakGoalId: string | null = null;
 	#endedTurnWasUserInitiated = false;
 	#lastTurnUsage: TokenUsageSnapshot | undefined;
@@ -75,6 +97,7 @@ export class MonitorAwareGoalContinuation {
 	#scheduledDueAtMs: number | undefined;
 	#scheduledCache: GoalCacheWarmMetrics | undefined;
 	#scheduledDelayMs: number | undefined;
+	#askUserDeadlineAtMs: number | undefined;
 	#cacheWarmIteration = 0;
 	#scheduledCacheWarmIteration: number | undefined;
 	#heldTimer:
@@ -83,6 +106,8 @@ export class MonitorAwareGoalContinuation {
 	#directInputHolds = new Set<string>();
 	#pendingSystemRecovery: SystemAbortOptions | undefined;
 	#pendingProviderRecovery: ProviderRecoveryOptions | undefined;
+	#providerRetryAttempts = 0;
+	#providerRetryDelayMs: number | undefined;
 
 	constructor(
 		pi: ExtensionAPI,
@@ -100,7 +125,7 @@ export class MonitorAwareGoalContinuation {
 	start(ctx: ExtensionContext): void {
 		this.#cancelTimer();
 		this.#ctx = ctx;
-		if (this.#hasStarted) this.#wakeSources.clear();
+		if (this.#hasStarted) this.#clearWakeSources();
 		else this.#hasStarted = true;
 		this.#goal = null;
 		this.#lastAgentEndMessages = [];
@@ -110,24 +135,31 @@ export class MonitorAwareGoalContinuation {
 
 	async afterAgentEnd(options: AgentEndOptions): Promise<Goal | null> {
 		if (options.goal?.id !== this.#goal?.id) this.#resetContinuationState();
+		this.#providerRetryAttempts = 0;
 		this.#ctx = options.ctx;
 		this.#goal = options.goal;
 		this.#lastAgentEndMessages = options.messages;
 		this.#lastTurnUsage = collectAssistantUsage([...options.messages]);
 		this.#resetLengthRecoveryAfterCleanStop(options.goal, options.messages);
 		const turnUsedTools = continuationTurnUsedTools(options.messages);
-		this.#recordAssistantOutput(options.messages, turnUsedTools);
+		// A person's words delivered by a human-input monitor are new input, exactly like a typed message.
+		const humanInput = options.messages.some(isHumanInputMonitorNotification);
+		this.#recordAssistantOutput(options.messages, turnUsedTools || humanInput);
 		if (options.goal?.status !== "active") {
 			this.#cancelTimer();
 			this.#resetContinuationState();
 			return options.goal;
 		}
-		this.#recordToollessContinuationTurn(options.goal, turnUsedTools);
+		this.#recordToollessContinuationTurn(options.goal, turnUsedTools || humanInput);
 		const immediateInput = this.#buildVerdictInput(options.ctx, options.goal, "immediate", options.messages);
+		const madeProgress =
+			this.#recordToolEffect(options.messages) || humanInput || hasGoalTodoProgress(immediateInput);
 		const goal =
-			!this.#endedTurnWasUserInitiated && (turnUsedTools || hasGoalContinuationProgress(immediateInput))
-				? ((await resetContinuationStreak(goalStoreRef(options.ctx.sessionManager, options.ctx.cwd))) ??
-					options.goal)
+			!this.#endedTurnWasUserInitiated && (madeProgress || hasGoalContinuationProgress(immediateInput))
+				? ((await resetContinuationStreak(goalStoreRef(options.ctx.sessionManager, options.ctx.cwd), {
+						progress: madeProgress,
+						unattended: humanInput,
+					})) ?? options.goal)
 				: options.goal;
 		this.#goal = goal;
 		const immediateVerdict = evaluateGoalContinuation({
@@ -144,12 +176,13 @@ export class MonitorAwareGoalContinuation {
 			switch (immediateVerdict.reason) {
 				case "not-eligible":
 				case "single-flight":
-				case "stale":
 					return goal;
+				case "stale":
+				case "context-overflow":
 				case "cap":
 				case "repetition":
 				case "length-exhausted":
-				case "unattended": {
+				case "no-progress": {
 					const admission = await this.#admitAndQueue(options.ctx, goal, "immediate", options.messages);
 					return admission.goal;
 				}
@@ -179,6 +212,10 @@ export class MonitorAwareGoalContinuation {
 			return options.goal;
 		}
 		if (options.willRetry) return options.goal;
+		// A deadline stop is never auto-continued; the hold releases on admitted user input.
+		if (deadlineStopPendingSinceLastTurn(options.ctx.sessionManager.getBranch()) !== undefined) {
+			return options.goal;
+		}
 		if (this.#activeWakeSourceCount() > 0) this.#schedule(options.goal, "monitor");
 		else if (lastAssistantMessage(options.messages)?.stopReason === "error") {
 			this.#pendingSystemRecovery = options;
@@ -219,6 +256,19 @@ export class MonitorAwareGoalContinuation {
 		) {
 			return undefined;
 		}
+		this.#providerRetryAttempts += 1;
+		const now = Date.now();
+		const delayMs = providerRetryDelayMs(
+			this.#providerRetryAttempts,
+			providerRetryAt(pendingProvider.messages, now),
+			now,
+		);
+		if (delayMs > 0) {
+			this.#cancelTimer();
+			this.#providerRetryDelayMs = delayMs;
+			this.#schedule(pendingProvider.goal, "providerRetry");
+			return pendingProvider.goal;
+		}
 		return (
 			await this.#admitAndQueue(
 				pendingProvider.ctx,
@@ -247,12 +297,24 @@ export class MonitorAwareGoalContinuation {
 	 * Re-arms the monitor-delayed backstop a reload tore down with the retired
 	 * generation, so a later wake-source drain can still deliver the goal
 	 * continuation. No-op unless the goal is active, a wake source is live, and
-	 * no continuation is already scheduled.
+	 * no continuation is already scheduled. A wait the branch still records as
+	 * parked is restored as-is (iteration, cache snapshot, original due time) so
+	 * a reload never appends a second card or pushes the wake past the cache TTL.
 	 */
 	rearmMonitorBackstop(goal: Goal): void {
 		if (goal.status !== "active" || this.#activeWakeSourceCount() === 0) return;
 		this.#goal = goal;
-		this.#schedule(goal, "monitor");
+		this.#schedule(goal, "monitor", false, this.#parkedWait(goal.id));
+	}
+
+	/** A retired ctx throws from its getters (see `#ctxHasUI`); it has no branch to restore from. */
+	#parkedWait(goalId: string): ParkedGoalWait | undefined {
+		try {
+			return findParkedGoalWait(this.#ctx?.sessionManager?.getBranch() ?? [], goalId);
+		} catch (error) {
+			if (isStaleExtensionContextError(error)) return undefined;
+			throw error;
+		}
 	}
 
 	/** Temporarily prevents a scheduled continuation from racing unresolved direct-input admission. */
@@ -314,30 +376,51 @@ export class MonitorAwareGoalContinuation {
 		this.#channelStateUnsubscribers = [];
 		this.#ctx = undefined;
 		this.#goal = null;
-		this.#wakeSources.clear();
+		this.#clearWakeSources();
 		this.#lastAgentEndMessages = [];
 		this.#directInputHolds.clear();
 		this.#resetContinuationState();
 	}
 
-	#schedule(goal: Goal, kind: DelayedContinuationKind): void {
+	#schedule(goal: Goal, kind: DelayedContinuationKind, repark = false, parked?: ParkedGoalWait): void {
 		if (this.#scheduledContinuationKind !== undefined) return;
+		// A live wake source arms the periodic backstop only: the normal resumption
+		// is the drain fire in #setWakeSourceCount, and the backstop re-checks the
+		// goal every `promptCache.goalBackstopMaxSeconds` in case the source never
+		// delivers. A pending ask-user question is the exception: re-prompting the
+		// model every backstop while the user is deciding is noise it cannot act
+		// on, so the wait is parked on the question's own deadline instead.
+		// A best-effort prompt cache has no TTL to land inside, so an unconfigured
+		// backstop there is the long liveness re-check (senpi#831).
+		const askUserWaitMs = kind === "monitor" ? this.#askUserWaitMs() : undefined;
 		const delayMs =
 			kind === "monitor"
-				? resolveGoalMonitorContinuationDelayMs(
-						this.#ctx?.getPromptCacheSafeWaitSeconds?.(),
-						this.#ctx?.getPromptCacheGoalBackstopMaxSeconds?.(),
-					)
-				: GOAL_USER_GRACE_DELAY_MS;
+				? (parked?.delayMs ??
+					askUserWaitMs ??
+					resolveGoalMonitorContinuationDelayMs(
+						resolveGoalBackstopMaxSecondsForCache(
+							this.#ctx?.getPromptCacheGoalBackstopMaxSeconds?.(),
+							resolveGoalPromptCacheLifetime(this.#ctx?.model, process.env),
+						),
+					))
+				: kind === "providerRetry"
+					? (this.#providerRetryDelayMs ?? PROVIDER_RETRY_BASE_MS)
+					: GOAL_USER_GRACE_DELAY_MS;
 		this.#scheduledDelayMs = delayMs;
+		let remainingMs = delayMs;
 		if (kind === "monitor") {
-			this.#cacheWarmIteration += 1;
+			if (parked !== undefined) this.#cacheWarmIteration = parked.iteration;
+			else if (!repark) this.#cacheWarmIteration += 1;
 			this.#scheduledCacheWarmIteration = this.#cacheWarmIteration;
 			const iteration = this.#scheduledCacheWarmIteration;
-			const cache = estimateCacheWarmMetrics(this.#ctx?.model, process.env, this.#lastTurnUsage);
+			const cache =
+				parked !== undefined
+					? parked.cache
+					: estimateCacheWarmMetrics(this.#ctx?.model, process.env, this.#lastTurnUsage);
 			const wakeSources = this.#wakeSourceSnapshot();
 			this.#scheduledCache = cache;
-			this.#scheduledAtMs = Date.now();
+			this.#scheduledAtMs = parked !== undefined ? parked.dueAtMs - delayMs : Date.now();
+			if (parked !== undefined) remainingMs = Math.max(0, parked.dueAtMs - Date.now());
 			const scheduleData = createGoalCacheWarmScheduleData({
 				goalId: goal.id,
 				delayMs,
@@ -347,23 +430,26 @@ export class MonitorAwareGoalContinuation {
 				wakeSources,
 				...(cache !== undefined ? { cache } : {}),
 			});
-			this.#pi.events?.emit(GOAL_CONTINUATION_SCHEDULED_EVENT, scheduleData);
-			this.#appendWarmupEntry({
-				phase: "scheduled",
-				...scheduleData,
-			});
+			this.#publish(GOAL_CONTINUATION_SCHEDULED_EVENT, scheduleData);
+			// Progress adjusts this wait; it is not another cache-warm iteration
+			// or transcript entry for every keystroke in the answer composer.
+			if (!repark && parked === undefined)
+				this.#appendWarmupEntry({
+					phase: "scheduled",
+					...scheduleData,
+				});
 		} else {
 			this.#scheduledAtMs = undefined;
 			this.#scheduledCache = undefined;
 			this.#scheduledCacheWarmIteration = undefined;
 		}
 		this.#scheduledContinuationKind = kind;
-		this.#pi.events?.emit(GOAL_CONTINUATION_TIMER_STATE_EVENT, { armed: true, kind });
+		this.#publish(GOAL_CONTINUATION_TIMER_STATE_EVENT, { armed: true, kind, dueAtMs: Date.now() + remainingMs });
 		if (this.#directInputHolds.size > 0) {
-			this.#heldTimer = { kind, remainingMs: delayMs, heldAtMs: Date.now(), totalMs: delayMs, drainFire: false };
+			this.#heldTimer = { kind, remainingMs, heldAtMs: Date.now(), totalMs: delayMs, drainFire: false };
 			return;
 		}
-		this.#armTimer(kind, delayMs, delayMs);
+		this.#armTimer(kind, remainingMs, delayMs);
 	}
 
 	/**
@@ -385,6 +471,7 @@ export class MonitorAwareGoalContinuation {
 
 	#armTimer(kind: DelayedContinuationKind, delayMs: number, totalMs: number, drainFire = false): void {
 		this.#scheduledDueAtMs = Date.now() + delayMs;
+		this.#armedDrainFire = drainFire;
 		const ctx = this.#ctx;
 		if (ctx !== undefined && this.#ctxHasUI(ctx)) {
 			this.#waitTicker?.sync(ctx, {
@@ -411,12 +498,18 @@ export class MonitorAwareGoalContinuation {
 		this.#timer = undefined;
 		this.#scheduledDueAtMs = undefined;
 		this.#scheduledContinuationKind = undefined;
-		this.#pi.events?.emit(GOAL_CONTINUATION_TIMER_STATE_EVENT, { armed: false, kind });
+		this.#publish(GOAL_CONTINUATION_TIMER_STATE_EVENT, { armed: false, kind });
 		this.#waitTicker?.stop();
 		const delayMs =
 			this.#scheduledDelayMs ??
-			(kind === "monitor" ? GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS : GOAL_USER_GRACE_DELAY_MS);
+			(kind === "monitor"
+				? GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS
+				: kind === "providerRetry"
+					? PROVIDER_RETRY_BASE_MS
+					: GOAL_USER_GRACE_DELAY_MS);
 		const waitedMs = this.#scheduledAtMs === undefined ? delayMs : Math.max(0, Date.now() - this.#scheduledAtMs);
+		const dueAtMs = this.#scheduledAtMs === undefined ? undefined : this.#scheduledAtMs + delayMs;
+		const wakeCause = drainFire ? "sources-drained" : "timer";
 		const cache = this.#scheduledCache;
 		const iteration = this.#scheduledCacheWarmIteration;
 		this.#scheduledAtMs = undefined;
@@ -426,19 +519,22 @@ export class MonitorAwareGoalContinuation {
 		const ctx = this.#ctx;
 		const goal = this.#goal;
 		if (ctx === undefined || goal?.status !== "active" || !ctx.isIdle() || ctx.hasPendingMessages()) return;
+		if (deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) !== undefined) return;
 		if (kind === "monitor" && this.#activeWakeSourceCount() === 0 && !drainFire) return;
 		const admission = await this.#admitAndQueue(
 			ctx,
 			goal,
-			kind === "monitor" ? "monitorDelayed" : "userGrace",
+			kind === "monitor" ? "monitorDelayed" : kind === "providerRetry" ? "providerRecovery" : "userGrace",
 			this.#lastAgentEndMessages,
 		);
 		if (kind !== "monitor" || !admission.admitted || iteration === undefined) return;
 		const wakeSources = this.#wakeSourceSnapshot();
-		this.#pi.events?.emit(GOAL_CONTINUATION_RESUMED_EVENT, {
+		this.#publish(GOAL_CONTINUATION_RESUMED_EVENT, {
 			goalId: goal.id,
 			delayMs,
+			dueAtMs,
 			waitedMs,
+			wakeCause,
 			iteration,
 			activeMonitorCount: this.#activeWakeSourceCount(),
 			wakeSources,
@@ -448,7 +544,9 @@ export class MonitorAwareGoalContinuation {
 			phase: "resumed",
 			goalId: goal.id,
 			delayMs,
+			dueAtMs,
 			waitedMs,
+			wakeCause,
 			iteration,
 			activeMonitorCount: this.#activeWakeSourceCount(),
 			wakeSources,
@@ -503,6 +601,7 @@ export class MonitorAwareGoalContinuation {
 			hasPendingMessages: ctx.hasPendingMessages(),
 			path,
 			lastStopReason: lastAssistant?.stopReason,
+			lastTurnWasMalformedToolUse: lastAssistant?.role === "assistant" && isMalformedToolUseTurn(lastAssistant),
 			consecutiveContinuations: goal.consecutiveContinuations ?? 0,
 			lastContinuationSignature: goal.lastContinuationSignature,
 			currentSignature: buildCurrentGoalContinuationSignature(ctx, goal, lastAssistantText(messages)),
@@ -510,14 +609,18 @@ export class MonitorAwareGoalContinuation {
 			recentNormalizedOutputHashes: this.#recentNormalizedOutputHashes,
 			toollessContinuationStreak: this.#toollessContinuationStreak,
 			continuationPending: this.#isContinuationPending(),
+			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(ctx, lastAssistant),
 		};
 	}
 
 	#buildContinuationContent(ctx: ExtensionContext, goal: Goal, verdict: ContinuingGoalContinuationVerdict): string {
-		let content = verdict.prompt === "minimal" ? buildTruncationRecoveryPrompt() : buildContinuationPrompt(goal);
+		let content =
+			verdict.prompt === "minimal"
+				? buildTruncationRecoveryPrompt()
+				: buildContinuationPrompt(goal, { modelId: ctx.model?.id });
 		if (!verdict.stallNotice) return content;
 
-		const liveSources = this.#liveWakeSources();
+		const liveSources = this.liveWakeSources();
 		this.#pi.events?.emit(GOAL_MONITOR_STALL_EVENT, {
 			goalId: goal.id,
 			consecutiveContinuations: this.#toollessContinuationStreak,
@@ -546,6 +649,18 @@ export class MonitorAwareGoalContinuation {
 		this.#recentNormalizedOutputHashes = [...this.#recentNormalizedOutputHashes, hashAssistantText(text)].slice(-3);
 	}
 
+	/**
+	 * A tool turn is progress only when its calls and outcomes differ from every recent tool turn. With no history
+	 * (first turn, or after a reload or input reset) there is nothing to prove change against, so it only seeds.
+	 */
+	#recordToolEffect(messages: readonly AgentMessage[]): boolean {
+		const fingerprint = toolEffectFingerprint(messages);
+		if (fingerprint === undefined) return false;
+		const repeated = this.#recentToolEffects.length === 0 || this.#recentToolEffects.includes(fingerprint);
+		this.#recentToolEffects = [...this.#recentToolEffects, fingerprint].slice(-GOAL_TOOL_EFFECT_WINDOW);
+		return !repeated;
+	}
+
 	#recordToollessContinuationTurn(goal: Goal, turnUsedTools: boolean): void {
 		if (goal.id !== this.#toollessStreakGoalId) {
 			this.#toollessStreakGoalId = goal.id;
@@ -569,7 +684,7 @@ export class MonitorAwareGoalContinuation {
 		if (events === undefined) return;
 		this.#channelStateUnsubscribers.push(
 			...subscribeGoalChannelState(events, {
-				onWakeSource: (source, activeCount) => this.#setWakeSourceCount(source, activeCount),
+				onWakeSource: (source, activeCount, event) => this.#setWakeSourceCount(source, activeCount, event?.items),
 				onContinuationHold: (source, active) => {
 					const inputId = `external:${source}`;
 					if (active) this.holdDirectInput(inputId);
@@ -579,8 +694,60 @@ export class MonitorAwareGoalContinuation {
 		);
 	}
 
-	#setWakeSourceCount(source: string, activeCount: number): void {
+	/**
+	 * Remaining wait on a pending async ask-user question, or `undefined` when no
+	 * question is live. A deadline already in the past means the question outlived
+	 * its first idle window - the extension restarts that timer whenever the user
+	 * interacts - so the goal parks for one more window instead of falling back to
+	 * the periodic backstop. Clamped through the shared monitor bounds so a
+	 * misconfigured `askUser.timeoutMinutes` cannot park the goal past the
+	 * monitor's own ceiling.
+	 */
+	#askUserWaitMs(): number | undefined {
+		if ((this.#wakeSources.get(ASK_USER_WAKE_SOURCE) ?? 0) <= 0) return undefined;
+		const remainingMs = (this.#askUserDeadlineAtMs ?? 0) - Date.now();
+		const waitMs = remainingMs > 0 ? remainingMs : this.#askUserIdleTimeoutMs();
+		return resolveGoalMonitorContinuationDelayMs(waitMs / 1000);
+	}
+
+	#askUserIdleTimeoutMs(): number {
+		const minutes = this.#ctx?.getAskUserSettings?.().timeoutMinutes;
+		const resolved =
+			typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0
+				? minutes
+				: ASK_USER_DEFAULT_TIMEOUT_MINUTES;
+		return resolved * 60_000;
+	}
+
+	/**
+	 * Prefer the earliest authoritative request deadline. Legacy count-only
+	 * emitters retain the settings-window heuristic; zero clears the deadline.
+	 */
+	#noteAskUserWait(activeCount: number, items?: readonly WakeSourceStateItem[]): void {
+		if (activeCount <= 0) {
+			this.#askUserDeadlineAtMs = undefined;
+			return;
+		}
+		const deadlines = items?.flatMap((item) => (item.deadlineAtMs === undefined ? [] : [item.deadlineAtMs])) ?? [];
+		if (deadlines.length > 0) {
+			this.#askUserDeadlineAtMs = Math.min(...deadlines);
+			return;
+		}
+		const previousCount = this.#wakeSources.get(ASK_USER_WAKE_SOURCE) ?? 0;
+		if (activeCount > previousCount || this.#askUserDeadlineAtMs === undefined) {
+			this.#askUserDeadlineAtMs = Date.now() + this.#askUserIdleTimeoutMs();
+		}
+	}
+
+	#clearWakeSources(): void {
+		this.#wakeSources.clear();
+		this.#askUserDeadlineAtMs = undefined;
+	}
+
+	#setWakeSourceCount(source: string, activeCount: number, items?: readonly WakeSourceStateItem[]): void {
 		const previousTotal = this.#activeWakeSourceCount();
+		const previousDeadline = this.#askUserDeadlineAtMs;
+		if (source === ASK_USER_WAKE_SOURCE) this.#noteAskUserWait(activeCount, items);
 		this.#wakeSources.set(source, activeCount);
 		const nextTotal = this.#activeWakeSourceCount();
 		if (previousTotal > 0 && nextTotal === 0) {
@@ -590,6 +757,11 @@ export class MonitorAwareGoalContinuation {
 			return;
 		}
 		if (this.#scheduledContinuationKind === "monitor") {
+			if (previousDeadline !== this.#askUserDeadlineAtMs && this.#goal !== null) {
+				this.#cancelTimer();
+				this.#schedule(this.#goal, "monitor", true);
+				return;
+			}
 			this.#waitTicker?.setChannelCounts(this.#wakeSourceSnapshot());
 		}
 	}
@@ -622,7 +794,7 @@ export class MonitorAwareGoalContinuation {
 		return Object.fromEntries([...this.#wakeSources.entries()].sort(([left], [right]) => left.localeCompare(right)));
 	}
 
-	#liveWakeSources(): string[] {
+	liveWakeSources(): string[] {
 		return [...this.#wakeSources.entries()]
 			.filter(([, count]) => count > 0)
 			.map(([source]) => source)
@@ -632,8 +804,10 @@ export class MonitorAwareGoalContinuation {
 	#resetContinuationState(): void {
 		this.#pendingSystemRecovery = undefined;
 		this.#pendingProviderRecovery = undefined;
+		this.#providerRetryAttempts = 0;
 		this.#consecutiveLengthRecoveries.clear();
 		this.#recentNormalizedOutputHashes = [];
+		this.#recentToolEffects = [];
 		this.#resetToollessContinuationStreak();
 		this.#resetCacheWarmIteration();
 	}
@@ -648,6 +822,23 @@ export class MonitorAwareGoalContinuation {
 		this.#toollessStreakGoalId = null;
 	}
 
+	/**
+	 * Runs the armed continuation now, through the same eligibility checks as its timer (the
+	 * desktop's "Check now"). A held timer (the user is typing) stays held.
+	 */
+	async fireNow(): Promise<GoalContinuationFireNowResult> {
+		if (this.#heldTimer !== undefined) return { fired: false, reason: "held" };
+		const kind = this.#scheduledContinuationKind;
+		if (this.#timer === undefined || kind === undefined) return { fired: false, reason: "not_armed" };
+		clearTimeout(this.#timer);
+		await this.#continueIfEligible(kind, this.#armedDrainFire);
+		return { fired: true, kind };
+	}
+
+	#publish(name: string, data: unknown): void {
+		publishGoalContinuationEvent(this.#pi, name, data);
+	}
+
 	#cancelTimer(): void {
 		const kind = this.#scheduledContinuationKind;
 		this.#scheduledAtMs = undefined;
@@ -659,7 +850,7 @@ export class MonitorAwareGoalContinuation {
 		if (this.#timer !== undefined) clearTimeout(this.#timer);
 		this.#timer = undefined;
 		this.#scheduledContinuationKind = undefined;
-		if (kind !== undefined) this.#pi.events?.emit(GOAL_CONTINUATION_TIMER_STATE_EVENT, { armed: false, kind });
+		if (kind !== undefined) this.#publish(GOAL_CONTINUATION_TIMER_STATE_EVENT, { armed: false, kind });
 		this.#waitTicker?.stop();
 	}
 }

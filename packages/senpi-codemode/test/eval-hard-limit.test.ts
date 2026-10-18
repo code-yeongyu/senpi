@@ -50,7 +50,8 @@ describe("eval hard limit", () => {
 		const manager = new EvalDetachedCellManager({ hardLimitSeconds: 2 });
 		const kernel = new FakeKernel([]);
 		const cell = manager.create("runaway-cell", input());
-		manager.markRunning(cell, kernel, liveResultFor("still computing"));
+		manager.bindKernel(cell, kernel, liveResultFor("still computing"));
+		manager.markRunning(cell);
 		manager.detach(cell);
 
 		await vi.advanceTimersByTimeAsync(1_999);
@@ -62,7 +63,7 @@ describe("eval hard limit", () => {
 		expect(kernel.interrupts).toHaveLength(1);
 		expect(manager.peek("runaway-cell").state).toBe("cancelled");
 		expect(manager.peek("runaway-cell").hardLimitSeconds).toBe(2);
-		expect(manager.busyFor("js")).toBeUndefined();
+		expect(manager.liveCells("js")).toEqual([]);
 	});
 
 	it("tells the main agent the cell was killed by the hard limit", async () => {
@@ -71,7 +72,8 @@ describe("eval hard limit", () => {
 		const manager = new EvalDetachedCellManager({ hardLimitSeconds: 2, notifier: recorder });
 		const kernel = new FakeKernel([]);
 		const cell = manager.create("notified-cell", input());
-		manager.markRunning(cell, kernel, liveResultFor("buffered print"));
+		manager.bindKernel(cell, kernel, liveResultFor("buffered print"));
+		manager.markRunning(cell);
 		manager.detach(cell);
 
 		await vi.advanceTimersByTimeAsync(2_000);
@@ -91,7 +93,8 @@ describe("eval hard limit", () => {
 		const kernel = new FakeKernel([]);
 		const killed: Error[] = [];
 		const cell = manager.create("bridge-bound-cell", input());
-		manager.markRunning(cell, kernel, liveResultFor("tool calls"), (error) => killed.push(error));
+		manager.bindKernel(cell, kernel, liveResultFor("tool calls"), (error) => killed.push(error));
+		manager.markRunning(cell);
 
 		await vi.advanceTimersByTimeAsync(2_000);
 
@@ -109,7 +112,8 @@ describe("eval hard limit", () => {
 		const manager = new EvalDetachedCellManager({ hardLimitSeconds: 2 });
 		const kernel = new FakeKernel([]);
 		const cell = manager.create("orphan-cell", input());
-		manager.markRunning(cell, kernel, liveResultFor("booted"));
+		manager.bindKernel(cell, kernel, liveResultFor("booted"));
+		manager.markRunning(cell);
 
 		await vi.advanceTimersByTimeAsync(2_000);
 
@@ -124,7 +128,8 @@ describe("eval hard limit", () => {
 		const manager = new EvalDetachedCellManager({ hardLimitSeconds: 2, notifier: recorder });
 		const kernel = new FakeKernel([]);
 		const cell = manager.create("fast-cell", input());
-		manager.markRunning(cell, kernel, liveResultFor("done"));
+		manager.bindKernel(cell, kernel, liveResultFor("done"));
+		manager.markRunning(cell);
 		manager.detach(cell);
 		manager.complete(cell, liveResultFor("done")());
 
@@ -138,13 +143,15 @@ describe("eval hard limit", () => {
 		expect(recorder.notices[0]?.content).not.toContain("hard limit");
 	});
 
-	it("lets an explicit longer timeout raise the effective hard limit", async () => {
+	it("lets an explicit longer timeout raise the effective hard limit, even for a bridge-parked cell", async () => {
 		vi.useFakeTimers();
 		const manager = new EvalDetachedCellManager({ hardLimitSeconds: 2 });
 		const kernel = new FakeKernel([]);
 		const cell = manager.create("explicit-cell", input({ timeout: 5 }));
-		manager.markRunning(cell, kernel, liveResultFor("long by request"));
+		manager.bindKernel(cell, kernel, liveResultFor("long by request"));
+		manager.markRunning(cell);
 		manager.detach(cell);
+		manager.pause(cell);
 
 		await vi.advanceTimersByTimeAsync(4_999);
 		expect(kernel.interrupts).toEqual([]);
@@ -153,6 +160,7 @@ describe("eval hard limit", () => {
 
 		expect(kernel.interrupts).toHaveLength(1);
 		expect(manager.peek("explicit-cell").hardLimitSeconds).toBe(5);
+		expect(manager.peek("explicit-cell").runBudgetSeconds).toBeUndefined();
 	});
 
 	it("delivers the hard-limit notice through the real eval tool path", async () => {

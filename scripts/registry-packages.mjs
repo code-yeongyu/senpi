@@ -1,3 +1,6 @@
+// Chord is deliberately absent: the fork does not modify it semantically, so it keeps upstream's
+// own release identity and its declared edges resolve to upstream's published version (checked by
+// publish-registry-dependencies.test.mjs).
 export const registryPackageNames = new Map([
 	["@earendil-works/pi-ai", "@code-yeongyu/senpi-ai"],
 	["@earendil-works/pi-agent-core", "@code-yeongyu/senpi-agent-core"],
@@ -9,6 +12,14 @@ export const registryPackageNames = new Map([
 ]);
 
 export const registrySourcePackageNames = new Set(registryPackageNames.keys());
+
+const publishedRegistryNames = new Set(registryPackageNames.values());
+
+// A fork-scope package outside the publish set is never on the registry, so no published manifest may
+// declare it: every declared dependency is resolved from the registry at install time (senpi#2141).
+export function isUnpublishedForkPackage(packageName) {
+	return packageName.startsWith("@code-yeongyu/") && !publishedRegistryNames.has(packageName);
+}
 
 export function resolveRegistryPackages(packages) {
 	const resolved = new Map();

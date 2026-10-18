@@ -9,6 +9,7 @@ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../../types.ts";
+import { getDispatchIdentity, registerDispatchIdentity } from "../../permission-system/dispatch-metadata.ts";
 import type { ToolSearchDocument } from "../../tool-search/engine/document.ts";
 import { deriveMcpRegistrationId } from "../../tool-search/engine/marker.ts";
 import type { ToolSearchService } from "../../tool-search/service.ts";
@@ -55,6 +56,10 @@ export interface McpTierBRegistration {
 }
 
 const managedNamesByRegistrar = new WeakMap<object, ReadonlySet<string>>();
+// Names a by-name call already promoted from stub to full. A cold lazy server's
+// background connect re-registers the whole catalog; without this memory that
+// refresh would hand the promoted tool back to the model as a stub.
+const promotedNamesByRegistrar = new WeakMap<object, Set<string>>();
 
 /** Register MCP tools honouring Tier-B search mode + prompt-cache mitigations. */
 export function registerMcpTierBTools(
@@ -83,6 +88,8 @@ export function registerMcpTierBTools(
 	}));
 	const fullDefs = buildMcpToolDefinitions(input.registeredEntries, warn);
 	const fullByName = new Map(fullDefs.map((def) => [def.name, def] as const));
+	const promoted = promotedNamesByRegistrar.get(pi as object) ?? new Set<string>();
+	promotedNamesByRegistrar.set(pi as object, promoted);
 	const gatewayNames: string[] = [];
 	for (const gateway of input.proxyGateways ?? []) {
 		const tool = createMcpProxyTool(gateway.server, gateway.entries);
@@ -94,7 +101,11 @@ export function registerMcpTierBTools(
 		gatewayNames.push(tool.name);
 	}
 
-	const activeMcpNames = [...mapMcpCatalogNames(input.activeEntries).map(({ name }) => name), ...gatewayNames];
+	const activeMcpNames = [
+		...mapMcpCatalogNames(input.activeEntries).map(({ name }) => name),
+		...fullDefs.filter((def) => input.searchMode && promoted.has(def.name)).map((def) => def.name),
+		...gatewayNames,
+	];
 	const managedNames = new Set([...fullDefs.map((def) => def.name), ...gatewayNames]);
 	const previousManagedNames = managedNamesByRegistrar.get(pi as object) ?? new Set<string>();
 	managedNamesByRegistrar.set(pi as object, managedNames);
@@ -107,6 +118,7 @@ export function registerMcpTierBTools(
 	const activate = (names: readonly string[]): void => {
 		const known = [...new Set(names.filter((name) => registeredNames.has(name)))];
 		if (known.length === 0) return;
+		for (const name of known) promoted.add(name);
 		if (stubSwap) swapStubsToFull(pi, known, stubbed, fullByName);
 		const current = pi.getActiveTools();
 		pi.setActiveTools(orderActiveSet(unionStable(current, known), current, catalogNames));
@@ -144,9 +156,9 @@ export function registerMcpTierBTools(
 	// active so the tools array is length-stable; direct tools stay full.
 	const directActive = new Set(activeMcpNames);
 	const toRegister: McpToolDefinition[] = fullDefs.map((def) => {
-		if (directActive.has(def.name)) return def;
+		if (directActive.has(def.name) || promoted.has(def.name)) return def;
 		stubbed.add(def.name);
-		return buildMcpStubDefinition(def.name);
+		return buildMcpStubDefinition(def.name, { full: def, promote: () => activate([def.name]) });
 	});
 	const active = orderActiveSet([...currentBase, ...fullDefs.map((def) => def.name)], reference, catalogNames);
 	registerToolsPreservingActiveSet(pi, toRegister, active);
@@ -165,6 +177,7 @@ function swapStubsToFull(
 		if (full === undefined) continue;
 		pi.registerTool(full);
 		stubbed.delete(name);
+		promotedNamesByRegistrar.get(pi as object)?.add(name);
 	}
 }
 
@@ -195,23 +208,44 @@ function isLegacyMcpRegistrationName(name: string): boolean {
 	return name.startsWith("mcp_");
 }
 
+/** How a stub promotes itself: swap to the full definition, then run that definition. */
+export interface McpStubPromotion {
+	readonly full: McpToolDefinition;
+	readonly promote: () => void;
+}
+
 /** A 30-70 token placeholder for an inactive search-mode tool. Keeps the tools
- * array length-stable under stubSwap; guides the model to tool_search. */
-export function buildMcpStubDefinition(name: string): McpToolDefinition {
+ * array length-stable under stubSwap. Calling it by name promotes the full
+ * definition and runs the call in the same turn, so the model never needs a
+ * tool_search round trip; without a promotion hook it only points at tool_search. */
+export function buildMcpStubDefinition(name: string, promotion?: McpStubPromotion): McpToolDefinition {
+	const parameters = Type.Object({}, { additionalProperties: true });
+	if (promotion !== undefined) {
+		registerDispatchIdentity(parameters, (input) => getDispatchIdentity(promotion.full.parameters, input));
+	}
 	return {
 		name,
 		label: name,
-		description: `Inactive MCP tool. Run tool_search to activate ${name}, then call it on your next turn.`,
-		parameters: Type.Object({}),
+		description:
+			promotion === undefined
+				? `Inactive MCP tool. Run tool_search to activate ${name}, then call it on your next turn.`
+				: `Deferred MCP tool. Call ${name} with its real arguments; it activates and runs on this first call (tool_search lists its schema).`,
+		parameters,
 		executionMode: "parallel",
-		async execute(): Promise<AgentToolResult<McpToolDetails | undefined>> {
-			return {
-				content: [{ type: "text", text: `${name} is not active. Use tool_search to activate it, then call it.` }],
-				details: undefined,
-			};
+		async execute(toolCallId, params, signal, onUpdate, ctx): Promise<AgentToolResult<McpToolDetails | undefined>> {
+			if (promotion === undefined) {
+				return {
+					content: [
+						{ type: "text", text: `${name} is not active. Use tool_search to activate it, then call it.` },
+					],
+					details: undefined,
+				};
+			}
+			promotion.promote();
+			return promotion.full.execute(toolCallId, params, signal, onUpdate, ctx);
 		},
 		renderCall(_args, theme) {
-			return new Text(theme.fg("toolOutput", `${name} (inactive stub)`), 0, 0);
+			return new Text(theme.fg("toolOutput", `${name} (deferred stub)`), 0, 0);
 		},
 	};
 }

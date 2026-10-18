@@ -37,10 +37,6 @@ export function buildMcpToolNames(entries: readonly McpToolNameEntry[], warn?: W
 	return names;
 }
 
-export function buildMcpToolName(entry: McpToolNameEntry): string {
-	return ellipsizeMiddle(buildBaseName(entry), MCP_TOOL_NAME_MAX_LENGTH);
-}
-
 function buildBaseName(entry: McpToolNameEntry): string {
 	return `mcp_${sanitizeNamePart(entry.serverName)}_${sanitizeNamePart(entry.toolName)}`;
 }

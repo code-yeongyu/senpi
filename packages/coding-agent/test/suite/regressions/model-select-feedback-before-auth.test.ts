@@ -11,7 +11,8 @@ describe("InteractiveMode.selectModelFromUi feedback ordering", () => {
 
 		const fakeThis: any = {
 			session: {
-				setModel: vi.fn(async () => {
+				// A picker selection applies to the session (#2870); its auth round trip is the same.
+				setSessionModel: vi.fn(async () => {
 					order.push("setModel:start");
 					await setModelGate;
 					order.push("setModel:end");
@@ -31,7 +32,10 @@ describe("InteractiveMode.selectModelFromUi feedback ordering", () => {
 		const done = () => order.push("selector:released");
 		const model = { id: "beta-1", provider: "faux" };
 
-		const pending = (InteractiveMode as any).prototype.selectModelFromUi.call(fakeThis, model, done);
+		const pending = (InteractiveMode as any).prototype.selectModelFromUi.call(fakeThis, model, done, {
+			origin: { source: "picker" },
+			persistDefault: false,
+		});
 		await new Promise((resolve) => setImmediate(resolve));
 
 		// The overlay is torn down on Enter, so the selector must be released while

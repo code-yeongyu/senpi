@@ -68,20 +68,22 @@ export function makeMockAnthropicClient(sse: string): MockAnthropicClient {
 	let lastParams: Record<string, unknown> | undefined;
 	let createCount = 0;
 	const client = {
-		messages: {
-			create(params: Record<string, unknown>) {
-				lastParams = params;
-				createCount += 1;
-				return {
-					asResponse(): Promise<Response> {
-						return Promise.resolve(
-							new Response(sse, {
-								status: 200,
-								headers: { "content-type": "text/event-stream" },
-							}),
-						);
-					},
-				};
+		beta: {
+			messages: {
+				create(params: Record<string, unknown>) {
+					lastParams = params;
+					createCount += 1;
+					return {
+						asResponse(): Promise<Response> {
+							return Promise.resolve(
+								new Response(sse, {
+									status: 200,
+									headers: { "content-type": "text/event-stream" },
+								}),
+							);
+						},
+					};
+				},
 			},
 		},
 	};
@@ -157,6 +159,8 @@ export function anthropicToolSearchResultBlock(toolUseId = "srvtoolu_spike_1"): 
 // ---------------------------------------------------------------------------
 
 export const ANTHROPIC_TOOL_SEARCH_TYPE = "tool_search_tool_bm25_20251119";
+/** The API validates the server tool's `name` against its variant: `tools.N.<type>.name: Input should be '<name>'`. */
+export const ANTHROPIC_TOOL_SEARCH_CONTRACT_NAME = "tool_search_tool_bm25";
 
 export interface AnthropicValidationResult {
 	readonly status: 200 | 400;
@@ -188,6 +192,20 @@ export function validateAnthropicToolSearchPayload(payload: unknown): AnthropicV
 	if (objs.length > 0 && deferred.length === objs.length) {
 		return { status: 400, error: "invalid_request: at least one tool must be non-deferred" };
 	}
+	// The API validates the server tool's `name` against its variant; a `name`-less
+	// stub is tolerated here so shape-only fixtures stay valid.
+	const misnamed = objs.findIndex(
+		(tool) =>
+			tool.type === ANTHROPIC_TOOL_SEARCH_TYPE &&
+			"name" in tool &&
+			tool.name !== ANTHROPIC_TOOL_SEARCH_CONTRACT_NAME,
+	);
+	if (misnamed >= 0) {
+		return {
+			status: 400,
+			error: `invalid_request_error: tools.${misnamed}.${ANTHROPIC_TOOL_SEARCH_TYPE}.name: Input should be '${ANTHROPIC_TOOL_SEARCH_CONTRACT_NAME}'`,
+		};
+	}
 	return { status: 200 };
 }
 
@@ -197,7 +215,7 @@ export function mockAnthropicExpandToolReferences(block: unknown): string[] {
 	if (!isObj(block) || !Array.isArray(block.content)) return [];
 	return block.content
 		.filter((entry): entry is Record<string, unknown> => isObj(entry) && entry.type === "tool_reference")
-		.map((entry) => String(entry.name));
+		.map((entry) => String(entry.tool_name));
 }
 
 /** OpenAI `tool_search_call` output item (client-mode intercept target). */

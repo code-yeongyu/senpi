@@ -9,6 +9,7 @@ import type {
 	ContextEvent,
 	ExtensionAPI,
 	ExtensionContext,
+	ExtensionToolContext,
 	SessionStartEvent,
 	ToolInfo,
 } from "../../src/core/extensions/types.ts";
@@ -191,10 +192,10 @@ describe("ToolSearchService", () => {
 			{ query: "nothing matches" },
 			undefined,
 			undefined,
-			{} as ExtensionContext,
+			{} as ExtensionToolContext,
 		);
 		expect(result.content).toEqual([
-			expect.objectContaining({ type: "text", text: expect.stringContaining("No tools matched") }),
+			expect.objectContaining({ type: "text", text: expect.stringContaining("No catalog tools matched") }),
 		]);
 		expect(state.active).toEqual(["read", "bash"]);
 		expect(state.setActiveTools).not.toHaveBeenCalled();
@@ -204,10 +205,10 @@ describe("ToolSearchService", () => {
 		const tools = [toolInfo("weather_forecast")];
 		const state = runtime(tools);
 		const service = new ToolSearchService(state.runtime);
-		const handlers = new Map<string, Array<(event: unknown, ctx: ExtensionContext) => void>>();
+		const handlers = new Map<string, Array<(event: unknown, ctx: ExtensionContext) => void | Promise<void>>>();
 		let activator: ((name: string) => boolean) | undefined;
 		const pi = {
-			on(name: string, handler: (event: unknown, ctx: ExtensionContext) => void) {
+			on(name: string, handler: (event: unknown, ctx: ExtensionContext) => void | Promise<void>) {
 				handlers.set(name, [...(handlers.get(name) ?? []), handler]);
 			},
 			registerLazyToolActivator(handler: (name: string) => boolean) {
@@ -230,7 +231,7 @@ describe("ToolSearchService", () => {
 		} as unknown as ExtensionContext;
 
 		for (const handler of handlers.get("session_start") ?? []) {
-			handler({ type: "session_start", reason: "resume" } satisfies SessionStartEvent, ctx);
+			await handler({ type: "session_start", reason: "resume" } satisfies SessionStartEvent, ctx);
 		}
 		expect(pi.registerTool).toHaveBeenCalledOnce();
 		expect(pi.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "tool_search" }));

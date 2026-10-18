@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../../src/core/agent-session.ts";
@@ -23,7 +23,7 @@ import { createHarness, type Harness, type HarnessOptions } from "./harness.ts";
  * assertions are on wire records, not on internal method calls.
  */
 
-const CODEX_PROVIDER = "openai-codex";
+const CODEX_PROVIDER = "chatgpt-subscription";
 const CODEX_API = "openai-codex-responses";
 const BASE_MODEL_ID = "gpt-5.6-sol";
 const ALT_MODEL_ID = "gpt-5.5";
@@ -117,11 +117,9 @@ describe("RPC fast-mode commands and model/tier events", () => {
 		};
 	}
 
-	function readSettings(harness: Harness): Record<string, unknown> {
-		return JSON.parse(readFileSync(join(harness.tempDir, "agent", "settings.json"), "utf-8")) as Record<
-			string,
-			unknown
-		>;
+	function readState(harness: Harness): Record<string, unknown> {
+		const path = join(harness.tempDir, "agent", "state.json");
+		return existsSync(path) ? JSON.parse(readFileSync(path, "utf-8")) : {};
 	}
 
 	// =====================================================================
@@ -297,6 +295,8 @@ describe("RPC fast-mode commands and model/tier events", () => {
 	it("roundtrips set_fast_mode / get_fast_mode and persists per model", async () => {
 		// given
 		const rpc = await createRpcHarness();
+		const configPath = join(rpc.harness.tempDir, "agent", "settings.json");
+		const configBefore = readFileSync(configPath, "utf8");
 		expect((await rpc.send({ type: "get_fast_mode" })).data).toEqual({ enabled: false, serviceTier: null });
 
 		// when
@@ -312,11 +312,12 @@ describe("RPC fast-mode commands and model/tier events", () => {
 		});
 		expect((await rpc.send({ type: "get_fast_mode" })).data).toEqual({ enabled: true, serviceTier: "priority" });
 		// The `/fast` command and this command share ONE persistence path.
-		expect(readSettings(rpc.harness).modelServiceTiers).toEqual({ [BASE_KEY]: "priority" });
+		expect(readState(rpc.harness).modelServiceTiers).toEqual({ [BASE_KEY]: "priority" });
+		expect(readFileSync(configPath, "utf8")).toBe(configBefore);
 
 		// and: a fresh session over the same settings starts fast
 		const restarted = await createRpcHarness({
-			settings: readSettings(rpc.harness) as HarnessOptions["settings"],
+			settings: { ...JSON.parse(configBefore), ...readState(rpc.harness) },
 		});
 		expect((await restarted.send({ type: "get_fast_mode" })).data).toEqual({
 			enabled: true,
@@ -341,7 +342,7 @@ describe("RPC fast-mode commands and model/tier events", () => {
 			provider: CODEX_PROVIDER,
 			modelId: BASE_MODEL_ID,
 		});
-		expect(readSettings(rpc.harness).modelServiceTiers).toEqual({ [BASE_KEY]: "auto" });
+		expect(readState(rpc.harness).modelServiceTiers).toEqual({ [BASE_KEY]: "auto" });
 		expect((await rpc.send({ type: "get_fast_mode" })).data).toEqual({ enabled: false, serviceTier: null });
 	});
 
@@ -386,8 +387,8 @@ describe("RPC fast-mode commands and model/tier events", () => {
 
 		// then: the wire reports the refusal instead of a false success
 		expect(response.success).toBe(false);
-		expect(response.error).toBe("Fast mode is only available for OpenAI Codex models.");
-		expect(readSettings(rpc.harness).modelServiceTiers).toBeUndefined();
+		expect(response.error).toBe("Fast mode is only available for ChatGPT Subscription models.");
+		expect(readState(rpc.harness).modelServiceTiers).toBeUndefined();
 		expect((await rpc.send({ type: "get_state" })).data?.fastMode).toBe(false);
 	});
 
@@ -409,7 +410,7 @@ describe("RPC fast-mode commands and model/tier events", () => {
 		// then: refused with the pin's copy, and nothing persisted
 		expect(response.success).toBe(false);
 		expect(response.error).toBe("Fast mode is fixed by the active model selection's priority tier.");
-		expect(readSettings(rpc.harness).modelServiceTiers).toBeUndefined();
+		expect(readState(rpc.harness).modelServiceTiers).toBeUndefined();
 		expect((await rpc.send({ type: "get_fast_mode" })).data).toEqual({ enabled: true, serviceTier: "priority" });
 	});
 
@@ -448,7 +449,7 @@ describe("RPC fast-mode commands and model/tier events", () => {
 			expect(response.success).toBe(false);
 			expect(response.error).toContain("boolean");
 		}
-		expect(readSettings(rpc.harness).modelServiceTiers).toBeUndefined();
+		expect(readState(rpc.harness).modelServiceTiers).toBeUndefined();
 		expect((await rpc.send({ type: "get_state" })).data?.fastMode).toBe(false);
 	});
 });

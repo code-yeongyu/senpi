@@ -1,15 +1,23 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
 import type { BuildDynamicSystemPromptOptions } from "../../../dynamic-prompt/build.ts";
 import { buildClaudeFable5Prompt } from "./claude-fable-5.ts";
 import { buildClaudeFable51Prompt } from "./claude-fable-5-1.ts";
+import { buildClaudeHaiku55Prompt } from "./claude-haiku-5-5.ts";
 import { buildClaudeOpus45Prompt } from "./claude-opus-4-5.ts";
 import { buildClaudeOpus46Prompt } from "./claude-opus-4-6.ts";
 import { buildClaudeOpus47Prompt } from "./claude-opus-4-7.ts";
 import { buildClaudeOpus48Prompt } from "./claude-opus-4-8.ts";
 import { buildClaudeOpus5Prompt } from "./claude-opus-5.ts";
+import { buildClaudeOpus55Prompt } from "./claude-opus-5-5.ts";
+import { buildClaudeSonnet55Prompt } from "./claude-sonnet-5-5.ts";
+import {
+	type ResolvedPresetName as ContractResolvedPresetName,
+	resolvePresetName as resolveContractPresetName,
+} from "./contract.ts";
+import { buildDeepseekV41FlashPrompt } from "./deepseek-v4-1-flash.ts";
 import { buildDeepseekV4FlashPrompt } from "./deepseek-v4-flash.ts";
 import { buildDeepseekV4Flash0731Prompt } from "./deepseek-v4-flash-0731.ts";
 import { buildDeepseekV4ProPrompt } from "./deepseek-v4-pro.ts";
+import { buildGemini4ArgonPrompt } from "./gemini-4-argon.ts";
 import { buildGlm52Prompt } from "./glm-5-2.ts";
 import { buildGlm53Prompt } from "./glm-5-3.ts";
 import { buildGpt52Prompt } from "./gpt-5.2.ts";
@@ -18,180 +26,24 @@ import { buildGpt54Prompt } from "./gpt-5.4.ts";
 import { buildGpt55Prompt } from "./gpt-5.5.ts";
 import { buildGpt56Prompt } from "./gpt-5.6.ts";
 import { buildGpt5Prompt } from "./gpt-5.ts";
+import { buildGpt6AstraPrompt } from "./gpt-6-astra.ts";
 import { buildGrok45Prompt } from "./grok-4.5.ts";
 import { buildGrok46Prompt } from "./grok-4.6.ts";
+import { buildGrok47Prompt } from "./grok-4.7.ts";
 import { buildKimiK26Prompt } from "./kimi-k2-6.ts";
 import { buildKimiK27Prompt } from "./kimi-k2-7.ts";
+import { buildKimiK28Prompt } from "./kimi-k2-8.ts";
 import { buildKimiK3Prompt } from "./kimi-k3.ts";
-import { type PromptPresetName, type PromptPresetSettings, parsePromptPreset } from "./settings.ts";
+import type { ModelWithPromptPresetMetadata } from "./matchers.ts";
+import { type PromptPresetSettings, parsePromptPreset } from "./settings.ts";
 
 export type { PromptPresetSettings } from "./settings.ts";
 
-type ResolvedPresetName = Exclude<PromptPresetName, "auto">;
-type ModelWithPromptPresetMetadata = Pick<Model<Api>, "id" | "provider"> & {
-	name?: string;
-	promptPreset?: string;
-};
+type ResolvedPresetName = ContractResolvedPresetName;
 
 export interface ResolvedPromptPreset {
 	name: ResolvedPresetName;
 	prompt: string;
-}
-
-function normalizeModelId(modelId: string): string {
-	return modelId.toLowerCase().replace(/\s+/g, "-");
-}
-
-type Gpt5Version = "gpt-5.2" | "gpt-5.3-codex" | "gpt-5.4" | "gpt-5.5" | "gpt-5.6";
-
-function extractGpt5Version(modelId: string): Gpt5Version | undefined {
-	const normalized = normalizeModelId(modelId);
-	if (normalized.includes("gpt-5.6")) {
-		return "gpt-5.6";
-	}
-	if (normalized.includes("gpt-5.5")) {
-		return "gpt-5.5";
-	}
-	if (normalized.includes("gpt-5.4")) {
-		return "gpt-5.4";
-	}
-	if (normalized.includes("gpt-5.3")) {
-		return "gpt-5.3-codex";
-	}
-	if (normalized.includes("gpt-5.2")) {
-		return "gpt-5.2";
-	}
-	return undefined;
-}
-
-function hasKimiK26Signal(value: string): boolean {
-	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)6(?:$|[/@._:-])/.test(normalizeModelId(value));
-}
-
-function isKimiK26Model(model: ModelWithPromptPresetMetadata): boolean {
-	return hasKimiK26Signal(model.id) || (model.name !== undefined && hasKimiK26Signal(model.name));
-}
-
-function hasKimiK27Signal(value: string): boolean {
-	return /(?:^|[/@._-])kimi-k2(?:[._-]|p)7(?:$|[/@._:-])/.test(normalizeModelId(value));
-}
-
-function isKimiK27Model(model: ModelWithPromptPresetMetadata): boolean {
-	return hasKimiK27Signal(model.id) || (model.name !== undefined && hasKimiK27Signal(model.name));
-}
-
-function hasKimiK3Signal(value: string): boolean {
-	const normalized = normalizeModelId(value);
-	return normalized === "k3" || /(?:^|[/@._-])kimi-k3(?:$|[/@._:-])/.test(normalized);
-}
-
-function isKimiK3Model(model: ModelWithPromptPresetMetadata): boolean {
-	return hasKimiK3Signal(model.id) || (model.name !== undefined && hasKimiK3Signal(model.name));
-}
-
-// DeepSeek V4 id shapes verified against the OpenRouter live API, models.dev,
-// and senpi's generated provider catalogs (2026-07-31): deepseek-v4-flash,
-// deepseek/deepseek-v4-flash-0731, deepseek-ai/DeepSeek-V4-Pro,
-// accounts/fireworks/models/deepseek-v4-flash, aihubmix's alicloud-deepseek-v4-*,
-// and trailing tags (:free, -free, :thinking, -nothinking, -cheaper, -lightning, -el).
-function hasDeepseekV4Flash0731Signal(value: string): boolean {
-	return /(?:^|[/@:._-])deepseek[._-]v4[._-]flash[._-]0731(?:$|[/@:._-])/.test(normalizeModelId(value));
-}
-
-function isDeepseekV4Flash0731Model(model: ModelWithPromptPresetMetadata): boolean {
-	return (
-		hasDeepseekV4Flash0731Signal(model.id) || (model.name !== undefined && hasDeepseekV4Flash0731Signal(model.name))
-	);
-}
-
-function hasDeepseekV4FlashSignal(value: string): boolean {
-	return /(?:^|[/@:._-])deepseek[._-]v4[._-]flash(?:$|[/@:._-])/.test(normalizeModelId(value));
-}
-
-function isDeepseekV4FlashModel(model: ModelWithPromptPresetMetadata): boolean {
-	return hasDeepseekV4FlashSignal(model.id) || (model.name !== undefined && hasDeepseekV4FlashSignal(model.name));
-}
-
-function hasDeepseekV4ProSignal(value: string): boolean {
-	return /(?:^|[/@:._-])deepseek[._-]v4[._-]pro(?:$|[/@:._-])/.test(normalizeModelId(value));
-}
-
-function isDeepseekV4ProModel(model: ModelWithPromptPresetMetadata): boolean {
-	return hasDeepseekV4ProSignal(model.id) || (model.name !== undefined && hasDeepseekV4ProSignal(model.name));
-}
-
-function hasGlm52Signal(value: string): boolean {
-	return /(?:^|[/@._-])glm(?:[._-]|p)5(?:[._-]|p)2(?:$|[/@._:-])/.test(normalizeModelId(value));
-}
-
-function isGlm52Model(model: ModelWithPromptPresetMetadata): boolean {
-	return hasGlm52Signal(model.id) || (model.name !== undefined && hasGlm52Signal(model.name));
-}
-
-function hasGlm53Signal(value: string): boolean {
-	return /(?:^|[/@._-])glm(?:[._-]|p)5(?:[._-]|p)3(?:$|[/@._:-])/.test(normalizeModelId(value));
-}
-
-function isGlm53Model(model: ModelWithPromptPresetMetadata): boolean {
-	return hasGlm53Signal(model.id) || (model.name !== undefined && hasGlm53Signal(model.name));
-}
-
-function hasGrok45Signal(value: string): boolean {
-	// Match any Grok 4.5 id shape: grok-4.5, grok4.5, grok45, grok-4p5, provider:model,
-	// path/prefix ids, and trailing tags (:thinking, -latest). Keep 4.3 / 4.20 / 3 out.
-	return /(?:^|[/@:._-])grok(?:[._-]|p)?4(?:[._-]|p)?5(?:$|[/@._:-])/.test(normalizeModelId(value));
-}
-
-function isGrok45Model(model: ModelWithPromptPresetMetadata): boolean {
-	return hasGrok45Signal(model.id) || (model.name !== undefined && hasGrok45Signal(model.name));
-}
-
-function hasGrok46Signal(value: string): boolean {
-	// Same id shapes as hasGrok45Signal with a 4.6 minor version. Keep 4.5 / 4.3 / 4.20 / 3 out.
-	return /(?:^|[/@:._-])grok(?:[._-]|p)?4(?:[._-]|p)?6(?:$|[/@._:-])/.test(normalizeModelId(value));
-}
-
-function isGrok46Model(model: ModelWithPromptPresetMetadata): boolean {
-	return hasGrok46Signal(model.id) || (model.name !== undefined && hasGrok46Signal(model.name));
-}
-
-// Claude Mythos shares each Fable release's prompting guide ("Prompting Claude
-// Fable 5.1" covers Fable 5.1 and Mythos 5.1; "Prompting Claude Fable 5"
-// covers Fable 5 and Mythos 5), so Mythos ids route to the matching Fable preset.
-const CLAUDE_FABLE_51_MARKERS = ["fable-5-1", "fable-5.1", "mythos-5-1", "mythos-5.1"] as const;
-const CLAUDE_FABLE_5_MARKERS = ["fable-5", "mythos-5"] as const;
-
-function isClaudeFable51Model(modelId: string): boolean {
-	const normalized = normalizeModelId(modelId);
-	return CLAUDE_FABLE_51_MARKERS.some((marker) => normalized.includes(marker));
-}
-
-function isClaudeFable5Model(modelId: string): boolean {
-	const normalized = normalizeModelId(modelId);
-	return CLAUDE_FABLE_5_MARKERS.some((marker) => normalized.includes(marker));
-}
-
-function isClaudeOpus5Model(modelId: string): boolean {
-	return normalizeModelId(modelId).includes("opus-5");
-}
-
-type ClaudeOpusVersion = "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" | "claude-opus-4-5";
-
-function extractClaudeOpusVersion(modelId: string): ClaudeOpusVersion | undefined {
-	const normalized = normalizeModelId(modelId);
-	if (normalized.includes("opus-4-8")) {
-		return "claude-opus-4-8";
-	}
-	if (normalized.includes("opus-4-7")) {
-		return "claude-opus-4-7";
-	}
-	if (normalized.includes("opus-4-6")) {
-		return "claude-opus-4-6";
-	}
-	if (normalized.includes("opus-4-5") || normalized.includes("opus-4.5")) {
-		return "claude-opus-4-5";
-	}
-	return undefined;
 }
 
 export function resolvePresetName(
@@ -207,60 +59,13 @@ export function resolvePresetName(
 		return modelPromptPreset;
 	}
 
-	const gpt5Version = extractGpt5Version(model.id);
-	if (gpt5Version) {
-		return gpt5Version;
-	}
-	if (isKimiK3Model(model)) {
-		return "kimi-k3";
-	}
-	if (isKimiK27Model(model)) {
-		return "kimi-k2-7";
-	}
-	if (isKimiK26Model(model)) {
-		return "kimi-k2-6";
-	}
-	// The dotted release must resolve before the generic fable-5 substring.
-	if (isClaudeFable51Model(model.id)) {
-		return "claude-fable-5-1";
-	}
-	if (isClaudeFable5Model(model.id)) {
-		return "claude-fable-5";
-	}
-	if (isClaudeOpus5Model(model.id)) {
-		return "claude-opus-5";
-	}
-	const claudeVersion = extractClaudeOpusVersion(model.id);
-	if (claudeVersion) {
-		return claudeVersion;
-	}
-	if (isGlm53Model(model)) {
-		return "glm-5.3";
-	}
-	if (isGlm52Model(model)) {
-		return "glm-5.2";
-	}
-	// The dated snapshot must resolve before the generic flash alias.
-	if (isDeepseekV4Flash0731Model(model)) {
-		return "deepseek-v4-flash-0731";
-	}
-	if (isDeepseekV4FlashModel(model)) {
-		return "deepseek-v4-flash";
-	}
-	if (isDeepseekV4ProModel(model)) {
-		return "deepseek-v4-pro";
-	}
-	if (isGrok46Model(model)) {
-		return "grok-4.6";
-	}
-	if (isGrok45Model(model)) {
-		return "grok-4.5";
-	}
-	return undefined;
+	return resolveContractPresetName({ providerID: model.provider, modelID: model.id, name: model.name });
 }
 
-function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPromptOptions): ResolvedPromptPreset {
+export function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPromptOptions): ResolvedPromptPreset {
 	switch (name) {
+		case "gpt-6-astra":
+			return { name, prompt: buildGpt6AstraPrompt(options) };
 		case "gpt-5.6":
 			return { name, prompt: buildGpt56Prompt(options) };
 		case "gpt-5.5":
@@ -281,14 +86,22 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildDeepseekV4FlashPrompt(options) };
 		case "deepseek-v4-flash-0731":
 			return { name, prompt: buildDeepseekV4Flash0731Prompt(options) };
+		case "deepseek-v4-1-flash":
+			return { name, prompt: buildDeepseekV41FlashPrompt(options) };
 		case "deepseek-v4-pro":
 			return { name, prompt: buildDeepseekV4ProPrompt(options) };
+		case "grok-4.7":
+			return { name, prompt: buildGrok47Prompt(options) };
 		case "grok-4.6":
 			return { name, prompt: buildGrok46Prompt(options) };
 		case "grok-4.5":
 			return { name, prompt: buildGrok45Prompt(options) };
+		case "gemini-4-argon":
+			return { name, prompt: buildGemini4ArgonPrompt(options) };
 		case "kimi-k3":
 			return { name, prompt: buildKimiK3Prompt(options) };
+		case "kimi-k2-8":
+			return { name, prompt: buildKimiK28Prompt(options) };
 		case "kimi-k2-7":
 			return { name, prompt: buildKimiK27Prompt(options) };
 		case "kimi-k2-6":
@@ -297,6 +110,12 @@ function buildPreset(name: ResolvedPresetName, options: BuildDynamicSystemPrompt
 			return { name, prompt: buildClaudeFable51Prompt(options) };
 		case "claude-fable-5":
 			return { name, prompt: buildClaudeFable5Prompt(options) };
+		case "claude-opus-5-5":
+			return { name, prompt: buildClaudeOpus55Prompt(options) };
+		case "claude-sonnet-5-5":
+			return { name, prompt: buildClaudeSonnet55Prompt(options) };
+		case "claude-haiku-5-5":
+			return { name, prompt: buildClaudeHaiku55Prompt(options) };
 		case "claude-opus-5":
 			return { name, prompt: buildClaudeOpus5Prompt(options) };
 		case "claude-opus-4-8":
@@ -318,6 +137,8 @@ function withDefaults(options: Partial<BuildDynamicSystemPromptOptions> = {}): B
 		promptGuidelines: options.promptGuidelines ?? [],
 		contextFiles: options.contextFiles ?? [],
 		skills: options.skills ?? [],
+		surface: options.surface ?? "terminal",
+		appName: options.appName,
 	};
 }
 

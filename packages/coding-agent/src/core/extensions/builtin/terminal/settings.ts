@@ -20,6 +20,8 @@ export interface ResolvedTerminalSettings {
 	readonly timeoutAction: TimeoutAction;
 	readonly notify: NotifyMode;
 	readonly monitor: MonitorDeliverySettings;
+	/** Admission cap on persistent (restart-surviving) monitors per session. */
+	readonly maxDurableMonitors: number | "unlimited";
 }
 
 export const TERMINAL_SETTINGS_DEFAULTS: ResolvedTerminalSettings = {
@@ -36,6 +38,7 @@ export const TERMINAL_SETTINGS_DEFAULTS: ResolvedTerminalSettings = {
 		maxCharsPerInjection: 4096,
 		wakeBudget: 5,
 	},
+	maxDurableMonitors: "unlimited",
 };
 
 function positiveInt(value: unknown, fallback: number, maximum = Number.MAX_SAFE_INTEGER): number {
@@ -50,6 +53,12 @@ function nonNegativeInt(value: unknown, fallback: number): number {
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
 	return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
+}
+
+/** A positive integer caps durable monitors; anything else, including "unlimited", means no cap. */
+function durableMonitorCap(value: unknown): number | "unlimited" {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 1) return "unlimited";
+	return Math.trunc(value);
 }
 
 /** Resolve terminal-tool config from a raw `terminal` settings block, filling defaults. */
@@ -81,6 +90,7 @@ export function resolveTerminalSettings(raw: TerminalSettings | undefined): Reso
 			),
 			wakeBudget: positiveInt(raw.monitorWakeBudget, TERMINAL_SETTINGS_DEFAULTS.monitor.wakeBudget, 100),
 		},
+		maxDurableMonitors: durableMonitorCap(raw.maxDurableMonitors),
 	};
 }
 

@@ -22,6 +22,8 @@ import {
 import type { Api, Context, Model } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 function provider(api: string, label: string): ApiProvider {
 	return {
 		api,
@@ -90,7 +92,7 @@ describe("node provider scopes", () => {
 				if (++registrations === 2) release();
 				await bothRegistered;
 				return getApiProvider("scope-test")
-					?.stream({ api: "scope-test" } as Model<Api>, context)
+					?.stream({ api: "scope-test" } as Model<Api>, normalizeContext(context))
 					.result();
 			});
 

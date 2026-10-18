@@ -2,8 +2,7 @@ import type { EvalDetachedCellNotifier, EvalDetachedCellSnapshot } from "./detac
 import { buildDetachedCellNotification } from "./detached-cell-notification.ts";
 
 export interface PendingDetachedNotification {
-	readonly snapshot: () => EvalDetachedCellSnapshot;
-	readonly spillPath: string | undefined;
+	readonly snapshot: () => EvalDetachedCellSnapshot | Promise<EvalDetachedCellSnapshot>;
 }
 
 export class DetachedNotificationQueue {
@@ -30,7 +29,7 @@ export class DetachedNotificationQueue {
 		const flush = Promise.resolve().then(async () => {
 			const pending = this.#pending.splice(0);
 			const notifications = await Promise.all(
-				pending.map(async (item) => await buildDetachedCellNotification(item.snapshot(), item.spillPath)),
+				pending.map(async (item) => buildDetachedCellNotification(await item.snapshot())),
 			);
 			this.#notifier?.notify(notifications);
 		});

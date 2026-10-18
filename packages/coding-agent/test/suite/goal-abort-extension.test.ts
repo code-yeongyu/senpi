@@ -1,6 +1,7 @@
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import goalExtension from "../../src/core/extensions/builtin/goal/index.ts";
+import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { createGoal, readGoal, updateGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
 import type { GoalStatus } from "../../src/core/extensions/builtin/goal/types.ts";
@@ -154,7 +155,9 @@ describe("goal abort lifecycle through the agent session", () => {
 		expect(abortSources).toContain(undefined);
 		expect(harness.faux.getCallLog()).toHaveLength(2);
 		expect(await readGoal(ref)).toMatchObject({ status: "active" });
-		expect(await scheduledContinuation).toEqual(expect.objectContaining({ delayMs: 240_000, iteration: 1 }));
+		expect(await scheduledContinuation).toEqual(
+			expect.objectContaining({ delayMs: GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS, iteration: 1 }),
+		);
 	});
 
 	it("keeps a model-authored block blocked on ordinary direct input", async () => {

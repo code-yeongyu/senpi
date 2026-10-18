@@ -26,6 +26,7 @@ export {
 	type FindToolInput,
 	type FindToolOptions,
 } from "./find.ts";
+export { createGlobTool, createGlobToolDefinition, type GlobToolOptions } from "./glob.ts";
 export {
 	createGrepTool,
 	createGrepToolDefinition,
@@ -79,11 +80,12 @@ export {
 	type WriteToolOptions,
 } from "./write.ts";
 
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { type AgentTool, selectedReadFolder } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.ts";
 import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
 import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
 import { createFindTool, createFindToolDefinition, type FindToolOptions } from "./find.ts";
+import { createGlobToolDefinition, type GlobToolOptions } from "./glob.ts";
 import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
 import { createLsTool, createLsToolDefinition, type LsToolOptions } from "./ls.ts";
 import { createPowerShellToolDefinition, type PowerShellToolOptions } from "./powershell.ts";
@@ -92,7 +94,7 @@ import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } fro
 
 export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
-export type ToolName = "read" | "bash" | "powershell" | "edit" | "write" | "grep" | "find" | "ls";
+export type ToolName = "read" | "bash" | "powershell" | "edit" | "write" | "grep" | "find" | "glob" | "ls";
 export const allToolNames: Set<ToolName> = new Set([
 	"read",
 	"bash",
@@ -101,17 +103,9 @@ export const allToolNames: Set<ToolName> = new Set([
 	"write",
 	"grep",
 	"find",
+	"glob",
 	"ls",
 ]);
-
-// TEMPORARY: tools listed here are built and stay resolvable through getRegisteredTool, but are
-// withheld from the MODEL-facing surface - they are dropped from the prompt-bearing tool
-// definitions and from the active tool names, so the model can neither see nor call them.
-// Programmatic callers that resolve a tool by name (notably the Cursor exec bridge, which drives
-// its own native read/bash/grep/ls frames regardless of what the request advertised) keep working.
-// `grep` is withheld while search routing is evaluated; restoring it is deleting the entry from
-// this set. Keep this set empty in the steady state.
-export const temporarilyDisabledToolNames: ReadonlySet<string> = new Set<ToolName>(["grep"]);
 
 export interface ToolsOptions {
 	read?: ReadToolOptions;
@@ -121,25 +115,27 @@ export interface ToolsOptions {
 	edit?: EditToolOptions;
 	grep?: GrepToolOptions;
 	find?: FindToolOptions;
+	glob?: GlobToolOptions;
 	ls?: LsToolOptions;
 }
 
 export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): Record<ToolName, ToolDef> {
 	return {
-		read: createReadToolDefinition(cwd, options?.read),
+		read: createReadToolDefinition(cwd, { folder: selectedReadFolder, ...options?.read }),
 		bash: createBashToolDefinition(cwd, options?.bash),
 		powershell: createPowerShellToolDefinition(cwd, options?.powershell),
 		edit: createEditToolDefinition(cwd, options?.edit),
 		write: createWriteToolDefinition(cwd, options?.write),
 		grep: createGrepToolDefinition(cwd, options?.grep),
 		find: createFindToolDefinition(cwd, options?.find),
+		glob: createGlobToolDefinition(cwd, options?.glob),
 		ls: createLsToolDefinition(cwd, options?.ls),
 	};
 }
 
 export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 	return [
-		createReadTool(cwd, options?.read),
+		createReadTool(cwd, { folder: selectedReadFolder, ...options?.read }),
 		createBashTool(cwd, options?.bash),
 		createEditTool(cwd, options?.edit),
 		createWriteTool(cwd, options?.write),
@@ -148,7 +144,7 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 
 export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[] {
 	return [
-		createReadTool(cwd, options?.read),
+		createReadTool(cwd, { folder: selectedReadFolder, ...options?.read }),
 		createGrepTool(cwd, options?.grep),
 		createFindTool(cwd, options?.find),
 		createLsTool(cwd, options?.ls),

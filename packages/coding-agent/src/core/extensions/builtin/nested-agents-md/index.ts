@@ -79,7 +79,7 @@ export default function nestedAgentsMd(pi: ExtensionAPI): void {
 		updateStatus(ctx, cache, sessionKey, hasErrors);
 		if (widgetVisible) updateWidget(ctx, true, [...metaMap.values()]);
 
-		const textBlock: TextContent = { type: "text", text: result.injectedText };
+		const textBlock: TextContent = { type: "text", text: result.injectedText, audience: "model" };
 		return { content: [...event.content, textBlock] };
 	});
 

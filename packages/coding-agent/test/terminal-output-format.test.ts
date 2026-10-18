@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	formatTerminalToolOutput,
 	sanitizeTerminalOutput,
+	splitModelOnlyNotices,
 	TERMINAL_TOOL_MAX_BYTES,
 	TERMINAL_TOOL_MAX_LINES,
 } from "../src/core/extensions/builtin/terminal/output-format.ts";
@@ -89,5 +90,49 @@ describe("formatTerminalToolOutput", () => {
 		const result = formatTerminalToolOutput(`${frame.repeat(3000)}\r\x1b[K\x1b[32m✓\x1b[0m finished`);
 		expect(result.truncated).toBe(false);
 		expect(result.text).toBe("✓ finished");
+	});
+});
+
+describe("model-only truncation marker", () => {
+	const join = (parts: { text: string }[]) => parts.map((part) => part.text).join("\n");
+
+	it("keeps the marker out of the body and reports it separately", () => {
+		const lines = Array.from({ length: TERMINAL_TOOL_MAX_LINES + 10 }, (_, i) => `line-${i}`);
+		const result = formatTerminalToolOutput(lines.join("\n"));
+		expect(result.marker).toContain("earlier output dropped");
+		expect(result.body).not.toContain("earlier output dropped");
+		expect(result.text).toBe(`${result.body}\n\n${result.marker}`);
+	});
+
+	it("splits a trailing marker into a model-only part whose join is byte-identical", () => {
+		const text = "out-a\nout-b\n\n[Showing lines 3-4 of 4; earlier output dropped]";
+		const parts = splitModelOnlyNotices(text, ["[Showing lines 3-4 of 4; earlier output dropped]"]);
+		expect(parts).toEqual([
+			{ type: "text", text: "out-a\nout-b\n" },
+			{ type: "text", text: "[Showing lines 3-4 of 4; earlier output dropped]", audience: "model" },
+		]);
+		expect(join(parts)).toBe(text);
+	});
+
+	it("splits a leading drop notice and a trailing marker around the visible body", () => {
+		const text = "status\n[12 earlier chars dropped]\nbody\n\n[Showing lines 1-2 of 9; earlier output dropped]";
+		const parts = splitModelOnlyNotices(text, [
+			"[12 earlier chars dropped]",
+			"[Showing lines 1-2 of 9; earlier output dropped]",
+		]);
+		expect(parts.map((part) => ("audience" in part ? "model" : "visible"))).toEqual([
+			"visible",
+			"model",
+			"visible",
+			"model",
+		]);
+		expect(join(parts)).toBe(text);
+	});
+
+	it("leaves text whole when no marker applies", () => {
+		expect(splitModelOnlyNotices("plain output", [undefined])).toEqual([{ type: "text", text: "plain output" }]);
+		expect(splitModelOnlyNotices("inline [marker] text", ["[marker]"])).toEqual([
+			{ type: "text", text: "inline [marker] text" },
+		]);
 	});
 });

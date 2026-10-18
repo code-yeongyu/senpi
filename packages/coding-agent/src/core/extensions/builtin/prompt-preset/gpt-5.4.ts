@@ -2,7 +2,7 @@ import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "
 import { buildFileOperationsTuning } from "./file-operations.ts";
 import { buildGptEvalRoutingTuning } from "./gpt-eval-routing.ts";
 
-function buildGpt54Tuning(): string {
+function buildGpt54Tuning(toolNames: readonly string[]): string {
 	return `Use explicit section structure and step sequences for multi-step tasks — ordered steps with dependencies. When a specific response shape is needed, declare exact fields and order upfront, no extra text.
 
 Default to medium reasoning effort. Escalate to high only for multi-constraint optimization, subtle bugs, or novel architecture decisions. Use low for classification, extraction, formatting.
@@ -11,9 +11,13 @@ State when each tool should and should not be called. Specify parallel vs sequen
 
 ${buildGptEvalRoutingTuning()}
 
-${buildFileOperationsTuning()}`;
+${buildFileOperationsTuning({ toolNames })}`;
 }
 
 export function buildGpt54Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildGpt54Tuning(), workstationDialect: "codex" });
+	return buildDynamicSystemPrompt({
+		...options,
+		tuningSection: buildGpt54Tuning(options.selectedTools),
+		workstationDialect: "codex",
+	});
 }

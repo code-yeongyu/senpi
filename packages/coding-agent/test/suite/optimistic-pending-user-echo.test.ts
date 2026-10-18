@@ -69,13 +69,25 @@ describe("optimistic pending user echo", () => {
 			return { replace: () => {}, remove: () => {} };
 		});
 		const defaultEditor: { onSubmit?: (text: string) => Promise<void> } = {};
+		const beginUserEcho = Reflect.get(interactiveModeModule.InteractiveMode.prototype, "beginUserEcho");
+		if (typeof beginUserEcho !== "function") throw new Error("InteractiveMode.beginUserEcho is missing");
+		// Refs #1645: keep ordinary echo coverage on the real composer classifier.
+		const submitAsyncQuestionComment = Reflect.get(
+			interactiveModeModule.InteractiveMode.prototype,
+			"submitAsyncQuestionComment",
+		);
+		if (typeof submitAsyncQuestionComment !== "function")
+			throw new Error("InteractiveMode.submitAsyncQuestionComment is missing");
 		const context = {
+			beginUserEcho,
+			submitAsyncQuestionComment,
+			composerDestination: { kind: "chat" },
 			defaultEditor,
 			preResolvedSubmissionImages: undefined,
 			hideShortcutOverlay: () => {},
 			lastEditorText: "",
 			isExtensionCommand: () => false,
-			session: { isCompacting: false, isStreaming: false },
+			session: { isCompacting: false, isStreaming: false, messages: [] },
 			flushPendingBashComponents: () => {},
 			takeSubmissionImages: () => [],
 			optimisticUserEchoes,
@@ -90,6 +102,120 @@ describe("optimistic pending user echo", () => {
 		await defaultEditor.onSubmit?.("paint me now");
 
 		expect(order).toEqual(["render:paint me now", "prompt-handoff"]);
+	});
+
+	it("dispatches an extension command through prompt() without painting an optimistic echo", async () => {
+		const order: string[] = [];
+		const Controller = getControllerConstructor();
+		const optimisticUserEchoes = new Controller((text) => {
+			order.push(`render:${text}`);
+			return { replace: () => {}, remove: () => order.push(`remove:${text}`) };
+		});
+		const defaultEditor: { onSubmit?: (text: string) => Promise<void> } = {};
+		const context = {
+			composerDestination: { kind: "chat" },
+			defaultEditor,
+			preResolvedSubmissionImages: undefined,
+			hideShortcutOverlay: () => {},
+			lastEditorText: "",
+			isExtensionCommand: (text: string) => text.startsWith("/btw"),
+			session: {
+				isCompacting: false,
+				isStreaming: false,
+				messages: [],
+				prompt: async (text: string) => {
+					order.push(`prompt:${text}`);
+				},
+			},
+			optimisticUserEchoes,
+			editor: { addToHistory: () => {}, setText: () => {} },
+		};
+		const setup = Reflect.get(interactiveModeModule.InteractiveMode.prototype, "setupEditorSubmitHandler");
+		if (typeof setup !== "function") throw new Error("InteractiveMode.setupEditorSubmitHandler is missing");
+		setup.call(context);
+
+		await defaultEditor.onSubmit?.("/btw hi");
+
+		// The command runs inside AgentSession.prompt() and never becomes a canonical
+		// user message, so a painted echo would only sit next to the command's own
+		// UI (e.g. the /btw panel) until the handler resolved, then vanish.
+		expect(order).toEqual(["prompt:/btw hi"]);
+	});
+
+	it("dispatches an extension command without an echo on the Alt+Enter streaming path", async () => {
+		const order: string[] = [];
+		const Controller = getControllerConstructor();
+		const optimisticUserEchoes = new Controller((text) => {
+			order.push(`render:${text}`);
+			return { replace: () => {}, remove: () => order.push(`remove:${text}`) };
+		});
+		const context = {
+			setComposerReply: () => {},
+			getExpandedEditorText: () => "/btw hi",
+			isExtensionCommand: (text: string) => text.startsWith("/btw"),
+			session: {
+				isCompacting: false,
+				isStreaming: true,
+				prompt: async (text: string) => {
+					order.push(`prompt:${text}`);
+				},
+			},
+			takeSubmissionImages: () => [],
+			beginUserEcho: (text: string) => {
+				order.push(`echo:${text}`);
+				return "echo-id";
+			},
+			updatePendingMessagesDisplay: () => {},
+			ui: { requestRender: () => {} },
+			optimisticUserEchoes,
+			editor: { addToHistory: () => {}, setText: () => {} },
+		};
+		const followUp = Reflect.get(interactiveModeModule.InteractiveMode.prototype, "handleFollowUp");
+		if (typeof followUp !== "function") throw new Error("InteractiveMode.handleFollowUp is missing");
+
+		await followUp.call(context);
+
+		// Alt+Enter while the main turn streams must mirror the Enter path: the command
+		// runs inside AgentSession.prompt() and renders its own panel, so no echo.
+		expect(order).toEqual(["prompt:/btw hi"]);
+	});
+
+	it("still paints an optimistic echo for ordinary text on the Alt+Enter streaming path", async () => {
+		const order: string[] = [];
+		const Controller = getControllerConstructor();
+		const optimisticUserEchoes = new Controller((text) => {
+			order.push(`render:${text}`);
+			return { replace: () => {}, remove: () => {} };
+		});
+		const context = {
+			setComposerReply: () => {},
+			getExpandedEditorText: () => "queued follow-up",
+			isExtensionCommand: () => false,
+			session: {
+				isCompacting: false,
+				isStreaming: true,
+				prompt: async () => {
+					order.push("prompt");
+				},
+			},
+			takeSubmissionImages: () => [],
+			beginUserEcho: (text: string) => {
+				order.push(`echo:${text}`);
+				return "echo-id";
+			},
+			updatePendingMessagesDisplay: () => {
+				order.push("update-pending");
+			},
+			ui: { requestRender: () => {} },
+			optimisticUserEchoes,
+			editor: { addToHistory: () => {}, setText: () => {} },
+		};
+		const followUp = Reflect.get(interactiveModeModule.InteractiveMode.prototype, "handleFollowUp");
+		if (typeof followUp !== "function") throw new Error("InteractiveMode.handleFollowUp is missing");
+
+		await followUp.call(context);
+
+		expect(order).toEqual(["echo:queued follow-up", "prompt", "update-pending"]);
 	});
 
 	it("renders synchronously before prompt work starts", async () => {

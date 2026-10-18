@@ -1,5 +1,130 @@
 # Tool Search Builtin Changes
 
+## 2026-10-07 - Tool-search context hook declares non-mutation (senpi#2525)
+
+### What changed
+
+- `index.ts`: the `context` handler is registered `{ mutatesMessages: false }`; `maybeRehydrateFromHistory` is a read-only scan over the messages.
+
+### Why
+
+senpi#2525: with both builtin `context` handlers declared, the runner skips the per-turn whole-context clone for the default extension set.
+
+### Why an extension could not handle it
+
+This is the extension itself; only its own registration can declare its mutation behavior to the runner.
+
+### Expected merge conflict zones
+
+- `index.ts`: the `pi.on("context")` registration.
+
+## 2026-10-01 - Each session owns its tool-search service (senpi#2509)
+
+### What changed
+
+- `service.ts`: the module-level singleton that sessions shared is gone. Services are registered per extension load, `dispose(sessionId, reason)` makes every later use throw an error naming the session, and `getToolSearchService()` remains only for session-free callers (provider scope, else the only live session, else a standalone service; several live sessions throw).
+- `index.ts`: every load creates its own service (the RPC provider-scope install is unchanged), and a retired generation's lazy activator declines.
+
+### Why
+
+- Outside the RPC host, `toolSearchExtension` fell back to the module-level service from `getToolSearchService(runtime)` and `createToolSearchExtension` rebound it to each loading session's `pi`. When another in-process session (a task child, a replaced session) closed, the live session's `context` and `before_provider_request` hooks threw the stale-ctx error from `getCatalog` and its tool search stopped working.
+
+### Why an extension could not handle it
+
+- The fix is in the builtin itself; the session that binds each extension load adopts and retires its service (`core/changes.md`, same date).
+
+### Expected merge conflict zones
+
+- `service.ts`: the service fields, the disposal guard at each public entry point, and the module-level registry functions at the end of the file.
+- `index.ts`: the lazy activator registration and the default factory.
+
+## 2026-09-14 - Side-effect-free tool_search with precision gating and hidden-tool hints (senpi #1682)
+
+### What changed
+
+- `tool.ts`: `tool_search` no longer activates anything. It returns up to 5 candidates as name, description and the one-line JSON parameter schema, and tells the model to call one by name; the existing lazy activator (`resolveUnknownToolCall` -> `_activateLazyTool`) promotes the tool on that first call, so the `tools` array changes only when a tool is genuinely used and the "callable from your NEXT turn" round trip is gone. `details` carries `matched` instead of `activated`; the TUI title reads "N tool(s) found". No activation marker is emitted any more.
+- `engine/bm25.ts`: results carry `coverage` (share of the query's content terms present in the document, stopwords excluded); an optional `precision` gate keeps a hit only when coverage >= 0.5 AND its score >= 0.35 x the best non-exact score. Index and query terms pass through a minimal plural fold (`stemToken`: `messages` -> `message`, `libraries` -> `library`). Exact-name hits bypass the gate. The engine default stays lenient; `ToolSearchService.search()` turns the gate on.
+- `service.ts`: `bindRemovedToolHints()` / `hiddenToolHints(query)` surface the host's `agent.removedToolHints` (eval-only `bash`/`powershell`/`workflow`/`monitor`, or any removed tool with a registered hint) when the query names one; `getToolParameters(name)` reads the schema of a registered inactive tool for the result text. `activate()` / `activateTool()` stay for programmatic and rehydration callers.
+- `core/agent-session.ts`: `_bindToolSearchRemovedHints()` binds the hint provider at construction and again after `bindCore`, whichever creates the session-scoped service first. `_activateLazyTool()` now promotes a lazily-activatable tool itself when no catalog service claims it, so a search-exposed tool activates on a by-name call even in a session without the tool-search builtin (the exposure metadata owns the path, the catalog only enriches it).
+- `builtin/imagegen/tool.ts`: `generate_image` is registered `exposure: "search"` with intent keywords; the bundled imagegen skill names the tool, so a by-name call activates it. The OpenAI native `image_generation` injector never depended on the client tool being resident.
+- Tests: `test/tool-search/tool.test.ts` and `test/mcp/tool-search-promotion.test.ts` now pin the by-name contract (search leaves the payload untouched; the by-name call activates and runs in the same turn; the transcript carries no marker; legacy v1/v2 markers still rehydrate). New `test/tool-search/precision.test.ts` (gate, stemming, hidden hints, service default) and `test/suite/regressions/issue-1682-tool-search-side-effect-free.test.ts` (eval-only hint through a real session, `generate_image` deferred and by-name activated). `3592` regression drops `generate_image` from the default active list.
+
+### Why
+
+- In a 30-day sample of real sessions, 90 `tool_search` calls produced 0 intent hits: 80 auto-activated unrelated tools on an incidental term match (`search`, `messages`), and 10 answered "No tools matched" for eval-only `bash`/`monitor`. Each false activation changed the `tools` array and invalidated the provider prompt cache for the whole context (150-390K tokens at the time) on top of the wasted round trip.
+
+### Why an extension could not handle it
+
+- The search tool, the gate and the activation path are the builtin itself; the hint provider is session state (`agent.removedToolHints`) that only the host can expose.
+
+### Expected merge conflict zones
+
+- LOW: `tool.ts` result text and details shape; `engine/bm25.ts` search loop; the imagegen tool definition header; the three rewritten tests.
+
+## 2026-09-08 - Wire the native 400 fallback into a session recovery signal (senpi #1481/#1482)
+
+### What changed
+
+- `service.ts`: `ToolSearchService` carries a one-shot pending flag (`noteNativeInjectionFailure` / `takeNativeInjectionFailure`) recording that a native-injected request was rejected.
+- `index.ts`: the adapter's `onFallback` now records that reason on the service, so the session's retry branch can recover in place (senpi #1482) instead of falling back blindly.
+- `test/tool-search/native-anthropic.test.ts`: a wiring case drives `emitBeforeProviderRequest` (with a supported Anthropic model and an MCP feed) and `after_provider_response` 400, asserting the flag is set once, consumed once, and injection stays off afterwards.
+
+### Why
+
+- `AnthropicNativeToolSearchAdapter` already disables itself permanently on a 400, but nothing told the session WHY the current turn failed; the flag is the provider-scope-scoped channel between the extension and the session's retry branch.
+
+### Expected merge conflict zones
+
+- LOW: the adapter construction site in `index.ts` and the service class; both are fork-owned.
+
+
+## 2026-09-04 - Gate native tool-search on model support and fix the tool_reference field
+
+### What changed
+
+- New `native-support.ts` owns `supportsAnthropicNativeToolSearch()`. Injection now requires a model that
+  actually carries tool search, not merely the `anthropic-messages` api: it honours an explicit
+  `compat.supportsToolReferences`, otherwise mirrors pi-ai's private default (first-party `anthropic`
+  provider, no Haiku, Opus/Sonnet/Fable 4.5+). A bare api string keeps the old api-only contract.
+- `addAnthropicNativeToolSearch()` and `AnthropicNativeToolSearchAdapter.applyBeforeRequest()` take that
+  target instead of an api string; `index.ts` passes `event.model ?? ctx.model`.
+- `buildToolReferenceBlocks()` emits `{ type: "tool_reference", tool_name }`. It previously emitted `name`,
+  which the API rejects as a malformed content block. `test/mcp/fixtures/native-search-mocks.ts` read the
+  same wrong field, so its expander agreed with the bug.
+- `test/suite/regressions/0000-anthropic-native-tool-search-contract.test.ts` pins the wire contract and the
+  gate; each assertion was verified by mutating the production hunk and observing RED.
+
+### Why
+
+- Anthropic documents `tool_reference` blocks as carrying `tool_name`, and lists tool search as available
+  only on Opus/Sonnet 4.5+, Fable/Mythos, and Haiku 4.5 (which rejects client-side `tool_reference`).
+- Anthropic-compatible endpoints (gateways, proxies, kimi-coding) answer the same api and reject the server
+  tool. Injecting there 400s the request, which permanently disables native search for that session — the
+  same failure mode the 2026-09-04 name fix addressed, one layer up.
+
+### Expected merge conflict zones
+
+- LOW: `native-search.ts` signature block; new `native-support.ts` is additive.
+
+## 2026-09-04 - Name the Anthropic native tool-search server tool per the API contract
+
+### What changed
+
+- `native-search.ts`: `ANTHROPIC_TOOL_SEARCH_NAME` is now `tool_search_tool_bm25`. The injected server tool is `{ type: "tool_search_tool_bm25_20251119", name: "tool_search_tool_bm25" }`; the type is unchanged and the local `tool_search` custom tool keeps its own name.
+- `test/suite/regressions/0000-anthropic-native-tool-search-canonical-name.test.ts` pins the literal contract pair, keeps the local tool resident, and keeps non-Anthropic payloads byte-identical.
+
+### Why
+
+- Anthropic validates the server tool's `name` against the tool-search variant: every request carrying deferred tools was rejected with `invalid_request_error: tools.N.tool_search_tool_bm25_20251119.name: Input should be 'tool_search_tool_bm25'`, which then disabled native search for the session.
+
+### Why an extension could not handle it
+
+- The name is emitted by the builtin's own payload transform on `before_provider_request`; no extension hook rewrites an already-injected server tool.
+
+### Expected merge conflict zones
+
+- LOW: `native-search.ts` constant block.
+
 ## 2026-08-11 - Defer local tool registration until the catalog is searchable
 
 ### What changed
@@ -91,3 +216,21 @@
 
 - LOW: `engine/document.ts` shared document fields.
 - LOW: `engine/bm25.ts` field weighting, exact-match handling, filtering, and ordering.
+
+## 2026-09-28 - Injected deferred tools carry an object input_schema (senpi#2252)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/tool-search/native-search.ts`: `injectInactiveCatalogTools` passes a tool's parameters through `anthropicInputSchema`, which resolves a root union (`anyOf` with no top-level `type`) into one `type: "object"` schema with `resolveRootObjectSchema` from `@earendil-works/pi-ai/utils/tool-schema-compat`. A plain object schema is still sent unchanged.
+
+### Why
+
+- Anthropic rejects any tool whose `input_schema` lacks `type: "object"` (`tools.N.custom.input_schema.type: Field required`), which failed every request once a deferrable root-union tool (the desktop `computer` tool) was cataloged. Resident tools already get this shape in `convertTools` (#718).
+
+### Why an extension could not handle it
+
+- This is the tool-search extension's own payload transform.
+
+### Expected merge conflict zones
+
+- LOW: the `input_schema` field of `injectInactiveCatalogTools` and the helper beside `maybeDefer`.

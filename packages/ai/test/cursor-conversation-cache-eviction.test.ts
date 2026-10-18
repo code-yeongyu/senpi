@@ -1,10 +1,10 @@
-import { mkdtempSync } from "node:fs";
 import * as http2 from "node:http2";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { create, toBinary } from "@bufbuild/protobuf";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { makeTempDir as mkdtempSync } from "../../../scripts/vitest-temp.ts";
 import { AgentServerMessageSchema } from "../src/api/cursor-agent/gen/agent_pb.ts";
 import {
 	frameConnectMessage,
@@ -13,6 +13,8 @@ import {
 } from "../src/api/cursor-agent.ts";
 import { cleanupSessionResources } from "../src/session-resources.ts";
 import type { Model } from "../src/types.ts";
+
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 process.env.CURSOR_CONVERSATION_ID_STORE = join(mkdtempSync(join(tmpdir(), "cursor-cache-")), "ids.json");
 
@@ -75,7 +77,7 @@ async function startServer(handler: (stream: http2.ServerHttp2Stream) => void): 
 async function runStream(baseUrl: string, sessionId: string, userContent = "hello", conversationId?: string) {
 	const result = streamCursorAgent(
 		buildModel(baseUrl),
-		{ messages: [{ role: "user", content: userContent, timestamp: 0 }] },
+		normalizeContext({ messages: [{ role: "user", content: userContent, timestamp: 0 }] }),
 		{ apiKey: "test-token", sessionId, conversationId, signal: neverAbortedSignal },
 	);
 	for await (const _event of result) {

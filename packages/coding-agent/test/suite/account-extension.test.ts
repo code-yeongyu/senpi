@@ -4,10 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
 import accountExtension from "../../src/core/extensions/builtin/account/index.ts";
-import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "../../src/core/extensions/types.ts";
-
-type Command = Pick<RegisteredCommand, "handler">;
-type Notice = { message: string; type: "info" | "warning" | "error" | undefined };
+import { type Command, createAccountCommandContext, registerCommand } from "./account-command-harness.ts";
 
 let dir: string;
 let storage: AuthStorage;
@@ -22,31 +19,11 @@ afterEach(() => {
 });
 
 function registeredCommand(): Command {
-	const commands = new Map<string, Command>();
-	const pi = {
-		registerCommand: (name: string, command: Command) => commands.set(name, command),
-	} as unknown as ExtensionAPI;
-	accountExtension(pi);
-	const registered = commands.get("account");
-	if (!registered) throw new Error("/account was not registered");
-	return registered;
+	return registerCommand("account", accountExtension);
 }
 
-function createContext(): { ctx: ExtensionCommandContext; notices: Notice[] } {
-	const notices: Notice[] = [];
-	return {
-		ctx: {
-			hasUI: true,
-			cwd: dir,
-			signal: undefined,
-			sessionManager: { getSessionId: () => "session-01" },
-			modelRegistry: { authStorage: storage },
-			ui: {
-				notify: (message: string, type?: Notice["type"]) => notices.push({ message, type }),
-			},
-		} as unknown as ExtensionCommandContext,
-		notices,
-	};
+function createContext() {
+	return createAccountCommandContext(storage, dir);
 }
 
 async function seedPool(provider: string): Promise<void> {

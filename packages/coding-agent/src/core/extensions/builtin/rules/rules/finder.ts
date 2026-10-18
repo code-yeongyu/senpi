@@ -1,6 +1,6 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, posix, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 
 import {
 	GLOBAL_DISTANCE,
@@ -177,6 +177,7 @@ function findUserHomeCandidates(
 			isSingleFile: true,
 			relativePath: toRelativePath(homeDirectory, filePath),
 		});
+		break;
 	}
 
 	return candidates;
@@ -228,7 +229,9 @@ function getWalkDirectories(projectRoot: string, targetFile: string | null): Wal
 
 	while (true) {
 		walkDirectories.push({ directory: currentDirectory, distance });
-		if (currentDirectory === projectRoot) {
+		// Windows drive letters are case-insensitive, so an exact string compare misses
+		// "c:\proj" against a "C:\proj" root and walks past it; relative() folds the case.
+		if (relative(projectRoot, currentDirectory) === "") {
 			break;
 		}
 
@@ -246,7 +249,10 @@ function getWalkDirectories(projectRoot: string, targetFile: string | null): Wal
 
 function isSameOrChildPath(childPath: string, parentPath: string): boolean {
 	const childRelativePath = relative(parentPath, childPath);
-	return childRelativePath === "" || (!childRelativePath.startsWith("..") && !childRelativePath.startsWith("/"));
+	// Cross-drive / UNC: relative() between two Windows roots returns an absolute
+	// path (e.g. "D:\other"), which starts with neither ".." nor "/", so a
+	// startsWith("/") test would accept a target outside the project root.
+	return childRelativePath === "" || (!childRelativePath.startsWith("..") && !isAbsolute(childRelativePath));
 }
 
 function readSingleFileInfo(filePath: string): SingleFileInfo | null {
@@ -283,6 +289,7 @@ function toRelativePath(rootDirectory: string, filePath: string): string {
 function toProjectRuleSource(parentDirectory: string, subDirectory: string): RuleSource {
 	const source = `${parentDirectory}/${subDirectory}`;
 	switch (source) {
+		case ".pi/rules":
 		case ".omo/rules":
 		case ".claude/rules":
 		case ".cursor/rules":
@@ -308,6 +315,7 @@ function toProjectSingleFileSource(ruleFile: string): RuleSource {
 function toUserHomeRuleSource(ruleSubdir: string): RuleSource {
 	const source = `~/${ruleSubdir}`;
 	switch (source) {
+		case "~/.pi/rules":
 		case "~/.omo/rules":
 		case "~/.opencode/rules":
 		case "~/.claude/rules":

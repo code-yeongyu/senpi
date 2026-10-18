@@ -9,6 +9,7 @@ export interface ResourceCollision {
 
 export interface ResourceDiagnostic {
 	type: "warning" | "error" | "collision";
+	category?: "size-limit";
 	message: string;
 	path?: string;
 	collision?: ResourceCollision;

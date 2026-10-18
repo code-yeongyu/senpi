@@ -11,9 +11,12 @@ declare global {
 	}
 }
 
-export function evaluate(permission: string, pattern: string, ...rulesets: Ruleset[]): Rule {
+export function evaluate(permission: string, pattern: string | readonly string[], ...rulesets: Ruleset[]): Rule {
+	const patterns = typeof pattern === "string" ? [pattern] : pattern;
 	const matchedRule = rulesets.flat().findLast((rule) => {
-		return Wildcard.match(permission, rule.permission) && matchesPattern(pattern, rule.pattern);
+		return (
+			Wildcard.match(permission, rule.permission) && patterns.some((value) => matchesPattern(value, rule.pattern))
+		);
 	});
 
 	if (matchedRule) {

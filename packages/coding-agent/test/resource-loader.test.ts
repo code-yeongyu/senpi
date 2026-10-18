@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,6 +38,7 @@ describe("DefaultResourceLoader", () => {
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		if (originalHome === undefined) {
 			delete process.env.HOME;
 		} else {
@@ -51,42 +51,21 @@ describe("DefaultResourceLoader", () => {
 		return extensions.filter((extension) => !extension.path.startsWith("<builtin:"));
 	}
 
-	// Bundled codemode is loaded through Jiti. Running this probe from source preserves
-	// the production ESM path instead of Vitest's in-process module aliases.
-	function reloadExtensionsFromSource(): {
-		plain: { extensions: Array<{ path: string; tools: string[] }>; errors: Array<{ path: string; error: string }> };
-		trusted: { extensions: Array<{ path: string; tools: string[] }>; errors: Array<{ path: string; error: string }> };
-	} {
-		const probePath = join(tempDir, "resource-loader-probe.mts");
-		const resourceLoaderUrl = pathToFileURL(join(process.cwd(), "src", "core", "resource-loader.ts")).href;
-		writeFileSync(
-			probePath,
-			`import { DefaultResourceLoader } from ${JSON.stringify(resourceLoaderUrl)};
-
-const [agentDir, cwd] = process.argv.slice(2);
-const snapshot = (loader: DefaultResourceLoader) => ({
-	extensions: loader.getExtensions().extensions.map((extension) => ({
-		path: extension.path,
-		tools: [...extension.tools.keys()],
-	})),
-	errors: loader.getExtensions().errors,
-});
-
-void (async () => {
-	const plainLoader = new DefaultResourceLoader({ cwd, agentDir, noSkills: true });
-	await plainLoader.reload();
-	const trustedLoader = new DefaultResourceLoader({ cwd, agentDir, noSkills: true });
-	await trustedLoader.reload({ resolveProjectTrust: async () => true });
-	process.stdout.write(JSON.stringify({ plain: snapshot(plainLoader), trusted: snapshot(trustedLoader) }));
-})();
-`,
-		);
-		const output = execFileSync(process.execPath, ["--import", "tsx", probePath, agentDir, cwd], {
-			cwd: process.cwd(),
-			encoding: "utf8",
-			env: { ...process.env, HOME: tempDir },
+	// Exercise the real filesystem importer, as codemode-bridge does, without charging
+	// a second cold Node/tsx module graph to the trust operation's deadline (#1656).
+	async function reloadExtensions(resolveProjectTrust: () => Promise<boolean> = async () => true) {
+		const snapshot = (loader: DefaultResourceLoader) => ({
+			extensions: loader.getExtensions().extensions.map((extension) => ({
+				path: extension.path,
+				tools: [...extension.tools.keys()],
+			})),
+			errors: loader.getExtensions().errors,
 		});
-		return JSON.parse(output) as ReturnType<typeof reloadExtensionsFromSource>;
+		const plainLoader = new DefaultResourceLoader({ cwd, agentDir, noSkills: true });
+		await plainLoader.reload();
+		const trustedLoader = new DefaultResourceLoader({ cwd, agentDir, noSkills: true });
+		await trustedLoader.reload({ resolveProjectTrust });
+		return { plain: snapshot(plainLoader), trusted: snapshot(trustedLoader) };
 	}
 
 	describe("reload", () => {
@@ -97,6 +76,70 @@ void (async () => {
 			expect(loader.getSkills().skills).toEqual([]);
 			expect(loader.getPrompts().prompts).toEqual([]);
 			expect(loader.getThemes().themes).toEqual([]);
+		});
+
+		it("should not treat a project manifest as the owner of a project extension", async () => {
+			const extensionsDir = join(cwd, CONFIG_DIR_NAME, "extensions");
+			mkdirSync(extensionsDir, { recursive: true });
+			writeFileSync(
+				join(cwd, "package.json"),
+				JSON.stringify({ dependencies: { "@earendil-works/pi-coding-agent": "1.0.0" } }),
+			);
+			writeFileSync(join(extensionsDir, "project-extension.ts"), "export default function() {}");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			expect(nonBuiltinExtensions(loader.getExtensions().extensions)).toHaveLength(1);
+			expect(loader.getExtensions().warnings).toEqual([]);
+		});
+
+		it("should warn about host dependencies in an extension package manifest", async () => {
+			// Regression for #9863.
+			const packageRoot = join(tempDir, "extension-package");
+			const extensionsDir = join(packageRoot, "extensions");
+			mkdirSync(extensionsDir, { recursive: true });
+			writeFileSync(
+				join(packageRoot, "package.json"),
+				JSON.stringify({ dependencies: { "@earendil-works/pi-coding-agent": "1.0.0" } }),
+			);
+			writeFileSync(join(extensionsDir, "package-extension.ts"), "export default function() {}");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				// In-memory settings bypass agentDir/settings.json, so disable the default-on bundled codemode here too (L7a).
+				settingsManager: SettingsManager.inMemory({
+					packages: [packageRoot],
+					disabledBuiltinExtensions: ["codemode"],
+				}),
+			});
+			await loader.reload();
+
+			expect(nonBuiltinExtensions(loader.getExtensions().extensions)).toHaveLength(1);
+			expect(loader.getExtensions().warnings).toEqual([
+				{
+					path: join(packageRoot, "package.json"),
+					warning:
+						'Host-provided extension packages must be declared in peerDependencies with a "*" range, not dependencies: @earendil-works/pi-coding-agent. Installed copies can bypass the extension loader and create duplicate runtime modules.',
+				},
+			]);
+		});
+
+		it("should fail when an extension package manifest cannot be parsed", async () => {
+			const packageRoot = join(tempDir, "invalid-extension-package");
+			const extensionsDir = join(packageRoot, "extensions");
+			mkdirSync(extensionsDir, { recursive: true });
+			writeFileSync(join(packageRoot, "package.json"), "{");
+			writeFileSync(join(extensionsDir, "package-extension.ts"), "export default function() {}");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({ packages: [packageRoot] }),
+			});
+
+			await expect(loader.reload()).rejects.toThrow(SyntaxError);
 		});
 
 		it("should discover skills from agentDir", async () => {
@@ -155,6 +198,28 @@ Prompt content.`,
 
 			const { prompts } = loader.getPrompts();
 			expect(prompts.some((p) => p.name === "test-prompt")).toBe(true);
+		});
+
+		// Regression test for #9354.
+		it("should report invalid prompt frontmatter while loading valid siblings", async () => {
+			const promptsDir = join(agentDir, "prompts");
+			const invalidPromptPath = join(promptsDir, "invalid.md");
+			mkdirSync(promptsDir, { recursive: true });
+			writeFileSync(invalidPromptPath, "---\ndescription: Broken: unquoted colon\n---\nDo something.\n");
+			writeFileSync(join(promptsDir, "valid.md"), "Valid prompt content.");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			const { prompts, diagnostics } = loader.getPrompts();
+			expect(prompts.map((prompt) => prompt.name)).toEqual(["valid"]);
+			expect(diagnostics).toEqual([
+				expect.objectContaining({
+					type: "warning",
+					path: invalidPromptPath,
+					message: expect.stringContaining("line 1, column 14"),
+				}),
+			]);
 		});
 
 		it("should prefer project resources over user on name collisions", async () => {
@@ -280,8 +345,8 @@ export default function(pi) {
 			const loader = new DefaultResourceLoader({ cwd, agentDir });
 			await loader.reload({
 				resolveProjectTrust: async ({ extensionsResult }) => {
+					// The pre-trust pass loads user extensions only: the project's .pi extension waits for trust.
 					expect(nonBuiltinExtensions(extensionsResult.extensions).map((extension) => extension.path)).toEqual([
-						join(cwd, ".pi", "extensions", "project.ts"),
 						join(userExtDir, "user.ts"),
 					]);
 					return true;
@@ -298,6 +363,7 @@ export default function(pi) {
 		});
 
 		it("should preserve builtin and bundled extensions when project trust resolves", async () => {
+			// Given
 			writeFileSync(join(agentDir, "settings.json"), "{}\n");
 			const userExtDir = join(agentDir, "extensions");
 			const fileExtensionPath = join(userExtDir, "file.ts");
@@ -312,7 +378,15 @@ export default function(pi) {
 }`,
 			);
 
-			const { plain, trusted } = reloadExtensionsFromSource();
+			// When: a clock jump while awaiting trust must not change the inventory.
+			vi.useFakeTimers({ toFake: ["Date"] });
+			vi.setSystemTime(0);
+			const { plain, trusted } = await reloadExtensions(async () => {
+				vi.setSystemTime(60_000);
+				return true;
+			});
+
+			// Then
 			expect(plain.errors).toEqual([]);
 			expect(trusted.errors).toEqual([]);
 			expect(trusted.extensions.map((extension) => extension.path)).toEqual(
@@ -357,7 +431,7 @@ export default function(pi) {
 			);
 			writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ packages: [packageDir] })}\n`);
 
-			const { plain, trusted } = reloadExtensionsFromSource();
+			const { plain, trusted } = await reloadExtensions();
 			expect(plain.extensions.some((extension) => extension.path === "<builtin:todowrite>")).toBe(true);
 			expect(plain.extensions.some((extension) => extension.path === packageExtensionPath)).toBe(false);
 			expect(trusted.extensions.some((extension) => extension.path === "<builtin:todowrite>")).toBe(true);
@@ -1129,6 +1203,174 @@ export default function(pi) {
 			expect(
 				loadedExtensions.map((extension) => extension.tools.get("duplicate-tool")?.definition.description),
 			).toEqual(["explicit tool", "global tool"]);
+		});
+
+		it("should leave out replaceable extensions whose names another extension registers", async () => {
+			// A third-party MCP extension registering /mcp replaces the built-in one instead of both running.
+			// The fork registry builtin mcp (D-2, not replaceable) also registers /mcp; disable it so only the
+			// replaceable factory below stands in for the built-in (L7a).
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				`${JSON.stringify({ disabledBuiltinExtensions: ["codemode", "mcp"] })}\n`,
+			);
+			const globalExtDir = join(agentDir, "extensions");
+			mkdirSync(globalExtDir, { recursive: true });
+			writeFileSync(
+				join(globalExtDir, "other-mcp.ts"),
+				`
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+export default function(pi: ExtensionAPI) {
+  pi.registerCommand("mcp", { description: "other mcp", handler: async () => {} });
+}`,
+			);
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				extensionFactories: [
+					{
+						name: "mcp",
+						replaceable: true,
+						factory: (pi) => pi.registerCommand("mcp", { description: "built-in mcp", handler: async () => {} }),
+					},
+					{
+						name: "llama",
+						replaceable: true,
+						factory: (pi) =>
+							pi.registerCommand("llama", { description: "built-in llama", handler: async () => {} }),
+					},
+				],
+			});
+			await loader.reload();
+
+			const extensionsResult = loader.getExtensions();
+			// Fork ordering: factory extensions load ahead of file extensions.
+			expect(nonBuiltinExtensions(extensionsResult.extensions).map((extension) => extension.path)).toEqual([
+				"<inline:llama>",
+				join(globalExtDir, "other-mcp.ts"),
+			]);
+			expect(extensionsResult.errors).toEqual([]);
+
+			const runner = new ExtensionRunner(
+				extensionsResult.extensions,
+				extensionsResult.runtime,
+				cwd,
+				SessionManager.inMemory(),
+				await createModelRegistry(AuthStorage.create(join(tempDir, "auth-replaceable.json"))),
+			);
+			expect(runner.getCommand("mcp")?.description).toBe("other mcp");
+			expect(runner.getCommand("llama")?.description).toBe("built-in llama");
+		});
+
+		it("should skip built-in extensions disabled in settings", async () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ disabledBuiltinExtensions: ["codemode"], extensions: ["-builtin:mcp"] }),
+			);
+			const loaded: string[] = [];
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				extensionFactories: [
+					{ name: "mcp", builtin: true, factory: () => void loaded.push("mcp") },
+					{ name: "llama", builtin: true, factory: () => void loaded.push("llama") },
+				],
+			});
+			await loader.reload();
+
+			const extensions = nonBuiltinExtensions(loader.getExtensions().extensions);
+			expect(extensions.map((extension) => extension.path)).toEqual(["builtin:llama"]);
+			expect(extensions[0].sourceInfo).toMatchObject({
+				path: "builtin:llama",
+				source: "builtin",
+			});
+			expect(extensions[0].hidden).toBe(true);
+			expect(loaded).toEqual(["llama"]);
+		});
+
+		it("should load built-in extensions after file extensions with and without trust resolution", async () => {
+			const userExtDir = join(agentDir, "extensions");
+			mkdirSync(userExtDir, { recursive: true });
+			writeFileSync(join(userExtDir, "user.ts"), "export default function() {}");
+			mkdirSync(join(cwd, CONFIG_DIR_NAME), { recursive: true });
+			// A project override gives the built-in project scope, which must not move it ahead.
+			writeFileSync(join(cwd, CONFIG_DIR_NAME, "settings.json"), JSON.stringify({ extensions: ["+builtin:mcp"] }));
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				extensionFactories: [{ name: "mcp", builtin: true, factory: () => {} }],
+			});
+			const expected = [join(userExtDir, "user.ts"), "builtin:mcp"];
+
+			await loader.reload({ resolveProjectTrust: async () => true });
+			expect(nonBuiltinExtensions(loader.getExtensions().extensions).map((extension) => extension.path)).toEqual(
+				expected,
+			);
+			await loader.reload();
+			expect(nonBuiltinExtensions(loader.getExtensions().extensions).map((extension) => extension.path)).toEqual(
+				expected,
+			);
+		});
+
+		it("should disable built-in extensions with noExtensions unless loaded with -e builtin:<name>", async () => {
+			const loaded: string[] = [];
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				noExtensions: true,
+				additionalExtensionPaths: ["builtin:mcp", "builtin:missing"],
+				extensionFactories: [
+					{ name: "mcp", builtin: true, factory: () => void loaded.push("mcp") },
+					{ name: "llama", builtin: true, factory: () => void loaded.push("llama") },
+				],
+			});
+			await loader.reload();
+
+			expect(nonBuiltinExtensions(loader.getExtensions().extensions).map((extension) => extension.path)).toEqual([
+				"builtin:mcp",
+			]);
+			expect(loader.getExtensions().errors).toEqual([
+				{ path: "builtin:missing", error: "Unknown built-in extension: builtin:missing" },
+			]);
+			expect(loaded).toEqual(["mcp"]);
+		});
+
+		it("should apply project built-in extension overrides after trust resolves", async () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ disabledBuiltinExtensions: ["codemode"], extensions: ["-builtin:mcp"] }),
+			);
+			mkdirSync(join(cwd, CONFIG_DIR_NAME), { recursive: true });
+			writeFileSync(
+				join(cwd, CONFIG_DIR_NAME, "settings.json"),
+				JSON.stringify({ extensions: ["+builtin:mcp", "-builtin:llama"] }),
+			);
+			const loaded: string[] = [];
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				extensionFactories: [
+					{ name: "mcp", builtin: true, factory: () => void loaded.push("mcp") },
+					{ name: "plain", factory: () => void loaded.push("plain") },
+					{ name: "llama", builtin: true, factory: () => void loaded.push("llama") },
+				],
+			});
+			await loader.reload({
+				resolveProjectTrust: async ({ extensionsResult }) => {
+					// Built-in extensions wait until project settings are known.
+					expect(nonBuiltinExtensions(extensionsResult.extensions).map((extension) => extension.path)).toEqual([
+						"<inline:plain>",
+					]);
+					return true;
+				},
+			});
+
+			// Fork ordering: factory extensions load ahead of file and `builtin:<name>` paths.
+			expect(nonBuiltinExtensions(loader.getExtensions().extensions).map((extension) => extension.path)).toEqual([
+				"<inline:plain>",
+				"builtin:mcp",
+			]);
+			expect(loaded).toEqual(["plain", "mcp"]);
 		});
 	});
 

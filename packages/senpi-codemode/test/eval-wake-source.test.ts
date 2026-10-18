@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionContext } from "@code-yeongyu/senpi";
+import type { ExtensionContext, ExtensionToolContext } from "@code-yeongyu/senpi";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CodemodeSessionManager } from "../src/extension/session-manager.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceState } from "../src/extension/wake-source-state.ts";
@@ -137,6 +137,7 @@ class WiringPi {
 	readonly messages: string[] = [];
 	registeredTool: Parameters<CodemodeExtensionAPI["registerTool"]>[0] | undefined;
 	events?: { emit(name: string, data: unknown): void };
+	rpc?: { emit(name: string, data: unknown): void };
 
 	registerTool(tool: Parameters<CodemodeExtensionAPI["registerTool"]>[0]): void {
 		if (tool.name === "eval") this.registeredTool = tool;
@@ -197,7 +198,7 @@ async function sessionCwd(): Promise<string> {
 	return cwd;
 }
 
-function wiringContext(cwd: string, calls: StatusCall[]): ExtensionContext {
+function wiringContext(cwd: string, calls: StatusCall[]): ExtensionToolContext {
 	const base = fakeExtensionContext();
 	const theme = Object.create(null);
 	theme.fg = (_color: string, text: string): string => text;
@@ -208,6 +209,7 @@ function wiringContext(cwd: string, calls: StatusCall[]): ExtensionContext {
 	};
 	ui.theme = theme;
 	const sessionManager = Object.create(null);
+	sessionManager.getSessionId = (): string => "wake-source-test-session";
 	sessionManager.getSessionFile = (): string => join(artifactsRoot, `${crypto.randomUUID()}.jsonl`);
 	return { ...base, cwd, mode: "tui", hasUI: true, ui, sessionManager };
 }
@@ -215,7 +217,7 @@ function wiringContext(cwd: string, calls: StatusCall[]): ExtensionContext {
 async function detachOne(
 	pi: WiringPi,
 	kernel: FakeKernel,
-	ctx: ExtensionContext,
+	ctx: ExtensionToolContext,
 	cellId: string,
 	summary: string,
 ): Promise<void> {
@@ -270,6 +272,42 @@ describe("wake source liveness wiring", () => {
 		await vi.waitFor(() =>
 			expect(busEmissions.filter((emission) => emission.name === "wake_source_state").at(-1)).toEqual({
 				name: "wake_source_state",
+				data: { source: "senpi-codemode", activeCount: 0, items: [] },
+			}),
+		);
+
+		await pi.emit("session_shutdown", {}, ctx);
+	});
+
+	it("publishes detach transitions on the rpc channel so out-of-process consumers see live cells", async () => {
+		const cwd = await sessionCwd();
+		const pi = new WiringPi();
+		const rpcEmissions: BusEmission[] = [];
+		pi.rpc = { emit: (name, data) => rpcEmissions.push({ name, data }) };
+		pi.events = { emit: () => {} };
+		const kernel = new FakeKernel([]);
+		senpiCodemode(pi, { createSessionManager: () => new WiringSessionManager(kernel) });
+		const calls: StatusCall[] = [];
+		const ctx = wiringContext(cwd, calls);
+
+		await pi.emit("session_start", { reason: "startup" }, ctx);
+
+		vi.useFakeTimers();
+		await detachOne(pi, kernel, ctx, "rpc-cell", "rpc probe");
+
+		expect(rpcEmissions.filter((emission) => emission.name === WAKE_SOURCE_STATE_EVENT).at(-1)).toEqual({
+			name: WAKE_SOURCE_STATE_EVENT,
+			data: {
+				source: "senpi-codemode",
+				activeCount: 1,
+				items: [{ id: "rpc-cell", description: "rpc probe", startedAtMs: expect.any(Number) }],
+			},
+		});
+
+		kernel.completeDeferredRun(result("rpc-cell", "42"));
+		await vi.waitFor(() =>
+			expect(rpcEmissions.filter((emission) => emission.name === WAKE_SOURCE_STATE_EVENT).at(-1)).toEqual({
+				name: WAKE_SOURCE_STATE_EVENT,
 				data: { source: "senpi-codemode", activeCount: 0, items: [] },
 			}),
 		);

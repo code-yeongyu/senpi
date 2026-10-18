@@ -439,10 +439,15 @@ return "done";
 				if (!file || seen.has(file)) continue;
 				seen.add(file);
 				const source = await readFile(file, "utf8");
-				for (const match of source.matchAll(/from\s+["'](\.\/[^"']+)["']/gu)) {
+				for (const match of source.matchAll(/from\s+["']([^"']+)["']/gu)) {
 					const specifier = match[1];
+					const allowed =
+						specifier.startsWith("./") || specifier.startsWith("../") || specifier.startsWith("node:");
+					expect(allowed, specifier).toBe(true);
 					expect(specifier.endsWith(".ts")).toBe(false);
-					if (specifier.endsWith(".js")) stack.push(fileURLToPath(new URL(specifier, pathToFileURL(file))));
+					if (specifier.startsWith(".") && specifier.endsWith(".js")) {
+						stack.push(fileURLToPath(new URL(specifier, pathToFileURL(file))));
+					}
 				}
 			}
 		} finally {

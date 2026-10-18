@@ -1,6 +1,6 @@
 import { Text } from "@earendil-works/pi-tui";
 
-import { providerEntryLabel } from "./search.ts";
+import { attemptRouteLabel } from "./route-attempts.ts";
 import type { SearchDetails, SearchErrorDetails, SearchProgressDetails, SearchRenderDetails } from "./types.ts";
 
 interface ThemeLike {
@@ -32,11 +32,15 @@ function durationText(durationMs: number): string {
 	return durationMs >= 1000 ? `${Math.round(durationMs / 1000)}s` : `${durationMs}ms`;
 }
 
+function attemptState(attempt: NonNullable<SearchDetails["attempts"]>[number]): string | number {
+	if (attempt.skipped) return "skipped";
+	if (attempt.blocked === "challenge") return "challenged";
+	return attempt.error ? "failed" : attempt.resultsCount;
+}
+
 function attemptLabel(attempts: SearchDetails["attempts"]): string {
 	return attempts
-		? attempts
-				.map((attempt) => `${providerEntryLabel(attempt)}:${attempt.error ? "failed" : attempt.resultsCount}`)
-				.join(" -> ")
+		? attempts.map((attempt) => `${attemptRouteLabel(attempt)}:${attemptState(attempt)}`).join(" -> ")
 		: "";
 }
 
@@ -47,7 +51,7 @@ function routeStateLabel(details: SearchProgressDetails): string {
 	return labels
 		.map((label, index) => {
 			const attempt = attempts[index];
-			if (attempt) return `${label}:${attempt.error ? "failed" : attempt.resultsCount}`;
+			if (attempt) return `${label}:${attemptState(attempt)}`;
 			return `${label}:${index === attempts.length ? "searching" : "pending"}`;
 		})
 		.join(" -> ");
@@ -99,7 +103,7 @@ export function renderSearchResult(
 	if (details.error) return new Text(theme.fg("error", details.error), 0, 0);
 
 	const count = details.results.length;
-	const provider = providerEntryLabel(details);
+	const provider = attemptRouteLabel(details);
 	const summary =
 		theme.fg("success", `${count} result${count === 1 ? "" : "s"}`) +
 		theme.fg("muted", ` via ${provider} in ${durationText(details.durationMs)}`) +

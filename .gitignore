@@ -1,4 +1,7 @@
-node_modules/
+# A file or a directory: worktrees often symlink node_modules, and a directory-only pattern lets the link be committed.
+node_modules
+packages/senpi-codemode/gate-report.json
+.senpi-gate-inputs.json
 dist/
 .artifacts/
 *.log
@@ -9,6 +12,11 @@ dist/
 # Rust workspace artifacts
 target/
 **/*.rs.bk
+
+# Native grep addons are never tracked. napi writes senpi_grep.<tag>.node into
+# the crate dir; host copies are staged under coding-agent at publish time.
+packages/coding-agent/native/prebuilds/
+crates/senpi-grep/*.node
 
 # Rust workspace
 target/
@@ -28,6 +36,8 @@ packages/*/dist/*
 !packages/ai/dist/cli.js
 !packages/coding-agent/dist/
 !packages/coding-agent/dist/cli.js
+# Publish staging: scripts/prepare-senpi-bundled-workspaces.mjs copies the unpublished client/protocol builds here.
+packages/coding-agent/vendor/
 packages/*/dist-chrome/
 packages/*/dist-firefox/
 # Generated model data JSON and .manifest.json are committed (fork contract); only transient generator staging dirs are ignored.
@@ -51,6 +61,7 @@ packages/ai/src/providers/.model-generation-*/
 # Package specific
 .npm/
 coverage/
+.vitest/
 .nyc_output/
 .pi_config/
 tui-debug.log
@@ -70,6 +81,11 @@ local-ignore/
 .pi/hf-sessions-backup/
 collect.sh
 
-# Ephemeral agent working state. Existing tracked archives remain tracked,
-# but new untracked files must never block a release commit.
-.omo/
+# Ephemeral agent working state (plans, evidence, task children). Nothing under it is
+# committed except the init-deep snapshot; scripts/tracked-harness-artifacts-audit.test.mjs
+# fails the build if any other path under these roots is tracked (senpi#2029).
+.omo/*
+!.omo/init-deep.json
+.qa-evidence/
+qa-evidence/
+packages/agent/docs/extensions/pi-server-artifact/index.md

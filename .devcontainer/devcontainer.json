@@ -17,6 +17,9 @@
 		"OPENAI_API_KEY": {
 			"description": "(Optional) OpenAI API key."
 		},
+		"BAI_API_KEY": {
+			"description": "(Optional) B.AI API key."
+		},
 		"OLLAMA_API_KEY": {
 			"description": "(Optional) Ollama Cloud API key."
 		},

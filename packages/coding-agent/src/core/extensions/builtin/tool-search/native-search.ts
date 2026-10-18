@@ -1,12 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { resolveRootObjectSchema } from "@earendil-works/pi-ai/utils/tool-schema-compat";
 import type { ToolSearchDocument } from "./engine/document.ts";
+import { type AnthropicToolSearchTarget, supportsAnthropicNativeToolSearch } from "./native-support.ts";
 
 // Anthropic Messages supports native BM25 tool search through request payload
 // injection alone. OpenAI native client-mode search remains intentionally out of
 // scope because it requires a provider-layer seam.
 
 export const ANTHROPIC_TOOL_SEARCH_TYPE = "tool_search_tool_bm25_20251119";
-export const ANTHROPIC_TOOL_SEARCH_NAME = "tool_search";
+export const ANTHROPIC_TOOL_SEARCH_NAME = "tool_search_tool_bm25";
 /** Anthropic caps a request at 10k tools; beyond that native search is invalid. */
 export const ANTHROPIC_MAX_TOOLS = 10000;
 
@@ -52,11 +54,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * least one non-deferred tool, and skip entirely above the 10k tool cap.
  */
 export function addAnthropicNativeToolSearch(
-	api: string | undefined,
+	target: AnthropicToolSearchTarget,
 	payload: unknown,
 	config: AnthropicNativeInjectionConfig,
 ): unknown {
-	if (api !== "anthropic-messages" || !isRecord(payload)) return payload;
+	if (!supportsAnthropicNativeToolSearch(target) || !isRecord(payload)) return payload;
 	const tools = Array.isArray(payload.tools) ? payload.tools : [];
 	const injected = injectInactiveCatalogTools(tools, config);
 	if (injected.length > ANTHROPIC_MAX_TOOLS) return payload;
@@ -82,12 +84,23 @@ function injectInactiveCatalogTools(tools: readonly unknown[], config: Anthropic
 		injected.push({
 			name: doc.name,
 			description: definition.description ?? doc.description ?? doc.label,
-			input_schema: definition.parameters,
+			input_schema: anthropicInputSchema(definition.parameters),
 			defer_loading: true,
 		});
 		residentNames.add(doc.name);
 	}
 	return injected;
+}
+
+/**
+ * Anthropic requires `input_schema.type: "object"`. Resident tools get that shape in the provider's
+ * `convertTools`; injected catalog tools bypass it, so a root union (`anyOf` with no top-level
+ * `type`) would reject the whole request. Plain object schemas pass through unchanged.
+ */
+function anthropicInputSchema(parameters: unknown): unknown {
+	if (!isRecord(parameters) || parameters.type === "object") return parameters;
+	const resolved = resolveRootObjectSchema(parameters);
+	return resolved.type === "object" ? resolved : { ...resolved, type: "object" };
 }
 
 function maybeDefer(tool: unknown, config: AnthropicNativeInjectionConfig): unknown {
@@ -101,9 +114,13 @@ function maybeDefer(tool: unknown, config: AnthropicNativeInjectionConfig): unkn
 	return { ...tool, defer_loading: true };
 }
 
-/** `tool_reference` blocks emitted inside a tool_result so the API expands the referenced tools. */
-export function buildToolReferenceBlocks(names: readonly string[]): { type: "tool_reference"; name: string }[] {
-	return names.map((name) => ({ type: "tool_reference", name }));
+/**
+ * `tool_reference` blocks emitted inside a tool_result so the API expands the
+ * referenced tools. Anthropic names the target through `tool_name`; a block
+ * carrying `name` is rejected as a malformed content block.
+ */
+export function buildToolReferenceBlocks(names: readonly string[]): { type: "tool_reference"; tool_name: string }[] {
+	return names.map((name) => ({ type: "tool_reference", tool_name: name }));
 }
 
 export interface AnthropicNativeAdapterDeps extends AnthropicNativeInjectionConfig {
@@ -124,10 +141,10 @@ export class AnthropicNativeToolSearchAdapter {
 		this.#deps = deps;
 	}
 
-	applyBeforeRequest(api: string | undefined, payload: unknown): unknown {
+	applyBeforeRequest(target: AnthropicToolSearchTarget, payload: unknown): unknown {
 		this.#injectedLastRequest = false;
 		if (this.#disabled || !this.#deps.enabled()) return payload;
-		const next = addAnthropicNativeToolSearch(api, payload, this.#deps);
+		const next = addAnthropicNativeToolSearch(target, payload, this.#deps);
 		this.#injectedLastRequest = next !== payload;
 		return next;
 	}

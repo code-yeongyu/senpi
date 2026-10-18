@@ -10,10 +10,14 @@ export interface JsRuntimeVersions {
 export function jsRuntimeInfo(
 	versions: JsRuntimeVersions = process.versions,
 	execPath: string = process.execPath,
+	processIsolation = false,
 ): EvalRuntimeInfo {
 	const bun = versions.bun;
-	if (bun !== undefined && bun.length > 0) return { name: "bun", version: bun, path: execPath };
-	return { name: "node", version: versions.node, path: execPath };
+	const base =
+		bun !== undefined && bun.length > 0
+			? { name: "bun", version: bun, path: execPath }
+			: { name: "node", version: versions.node, path: execPath };
+	return processIsolation ? { ...base, isolation: "process" } : base;
 }
 
 /** Short host-line segment, e.g. "node 26.7.0" or "bun 1.4.0". */

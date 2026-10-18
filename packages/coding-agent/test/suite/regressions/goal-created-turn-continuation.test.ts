@@ -1,6 +1,7 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import goalExtension from "../../../src/core/extensions/builtin/goal/index.ts";
+import type { ExtensionToolContext } from "../../../src/core/extensions/types.ts";
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
@@ -29,7 +30,7 @@ describe("goal creation continuation", () => {
 
 		await harness.tools
 			.get("create_goal")
-			?.execute("create", { objective: "Ship the release" }, undefined, undefined, ctx);
+			?.execute("create", { objective: "Ship the release" }, undefined, undefined, ctx as ExtensionToolContext);
 		await runGoalHandlers(
 			harness.handlers,
 			"agent_end",

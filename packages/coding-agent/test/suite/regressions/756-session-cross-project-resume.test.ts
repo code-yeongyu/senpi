@@ -17,7 +17,7 @@ assertWorkspaceBuildPrerequisite(import.meta.url);
  * interactive session hangs (or silently answers "no" once stdin ends). Two
  * distinct shapes have to stay covered:
  *
- * 1. stdin is not a terminal at all - pipes, detached spawns, app-server children.
+ * 1. stdin is not a terminal at all - pipes and detached spawns.
  * 2. stdin IS a terminal while the resolved application mode is non-interactive,
  *    which is the documented `senpi --session <id> -p "say ok"` one-shot. Gating
  *    on `process.stdin.isTTY` alone misses this second shape.

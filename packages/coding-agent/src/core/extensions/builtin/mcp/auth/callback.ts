@@ -20,6 +20,8 @@ export interface CallbackServerOptions {
 export interface CallbackResult {
 	code: string;
 	state: string | undefined;
+	// RFC 9207 authorization server identifier, checked before the code is exchanged.
+	iss: string | undefined;
 }
 
 export interface CallbackChannel {
@@ -179,7 +181,7 @@ export class LoopbackCallbackServer {
 			return;
 		}
 		res.writeHead(200, { "content-type": "text/html" }).end(SUCCESS_HTML);
-		this.#succeed({ code, state });
+		this.#succeed({ code, state, iss: url.searchParams.get("iss") ?? undefined });
 	}
 
 	#succeed(result: CallbackResult): void {

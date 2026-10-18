@@ -2,13 +2,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { isValidThinkingLevel } from "../../cli/args.ts";
 import { findExactModelReferenceMatch, parseModelPattern } from "../model-resolver.ts";
-import {
-	type FallbackAuthTiers,
-	MAX_PROVIDERS_PER_FAMILY,
-	matchesFamily,
-	parseBareSelector,
-	rankFamilyModels,
-} from "./expansion.ts";
+import { type FallbackAuthTiers, MAX_PROVIDERS_PER_FAMILY, parseBareSelector, rankFamilyModels } from "./expansion.ts";
 
 export interface FallbackSelector {
 	raw: string;
@@ -49,10 +43,26 @@ function authTiers(lookup: FallbackModelLookup): FallbackAuthTiers {
 			typeof registry.hasConfiguredAuth === "function"
 				? (model) => registry.hasConfiguredAuth?.(model) === true
 				: undefined,
-		isFallbackEligible:
-			typeof registry.isFallbackEligible === "function"
-				? (model) => registry.isFallbackEligible?.(model) !== false
-				: undefined,
+		isFallbackEligible: typeof registry.isFallbackEligible === "function" ? memoizedEligibility(registry) : undefined,
+	};
+}
+
+/**
+ * Eligibility is a provider's switch (`fallbackEligible`), read from settings on disk; one
+ * canonicalization pass used to ask it once per catalog model, a 150-450 ms stall on the first
+ * fallback check of a session. Settings cannot change within one synchronous pass, so each
+ * provider is asked once per pass.
+ */
+function memoizedEligibility(registry: {
+	isFallbackEligible?(model: Model<Api>): boolean;
+}): (model: Model<Api>) => boolean {
+	const known = new Map<string, boolean>();
+	return (model) => {
+		const cached = known.get(model.provider);
+		if (cached !== undefined) return cached;
+		const eligible = registry.isFallbackEligible?.(model) !== false;
+		known.set(model.provider, eligible);
+		return eligible;
 	};
 }
 
@@ -125,6 +135,16 @@ export function baseSelector(selector: Pick<FallbackSelector, "provider" | "id">
 }
 
 /**
+ * A rung's identity: the model plus the thinking level it runs at. An entry
+ * without an explicit level inherits the running level, so it names the rung in
+ * flight rather than a second rung of that model.
+ */
+export function rungSelector(selector: Pick<FallbackSelector, "provider" | "id" | "thinkingLevel">): string {
+	const base = baseSelector(selector);
+	return selector.thinkingLevel ? `${base}:${selector.thinkingLevel}` : base;
+}
+
+/**
  * Converts validated configuration to canonical selector strings for runtime lookup.
  *
  * A bare key (no provider prefix) is a model-family policy: it expands to one
@@ -141,37 +161,6 @@ export function baseSelector(selector: Pick<FallbackSelector, "provider" | "id">
  * consecutive upstream 500s, zero fallback attempts, terminal error).
  * Users disable it with the `"*": []` tombstone.
  */
-export const WILDCARD_CHAIN_KEY = "*";
-
-/**
- * Whether the user explicitly switched fallback OFF for this model with the
- * documented `[]` tombstone (exact key, base key, or a bare family key that
- * covers it). The shipped wildcard lane must never resurrect fallback against
- * that instruction, so the wildcard gate consults this first.
- *
- * Bare-family matching is deliberately conservative: an ambiguous match
- * suppresses the wildcard rather than overriding an explicit opt-out, because a
- * surprising extra fallback hop is worse than a missing convenience lane.
- */
-export function hasExplicitFallbackOptOut(
-	chains: FallbackChains,
-	currentModel: Model<Api>,
-	currentThinking: ThinkingLevel | undefined,
-): boolean {
-	const base = formatSelector(currentModel).toLowerCase();
-	const exact = currentThinking ? `${base}:${currentThinking}`.toLowerCase() : base;
-	for (const [key, entries] of Object.entries(chains)) {
-		if (!Array.isArray(entries) || !isChainTombstone(entries)) continue;
-		if (key === WILDCARD_CHAIN_KEY) continue;
-		const normalizedKey = key.trim().toLowerCase();
-		const keyBase = normalizedBase(normalizedKey);
-		if (keyBase === base || normalizedKey === exact) return true;
-		// Bare family key (no provider prefix): treat an id match as covering.
-		if (!normalizedKey.includes("/") && matchesFamily(currentModel, keyBase)) return true;
-	}
-	return false;
-}
-
 export function canonicalizeFallbackChains(chains: FallbackChains, lookup: FallbackModelLookup): FallbackChains {
 	const models = availableModels(lookup);
 	const tiers = authTiers(lookup);
@@ -231,17 +220,6 @@ export function canonicalizeFallbackChains(chains: FallbackChains, lookup: Fallb
 		if (tombstones.has(normalizedBase(key))) delete canonical[key];
 	}
 
-	// The wildcard key is not a model selector, so both loops above skip it.
-	// Its entries expand exactly like any other chain; a `[]` tombstone removes
-	// the lane entirely. Self-selection of the failing model is prevented at
-	// candidate time (nextCandidate's "self" skip), not here, because the
-	// wildcard has no key selector to filter against.
-	const wildcardEntries = chains[WILDCARD_CHAIN_KEY];
-	if (Array.isArray(wildcardEntries) && !isChainTombstone(wildcardEntries)) {
-		const canonicalEntries = expandEntries(wildcardEntries, WILDCARD_CHAIN_KEY);
-		if (canonicalEntries.length > 0) canonical[WILDCARD_CHAIN_KEY] = canonicalEntries;
-	}
-
 	return canonical;
 }
 
@@ -249,32 +227,34 @@ export function resolveChainKey(
 	currentModel: Model<Api>,
 	currentThinking: ThinkingLevel | undefined,
 	chains: FallbackChains,
-	options?: { allowWildcard?: boolean },
+	_options?: { allowWildcard?: boolean },
 ): string | undefined {
 	const base = formatSelector(currentModel);
 	const exact = currentThinking ? `${base}:${currentThinking}` : base;
 	if (Object.hasOwn(chains, exact)) return exact;
 	if (Object.hasOwn(chains, base)) return base;
-	// The wildcard is opt-in per call site: it is a last resort for a model with
-	// no chain of its own, and it must never hijack a session already walking a
-	// configured chain (the last rung of that chain usually has no key either).
-	// nextCandidate consults the active episode's chainKey before asking for it.
-	if (!options?.allowWildcard) return undefined;
-	return Object.hasOwn(chains, WILDCARD_CHAIN_KEY) ? WILDCARD_CHAIN_KEY : undefined;
+	return undefined;
 }
 
 function formatParsedSelector(selector: FallbackSelector): string {
-	const base = baseSelector(selector);
-	return selector.thinkingLevel ? `${base}:${selector.thinkingLevel}` : base;
+	return rungSelector(selector);
+}
+
+/** The explicit `:level` suffix of a selector string, when it has one. */
+function explicitThinkingLevel(selector: string): string | undefined {
+	const normalized = selector.trim().toLowerCase();
+	const lastColon = normalized.lastIndexOf(":");
+	if (lastColon === -1) return undefined;
+	const suffix = normalized.slice(lastColon + 1);
+	return isValidThinkingLevel(suffix) ? suffix : undefined;
 }
 
 function normalizedBase(selector: FallbackSelector | string): string {
 	if (typeof selector !== "string") return baseSelector(selector).toLowerCase();
 
 	const normalized = selector.trim().toLowerCase();
-	const lastColon = normalized.lastIndexOf(":");
-	if (lastColon === -1 || !isValidThinkingLevel(normalized.slice(lastColon + 1))) return normalized;
-	return normalized.slice(0, lastColon);
+	const level = explicitThinkingLevel(normalized);
+	return level === undefined ? normalized : normalized.slice(0, normalized.lastIndexOf(":"));
 }
 
 function normalizedExact(selector: FallbackSelector | string): string {
@@ -294,6 +274,13 @@ export function candidatesAfter(
 	if (exactIndex !== -1) return chainEntries.slice(exactIndex + 1);
 
 	const base = normalizedBase(currentSelector);
-	const baseIndex = chainEntries.findIndex((entry) => normalizedBase(entry) === base);
+	// Only a same-base entry WITHOUT a level is the position: it inherits the
+	// running level, so it is the rung in flight. A same-base entry at another
+	// explicit level is a rung of its own - with `["X:off", "Y"]` and the session
+	// on X:high, matching on the base alone consumed X:off as the position and the
+	// chain skipped straight past it to Y.
+	const baseIndex = chainEntries.findIndex(
+		(entry) => normalizedBase(entry) === base && explicitThinkingLevel(entry) === undefined,
+	);
 	return baseIndex === -1 ? chainEntries : chainEntries.slice(baseIndex + 1);
 }

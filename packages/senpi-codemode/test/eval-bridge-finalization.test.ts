@@ -25,7 +25,9 @@ class BridgeKernel implements EvalKernel {
 		this.#throwOnReply = throwOnReply;
 	}
 
-	async run(_input: EvalKernelRunInput): Promise<EvalResult> {
+	async run(input: EvalKernelRunInput): Promise<EvalResult> {
+		input.onStarted?.();
+		this.onMessage = input.onMessage ?? this.onMessage;
 		this.onMessage?.({ type: "tool-call", callId: "bridge-call", toolName: "demo", args: {} });
 		if (this.#result) return this.#result;
 		return await new Promise<EvalResult>(() => {});
@@ -42,6 +44,14 @@ class BridgeKernel implements EvalKernel {
 	}
 
 	async reset(): Promise<void> {}
+
+	cancelQueued(): boolean {
+		return false;
+	}
+
+	queueSnapshot() {
+		return { activeCellId: null, queuedCellIds: [] };
+	}
 
 	async close(): Promise<void> {}
 }
@@ -157,9 +167,9 @@ describe("eval bridge finalization", () => {
 
 		await expect(outcome).resolves.toMatchObject({
 			status: "rejected",
-			reason: { name: "TimeoutError", message: expect.stringContaining("Cell timed out after 1000ms") },
+			reason: { name: "TimeoutError", message: expect.stringContaining("1s run budget") },
 		});
-		expect(kernel.interrupts).toEqual(["Cell timed out after 1000ms"]);
+		expect(kernel.interrupts).toEqual([expect.stringContaining("1s run budget")]);
 		bridgeResult.resolve({ content: [{ type: "text", text: "late bridge value" }], details: {} });
 		await Promise.resolve();
 		expect(kernel.replies).toEqual([]);

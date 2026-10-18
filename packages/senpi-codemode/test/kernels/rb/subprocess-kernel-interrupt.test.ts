@@ -6,7 +6,8 @@ import { SubprocessKernel } from "../../../src/kernels/shared/subprocess-kernel.
 import type { EvalKernel } from "../../../src/tool/types.ts";
 
 class InterruptibleFakeProcess extends EventEmitter {
-	readonly stdin = { writes: [] as string[], write: (chunk: string): number => this.stdin.writes.push(chunk) };
+	readonly stdinWrites: string[] = [];
+	readonly stdin = { writes: this.stdinWrites, write: (chunk: string): unknown => this.stdinWrites.push(chunk) };
 	readonly stdout = new PassThrough();
 	readonly stderr = new PassThrough();
 	readonly killedSignals: NodeJS.Signals[] = [];

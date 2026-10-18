@@ -142,12 +142,16 @@ describe("terminal builtin extension — real session execution (pipe fallback)"
 		if (!runtime) throw new Error(`No terminal session found with id: ${bashId}`);
 		await new Promise<void>((resolve, reject) => {
 			const timer = setTimeout(() => reject(new Error("READY_MARK never arrived within 5s")), 5000);
-			const unsubscribe = runtime.onOutput((chunk) => {
-				if (!chunk.includes("READY_MARK")) return;
+			const done = () => {
 				clearTimeout(timer);
 				unsubscribe();
 				resolve();
+			};
+			const unsubscribe = runtime.onOutput((chunk) => {
+				if (chunk.includes("READY_MARK")) done();
 			});
+			// Subscribed first, then check what execute's early-output grace already buffered.
+			if (runtime.fullOutput().includes("READY_MARK")) done();
 		});
 		const peeked = await output.execute("call-peek", { bash_id: bashId });
 		expect(firstText(peeked)).toContain("READY_MARK");
@@ -345,6 +349,7 @@ describe("terminal extension auto-detach wiring", () => {
 		let activeTools: string[] = [];
 		const fakePi = {
 			registerTool: (tool: Tool) => tools.set(tool.name, tool),
+			registerMessageRenderer: () => {},
 			on: (event: string, handler: Handler) => {
 				const registered = handlers.get(event) ?? [];
 				registered.push(handler);

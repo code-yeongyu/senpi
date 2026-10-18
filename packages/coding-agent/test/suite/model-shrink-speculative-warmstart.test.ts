@@ -1,7 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it } from "vitest";
 import compactionExtension from "../../src/core/extensions/builtin/compaction/index.ts";
-import { ModelUsabilityBudgetError } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const harnesses: Harness[] = [];
@@ -57,10 +56,12 @@ describe("model window shrink speculative warm start", () => {
 		harness.session.setFavoriteModels([{ model: harness.getModel() }, { model: smallModel }]);
 
 		// when
-		const switchPromise = harness.session.cycleModel();
+		await harness.session.cycleModel();
 
-		// then
-		await expect(switchPromise).rejects.toBeInstanceOf(ModelUsabilityBudgetError);
+		// then: #1873 holds the shrink for the next send instead of refusing it, and
+		// the contract this case exists for is unchanged - the decision happens before
+		// any speculative work and before the active model moves.
+		expect(harness.session.pendingModelSwitch?.model.id).toBe("faux-small");
 		expect(harness.session.model?.id).toBe("faux-big");
 		expect(harness.faux.state.callCount).toBe(0);
 	});

@@ -1,0 +1,66 @@
+name: Automation branch guard
+
+# #3243: an automation PR must hold only what its bot generated. A hand merge of main into
+# automation/opengateway-catalog-refresh kept the branch's older catalog snapshot over newer data
+# on main, and the PR still looked like a routine refresh. The refresh workflow regenerates the
+# branch from main; nothing else may commit to it.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Automation branch carries only bot commits
+    if: github.head_ref == 'automation/opengateway-catalog-refresh'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # A fork can name its branch automation/opengateway-catalog-refresh too, and its checkout
+      # would bring its own copy of the checker. Only this repository's bot pushes that branch.
+      # A pull request can still edit or delete this workflow file, since GitHub reads it from the
+      # PR's merge ref; making the guard a required check is what turns a missing guard into a failure.
+      - name: Refuse an automation branch from another repository
+        if: github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          echo "::error::automation/opengateway-catalog-refresh must come from this repository, not ${HEAD_REPO}."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Refuse commits the bot did not write
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # The checker comes from the base commit, so the branch under review cannot rewrite the script.
+        # This protects the script, not this workflow around it: it guards against accidents, not forgery.
+        run: |
+          git show "${BASE_SHA}:scripts/check-bot-branch-commits.mjs" > "${RUNNER_TEMP}/check-bot-branch-commits.mjs"
+          node "${RUNNER_TEMP}/check-bot-branch-commits.mjs" --base "$BASE_SHA" --head "$HEAD_SHA" --bot-email actions@github.com
+
+      - name: Workflow summary
+        if: always()
+        shell: bash
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          {
+            echo "## Automation branch guard"
+            echo "- Branch: ${HEAD_REF}"
+            echo "- Status: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -113,7 +113,7 @@ type ConfigurationAssessment = {
 };
 
 /** The single condition evaluation behind both the tolerant `check` and the throwing turn-time resolution. */
-type ConfigurationOutcome =
+export type ConfigurationOutcome =
 	| { status: "disabled" }
 	| { status: "not-installed"; error: unknown }
 	| { status: "no-accounts" }
@@ -124,7 +124,7 @@ type ConfigurationOutcome =
  * same conditions for every caller and reports why the lane is unusable
  * instead of deciding per call-site whether that is fatal.
  */
-async function assessConfiguration(deps: CursorCliOauthConfigDeps): Promise<ConfigurationOutcome> {
+export async function assessConfiguration(deps: CursorCliOauthConfigDeps): Promise<ConfigurationOutcome> {
 	const settings = deps.readSettings();
 	if (settings.explicitlyDisabled === true) return { status: "disabled" };
 	try {

@@ -33,6 +33,7 @@ describe("rules builtin - environment configuration", () => {
 
 	const extensionActions: ExtensionActions = {
 		registerLazyToolActivator: () => {},
+		getSettings: () => ({}),
 		sendMessage: () => {},
 		sendUserMessage: () => {},
 		appendEntry: () => {},

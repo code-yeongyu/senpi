@@ -20,9 +20,15 @@ export function validateGitRevision(value) {
 	return value;
 }
 
+// Released changelogs only grow; packages/coding-agent/CHANGELOG.md passed spawnSync's 1 MiB default in 2026.10.1-3.
+const GIT_OUTPUT_LIMIT_BYTES = 64 * 1024 * 1024;
+
 /** Runs git; throws on failure so callers fail closed. */
 export function runGit(args, what) {
-	const result = spawnSync("git", args, { encoding: "utf8" });
+	const result = spawnSync("git", args, { encoding: "utf8", maxBuffer: GIT_OUTPUT_LIMIT_BYTES });
+	if (result.error?.code === "ENOBUFS") {
+		throw new Error(`${what} produced more than ${GIT_OUTPUT_LIMIT_BYTES} bytes of git output`);
+	}
 	if (result.error) throw result.error;
 	if (result.status !== 0) throw new Error(`${what} failed:\n${(result.stderr ?? "").trim()}`);
 	return result.stdout;
@@ -56,19 +62,17 @@ export function ensureCommitExists(sha) {
 	runGit(["cat-file", "-e", `${sha}^{commit}`], `verifying pinned upstream commit ${sha}`);
 }
 
-/** Parses `git diff --name-status` text into paths, renames, and deletions. */
+/** Parses `git diff --name-status` text into paths and renames. Deleted paths stay in changedFiles. */
 export function parseNameStatus(text) {
 	const changedFiles = [];
 	const renames = [];
-	const deletions = [];
 	for (const line of splitLines(text)) {
 		const [status, ...paths] = line.split("\t");
 		if (paths.length === 0) continue;
 		changedFiles.push(...paths);
 		if (status.startsWith("R")) renames.push({ from: paths[0], to: paths[1] });
-		else if (status.startsWith("D")) deletions.push(paths[0]);
 	}
-	return { changedFiles, renames, deletions };
+	return { changedFiles, renames };
 }
 
 /** Rename-aware PR diff (base...HEAD) with change kinds. */

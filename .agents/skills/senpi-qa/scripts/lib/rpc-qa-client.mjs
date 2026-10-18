@@ -1,8 +1,8 @@
 import { spawnCli } from "./common.mjs";
 
 export class RpcQaClient {
-	constructor({ env, cwd, extraArgs }) {
-		this.child = spawnCli(["--mode", "rpc", "--no-session", "--no-context-files", ...extraArgs], { env, cwd });
+	constructor({ env, cwd, extraArgs, spawnCli: spawnChild = spawnCli }) {
+		this.child = spawnChild(["--mode", "rpc", "--no-session", "--no-context-files", ...extraArgs], { env, cwd });
 		this.pending = new Map();
 		this.events = [];
 		this.eventWaiters = [];

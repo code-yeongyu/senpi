@@ -1,8 +1,9 @@
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { resetContinuationStreak } from "../../src/core/extensions/builtin/goal/store.ts";
-import type { ExtensionContext } from "../../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
@@ -29,7 +30,7 @@ async function createStallHarness(threadId: string, monitorsActive = true): Prom
 	await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 	await harness.tools
 		.get("create_goal")
-		?.execute("create", { objective: "Keep monitoring" }, undefined, undefined, ctx);
+		?.execute("create", { objective: "Keep monitoring" }, undefined, undefined, ctx as ExtensionToolContext);
 	if (monitorsActive) {
 		harness.events.emit("terminal_monitor_state", { activeCount: 1 });
 		await harness.events.flush();
@@ -76,7 +77,7 @@ async function runContinuationCycle(
 async function runMonitorContinuationCycle(harness: GoalHarness, ctx: ExtensionContext): Promise<void> {
 	await runContinuationCycle(harness, ctx);
 	const delayedDeliveryRecorded = waitForSentCount(harness, harness.sent.length + 1);
-	await vi.advanceTimersByTimeAsync(240_000);
+	await vi.advanceTimersByTimeAsync(GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS);
 	await delayedDeliveryRecorded;
 }
 
@@ -203,10 +204,12 @@ describe("goal monitor continuation stall check", () => {
 		await runMonitorContinuationCycle(harness, ctx);
 		await runMonitorContinuationCycle(harness, ctx);
 
-		await harness.tools.get("update_goal")?.execute("complete", { status: "complete" }, undefined, undefined, ctx);
+		await harness.tools
+			.get("update_goal")
+			?.execute("complete", { status: "complete" }, undefined, undefined, ctx as ExtensionToolContext);
 		await harness.tools
 			.get("create_goal")
-			?.execute("create", { objective: "Fresh objective" }, undefined, undefined, ctx);
+			?.execute("create", { objective: "Fresh objective" }, undefined, undefined, ctx as ExtensionToolContext);
 
 		const sentBefore = harness.sent.length;
 		await runMonitorContinuationCycle(harness, ctx);

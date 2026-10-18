@@ -1,5 +1,6 @@
 import { type AssistantMessage, fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MANUAL_CONTINUE_CUSTOM_TYPE } from "../../../src/core/manual-continue.ts";
 import { createHarness, getAssistantTexts, getUserTexts, type Harness } from "../harness.ts";
 
 function createUsage(totalTokens: number) {
@@ -219,7 +220,13 @@ describe("pre-prompt compaction regression", () => {
 			willRetry: true,
 			accepted: true,
 		});
-		expect(getUserTexts(harness)).toContain(".");
+		// The bare "." retry is the manual-continue shortcut: it arrives as a hidden
+		// custom message instead of a literal user turn.
+		expect(
+			harness.session.messages.some(
+				(message) => message.role === "custom" && message.customType === MANUAL_CONTINUE_CUSTOM_TYPE,
+			),
+		).toBe(true);
 		expect(harness.faux.state.callCount).toBe(1);
 	});
 

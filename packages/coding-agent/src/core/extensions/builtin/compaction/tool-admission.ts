@@ -7,6 +7,7 @@
  * from the supplied text on every request; model-visible marker text is never state.
  */
 
+import { markTransientMessage } from "../../../compaction/estimate-cache-key.ts";
 import { estimateTokens } from "../../../compaction/index.ts";
 
 const MAX_ADMISSION_CAP_TOKENS = 50_000;
@@ -36,7 +37,7 @@ export function resolveToolResultAdmissionCapTokens(contextWindow: number): numb
 }
 
 function estimateTextTokens(text: string): number {
-	return estimateTokens({ role: "user", content: text, timestamp: 0 });
+	return estimateTokens(markTransientMessage({ role: "user", content: text, timestamp: 0 }));
 }
 
 function buildExcerpt(text: string, budgetChars: number, totalTokens: number): string {

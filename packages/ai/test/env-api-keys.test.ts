@@ -9,6 +9,7 @@ const originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
 const originalAnthropicOauthToken = process.env.ANTHROPIC_OAUTH_TOKEN;
 const originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
 const originalOllamaApiKey = process.env.OLLAMA_API_KEY;
+const originalBaiApiKey = process.env.BAI_API_KEY;
 
 afterEach(() => {
 	if (originalCopilotGitHubToken === undefined) {
@@ -58,6 +59,12 @@ afterEach(() => {
 	} else {
 		process.env.OLLAMA_API_KEY = originalOllamaApiKey;
 	}
+
+	if (originalBaiApiKey === undefined) {
+		delete process.env.BAI_API_KEY;
+	} else {
+		process.env.BAI_API_KEY = originalBaiApiKey;
+	}
 });
 
 describe("environment API keys", () => {
@@ -91,6 +98,13 @@ describe("environment API keys", () => {
 
 		expect(findEnvKeys("ollama")).toEqual(["OLLAMA_API_KEY"]);
 		expect(getEnvApiKey("ollama")).toBe("ollama-token");
+	});
+
+	it("resolves B.AI credentials from BAI_API_KEY", () => {
+		process.env.BAI_API_KEY = "bai-token";
+
+		expect(findEnvKeys("bai")).toEqual(["BAI_API_KEY"]);
+		expect(getEnvApiKey("bai")).toBe("bai-token");
 	});
 
 	it("reports ANTHROPIC_AUTH_TOKEN but preserves OAuth token API key lookup", () => {

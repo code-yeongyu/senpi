@@ -1,10 +1,32 @@
 import type { AssistantMessage, AssistantMessageEvent } from "../types.ts";
 
+class FifoQueue<T> {
+	private incoming: T[] = [];
+	private outgoing: T[] = [];
+
+	get length(): number {
+		return this.incoming.length + this.outgoing.length;
+	}
+
+	enqueue(value: T): void {
+		this.incoming.push(value);
+	}
+
+	dequeue(): T | undefined {
+		if (this.outgoing.length === 0) {
+			while (this.incoming.length > 0) {
+				this.outgoing.push(this.incoming.pop()!);
+			}
+		}
+		return this.outgoing.pop();
+	}
+}
+
 // Generic event stream class for async iteration
 export class EventStream<T, R = T> implements AsyncIterable<T> {
 	#queue: T[] = [];
 	#queueHead = 0;
-	private waiting: Array<{ resolve: (value: IteratorResult<T>) => void; reject: (error: unknown) => void }> = [];
+	private waiting = new FifoQueue<{ resolve: (value: IteratorResult<T>) => void; reject: (error: unknown) => void }>();
 	private done = false;
 	#failed = false;
 	#error: unknown;
@@ -55,7 +77,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		}
 
 		// Deliver to waiting consumer or queue it
-		const waiter = this.waiting.shift();
+		const waiter = this.waiting.dequeue();
 		if (waiter) {
 			waiter.resolve({ value: event, done: false });
 		} else {
@@ -70,7 +92,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		}
 		// Notify all waiting consumers that we're done
 		while (this.waiting.length > 0) {
-			const waiter = this.waiting.shift();
+			const waiter = this.waiting.dequeue();
 			if (waiter) waiter.resolve({ value: undefined, done: true });
 		}
 	}
@@ -82,7 +104,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 		this.#error = error;
 		this.rejectFinalResult(error);
 		while (this.waiting.length > 0) {
-			const waiter = this.waiting.shift();
+			const waiter = this.waiting.dequeue();
 			if (waiter) waiter.reject(error);
 		}
 	}
@@ -99,7 +121,7 @@ export class EventStream<T, R = T> implements AsyncIterable<T> {
 				if (this.done) {
 					return Promise.resolve({ value: undefined, done: true });
 				}
-				return new Promise<IteratorResult<T>>((resolve, reject) => this.waiting.push({ resolve, reject }));
+				return new Promise<IteratorResult<T>>((resolve, reject) => this.waiting.enqueue({ resolve, reject }));
 			},
 		};
 	}

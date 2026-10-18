@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { estimateCacheKey, isTransientMessage, serializeForEstimate } from "../../../compaction/estimate-cache-key.ts";
 import { estimateTokens } from "../../../compaction/index.ts";
 
 /**
@@ -44,15 +45,33 @@ function cjkExtraChars(text: string): number {
  * Request-sizing estimate: the shared chars/4 estimate plus a CJK density
  * correction. JSON serialization carries every content field, so CJK runs are
  * counted wherever they appear (text, tool arguments, outputs, summaries).
+ *
+ * Cached per message object with the same JSON-text key as `estimateTokens`
+ * (senpi#2525): the emergency-prune path estimates the whole context every turn,
+ * and an unchanged message must not pay for another CJK scan. The key is the
+ * serialization the scan needs anyway, so a miss costs nothing extra.
  */
 function estimateWireTokens(message: AgentMessage): number {
+	const serialized = serializeForEstimate(message);
+	if (serialized === undefined || isTransientMessage(message)) return computeWireTokens(message, serialized);
+	const key = estimateCacheKey(serialized);
+	const cached = wireEstimateCache.get(message);
+	if (cached !== undefined && cached.key === key) return cached.tokens;
+	const tokens = computeWireTokens(message, serialized);
+	wireEstimateCache.set(message, { key, tokens });
+	return tokens;
+}
+
+interface WireEstimateCacheEntry {
+	readonly key: string;
+	readonly tokens: number;
+}
+
+const wireEstimateCache = new WeakMap<AgentMessage, WireEstimateCacheEntry>();
+
+function computeWireTokens(message: AgentMessage, serialized: string | undefined): number {
 	const base = estimateTokens(message);
-	let serialized: string;
-	try {
-		serialized = JSON.stringify(message);
-	} catch {
-		return base;
-	}
+	if (serialized === undefined) return base;
 	return base + Math.ceil(cjkExtraChars(serialized) / 4);
 }
 

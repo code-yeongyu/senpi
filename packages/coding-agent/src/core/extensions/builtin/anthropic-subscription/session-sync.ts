@@ -1,0 +1,240 @@
+import { createHash } from "node:crypto";
+import type { Context, Message } from "@earendil-works/pi-ai";
+import { appendSdkContentBlocks } from "./content-blocks.ts";
+import { longContextAvailable } from "./long-context.ts";
+import type { AnthropicSubscriptionAuthLane } from "./options.ts";
+import type { ContentBlockParam, Options } from "./sdk-boundary.ts";
+import { imageNeutralContent } from "./sent-image-slots.ts";
+import type { AnthropicSubscriptionSessionEntry } from "./session-registry.ts";
+import { HOST_TOOL_POLICY_FINGERPRINT, mapPiToolNameToSdk } from "./tools.ts";
+
+export type SentMessage = Extract<Message, { role: "user" | "toolResult" }>;
+
+export type SessionConfigFingerprint = {
+	systemPromptHash: string;
+	toolsetHash: string;
+};
+
+const sentHashesByEntry = new WeakMap<AnthropicSubscriptionSessionEntry, string[]>();
+
+function stableValue(value: unknown, seen = new WeakSet<object>()): unknown {
+	if (typeof value === "function") return `[function:${value.name}:${value.toString()}]`;
+	if (typeof value === "bigint") return value.toString();
+	if (value === null || typeof value !== "object") return value;
+	if (seen.has(value)) return "[circular]";
+	seen.add(value);
+	const normalized = Array.isArray(value)
+		? value.map((item) => stableValue(item, seen))
+		: Object.fromEntries(
+				Object.entries(value as Record<string, unknown>)
+					.filter(([, item]) => item !== undefined)
+					.sort(([left], [right]) => left.localeCompare(right))
+					.map(([key, item]) => [key, stableValue(item, seen)]),
+			);
+	seen.delete(value);
+	return normalized;
+}
+
+function digest(value: unknown): string {
+	return createHash("sha256")
+		.update(JSON.stringify(stableValue(value)))
+		.digest("hex");
+}
+
+export function sessionSyncDigest(value: unknown): string {
+	return digest(value);
+}
+
+/**
+ * A user message with no content blocks carries nothing to transmit and is
+ * transient: it is present for a single provider call and gone by the next.
+ * Hashing one shifts every later index, so the following turn reports
+ * `sent_stream_diverged` and re-sends the whole history even though the
+ * conversation never changed. Tool results are never filtered - an empty tool
+ * result is a real observation, and its id and name stay hash-significant.
+ */
+function isContentlessUserMessage(message: SentMessage): boolean {
+	if (message.role !== "user") return false;
+	// Only a literal zero-block array is content-less. Whitespace-only text and
+	// explicit empty-text blocks still emit transport blocks, so they must stay
+	// hash-significant to keep divergence detection fail-closed.
+	return Array.isArray(message.content) && message.content.length === 0;
+}
+
+const VOLATILE_HOOK_CUSTOM_TYPES = new Set([
+	"omo-memory:notice",
+	"mindy-team:context-block",
+	"senpi-task.usage",
+	"senpi-monitor:notification",
+	"omo-senpi:wake",
+	"senpi-terminal:notification",
+	"omo-ultrawork:directive",
+	"omo-mass-ulw:skill-pointer",
+]);
+
+type HookInspectable = {
+	role: string;
+	content?: unknown;
+	customType?: unknown;
+	__piContextProvenance?: { customType?: unknown };
+};
+
+function messageText(message: HookInspectable): string {
+	const content = message.content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.map((block) =>
+			block && typeof block === "object" && "type" in block && block.type === "text" && "text" in block
+				? String(block.text)
+				: "",
+		)
+		.join("");
+}
+
+function hookCustomType(message: HookInspectable): string | undefined {
+	if (typeof message.customType === "string") return message.customType;
+	const provenance = message.__piContextProvenance;
+	if (provenance && typeof provenance.customType === "string") return provenance.customType;
+	return undefined;
+}
+
+/**
+ * Top-of-turn hook injections convert to user-role bodies. Their *content*
+ * must not participate in continuity hashes (a rewrite would look like
+ * sent_stream_diverged and flatten). They still have to stay in the transmitted
+ * set: `from` indexes that same list when building the SDK delta payload.
+ * convertToLlm preserves customType in request-local provenance; content signatures keep compatibility with already-converted rewrite-in-place hooks.
+ */
+function volatileHookKind(message: HookInspectable): string | undefined {
+	const customType = hookCustomType(message);
+	if (customType && VOLATILE_HOOK_CUSTOM_TYPES.has(customType)) return customType;
+	const text = messageText(message);
+	if (text.startsWith("<memory_notice>")) return "omo-memory:notice";
+	if (text.startsWith("<RULES>\n") || text.startsWith("<RULES>\r\n")) return "mindy-team:context-block";
+	if (text.startsWith("<omo-senpi-task>")) return "senpi-task.usage";
+	return undefined;
+}
+
+export function sentMessages(context: Context): SentMessage[] {
+	return context.messages.filter(isTransmittedMessage);
+}
+
+/**
+ * The one selection rule for "message the provider was sent". Branch-derived and
+ * context-derived hashes MUST share it: a content-less user message that only one
+ * side skips shifts every later index and reports a false divergence.
+ */
+export function isTransmittedMessage(message: { role: string }): message is SentMessage {
+	if (message.role !== "user" && message.role !== "toolResult") return false;
+	return !isContentlessUserMessage(message as SentMessage);
+}
+
+/**
+ * Applies the transmitted-message rule itself, so no caller can produce a hash
+ * list that disagrees with another caller's by forgetting the filter.
+ */
+export function sentMessageHashes(messages: readonly SentMessage[]): string[] {
+	const hashes = messages.filter(isTransmittedMessage).map((message) => {
+		const hook = volatileHookKind(message);
+		if (hook) return digest({ role: message.role, volatileHook: hook });
+		return digest(
+			message.role === "user"
+				? { role: message.role, content: imageNeutralContent(message.content) }
+				: {
+						role: message.role,
+						toolCallId: message.toolCallId,
+						toolName: message.toolName,
+						content: imageNeutralContent(message.content),
+					},
+		);
+	});
+	return hashes;
+}
+
+export function sentHashPrefixDigest(hashes: readonly string[], count = hashes.length): string {
+	return digest(hashes.slice(0, count));
+}
+
+/** Pure divergence guard: every non-proven continuation resolves to cold-seed. */
+
+export function sentHashesForEntry(entry: AnthropicSubscriptionSessionEntry): readonly string[] | undefined {
+	return sentHashesByEntry.get(entry);
+}
+
+export function recordSyncedStream(entry: AnthropicSubscriptionSessionEntry, hashes: readonly string[]): void {
+	const copy = [...hashes];
+	sentHashesByEntry.set(entry, copy);
+	entry.sentCount = copy.length;
+	entry.syncedPrefixHash = sentHashPrefixDigest(copy);
+	entry.branchInfo = null;
+}
+
+export function configFingerprint(
+	options: Options,
+	context: Context,
+	authLane: AnthropicSubscriptionAuthLane,
+	accountName: string,
+): SessionConfigFingerprint {
+	return {
+		systemPromptHash: digest(options.systemPrompt ?? null),
+		toolsetHash: digest({
+			tools: options.tools ?? [],
+			reasoning: {
+				thinking: options.thinking,
+				effort: options.effort,
+				maxThinkingTokens: options.maxThinkingTokens,
+			},
+			contextTools: (context.tools ?? []).map((tool) => ({
+				name: tool.name,
+				description: tool.description,
+				parameters: tool.parameters,
+			})),
+			cwd: options.cwd,
+			authLane,
+			accountName,
+			permissionMode: options.permissionMode,
+			// The compaction owner (`autoCompactEnabled`) is fixed at spawn: a changed owner must
+			// restart the resident process, or the old owner keeps compacting next to the new one.
+			settings: options.settings,
+			// Bump HOST_TOOL_POLICY_FINGERPRINT in tools.ts when denial copy or hooks change.
+			hostToolPolicy: HOST_TOOL_POLICY_FINGERPRINT,
+			settingSources: options.settingSources,
+			// A refused 1M window must restart the resident process at the standard one (senpi#3408). Only
+			// the refusal state is hashed: a live model switch reaches the process through setModel.
+			longContextRefused: !longContextAvailable(),
+			extraArgs: options.extraArgs,
+			pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
+			includePartialMessages: options.includePartialMessages,
+		}),
+	};
+}
+
+function appendContent(blocks: ContentBlockParam[], content: string | readonly unknown[]): void {
+	// The delta path has always transmitted a whole-content empty string as an
+	// empty text block; keep that wire shape so resident sessions see the same
+	// payload as before the shared mapper (prompt-bridge intentionally skips it).
+	if (content === "") {
+		blocks.push({ type: "text", text: "" });
+		return;
+	}
+	appendSdkContentBlocks(blocks, content);
+}
+
+export function buildDeltaPromptBlocks(
+	messages: readonly SentMessage[],
+	customToolNameToSdk?: ReadonlyMap<string, string>,
+): ContentBlockParam[] {
+	const blocks: ContentBlockParam[] = [];
+	for (const [index, message] of messages.entries()) {
+		if (index > 0) blocks.push({ type: "text", text: "\n\n" });
+		if (message.role === "toolResult") {
+			blocks.push({
+				type: "text",
+				text: `Tool result (${mapPiToolNameToSdk(message.toolName, customToolNameToSdk)}, id=${message.toolCallId}):\n`,
+			});
+		}
+		appendContent(blocks, message.content);
+	}
+	return blocks;
+}

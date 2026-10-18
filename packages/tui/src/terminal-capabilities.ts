@@ -33,7 +33,7 @@ export function detectTerminalCapabilities(
 	const termProgram = (env.TERM_PROGRAM ?? "").toLowerCase();
 	const terminalEmulator = env.TERMINAL_EMULATOR ?? "";
 	const colorTerm = env.COLORTERM ?? "";
-	const trueColor = colorTerm === "truecolor" || colorTerm === "24bit";
+	const trueColor = colorTerm === "truecolor" || colorTerm === "24bit" || term.toLowerCase().endsWith("-direct");
 
 	if (env.TMUX || term.startsWith("tmux")) {
 		const state = probeTmuxImageState(env, execTmux);

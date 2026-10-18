@@ -1,4 +1,5 @@
 import { open as openInspector } from "node:inspector";
+import { installStaleExtensionContainment } from "../../src/core/stale-extension-containment.ts";
 import {
 	consumeEarlyInspectorVmImportRecoveries,
 	installEarlyInspectorVmImportRecovery,
@@ -11,6 +12,8 @@ if (mode !== "recoverable" && mode !== "fatal") throw new Error("Expected mode: 
 
 openInspector(0, "127.0.0.1", false);
 installEarlyInspectorVmImportRecovery();
+// cli-main installs the stale-ctx seam right after this one; "with-containment" mirrors that order.
+if (process.argv[3] === "with-containment") installStaleExtensionContainment();
 
 const error = Object.assign(new TypeError("A dynamic import callback was not specified."), {
 	code: "ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING",

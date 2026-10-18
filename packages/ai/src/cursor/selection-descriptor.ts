@@ -80,7 +80,9 @@ function buildParameters(
  * model id plus ordered parameters. Both Cursor transports consume this; the
  * native lane renders parameters into protobuf, the CLI lane renders a model
  * string. Absent/unsupported selections return the representative or upstream
- * id with zero parameters.
+ * id with zero parameters. Identities derived from unlisted suffix variants
+ * resolve each level through `cursorReasoning.variantIds` before any capability
+ * lookup (senpi#2038).
  */
 export function resolveCursorSelectionDescriptor(
 	model: Model<"cursor-agent">,
@@ -95,10 +97,22 @@ export function resolveCursorSelectionDescriptor(
 	}
 
 	if (selection.source === "legacy-variant") {
-		if (selection.legacyVariantId === undefined || getCursorVariantAlias(selection.legacyVariantId) === undefined) {
+		const legacyId = selection.legacyVariantId;
+		const allowlisted =
+			legacyId !== undefined &&
+			(getCursorVariantAlias(legacyId) !== undefined || Object.values(compat.variantIds ?? {}).includes(legacyId));
+		if (!allowlisted) {
 			return { modelId: compat.representativeVariantId, parameters: [] };
 		}
-		return { modelId: selection.legacyVariantId, parameters: [] };
+		return { modelId: legacyId, parameters: [] };
+	}
+
+	const derivedVariantId = compat.variantIds?.[selection.level];
+	if (derivedVariantId !== undefined) {
+		return { modelId: derivedVariantId, parameters: [] };
+	}
+	if (compat.variantIds !== undefined) {
+		return { modelId: compat.representativeVariantId, parameters: [] };
 	}
 
 	const capability = CURSOR_MODEL_CAPABILITIES[compat.capabilityId];

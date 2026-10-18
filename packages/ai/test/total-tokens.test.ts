@@ -33,9 +33,9 @@ import { resolveApiKey } from "./oauth.ts";
 const oauthTokens = await Promise.all([
 	resolveApiKey("anthropic"),
 	resolveApiKey("github-copilot"),
-	resolveApiKey("openai-codex"),
+	resolveApiKey("chatgpt-subscription"),
 ]);
-const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
+const [anthropicOAuthToken, githubCopilotToken, chatgptSubscriptionToken] = oauthTokens;
 const openRouterApiKey = getLiveEnvApiKey("OPENROUTER_API_KEY", OPENROUTER_LIVE_TEST_FLAG);
 const basetenApiKey = getLiveEnvApiKey("BASETEN_API_KEY", BASETEN_LIVE_TEST_FLAG);
 const qwenTokenPlanApiKey = getLiveEnvApiKey("QWEN_TOKEN_PLAN_API_KEY", QWEN_TOKEN_PLAN_LIVE_TEST_FLAG);
@@ -383,7 +383,7 @@ describe("totalTokens field", () => {
 
 	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together AI", () => {
 		it("Kimi-K2.6 - should return totalTokens equal to sum of components", { retry: 3, timeout: 60000 }, async () => {
-			const llm = getModel("together", "moonshotai/Kimi-K2.6");
+			const llm = getModel("together", "moonshotai/Kimi-K3");
 
 			console.log(`\nTogether AI / ${llm.id}:`);
 			const { first, second } = await testTotalTokensWithCache(llm, {
@@ -489,11 +489,11 @@ describe("totalTokens field", () => {
 	// =========================================================================
 
 	describe.skipIf(!process.env.XIAOMI_API_KEY)("Xiaomi MiMo (API billing)", () => {
-		it("mimo-v2.5-pro - should return totalTokens equal to sum of components", {
+		it("mimo-v2.6-pro - should return totalTokens equal to sum of components", {
 			retry: 3,
 			timeout: 60000,
 		}, async () => {
-			const llm = getModel("xiaomi", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi", "mimo-v2.6-pro");
 
 			console.log(`\nXiaomi MiMo / ${llm.id}:`);
 			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.XIAOMI_API_KEY });
@@ -511,11 +511,11 @@ describe("totalTokens field", () => {
 	// =========================================================================
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_CN_API_KEY)("Xiaomi MiMo Token Plan (CN)", () => {
-		it("mimo-v2.5-pro - should return totalTokens equal to sum of components", {
+		it("mimo-v2.6-pro - should return totalTokens equal to sum of components", {
 			retry: 3,
 			timeout: 60000,
 		}, async () => {
-			const llm = getModel("xiaomi-token-plan-cn", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi-token-plan-cn", "mimo-v2.6-pro");
 
 			console.log(`\nXiaomi MiMo Token Plan CN / ${llm.id}:`);
 			const { first, second } = await testTotalTokensWithCache(llm, {
@@ -535,11 +535,11 @@ describe("totalTokens field", () => {
 	// =========================================================================
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_AMS_API_KEY)("Xiaomi MiMo Token Plan (AMS)", () => {
-		it("mimo-v2.5-pro - should return totalTokens equal to sum of components", {
+		it("mimo-v2.6-pro - should return totalTokens equal to sum of components", {
 			retry: 3,
 			timeout: 60000,
 		}, async () => {
-			const llm = getModel("xiaomi-token-plan-ams", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi-token-plan-ams", "mimo-v2.6-pro");
 
 			console.log(`\nXiaomi MiMo Token Plan AMS / ${llm.id}:`);
 			const { first, second } = await testTotalTokensWithCache(llm, {
@@ -559,11 +559,11 @@ describe("totalTokens field", () => {
 	// =========================================================================
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_SGP_API_KEY)("Xiaomi MiMo Token Plan (SGP)", () => {
-		it("mimo-v2.5-pro - should return totalTokens equal to sum of components", {
+		it("mimo-v2.6-pro - should return totalTokens equal to sum of components", {
 			retry: 3,
 			timeout: 60000,
 		}, async () => {
-			const llm = getModel("xiaomi-token-plan-sgp", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi-token-plan-sgp", "mimo-v2.6-pro");
 
 			console.log(`\nXiaomi MiMo Token Plan SGP / ${llm.id}:`);
 			const { first, second } = await testTotalTokensWithCache(llm, {
@@ -742,11 +742,11 @@ describe("totalTokens field", () => {
 	// =========================================================================
 
 	describe.skipIf(!openRouterApiKey)("OpenRouter", () => {
-		it("anthropic/claude-sonnet-4 - should return totalTokens equal to sum of components", {
+		it("anthropic/claude-sonnet-4.5 - should return totalTokens equal to sum of components", {
 			retry: 3,
 			timeout: 60000,
 		}, async () => {
-			const llm = getModel("openrouter", "anthropic/claude-sonnet-4");
+			const llm = getModel("openrouter", "anthropic/claude-sonnet-4.5");
 
 			console.log(`\nOpenRouter / ${llm.id}:`);
 			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: openRouterApiKey });
@@ -892,14 +892,14 @@ describe("totalTokens field", () => {
 	// =========================================================================
 
 	describe("OpenAI Codex (OAuth)", () => {
-		it.skipIf(!openaiCodexToken)(
+		it.skipIf(!chatgptSubscriptionToken)(
 			"gpt-5.5 - should return totalTokens equal to sum of components",
 			{ retry: 3, timeout: 60000 },
 			async () => {
-				const llm = getModel("openai-codex", "gpt-5.5");
+				const llm = getModel("chatgpt-subscription", "gpt-5.5");
 
 				console.log(`\nOpenAI Codex / ${llm.id}:`);
-				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: openaiCodexToken });
+				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: chatgptSubscriptionToken });
 
 				logUsage("First request", first);
 				logUsage("Second request", second);

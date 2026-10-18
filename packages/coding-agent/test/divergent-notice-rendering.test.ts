@@ -1,8 +1,10 @@
 import type { Model } from "@earendil-works/pi-ai";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
+import { APP_NAME, BRAND } from "../src/config.ts";
 import promptUrlWidgetExtension from "../src/core/extensions/builtin/prompt-url-widget.ts";
 import { renderBannerLines } from "../src/core/extensions/builtin/rules/ui/rules-banner.ts";
+import type { NoticeSpec } from "../src/core/extensions/notice/spec.ts";
 import type { ExtensionAPI, ExtensionContext } from "../src/core/extensions/types.ts";
 import { buildNoticeBox, noticeEntryRenderer, noticeMessageRenderer } from "../src/index.ts";
 import { EarendilAnnouncementComponent } from "../src/modes/interactive/components/earendil-announcement.ts";
@@ -88,6 +90,23 @@ describe("divergent notice rendering", () => {
 		const fakeThis = createInteractiveThis();
 		interactiveMethod(methodName).call(fakeThis, ...args);
 		expectNoticeContract(renderChildren(fakeThis.chatContainer));
+	});
+
+	test("showNewVersionNotification emits the update command on its own extra line", () => {
+		const fakeThis = createInteractiveThis();
+		let captured: NoticeSpec | undefined;
+		fakeThis.showNoticeBox = (spec: unknown): void => {
+			captured = spec as NoticeSpec;
+			interactiveMethod("showNoticeBox").call(fakeThis, spec);
+		};
+
+		interactiveMethod("showNewVersionNotification").call(fakeThis, "5.0.0-0.beta.51");
+
+		expect(captured).toBeDefined();
+		const action = BRAND?.update?.command ?? `${APP_NAME} update`;
+		expect(captured?.why).toBe("New version 5.0.0-0.beta.51 is available.");
+		expect(captured?.why).not.toContain(action);
+		expect(captured?.extra?.some((line) => line.text === action)).toBe(true);
 	});
 
 	test("renders loaded-resource conflict diagnostics through the notice background", () => {

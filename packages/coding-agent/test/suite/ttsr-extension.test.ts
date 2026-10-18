@@ -149,7 +149,8 @@ describe("collapse remediation persistence", () => {
 		const lines = readSessionLines(harness);
 		const entries = readSessionEntries(harness);
 		expect(lines.length).toBe(entries.length);
-		expect(lines.length).toBe(6);
+		expect(lines.length).toBe(7);
+		expect(entries.filter((e) => e.type === "custom" && e.customType === "engine-turn-start")).toHaveLength(1);
 		expectTtsrActivation(entries, {
 			owner: "collapse-repetition",
 			rules: ["collapse-repetition"],

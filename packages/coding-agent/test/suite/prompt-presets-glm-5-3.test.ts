@@ -73,6 +73,14 @@ describe("GLM 5.3 prompt preset", () => {
 		},
 	);
 
+	it("routes user questions through ask_user_question when it is available", () => {
+		expect(GLM5_TUNING).toContain("ask_user_question");
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const preset = resolvePreset(createModel("glm-5.3", "openrouter", "openai-responses"), settings);
+
+		expect(preset?.prompt).toContain("ask_user_question");
+	});
+
 	it("allows settings.json to force glm-5.3 regardless of model id", () => {
 		// given
 		const settings = { promptPreset: "glm-5.3" } as PromptPresetSettings;

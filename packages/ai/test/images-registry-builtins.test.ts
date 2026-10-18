@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateImages } from "../src/images.ts";
 import { getImagesApiProvider } from "../src/images-api-registry.ts";
-import type { ImagesContext, ImagesModel } from "../src/types.ts";
+import { IMAGE_MODELS } from "../src/models.generated.ts";
+import type { ImageModel, ImagesContext } from "../src/types.ts";
 
-const model: ImagesModel<"openai-images"> = {
+const model: ImageModel<"openai-images"> = {
+	type: "image",
 	id: "gpt-image-2",
 	name: "GPT Image 2",
 	api: "openai-images",
@@ -20,6 +22,20 @@ describe("openai-images builtin registry", () => {
 		vi.resetModules();
 	});
 
+	it.each(["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"] as const)(
+		"registers %s with editing and pricing",
+		(id) => {
+			expect(IMAGE_MODELS.openai).toHaveProperty([id]);
+			expect(IMAGE_MODELS.openai[id]).toMatchObject({
+				id,
+				api: "openai-images",
+				input: ["text", "image"],
+				output: ["image"],
+				cost: { input: 5, output: 30, cacheRead: 1.25, cacheWrite: 0 },
+			});
+		},
+	);
+
 	it("registers a lazy generateImages for openai-images", () => {
 		const provider = getImagesApiProvider("openai-images");
 		expect(provider).toBeDefined();
@@ -27,22 +43,26 @@ describe("openai-images builtin registry", () => {
 	});
 
 	it("returns an error envelope when the underlying module import fails", async () => {
-		// Force the dynamic import of the openai-images module to reject.
-		vi.doMock("../../api/openai-images.ts", () => {
+		// Force the dynamic import of the openai-images module to reject. The path is relative to this
+		// test file; a wrong path leaves the real module loaded and the call goes to the network.
+		vi.doMock("../src/api/openai-images.ts", () => {
 			throw new Error("module import failed");
 		});
 
 		const provider = getImagesApiProvider("openai-images");
 		expect(provider).toBeDefined();
+		// If the mocked import did not fail, the real module would build a client with this fetch.
+		const fetch = vi.fn(() => Promise.reject(new Error("the network must not be reached")));
 
-		const result = await generateImages(model, context, { apiKey: "test-key" });
+		const result = await generateImages(model, context, { apiKey: "test-key", fetch });
 		expect(result.stopReason).toBe("error");
 		expect(result.errorMessage).toBeTruthy();
 		expect(result.output).toEqual([]);
+		expect(fetch).not.toHaveBeenCalled();
 	});
 
 	it("returns an error envelope (never a thrown rejection) on import failure via direct provider call", async () => {
-		vi.doMock("../../api/openai-images.ts", () => {
+		vi.doMock("../src/api/openai-images.ts", () => {
 			throw new Error("module import failed");
 		});
 
@@ -51,9 +71,12 @@ describe("openai-images builtin registry", () => {
 
 		// The lazy wrapper must catch the import failure and return an
 		// AssistantImages with stopReason "error" — never a thrown rejection.
-		const result = await provider?.generateImages(model, context, { apiKey: "test-key" });
+		const fetch = vi.fn(() => Promise.reject(new Error("the network must not be reached")));
+		const result = await provider?.generateImages(model, context, { apiKey: "test-key", fetch });
 		expect(result).toBeDefined();
 		expect(result?.stopReason).toBe("error");
 		expect(result?.errorMessage).toBeTruthy();
+		expect(result?.output).toEqual([]);
+		expect(fetch).not.toHaveBeenCalled();
 	});
 });

@@ -1,6 +1,4 @@
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { OAuthFlowError } from "./auth/oauth-errors.ts";
 import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
 import type {
 	ServerConnectionListener,
@@ -13,6 +11,7 @@ import { diagnoseCapturedMcpConnectFailure, diagnoseMcpConnectFailure } from "./
 import { ConnectError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import { subscribeMcpServerLogging } from "./logging.ts";
+import { isMcpNeedsAuthError } from "./needs-auth.ts";
 import { subscribeMcpListChanged } from "./notifications.ts";
 import { subscribeMcpResourceUpdated } from "./resources.ts";
 import {
@@ -103,14 +102,29 @@ export class ServerConnection {
 		if (this.#pendingConnect) return this.#pendingConnect;
 
 		const generation = this.#generation;
-		const connection = this.#createTransportConnection(generation);
-		this.#pendingConnection = connection;
-		this.#setState("connecting");
-		this.#pendingConnect = this.#connectTransport(connection, generation).finally(() => {
+		let connection: McpTransportConnection;
+		try {
+			connection = this.#createTransportConnection();
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		this.#pendingConnect = this.#openConnection(connection, generation).finally(() => {
 			if (this.#pendingConnect !== undefined && generation === this.#generation) this.#pendingConnect = undefined;
-			if (this.#pendingConnection === connection) this.#pendingConnection = undefined;
 		});
+		// Emit "connecting" only after the single-flight promise is published, so a listener that calls
+		// connect() joins this attempt instead of starting a second one.
+		if (generation === this.#generation) this.#setState("connecting");
 		return this.#pendingConnect;
+	}
+
+	// Own the connection before discovery so a concurrent dispose can abort the probe.
+	async #openConnection(connection: McpTransportConnection, generation: number): Promise<Client> {
+		this.#pendingConnection = connection;
+		try {
+			return await this.#connectTransport(connection, generation);
+		} finally {
+			if (this.#pendingConnection === connection) this.#pendingConnection = undefined;
+		}
 	}
 
 	async renew(): Promise<Client> {
@@ -160,11 +174,12 @@ export class ServerConnection {
 		this.#markFailure("needs_client_registration", error);
 	}
 
-	markToolsChanged(): void {
+	markToolsChanged(cause: ServerConnectionToolsChangedEvent["cause"] = "notification"): void {
 		this.#emit(this.#toolsListeners, {
 			type: "tools_changed",
 			serverName: this.serverName,
 			generation: this.#generation,
+			cause,
 		});
 	}
 
@@ -178,8 +193,8 @@ export class ServerConnection {
 		return () => this.#toolsListeners.delete(listener);
 	}
 
-	#createTransportConnection(generation: number): McpTransportConnection {
-		const connection = createMcpTransport({
+	#createTransportConnection(): McpTransportConnection {
+		return createMcpTransport({
 			authProvider: this.#authProvider,
 			config: this.#config,
 			env: this.#env,
@@ -187,6 +202,9 @@ export class ServerConnection {
 			logger: this.#logger,
 			serverName: this.serverName,
 		});
+	}
+
+	#trackTransport(connection: McpTransportConnection, generation: number): void {
 		connection.transport.onclose = wrapAsync(
 			"connection.transport.onclose",
 			() => {
@@ -210,11 +228,12 @@ export class ServerConnection {
 			},
 			this.#sink,
 		);
-		return connection;
 	}
 
 	async #connectTransport(connection: McpTransportConnection, generation: number): Promise<Client> {
 		try {
+			await connection.materialize();
+			this.#trackTransport(connection, generation);
 			await connectMcpTransport(connection);
 		} catch (error) {
 			if (this.#pendingConnection === connection) this.#pendingConnection = undefined;
@@ -222,7 +241,11 @@ export class ServerConnection {
 			if (generation !== this.#generation || this.#state === "disabled") {
 				throw this.#connectError(`MCP server ${this.serverName} connect was superseded`, "connect", true);
 			}
-			if (isNeedsAuthError(error)) {
+			if (error instanceof ConnectError && error.phase === "modern-stdio") {
+				this.markDegraded(error);
+				throw error;
+			}
+			if (isMcpNeedsAuthError(error)) {
 				const authError = error instanceof Error ? error : new Error(String(error));
 				this.markNeedsAuth(authError);
 				throw authError;
@@ -254,7 +277,7 @@ export class ServerConnection {
 		// logger, filtered by config.logLevel, burst-capped.
 		subscribeMcpServerLogging(connection.client, { logLevel: this.#config.logLevel, logger: this.#logger });
 		this.#setState("connected");
-		this.markToolsChanged();
+		this.markToolsChanged("connect");
 		return connection.client;
 	}
 
@@ -318,14 +341,4 @@ export class ServerConnection {
 	get #sink(): McpAsyncErrorSink {
 		return { logger: this.#logger };
 	}
-}
-
-function isNeedsAuthError(error: unknown, depth = 0): boolean {
-	if (error instanceof UnauthorizedError) return true;
-	if (error instanceof OAuthFlowError) return error.terminal;
-	// connectMcpTransport wraps the SDK error in a ConnectError; unwrap the cause.
-	if (depth < 5 && error !== null && typeof error === "object" && "cause" in error) {
-		return isNeedsAuthError((error as { cause?: unknown }).cause, depth + 1);
-	}
-	return false;
 }

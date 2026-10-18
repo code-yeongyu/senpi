@@ -1,0 +1,1157 @@
+{
+	"minimax-m3": {
+		"api": "openai-completions",
+		"contextWindow": 1000000,
+		"maxTokens": 131072,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 0.3,
+			"output": 1.2,
+			"cacheRead": 0.06,
+			"cacheWrite": 0.3
+		}
+	},
+	"minimax-m2.7": {
+		"api": "openai-completions",
+		"contextWindow": 204800,
+		"maxTokens": 131100,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 0.3,
+			"output": 1.2,
+			"cacheRead": 0.06,
+			"cacheWrite": 0.375
+		}
+	},
+	"glm-5.1": {
+		"api": "openai-completions",
+		"contextWindow": 200000,
+		"maxTokens": 128000,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 1.4,
+			"output": 4.4,
+			"cacheRead": 0.28,
+			"cacheWrite": 1.4
+		}
+	},
+	"glm-5.2": {
+		"api": "openai-completions",
+		"contextWindow": 1000000,
+		"maxTokens": 128000,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 1.4,
+			"output": 4.4,
+			"cacheRead": 0.28,
+			"cacheWrite": 1.4
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": null,
+			"medium": null,
+			"high": "high",
+			"xhigh": null,
+			"max": "max"
+		}
+	},
+	"gpt-5.6-sol": {
+		"api": "openai-responses",
+		"contextWindow": 1050000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 4,
+			"output": 20,
+			"cacheRead": 0.4,
+			"cacheWrite": 5
+		},
+		"thinkingLevelMap": {
+			"off": "none",
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": "max"
+		}
+	},
+	"gpt-5.6-terra": {
+		"api": "openai-responses",
+		"contextWindow": 1050000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 2,
+			"output": 12,
+			"cacheRead": 0.2,
+			"cacheWrite": 2.5
+		},
+		"thinkingLevelMap": {
+			"off": "none",
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": "max"
+		}
+	},
+	"gpt-5.6-luna": {
+		"api": "openai-responses",
+		"contextWindow": 1050000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 0.2,
+			"output": 1.2,
+			"cacheRead": 0.02,
+			"cacheWrite": 0.25
+		},
+		"thinkingLevelMap": {
+			"off": "none",
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": "max"
+		}
+	},
+	"gpt-5.5": {
+		"api": "openai-responses",
+		"contextWindow": 1050000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 5,
+			"output": 30,
+			"cacheRead": 0.5,
+			"cacheWrite": 5,
+			"tiers": [
+				{
+					"inputTokensAbove": 272000,
+					"input": 10,
+					"output": 45,
+					"cacheRead": 1,
+					"cacheWrite": 10
+				}
+			]
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": null,
+			"medium": "medium",
+			"high": null,
+			"xhigh": null,
+			"max": null
+		}
+	},
+	"gpt-5.5-instant": {
+		"api": "openai-responses",
+		"contextWindow": 1050000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 5,
+			"output": 30,
+			"cacheRead": 0.5,
+			"cacheWrite": 5,
+			"tiers": [
+				{
+					"inputTokensAbove": 272000,
+					"input": 10,
+					"output": 45,
+					"cacheRead": 1,
+					"cacheWrite": 10
+				}
+			]
+		}
+	},
+	"gpt-5.4": {
+		"api": "openai-responses",
+		"contextWindow": 272000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 2.5,
+			"output": 15,
+			"cacheRead": 0.25,
+			"cacheWrite": 2.5
+		},
+		"thinkingLevelMap": {
+			"off": "none",
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": null
+		}
+	},
+	"gpt-5.2": {
+		"api": "openai-responses",
+		"contextWindow": 400000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 1.75,
+			"output": 14,
+			"cacheRead": 0.175,
+			"cacheWrite": 1.75
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": null
+		}
+	},
+	"gpt-5.4-pro": {
+		"api": "openai-responses",
+		"contextWindow": 1050000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 30,
+			"output": 180,
+			"cacheRead": 3,
+			"cacheWrite": 30
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": null,
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": null
+		}
+	},
+	"gpt-5.4-mini": {
+		"api": "openai-responses",
+		"contextWindow": 400000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 0.75,
+			"output": 4.5,
+			"cacheRead": 0.075,
+			"cacheWrite": 0.75
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": null
+		}
+	},
+	"gpt-5-mini": {
+		"api": "openai-responses",
+		"contextWindow": 400000,
+		"maxTokens": 128000,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 0.25,
+			"output": 2,
+			"cacheRead": 0.025,
+			"cacheWrite": 0.25
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": null,
+			"max": null
+		}
+	},
+	"gpt-5.4-nano": {
+		"api": "openai-responses",
+		"contextWindow": 400000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 0.2,
+			"output": 1.25,
+			"cacheRead": 0.02,
+			"cacheWrite": 0.2
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": null
+		}
+	},
+	"gpt-5-nano": {
+		"api": "openai-responses",
+		"contextWindow": 400000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 0.05,
+			"output": 0.4,
+			"cacheRead": 0.005,
+			"cacheWrite": 0.05
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": "minimal",
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": null,
+			"max": null
+		}
+	},
+	"claude-fable-5.1": {
+		"api": "anthropic-messages",
+		"contextWindow": 1000000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 10,
+			"output": 50,
+			"cacheRead": 0.25,
+			"cacheWrite": 12.5
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": "max"
+		}
+	},
+	"claude-fable-5": {
+		"api": "anthropic-messages",
+		"contextWindow": 1000000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 10,
+			"output": 50,
+			"cacheRead": 1,
+			"cacheWrite": 12.5
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": null,
+			"medium": null,
+			"high": null,
+			"xhigh": "xhigh",
+			"max": "max"
+		}
+	},
+	"claude-opus-5": {
+		"api": "anthropic-messages",
+		"contextWindow": 1000000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 5,
+			"output": 25,
+			"cacheRead": 0.5,
+			"cacheWrite": 6.25
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": "max"
+		}
+	},
+	"claude-opus-4.8": {
+		"api": "anthropic-messages",
+		"contextWindow": 1000000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 5,
+			"output": 25,
+			"cacheRead": 0.5,
+			"cacheWrite": 6.25
+		}
+	},
+	"claude-opus-4.7": {
+		"api": "anthropic-messages",
+		"contextWindow": 1000000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 5,
+			"output": 25,
+			"cacheRead": 0.5,
+			"cacheWrite": 6.25
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": null,
+			"medium": null,
+			"high": null,
+			"xhigh": "xhigh",
+			"max": null
+		}
+	},
+	"claude-opus-4.6": {
+		"api": "anthropic-messages",
+		"contextWindow": 1000000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 5,
+			"output": 25,
+			"cacheRead": 0.5,
+			"cacheWrite": 6.25
+		}
+	},
+	"claude-opus-4.5": {
+		"api": "anthropic-messages",
+		"contextWindow": 200000,
+		"maxTokens": 32000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 5,
+			"output": 25,
+			"cacheRead": 0.5,
+			"cacheWrite": 6.25
+		}
+	},
+	"claude-sonnet-5": {
+		"api": "anthropic-messages",
+		"contextWindow": 1000000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 2,
+			"output": 10,
+			"cacheRead": 0.2,
+			"cacheWrite": 2.5
+		},
+		"thinkingLevelMap": {
+			"off": "off",
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": "max"
+		}
+	},
+	"claude-sonnet-4.6": {
+		"api": "anthropic-messages",
+		"contextWindow": 1000000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 3,
+			"output": 15,
+			"cacheRead": 0.3,
+			"cacheWrite": 3.75
+		}
+	},
+	"claude-sonnet-4.5": {
+		"api": "anthropic-messages",
+		"contextWindow": 200000,
+		"maxTokens": 64000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 3,
+			"output": 15,
+			"cacheRead": 0.3,
+			"cacheWrite": 3.75
+		}
+	},
+	"claude-haiku-4.5": {
+		"api": "anthropic-messages",
+		"contextWindow": 200000,
+		"maxTokens": 64000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 1,
+			"output": 5,
+			"cacheRead": 0.1,
+			"cacheWrite": 1.25
+		}
+	},
+	"gemini-3.1-pro": {
+		"api": "openai-completions",
+		"contextWindow": 1000000,
+		"maxTokens": 64000,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 2,
+			"output": 12,
+			"cacheRead": 0.2,
+			"cacheWrite": 2
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": null,
+			"high": "high",
+			"xhigh": null,
+			"max": null
+		}
+	},
+	"gemini-3-flash": {
+		"api": "openai-completions",
+		"contextWindow": 1048576,
+		"maxTokens": 65536,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 0.5,
+			"output": 3,
+			"cacheRead": 0.05,
+			"cacheWrite": 0.5
+		}
+	},
+	"gemini-3.5-flash-lite": {
+		"api": "openai-completions",
+		"contextWindow": 1048576,
+		"maxTokens": 65536,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 0.3,
+			"output": 2.5,
+			"cacheRead": 0.03,
+			"cacheWrite": 0.3
+		}
+	},
+	"gemini-3.6-flash": {
+		"api": "openai-completions",
+		"contextWindow": 1048576,
+		"maxTokens": 65536,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 1.5,
+			"output": 7.5,
+			"cacheRead": 0.15,
+			"cacheWrite": 1.5
+		}
+	},
+	"hy3": {
+		"api": "openai-completions",
+		"contextWindow": 256000,
+		"maxTokens": 128000,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 0.132,
+			"output": 0.528,
+			"cacheRead": 0.033,
+			"cacheWrite": 0.132
+		},
+		"thinkingLevelMap": {
+			"off": "none",
+			"minimal": null,
+			"low": "low",
+			"medium": null,
+			"high": "high",
+			"xhigh": null,
+			"max": null
+		}
+	},
+	"mimo-v2.5": {
+		"api": "openai-completions",
+		"contextWindow": 1000000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 0.14,
+			"output": 0.28,
+			"cacheRead": 0.0028,
+			"cacheWrite": 0.14
+		}
+	},
+	"glm-5.3-flash": {
+		"api": "openai-completions",
+		"contextWindow": 1000000,
+		"maxTokens": 131072,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 0.15,
+			"output": 0.5,
+			"cacheRead": 0.03,
+			"cacheWrite": 0.15
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": null,
+			"high": "high",
+			"xhigh": null,
+			"max": "max"
+		}
+	},
+	"kimi-k2.6": {
+		"api": "openai-completions",
+		"contextWindow": 262144,
+		"maxTokens": 65536,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 0.95,
+			"output": 4,
+			"cacheRead": 0.1615,
+			"cacheWrite": 0.95
+		}
+	},
+	"glm-5.3": {
+		"api": "openai-completions",
+		"contextWindow": 1000000,
+		"maxTokens": 131072,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 1.4,
+			"output": 4.4,
+			"cacheRead": 0.28,
+			"cacheWrite": 1.4
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": null,
+			"high": "high",
+			"xhigh": null,
+			"max": "max"
+		}
+	},
+	"mimo-v2.5-pro": {
+		"api": "openai-completions",
+		"contextWindow": 1000000,
+		"maxTokens": 128000,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 0.435,
+			"output": 0.87,
+			"cacheRead": 0.0036,
+			"cacheWrite": 0.435
+		}
+	},
+	"hy4-preview": {
+		"api": "openai-completions",
+		"contextWindow": 1000000,
+		"maxTokens": 64000,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 0.834,
+			"output": 2.501,
+			"cacheRead": 0.042,
+			"cacheWrite": 0.834
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": null,
+			"high": "high",
+			"xhigh": null,
+			"max": null
+		}
+	},
+	"kimi-k3": {
+		"api": "openai-completions",
+		"contextWindow": 1048576,
+		"maxTokens": 131072,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 3,
+			"output": 15,
+			"cacheRead": 0.3,
+			"cacheWrite": 3
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": null,
+			"medium": null,
+			"high": null,
+			"xhigh": null,
+			"max": "max"
+		}
+	},
+	"qwen3.8-flash": {
+		"api": "openai-completions",
+		"contextWindow": 1000000,
+		"maxTokens": 131000,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 0.16,
+			"output": 0.47,
+			"cacheRead": 0.016,
+			"cacheWrite": 0.16
+		}
+	},
+	"qwen3.8-max": {
+		"api": "openai-completions",
+		"contextWindow": 1000000,
+		"maxTokens": 131070,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 2,
+			"output": 6,
+			"cacheRead": 0.25,
+			"cacheWrite": 2
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": null,
+			"xhigh": "xhigh",
+			"max": null
+		}
+	},
+	"qwen3.8-27b": {
+		"api": "openai-completions",
+		"contextWindow": 262144,
+		"maxTokens": 131072,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 0.22,
+			"output": 1.6,
+			"cacheRead": 0.022,
+			"cacheWrite": 0.22
+		}
+	},
+	"deepseek-v4.1-flash": {
+		"api": "openai-responses",
+		"contextWindow": 1000000,
+		"maxTokens": 384000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 0.3,
+			"output": 1.2,
+			"cacheRead": 0.006,
+			"cacheWrite": 0.3
+		},
+		"thinkingLevelMap": {
+			"off": "none",
+			"minimal": null,
+			"low": "low",
+			"medium": null,
+			"high": "high",
+			"xhigh": null,
+			"max": "max"
+		}
+	},
+	"gpt-6-astra": {
+		"api": "openai-responses",
+		"contextWindow": 1050000,
+		"maxTokens": 128000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 10,
+			"output": 50,
+			"cacheRead": 1,
+			"cacheWrite": 12.5,
+			"tiers": [
+				{
+					"inputTokensAbove": 272000,
+					"input": 20,
+					"output": 75,
+					"cacheRead": 2,
+					"cacheWrite": 25
+				}
+			]
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": "max"
+		}
+	},
+	"gemini-3.8-flash": {
+		"api": "openai-completions",
+		"contextWindow": 1048576,
+		"maxTokens": 65536,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 0.75,
+			"output": 3.75,
+			"cacheRead": 0.075,
+			"cacheWrite": 0.75
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": null,
+			"max": null
+		}
+	},
+	"deepseek-v4-pro": {
+		"api": "openai-responses",
+		"contextWindow": 1000000,
+		"maxTokens": 384000,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 1.32,
+			"output": 3.96,
+			"cacheRead": 0.044,
+			"cacheWrite": 1.32
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": null,
+			"medium": null,
+			"high": "high",
+			"xhigh": null,
+			"max": "max"
+		}
+	},
+	"gemini-3.5-flash": {
+		"api": "openai-completions",
+		"contextWindow": 1048576,
+		"maxTokens": 65536,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 1.5,
+			"output": 9,
+			"cacheRead": 0.15,
+			"cacheWrite": 1.5
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": "minimal",
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": null,
+			"max": null
+		}
+	},
+	"deepseek-v3.2": {
+		"api": "openai-responses",
+		"contextWindow": 164000,
+		"maxTokens": 164000,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 0.29,
+			"output": 0.44,
+			"cacheRead": 0.145,
+			"cacheWrite": 0.29
+		}
+	},
+	"deepseek-v4-flash": {
+		"api": "openai-responses",
+		"contextWindow": 1000000,
+		"maxTokens": 384000,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 0.3,
+			"output": 1.2,
+			"cacheRead": 0.006,
+			"cacheWrite": 0.3
+		}
+	},
+	"deepseek-v4-flash-vision-exp": {
+		"api": "openai-responses",
+		"contextWindow": 1000000,
+		"maxTokens": 384000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 0.3,
+			"output": 1.2,
+			"cacheRead": 0.006,
+			"cacheWrite": 0.3
+		},
+		"thinkingLevelMap": {
+			"off": "none",
+			"minimal": null,
+			"low": "low",
+			"medium": null,
+			"high": "high",
+			"xhigh": null,
+			"max": "max"
+		}
+	},
+	"grok-4.5": {
+		"api": "openai-completions",
+		"contextWindow": 500000,
+		"maxTokens": 500000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 2,
+			"output": 6,
+			"cacheRead": 0.3,
+			"cacheWrite": 2
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": null,
+			"max": null
+		}
+	},
+	"grok-4.6": {
+		"api": "openai-completions",
+		"contextWindow": 500000,
+		"maxTokens": 500000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 2,
+			"output": 6,
+			"cacheRead": 0.5,
+			"cacheWrite": 2
+		},
+		"thinkingLevelMap": {
+			"off": null,
+			"minimal": null,
+			"low": "low",
+			"medium": "medium",
+			"high": "high",
+			"xhigh": "xhigh",
+			"max": null
+		}
+	},
+	"kimi-k2.5": {
+		"api": "openai-completions",
+		"contextWindow": 256000,
+		"maxTokens": 256000,
+		"input": [
+			"text",
+			"image"
+		],
+		"cost": {
+			"input": 0.59,
+			"output": 3,
+			"cacheRead": 0.1,
+			"cacheWrite": 0.59
+		}
+	},
+	"muse-spark-1-3": {
+		"api": "openai-completions",
+		"contextWindow": 1000000,
+		"maxTokens": 131000,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 1.25,
+			"output": 4.25,
+			"cacheRead": 0.15,
+			"cacheWrite": 1.25
+		}
+	},
+	"qwen3.6-27b": {
+		"api": "openai-completions",
+		"contextWindow": 128000,
+		"maxTokens": 32768,
+		"input": [
+			"text",
+			"image",
+			"video"
+		],
+		"cost": {
+			"input": 0.19,
+			"output": 2.99,
+			"cacheRead": 0.019,
+			"cacheWrite": 0.19
+		}
+	},
+	"qwen3.7-max": {
+		"api": "openai-completions",
+		"contextWindow": 1000000,
+		"maxTokens": 65536,
+		"input": [
+			"text"
+		],
+		"cost": {
+			"input": 1.65,
+			"output": 4.951,
+			"cacheRead": 0.33,
+			"cacheWrite": 1.65
+		}
+	}
+}

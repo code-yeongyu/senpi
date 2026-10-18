@@ -33,7 +33,12 @@ export function registerSlashCommands(pi: ExtensionAPI, engine: Engine): void {
 			}
 
 			if (subcommand === "show") {
-				const id = tokens[1] ?? "";
+				const id = tokens[1];
+				if (id === undefined) {
+					notify(ctx, "Rule ID is required", "error");
+					return;
+				}
+
 				const rule = findRuleById(loaded.rules, id);
 				if (rule === null) {
 					notify(ctx, `Rule not found: ${id}`, "error");

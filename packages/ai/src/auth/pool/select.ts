@@ -47,6 +47,35 @@ export function rendezvousOrder<T extends SelectableSlot>(key: string, slots: re
 		.map(({ slot }) => slot);
 }
 
+/**
+ * Moves the accounts a user order names to the front, in that order; the rest keep
+ * their ranked order behind them. Names missing from `ranked` are skipped, so a
+ * stale order (a removed account) never blocks selection.
+ */
+export function applyAccountOrder<T extends { readonly name: string }>(
+	order: readonly string[] | undefined,
+	ranked: readonly T[],
+): T[] {
+	if (order === undefined || order.length === 0) return [...ranked];
+	const byName = new Map(ranked.map((slot) => [slot.name, slot]));
+	const front: T[] = [];
+	for (const name of order) {
+		const slot = byName.get(name);
+		if (slot !== undefined && !front.includes(slot)) front.push(slot);
+	}
+	return [...front, ...ranked.filter((slot) => !front.includes(slot))];
+}
+
+/** Drops a removed account from a stored user order, and the order itself once it is empty. */
+export function withoutOrderedAccount<T extends { order?: string[] }>(credential: T, name: string): T {
+	if (credential.order === undefined || !credential.order.includes(name)) return credential;
+	const order = credential.order.filter((entry) => entry !== name);
+	const next = { ...credential };
+	if (order.length === 0) delete next.order;
+	else next.order = order;
+	return next;
+}
+
 function isBlocked(slot: SelectableSlot, now: number): boolean {
 	return slot.blockReason === "auth_error" || (slot.blockedUntil !== undefined && slot.blockedUntil > now);
 }

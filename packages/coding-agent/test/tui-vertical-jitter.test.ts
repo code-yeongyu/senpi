@@ -19,6 +19,8 @@ type Fixture = {
 	settingsManager: { getShowTerminalProgress: () => boolean };
 	ui: {
 		requestRender: () => void;
+		catchUpScrollback: () => void;
+		setScrollbackReplayHold: (hold: boolean | "until-input") => void;
 		terminal: { setProgress: (value: boolean) => void; columns: number; rows: number };
 	};
 	checkShutdownRequested: () => Promise<void>;
@@ -59,6 +61,8 @@ function fixture(): Fixture {
 		settingsManager: { getShowTerminalProgress: () => false },
 		ui: {
 			requestRender: vi.fn(),
+			catchUpScrollback: vi.fn(),
+			setScrollbackReplayHold: vi.fn(),
 			getClearOnShrink: () => false,
 			terminal: { setProgress: vi.fn(), columns: 80, rows: 24 },
 		} as Fixture["ui"] & { getClearOnShrink: () => boolean },

@@ -46,7 +46,9 @@ export function createSessionCursorExecBridge(
 					type: "toolCall",
 					id: event.toolCallId,
 					name: event.toolName,
-					arguments: event.input,
+					// event.input is the validated form of the bridge's JSON exec-frame args; the extension
+					// ToolCallEvent API types it Record<string, unknown>.
+					arguments: event.input as AgentToolCall["arguments"],
 				},
 				event.input,
 			),

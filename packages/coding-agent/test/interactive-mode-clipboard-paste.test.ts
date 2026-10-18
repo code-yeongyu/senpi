@@ -1,3 +1,5 @@
+import type { Stats } from "node:fs";
+import * as fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 /**
@@ -27,6 +29,10 @@ const clipboardTextMock = vi.hoisted(() => ({
 	readClipboardText: vi.fn<() => Promise<string | null>>(),
 }));
 
+vi.mock("node:fs", async (importOriginal) => {
+	return { ...(await importOriginal<typeof fs>()) };
+});
+
 vi.mock("../src/utils/clipboard-image.ts", async (importOriginal) => {
 	const original = await importOriginal<typeof import("../src/utils/clipboard-image.ts")>();
 	return { ...original, readClipboardImage: clipboardImageMock.readClipboardImage };
@@ -34,11 +40,18 @@ vi.mock("../src/utils/clipboard-image.ts", async (importOriginal) => {
 
 vi.mock("../src/utils/clipboard.ts", async (importOriginal) => {
 	const original = await importOriginal<typeof import("../src/utils/clipboard.ts")>();
-	return { ...original, readClipboardText: clipboardTextMock.readClipboardText };
+	// The paste handler reads clipboard file paths first; stub it so tests never read the host clipboard.
+	return {
+		...original,
+		readClipboardFilePaths: vi.fn(async () => null),
+		readClipboardText: clipboardTextMock.readClipboardText,
+	};
 });
 
 import type { ImageContent } from "@earendil-works/pi-ai/compat";
 import { Editor, ProcessTerminal, TUI } from "@earendil-works/pi-tui";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
+import { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { getEditorTheme, initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { processImage } from "../src/utils/image-process.ts";
@@ -125,8 +138,8 @@ function createRealEditor(): Editor {
  * subscribed exactly like production (`subscribeImageMarkers` wires the
  * notify -> reconcile path and the undo payload mirroring).
  */
-function makeContext(options: { blockImages?: boolean; autoResize?: boolean } = {}) {
-	const editor = createRealEditor();
+function makeContext(options: { blockImages?: boolean; autoResize?: boolean; editor?: Editor } = {}) {
+	const editor = options.editor ?? createRealEditor();
 	const sessionLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
 	const context: PasteReceiver = {
 		editor,
@@ -431,4 +444,119 @@ describe("InteractiveMode image-marker reconciliation", () => {
 		expect([...context.pendingImages.keys()]).toEqual([2]);
 		expect(context.pendingImages.get(2)?.data).toBe("BBB");
 	});
+});
+
+describe("Warp-on-WSL empty bracketed image paste", () => {
+	const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+
+	it.each([
+		["direct Warp on WSL", "linux", {}, true, true, "default"],
+		["rebound paste shortcut", "linux", {}, true, true, "rebound"],
+		["disabled paste shortcut", "linux", {}, true, true, "disabled"],
+		[
+			"Windows Terminal on WSL",
+			"linux",
+			{ WARP_SESSION_ID: "", TERM_PROGRAM: "Windows_Terminal" },
+			true,
+			false,
+			"default",
+		],
+		["Warp on Linux without WSL", "linux", { WSL_INTEROP: "", WSL_DISTRO_NAME: "" }, true, false, "default"],
+		["native macOS Warp", "darwin", {}, true, false, "default"],
+		["native Windows Warp", "win32", {}, true, false, "default"],
+		["SSH", "linux", { SSH_CONNECTION: "remote" }, true, false, "default"],
+		["tmux", "linux", { TMUX: "mux" }, true, false, "default"],
+		["tmux pane", "linux", { TMUX_PANE: "%1" }, true, false, "default"],
+		["screen", "linux", { STY: "screen" }, true, false, "default"],
+		["zellij", "linux", { ZELLIJ: "session" }, true, false, "default"],
+		["empty Warp markers", "linux", { WARP_SESSION_ID: "", TERM_PROGRAM: "" }, true, false, "default"],
+		["spoofed TERM_PROGRAM alone", "linux", { WARP_SESSION_ID: " \t" }, true, false, "default"],
+		["invalid interop path", "linux", { WSL_INTEROP: "/tmp/123_interop" }, true, false, "default"],
+		["non-socket interop", "linux", {}, false, false, "default"],
+	] as const)(
+		"%s only attaches a bitmap when locally eligible",
+		async (_name, platform, overrides, socket, attaches, binding) => {
+			const statSync = fs.statSync;
+			const stat = vi
+				.spyOn(fs, "statSync")
+				.mockImplementation((path, ...args) =>
+					path === "/run/WSL/123_interop"
+						? ({ isSocket: () => socket } as Stats)
+						: Reflect.apply(statSync, fs, [path, ...args]),
+				);
+			try {
+				Object.defineProperty(process, "platform", { value: platform, configurable: true });
+				for (const [name, value] of Object.entries({
+					WARP_SESSION_ID: "warp-session",
+					WARP_TERMINAL_SESSION_UUID: "",
+					TERM_PROGRAM: "WarpTerminal",
+					WSL_INTEROP: "/run/WSL/123_interop",
+					WSL_DISTRO_NAME: "Ubuntu",
+					WSLENV: "",
+					SSH_CONNECTION: "",
+					SSH_CLIENT: "",
+					SSH_TTY: "",
+					TMUX: "",
+					TMUX_PANE: "",
+					STY: "",
+					ZELLIJ: "",
+					...overrides,
+				}))
+					vi.stubEnv(name, value);
+				initTheme("dark");
+				const keybindings = new KeybindingsManager(
+					binding === "rebound"
+						? { "app.clipboard.pasteImage": "ctrl+y" }
+						: binding === "disabled"
+							? { "app.clipboard.pasteImage": [] }
+							: {},
+				);
+				const composer = new CustomEditor(new TUI(new ProcessTerminal()), getEditorTheme(), keybindings);
+				const { context } = makeContext({ editor: composer });
+				clipboardImageMock.readClipboardImage.mockReset();
+				clipboardImageMock.readClipboardImage.mockResolvedValue({
+					bytes: pngBytes(PNG_RED_BASE64),
+					mimeType: "image/png",
+				});
+				clipboardTextMock.readClipboardText.mockResolvedValue(null);
+				let paste: Promise<void> | undefined;
+				composer.onPasteImage = () => {
+					paste = getHandleClipboardPaste().call(context);
+				};
+
+				if (attaches) {
+					// Ordinary typing must not query the WSL interop socket on the input hot path.
+					const socketChecks = stat.mock.calls.length;
+					composer.handleInput("draft");
+					expect(composer.getText()).toBe("draft");
+					expect(stat.mock.calls.length).toBe(socketChecks);
+					composer.setText("");
+				}
+
+				// Physical Ctrl+V was captured as these exact bytes, not a Ctrl+V key sequence.
+				composer.handleInput("\x1b[200~\x1b[201~");
+				await paste;
+				expect(composer.getText()).toBe(attaches ? "[Image #1]" : "");
+				expect(getTakeSubmissionImages().call(context, composer.getText())).toEqual(
+					attaches ? [{ type: "image", data: await processedData(PNG_RED_BASE64), mimeType: "image/png" }] : [],
+				);
+
+				composer.handleInput("\x1b[200~plain text\x1b[201~");
+				expect(composer.getText()).toBe(attaches ? "[Image #1]plain text" : "plain text");
+				expect(clipboardImageMock.readClipboardImage).toHaveBeenCalledTimes(attaches ? 1 : 0);
+				if (attaches) {
+					composer.handleInput(LINE_START);
+					composer.handleInput("\x1b[C");
+					composer.handleInput(BACKSPACE);
+					expect(composer.getText()).toBe("plain text");
+				}
+			} finally {
+				stat.mockRestore();
+				vi.unstubAllEnvs();
+				Object.defineProperty(process, "platform", platformDescriptor);
+				clipboardImageMock.readClipboardImage.mockReset();
+				clipboardTextMock.readClipboardText.mockReset();
+			}
+		},
+	);
 });

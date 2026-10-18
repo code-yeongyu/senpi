@@ -85,12 +85,30 @@ describe("validateFallbackChains", () => {
 		{
 			name: "self-references and unsupported thinking",
 			chains: {
-				"openai/gpt-5.4": ["openai/gpt-5.4:high", "test/no-reasoning:high"],
+				"openai/gpt-5.4": ["openai/gpt-5.4", "test/no-reasoning:high"],
 			},
 			warnings: [
-				'Fallback chain entry "openai/gpt-5.4:high" for "openai/gpt-5.4" cannot reference the same model.',
+				'Fallback chain entry "openai/gpt-5.4" for "openai/gpt-5.4" cannot reference the same model.',
 				'Fallback chain entry "test/no-reasoning:high" uses thinking level "high", which is unsupported by test/no-reasoning.',
 			],
+		},
+		{
+			// A second rung of the same model at another level is how a chain retries one
+			// model with thinking off, so it is a valid entry, not a self-reference. An
+			// entry without a level still inherits the key's level and stays a duplicate.
+			name: "the same model at another thinking level",
+			chains: {
+				"openai/gpt-5.4:high": ["openai/gpt-5.4:off"],
+				"anthropic/claude-sonnet-4-5": ["anthropic/claude-sonnet-4-5:high"],
+			},
+			warnings: [],
+		},
+		{
+			name: "a level-less entry repeating the key's level",
+			chains: {
+				"openai/gpt-5.4:high": ["openai/gpt-5.4"],
+			},
+			warnings: ['Fallback chain entry "openai/gpt-5.4" for "openai/gpt-5.4:high" cannot reference the same model.'],
 		},
 		{
 			name: "clean configurations",

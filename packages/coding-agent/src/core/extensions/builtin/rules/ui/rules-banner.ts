@@ -6,7 +6,7 @@ import type { LoadedRule, RuleDiagnostic } from "../rules/types.ts";
 export interface RulesBannerProps {
 	ruleCount: number;
 	diagnostics: ReadonlyArray<RuleDiagnostic>;
-	topRules?: ReadonlyArray<Pick<LoadedRule, "relativePath" | "matchReason">>;
+	topRules?: ReadonlyArray<Pick<LoadedRule, "relativePath" | "matchReason"> & { path?: string }>;
 }
 
 export class RulesBanner extends Container {
@@ -40,7 +40,9 @@ export function renderBannerLines(props: RulesBannerProps, theme: Theme, width: 
 	}
 
 	const extra: NoticeLine[] = (props.topRules ?? []).map((rule) => {
-		const hasDiagnostic = props.diagnostics.some((diagnostic) => diagnostic.source === rule.relativePath);
+		const hasDiagnostic = props.diagnostics.some(
+			(diagnostic) => diagnostic.source === rule.path || diagnostic.source === rule.relativePath,
+		);
 		const annotation =
 			typeof rule.matchReason === "object" && rule.matchReason.kind === "glob" ? ` ${rule.matchReason.pattern}` : "";
 		return {

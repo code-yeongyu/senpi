@@ -4,15 +4,15 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-	assertSenpiPackedWorkspaceFiles,
-	prepareSenpiBundledWorkspaces,
-	rewriteOwnedRegistryAliases,
-} from "./prepare-senpi-bundled-workspaces.mjs";
+import { prepareSenpiBundledWorkspaces } from "./prepare-senpi-bundled-workspaces.mjs";
+import { rewriteOwnedRegistryAliases } from "./prepare-senpi-publish-manifest.mjs";
 import { buildPublishArgs } from "./publish-command.mjs";
 import { rewritePublishManifest } from "./publish-manifest.mjs";
-import { materializeMissingPublishRuntime } from "./materialize-publish-runtime.mjs";
 import { parseNpmPackJson } from "./npm-pack-json.mjs";
+import { assertPublishedWorkspacePackFiles, assertSenpiPackedWorkspaceFiles } from "./senpi-publish-pack-checks.mjs";
+import { queryNpmRegistry } from "./npm-registry.mjs";
+import { getPublicWorkspacePackages } from "./release-packages.mjs";
+import { registryPackageNames } from "./registry-packages.mjs";
 
 // Source packages retain their upstream names and private guard. Registry-backed
 // packages are published from temporary manifests under our scope, while bundled-only
@@ -20,23 +20,39 @@ import { parseNpmPackJson } from "./npm-pack-json.mjs";
 //
 // @code-yeongyu/senpi-server remains excluded because it is `private: true`, and
 // The sqlite session backend keeps upstream's independent semver line.
-const packages = [
-	{ directory: "packages/ai", name: "@code-yeongyu/senpi-ai", rewriteManifest: true },
-	{ directory: "packages/agent", name: "@code-yeongyu/senpi-agent-core", rewriteManifest: true },
-	{ directory: "packages/tui", name: "@code-yeongyu/senpi-tui", rewriteManifest: true },
-	{ directory: "packages/pty", name: "@code-yeongyu/senpi-pty", rewriteManifest: true },
-	{ directory: "packages/telemetry", name: "@code-yeongyu/senpi-telemetry", rewriteManifest: true },
-	{ directory: "packages/senpi-codemode", name: "@code-yeongyu/senpi-codemode", rewriteManifest: true },
-	{ directory: "packages/coding-agent", name: "@code-yeongyu/senpi", rewriteManifest: true },
-];
+const publishOrder = [...registryPackageNames.values()];
+const packages = getPublicWorkspacePackages()
+	.sort((a, b) => publishOrder.indexOf(a.name) - publishOrder.indexOf(b.name))
+	.map((pkg) => ({ ...pkg, rewriteManifest: true }));
 const sourceOnlyPackages = new Set(["@code-yeongyu/senpi-codemode"]);
 const temporaryPublishDirectories = [];
 
 const dryRun = process.argv.includes("--dry-run");
-const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--dry-run");
+const requiredNativePrebuildFlag = "--require-native-prebuilds=";
+const legacyRequiredNativePrebuildFlag = "--require-native-prebuild=";
+// The publish-only job of publish-npm.yml explicitly names every non-best-effort
+// target; the required set is validated against SUPPORTED_NATIVE_PREBUILD_TARGETS by
+// the pack check itself (senpi#1193).
+const requiredNativePrebuildTargets = process.argv
+	.slice(2)
+	.filter(
+		(arg) =>
+			arg.startsWith(requiredNativePrebuildFlag) || arg.startsWith(legacyRequiredNativePrebuildFlag),
+	)
+	.flatMap((arg) => arg.slice(arg.indexOf("=") + 1).split(","))
+	.map((target) => target.trim())
+	.filter((target) => target.length > 0);
+const unknownArgs = process.argv
+	.slice(2)
+	.filter(
+		(arg) =>
+			arg !== "--dry-run" &&
+			!arg.startsWith(requiredNativePrebuildFlag) &&
+			!arg.startsWith(legacyRequiredNativePrebuildFlag),
+	);
 
 if (unknownArgs.length > 0) {
-	console.error(`Usage: node scripts/publish.mjs [--dry-run]`);
+	console.error(`Usage: node scripts/publish.mjs [--dry-run] [--require-native-prebuilds=<platform>-<arch>[,...]]`);
 	process.exit(1);
 }
 
@@ -98,49 +114,19 @@ function assertBuildOutputExists(directory) {
 	}
 }
 
-function validatePack(directory, sourceDirectory) {
-	const result = run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { capture: true, cwd: directory });
+function validatePack(pkg) {
+	const result = run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { capture: true, cwd: pkg.publishDirectory });
 	const packed = parseNpmPackJson(result.stdout)[0];
-	const packageJson = readPackageJson(directory);
-	if (sourceDirectory === "packages/coding-agent") {
-		assertSenpiPackedWorkspaceFiles(packed, {
-			runtimeDependencies: [
-				...Object.keys(packageJson.dependencies ?? {}),
-				...Object.keys(packageJson.optionalDependencies ?? {}),
-			],
-			bundledDependencies: packageJson.bundleDependencies ?? packageJson.bundledDependencies,
-		});
-	}
-	if (sourceOnlyPackages.has(packageJson.name)) {
-		const filePaths = new Set((packed.files ?? []).map((file) => file.path));
-		// `npm pack --json` file paths vary by npm version: some emit a `package/` prefix,
-		// others emit bare repo-relative paths. Accept either so the source-only content
-		// check is npm-version-agnostic (mirrors assertSenpiPackedWorkspaceFiles).
-		for (const requiredFile of ["src/index.ts", "README.md", "CHANGELOG.md", "LICENSE"]) {
-			if (!filePaths.has(`package/${requiredFile}`) && !filePaths.has(requiredFile)) {
-				throw new Error(`${packageJson.name} package tarball is missing ${requiredFile}`);
-			}
-		}
+	if (pkg.directory === "packages/coding-agent") {
+		assertSenpiPackedWorkspaceFiles(packed, readPackageJson(pkg.publishDirectory));
+	} else {
+		assertPublishedWorkspacePackFiles(packed, readPackageJson(pkg.directory).name, { requiredNativePrebuildTargets });
 	}
 	console.log(`  ${packed.filename}: ${packed.files.length} files, ${packed.size} bytes packed, ${packed.unpackedSize} bytes unpacked`);
 }
 
 function isPublished(name, version) {
-	const result = spawnSync(commandForPlatform("npm"), ["view", `${name}@${version}`, "version", "--json"], {
-		encoding: "utf8",
-		stdio: ["inherit", "pipe", "pipe"],
-	});
-
-	if (result.status === 0 && result.stdout.trim()) {
-		return true;
-	}
-
-	const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
-	if (result.status !== 0 && (output.includes("E404") || output.includes("404 Not Found"))) {
-		return false;
-	}
-
-	throw new Error(output ? `Failed to query ${name}@${version}\n${output}` : `Failed to query ${name}@${version}`);
+	return queryNpmRegistry(`${name}@${version}`, "version") !== null;
 }
 
 const packageVersions = new Map();
@@ -161,7 +147,6 @@ const publishArgs = dryRun ? undefined : buildPublishArgs({ githubActions: proce
 
 console.log(`Publishing senpi packages at ${versions[0]}${dryRun ? " (dry run)" : ""}\n`);
 
-await materializeMissingPublishRuntime();
 prepareSenpiBundledWorkspaces();
 
 const packageStates = packages.map((pkg) => ({
@@ -180,7 +165,7 @@ for (const pkg of packageStates) {
 	} else {
 		console.log(`${pkg.name}@${pkg.version} is not published; validating package contents before publish.`);
 	}
-	validatePack(pkg.publishDirectory, pkg.directory);
+	validatePack(pkg);
 	console.log();
 }
 

@@ -101,6 +101,57 @@ describe("truncate utilities", () => {
 		expect(result.firstLineExceedsLimit).toBe(true);
 	});
 
+	it("reports bytes when only a trailing newline exceeds the byte limit at the line cap", () => {
+		expect(truncateHead("hello\nworld\n", { maxBytes: 11, maxLines: 2 })).toMatchObject({
+			content: "hello\nworld",
+			truncated: true,
+			truncatedBy: "bytes",
+			totalLines: 2,
+			outputLines: 2,
+		});
+	});
+
+	it("reports bytes when only a trailing newline exceeds the byte limit below the line cap", () => {
+		expect(truncateHead("hello\nworld\n", { maxBytes: 11, maxLines: 10 })).toMatchObject({
+			content: "hello\nworld",
+			truncated: true,
+			truncatedBy: "bytes",
+			totalLines: 2,
+			outputLines: 2,
+		});
+	});
+
+	it("reports bytes when only a line separator pushes the output past the byte limit", () => {
+		expect(truncateHead("hello\nworld", { maxBytes: 10, maxLines: 10 })).toMatchObject({
+			content: "hello",
+			truncated: true,
+			truncatedBy: "bytes",
+			totalLines: 2,
+			outputLines: 1,
+		});
+	});
+
+	it("reports lines when lines were omitted even though the kept lines fill the byte limit exactly", () => {
+		expect(truncateHead("a\nb\nc", { maxBytes: 3, maxLines: 2 })).toMatchObject({
+			content: "a\nb",
+			truncated: true,
+			truncatedBy: "lines",
+			totalLines: 3,
+			outputLines: 2,
+		});
+	});
+
+	it("returns content within both limits unchanged", () => {
+		const content = "hello\nworld\n";
+		expect(truncateHead(content, { maxBytes: 12, maxLines: 2 })).toMatchObject({
+			content,
+			truncated: false,
+			truncatedBy: null,
+			totalLines: 2,
+			outputLines: 2,
+		});
+	});
+
 	it("truncates tail on UTF-8 boundaries when only a partial last line fits", () => {
 		const result = truncateTail("aé🙂b", { maxBytes: 5, maxLines: 10 });
 

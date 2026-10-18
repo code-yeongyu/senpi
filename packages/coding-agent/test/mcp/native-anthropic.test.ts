@@ -158,7 +158,15 @@ describe("todo33 anthropic native: M5 co-residence with web-search + cache tail 
 			],
 		};
 		// anthropic-web-search injects its native web_search tool.
-		const withWeb = addAnthropicWebSearchToPayload("anthropic-messages", base);
+		const withWeb = addAnthropicWebSearchToPayload(
+			{
+				api: "anthropic-messages",
+				provider: "anthropic",
+				baseUrl: "https://api.anthropic.com",
+				compat: { supportsWebSearch: true },
+			},
+			base,
+		);
 		// Our adapter runs LAST (mcp builtin pinned last) and sees the final payload.
 		const final = addAnthropicNativeToolSearch("anthropic-messages", withWeb, CONFIG);
 

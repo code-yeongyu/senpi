@@ -82,10 +82,7 @@ function agentFacingSurfaces(): Array<{ name: string; line: number; text: string
 			`terminal/prompt.ts buildTerminalPromptSection(evalOnly=${evalOnly})`,
 			buildTerminalPromptSection({ evalOnly }),
 		),
-		...surfaceLines(
-			`bash-timeout prompt section (evalOnly=${evalOnly})`,
-			buildBashTimeoutPrompt(resolveBashTimeoutDefaults({}), { evalOnly }),
-		),
+		...surfaceLines("bash-timeout prompt section", buildBashTimeoutPrompt(resolveBashTimeoutDefaults({}))),
 		...terminalToolSurfaces(),
 	]);
 }
@@ -141,7 +138,5 @@ describe("stale wait-idiom consistency gate", () => {
 	it("the bash_output tool surface no longer advertises blocking", () => {
 		const bashOutput = createBashOutputTool(stubTerminalCtx());
 		expect(bashOutput.description.toLowerCase()).not.toContain("block until");
-		expect(bashOutput.description).not.toContain("wait_for");
-		expect(bashOutput.promptSnippet ?? "").not.toContain("wait_for");
 	});
 });

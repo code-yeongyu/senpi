@@ -50,6 +50,8 @@ export class GoalWaitTicker {
 		this.channelCounts = { ...input.channelCounts };
 		this.lastRenderedStatus = undefined;
 		this.tick();
+		// The immediate render hit a retired ctx and retired the ticker: arm nothing for it.
+		if (this.ctx === undefined) return;
 		if (this.intervalId !== undefined) return;
 		const handle = setInterval(() => this.tick(), GOAL_WAIT_TICK_INTERVAL_MS);
 		handle.unref();

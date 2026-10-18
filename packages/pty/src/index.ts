@@ -13,6 +13,7 @@ export {
 	type NativePtyRuntime,
 	NativePtySentinelMismatchError,
 } from "./native-loader.ts";
+export { isQuarantinedNativeFile, QUARANTINE_ATTRIBUTE } from "./quarantine.ts";
 export {
 	type InitialSessionRegistryEntry,
 	isTerminalSessionExited,
@@ -44,6 +45,7 @@ export {
 	type TerminalSessionNativeOptions,
 	type TerminalSessionOperationResult,
 	type TerminalSessionOptions,
+	type TerminalSessionTerminateOptions,
 } from "./session.ts";
 export {
 	type BunRuntime,

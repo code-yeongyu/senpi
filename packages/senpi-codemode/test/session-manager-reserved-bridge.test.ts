@@ -144,4 +144,39 @@ describe("codemode session manager reserved bridge routing", () => {
 		expect(reply).toMatchObject({ ok: true });
 		expect(calls).toEqual([{ toolName: "read", params: { path: "a.txt" } }]);
 	});
+
+	it("marshals ordinary tool results into the same {text, images} shape the JS kernel receives", async () => {
+		const pngBase64 = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64");
+		dir = mkdtempSync(join(tmpdir(), "codemode-reserved-"));
+		manager = await createCodemodeSessionManager({
+			sessionId: "s",
+			cwd: dir,
+			settings: defaultCodemodeSettings,
+			availability,
+			listTools: () => [],
+			executeTool: async () => ({
+				content: [
+					{ type: "text", text: "Read image file [image/png]" },
+					{ type: "image", data: pngBase64, mimeType: "image/png" },
+				],
+				details: {},
+			}),
+			complete: async () => {
+				throw new Error("completion is not exercised in this test");
+			},
+		});
+		const bridge = endpointOf(manager);
+
+		const reply = await postCall(bridge.port, bridge.token, "read", { path: "shot.png" });
+
+		expect(reply).toEqual({
+			ok: true,
+			value: {
+				text: "Read image file [image/png]",
+				details: undefined,
+				images: [{ mimeType: "image/png", dataBase64: pngBase64 }],
+				hasError: false,
+			},
+		});
+	});
 });

@@ -10,8 +10,11 @@ import {
 	providerEntryLabel,
 	type SearchRoutingState,
 } from "./search.ts";
+import { resolveNativeSearchModel } from "./search-model.ts";
+import { resolveSessionLoginEntries } from "./session-login-entries.ts";
 import type {
 	ConfigLoadResult,
+	SearchDetails,
 	SearchErrorDetails,
 	SearchProgressDetails,
 	SearchRenderDetails,
@@ -40,7 +43,11 @@ async function configWithNativeRoute(
 	signal: AbortSignal | undefined,
 ): Promise<WebsearchConfig> {
 	if (!config.auto) return config;
-	const nativeEntries = await buildNativeEntries(ctx?.model, ctx?.modelRegistry, signal);
+	const choice = resolveNativeSearchModel(ctx?.model, ctx?.modelRegistry, config.nativeModel);
+	const searchModel = choice?.fallbackModel
+		? { model: choice.model, fallbackModel: choice.fallbackModel }
+		: choice && { model: choice.model };
+	const nativeEntries = await buildNativeEntries(ctx?.model, ctx?.modelRegistry, signal, searchModel);
 	return nativeEntries.length > 0 ? { ...config, providers: [...nativeEntries, ...config.providers] } : config;
 }
 
@@ -56,7 +63,11 @@ function searchErrorDetails(query: string, error: string, reason?: SearchErrorDe
 	return { phase: "error", query, error, ...(reason ? { reason } : {}) };
 }
 
-export function createWebSearchTool(getConfig: ConfigProvider): WebSearchTool {
+export interface WebSearchToolOptions {
+	onSearchComplete?: (details: SearchDetails) => void;
+}
+
+export function createWebSearchTool(getConfig: ConfigProvider, options: WebSearchToolOptions = {}): WebSearchTool {
 	let routingState: SearchRoutingState | undefined;
 	let routingKey = "";
 
@@ -81,7 +92,13 @@ export function createWebSearchTool(getConfig: ConfigProvider): WebSearchTool {
 			}
 
 			const maxResults = loaded.config.providers[0]?.maxResults ?? 10;
-			const config = await configWithNativeRoute(loaded.config, ctx, signal);
+			const listed = await resolveSessionLoginEntries(loaded.config, ctx, signal);
+			const config = await configWithNativeRoute(listed, ctx, signal);
+			if (config.providers.length === 0 && loaded.config.providers.length > 0) {
+				const message =
+					"No web search provider is usable: the websearch.json entries that rely on a senpi login have no matching login.";
+				return { content: [{ type: "text", text: message }], details: searchErrorDetails(params.query, message) };
+			}
 			const progressDetails: SearchProgressDetails = {
 				phase: "searching",
 				query: params.query,
@@ -102,7 +119,7 @@ export function createWebSearchTool(getConfig: ConfigProvider): WebSearchTool {
 				routingKey !== nextRoutingKey ||
 				routingState.successCounts.length !== config.providers.length
 			) {
-				routingState = createSearchRoutingState(config.providers.length);
+				routingState = createSearchRoutingState(config.providers.length, routingState?.cooldowns);
 				routingKey = nextRoutingKey;
 			}
 			const request = {
@@ -129,6 +146,7 @@ export function createWebSearchTool(getConfig: ConfigProvider): WebSearchTool {
 					});
 				},
 			);
+			options.onSearchComplete?.(details);
 			return { content: [{ type: "text", text: formatSearchText(details) }], details };
 		},
 		renderCall: (args, theme) => renderSearchCall(args, theme),

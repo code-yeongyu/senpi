@@ -1,3 +1,4 @@
+import { deadlineStopPendingSinceLastTurn } from "../../../turn-deadline.ts";
 import type { ExtensionContext } from "../../types.ts";
 import { GOAL_CONTINUATION_CAP } from "./continuation.ts";
 import type { MonitorAwareGoalContinuation } from "./monitor-continuation.ts";
@@ -36,6 +37,10 @@ export async function reengageGoalAfterReload(options: {
 }): Promise<ReloadReengagementOutcome> {
 	const { ctx, goal, monitor } = options;
 	if (goal.status !== "active") return "skipped-inactive";
+	// A deadline stop stays held across reload: re-engagement resumes only on admitted input.
+	if (deadlineStopPendingSinceLastTurn(ctx.sessionManager.getBranch()) !== undefined) {
+		return "skipped-inactive";
+	}
 	if (monitor.hasActiveWakeSources()) {
 		monitor.rearmMonitorBackstop(goal);
 		return "backstop-rearmed";

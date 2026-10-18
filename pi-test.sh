@@ -19,9 +19,11 @@ if [[ "$NO_ENV" == "true" ]]; then
   unset ANTHROPIC_API_KEY
   unset ANTHROPIC_OAUTH_TOKEN
   unset OPENAI_API_KEY
+  unset BAI_API_KEY
   unset GEMINI_API_KEY
   unset GROQ_API_KEY
   unset CEREBRAS_API_KEY
+  unset VENICE_API_KEY
   unset XAI_API_KEY
   unset OPENROUTER_API_KEY
   unset ZAI_API_KEY

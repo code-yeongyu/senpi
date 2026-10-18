@@ -35,12 +35,7 @@ function checkDeprecatedExtensionDirs(baseDir: string, label: string): string[] 
 	if (existsSync(toolsDir)) {
 		try {
 			const entries = readdirSync(toolsDir);
-			const customTools = entries.filter((entry) => {
-				const lower = entry.toLowerCase();
-				return (
-					lower !== "fd" && lower !== "rg" && lower !== "fd.exe" && lower !== "rg.exe" && !entry.startsWith(".")
-				);
-			});
+			const customTools = entries.filter((entry) => existsSync(join(toolsDir, entry, "index.ts")));
 			if (customTools.length > 0) {
 				warnings.push(
 					`${label} tools/ directory contains custom tools. Custom tools have been merged into extensions.`,

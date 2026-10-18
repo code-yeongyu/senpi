@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AssistantMessage, Context, Model, ToolResultMessage, Usage } from "@earendil-works/pi-ai";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { registerFauxProvider } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { streamSimple as streamAnthropic } from "../../../ai/src/api/anthropic-messages.ts";
@@ -95,7 +96,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		api: "openai-responses",
 		provider: "openai",
 		modelId: "gpt-5.5",
-		expectedTools: ["read", "bash", "apply_patch"],
+		expectedTools: ["read", "bash", "apply_patch", "grep"],
 		expectedApplyPatchVariant: "custom",
 		expectedHistory: [
 			"custom_tool_call:apply_patch",
@@ -110,7 +111,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		api: "openai-responses",
 		provider: "openai",
 		modelId: "gpt-5.5",
-		expectedTools: ["read", "bash", "apply_patch"],
+		expectedTools: ["read", "bash", "apply_patch", "grep"],
 		expectedApplyPatchVariant: "custom",
 		expectedHistory: [
 			"custom_tool_call:apply_patch",
@@ -125,7 +126,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		api: "anthropic-messages",
 		provider: "anthropic",
 		modelId: "claude-sonnet",
-		expectedTools: ["read", "bash", "edit", "write"],
+		expectedTools: ["read", "bash", "edit", "write", "grep"],
 		expectedApplyPatchVariant: undefined,
 		expectedHistory: ["tool_use:apply_patch", "tool_use:edit", "tool_result:call_patch", "tool_result:call_edit"],
 	},
@@ -135,7 +136,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		api: "openai-completions",
 		provider: "openai",
 		modelId: "gpt-5.5",
-		expectedTools: ["read", "bash", "apply_patch"],
+		expectedTools: ["read", "bash", "apply_patch", "grep"],
 		expectedApplyPatchVariant: "function",
 		expectedHistory: ["tool_call:apply_patch", "tool_call:edit", "tool_result:call_patch", "tool_result:call_edit"],
 	},
@@ -145,7 +146,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		api: "openai-responses",
 		provider: "openai",
 		modelId: "gpt-5.5",
-		expectedTools: ["read", "bash", "apply_patch"],
+		expectedTools: ["read", "bash", "apply_patch", "grep"],
 		expectedApplyPatchVariant: "custom",
 		expectedHistory: [
 			"custom_tool_call:apply_patch",
@@ -161,7 +162,7 @@ const LIFECYCLE_ROWS: LifecycleRow[] = [
 		api: "anthropic-messages",
 		provider: "anthropic",
 		modelId: "claude-sonnet",
-		expectedTools: ["read", "bash", "edit", "write"],
+		expectedTools: ["read", "bash", "edit", "write", "grep"],
 		expectedApplyPatchVariant: undefined,
 		expectedHistory: ["tool_use:apply_patch", "tool_use:edit", "tool_result:call_patch", "tool_result:call_edit"],
 	},
@@ -232,17 +233,17 @@ async function capturePayload(
 	};
 
 	if (api === "openai-responses") {
-		await streamResponses(makeModel(api, provider, modelId), context, {
+		await streamResponses(makeModel(api, provider, modelId), normalizeContext(context), {
 			apiKey: "fake-api-key",
 			onPayload,
 		}).result();
 	} else if (api === "openai-completions") {
-		await streamCompletions(makeModel(api, provider, modelId), context, {
+		await streamCompletions(makeModel(api, provider, modelId), normalizeContext(context), {
 			apiKey: "fake-api-key",
 			onPayload,
 		}).result();
 	} else {
-		await streamAnthropic(makeModel(api, provider, modelId), context, {
+		await streamAnthropic(makeModel(api, provider, modelId), normalizeContext(context), {
 			apiKey: "fake-api-key",
 			onPayload,
 		}).result();
@@ -471,7 +472,7 @@ describe("GPT model-switch lifecycle characterization", () => {
 		await harness.session.setModel({ ...target, api: "openai-responses" });
 
 		// Then: one switch updates the active toolset and the prompt guidance in the same turn.
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
 		expect(harness.session.systemPrompt).toContain("- apply_patch:");
 		expect(harness.session.systemPrompt).not.toContain("- edit:");
 		expect(harness.session.systemPrompt).not.toContain("- write:");
@@ -482,7 +483,7 @@ describe("GPT model-switch lifecycle characterization", () => {
 		await harness.session.setModel(anthropicTarget);
 
 		// Then: guidance tracks the restored edit tools.
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "grep", "edit", "write"]);
 		expect(harness.session.systemPrompt).toContain("- edit:");
 		expect(harness.session.systemPrompt).not.toContain("- apply_patch:");
 	});
@@ -519,7 +520,7 @@ describe("GPT model-switch lifecycle characterization", () => {
 
 		// Then: provider/id/contextWindow equality must not hide an API-only context change.
 		expect(selectedApis).toEqual(["openai-responses"]);
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
 		expect(harness.session.systemPrompt).toContain("- apply_patch:");
 		expect(harness.session.getMessageRevision()).toBeGreaterThan(initialRevision);
 	});
@@ -542,7 +543,7 @@ describe("GPT model-switch lifecycle characterization", () => {
 		};
 		const wireInput = convertResponsesMessages(
 			makeModel("openai-responses", "openai", "gpt-5.5"),
-			context,
+			normalizeContext(context),
 			new Set(["openai"]),
 		);
 		const serialized = JSON.stringify(wireInput);

@@ -1,5 +1,11 @@
 import { buildNoticeBox } from "../notice/index.ts";
-import type { ExtensionAPI, ExtensionContext } from "../types.ts";
+import type {
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionHandler,
+} from "../types.ts";
 
 const PR_PROMPT_PATTERN = /^\s*You are given one or more GitHub PR URLs:\s*(\S+)/im;
 const ISSUE_PROMPT_PATTERN = /^\s*Analyze GitHub issue\(s\):\s*(\S+)/im;
@@ -89,8 +95,11 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 		}
 	};
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		if (!ctx.hasUI) return;
+	const onBeforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult> = async (
+		event,
+		ctx,
+	) => {
+		if (event.preview === true || !ctx.hasUI) return;
 		const match = extractPromptMatch(event.prompt);
 		if (!match) {
 			return;
@@ -104,7 +113,8 @@ export default function promptUrlWidgetExtension(pi: ExtensionAPI) {
 			setWidget(ctx, match, title, authorText);
 			applySessionName(ctx, match, title);
 		});
-	});
+	};
+	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
 	const getUserText = (content: string | { type: string; text?: string }[] | undefined): string => {
 		if (!content) return "";

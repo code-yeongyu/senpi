@@ -326,6 +326,19 @@ describe("permission parsers", () => {
 			});
 		});
 
+		describe("glob", () => {
+			it("maps eval-only glob to the same list permission as find (#3330)", () => {
+				// given
+				const input = { pattern: "**/*.ts", path: "src" };
+
+				// when
+				const result = registry.parse("glob", input, cwd);
+
+				// then
+				expect(result).toEqual([{ permission: "list", patterns: ["src"], always: ["src"] }]);
+			});
+		});
+
 		describe("ls", () => {
 			it("maps ls to list permission with the provided path", () => {
 				// given

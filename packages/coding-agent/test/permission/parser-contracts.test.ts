@@ -337,30 +337,30 @@ describe("parser contract tests", () => {
 
 	describe("unknown tool fallback", () => {
 		it("should fallback to tool-level permission for unknown tools", () => {
-			// given - a tool that has no parser registered
+			// given - a tool that has no parser registered and no recognized arg
 			const input = { someField: "someValue" };
 
 			// when
 			const result = registry.parse("unknown_tool", input, cwd);
 
-			// then
+			// then - an arg-less call still gates everything
 			expect(result).toHaveLength(1);
 			expect(result[0].permission).toBe("unknown_tool");
 			expect(result[0].patterns).toEqual(["*"]);
 			expect(result[0].always).toEqual(["*"]);
 		});
 
-		it("should fallback when new upstream tool has no parser", () => {
-			// given - simulating a new tool added upstream
+		it("should derive the decision target from the meaningful arg when a tool has no parser", () => {
+			// given - simulating a new tool added upstream with a command arg
 			const newToolInput = { command: "do something" };
 
 			// when
 			const result = registry.parse("new_upstream_tool", newToolInput, cwd);
 
-			// then - should not throw, should return fallback
+			// then - the concrete arg is the target, so a pattern-specific deny can match (HIGH 1)
 			expect(result).toHaveLength(1);
 			expect(result[0].permission).toBe("new_upstream_tool");
-			expect(result[0].patterns).toEqual(["*"]);
+			expect(result[0].patterns).toEqual(["do something"]);
 		});
 	});
 

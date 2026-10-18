@@ -15,9 +15,11 @@ import { APP_TITLE } from "../src/config.ts";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
+import type { QuietStartup } from "../src/core/settings-manager.ts";
+import { warnIfLargeSkillCatalog } from "../src/core/skills-prompt.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
-import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
+import { InteractiveMode, showsStartupDetails, showsStartupHeader } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
@@ -726,7 +728,7 @@ describe("InteractiveMode.getWorkingIndicatorOptions", () => {
 		// Given
 		const fakeThis: any = {
 			workingIndicatorOptions: undefined,
-			sessionManager: { getEntries: () => [] },
+			sessionManager: { getEntries: () => [], getEntryCount: () => 0 },
 			getWorkingElapsedSeconds: () => 7,
 		};
 
@@ -761,7 +763,7 @@ describe("InteractiveMode.getWorkingIndicatorOptions", () => {
 		initTheme("dark");
 		const fakeThis: any = {
 			workingIndicatorOptions: undefined,
-			sessionManager: { getEntries: () => [] },
+			sessionManager: { getEntries: () => [], getEntryCount: () => 0 },
 			getWorkingElapsedSeconds: () => 7,
 		};
 
@@ -777,6 +779,28 @@ describe("InteractiveMode.getWorkingIndicatorOptions", () => {
 });
 
 describe("InteractiveMode.createBaseAutocompleteProvider", () => {
+	test("prefixes autocomplete descriptions with the resource scope tag, system included", () => {
+		const prototype = InteractiveMode.prototype as unknown as {
+			getAutocompleteSourceTag(sourceInfo?: SourceInfo): string | undefined;
+			prefixAutocompleteDescription(description: string | undefined, sourceInfo?: SourceInfo): string | undefined;
+		};
+		const fakeThis = { getAutocompleteSourceTag: prototype.getAutocompleteSourceTag };
+		const prefix = (scope: SourceInfo["scope"], source = "local"): string | undefined =>
+			prototype.prefixAutocompleteDescription.call(fakeThis, "desc", {
+				path: "/tmp/resource",
+				source,
+				scope,
+				origin: "top-level",
+			});
+
+		expect(prefix("user")).toBe("[u] desc");
+		expect(prefix("project")).toBe("[p] desc");
+		expect(prefix("temporary", "cli")).toBe("[t] desc");
+		expect(prefix("system", "builtin")).toBe("[s] desc");
+		expect(prefix("system", "cli")).toBe("[s] desc");
+		expect(prefix("system", "npm:harness-pkg")).toBe("[s:npm:harness-pkg] desc");
+	});
+
 	test("matches model command arguments across provider/model order", async () => {
 		type TestModel = { id: string; provider: string; name: string };
 		type FakeInteractiveMode = {
@@ -800,7 +824,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 		).prototype.createBaseAutocompleteProvider;
 		const models = [
 			{ id: "gpt-5.2-codex", provider: "github-copilot", name: "GPT-5.2 Codex" },
-			{ id: "gpt-5.5", provider: "openai-codex", name: "GPT-5.5" },
+			{ id: "gpt-5.5", provider: "chatgpt-subscription", name: "GPT-5.5" },
 		];
 		const fakeThis: FakeInteractiveMode = {
 			session: {
@@ -817,15 +841,17 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 		};
 
 		const provider = createBaseAutocompleteProvider.call(fakeThis);
-		const line = "/model codexgpt";
+		// `subgpt` crosses the boundary: "sub" comes from the PROVIDER id
+		// (chatgpt-subscription) and "gpt" from the MODEL id, which is exactly the
+		// ordering this test is named for. The previous query "codexgpt" also matched
+		// github-copilot/gpt-5.2-codex, but only because "codex" happened to appear in
+		// BOTH the old provider id and that model id - incidental, not the contract.
+		const line = "/model subgpt";
 		const suggestions = await provider.getSuggestions([line], 0, line.length, {
 			signal: new AbortController().signal,
 		});
 
-		expect(suggestions?.items.map((item) => item.value)).toEqual([
-			"openai-codex/gpt-5.5",
-			"github-copilot/gpt-5.2-codex",
-		]);
+		expect(suggestions?.items.map((item) => item.value)).toEqual(["chatgpt-subscription/gpt-5.5"]);
 	});
 
 	test("matches login command arguments by provider id and name", async () => {
@@ -889,15 +915,16 @@ describe("InteractiveMode.showLoadedResources", () => {
 	});
 
 	function createShowLoadedResourcesThis(options: {
-		quietStartup: boolean;
+		quietStartup: QuietStartup;
 		verbose?: boolean;
 		toolOutputExpanded?: boolean;
 		cwd?: string;
 		contextFiles?: Array<{ path: string; content?: string }>;
+		contextDiagnostics?: Array<{ type: "warning"; message: string; path?: string }>;
 		systemPromptSource?: { path: string };
 		appendSystemPromptSources?: Array<{ path: string }>;
 		extensions?: ExtensionFixture[];
-		skills?: Array<{ filePath: string; name: string }>;
+		skills?: Array<{ filePath: string; name: string; sourceInfo?: SourceInfo }>;
 		skillDiagnostics?: Array<{ type: "warning" | "error" | "collision"; message: string }>;
 		useRealScopeGroups?: boolean;
 	}) {
@@ -921,7 +948,10 @@ describe("InteractiveMode.showLoadedResources", () => {
 				},
 				resourceLoader: {
 					getPathMetadata: () => new Map(),
-					getAgentsFiles: () => ({ agentsFiles: options.contextFiles ?? [] }),
+					getAgentsFiles: () => ({
+						agentsFiles: options.contextFiles ?? [],
+						diagnostics: options.contextDiagnostics ?? [],
+					}),
 					getSystemPromptSource: () => options.systemPromptSource,
 					getAppendSystemPromptSources: () => options.appendSystemPromptSources ?? [],
 					getSkills: () => ({
@@ -968,8 +998,6 @@ describe("InteractiveMode.showLoadedResources", () => {
 		};
 
 		if (options.useRealScopeGroups) {
-			fakeThis.getScopeGroup = (sourceInfo?: SourceInfo) =>
-				(InteractiveMode as any).prototype.getScopeGroup.call(fakeThis, sourceInfo);
 			fakeThis.buildScopeGroups = (items: Array<{ path: string; sourceInfo?: SourceInfo }>) =>
 				(InteractiveMode as any).prototype.buildScopeGroups.call(fakeThis, items);
 			fakeThis.formatScopeGroups = (groups: unknown, formatOptions: unknown) =>
@@ -983,7 +1011,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 		filePath: string,
 		options: {
 			source: string;
-			scope: "user" | "project" | "temporary";
+			scope: "user" | "project" | "temporary" | "system";
 			origin: "package" | "top-level";
 			baseDir?: string;
 		},
@@ -1613,6 +1641,29 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(fakeThis.loadedResourcesContainer.children).toHaveLength(0);
 	});
 
+	test("hides resource listing but keeps the startup header with header-only quiet startup", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: "header",
+			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		expect(fakeThis.loadedResourcesContainer.children).toHaveLength(0);
+		expect(showsStartupHeader(false, "header")).toBe(true);
+		expect(showsStartupDetails(false, "header")).toBe(false);
+	});
+
+	test("hides the startup header with full quiet startup unless verbose", () => {
+		expect(showsStartupHeader(false, true)).toBe(false);
+		expect(showsStartupHeader(true, true)).toBe(true);
+		expect(showsStartupDetails(true, "header")).toBe(true);
+		expect(showsStartupHeader(false, false)).toBe(true);
+		expect(showsStartupDetails(false, false)).toBe(true);
+	});
+
 	test("still shows diagnostics on quiet startup when requested", () => {
 		const fakeThis = createShowLoadedResourcesThis({
 			quietStartup: true,
@@ -1629,6 +1680,55 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(output).toContain("Skill conflicts");
 		expect(output).toContain(theme.getBgAnsi("customMessageBg"));
 		expect(output).not.toContain("[Skills]");
+	});
+
+	test("shows context size warnings in the resource notices on quiet startup", () => {
+		// Given
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: true,
+			contextDiagnostics: [{ type: "warning", message: "context budget exceeded", path: "/tmp/AGENTS.md" }],
+		});
+		// When
+		Reflect.get(InteractiveMode.prototype, "showLoadedResources").call(fakeThis, {
+			force: false,
+			showDiagnosticsWhenQuiet: true,
+		});
+		// Then
+		expect(renderAll(fakeThis.loadedResourcesContainer)).toContain("Context size limits");
+	});
+
+	test("shows skill budget warnings as size notices rather than skill conflicts", () => {
+		// Given
+		const diagnostics = warnIfLargeSkillCatalog(
+			Array.from({ length: 101 }, (_, index) => ({
+				name: `skill-${index}`,
+				description: "Synthetic QA skill.",
+				filePath: `/skills/skill-${index}/SKILL.md`,
+				baseDir: `/skills/skill-${index}`,
+				disableModelInvocation: false,
+				sourceInfo: {
+					path: `/skills/skill-${index}/SKILL.md`,
+					source: "local",
+					scope: "user",
+					origin: "top-level",
+				},
+			})),
+		);
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: true,
+			toolOutputExpanded: true,
+			skillDiagnostics: diagnostics,
+		});
+		// When
+		Reflect.get(InteractiveMode.prototype, "showLoadedResources").call(fakeThis, {
+			force: false,
+			showDiagnosticsWhenQuiet: true,
+		});
+		// Then
+		const output = renderAll(fakeThis.loadedResourcesContainer);
+		expect(output).toContain("Context size limits");
+		expect(output).not.toContain("Skill conflicts");
+		expect(output).not.toContain("Conflicting or invalid loaded resources");
 	});
 
 	test("formats builtin synthetic extension paths with readable builtin labels", () => {
@@ -1656,7 +1756,6 @@ describe("InteractiveMode.showLoadedResources", () => {
 		fakeThis.getBuiltinExtensionNameFromPath = (InteractiveMode as any).prototype.getBuiltinExtensionNameFromPath;
 		fakeThis.formatDisplayPath = (InteractiveMode as any).prototype.formatDisplayPath;
 		fakeThis.getShortPath = (InteractiveMode as any).prototype.getShortPath;
-		fakeThis.getScopeGroup = (InteractiveMode as any).prototype.getScopeGroup;
 		fakeThis.isPackageSource = (InteractiveMode as any).prototype.isPackageSource;
 		fakeThis.buildScopeGroups = (InteractiveMode as any).prototype.buildScopeGroups;
 		fakeThis.formatScopeGroups = (InteractiveMode as any).prototype.formatScopeGroups;
@@ -1688,5 +1787,134 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(output).toContain("user");
 		expect(output).toContain("~/.senpi/agent/extensions/diff.js");
 		expect(output).not.toContain("todowrite");
+	});
+
+	function createSystemScopeFixtures(): {
+		extensions: ExtensionFixture[];
+		skills: Array<{ filePath: string; name: string; sourceInfo: SourceInfo }>;
+	} {
+		return {
+			extensions: [
+				{
+					path: "<builtin:todowrite>",
+					sourceInfo: createSourceInfo("<builtin:todowrite>", {
+						source: "builtin",
+						scope: "system",
+						origin: "top-level",
+					}),
+				},
+				{
+					path: "/pkg/extensions/harness.js",
+					sourceInfo: createSourceInfo("/pkg/extensions/harness.js", {
+						source: "cli",
+						scope: "system",
+						origin: "top-level",
+						baseDir: "/pkg",
+					}),
+				},
+				{
+					path: "/tmp/ad-hoc/index.ts",
+					sourceInfo: createSourceInfo("/tmp/ad-hoc/index.ts", {
+						source: "cli",
+						scope: "temporary",
+						origin: "top-level",
+						baseDir: "/tmp/ad-hoc",
+					}),
+				},
+			],
+			skills: [
+				{
+					filePath: "/pkg/skills/packaged-skill/SKILL.md",
+					name: "packaged-skill",
+					sourceInfo: createSourceInfo("/pkg/skills/packaged-skill/SKILL.md", {
+						source: "cli",
+						scope: "system",
+						origin: "top-level",
+						baseDir: "/pkg",
+					}),
+				},
+				{
+					filePath: "/tmp/agent/skills/my-skill/SKILL.md",
+					name: "my-skill",
+					sourceInfo: createSourceInfo("/tmp/agent/skills/my-skill/SKILL.md", {
+						source: "local",
+						scope: "user",
+						origin: "top-level",
+						baseDir: "/tmp/agent/skills",
+					}),
+				},
+			],
+		};
+	}
+
+	test("omits system skills and extensions from the compact listing but keeps user and ad-hoc ones", () => {
+		const fixtures = createSystemScopeFixtures();
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			extensions: fixtures.extensions,
+			skills: fixtures.skills,
+			useRealScopeGroups: true,
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, { force: false });
+
+		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+"[Skills]
+  my-skill
+
+[Extensions]
+  ad-hoc"`);
+	});
+
+	test("lists system resources under a system group in the expanded listing", () => {
+		const fixtures = createSystemScopeFixtures();
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			toolOutputExpanded: true,
+			extensions: fixtures.extensions,
+			skills: fixtures.skills,
+			useRealScopeGroups: true,
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, { force: false });
+
+		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+"[Skills]
+  user
+    /tmp/agent/skills/my-skill/SKILL.md
+  system
+    /pkg/skills/packaged-skill/SKILL.md
+
+[Extensions]
+  path
+    /tmp/ad-hoc
+  system
+    /pkg/extensions/harness.js
+    builtin/todo"`);
+	});
+
+	test("hides a section whose resources are all system until it is expanded", () => {
+		const fixtures = createSystemScopeFixtures();
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			extensions: fixtures.extensions.filter((extension) => extension.sourceInfo?.scope === "system"),
+			useRealScopeGroups: true,
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, { force: false });
+
+		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toBe("");
+
+		for (const child of fakeThis.loadedResourcesContainer.children as unknown[]) {
+			if (typeof child === "object" && child !== null && "setExpanded" in child) {
+				(child as { setExpanded(expanded: boolean): void }).setExpanded(true);
+			}
+		}
+
+		expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer)).toMatchInlineSnapshot(`
+"[Extensions]
+  system
+    /pkg/extensions/harness.js
+    builtin/todo"`);
 	});
 });

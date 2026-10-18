@@ -22,11 +22,26 @@ catalog costs almost nothing until the model actually needs it.
 }
 ```
 
-2. Start senpi. Run `/mcp` for the status panel, `/mcp status` for a one-line
+2. Start senpi. Run `/mcp` for the interactive server manager, `/mcp status` for a one-line
    summary, `/mcp add <name> <command...>` to add servers interactively.
-3. Servers needing OAuth: `/mcp login <name>` (see [Auth](#auth)).
+3. Servers needing OAuth: `/mcp auth <name>` (see [Auth](#auth)).
 4. Use it: small catalogs register directly; big ones surface through
    `tool_search` (see [Exposure tiers](#exposure-tiers)).
+
+## Interactive manager
+
+`/mcp` lists servers with their connection state, tool and available resource
+counts, exposure mode, and configuration source. Select a server to inspect its
+tools, details, or logs; test or reconnect it; or sign in/out when OAuth applies.
+The list updates when connections and catalogs change and preserves selection.
+Navigation, confirmation, and cancellation use your configured keybindings.
+
+Enable/disable and exposure changes are saved to the selected server's global
+or trusted project `mcp.json`. Imported, skill-owned, extension-owned, and
+untrusted definitions are read-only in this manager. OAuth actions close the
+manager before running the existing authorization flow, keeping its notices
+visible. Outside the TUI, `/mcp` reports status through the existing notification
+channel; existing subcommands remain available.
 
 ## Configuration reference
 
@@ -48,7 +63,10 @@ Argument array for `command`. Default `[]`.
 
 ### `env`
 Extra environment variables for the child process. Values support `${VAR}`
-expansion from the trusted parent environment.
+expansion from the trusted parent environment. The child does not inherit your
+whole environment: it sees only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`
+and `USER` (on Windows, the system path and profile variables) plus `env`,
+so pass every variable the server reads through `env`.
 
 ### `cwd`
 Working directory for the child process. Default: the session cwd.
@@ -202,6 +220,9 @@ same fields as [`mcpServers.<name>`](#server-fields-mcpserversname), plus
 ```
 
 The `mcpServers` wrapper is optional — a bare server-name map works too.
+When you installed the skill, `${EXA_API_KEY}` expands from your environment
+exactly as it would in your own `mcp.json`; see
+[Environment variables in skill servers](#environment-variables-in-skill-servers).
 
 **Frontmatter `mcp:` block** in SKILL.md:
 
@@ -235,6 +256,27 @@ Semantics:
 - There is no unload signal: tools revealed by a skill stay active until the
   session ends.
 
+### Environment variables in skill servers
+
+`${VAR}` expansion follows the trust of the skill that declares the server,
+the same line senpi draws for `mcp.json` files:
+
+- **Skills you own** (your user skills directory, packages you installed, and
+  the skills of a project you trusted): stdio `command`, `args`, `env` and
+  `cwd` expand exactly like your own `mcp.json`, including `${VAR:-default}`
+  and the refusal of command substitution (a server asking for `$(...)` or a
+  leading `!` is skipped with a warning).
+- **Skills of an untrusted project**: nothing expands. The placeholder stays
+  literal and senpi warns once, naming the skill and the variable; trust the
+  project or declare the server in your own `mcp.json` to expand it. A cloned
+  repository must not be able to hand `AWS_SECRET_ACCESS_KEY` to a command it
+  chose.
+- **Remote servers from any skill**: `url` and `headers` never expand, and
+  `bearerTokenEnv` is ignored, so no `Authorization` header is sent. Expanding
+  them would send your secrets to a server the skill picked. senpi warns once
+  per server; declare the server in your own `mcp.json`, where variables and
+  `bearerTokenEnv` keep working.
+
 ## Resources and prompts
 
 - `mcp_list_resources` / `mcp_read_resource` register automatically when a
@@ -251,20 +293,23 @@ Semantics:
 ## Auth
 
 - **Bearer**: set `bearerTokenEnv` (recommended) or an `Authorization` header.
-- **OAuth (interactive)**: `/mcp login <name>` runs the authorization-code +
-  PKCE flow with a loopback callback; tokens persist under `<agentDir>` with
+- **OAuth (interactive)**: `/mcp auth <name>` opens the browser for the
+  authorization-code + PKCE flow after the loopback callback is ready. The
+  complete authorization URL stays in the transcript if the browser cannot
+  open, so you can open it manually. Tokens persist under `<agentDir>` with
   `0600` permissions and refresh automatically (single-flight across
   processes).
 - **OAuth (headless)**: `flow:"client_credentials"` for machine-to-machine, or
-  `/mcp login <name> --paste` to complete the code flow by pasting the
-  redirect URL from another browser/machine.
+  `/mcp auth-start <name>` to obtain an authorization URL, followed by
+  `/mcp auth-complete <name> <redirect-url>` to paste the final redirect URL
+  from another browser/machine in the same session.
 - `/mcp logout <name>` clears stored tokens.
 
 ## Troubleshooting
 
 | Symptom (`/mcp status`) | Meaning | Fix |
 |---|---|---|
-| `needs_auth` | 401 and no usable token | `/mcp login <name>` |
+| `needs_auth` | 401 and no usable token | `/mcp auth <name>` |
 | `suspended` | reconnect circuit breaker opened (5 failures/30s) | fix the server, then `/mcp reconnect <name>` |
 | `degraded` | transient failure; auto-reconnect with backoff is running | wait, or `/mcp reconnect <name>` |
 | tools missing | server filtered/disabled, or hidden behind search | check `includeTools`/`excludeTools`, ask the model to `tool_search` |
@@ -274,7 +319,10 @@ Semantics:
 ## Security notes
 
 - Config values never pass through a shell; `${VAR}` expansion only reads the
-  trusted parent environment.
+  trusted parent environment, and only for trusted sources: your own and a
+  trusted project's config, and stdio servers of skills you own. Skill remote
+  servers never expand variables or send `bearerTokenEnv` (see
+  [Environment variables in skill servers](#environment-variables-in-skill-servers)).
 - Project-level and imported configs require project trust before servers
   spawn; untrusted entries are listed but inert.
 - Tokens are stored `0600` and never logged; server log streams and tool

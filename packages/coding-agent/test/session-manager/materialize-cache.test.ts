@@ -104,8 +104,9 @@ describe("SessionManager materialized-view cache", () => {
 
 			session.branch(id1);
 			const branch = session.getBranch();
-			expect(branch).toHaveLength(1);
-			expect(materializeSpy.mock.calls.length).toBeGreaterThan(0);
+			expect(branch.map((entry) => entry.id)).toEqual([id1]);
+			const answerId = session.appendMessage(assistantMsg("a different answer"));
+			expect(session.getBranch().map((entry) => entry.id)).toEqual([id1, answerId]);
 		});
 
 		it("explicit fromId bypasses the cache", () => {
@@ -113,10 +114,10 @@ describe("SessionManager materialized-view cache", () => {
 			const id1 = session.appendMessage(userMsg("hello"));
 			session.appendMessage(assistantMsg("hi"));
 
-			session.getBranch(id1);
-			materializeSpy.mockClear();
-			session.getBranch(id1);
-			expect(materializeSpy.mock.calls.length).toBeGreaterThan(0);
+			const leafBranch = session.getBranch();
+			expect(leafBranch).toHaveLength(2);
+			expect(session.getBranch(id1).map((entry) => entry.id)).toEqual([id1]);
+			expect(session.getBranch()).toBe(leafBranch);
 		});
 	});
 

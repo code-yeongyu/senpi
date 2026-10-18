@@ -12,6 +12,7 @@ import type { RpcResponse } from "../src/modes/rpc/rpc-types.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import { RpcSessionRegistry } from "../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "./helpers/fake-session-base.ts";
 
 const directories: string[] = [];
 
@@ -23,9 +24,9 @@ function runtime(options: Parameters<CreateAgentSessionRuntimeFactory>[0]): Crea
 	new ProjectTrustStore(options.agentDir).set(options.cwd, true);
 	return {
 		session: {
-			sessionManager: options.sessionManager,
-			agentDir: options.agentDir,
+			...fakeSessionBase(options),
 			isFastModeActive: () => false,
+			agent: { state: {} },
 			isStreaming: false,
 			// The shared state builder projects open_session through the full session
 			getContextUsage: () => undefined,
@@ -100,20 +101,56 @@ describe("RPC attachment edge regressions", () => {
 		expect(registry.list()).toEqual([]);
 	});
 
+	test("cancels pending UI requests only when the last attachment releases the session", async () => {
+		const { dir, registry } = await setup();
+		const writer = new SessionEventWriter(() => {});
+		for (const connection of ["owner", "peer"])
+			writer.registerConnection(connection, { writeRaw: () => {}, waitForBackpressure: async () => {} });
+		let cancellations = 0;
+		const router = new SessionCommandRouter(registry, writer, { cwd: dir }, async () => ({
+			handle: async () => {},
+			cancelPendingExtensionUiRequests: () => {
+				cancellations += 1;
+			},
+			dispose: async () => {},
+		}));
+		const path = join(dir, "shared-question.jsonl");
+		await writer.withConnection("owner", () => router.handle(open(dir, path)));
+		await writer.withConnection("peer", () => router.handle(open(dir, path)));
+		expect(registry.list()).toHaveLength(1);
+
+		// The session-opening connection drops while another attachment survives:
+		// a pending question is session-owned and must stay answerable.
+		await router.releaseConnection("owner");
+		expect(cancellations).toBe(0);
+		expect(registry.list()[0]?.status).toBe("open");
+
+		await router.releaseConnection("peer");
+		expect(cancellations).toBe(1);
+		expect(registry.list()).toEqual([]);
+	});
+
 	test("disconnect waits for an in-flight open before releasing its reservation", async () => {
+		const enteredRuntime = Promise.withResolvers<void>();
+		const deadline = AbortSignal.timeout(10_000);
+		deadline.addEventListener("abort", () => enteredRuntime.reject(deadline.reason), { once: true });
 		let releaseRuntime!: () => void;
 		const runtimeReady = new Promise<void>((resolve) => {
 			releaseRuntime = resolve;
 		});
 		const { dir, registry, writer, router } = await setup(async (options) => {
+			enteredRuntime.resolve();
 			await runtimeReady;
 			return runtime(options);
 		});
 		const opening = writer.withConnection("connection", () => router.handle(open(dir, join(dir, "race.jsonl"))));
 		const released = router.releaseConnection("connection");
-		await Promise.resolve();
-		expect(registry.list()[0]?.status).toBe("opening");
-		releaseRuntime();
+		try {
+			await enteredRuntime.promise;
+			expect(registry.list()[0]?.status).toBe("opening");
+		} finally {
+			releaseRuntime();
+		}
 		await Promise.all([opening, released]);
 		expect(registry.list()).toEqual([]);
 	});

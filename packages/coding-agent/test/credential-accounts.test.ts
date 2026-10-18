@@ -62,9 +62,11 @@ describe("provider-neutral credential accounts", () => {
 
 	test("sidecar health surfaces as blocked without auth.json carrying block state", async () => {
 		await seedPool("openai");
+		const workRevision = await repository.storedCredentialRevision("openai", "work", { key: "key-work" });
 		await repository.mutateSlotState("openai", "stored", "work", () => ({
 			blockedUntil: NOW_FAR_FUTURE,
 			blockReason: "rate_limit",
+			credentialRevision: workRevision,
 		}));
 
 		const accounts = await getCredentialAccounts(storage, "openai", {}, repository);

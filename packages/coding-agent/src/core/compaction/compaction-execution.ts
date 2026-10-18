@@ -2,6 +2,7 @@ import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-a
 import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
 import type { Model, Usage } from "@earendil-works/pi-ai/compat";
 import { convertToLlm } from "../messages.ts";
+import { combineUsage } from "../usage-totals.ts";
 import {
 	buildSummarizationContext,
 	type CacheFriendlySummaryOptions,
@@ -9,7 +10,6 @@ import {
 	type CompactionPreparation,
 	type CompactionResult,
 	cacheFriendlyContextFits,
-	combineUsage,
 	completeSummarization,
 	createSummarizationOptions,
 	generateSummaryWithUsage,
@@ -18,37 +18,37 @@ import {
 } from "./compaction.ts";
 import { computeFileLists, contentTextForSummary, formatFileOperations, serializeConversation } from "./utils.ts";
 
-const TURN_PREFIX_SUMMARIZATION_PROMPT = `This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.
+const TURN_PREFIX_SUMMARIZATION_PROMPT = `The messages above are earlier context from an ongoing conversation. Later messages are stored separately and do not need to be reconstructed.
 
-Summarize the prefix to provide context for the retained suffix:
-
-## Original Request
-[What did the user ask for in this turn?]
-
-## Early Progress
-- [Key decisions and work done in the prefix]
-
-## Context for Suffix
-- [Information needed to understand the retained recent work]
-
-Be concise. Focus on what's needed to understand the kept suffix.`;
-
-const SOURCE_CONTEXT_TURN_PREFIX_SUMMARIZATION_PROMPT = `The final turn in the source conversation was too large to keep in full. Its SUFFIX (recent work) is retained.
-
-The source conversation may also contain complete earlier turns for background. Summarize only the final, incomplete turn. It begins with the last user-role request before this instruction. Do not summarize earlier turns except for details needed to understand this final turn's prefix.
-
-Summarize the prefix to provide context for the retained suffix:
+Create a concise checkpoint of the user's request and the progress shown above. This checkpoint will be placed before the later messages so the conversation can continue with the necessary context.
 
 ## Original Request
-[What did the user ask for in this turn?]
+[What did the user ask for?]
 
-## Early Progress
-- [Key decisions and work done in the prefix]
+## Progress So Far
+- [Key decisions and work completed in these messages]
 
-## Context for Suffix
-- [Information needed to understand the retained recent work]
+## Context Needed to Continue
+- [Information from these messages needed to understand the later work]
 
-Be concise. Focus on what's needed to understand the kept suffix.`;
+Only summarize information explicitly present above. Do not infer or recreate later messages.`;
+
+const SOURCE_CONTEXT_TURN_PREFIX_SUMMARIZATION_PROMPT = `The messages above are context from an ongoing conversation whose final turn is still in progress. Later messages of that turn are stored separately and do not need to be reconstructed.
+
+The conversation may also contain complete earlier turns for background. Summarize only the final, incomplete turn. It begins with the last user-role request before this instruction. Do not summarize earlier turns except for details needed to understand the final turn.
+
+Create a concise checkpoint of that request and the progress shown so far. This checkpoint will be placed before the later messages so the conversation can continue with the necessary context.
+
+## Original Request
+[What did the user ask for?]
+
+## Progress So Far
+- [Key decisions and work completed in these messages]
+
+## Context Needed to Continue
+- [Information from these messages needed to understand the later work]
+
+Only summarize information explicitly present above. Do not infer or recreate later messages.`;
 
 /**
  * Generate summaries for compaction using prepared data.
@@ -91,7 +91,7 @@ export async function compact(
 	let summaryUsage: Usage;
 
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
-		let historyText = "No prior history.";
+		let historyText = previousSummary ?? "No prior history.";
 		let historyUsage: Usage | undefined;
 		if (messagesToSummarize.length > 0) {
 			const historyResult = await generateSummaryWithUsage(
@@ -115,6 +115,7 @@ export async function compact(
 					sourceContext: cacheFriendly?.sourceContext,
 					requestOptions: cacheFriendly?.requestOptions,
 				},
+				settings.summarizationMaxDurationMs,
 			);
 			historyText = historyResult.text;
 			historyUsage = historyResult.usage;
@@ -138,6 +139,7 @@ export async function compact(
 				sourceContext: cacheFriendly?.turnPrefixSourceContext,
 				requestOptions: cacheFriendly?.requestOptions,
 			},
+			settings.summarizationMaxDurationMs,
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
@@ -165,6 +167,7 @@ export async function compact(
 				sourceContext: cacheFriendly?.sourceContext,
 				requestOptions: cacheFriendly?.requestOptions,
 			},
+			settings.summarizationMaxDurationMs,
 		);
 		summary = result.text;
 		summaryUsage = result.usage;
@@ -206,6 +209,7 @@ async function generateTurnPrefixSummary(
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
 	cacheFriendly?: Pick<CacheFriendlySummaryOptions, "sourceContext" | "requestOptions">,
+	summarizationMaxDurationMs?: number,
 ): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
@@ -229,7 +233,7 @@ async function generateTurnPrefixSummary(
 		const providerMessages = transformContext ? await transformContext(messages, signal) : messages;
 		const llmMessages = convertToLlm(providerMessages);
 		const conversationText = serializeConversation(llmMessages);
-		promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
+		promptText = `# Conversation\n${conversationText}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
 	}
 
 	const response = await completeSummarization(
@@ -251,6 +255,7 @@ async function generateTurnPrefixSummary(
 		streamFn,
 		retry,
 		callbacks,
+		summarizationMaxDurationMs,
 	);
 
 	const failure = getSummarizationFailure(response, "Turn prefix summarization");

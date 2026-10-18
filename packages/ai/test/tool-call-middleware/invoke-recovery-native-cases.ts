@@ -9,7 +9,7 @@ const leakedInvoke =
 function nativeCall(
 	id: string,
 	name: string,
-	argumentsValue: Record<string, unknown>,
+	argumentsValue: ToolCall["arguments"],
 	extra: Pick<ToolCall, "thoughtSignature" | "incomplete" | "errorMessage"> = {},
 ): ToolCall {
 	return { type: "toolCall", id, name, arguments: argumentsValue, ...extra };

@@ -1,0 +1,144 @@
+name: Model catalog refresh
+
+# Keeps the bundled model catalog on main current (senpi#2943). Daily it regenerates the
+# whole catalog from models.dev and the providers' model listings. When the catalog
+# changed, it opens (or updates) one refresh PR with a CHANGELOG entry and enables
+# auto-merge, so the PR lands as soon as its required CI is green. A release then finds
+# no catalog drift and reuses main's CI instead of pushing a catalog commit and waiting
+# for it. A refresh PR whose CI stays red (for example a test pinning a model the catalog
+# dropped, #2584) stays open, and this run fails once it has waited MAX_STALE_DAYS, so
+# the drift is visible. Pull requests that touch the pipeline run it in dry-run mode.
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/model-catalog-refresh.yml'
+      - 'scripts/model-catalog-refresh.mjs'
+      - 'scripts/release-test-gate.mjs'
+      - 'packages/ai/scripts/generate-models.ts'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: model-catalog-refresh-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+env:
+  REFRESH_BRANCH: automation/model-catalog-refresh
+  MAX_STALE_DAYS: '3'
+
+jobs:
+  refresh:
+    name: Regenerate the model catalog
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || 'main' }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # --strict (the package script's default): a models.dev or provider-listing outage fails
+      # this run instead of silently keeping yesterday's catalog.
+      - name: Regenerate the model catalog
+        working-directory: packages/ai
+        run: npx tsx scripts/generate-models.ts --strict
+
+      - name: Validate model data
+        working-directory: packages/ai
+        run: npx tsx scripts/check-model-data.ts
+
+      - name: Summarize the change and record the CHANGELOG entry
+        id: summary
+        run: |
+          set -euo pipefail
+          node scripts/model-catalog-refresh.mjs \
+            --changelog packages/ai/CHANGELOG.md \
+            --summary "$RUNNER_TEMP/model-catalog-summary.md" >> "$GITHUB_OUTPUT"
+          if [[ -f "$RUNNER_TEMP/model-catalog-summary.md" ]]; then
+            cat "$RUNNER_TEMP/model-catalog-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The model catalog on main is current." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Anything else the regeneration rewrote means the pipeline drifted from what this
+      # workflow stages; fail rather than ship a partial refresh.
+      - name: Refuse changes outside the catalog
+        run: |
+          set -euo pipefail
+          unexpected="$(git status --porcelain --untracked-files=all | awk '{print $2}' \
+            | grep -vE '^packages/ai/(src/models\.generated\.ts|src/providers/data/[^/]+\.json|src/providers/[^/]+\.models\.ts|CHANGELOG\.md)$' || true)"
+          if [[ -n "$unexpected" ]]; then
+            echo "::error::The regeneration changed files outside the catalog: $unexpected"
+            exit 1
+          fi
+
+      - name: Open or update the refresh PR and enable auto-merge
+        if: github.event_name != 'pull_request'
+        env:
+          # A PAT is required: PRs pushed with GITHUB_TOKEN do not trigger the required CI checks.
+          GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
+          CHANGED: ${{ steps.summary.outputs.changed }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN}" ]]; then
+            echo "::error::UPSTREAM_AUTOMATION_TOKEN is required so the refresh PR runs CI."
+            exit 1
+          fi
+          open_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$REFRESH_BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [[ "$CHANGED" != "true" ]]; then
+            if [[ -n "$open_pr" ]]; then
+              gh pr close "$open_pr" --repo "$GITHUB_REPOSITORY" --delete-branch \
+                --comment "The model catalog on main is current again; closing this refresh."
+            fi
+            exit 0
+          fi
+          git config user.name "senpi-release-bot"
+          git config user.email "actions@github.com"
+          git checkout -B "$REFRESH_BRANCH"
+          git add -A -- packages/ai/src/models.generated.ts packages/ai/src/providers packages/ai/CHANGELOG.md
+          git commit -m "fix(ai): refresh the bundled model catalog"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${REFRESH_BRANCH}"
+          if [[ -n "$open_pr" ]]; then
+            gh pr edit "$open_pr" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/model-catalog-summary.md"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$REFRESH_BRANCH" \
+              --title "fix(ai): refresh the bundled model catalog" --body-file "$RUNNER_TEMP/model-catalog-summary.md"
+            open_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$REFRESH_BRANCH" --state open --json number --jq '.[0].number')"
+          fi
+          gh pr merge "$open_pr" --repo "$GITHUB_REPOSITORY" --auto --merge
+
+      - name: Fail when a refresh has waited too long
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          created="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$REFRESH_BRANCH" --state open --json createdAt --jq '.[0].createdAt // empty')"
+          if [[ -z "$created" ]]; then
+            echo "No pending model catalog refresh."
+            exit 0
+          fi
+          age_days=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 86400 ))
+          echo "The model catalog refresh PR has waited ${age_days} day(s)."
+          if (( age_days > MAX_STALE_DAYS )); then
+            echo "::error::The model catalog refresh PR has waited ${age_days} days (limit ${MAX_STALE_DAYS}); its CI is red or it cannot merge. A release would push the same drift and stop on the same CI."
+            exit 1
+          fi

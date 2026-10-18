@@ -151,6 +151,12 @@ function parseEvent(
 			copyText(parsed.reason, "reason", state);
 			copyText(specific?.additionalContext ?? parsed.additionalContext, "additionalContext", state);
 			return;
+		case "Notification":
+			copyText(specific?.additionalContext ?? parsed.additionalContext, "additionalContext", state);
+			if (parsed.decision !== undefined) {
+				add(state, "unsupported_field", "stdout.decision", "Notification does not support decisions.", "warning");
+			}
+			return;
 		case "SessionStart":
 			copyText(specific?.additionalContext ?? parsed.additionalContext, "additionalContext", state);
 			if (parsed.decision !== undefined) {

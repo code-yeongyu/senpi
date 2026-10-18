@@ -1,11 +1,15 @@
-import {
+import type {
 	TerminalScreen,
-	type TerminalScreenSnapshot,
+	TerminalScreenSnapshot,
 	TerminalSession,
-	type TerminalSessionExit,
-	type TerminalSessionOptions,
+	TerminalSessionExit,
+	TerminalSessionOptions,
 } from "@earendil-works/pi-pty";
+import { type ChildProcessIdentity, processBootAtMs } from "./process-identity.ts";
+import { loadPty } from "./pty.lazy.ts";
 import { DEFAULT_SCROLLBACK, MAX_SESSION_OUTPUT_CHARS } from "./shared.ts";
+
+const pty = await loadPty();
 
 export interface TerminalRuntimeOptions extends TerminalSessionOptions {
 	readonly scrollback?: number;
@@ -16,15 +20,31 @@ export interface DeltaRead {
 	readonly droppedChars: number;
 }
 
+const RELEASED_SCREEN: TerminalScreenSnapshot = {
+	cols: 0,
+	rows: 0,
+	visibleGrid: [],
+	scrollback: [],
+	cursor: { x: 0, y: 0 },
+};
+
 /**
  * A live terminal session: a pi-pty {@link TerminalSession} plus an xterm screen model
  * and a bounded decoded-output buffer with a per-consumer read cursor. Reads are pure
  * non-blocking peeks; watchers subscribe through `onOutput` (the monitor path).
+ *
+ * Once the process exits, the screen model is replaced by its final visible screen: an exited session
+ * stays listed until the registry needs its slot, and a live xterm with its scrollback and replay
+ * history costs tens of MB that nothing reads after exit (senpi#3171).
  */
 export class TerminalRuntimeSession {
 	readonly session: TerminalSession;
 	readonly command: string;
-	private readonly screen: TerminalScreen;
+	readonly startedAtMs: number;
+	private readonly argv: readonly string[];
+	private screen: TerminalScreen | null;
+	private finalScreen: TerminalScreenSnapshot | null = null;
+	private readonly screenRelease: Promise<void>;
 	private readonly decoder = new TextDecoder("utf-8", { fatal: false });
 	private buffer = "";
 	private droppedChars = 0;
@@ -34,12 +54,13 @@ export class TerminalRuntimeSession {
 
 	constructor(command: string, options: TerminalRuntimeOptions) {
 		this.command = command;
-		this.screen = new TerminalScreen({
+		this.argv = [options.command ?? command, ...(options.args ?? [])];
+		this.screen = new pty.TerminalScreen({
 			cols: options.cols,
 			rows: options.rows,
 			scrollback: options.scrollback ?? DEFAULT_SCROLLBACK,
 		});
-		this.session = new TerminalSession(options);
+		this.session = new pty.TerminalSession(options);
 		this.unsubscribeData = this.session.onData((chunk) => {
 			const text = this.ingest(chunk);
 			if (text.length === 0) return;
@@ -51,11 +72,52 @@ export class TerminalRuntimeSession {
 				}
 			}
 		});
+		this.screenRelease = new Promise((resolve) => {
+			this.session.onExit(() => {
+				// Best-effort like every screen write (#837): a failed release leaves an empty final screen, never an unhandled rejection.
+				void this.releaseScreen()
+					.catch(() => {})
+					.finally(resolve);
+			});
+		});
 		this.session.start();
+		this.startedAtMs = Date.now();
+	}
+
+	/** Resolves once an exited session has kept its final visible screen and dropped the screen model. */
+	screenReleased(): Promise<void> {
+		return this.screenRelease;
+	}
+
+	private async releaseScreen(): Promise<void> {
+		const screen = this.screen;
+		if (!screen) return;
+		await screen.flush().catch(() => {});
+		if (this.screen !== screen) return;
+		this.screen = null;
+		try {
+			this.finalScreen = { ...screen.snapshot(), scrollback: [] };
+		} finally {
+			screen.dispose();
+		}
 	}
 
 	get backend(): string | null {
 		return this.session.backend;
+	}
+
+	/** The spawned child as a later process can recognise it; undefined when the backend exposes no pid. */
+	identity(): ChildProcessIdentity | undefined {
+		const pid = this.session.pid;
+		if (pid === undefined) return undefined;
+		const processGroupId = this.session.processGroupId;
+		return {
+			pid,
+			...(processGroupId === undefined ? {} : { processGroupId }),
+			startedAtMs: this.startedAtMs,
+			bootAtMs: processBootAtMs(),
+			argv: this.argv,
+		};
 	}
 
 	get exited(): boolean {
@@ -74,7 +136,7 @@ export class TerminalRuntimeSession {
 	private ingest(chunk: Uint8Array): string {
 		const text = this.decoder.decode(chunk, { stream: true });
 		if (text.length === 0) return text;
-		this.ownScreenWrite(this.screen.feed(text));
+		if (this.screen) this.ownScreenWrite(this.screen.feed(text));
 		this.buffer += text;
 		if (this.buffer.length > MAX_SESSION_OUTPUT_CHARS) {
 			const overflow = this.buffer.length - MAX_SESSION_OUTPUT_CHARS;
@@ -105,11 +167,12 @@ export class TerminalRuntimeSession {
 	}
 
 	snapshot(): TerminalScreenSnapshot {
-		return this.screen.snapshot();
+		if (this.screen) return this.screen.snapshot();
+		return this.finalScreen ?? RELEASED_SCREEN;
 	}
 
 	resizeScreen(cols: number, rows: number): void {
-		this.ownScreenWrite(this.screen.resize(cols, rows));
+		if (this.screen) this.ownScreenWrite(this.screen.resize(cols, rows));
 	}
 
 	/**
@@ -133,6 +196,7 @@ export class TerminalRuntimeSession {
 		this.unsubscribeData?.();
 		this.unsubscribeData = null;
 		this.outputListeners.clear();
-		this.screen.dispose();
+		this.screen?.dispose();
+		this.screen = null;
 	}
 }

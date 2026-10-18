@@ -83,17 +83,21 @@ export default function anthropicBashExtension(pi: ExtensionAPI): void {
 		return addAnthropicBashToPayload(ctx.model?.api, event.payload);
 	});
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		if (ctx.model?.api !== "anthropic-messages") {
-			return undefined;
-		}
+	pi.on(
+		"before_agent_start",
+		async (event, ctx) => {
+			if (ctx.model?.api !== "anthropic-messages") {
+				return undefined;
+			}
 
-		if (!isAnthropicBashEnabled()) {
-			return undefined;
-		}
+			if (!isAnthropicBashEnabled()) {
+				return undefined;
+			}
 
-		return {
-			systemPrompt: `${event.systemPrompt}\n${ANTHROPIC_BASH_SECTION}`,
-		};
-	});
+			return {
+				systemPrompt: `${event.systemPrompt}\n${ANTHROPIC_BASH_SECTION}`,
+			};
+		},
+		{ previewSafe: true },
+	);
 }

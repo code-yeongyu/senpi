@@ -3,6 +3,7 @@ import { getModel, streamSimple } from "../src/compat.ts";
 import type { Context, Model, SimpleStreamOptions } from "../src/types.ts";
 
 interface AnthropicThinkingPayload {
+	messages: Array<{ role: string; output_config?: { effort?: string } }>;
 	thinking?: { type: string; budget_tokens?: number; display?: string };
 	output_config?: { effort?: string };
 }
@@ -157,7 +158,11 @@ describe("Anthropic forceAdaptiveThinking compat override", () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-opus-5"), { reasoning: "high" });
 
 		// then: budget thinking on an adaptive-only model returns an empty thinking block upstream
-		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.thinking).toEqual({
+			type: "adaptive",
+			display: "summarized",
+			block_binding: { prefix_mismatch_behavior: "drop_block" },
+		});
 		expect(payload.thinking?.budget_tokens).toBeUndefined();
 		expect(payload.output_config?.effort).toBeTruthy();
 	});
@@ -184,7 +189,8 @@ describe("Anthropic forceAdaptiveThinking compat override", () => {
 	it("uses native max effort for the built-in Claude Opus 5 model", async () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-opus-5"), { reasoning: "max" });
 
-		expect(payload.output_config).toEqual({ effort: "max" });
+		expect(payload.output_config).toEqual({ effort: "high" });
+		expect(payload.messages.at(-1)).toMatchObject({ output_config: { effort: "max" } });
 	});
 
 	it("allows built-in adaptive models to opt out with compat.forceAdaptiveThinking false", async () => {

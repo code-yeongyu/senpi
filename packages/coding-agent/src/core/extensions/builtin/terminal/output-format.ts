@@ -10,6 +10,8 @@
  * same budget the core bash tool enforces.
  */
 
+import type { TextContent } from "@earendil-works/pi-ai";
+import { modelOnlyText } from "../../../tools/model-only-text.ts";
 import { formatSize, type TruncationResult, truncateTail } from "../../../tools/truncate.ts";
 
 /** Mirrors the core bash tool budget (`DEFAULT_MAX_LINES` / `DEFAULT_MAX_BYTES`). */
@@ -58,7 +60,12 @@ export function sanitizeTerminalOutput(raw: string): string {
 }
 
 export interface FormattedTerminalToolOutput {
+	/** Model-facing text: the kept output, then the truncation marker when content was cut. */
 	readonly text: string;
+	/** The kept output alone, without the marker. */
+	readonly body: string;
+	/** Truncation marker addressed to the model; UIs never render it. */
+	readonly marker?: string;
 	readonly truncated: boolean;
 	readonly truncation: TruncationResult;
 }
@@ -74,10 +81,44 @@ export function formatTerminalToolOutput(raw: string): FormattedTerminalToolOutp
 		maxBytes: TERMINAL_TOOL_MAX_BYTES,
 	});
 	if (!truncation.truncated) {
-		return { text: sanitized, truncated: false, truncation };
+		return { text: sanitized, body: sanitized, truncated: false, truncation };
 	}
 	const marker = truncation.lastLinePartial
 		? `[Showing last ${formatSize(truncation.outputBytes)} of a single line; earlier output dropped]`
 		: `[Showing lines ${truncation.totalLines - truncation.outputLines + 1}-${truncation.totalLines} of ${truncation.totalLines}; earlier output dropped]`;
-	return { text: `${truncation.content}\n\n${marker}`, truncated: true, truncation };
+	return { text: `${truncation.content}\n\n${marker}`, body: truncation.content, marker, truncated: true, truncation };
+}
+
+/**
+ * Split a tool-result text into parts so each notice becomes its own model-only
+ * part. Providers join a tool result's text parts with "\n", so every notice
+ * must sit on its own line: the newline before it (and after it, when text
+ * follows) is taken out of the neighbouring parts and restored by that join.
+ * The joined parts are therefore byte-identical to `text`. A notice that is
+ * absent or not line-delimited leaves `text` as one visible part.
+ */
+export function splitModelOnlyNotices(text: string, notices: ReadonlyArray<string | undefined>): TextContent[] {
+	const parts: TextContent[] = [];
+	let cursor = 0;
+	// True when the previous part is a notice whose trailing newline was consumed.
+	let afterNotice = false;
+	for (const notice of notices) {
+		if (notice === undefined || notice.length === 0) continue;
+		const index = text.indexOf(notice, cursor);
+		if (index < 0) continue;
+		const end = index + notice.length;
+		if (end < text.length && text[end] !== "\n") continue;
+		if (afterNotice && index === cursor) {
+			parts.push(modelOnlyText(notice));
+		} else if (index > cursor && text[index - 1] === "\n") {
+			parts.push({ type: "text", text: text.slice(cursor, index - 1) }, modelOnlyText(notice));
+		} else {
+			continue;
+		}
+		cursor = end < text.length ? end + 1 : end;
+		afterNotice = end < text.length;
+	}
+	if (parts.length === 0) return [{ type: "text", text }];
+	if (cursor < text.length || text[text.length - 1] === "\n") parts.push({ type: "text", text: text.slice(cursor) });
+	return parts;
 }

@@ -4,6 +4,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { registryPackageNames } from "./registry-packages.mjs";
+import { WORKSPACE_PACKAGES } from "./release-packages.mjs";
 
 const DEFAULT_REPO = "earendil-works/pi";
 const DEFAULT_BASE_PATH = "packages/coding-agent";
@@ -17,13 +19,16 @@ function printUsage() {
 	console.log(`Usage: node scripts/release-notes.mjs <command> [options]
 
 Commands:
-  extract              Extract release notes from the coding-agent changelog
+  extract              Extract release notes from one or more package changelogs
   fix-github-releases  Rewrite existing GitHub release note links in place
 
 extract options:
   --version <x.y.z>    Version to extract
   --tag <vX.Y.Z>       Release tag used for repository links (defaults to v<version>)
-  --changelog <path>   Changelog path (default: ${DEFAULT_CHANGELOG})
+  --changelog <path>   Changelog path (default: ${DEFAULT_CHANGELOG}). Repeat it to combine
+                       packages: each non-empty section is emitted, in the given order, under
+                       a heading naming the package, with links resolved against its directory
+  --published          Use the changelog of every published workspace package (coding-agent first)
   --out <path>         Output file (default: stdout)
   --repo <owner/repo>  GitHub repository for generated links (default: ${DEFAULT_REPO})
   --base-path <path>   Base path for relative changelog links (default: ${DEFAULT_BASE_PATH})
@@ -60,8 +65,9 @@ function run(command, args, options = {}) {
 function parseOptions(args) {
 	const options = {
 		basePath: DEFAULT_BASE_PATH,
-		changelog: DEFAULT_CHANGELOG,
+		changelogs: [],
 		dryRun: false,
+		published: false,
 		out: undefined,
 		repo: DEFAULT_REPO,
 		sinceTag: DEFAULT_FIX_SINCE_TAG,
@@ -79,6 +85,10 @@ function parseOptions(args) {
 			options.dryRun = true;
 			continue;
 		}
+		if (arg === "--published") {
+			options.published = true;
+			continue;
+		}
 
 		const optionNames = new Set(["--base-path", "--changelog", "--out", "--repo", "--since-tag", "--tag", "--version"]);
 		if (!optionNames.has(arg)) {
@@ -91,7 +101,7 @@ function parseOptions(args) {
 		}
 
 		if (arg === "--base-path") options.basePath = value;
-		if (arg === "--changelog") options.changelog = value;
+		if (arg === "--changelog") options.changelogs.push(value);
 		if (arg === "--out") options.out = value;
 		if (arg === "--repo") options.repo = value;
 		if (arg === "--since-tag") options.sinceTag = value;
@@ -253,16 +263,57 @@ function extractReleaseNotes(options) {
 		throw new Error("extract requires --version or --tag");
 	}
 
-	if (!existsSync(options.changelog)) {
-		throw new Error(`Changelog does not exist: ${options.changelog}`);
+	const changelogs = options.published
+		? publishedChangelogs()
+		: options.changelogs.length > 0
+			? options.changelogs
+			: [DEFAULT_CHANGELOG];
+	for (const changelog of changelogs) {
+		if (!existsSync(changelog)) {
+			throw new Error(`Changelog does not exist: ${changelog}`);
+		}
 	}
 
 	const tag = normalizeTag(options.tag ?? version);
-	const changelog = readFileSync(options.changelog, "utf8");
-	const section = extractChangelogSection(changelog, version);
-	const rawNotes = section ? `${section}\n` : `Release ${version}\n`;
-	const { markdown } = normalizeReleaseNoteLinks(rawNotes, { basePath: options.basePath, repo: options.repo, tag });
-	writeOutput(markdown, options.out);
+	if (changelogs.length === 1) {
+		const section = extractChangelogSection(readFileSync(changelogs[0], "utf8"), version);
+		const rawNotes = section ? `${section}\n` : `Release ${version}\n`;
+		const { markdown } = normalizeReleaseNoteLinks(rawNotes, { basePath: options.basePath, repo: options.repo, tag });
+		writeOutput(markdown, options.out);
+		return;
+	}
+
+	const packageNotes = [];
+	for (const changelog of changelogs) {
+		const section = extractChangelogSection(readFileSync(changelog, "utf8"), version);
+		if (!section) {
+			continue;
+		}
+		const packageDir = path.relative(process.cwd(), path.resolve(path.dirname(changelog)));
+		const { markdown } = normalizeReleaseNoteLinks(`${section}\n`, { basePath: packageDir, repo: options.repo, tag });
+		packageNotes.push(`## ${releasePackageName(packageDir)}\n\n${markdown}`);
+	}
+	writeOutput(packageNotes.length > 0 ? packageNotes.join("\n") : `Release ${version}\n`, options.out);
+}
+
+// Every workspace package published to the registry, read from the release package list so a newly
+// published package is included without editing the workflow. coding-agent leads the release body.
+function publishedChangelogs() {
+	const changelogs = WORKSPACE_PACKAGES.filter((manifest) => {
+		if (!existsSync(manifest)) return false;
+		const { name } = JSON.parse(readFileSync(manifest, "utf8"));
+		return registryPackageNames.has(name);
+	}).map((manifest) => manifest.replace(/package\.json$/, "CHANGELOG.md"));
+	return [...changelogs.filter((changelog) => changelog === DEFAULT_CHANGELOG), ...changelogs.filter((changelog) => changelog !== DEFAULT_CHANGELOG)];
+}
+
+function releasePackageName(packageDir) {
+	const manifestPath = path.join(packageDir, "package.json");
+	if (!existsSync(manifestPath)) {
+		return normalizePathPart(packageDir);
+	}
+	const { name } = JSON.parse(readFileSync(manifestPath, "utf8"));
+	return registryPackageNames.get(name) ?? name;
 }
 
 function listGithubReleases(repo) {

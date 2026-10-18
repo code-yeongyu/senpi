@@ -40,18 +40,22 @@ describe("issue #477 recursive watch main-thread stall", () => {
 		worker.emit("message", { kind: "event", id: 1, eventType: "change", filename: ".omo/omo.json" });
 
 		expect(createRecursiveWorker).toHaveBeenCalledTimes(1);
-		expect(worker.postMessage).toHaveBeenCalledWith({
-			kind: "watch",
-			id: 1,
-			path: "/large-workspace-mount",
-			recursive: true,
-		});
-		expect(worker.postMessage).toHaveBeenCalledWith({
-			kind: "watch",
-			id: 2,
-			path: "/another-config-root",
-			recursive: true,
-		});
+		expect(worker.postMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: "watch",
+				id: 1,
+				path: "/large-workspace-mount",
+				recursive: true,
+			}),
+		);
+		expect(worker.postMessage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: "watch",
+				id: 2,
+				path: "/another-config-root",
+				recursive: true,
+			}),
+		);
 		expect(mocks.fsWatch).not.toHaveBeenCalled();
 		expect(listener).toHaveBeenCalledWith("change", ".omo/omo.json");
 

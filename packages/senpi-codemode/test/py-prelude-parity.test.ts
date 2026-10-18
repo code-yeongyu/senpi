@@ -13,6 +13,7 @@ import {
 import { createInterpreterDetector } from "../src/interpreters/detect.ts";
 import { PythonKernel } from "../src/kernels/py/kernel.ts";
 import { hasPython3, runCell } from "./py-kernel/fixtures.ts";
+import { typedAgentResponse } from "./workpool/handle-fixtures.ts";
 
 type PythonConnection = BridgeConnectionConfig & { readonly statusEvents?: boolean };
 
@@ -181,7 +182,7 @@ describe.skipIf(!(await hasPython3()))("Python prelude parity", () => {
 			token: "agent-token",
 			onCall: async (request) => {
 				calls.push(request);
-				return { text: '{"answer":42}', id: "st_agent", handle: "agent://st_agent", agent: "reviewer" };
+				return typedAgentResponse;
 			},
 			onEmit: async () => {},
 			onCompletion: async () => "unused",

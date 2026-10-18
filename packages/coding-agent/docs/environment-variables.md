@@ -25,9 +25,12 @@ Commands run by the `bash` and `powershell` tools receive the current Pi session
 |----------|-------------|
 | `PI_SESSION_ID` | Current session ID |
 | `PI_SESSION_FILE` | Absolute path to the current session JSONL file; unset for ephemeral sessions |
+| `PI_SESSION_CWD` | Current session working directory, independent of the shell child's working directory |
+| `PI_GOAL_STORE_FILE` | Absolute path to the session's authoritative goal-store file; the file need not exist yet |
 | `PI_PROVIDER` | Currently selected model provider |
 | `PI_MODEL` | Currently selected model ID |
 | `PI_REASONING_LEVEL` | Current effective reasoning level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
+| `OMO_BROWSER_ENGINE` | Browser the opener chose for this session: `connected` (the user's own browser), `builtin` (the app's in-app browser) or `none`. Set only for a session opened with `open_session.browserEngine`; a session that chose none never sees the variable, even if the host process has one |
 
 The values are resolved when each command starts. Switching models or changing the reasoning level therefore affects the next shell command without restarting Pi. `PI_PROVIDER` and `PI_MODEL` identify the selected Pi model, not a different upstream model that a router may choose internally.
 
@@ -46,7 +49,9 @@ if [ -n "$PI_SESSION_FILE" ]; then
 fi
 ```
 
-These variables are injected into the LLM-callable `bash` and `powershell` tools. They are not injected into user-entered `!` or `!!` commands.
+These variables are injected into the LLM-callable `bash` (including terminal-extension PTY sessions) and `powershell` tools. They are not injected into user-entered `!` or `!!` commands. Eval kernels receive the same session environment at kernel start, and their children inherit it. Inherited values for `PI_SESSION_CWD` and `PI_GOAL_STORE_FILE` are cleared before session values are applied; an unavailable optional goal-store path stays unset.
+
+`PI_GOAL_STORE_FILE` comes from `ExtensionContext.goalStoreFile`, not from the session JSONL filename. Persisted sessions use the session manager's directory, including an explicit `SessionManager.open(path, otherSessionDir)` override. In-memory sessions use a cwd-hashed `extensions/goal/no-session/<hash>` bucket under the agent state directory. Reading the path does not create a goal or its file.
 
 ### Custom Shell Tools
 
@@ -83,12 +88,23 @@ These variables are read by Pi itself:
 | `PI_PACKAGE_DIR` | Override the package directory, useful for Nix/Guix store paths |
 | `PI_OFFLINE` | Disable startup network operations, including update checks, package updates, and install/update telemetry |
 | `PI_SKIP_VERSION_CHECK` | Disable the `pi.dev` latest-version request |
+| `SENPI_RUNTIME` | `node` keeps senpi on Node.js and hides the Node.js runtime notice; `bun` re-execs under any installed Bun. Without it, a Bun-global install runs on its Bun and any other installed package runs on a discovered Bun 1.4.0 or newer |
+| `PI_SKIP_RUNTIME_NOTICE` | Hide the one-time "Running on Node.js" notice without changing the runtime |
 | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no` |
 | `PI_CACHE_RETENTION` | Set to `long` to opt into extended provider prompt caching where supported; direct Anthropic defaults to 5 minutes |
+| `PI_CLAUDE_CODE_VERSION` | Exact `X.Y.Z` to advertise as the Claude Code version on Anthropic OAuth requests (`claude-cli/<version>`) and skip the background lookup. Unset, senpi advertises the higher of its bundled floor and the latest published Claude Code, refreshed at most every six hours and cached in `<agent dir>/claude-code-version.json`; a `claude_code_version_too_old` rejection raises it and retries once |
 | `PI_SHARE_VIEWER_URL` | Override the base URL used by `/share` |
 | `PI_HARDWARE_CURSOR` | Set to `1` to show the hardware cursor; see [Terminal setup](terminal-setup.md) |
+| `PI_HYPERLINKS` | Override OSC 8 hyperlink detection with `1`, `0`, or `auto` |
+| `PI_IMAGE_PROTOCOL` | Override inline image detection with `kitty`, `iterm2`, `none`, or `auto` |
+| `PI_TRUE_COLOR` | Override truecolor detection with `1`, `0`, or `auto` |
+
+`SENPI_HYPERLINKS`, `SENPI_IMAGE_PROTOCOL`, and `SENPI_TRUE_COLOR` are equivalent capability overrides for branded Senpi distributions. They take precedence over the legacy `PI_*` names when both are set; explicit settings in the terminal configuration take precedence over either environment variable. The image protocol accepts `kitty`, `iterm2`, `none`, or `auto`.
 | `PI_TUI_ESC_TIMEOUT` | How long to wait after a lone ESC before treating it as Escape, in milliseconds; defaults to `100` over SSH and `10` otherwise. Increase if Alt-key input is misread as Escape |
+| `PI_TUI_BURST_WINDOW_MS` | When the terminal sends no bracketed-paste markers, how long a line break that ends a read with text is held in case the rest of a paste follows, in milliseconds; defaults to `100` over SSH and `20` otherwise. `0` never holds a line break. Increase if a slow connection still splits a paste into separate prompts |
 | `SENPI_RECOVER_INSPECTOR_VM_IMPORT` | Set to `1` at process start to keep the TUI running when a Node Inspector (`node inspect` / `--inspect`) eval uses dynamic `import()`, which Node rejects with `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`. Recovery applies only to that exact Inspector-originated rejection while an Inspector endpoint is active; all other uncaught errors remain fatal. Use `require()` or a target-side loader in Inspector evals instead |
+| `SENPI_MEMORY_REPORT` | Set to `1` to install the on-demand memory report: the RPC `memory_report` request writes a per-layer report to `<session>-artifacts/memory/`, and `SIGUSR2` (POSIX) writes one for every session registered in the signalled process (all sessions of an in-process host; a worker-runtime host's sessions answer only over RPC); see [RPC](rpc.md#memory_report). Unset, nothing is installed |
+| `SENPI_MEMORY_REPORT_SNAPSHOT` | With `SENPI_MEMORY_REPORT=1`, also write a heap snapshot of the main thread beside each report. A snapshot is a large allocation; use it only for diagnosis |
 | `VISUAL`, `EDITOR` | External editor fallback when `externalEditor` is unset |
 | `HTTP_PROXY`, `HTTPS_PROXY` | Proxy outbound HTTP requests |
 
@@ -100,3 +116,5 @@ These variables are read by Pi itself:
 | `PI_IMAGE_GEN_PROVIDER` | Pin a specific configured gateway provider for image generation (for example `quotio-openai`). The provider must have a resolvable API key and base URL in `models.json`. When unset, the credential resolver picks the best available source automatically |
 
 Provider credentials such as `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and cloud-provider configuration are listed in [Providers](providers.md#environment-variables-or-auth-file).
+
+`PI_SERVER_DIR` and `PI_SERVER_ID` apply only to the source-only [experimental remote harness](development.md#experimental-remote-harness), not distributed builds.

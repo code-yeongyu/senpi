@@ -12,7 +12,7 @@ custom-provider-gitlab-duo/ Provider against GitLab Duo
 gondolin/                   Route built-in tools + `!` commands into a Gondolin micro-VM
 sandbox/                    OS-level sandboxing via @anthropic-ai/sandbox-runtime
 plan-mode/                  Read-only planning mode (generated instructions)
-openai-codex-usage/         Codex usage tracking
+chatgpt-subscription-usage/         Codex usage tracking
 dynamic-resources/          Dynamic resource examples
 with-deps/                  Extension with its own private dependency manifest
 doom-overlay/               WASM Doom rendered as live overlay; doom/build/ is generated

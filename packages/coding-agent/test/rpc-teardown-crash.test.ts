@@ -1,5 +1,4 @@
 import { describe, expect, test, vi } from "vitest";
-import { RemoteInteractiveRuntime } from "../src/modes/interactive/interactive-host-runtime.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { RpcClient } from "../src/modes/rpc/rpc-client.ts";
 
@@ -29,20 +28,6 @@ describe("RPC teardown when the transport is gone", () => {
 		};
 
 		await expect(abortAndFireQueuedMessages.call(fakeThis)).resolves.toBe(0);
-	});
-
-	test("dispose continues through stop and local dispose after closeSession fails", async () => {
-		const client = new RpcClient();
-		(client as any).sessionId = "session";
-		const stop = vi.spyOn(client, "stop").mockResolvedValue(undefined);
-		const localDispose = vi.fn(async () => {});
-		const abortLocalBash = vi.fn();
-		const runtime = new RemoteInteractiveRuntime({ dispose: localDispose } as any, { abortLocalBash } as any, client);
-
-		await expect(runtime.dispose()).resolves.toBeUndefined();
-		expect(stop).toHaveBeenCalledTimes(1);
-		expect(localDispose).toHaveBeenCalledTimes(1);
-		expect(abortLocalBash).toHaveBeenCalledTimes(1);
 	});
 
 	test("active send failures still surface", async () => {

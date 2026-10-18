@@ -3,7 +3,7 @@ const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 export function detectSupportedImageMimeType(buffer: Uint8Array): string | undefined {
 	if (startsWith(buffer, [0xff, 0xd8, 0xff])) return buffer[3] === 0xf7 ? undefined : "image/jpeg";
 	if (startsWith(buffer, PNG_SIGNATURE)) return isPng(buffer) && !isAnimatedPng(buffer) ? "image/png" : undefined;
-	if (startsWithAscii(buffer, 0, "GIF")) return "image/gif";
+	if (startsWithAscii(buffer, 0, "GIF87a") || startsWithAscii(buffer, 0, "GIF89a")) return "image/gif";
 	if (startsWithAscii(buffer, 0, "RIFF") && startsWithAscii(buffer, 8, "WEBP")) return "image/webp";
 	if (startsWithAscii(buffer, 0, "BM") && isBmp(buffer)) return "image/bmp";
 	return undefined;

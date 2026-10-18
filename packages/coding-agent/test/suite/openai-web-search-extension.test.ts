@@ -273,7 +273,7 @@ describe("openai-web-search builtin extension", () => {
 		expect(result).toBe(payload);
 	});
 
-	it("still behaves as default-on when enable env is unset", () => {
+	it("keeps the first-party default on when the environment override is unset", () => {
 		const payload = {
 			tools: [{ name: "other_tool" }],
 		};
@@ -352,6 +352,7 @@ describe("openai-web-search before_agent_start", () => {
 				if (eventName === "session_start") {
 					sessionStartHandler = handler as SessionStartHandler;
 				}
+				return () => {};
 			},
 		} satisfies Pick<ExtensionAPI, "on">;
 
@@ -383,6 +384,7 @@ describe("openai-web-search before_agent_start", () => {
 				if (eventName === "before_agent_start") {
 					beforeAgentStartHandler = handler as BeforeAgentStartHandler;
 				}
+				return () => {};
 			},
 		} satisfies Pick<ExtensionAPI, "on">;
 

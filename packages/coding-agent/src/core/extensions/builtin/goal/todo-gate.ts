@@ -25,8 +25,8 @@ export function openTodoCompletionError(openTasks: readonly string[]): string {
 	const suffix = openTasks.length > MAX_LISTED_TASKS ? ` and ${openTasks.length - MAX_LISTED_TASKS} more` : "";
 	return (
 		`cannot mark the goal complete: ${openTasks.length} open todo task(s) remain: ${listed}${suffix}. ` +
-		"Finish each task and mark it done, or drop tasks that are genuinely no longer needed, " +
-		"then run the completion audit again and retry update_goal."
+		"Do the remaining work, or drop the tasks that are genuinely no longer needed - closing an unfinished task " +
+		"to clear this gate reports a completion that did not happen. Then run the completion audit again and retry update_goal."
 	);
 }
 
@@ -57,13 +57,9 @@ export function staleGoalTodoReminder(goal: Goal | null): string | undefined {
 			: "New todo tasks were added, but the registered goal is already complete (stale), so the new work is untracked.";
 	const fixLine =
 		goal === null
-			? "If this todo list tracks a durable objective (multi-step work that should survive across turns), register it now with create_goal so progress is tracked and audited."
-			: "If this todo list tracks a durable objective (multi-step work that should survive across turns), register it now with create_goal; creating a new goal archives the completed one and replaces it.";
-	return [
-		"<system-reminder>",
-		staleLine,
-		fixLine,
-		"If the todos are trivial short-lived bookkeeping for the current turn, continue without a goal.",
-		"</system-reminder>",
-	].join("\n");
+			? "Register one with create_goal only when the work must outlive this turn - it waits on external state or needs more than one verify-and-fix round."
+			: "Register one with create_goal only when the work must outlive this turn - it waits on external state or needs more than one verify-and-fix round; a new goal archives the completed one.";
+	return ["<system-reminder>", staleLine, fixLine, "Otherwise continue without a goal.", "</system-reminder>"].join(
+		"\n",
+	);
 }

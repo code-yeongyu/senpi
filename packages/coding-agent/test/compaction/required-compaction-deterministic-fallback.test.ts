@@ -1,20 +1,44 @@
 import type { AssistantMessage, Message, Model } from "@earendil-works/pi-ai";
-import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, normalizeContext } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { convertMessages as convertGoogleMessages } from "../../../ai/src/api/google-shared.ts";
 import { transformMessages } from "../../../ai/src/api/transform-messages.ts";
-import { prepareCompaction } from "../../src/core/compaction/index.ts";
+import { DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "../../src/core/compaction/index.ts";
 import { StreamDurationBudgetError } from "../../src/core/compaction/stream-watchdog.ts";
 import {
 	classifyRequiredCompactionFallbackFailure,
 	createRequiredCompactionFallback,
+	type DeterministicFallbackDiagnostic,
 } from "../../src/core/extensions/builtin/compaction/deterministic-fallback.ts";
+import { requiresDeterministicCompactionFallback } from "../../src/core/extensions/builtin/compaction/extension-wiring.ts";
 import { resolveCompactionGeometry } from "../../src/core/extensions/builtin/compaction/orchestration.ts";
+import { hasUnsafeRetainedContent } from "../../src/core/extensions/builtin/compaction/retained-message-safety.ts";
 import { SummaryRequestError } from "../../src/core/extensions/builtin/compaction/speculative.ts";
-import type { CompactionReason } from "../../src/core/extensions/types.ts";
+import type { CompactionReason, ContextUsage } from "../../src/core/extensions/types.ts";
+import { convertToLlm } from "../../src/core/messages.ts";
+import { buildSessionContext, type SessionEntry } from "../../src/core/session-manager.ts";
 import { createBlockingContext, createCompactionHandlers } from "../helpers/blocking-compaction-harness.ts";
 
 const validSig = "c2lnbmF0dXJlMTIzNA==";
+
+function replayFallback(branch: SessionEntry[], result: ReturnType<typeof createRequiredCompactionFallback>) {
+	expect(result).toBeDefined();
+	if (!result) throw new Error("Expected replay-safe fallback");
+	const messages = convertToLlm(
+		buildSessionContext([
+			...branch,
+			{
+				type: "compaction",
+				id: "fallback-replay",
+				parentId: branch.at(-1)?.id ?? null,
+				timestamp: new Date(0).toISOString(),
+				...result,
+			},
+		]).messages,
+	);
+	expect(hasUnsafeRetainedContent(messages)).toBe(false);
+	return messages;
+}
 
 function createGeminiAssistantMessage(
 	content: AssistantMessage["content"],
@@ -33,6 +57,33 @@ function createGeminiAssistantMessage(
 }
 
 describe("required compaction deterministic fallback", () => {
+	it("gates proactive fallback at the effective hard cap", () => {
+		const harness = createBlockingContext({ usageTokens: 0 });
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true);
+		expect(preparation).toBeDefined();
+		const event = {
+			type: "session_before_compact",
+			reason: "pre_prompt",
+			willRetry: false,
+			requestId: "pre-prompt-gate-boundary",
+			preparation: preparation!,
+			branchEntries,
+			signal: new AbortController().signal,
+		} satisfies Parameters<typeof requiresDeterministicCompactionFallback>[0];
+		const usage = (tokens: number | null, contextWindow = 10_000): ContextUsage => ({
+			tokens,
+			contextWindow,
+			percent: tokens === null ? null : (tokens / contextWindow) * 100,
+		});
+
+		expect(requiresDeterministicCompactionFallback(event, usage(9_599))).toBe(false);
+		expect(requiresDeterministicCompactionFallback(event, usage(9_600))).toBe(true);
+		expect(requiresDeterministicCompactionFallback(event, usage(null))).toBe(false);
+		expect(requiresDeterministicCompactionFallback(event, usage(10_000, 0))).toBe(false);
+		expect(requiresDeterministicCompactionFallback({ ...event, reason: "manual" }, usage(0))).toBe(true);
+	});
+
 	it("advances to the latest user boundary when the prepared suffix cannot fit", async () => {
 		const handlers = createCompactionHandlers();
 		const harness = createBlockingContext({ usageTokens: 9_900 });
@@ -131,10 +182,13 @@ describe("required compaction deterministic fallback", () => {
 		});
 	});
 
-	it("does not recover aborted or unrelated failures", async () => {
+	// Issue #1741 narrowed this: a terminal provider error that is NOT a refusal now
+	// authorizes the deterministic checkpoint instead of wedging the session. Aborts
+	// and refusals stay fail-closed.
+	it("does not recover aborted requests or provider refusals", async () => {
 		for (const testCase of [
 			{ reason: "threshold" as const, message: "upstream_stream_truncated", aborted: true, refusal: false },
-			{ reason: "threshold" as const, message: "unrelated provider refusal", aborted: false, refusal: false },
+			{ reason: "threshold" as const, message: "unrelated provider refusal", aborted: false, refusal: true },
 			{ reason: "threshold" as const, message: "upstream_stream_truncated", aborted: false, refusal: true },
 		]) {
 			const handlers = createCompactionHandlers();
@@ -175,7 +229,7 @@ describe("required compaction deterministic fallback", () => {
 	});
 
 	it("fails closed for every non-required reason even when typed truncation recovery would fit", async () => {
-		const nonRequiredReasons = ["pre_prompt", "branch", "extension"] satisfies CompactionReason[];
+		const nonRequiredReasons = ["branch", "extension"] satisfies CompactionReason[];
 		for (const reason of nonRequiredReasons) {
 			const handlers = createCompactionHandlers();
 			const harness = createBlockingContext({ usageTokens: 9_900 });
@@ -217,10 +271,128 @@ describe("required compaction deterministic fallback", () => {
 		}
 	});
 
+	it("recovers mandatory pre-prompt compaction after a typed summarizer failure", async () => {
+		const handlers = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 9_600 });
+		harness.registration.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "upstream_stream_truncated: Responses stream ended before a terminal event",
+			}),
+		]);
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = {
+			...prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!,
+			firstKeptEntryId: branchEntries.at(-1)?.id ?? "",
+		};
+
+		const result = await handlers.sessionBeforeCompact(
+			{
+				type: "session_before_compact",
+				reason: "pre_prompt",
+				willRetry: false,
+				requestId: "pre-prompt-required-recovery",
+				preparation,
+				branchEntries,
+				signal: new AbortController().signal,
+			},
+			harness.ctx,
+		);
+
+		expect(result).toMatchObject({
+			compaction: {
+				firstKeptEntryId: preparation.firstKeptEntryId,
+				details: { retainedSuffix: "prepared" },
+			},
+		});
+		expect(result).not.toHaveProperty("cancel");
+		expect(harness.registration.getCallLog()).toHaveLength(1);
+	});
+
+	it("preserves full context when proactive pre-prompt compaction fails below the hard cap", async () => {
+		const handlers = createCompactionHandlers();
+		const harness = createBlockingContext({ usageTokens: 9_599 });
+		harness.registration.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "upstream_stream_truncated: Responses stream ended before a terminal event",
+			}),
+		]);
+		const branchEntries = harness.ctx.sessionManager.getBranch();
+		const preparation = {
+			...prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!,
+			firstKeptEntryId: branchEntries.at(-1)?.id ?? "",
+		};
+
+		const result = await handlers.sessionBeforeCompact(
+			{
+				type: "session_before_compact",
+				reason: "pre_prompt",
+				willRetry: false,
+				requestId: "pre-prompt-proactive-fail-closed",
+				preparation,
+				branchEntries,
+				signal: new AbortController().signal,
+			},
+			harness.ctx,
+		);
+
+		expect(result).toMatchObject({ cancel: true });
+		expect(result).not.toHaveProperty("compaction");
+		expect(harness.ctx.sessionManager.getBranch()).toEqual(branchEntries);
+		expect(harness.registration.getCallLog()).toHaveLength(1);
+	});
+
 	it("classifies a duration watchdog without sleeping", () => {
 		expect(classifyRequiredCompactionFallbackFailure(new StreamDurationBudgetError(120_000))).toBe(
 			"summarization-timeout",
 		);
+	});
+
+	it("omits unsafe split-turn payloads without sacrificing the prepared request or safe tail", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		const preparedBoundaryId = harness.sessionManager.appendMessage({
+			role: "user",
+			content: "Continue the current turn.",
+			timestamp: 4,
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("", { timestamp: 5, stopReason: "toolUse" }),
+			content: [{ type: "toolCall", id: "unsafe-tool", name: "read", arguments: { path: "image.png" } }],
+		});
+		harness.sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "unsafe-tool",
+			toolName: "read",
+			content: [
+				{ type: "text", text: "Malformed image result" },
+				{ type: "image", mimeType: "image/png" },
+			] as never,
+			isError: false,
+			timestamp: 6,
+		});
+		const safeTailId = harness.sessionManager.appendMessage(
+			fauxAssistantMessage("Work continued safely.", { timestamp: 7 }),
+		);
+		const branchEntries = harness.sessionManager.getBranch();
+		const preparation = {
+			...prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!,
+			firstKeptEntryId: preparedBoundaryId,
+		};
+
+		const result = createRequiredCompactionFallback(preparation, 100_000, "summarization-timeout", {}, branchEntries);
+
+		expect(result).toMatchObject({
+			firstKeptEntryId: preparedBoundaryId,
+			details: { retainedSuffix: "prepared" },
+		});
+		const replay = replayFallback(branchEntries, result);
+		expect(replay).toContainEqual(
+			expect.objectContaining({ role: "toolResult", toolCallId: "unsafe-tool", isError: true }),
+		);
+		expect(JSON.stringify(replay)).not.toContain("image/png");
+		expect(branchEntries.find((entry) => entry.id === safeTailId)).toBeDefined();
+		expect(JSON.stringify(replay)).toContain("Work continued safely.");
 	});
 
 	it("rejects truncation-looking generic errors and requires structured summary-request provenance", () => {
@@ -283,6 +455,7 @@ describe("required compaction deterministic fallback", () => {
 			schema: "senpi.compaction.deterministic-fallback.v1",
 			origin: "required-compaction-recovery",
 			failureKind: "summarization-timeout",
+			retainedMessagePolicy: "omit-unsafe-v1",
 			taskIntent: "Finish the current repair",
 			retainedSuffix: "prepared",
 		});
@@ -296,7 +469,111 @@ describe("required compaction deterministic fallback", () => {
 		expect(JSON.stringify(harness.sessionManager.buildSessionContext().messages)).toContain("Keep latest request");
 	});
 
-	it("fails closed instead of throwing on malformed retained content blocks", () => {
+	it("retains a prepared tool result with a well-formed image block", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: "Inspect the image.",
+			timestamp: 4,
+		});
+		const preparedBoundaryId = harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("", { timestamp: 5, stopReason: "toolUse" }),
+			api: "openai-responses",
+			provider: "openai",
+			content: [{ type: "toolCall", id: "t", name: "read", arguments: { path: "image.png" } }],
+		});
+		harness.sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "t",
+			toolName: "read",
+			content: [
+				{ type: "text", text: "Image result" },
+				{
+					type: "image",
+					mimeType: "image/png",
+					data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1EAAAAASUVORK5CYII=",
+				},
+			],
+			isError: false,
+			timestamp: 6,
+		});
+		const branchEntries = harness.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS, true);
+		expect(preparation).toBeDefined();
+		const diagnostics: DeterministicFallbackDiagnostic = {};
+		const result = createRequiredCompactionFallback(
+			{
+				...preparation!,
+				firstKeptEntryId: preparedBoundaryId,
+				tokensBefore: 10_000,
+				settings: DEFAULT_COMPACTION_SETTINGS,
+			},
+			1_000_000,
+			"summarization-timeout",
+			{},
+			branchEntries,
+			diagnostics,
+		);
+
+		expect(result).toMatchObject({
+			firstKeptEntryId: preparedBoundaryId,
+			details: { retainedSuffix: "prepared" },
+		});
+		expect(diagnostics).toEqual({ candidatesChecked: 1 });
+	});
+
+	it("replaces malformed image results while preserving their tool pairing", () => {
+		for (const image of [
+			{ type: "image", mimeType: "image/png" },
+			{ type: "image", mimeType: "text/plain", data: "not-an-image" },
+		]) {
+			const harness = createBlockingContext({ usageTokens: 9_900 });
+			harness.sessionManager.appendMessage({
+				role: "user",
+				content: "Inspect the image.",
+				timestamp: 4,
+			});
+			const preparedBoundaryId = harness.sessionManager.appendMessage({
+				...fauxAssistantMessage("", { timestamp: 5, stopReason: "toolUse" }),
+				api: "openai-responses",
+				provider: "openai",
+				content: [{ type: "toolCall", id: "t", name: "read", arguments: { path: "image.png" } }],
+			});
+			harness.sessionManager.appendMessage({
+				role: "toolResult",
+				toolCallId: "t",
+				toolName: "read",
+				content: [{ type: "text", text: "Image result" }, image] as never,
+				isError: false,
+				timestamp: 6,
+			});
+			const branchEntries = harness.sessionManager.getBranch();
+			const preparation = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS, true);
+			expect(preparation).toBeDefined();
+			const diagnostics: DeterministicFallbackDiagnostic = {};
+
+			const result = createRequiredCompactionFallback(
+				{
+					...preparation!,
+					firstKeptEntryId: preparedBoundaryId,
+					tokensBefore: 10_000,
+					settings: DEFAULT_COMPACTION_SETTINGS,
+				},
+				1_000_000,
+				"summarization-timeout",
+				{},
+				branchEntries,
+				diagnostics,
+			);
+
+			const replay = replayFallback(branchEntries, result);
+			expect(replay).toContainEqual(expect.objectContaining({ role: "toolResult", toolCallId: "t", isError: true }));
+			expect(JSON.stringify(replay)).not.toContain('"type":"image"');
+			expect(diagnostics).toEqual({ candidatesChecked: 1 });
+		}
+	});
+
+	it("omits malformed retained content without replaying it or inventing tool pairs", () => {
 		for (const malformedMessage of [
 			{ role: "user", content: [null], timestamp: 4 },
 			{ role: "user", content: [{ type: "text" }], timestamp: 4 },
@@ -346,7 +623,14 @@ describe("required compaction deterministic fallback", () => {
 					branchEntries,
 				);
 			}).not.toThrow();
-			expect(result!).toBeUndefined();
+			if (malformedMessage.role === "toolResult" && "toolCallId" in malformedMessage) {
+				// A result with no declaring call remains a genuine structural rejection.
+				expect(result!).toBeUndefined();
+			} else {
+				const replay = replayFallback(branchEntries, result!);
+				expect(replay.at(-1)).toMatchObject({ role: "user" });
+				expect(replay.at(-1)).not.toEqual(malformedMessage);
+			}
 		}
 	});
 
@@ -414,7 +698,7 @@ describe("required compaction deterministic fallback", () => {
 		const harness = createBlockingContext({ usageTokens: 9_900 });
 		harness.sessionManager.appendMessage({
 			role: "user",
-			content: `bulk retained context ${"filler ".repeat(139_000)}`,
+			content: `bulk retained context ${"filler ".repeat(556_000)}`,
 			timestamp: 4,
 		});
 		const branchEntries = harness.sessionManager.getBranch();
@@ -518,7 +802,7 @@ describe("required compaction deterministic fallback", () => {
 		}
 	});
 
-	it("rejects malformed non-Google thinking signatures and unsigned redacted thinking", () => {
+	it("omits malformed non-Google thinking instead of replaying unsigned state", () => {
 		for (const content of [
 			[{ type: "thinking" as const, thinking: "hidden", thinkingSignature: 123 }],
 			[{ type: "thinking" as const, thinking: "hidden", redacted: true }],
@@ -533,15 +817,16 @@ describe("required compaction deterministic fallback", () => {
 			const branchEntries = harness.sessionManager.getBranch();
 			const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!;
 
-			expect(
-				createRequiredCompactionFallback(
-					{ ...preparation, firstKeptEntryId: assistantId },
-					100_000,
-					"summarization-timeout",
-					{},
-					branchEntries,
-				),
-			).toBeUndefined();
+			const result = createRequiredCompactionFallback(
+				{ ...preparation, firstKeptEntryId: assistantId },
+				100_000,
+				"summarization-timeout",
+				{},
+				branchEntries,
+			);
+			const replay = replayFallback(branchEntries, result);
+			expect(JSON.stringify(replay)).not.toContain("hidden");
+			expect(replay.some((message) => message.role === "assistant")).toBe(false);
 		}
 	});
 
@@ -645,7 +930,8 @@ describe("required compaction deterministic fallback", () => {
 		);
 		const elapsedMs = performance.now() - startedAt;
 
-		expect(result).toBeUndefined();
+		expect(result?.firstKeptEntryId).toBe(malformedBoundary);
+		expect(JSON.stringify(replayFallback(branchEntries, result))).not.toContain("not-base64");
 		expect(elapsedMs).toBeLessThan(10_000);
 	});
 
@@ -745,7 +1031,7 @@ describe("required compaction deterministic fallback", () => {
 		).toBeUndefined();
 	});
 
-	it("rejects accessor-bearing retained tool-call arguments without executing them", () => {
+	it("normalizes accessor-bearing arguments like persistence but still rejects a missing result", () => {
 		const harness = createBlockingContext({ usageTokens: 9_900 });
 		const branchEntries = harness.sessionManager.getBranch();
 		const preparation = prepareCompaction(branchEntries, harness.ctx.getCompactionSettings(), true)!;
@@ -777,7 +1063,7 @@ describe("required compaction deterministic fallback", () => {
 		);
 
 		expect(result).toBeUndefined();
-		expect(getterCalls).toBe(0);
+		expect(getterCalls).toBe(1);
 	});
 });
 
@@ -857,7 +1143,7 @@ describe("deterministic compaction fallback Gemini signed state and recovery cas
 			(message): message is Message =>
 				message.role === "user" || message.role === "assistant" || message.role === "toolResult",
 		);
-		const contents = convertGoogleMessages(googleModel, { messages: replayMessages });
+		const contents = convertGoogleMessages(googleModel, normalizeContext({ messages: replayMessages }));
 		expect(contents.some((content) => content.parts?.some((part) => "functionCall" in part))).toBe(true);
 		const assistantMsg = messages.find((m) => m.role === "assistant") as AssistantMessage | undefined;
 		expect(assistantMsg).toBeDefined();
@@ -1023,7 +1309,7 @@ describe("deterministic compaction fallback Gemini signed state and recovery cas
 		expect(result.details.retainedSuffix).toBe("earlier-safe-boundary");
 	});
 
-	it("Case E: fails closed on genuinely unsafe / malformed provider signatures", () => {
+	it("Case E: omits malformed signed calls and their results together", () => {
 		const harness = createBlockingContext({ usageTokens: 9_900 });
 		const badSigId = harness.sessionManager.appendMessage(
 			createGeminiAssistantMessage([
@@ -1056,7 +1342,10 @@ describe("deterministic compaction fallback Gemini signed state and recovery cas
 			branchEntries,
 		);
 
-		expect(result).toBeUndefined();
+		const replay = replayFallback(branchEntries, result);
+		expect(replay.some((message) => message.role === "assistant" || message.role === "toolResult")).toBe(false);
+		expect(JSON.stringify(replay)).not.toContain("bad content");
+		expect(JSON.stringify(replay)).not.toContain("not!base64!valid!sig");
 	});
 
 	it("Case F: budget exhaustion cleanly rejects without unbounded boundary search", () => {
@@ -1141,5 +1430,165 @@ describe("deterministic compaction fallback Gemini signed state and recovery cas
 		} else {
 			throw new Error("Expected toolCall block");
 		}
+	});
+});
+
+// code-yeongyu/oh-my-openagent#7921 case 7: an otherwise recoverable retained suffix
+// whose only structural defect is a failed or aborted assistant fragment carrying a
+// dangling toolCall block. The transport already drops those turns
+// (`dropFailedAssistantTurns` inside `convertToLlm`), so the fallback projection must
+// normalize them the same way instead of refusing the whole candidate.
+describe("deterministic fallback failed-turn normalization", () => {
+	/**
+	 * A recoverable suffix: the user's live request followed only by the failed and
+	 * aborted assistant fragments the provider left behind. Returns the boundary the
+	 * preparation would cut at (the user turn).
+	 */
+	function appendFailedFragments(harness: ReturnType<typeof createBlockingContext>): string {
+		const boundaryId = harness.sessionManager.appendMessage({
+			role: "user",
+			content: "please continue",
+			timestamp: 4,
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("partial answer", { timestamp: 5, stopReason: "error" }),
+			errorMessage: "Connection error.",
+			content: [
+				{ type: "text", text: "partial answer" },
+				{ type: "toolCall", id: "failed-call", name: "read", arguments: { path: "a.ts" } },
+			],
+		});
+		harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("", { timestamp: 6, stopReason: "aborted" }),
+			content: [{ type: "toolCall", id: "aborted-call", name: "read", arguments: { path: "b.ts" } }],
+		});
+		return boundaryId;
+	}
+
+	it("accepts a retained suffix whose only defect is failed and aborted tool-call fragments", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		const boundaryId = appendFailedFragments(harness);
+		const branchEntries = harness.sessionManager.getBranch();
+		const rawHistoryBefore = JSON.stringify(branchEntries);
+		const preparation = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS, true);
+		expect(preparation).toBeDefined();
+		const diagnostics: DeterministicFallbackDiagnostic = {};
+
+		const result = createRequiredCompactionFallback(
+			{
+				...preparation!,
+				firstKeptEntryId: boundaryId,
+				tokensBefore: 10_000,
+				settings: DEFAULT_COMPACTION_SETTINGS,
+			},
+			1_000_000,
+			// The summarizer produced no usable summary, so recovery has to come from
+			// the retained suffix alone.
+			"summarization-empty-summary",
+			{},
+			branchEntries,
+			diagnostics,
+		);
+
+		expect(result).toMatchObject({
+			firstKeptEntryId: boundaryId,
+			details: { retainedSuffix: "prepared", failureKind: "summarization-empty-summary" },
+		});
+		expect(diagnostics.rejectionReason).toBeUndefined();
+
+		// The accepted candidate is what the next request carries: no dangling fragment.
+		harness.sessionManager.appendCompaction(
+			result!.summary,
+			result!.firstKeptEntryId,
+			result!.tokensBefore,
+			result!.details,
+			true,
+		);
+		const projected = convertToLlm(harness.sessionManager.buildSessionContext().messages);
+		const projectedToolCallIds = projected.flatMap((message) =>
+			message.role === "assistant"
+				? message.content.flatMap((block) => (block.type === "toolCall" ? [block.id] : []))
+				: [],
+		);
+		expect(projectedToolCallIds).toEqual([]);
+		expect(JSON.stringify(projected)).toContain("please continue");
+		// Raw session history is untouched by the fallback projection.
+		expect(JSON.stringify(harness.sessionManager.getBranch().slice(0, branchEntries.length))).toBe(rawHistoryBefore);
+	});
+
+	it("still rejects a genuinely incomplete active tool call", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		appendFailedFragments(harness);
+		const activeBoundaryId = harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("", { timestamp: 8, stopReason: "toolUse" }),
+			content: [{ type: "toolCall", id: "active-call", name: "read", arguments: { path: "c.ts" } }],
+		});
+		const branchEntries = harness.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS, true);
+		const diagnostics: DeterministicFallbackDiagnostic = {};
+
+		const result = createRequiredCompactionFallback(
+			{
+				...preparation!,
+				firstKeptEntryId: activeBoundaryId,
+				tokensBefore: 10_000,
+				settings: DEFAULT_COMPACTION_SETTINGS,
+			},
+			1_000_000,
+			"summarization-empty-summary",
+			{},
+			branchEntries,
+			diagnostics,
+		);
+
+		expect(result).toBeUndefined();
+		expect(diagnostics.candidateRejections).toContainEqual({
+			firstKeptEntryId: activeBoundaryId,
+			rejectionReason: "atomic-tool-chain-cut",
+		});
+	});
+
+	it("replaces a malformed image result retained beside failed fragments", () => {
+		const harness = createBlockingContext({ usageTokens: 9_900 });
+		appendFailedFragments(harness);
+		const imageBoundaryId = harness.sessionManager.appendMessage({
+			...fauxAssistantMessage("", { timestamp: 8, stopReason: "toolUse" }),
+			content: [{ type: "toolCall", id: "image-call", name: "read", arguments: { path: "image.png" } }],
+		});
+		harness.sessionManager.appendMessage({
+			role: "toolResult",
+			toolCallId: "image-call",
+			toolName: "read",
+			content: [
+				{ type: "text", text: "Image result" },
+				{ type: "image", mimeType: "text/plain", data: "not-an-image" },
+			] as never,
+			isError: false,
+			timestamp: 9,
+		});
+		const branchEntries = harness.sessionManager.getBranch();
+		const preparation = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS, true);
+		const diagnostics: DeterministicFallbackDiagnostic = {};
+
+		const result = createRequiredCompactionFallback(
+			{
+				...preparation!,
+				firstKeptEntryId: imageBoundaryId,
+				tokensBefore: 10_000,
+				settings: DEFAULT_COMPACTION_SETTINGS,
+			},
+			1_000_000,
+			"summarization-empty-summary",
+			{},
+			branchEntries,
+			diagnostics,
+		);
+
+		const replay = replayFallback(branchEntries, result);
+		expect(replay).toContainEqual(
+			expect.objectContaining({ role: "toolResult", toolCallId: "image-call", isError: true }),
+		);
+		expect(JSON.stringify(replay)).not.toContain("not-an-image");
+		expect(diagnostics).toEqual({ candidatesChecked: 1 });
 	});
 });

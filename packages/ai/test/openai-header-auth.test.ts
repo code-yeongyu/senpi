@@ -3,6 +3,8 @@ import { streamOpenAICompletions } from "../src/providers/openai-completions.ts"
 import { streamOpenAIResponses } from "../src/providers/openai-responses.ts";
 import type { Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const context: Context = {
 	messages: [{ role: "user", content: "hello", timestamp: 0 }],
 };
@@ -19,7 +21,7 @@ describe("OpenAI-compatible static header auth", () => {
 			return completionsResponse();
 		});
 
-		const result = await streamOpenAICompletions(completionsModel(), context, {
+		const result = await streamOpenAICompletions(completionsModel(), normalizeContext(context), {
 			headers: { "x-api-key": "header-key" },
 		}).result();
 
@@ -35,7 +37,7 @@ describe("OpenAI-compatible static header auth", () => {
 			return responsesResponse();
 		});
 
-		const result = await streamOpenAIResponses(responsesModel(), context, {
+		const result = await streamOpenAIResponses(responsesModel(), normalizeContext(context), {
 			headers: { "x-api-key": "header-key" },
 		}).result();
 
@@ -47,7 +49,7 @@ describe("OpenAI-compatible static header auth", () => {
 	it("rejects metadata-only headers before issuing a request", async () => {
 		const fetch = vi.spyOn(globalThis, "fetch");
 
-		const result = await streamOpenAICompletions(completionsModel(), context, {
+		const result = await streamOpenAICompletions(completionsModel(), normalizeContext(context), {
 			headers: { "User-Agent": "senpi-test" },
 		}).result();
 

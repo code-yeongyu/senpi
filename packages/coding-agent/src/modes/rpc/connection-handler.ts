@@ -1,3 +1,6 @@
+import { type ToolRuntimeKind, toolRuntimeCapability } from "../../cli/tool-runtime.ts";
+import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
+import { clientFacingIdentity } from "./client-admission-record.ts";
 /**
  * Per-connection RPC handler.
  *
@@ -16,24 +19,24 @@
  */
 
 import * as crypto from "node:crypto";
-import { existsSync } from "node:fs";
 import { basename, dirname, extname } from "node:path";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { OAuthProviderId } from "@earendil-works/pi-ai/compat";
 import { VERSION } from "../../config.ts";
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
-import type { AgentSession, PromptDisposition } from "../../core/agent-session.ts";
+import type { AgentSession } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
-import { buildLoginProviderInfos } from "../../core/auth-providers.ts";
-import {
-	getCredentialAccounts,
-	pinCredentialAccount,
-	removeCredentialAccount,
-} from "../../core/credential-accounts.ts";
+import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
+import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
+import { listCredentialAccounts, orderCredentialAccounts } from "../../core/credential-account-order.ts";
+import { pinCredentialAccount, removeCredentialAccount } from "../../core/credential-accounts.ts";
+import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
+import { UserEditError } from "../../core/edited-user-message.ts";
 import {
 	emitProviderAccountsChanged,
 	subscribeProviderAccountEvents,
-} from "../../core/extensions/builtin/claude-sdk-oauth/account-events.ts";
-import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../../core/extensions/builtin/claude-sdk-oauth/account-management.ts";
+} from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../core/extensions/builtin/anthropic-subscription/account-management.ts";
 import {
 	isMcpControlInventoryChanged,
 	MCP_CONTROL_INVENTORY_CHANGED_EVENT,
@@ -52,26 +55,65 @@ import type {
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
-import { FooterDataProvider } from "../../core/footer-data-provider.ts";
-import { getSupportedThinkingLevels } from "../../core/thinking-levels.ts";
-import { ProjectTrustStore } from "../../core/trust-manager.ts";
+import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
+import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
+import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
+import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.ts";
+import { ClientAdmissions } from "./client-admissions.ts";
+import { handleClientInput } from "./client-input-handler.ts";
+import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
 import {
+	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
 	buildCustomUnsupportedRequest,
+	CONTINUE_FROM_LEAF_CAPABILITY,
 	DEFAULT_CUSTOM_EXTENSION_LABEL,
+	EVAL_CELLS_CAPABILITY,
 	EXTENSION_EVENTS_CAPABILITY,
-	RENDERED_COMPONENTS_CAPABILITY,
+	MEDIA_PLACEHOLDERS_CAPABILITY,
+	QUESTION_CAPABILITY,
+	QUEUED_MESSAGE_REVISION_CAPABILITY,
+	RETRY_FALLBACK_COMMAND_CAPABILITY,
+	SESSION_HELD_CAPABILITY,
 } from "./custom-capability.ts";
+import {
+	type EffectCommandContext,
+	runAbort,
+	runGetEffectStatus,
+	runQueuedInputChange,
+	runSetModel,
+	runSetThinkingLevel,
+} from "./effect-commands.ts";
+import { EffectLedger } from "./effect-ledger.ts";
+import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
+import { settleExtensionUiResponse } from "./extension-ui-response.ts";
+import {
+	currentResponseByteBudget,
+	endEntryWalk,
+	entryPageBounds,
+	holdEntryWalk,
+	pageEntries,
+} from "./get-entries-page.ts";
+import { HostSessionControl } from "./host-session-control.ts";
 import { createRpcLoginPromptCallbacks } from "./login-prompts.ts";
+import { answerMemoryReport } from "./memory-report-command.ts";
+import { protocolIdentity } from "./protocol-identity.ts";
 import { buildRpcCommandsForSession, createCommandsChangedEvent, rpcCommandListDigest } from "./rpc-command-surface.ts";
-import { rpcCommandPayloadError, rpcCommandShapeError, rpcMessageLengthError } from "./rpc-input-validation.ts";
+import {
+	rpcCommandPayloadError,
+	rpcCommandShapeError,
+	rpcMessageLengthError,
+	sessionRetryFallbackError,
+} from "./rpc-input-validation.ts";
+import { buildRpcSessionState } from "./rpc-session-state.ts";
 import type {
 	RpcAuthProvider,
 	RpcCommand,
-	RpcCommandInvocationEvent,
 	RpcExtensionEvent,
+	RpcExtensionUIProgress,
 	RpcExtensionUIRequest,
 	RpcExtensionUIResponse,
 	RpcLoadedExtension,
@@ -79,12 +121,22 @@ import type {
 	RpcMcpServerStatus,
 	RpcResponse,
 	RpcSessionReplacedEvent,
-	RpcSessionState,
-	RpcSkillInvocationEvent,
 } from "./rpc-types.ts";
-import { RENDERED_COMPONENT_RECORD } from "./session-event-writer.ts";
+import {
+	RPC_ERROR_ENTRY_NOT_FOUND,
+	RPC_ERROR_EVAL_CELL_NOT_FOUND,
+	RPC_ERROR_EVAL_CELLS_UNAVAILABLE,
+	RPC_ERROR_INVALID_ARGUMENT,
+	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
+	RPC_ERROR_MEDIA_NOT_FOUND,
+	RPC_ERROR_RESPONSE_TOO_LARGE,
+	STEER_WHEN_IDLE_CAPABILITY,
+} from "./rpc-types.ts";
+import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests } from "./session-extension-ui-requests.ts";
-import { createLiveComponentRenderer, type LiveComponentRenderer } from "./widget-line-renderer.ts";
+import { subscribeSessionRecords } from "./session-record-stream.ts";
+
+export { buildRpcSessionState } from "./rpc-session-state.ts";
 
 /** Additive per-connection options. Absent = classic default (byte-identical). */
 export interface RpcConnectionOptions {
@@ -94,18 +146,27 @@ export interface RpcConnectionOptions {
 	shutdownHandler?: () => void;
 	/** Session registries own runtime disposal themselves. */
 	disposeRuntime?: boolean;
+	/** Shared workers flush synchronously into their bounded IPC credit channel. */
+	eventFlushScheduler?: (flush: () => void) => void;
 	/** Multi-session routing handle. Absent preserves classic wire output exactly. */
 	sessionId?: string;
-	footerDataProviderFactory?: (session: AgentSession) => FooterDataProvider;
-	sharedWidth?: {
-		getWidth: () => number;
-		setWidth: (connectionId: string | undefined, width: number) => void;
-		clearWidth: (connectionId: string | undefined) => void;
-		setCapabilities?: (connectionId: string | undefined, capabilities: readonly string[]) => void;
-		hasRenderedComponents?: (sessionId: string) => boolean;
+	/**
+	 * A single-session `--mode rpc` process: it accepts `set_retry_fallback` and advertises it. A host's
+	 * session connection leaves it off; a host session takes its chain from `open_session.retryFallback`.
+	 */
+	retryFallbackCommand?: boolean;
+	/** A single-session `--mode rpc` process advertises its `--tool-runtime` as `tool_runtime:<value>`. */
+	toolRuntime?: ToolRuntimeKind;
+	/**
+	 * Shared-session capability registry. A `set_client_info` carrying `capabilities`
+	 * registers them for the connection that sent it; absent on a classic connection.
+	 */
+	clientInfo?: {
+		setCapabilities: (connectionId: string | undefined, capabilities: readonly string[]) => void;
 		connectionId: () => string | undefined;
-		onChange?: () => void;
 	};
+	/** Shared hosts dedupe `loaded_surfaces_changed` per connection by inventory digest; absent emits inline. */
+	publishLoadedSurfacesChanged?: (previous: string | undefined, digest: string) => void;
 }
 
 /**
@@ -113,13 +174,11 @@ export interface RpcConnectionOptions {
  * text (LF-terminated). `waitForBackpressure` lets the host apply flow control
  * (stdout drain in classic mode, or the transport's own `drain` signal).
  */
-function createFooterDataProvider(session: AgentSession): FooterDataProvider {
-	return new FooterDataProvider(session.sessionManager.getCwd());
-}
-
 export interface RpcConnectionSink {
 	writeRaw(chunk: string): void;
 	waitForBackpressure(): Promise<void>;
+	/** Tears the transport down once its event queue can no longer deliver (overflow, write failure). */
+	close?(): void;
 }
 
 export interface RpcConnectionHandler {
@@ -130,7 +189,11 @@ export interface RpcConnectionHandler {
 	readonly ready: Promise<void>;
 	/** Feed one inbound JSONL line (command or extension_ui_response). */
 	handleInputLine(line: string): Promise<void>;
-	rerenderComponents(): void;
+	/**
+	 * `prompt` calls this handler started that have not settled. The command answers before the
+	 * prompt's preflight ends, so this is the only record of a prompt that has not started its run yet.
+	 */
+	pendingPrompts(): readonly Promise<unknown>[];
 	/**
 	 * True once an extension requested shutdown via the shutdown handler. The
 	 * host polls this after each command and decides how to tear down.
@@ -140,6 +203,15 @@ export interface RpcConnectionHandler {
 	cancelPendingExtensionUiRequests(): void;
 	/** Tear down subscriptions and dispose the runtime. Never calls process.exit. */
 	dispose(): Promise<void>;
+}
+
+/** The tool call a dialog is about, as wire fields (absent when the dialog is not a permission request). */
+function dialogCall(opts: ExtensionUIDialogOptions | undefined): { toolCallId?: string; parentToolCallId?: string } {
+	if (opts?.toolCallId === undefined) return {};
+	return {
+		toolCallId: opts.toolCallId,
+		...(opts.parentToolCallId === undefined ? {} : { parentToolCallId: opts.parentToolCallId }),
+	};
 }
 
 function loadedExtensionName(path: string): string {
@@ -166,69 +238,6 @@ function loadedMcpStatus(server: McpWireStatusServer): RpcMcpServerStatus {
 	if (server.serverInfo !== null) return "connected";
 	if (server.authStatus === "notLoggedIn") return "needs_auth";
 	return "enabled";
-}
-
-/**
- * Project one session into the wire state shape.
- *
- * Shared with `open_session` (session-command-router) so both surfaces answer with the SAME
- * fields: a second hand-rolled literal silently drifts, which is how `serviceTier`/`fastMode`
- * would otherwise be missing from an opened session's initial state.
- *
- * `lastAbortSource` is passed in rather than read from the session: `session.currentAbortSource`
- * is cleared once the turn settles, so only the caller that observed `agent_end` still knows
- * who owned the abort.
- */
-export function buildRpcSessionState(session: AgentSession, lastAbortSource?: AgentAbortSource): RpcSessionState {
-	const cwd = session.sessionManager.getCwd();
-	// Trust gates project-source settings (shell prefixes, project resources), so every
-	// session state projection must have an authoritative store to consult.
-	if (!session.agentDir) {
-		throw new Error("RPC session invariant violated: agentDir is required");
-	}
-	const projectTrusted = new ProjectTrustStore(session.agentDir).get(cwd) === true;
-	return {
-		model: session.model,
-		thinkingLevel: session.thinkingLevel,
-		...(session.thinkingSelection ? { thinkingSelection: session.thinkingSelection } : {}),
-		...(lastAbortSource ? { lastAbortSource } : {}),
-		serviceTier: session.effectiveServiceTier,
-		fastMode: session.isFastModeActive(),
-		isStreaming: session.isStreaming,
-		isCompacting: session.isCompacting,
-		retryAttempt: session.retryAttempt,
-		isBashRunning: session.isBashRunning,
-		steeringMode: session.steeringMode,
-		followUpMode: session.followUpMode,
-		sessionFile: session.sessionFile,
-		sessionId: session.sessionId,
-		sessionName: session.sessionName,
-		cwd,
-		projectTrusted,
-		...(session.sessionFile &&
-		!existsSync(session.sessionFile) &&
-		session.sessionManager
-			.getEntries()
-			.some((entry) => entry.type !== "model_change" && entry.type !== "thinking_level_change")
-			? { entries: session.sessionManager.getEntries() }
-			: {}),
-		steering: typeof session.getSteeringMessages === "function" ? [...session.getSteeringMessages()] : [],
-		followUp: typeof session.getFollowUpMessages === "function" ? [...session.getFollowUpMessages()] : [],
-		ordered: [
-			...((
-				session as unknown as {
-					_queuedInputOrder?: Array<{ text: string; mode: "steer" | "followUp"; enqueueOrder: number }>;
-				}
-			)._queuedInputOrder ?? []),
-		].sort((a, b) => a.enqueueOrder - b.enqueueOrder),
-		autoCompactionEnabled: session.autoCompactionEnabled,
-		messageCount: session.messages.length,
-		pendingMessageCount: session.pendingMessageCount,
-		usageTotals: session.sessionManager.getUsageTotals(),
-		contextUsage: typeof session.getContextUsage === "function" ? session.getContextUsage() : undefined,
-		favoriteModels: session.favoriteModels?.map((entry) => ({ ...entry })) ?? [],
-		scopedModels: session.scopedModels?.map((entry) => ({ ...entry })) ?? [],
-	};
 }
 
 function loadedMcpServers(snapshot: McpWireStatusSnapshot): RpcLoadedMcpServer[] {
@@ -258,6 +267,44 @@ function loadedSurfacesFingerprint(
 }
 
 /**
+ * Locate one media block inside a tool result by `(toolCallId, contentIndex)`.
+ *
+ * Durable session entries are searched first: they survive the live message window
+ * being compacted or trimmed away. The live `session.messages` cover the window
+ * between `tool_execution_end` and persistence. Returns `undefined` unless the index
+ * lands on an actual image block, so a text block or an out-of-range index is
+ * reported as `media_not_found` rather than as a differently-shaped success.
+ */
+function findToolResultMedia(
+	session: AgentSession,
+	toolCallId: string,
+	contentIndex: number,
+): ImageContent | undefined {
+	const fromContent = (content: unknown): ImageContent | undefined => {
+		if (!Array.isArray(content)) return undefined;
+		const block = content[contentIndex] as ImageContent | undefined;
+		return block?.type === "image" ? block : undefined;
+	};
+	const matches = (message: unknown): message is { role: "toolResult"; toolCallId: string; content: unknown } => {
+		const candidate = message as { role?: unknown; toolCallId?: unknown } | null;
+		return candidate?.role === "toolResult" && candidate.toolCallId === toolCallId;
+	};
+
+	for (const entry of session.sessionManager.getEntries()) {
+		if (entry.type !== "message") continue;
+		if (!matches(entry.message)) continue;
+		const found = fromContent(entry.message.content);
+		if (found) return found;
+	}
+	for (const message of session.messages) {
+		if (!matches(message)) continue;
+		const found = fromContent(message.content);
+		if (found) return found;
+	}
+	return undefined;
+}
+
+/**
  * Create a per-connection RPC handler bound to one runtime host and one sink.
  *
  * This performs the initial `rebindSession()` and returns synchronously with a
@@ -271,29 +318,14 @@ export function createRpcConnectionHandler(
 ): RpcConnectionHandler {
 	let clientCapabilities = options.capabilities;
 	const routingSessionId = options.sessionId;
-	const clientWidth = () => options.sharedWidth?.getWidth() ?? 80;
-	const hasRenderedComponents = () =>
-		(options.sharedWidth?.hasRenderedComponents?.(routingSessionId ?? "") ?? false) ||
-		(clientCapabilities?.includes(RENDERED_COMPONENTS_CAPABILITY) ?? false);
-	const liveRenderers = new Map<string, LiveComponentRenderer>();
-	const retainedRendererFactories = new Map<string, () => void>();
-	const footerProviders = new Map<string, FooterDataProvider>();
-	const disposeRenderer = (key: string) => {
-		liveRenderers.get(key)?.dispose();
-		liveRenderers.delete(key);
-		footerProviders.get(key)?.dispose();
-		footerProviders.delete(key);
-	};
-	const disposeAllRenderers = () => {
-		for (const renderer of liveRenderers.values()) renderer.dispose();
-		for (const provider of footerProviders.values()) provider.dispose();
-		liveRenderers.clear();
-		footerProviders.clear();
-	};
 	// True only while THIS connection's own command drives a replacement; the issuer
 	// already learns the new identity from its command response.
 	let replacementIssuedHere = false;
 	let session = runtimeHost.session;
+	let sessionControl: HostSessionControl | undefined;
+	const promptCalls = new Set<Promise<unknown>>();
+	// Set by the first command that asks this session for a turn; `set_retry_fallback` is refused after it.
+	let turnRequested = false;
 	let unsubscribe: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
 	let unsubscribeLoadedSurfaces: (() => void) | undefined;
@@ -304,7 +336,13 @@ export function createRpcConnectionHandler(
 	let loadedSurfacesDigest: string | undefined;
 	let rpcCommandsDigest: string | undefined;
 	let suppressLoadedSurfaceEvents = false;
-	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw);
+	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
+
+	const effectContext = (): EffectCommandContext => ({
+		session,
+		by: { connectionId: options.clientInfo?.connectionId() ?? "local" },
+		...(routingSessionId === undefined ? {} : { sessionId: routingSessionId }),
+	});
 
 	const tagSessionRecord = <T extends object>(value: T): T | (T & { sessionId: string }) =>
 		routingSessionId === undefined ? value : { ...value, sessionId: routingSessionId };
@@ -331,12 +369,16 @@ export function createRpcConnectionHandler(
 
 	const recordLoadedSurfaces = (emitChange: boolean): ReturnType<typeof currentLoadedSurfaces> => {
 		const current = currentLoadedSurfaces();
-		const changed = loadedSurfacesDigest !== undefined && loadedSurfacesDigest !== current.digest;
+		const previous = loadedSurfacesDigest;
+		const changed = previous !== undefined && previous !== current.digest;
 		loadedSurfacesDigest = current.digest;
-		if (emitChange && changed && !suppressLoadedSurfaceEvents) {
-			outputEvent({ type: "loaded_surfaces_changed" });
-		}
+		if (emitChange && changed && !suppressLoadedSurfaceEvents) emitLoadedSurfacesChanged(previous, current.digest);
 		return current;
+	};
+
+	const emitLoadedSurfacesChanged = (previous: string | undefined, digest: string): void => {
+		if (options.publishLoadedSurfacesChanged) options.publishLoadedSurfacesChanged(previous, digest);
+		else outputEvent({ type: "loaded_surfaces_changed" });
 	};
 
 	const requestMcpWireStatus = async (): Promise<void> => {
@@ -396,6 +438,10 @@ export function createRpcConnectionHandler(
 		errorCode?: string,
 		errorData?: unknown,
 	): RpcResponse => {
+		const details =
+			errorData === undefined && (command === "edit_user_message" || command === "navigate_tree")
+				? { leafId: session.sessionManager.getLeafId() }
+				: errorData;
 		return {
 			id,
 			type: "response",
@@ -403,12 +449,13 @@ export function createRpcConnectionHandler(
 			success: false,
 			error: message,
 			...(errorCode ? { errorCode } : {}),
-			...(errorData === undefined ? {} : { errorData }),
+			...(details === undefined ? {} : { errorData: details }),
 		};
 	};
 
 	// Pending extension UI requests waiting for response
 	const pendingExtensionRequests = new SessionExtensionUiRequests();
+	const questions = new ConnectionQuestionBridge(output);
 
 	let shutdownRequested = false;
 
@@ -465,9 +512,16 @@ export function createRpcConnectionHandler(
 	 * Create an extension UI context that uses the RPC protocol.
 	 */
 	const createExtensionUIContext = (): ExtensionUIContext => ({
+		question: (request, opts) =>
+			clientCapabilities?.includes(QUESTION_CAPABILITY)
+				? questions.ask(request, opts)
+				: degradeQuestion(createExtensionUIContext(), request, opts),
 		select: (title, options, opts) =>
-			createDialogPromise(opts, undefined, { method: "select", title, options, timeout: opts?.timeout }, (r) =>
-				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
+			createDialogPromise(
+				opts,
+				undefined,
+				{ method: "select", title, options, timeout: opts?.timeout, ...dialogCall(opts) },
+				(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
 			),
 
 		confirm: (title, message, opts) =>
@@ -476,8 +530,11 @@ export function createRpcConnectionHandler(
 			),
 
 		input: (title, placeholder, opts) =>
-			createDialogPromise(opts, undefined, { method: "input", title, placeholder, timeout: opts?.timeout }, (r) =>
-				"cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined,
+			createDialogPromise(
+				opts,
+				undefined,
+				{ method: "input", title, placeholder, timeout: opts?.timeout, ...dialogCall(opts) },
+				(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
 			),
 
 		notify(message: string, type?: "info" | "warning" | "error"): void {
@@ -524,8 +581,7 @@ export function createRpcConnectionHandler(
 		},
 
 		setWidget(key: string, content: unknown, options?: ExtensionWidgetOptions): void {
-			disposeRenderer(key);
-			retainedRendererFactories.delete(key);
+			// Only string-array widgets cross the wire; a component factory needs a TUI to render into.
 			if (content === undefined || Array.isArray(content)) {
 				output({
 					type: "extension_ui_request",
@@ -535,98 +591,15 @@ export function createRpcConnectionHandler(
 					widgetLines: content as string[] | undefined,
 					widgetPlacement: options?.placement,
 				} as RpcExtensionUIRequest);
-				return;
 			}
-			retainedRendererFactories.set(key, () => {
-				const renderer = createLiveComponentRenderer({
-					factory: content as (
-						tui: import("@earendil-works/pi-tui").TUI,
-						thm: Theme,
-					) => import("@earendil-works/pi-tui").Component,
-					getWidth: clientWidth,
-					emit: (widgetLines) =>
-						output({
-							type: "extension_ui_request",
-							id: crypto.randomUUID(),
-							method: "setWidget",
-							widgetKey: key,
-							widgetLines,
-							widgetPlacement: options?.placement,
-							[RENDERED_COMPONENT_RECORD]: true,
-						} as RpcExtensionUIRequest),
-				});
-				if (renderer) liveRenderers.set(key, renderer);
-			});
-			if (hasRenderedComponents()) retainedRendererFactories.get(key)!();
 		},
 
-		setFooter(factory: unknown): void {
-			const key = "__footer__";
-			disposeRenderer(key);
-			retainedRendererFactories.delete(key);
-			if (factory === undefined) {
-				if (hasRenderedComponents())
-					output({
-						type: "extension_ui_request",
-						id: crypto.randomUUID(),
-						method: "setFooter",
-						widgetLines: undefined,
-					} as RpcExtensionUIRequest);
-				return;
-			}
-			retainedRendererFactories.set(key, () => {
-				const provider = options.footerDataProviderFactory?.(session) ?? createFooterDataProvider(session);
-				const renderer = createLiveComponentRenderer({
-					factory: factory as never,
-					factoryArgs: [provider],
-					getWidth: clientWidth,
-					emit: (widgetLines) =>
-						output({
-							type: "extension_ui_request",
-							id: crypto.randomUUID(),
-							method: "setFooter",
-							widgetLines,
-							[RENDERED_COMPONENT_RECORD]: true,
-						} as RpcExtensionUIRequest),
-				});
-				if (renderer) {
-					liveRenderers.set(key, renderer);
-					footerProviders.set(key, provider);
-				} else provider.dispose();
-			});
-			if (hasRenderedComponents()) retainedRendererFactories.get(key)!();
+		setFooter(_factory: unknown): void {
+			// Custom footer not supported in RPC mode - requires TUI access
 		},
 
-		setHeader(factory: unknown): void {
-			const key = "__header__";
-			disposeRenderer(key);
-			retainedRendererFactories.delete(key);
-			if (factory === undefined) {
-				if (hasRenderedComponents())
-					output({
-						type: "extension_ui_request",
-						id: crypto.randomUUID(),
-						method: "setHeader",
-						widgetLines: undefined,
-					} as RpcExtensionUIRequest);
-				return;
-			}
-			retainedRendererFactories.set(key, () => {
-				const renderer = createLiveComponentRenderer({
-					factory: factory as never,
-					getWidth: clientWidth,
-					emit: (widgetLines) =>
-						output({
-							type: "extension_ui_request",
-							id: crypto.randomUUID(),
-							method: "setHeader",
-							widgetLines,
-							[RENDERED_COMPONENT_RECORD]: true,
-						} as RpcExtensionUIRequest),
-				});
-				if (renderer) liveRenderers.set(key, renderer);
-			});
-			if (hasRenderedComponents()) retainedRendererFactories.get(key)!();
+		setHeader(_factory: unknown): void {
+			// Custom header not supported in RPC mode - requires TUI access
 		},
 
 		setTitle(title: string): void {
@@ -754,7 +727,7 @@ export function createRpcConnectionHandler(
 			outputEvent(commandsChanged);
 		}
 		if (!wasSuppressed && previousDigest !== undefined && previousDigest !== loadedSurfacesDigest) {
-			outputEvent({ type: "loaded_surfaces_changed" });
+			emitLoadedSurfacesChanged(previousDigest, loadedSurfacesDigest);
 		}
 	};
 
@@ -780,6 +753,15 @@ export function createRpcConnectionHandler(
 		unsubscribeExtensionEvents?.();
 		const replacedSession = session !== runtimeHost.session;
 		session = runtimeHost.session;
+		sessionQuestionBridges.set(session, questions);
+		// Installed before the bind below: extensions register their control endpoint on session_start.
+		sessionControl?.dispose();
+		sessionControl = new HostSessionControl(
+			session,
+			runtimeHost.launchProfile?.sessionContext?.host_socket,
+			(line) => void process.stderr.write(`senpi rpc session ${routingSessionId ?? "classic"}: ${line}\n`),
+		);
+		session.setControlEndpointHost?.(sessionControl);
 		if (replacedSession) {
 			lastAbortSource = undefined;
 			if (routingSessionId !== undefined || !replacementIssuedHere) {
@@ -831,8 +813,25 @@ export function createRpcConnectionHandler(
 								customInstructions: options?.customInstructions,
 								replaceInstructions: options?.replaceInstructions,
 								label: options?.label,
+								expectedLeafId: options?.expectedLeafId,
 							});
 							return { cancelled: result.cancelled };
+						},
+						editAssistantMessage: async (entryId, text, options) => {
+							const result = await session.editAssistantMessage(entryId, text, {
+								summarize: options?.summarize,
+								customInstructions: options?.customInstructions,
+								expectedLeafId: options?.expectedLeafId,
+							});
+							return { cancelled: result.cancelled, unchanged: result.unchanged, entryId: result.entryId };
+						},
+						editUserMessage: async (entryId, text, options) => {
+							const result = await session.editUserMessage(entryId, text, {
+								summarize: options?.summarize,
+								customInstructions: options?.customInstructions,
+								expectedLeafId: options?.expectedLeafId,
+							});
+							return { cancelled: result.cancelled, unchanged: result.unchanged, entryId: result.entryId };
 						},
 						switchSession: async (sessionPath, options) => {
 							return runtimeHost.switchSession(sessionPath, options);
@@ -864,48 +863,32 @@ export function createRpcConnectionHandler(
 		function installSessionSubscriptions(): void {
 			unsubscribe?.();
 			unsubscribeBackpressure?.();
-			unsubscribe = session.subscribe((event) => {
-				if (event.type === "skill_invocation") {
-					outputEvent(event satisfies RpcSkillInvocationEvent);
-					return;
-				}
-				if (event.type === "command_invocation") {
-					outputEvent(event satisfies RpcCommandInvocationEvent);
-					return;
-				}
-				if (event.type === "thinking_level_changed" || event.type === "model_changed") {
-					// Core emits the effective level only; the selection provenance lives beside it
-					// on the session and is what distinguishes an explicit choice from a default.
-					const thinkingSelection = session.thinkingSelection;
-					outputEvent(thinkingSelection === undefined ? event : { ...event, thinkingSelection });
-					return;
-				}
-				if (event.type === "agent_end") {
-					// The subscribe-path `agent_end` carries only { type, messages, willRetry };
-					// the abort provenance the extension hook receives is stripped from it. Read
-					// it from the session, which still reports the owner at this point, and retain
-					// it for `get_state` because the getter clears once the turn settles.
-					const abortSource = session.currentAbortSource;
-					if (abortSource !== undefined) lastAbortSource = abortSource;
-					outputEvent(abortSource === undefined ? event : { ...event, aborted: true, abortSource });
-					return;
-				}
-				outputEvent(event);
+			unsubscribe = subscribeSessionRecords(session, outputEvent, (abortSource) => {
+				lastAbortSource = abortSource;
 			});
 			unsubscribeBackpressure = session.agent.subscribe(async () => {
 				await waitForRpcBackpressure();
 			});
 		}
+		// Seals what a previous load left nonterminal before any command can read or replay it.
+		EffectLedger.forSession(session);
 		if (deferRefresh) {
 			// The subscription is already installed on the replaced session above, so
 			// the deferred refresh only needs its failure reported. Re-installing here
 			// would replay the settings-source selection a second time.
-			void refresh.catch((cause) => {
-				outputEvent({ type: "rpc_error", error: String(cause) });
-			});
+			void refresh.then(
+				() => session.releaseSettledSessionMemory(),
+				(cause) => {
+					outputEvent({ type: "rpc_error", error: String(cause) });
+				},
+			);
 			return;
 		}
 		await refresh;
+		await ClientAdmissions.forSession(session).ready;
+		// The open-time readers above (receipt seals, extension starts) read the full history; an idle
+		// session lets it go now instead of holding it until its first turn settles (senpi#3519).
+		session.releaseSettledSessionMemory();
 	};
 
 	/**
@@ -943,7 +926,7 @@ export function createRpcConnectionHandler(
 				signal: controller.signal,
 			});
 			session.modelRegistry.refresh();
-			if (provider === CLAUDE_SDK_OAUTH_PROVIDER_ID) emitProviderAccountsChanged(provider);
+			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
 			outputEvent({ type: "auth_login_end", provider, success: true });
 		} catch (loginError: unknown) {
 			const message = loginError instanceof Error ? loginError.message : String(loginError);
@@ -972,7 +955,7 @@ export function createRpcConnectionHandler(
 		notify: () => {},
 		setSessionModel: async (model) => {
 			if (!session.modelRuntime.hasConfiguredAuth(model.provider)) return false;
-			await session.setSessionModel(model);
+			await session.setSessionModel(model, { source: "rpc", actor: "set_fast_mode" });
 			return true;
 		},
 		setSessionFastMode: (enabled) => session.setSessionFastMode(enabled),
@@ -993,9 +976,25 @@ export function createRpcConnectionHandler(
 						protocolVersion: 1,
 						serverVersion: VERSION,
 						capabilities: [
-							...new Set(["multi_session", AUTO_TITLE_SESSIONS_CAPABILITY, ...(options.capabilities ?? [])]),
+							...new Set([
+								"multi_session",
+								AUTO_TITLE_SESSIONS_CAPABILITY,
+								MEDIA_PLACEHOLDERS_CAPABILITY,
+								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
+								EFFECT_LEDGER_CAPABILITY,
+								STEER_WHEN_IDLE_CAPABILITY,
+								CONTINUE_FROM_LEAF_CAPABILITY,
+								EVAL_CELLS_CAPABILITY,
+								AUTH_KEY_VERIFY_CAPABILITY,
+								QUEUED_MESSAGE_REVISION_CAPABILITY,
+								...(options.retryFallbackCommand ? [RETRY_FALLBACK_COMMAND_CAPABILITY] : []),
+								...(options.toolRuntime ? [toolRuntimeCapability(options.toolRuntime)] : []),
+								// Client flags cannot advertise a host guard this classic binding does not run.
+								...(options.capabilities ?? []).filter((capability) => capability !== SESSION_HELD_CAPABILITY),
+							]),
 						],
 						mode: "classic",
+						...protocolIdentity(),
 					},
 				};
 			case "open_session":
@@ -1006,42 +1005,10 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "prompt": {
-				if (command.thinkingLevel !== undefined && session.isStreaming && command.streamingBehavior !== undefined) {
-					return error(
-						id,
-						"prompt",
-						"Cannot set thinkingLevel on a queued prompt; set it after the current turn completes.",
-					);
-				}
-				// Start prompt handling immediately, but emit the authoritative response only after
-				// prompt preflight succeeds. Queued and immediately handled prompts also count as success.
-				// The disposition is captured for the wire: AgentSession always fires promptDisposition
-				// strictly before preflightResult(true), so the success frame carries the final value.
-				let preflightSucceeded = false;
-				let disposition: PromptDisposition | undefined;
-				void session
-					.prompt(command.message, {
-						images: command.images,
-						streamingBehavior: command.streamingBehavior,
-						thinkingLevel: command.thinkingLevel,
-						sessionTitlePrompt: command.sessionTitlePrompt,
-						expandPromptTemplates: command.expandPromptTemplates,
-						source: "rpc",
-						promptDisposition: (nextDisposition) => {
-							disposition = nextDisposition;
-						},
-						preflightResult: (didSucceed) => {
-							if (didSucceed && !preflightSucceeded) {
-								preflightSucceeded = true;
-								output(success(id, "prompt", { ...(disposition !== undefined ? { disposition } : {}) }));
-							}
-						},
-					})
-					.catch((e) => {
-						if (!preflightSucceeded) {
-							output(error(id, "prompt", e.message));
-						}
-					});
+				turnRequested = true;
+				const admission = handleClientInput(session, command, { output, promptCalls });
+				promptCalls.add(admission);
+				void admission.finally(() => promptCalls.delete(admission));
 				return undefined;
 			}
 
@@ -1061,7 +1028,20 @@ export function createRpcConnectionHandler(
 				return success(id, "append_session_entry");
 			}
 
+			case "continue_from_leaf": {
+				turnRequested = true;
+				try {
+					await session.continueFromLeaf();
+					return success(id, "continue_from_leaf");
+				} catch (err) {
+					if (err instanceof ContinueFromLeafError) return error(id, command.type, err.message, err.code);
+					throw err;
+				}
+			}
+
 			case "send_custom_message": {
+				// A context message that asks for no turn does not block a launch-time chain, like an extension's.
+				if (command.triggerTurn === true) turnRequested = true;
 				await session.sendCustomMessage(
 					{
 						customType: command.customType,
@@ -1074,23 +1054,30 @@ export function createRpcConnectionHandler(
 				return success(id, "send_custom_message");
 			}
 
-			case "steer": {
-				await session.steer(command.message, command.images, { enqueueOrder: command.enqueueOrder });
-				return success(id, "steer");
-			}
-
+			case "steer":
 			case "follow_up": {
-				await session.followUp(command.message, command.images, { enqueueOrder: command.enqueueOrder });
-				return success(id, "follow_up");
+				turnRequested = true;
+				await handleClientInput(session, command, { output, promptCalls });
+				return undefined;
 			}
 
-			case "abort": {
-				void session.abort().catch((cause: unknown) => {
-					// Abort is acknowledged once dispatched; report quiesce failures out of band.
-					outputEvent({ type: "rpc_error", error: String(cause) });
-				});
-				return success(id, "abort");
-			}
+			case "abort":
+				return runAbort(effectContext(), command, () =>
+					session.abort().catch((cause: unknown) => {
+						// Report quiesce failures out of band; the answer never waits on them.
+						outputEvent({ type: "rpc_error", error: String(cause) });
+					}),
+				);
+
+			case "interrupt":
+				return success(
+					id,
+					"interrupt",
+					await interruptRunningTurn(session, command.turnId, () => {
+						ClientAdmissions.forSession(session).noteAbort(effectContext().by);
+						return session.abort();
+					}),
+				);
 
 			case "abort_compaction": {
 				session.abortCompaction();
@@ -1106,7 +1093,12 @@ export function createRpcConnectionHandler(
 				return success(id, "check_reload_veto", await session.checkReloadVeto());
 			}
 
+			case "dequeue_message":
+			case "edit_queued_message":
+				return runQueuedInputChange(effectContext(), command);
+
 			case "clear_queue": {
+				ClientAdmissions.clearQueuedFor(session);
 				const cleared = session.clearQueue({ abortWillFollow: command.abortWillFollow ?? false });
 				return success(id, "clear_queue", {
 					steering: cleared.steering,
@@ -1116,14 +1108,34 @@ export function createRpcConnectionHandler(
 			}
 
 			case "get_steering_messages":
-				return success(id, "get_steering_messages", { messages: [...session.getSteeringMessages()] });
+				return success(id, "get_steering_messages", {
+					messages: [...session.getSteeringMessages()],
+					ordered: session
+						.getQueuedInputs()
+						.filter((input) => input.mode === "steer")
+						.map(clientFacingIdentity),
+				});
 
 			case "get_follow_up_messages":
-				return success(id, "get_follow_up_messages", { messages: [...session.getFollowUpMessages()] });
+				return success(id, "get_follow_up_messages", {
+					messages: [...session.getFollowUpMessages()],
+					ordered: session
+						.getQueuedInputs()
+						.filter((input) => input.mode === "followUp")
+						.map(clientFacingIdentity),
+				});
 
 			case "abort_branch_summary":
 				session.abortBranchSummary();
 				return success(id, "abort_branch_summary");
+
+			case "wake": {
+				const deliveryIds = Array.isArray(command.delivery_ids)
+					? command.delivery_ids.filter((entry): entry is string => typeof entry === "string")
+					: undefined;
+				const result = (await sessionControl?.wake(deliveryIds)) ?? {};
+				return success(id, "wake", { admitted: result.admitted ?? [] });
+			}
 
 			case "new_session": {
 				const options = command.parentSession ? { parentSession: command.parentSession } : undefined;
@@ -1138,34 +1150,24 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "set_client_info":
-				if (options.sharedWidth && command.capabilities !== undefined) {
+				if (options.clientInfo && command.capabilities !== undefined) {
 					clientCapabilities = command.capabilities;
-					options.sharedWidth.setCapabilities?.(options.sharedWidth.connectionId(), command.capabilities);
-				}
-				if (Number.isFinite(command.width) && command.width > 0) {
-					if (options.sharedWidth) {
-						options.sharedWidth.setWidth(options.sharedWidth.connectionId(), command.width);
-						options.sharedWidth.onChange?.();
-					} else for (const renderer of liveRenderers.values()) renderer.rerender();
+					options.clientInfo.setCapabilities(options.clientInfo.connectionId(), command.capabilities);
 				}
 				return success(id, "set_client_info");
 
 			case "get_state":
 				return success(id, "get_state", buildRpcSessionState(session, lastAbortSource));
 
+			case "get_effect_status":
+				return runGetEffectStatus(effectContext(), command);
+
 			// =================================================================
 			// Model
 			// =================================================================
 
-			case "set_model": {
-				const models = await session.modelRegistry.getAvailable();
-				const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
-				if (!model) {
-					return error(id, "set_model", `Model not found: ${command.provider}/${command.modelId}`);
-				}
-				const systemPromptChange = await session.setModel(model);
-				return success(id, "set_model", { ...model, systemPromptName: systemPromptChange?.systemPromptName });
-			}
+			case "set_model":
+				return runSetModel(effectContext(), command);
 
 			case "set_favorite_models":
 				session.setFavoriteModels(command.models);
@@ -1176,45 +1178,24 @@ export function createRpcConnectionHandler(
 				return success(id, "set_scoped_models");
 
 			case "cycle_model": {
-				const result = await session.cycleModel(command.direction);
+				const result = await session.cycleModel(command.direction, {
+					origin: { source: "rpc", actor: "cycle_model" },
+				});
 				if (!result) {
 					return success(id, "cycle_model", null);
 				}
 				return success(id, "cycle_model", result);
 			}
 
-			case "get_available_models": {
-				const models = await session.modelRegistry.getAvailable();
-				return success(id, "get_available_models", {
-					models: models.map((model) => ({
-						...model,
-						supportedThinkingLevels: getSupportedThinkingLevels(model),
-					})),
-				});
-			}
+			case "get_available_models":
+				return success(id, "get_available_models", await availableModelsData(session));
 
 			// =================================================================
 			// Thinking
 			// =================================================================
 
-			case "set_thinking_level": {
-				if (command.scope === "turn") {
-					// Validate BEFORE mutating: the session clamps an unsupported level to a supported
-					// neighbour, so applying first would leave a REJECTED request's clamped level in
-					// place. A failed command must not change session state.
-					if (!session.getAvailableThinkingLevels().includes(command.level)) {
-						return error(
-							id,
-							"set_thinking_level",
-							`Thinking level ${command.level} is not supported by the active model.`,
-						);
-					}
-					session.setSessionThinkingLevel(command.level);
-				} else {
-					session.setThinkingLevel(command.level);
-				}
-				return success(id, "set_thinking_level");
-			}
+			case "set_thinking_level":
+				return runSetThinkingLevel(effectContext(), command);
 
 			case "cycle_thinking_level": {
 				const level = session.cycleThinkingLevel();
@@ -1307,18 +1288,88 @@ export function createRpcConnectionHandler(
 				return success(id, "abort_retry");
 			}
 
+			case "set_retry_fallback": {
+				if (!options.retryFallbackCommand) {
+					return error(
+						id,
+						"set_retry_fallback",
+						"set_retry_fallback is for a single-session rpc process; a host session takes open_session.retryFallback.",
+					);
+				}
+				const profileError = sessionRetryFallbackError(command.retryFallback);
+				if (profileError !== undefined || command.retryFallback === undefined) {
+					return error(id, "set_retry_fallback", profileError ?? "set_retry_fallback needs retryFallback.");
+				}
+				// A launch-time setting: refused once this connection asked for a turn (even one not started yet), while
+				// any turn runs, or once the session holds turn history, so a chain never changes under a turn or a
+				// retry already in flight. Extension context messages (`custom`, e.g. one a component adds on
+				// session_start) are not a turn and do not count.
+				if (turnRequested || session.isStreaming || session.messages.some((message) => message.role !== "custom")) {
+					return error(
+						id,
+						"set_retry_fallback",
+						"set_retry_fallback must arrive before the session's first turn.",
+					);
+				}
+				runtimeHost.setRetryFallback(command.retryFallback);
+				return success(id, "set_retry_fallback");
+			}
+
 			// =================================================================
 			// Bash
 			// =================================================================
 
 			case "navigate_tree": {
-				const result = await session.navigateTree(command.targetId, {
-					summarize: command.summarize,
-					customInstructions: command.customInstructions,
-					replaceInstructions: command.replaceInstructions,
-					label: command.label,
-				});
-				return success(id, "navigate_tree", result);
+				// Addressing refusals. The command type forbids both spellings at once and neither of
+				// them, so TypeScript narrows these branches to `never` - they exist for the inbound
+				// JSON no type can police, which is why the command name is written out here.
+				if (command.entryId !== undefined && command.targetId !== undefined) {
+					return error(id, "navigate_tree", "navigate_tree takes either entryId or targetId, not both");
+				}
+				if (command.entryId === undefined && command.targetId === undefined) {
+					return error(id, "navigate_tree", "navigate_tree requires entryId or targetId");
+				}
+				const targetId = command.entryId ?? command.targetId;
+				if (typeof targetId !== "string" || targetId.length === 0) {
+					return error(id, command.type, "navigate_tree requires a non-empty entryId or targetId");
+				}
+				if (command.intent !== undefined && command.intent !== "select" && command.intent !== "resume") {
+					return error(id, command.type, "navigate_tree intent must be select or resume");
+				}
+				try {
+					// Core owns selection/resumption, summaries, cancellation, and root reset.
+					// Pass the requested entry itself, not a client- or handler-computed parent.
+					const result = await session.navigateTree(targetId, {
+						...(command.intent !== undefined ? { intent: command.intent } : {}),
+						summarize: command.summarize,
+						customInstructions: command.customInstructions,
+						replaceInstructions: command.replaceInstructions,
+						label: command.label,
+						expectedLeafId: command.expectedLeafId,
+					});
+					const leafId = session.sessionManager.getLeafId();
+					if (command.targetId !== undefined) {
+						return success(id, command.type, { ...result, leafId });
+					}
+					if (result.cancelled) {
+						return success(id, command.type, {
+							outcome: "cancelled",
+							leafId,
+							...(result.aborted ? { aborted: true } : {}),
+						});
+					}
+					return success(id, command.type, {
+						outcome: "navigated",
+						leafId,
+						...(result.editorText !== undefined ? { editorText: result.editorText } : {}),
+						...(result.summaryEntry ? { summaryEntryId: result.summaryEntry.id } : {}),
+					});
+				} catch (err) {
+					if (err instanceof AssistantEditError || err instanceof SessionStreamingError) {
+						return error(id, command.type, err.message, err.code);
+					}
+					throw err;
+				}
 			}
 
 			case "record_bash_result":
@@ -1377,6 +1428,22 @@ export function createRpcConnectionHandler(
 				return success(id, "get_session_stats", stats);
 			}
 
+			case "resolve_path":
+				return success(
+					id,
+					"resolve_path",
+					resolveMessagePath({
+						path: command.path,
+						cwd: session.cwd,
+						projectRoot: messagePathProjectRoot(session.cwd),
+					}),
+				);
+
+			case "memory_report": {
+				const answer = await answerMemoryReport(session);
+				return answer.ok ? success(id, "memory_report", answer.data) : error(id, "memory_report", answer.error);
+			}
+
 			case "export_html": {
 				const path = await session.exportToHtml(command.outputPath, { themeName: command.themeName });
 				return success(id, "export_html", { path });
@@ -1398,6 +1465,96 @@ export function createRpcConnectionHandler(
 				if (routingSessionId === undefined && !result.cancelled && session !== runtimeHost.session)
 					await rebindAfterLocalReplacement();
 				return success(id, "fork", { text: result.selectedText, cancelled: result.cancelled });
+			}
+
+			case "edit_assistant_message": {
+				if (
+					typeof command.entryId !== "string" ||
+					command.entryId.length === 0 ||
+					typeof command.text !== "string"
+				) {
+					return error(id, command.type, "edit_assistant_message requires a non-empty entryId and a text string");
+				}
+				try {
+					const result = await session.editAssistantMessage(command.entryId, command.text, {
+						summarize: command.summarize,
+						customInstructions: command.customInstructions,
+						expectedLeafId: command.expectedLeafId,
+					});
+					const leafId = session.sessionManager.getLeafId();
+					if (result.unchanged) {
+						return success(id, command.type, { outcome: "unchanged", leafId });
+					}
+					if (result.cancelled) {
+						return success(id, command.type, {
+							outcome: "cancelled",
+							leafId,
+							...(result.aborted ? { aborted: true } : {}),
+						});
+					}
+					const entry = result.entryId ? session.sessionManager.getEntry(result.entryId) : undefined;
+					if (entry?.type !== "message" || leafId === null) {
+						return error(id, command.type, "Edited assistant entry was not persisted");
+					}
+					return success(id, command.type, {
+						outcome: "edited",
+						entry,
+						leafId,
+						...(result.summaryEntry ? { summaryEntryId: result.summaryEntry.id } : {}),
+					});
+				} catch (err) {
+					if (err instanceof AssistantEditError || err instanceof SessionStreamingError) {
+						return error(id, command.type, err.message, err.code);
+					}
+					throw err;
+				}
+			}
+
+			case "edit_user_message": {
+				if (
+					typeof command.entryId !== "string" ||
+					command.entryId.length === 0 ||
+					typeof command.text !== "string"
+				) {
+					return error(id, command.type, "edit_user_message requires a non-empty entryId and a text string");
+				}
+				try {
+					const result = await session.editUserMessage(command.entryId, command.text, {
+						summarize: command.summarize,
+						customInstructions: command.customInstructions,
+						expectedLeafId: command.expectedLeafId,
+					});
+					const leafId = session.sessionManager.getLeafId();
+					if (result.unchanged) {
+						return success(id, command.type, { outcome: "unchanged", leafId });
+					}
+					if (result.cancelled) {
+						return success(id, command.type, {
+							outcome: "cancelled",
+							leafId,
+							...(result.aborted ? { aborted: true } : {}),
+						});
+					}
+					const entry = result.entryId ? session.sessionManager.getEntry(result.entryId) : undefined;
+					if (entry?.type !== "message" || leafId === null) {
+						return error(id, command.type, "Edited user entry was not persisted");
+					}
+					return success(id, command.type, {
+						outcome: "edited",
+						entry,
+						leafId,
+						...(result.summaryEntry ? { summaryEntryId: result.summaryEntry.id } : {}),
+					});
+				} catch (err) {
+					if (
+						err instanceof UserEditError ||
+						err instanceof AssistantEditError ||
+						err instanceof SessionStreamingError
+					) {
+						return error(id, command.type, err.message, err.code);
+					}
+					throw err;
+				}
 			}
 
 			case "clone": {
@@ -1422,16 +1579,57 @@ export function createRpcConnectionHandler(
 				if (command.since !== undefined) {
 					const sinceIndex = entries.findIndex((e) => e.id === command.since);
 					if (sinceIndex === -1) {
-						return error(id, "get_entries", `Entry not found: ${command.since}`);
+						return error(id, "get_entries", `Entry not found: ${command.since}`, RPC_ERROR_ENTRY_NOT_FOUND);
 					}
 					entries = entries.slice(sinceIndex + 1);
 				}
-				return success(id, "get_entries", { entries, leafId: sessionManager.getLeafId() });
+				const bounds = entryPageBounds(command);
+				if (!bounds.ok) return error(id, "get_entries", bounds.message, RPC_ERROR_INVALID_ARGUMENT);
+				const page = pageEntries(entries, describeUsageLimitEntry, bounds);
+				// A client walking pages asks again at once; holding the view until the last page spares each page a
+				// full re-read of the file. The hold expires on its own, so a walk the client abandons on an idle
+				// session does not pin the whole history; any other answer lets the view go now.
+				if (bounds.paged && page.hasMore) holdEntryWalk(session, () => session.releaseFullHistoryView());
+				else {
+					endEntryWalk(session);
+					session.releaseFullHistoryView();
+				}
+				const budget = currentResponseByteBudget();
+				if (page.firstEntryBytes > budget) {
+					return error(
+						id,
+						"get_entries",
+						`Entry ${entries[0]?.id ?? ""} alone is larger than one answer can carry (${budget} bytes), so it cannot be sent over RPC.`,
+						RPC_ERROR_RESPONSE_TOO_LARGE,
+					);
+				}
+				if (!bounds.paged && page.hasMore) {
+					return error(
+						id,
+						"get_entries",
+						`The session history is larger than one answer can carry (${budget} bytes). Read it in pages: pass limit or maxBytes, then since: nextSince until hasMore is false.`,
+						RPC_ERROR_RESPONSE_TOO_LARGE,
+					);
+				}
+				return success(id, "get_entries", {
+					entries: page.entries,
+					leafId: sessionManager.getLeafId(),
+					...(bounds.paged ? { hasMore: page.hasMore } : {}),
+					...(page.nextSince === undefined ? {} : { nextSince: page.nextSince }),
+				});
 			}
 
 			case "get_tree": {
 				const sessionManager = session.sessionManager;
-				return success(id, "get_tree", { tree: sessionManager.getTree(), leafId: sessionManager.getLeafId() });
+				const tree = sessionManager.getTree();
+				// getTree returns defensive nodes; keep the persisted entries diagnostic-bearing.
+				const nodes = [...tree];
+				for (const node of nodes) {
+					node.entry = describeUsageLimitEntry(node.entry);
+					for (const child of node.children) nodes.push(child);
+				}
+				session.releaseFullHistoryView();
+				return success(id, "get_tree", { tree, leafId: sessionManager.getLeafId() });
 			}
 
 			case "get_last_assistant_text": {
@@ -1459,8 +1657,29 @@ export function createRpcConnectionHandler(
 			// Messages
 			// =================================================================
 
+			case "get_subscription_limits": {
+				return success(id, "get_subscription_limits", { accounts: subscriptionLimits.snapshot() });
+			}
+
 			case "get_messages": {
-				return success(id, "get_messages", { messages: session.messages });
+				return success(id, "get_messages", {
+					messages: session.messages.map((message) =>
+						message.role === "assistant" ? describeUsageLimitMessage(message) : message,
+					),
+				});
+			}
+
+			// On-demand fetch of a media block a `media_placeholders` client received as
+			// an `image_ref` stub. Durable session entries first (they survive the live
+			// message window being compacted away), then the live messages for a result
+			// that has not been persisted yet.
+			case "get_media": {
+				const { toolCallId, contentIndex } = command;
+				const content = findToolResultMedia(session, toolCallId, contentIndex);
+				if (!content) {
+					return error(id, "get_media", RPC_ERROR_MEDIA_NOT_FOUND, RPC_ERROR_MEDIA_NOT_FOUND);
+				}
+				return success(id, "get_media", { toolCallId, contentIndex, content });
 			}
 
 			// =================================================================
@@ -1477,13 +1696,39 @@ export function createRpcConnectionHandler(
 				return success(id, "get_loaded_surfaces", inventory.data);
 			}
 
-			case "extension_request": {
-				const name = command.name.trim();
-				if (name.length === 0) {
-					return error(id, "extension_request", "Extension RPC request name cannot be empty");
+			case "extension_request":
+			case "eval_cells.list":
+			case "eval_cells.peek":
+			case "eval_cells.stop": {
+				const name = command.type === "extension_request" ? command.name.trim() : command.type;
+				if (name.length === 0) return error(id, command.type, "Extension RPC request name cannot be empty");
+				try {
+					const data = await session.extensionRunner.requestRpc(
+						name,
+						command.type === "extension_request" ? command.data : command,
+					);
+					return success(id, command.type, data);
+				} catch (cause) {
+					if (
+						cause instanceof ExtensionRpcRequestNotFoundError &&
+						(name === "eval_cells.list" || name === "eval_cells.peek" || name === "eval_cells.stop")
+					) {
+						return error(
+							id,
+							command.type,
+							"Eval cell controls are unavailable in this session",
+							RPC_ERROR_EVAL_CELLS_UNAVAILABLE,
+						);
+					}
+					if (
+						cause instanceof Error &&
+						"code" in cause &&
+						(cause.code === RPC_ERROR_EVAL_CELL_NOT_FOUND || cause.code === RPC_ERROR_INVALID_EVAL_CELL_REQUEST)
+					) {
+						return error(id, command.type, cause.message, cause.code);
+					}
+					throw cause;
 				}
-				const data = await session.extensionRunner.requestRpc(name, command.data);
-				return success(id, "extension_request", data);
 			}
 
 			// =================================================================
@@ -1498,7 +1743,8 @@ export function createRpcConnectionHandler(
 					id: info.id,
 					name: info.name,
 					authType: info.authType,
-					status: modelRegistry.getProviderAuthStatus(info.id),
+					status: authMethodStatus(modelRegistry, info),
+					...storedKeyHint(modelRegistry, info),
 				}));
 				return success(id, "get_auth_providers", { providers });
 			}
@@ -1520,19 +1766,31 @@ export function createRpcConnectionHandler(
 
 			case "login_api_key": {
 				session.modelRegistry.authStorage.set(command.provider, { type: "api_key", key: command.key });
-				session.modelRegistry.refresh();
+				// Answer after the registry sees the key: a client re-reading auth status on this
+				// response must not get the pre-login snapshot (#2384).
+				await session.modelRegistry.refresh();
 				return success(id, "login_api_key");
+			}
+
+			case "verify_api_key": {
+				const verification = await verifyApiKey({
+					models: session.modelRegistry.getAll(),
+					provider: command.provider,
+					key: command.key,
+					signal: AbortSignal.timeout(15_000),
+				});
+				return success(id, "verify_api_key", verification);
 			}
 
 			case "logout": {
 				session.modelRegistry.authStorage.logout(command.provider);
-				session.modelRegistry.refresh();
+				await session.modelRegistry.refresh();
 				return success(id, "logout");
 			}
 
 			case "get_provider_accounts": {
-				const accounts = await getCredentialAccounts(session.modelRegistry.authStorage, command.provider);
-				return success(id, "get_provider_accounts", { accounts });
+				const listing = await listCredentialAccounts(session.modelRegistry.authStorage, command.provider);
+				return success(id, "get_provider_accounts", { accounts: listing.accounts, ordered: listing.ordered });
 			}
 
 			case "account_pin": {
@@ -1543,6 +1801,15 @@ export function createRpcConnectionHandler(
 			case "account_remove": {
 				await removeCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
 				return success(id, "account_remove");
+			}
+
+			case "account_order": {
+				const names: unknown = command.names;
+				if (names !== null && !(Array.isArray(names) && names.every((name) => typeof name === "string"))) {
+					throw new Error("account_order names must be an array of account names, or null to clear the order");
+				}
+				await orderCredentialAccounts(session.modelRegistry.authStorage, command.provider, command.names);
+				return success(id, "account_order");
 			}
 
 			default: {
@@ -1575,6 +1842,16 @@ export function createRpcConnectionHandler(
 			return;
 		}
 
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"type" in parsed &&
+			parsed.type === "extension_ui_progress"
+		) {
+			questions.progress(parsed as RpcExtensionUIProgress);
+			return;
+		}
+
 		// Handle extension UI responses
 		if (
 			typeof parsed === "object" &&
@@ -1582,12 +1859,12 @@ export function createRpcConnectionHandler(
 			"type" in parsed &&
 			parsed.type === "extension_ui_response"
 		) {
-			const response = parsed as RpcExtensionUIResponse;
-			if (!pendingExtensionRequests.resolve(response) && routingSessionId !== undefined) {
-				// This binding owns exactly one session's request map. A response not
-				// requested here is a routed protocol error, never a cross-session match.
-				output(error(undefined, "extension_ui_response", "unknown_extension_ui_request"));
-			}
+			const reply = settleExtensionUiResponse(parsed as RpcExtensionUIResponse, {
+				questions,
+				dialogs: pendingExtensionRequests,
+				routed: routingSessionId !== undefined,
+			});
+			if (reply) output(reply);
 			return;
 		}
 
@@ -1621,8 +1898,19 @@ export function createRpcConnectionHandler(
 		}
 	};
 
+	// A single-session connection hears its account's new limit windows as they are reported. A host
+	// session's handler (it has a routing `sessionId`) does not: the host broadcasts the record once.
+	const stopLimitEvents =
+		options.sessionId === undefined
+			? subscriptionLimits.subscribe((limits) =>
+					eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
+				)
+			: () => {};
 	const dispose = async (): Promise<void> => {
-		disposeAllRenderers();
+		stopLimitEvents();
+		sessionControl?.dispose();
+		sessionControl = undefined;
+		questions.cancelAll();
 		pendingExtensionRequests.close();
 		unsubscribeProviderAccountEvents();
 		unsubscribe?.();
@@ -1648,18 +1936,14 @@ export function createRpcConnectionHandler(
 			await ready;
 			await handleInputLine(line);
 		},
-		rerenderComponents() {
-			if (!hasRenderedComponents()) {
-				disposeAllRenderers();
-				return;
-			}
-			for (const [key, createRenderer] of retainedRendererFactories) if (!liveRenderers.has(key)) createRenderer();
-			for (const renderer of liveRenderers.values()) renderer.rerender();
+		pendingPrompts() {
+			return [...promptCalls];
 		},
 		isShutdownRequested() {
 			return shutdownRequested;
 		},
 		cancelPendingExtensionUiRequests() {
+			questions.cancelAll();
 			pendingExtensionRequests.cancelAll();
 		},
 		async dispose() {

@@ -2,7 +2,7 @@ import { type BuildDynamicSystemPromptOptions, buildDynamicSystemPrompt } from "
 import { buildFileOperationsTuning } from "./file-operations.ts";
 import { buildGptEvalRoutingTuning } from "./gpt-eval-routing.ts";
 
-function buildGpt52Tuning(): string {
+function buildGpt52Tuning(toolNames: readonly string[]): string {
 	return `Constrain verbosity explicitly: "3-6 sentences", "max 5 bullets", "no preamble". Do not over-explain simple tasks.
 
 Optimize tool usage with explicit budgets: "maximum 3 tool calls for this lookup" or "one broad search first, only search again if the core question remains unanswered."
@@ -13,9 +13,13 @@ Compact after major milestones, not every turn. Keep the system prompt functiona
 
 ${buildGptEvalRoutingTuning()}
 
-${buildFileOperationsTuning()}`;
+${buildFileOperationsTuning({ toolNames })}`;
 }
 
 export function buildGpt52Prompt(options: BuildDynamicSystemPromptOptions): string {
-	return buildDynamicSystemPrompt({ ...options, tuningSection: buildGpt52Tuning(), workstationDialect: "codex" });
+	return buildDynamicSystemPrompt({
+		...options,
+		tuningSection: buildGpt52Tuning(options.selectedTools),
+		workstationDialect: "codex",
+	});
 }

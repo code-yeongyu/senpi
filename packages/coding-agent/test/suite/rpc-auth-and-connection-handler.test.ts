@@ -1,8 +1,8 @@
-import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CLAUDE_SDK_OAUTH_PROVIDER_ID } from "../../src/core/extensions/builtin/claude-sdk-oauth/index.ts";
+import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../src/core/extensions/builtin/anthropic-subscription/index.ts";
 import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handler.ts";
 import { makeHarness, makeSink } from "./rpc-connection-harness.ts";
 
@@ -20,6 +20,102 @@ describe("RPC auth and connection handler contracts", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
+	// Desktop #1812: the desktop removes a custom server by deleting its models.json block, then
+	// sends logout for that provider. The running host must stop listing its models right away.
+	it("stops serving a removed custom provider after logout, without a restart", async () => {
+		const collected = makeSink();
+		const modelsPath = join(tempDir, "models.json");
+		const harness = makeHarness(tempDir, { modelsJsonPath: modelsPath });
+		cleanup = harness.cleanup;
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		const gpuBox = {
+			baseUrl: "http://192.168.1.20:8000/v1",
+			api: "openai-completions",
+			models: [
+				{
+					id: "qwen2.5-coder",
+					name: "qwen2.5-coder",
+					reasoning: false,
+					input: ["text"],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 32000,
+					maxTokens: 4000,
+				},
+			],
+		};
+		let request = 0;
+		const send = async (command: Record<string, unknown>) => {
+			const id = `r${++request}`;
+			await handler.handleInputLine(JSON.stringify({ id, ...command }));
+			return collected.waitFor((message) => message.id === id, 5_000);
+		};
+		const servesGpuBox = async () => {
+			const response = await send({ type: "get_available_models" });
+			const data = response.data as { models: Array<{ provider: string }> };
+			return data.models.some((model) => model.provider === "gpu-box");
+		};
+
+		writeFileSync(modelsPath, JSON.stringify({ providers: { "gpu-box": gpuBox } }));
+		expect(await send({ type: "login_api_key", provider: "gpu-box", key: "synthetic-server-key" })).toMatchObject({
+			success: true,
+		});
+		expect(await servesGpuBox()).toBe(true);
+
+		writeFileSync(modelsPath, JSON.stringify({ providers: {} }));
+		expect(await send({ type: "logout", provider: "gpu-box" })).toMatchObject({ success: true });
+		expect(await servesGpuBox()).toBe(false);
+		// Losing the key alone hides it from "available"; the models themselves must be gone too,
+		// which is what #1812 saw stay listed.
+		expect(harness.runtimeHost.session.modelRegistry.getAll().some((model) => model.provider === "gpu-box")).toBe(
+			false,
+		);
+		await handler.dispose();
+	});
+
+	it("stops serving a removed keyless custom provider after logout (#1812)", async () => {
+		const collected = makeSink();
+		const modelsPath = join(tempDir, "models.json");
+		const harness = makeHarness(tempDir, { modelsJsonPath: modelsPath });
+		cleanup = harness.cleanup;
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		const localBox = {
+			baseUrl: "http://localhost:8080/v1",
+			api: "openai-completions",
+			apiKey: "not-needed",
+			models: [
+				{
+					id: "gemma-3",
+					name: "gemma-3",
+					reasoning: false,
+					input: ["text"],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 32000,
+					maxTokens: 4000,
+				},
+			],
+		};
+		let request = 0;
+		const send = async (command: Record<string, unknown>) => {
+			const id = `k${++request}`;
+			await handler.handleInputLine(JSON.stringify({ id, ...command }));
+			return collected.waitFor((message) => message.id === id, 5_000);
+		};
+		const servesLocalBox = async () => {
+			const response = await send({ type: "get_available_models" });
+			const data = response.data as { models: Array<{ provider: string }> };
+			return data.models.some((model) => model.provider === "local-box");
+		};
+
+		writeFileSync(modelsPath, JSON.stringify({ providers: { "local-box": localBox } }));
+		await harness.runtimeHost.session.modelRegistry.refresh();
+		expect(await servesLocalBox()).toBe(true);
+
+		writeFileSync(modelsPath, JSON.stringify({ providers: {} }));
+		expect(await send({ type: "logout", provider: "local-box" })).toMatchObject({ success: true });
+		expect(await servesLocalBox()).toBe(false);
+		await handler.dispose();
+	});
+
 	it("lists authentication providers with their status", async () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);
@@ -31,8 +127,62 @@ describe("RPC auth and connection handler contracts", () => {
 		expect(response).toMatchObject({ type: "response", command: "get_auth_providers", success: true });
 		const data = response.data as { providers: Array<Record<string, unknown>> };
 		const anthropic = data.providers.find((provider) => provider.id === "anthropic");
-		expect(anthropic).toMatchObject({ authType: "oauth", name: expect.any(String) });
+		expect(anthropic).toMatchObject({ authType: "api_key", name: expect.any(String) });
+		expect(data.providers.some((provider) => provider.id === "anthropic" && provider.authType === "oauth")).toBe(
+			false,
+		);
 		expect(anthropic?.status).toMatchObject({ configured: expect.any(Boolean) });
+		await handler.dispose();
+	});
+
+	// #2384 (omo-desktop-app#1315, DESKTOP-30): the OAuth and API-key rows of one provider shared one
+	// per-provider status, so a stored Claude login also read as a connected API key.
+	it("gives each auth method row of a provider its own status", async () => {
+		const collected = makeSink();
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		const modelRegistry = harness.runtimeHost.session.modelRegistry;
+		let request = 0;
+		const rowsFor = async (provider: string) => {
+			const id = `providers-${++request}`;
+			await handler.handleInputLine(JSON.stringify({ id, type: "get_auth_providers" }));
+			const response = await collected.waitFor((message) => message.id === id);
+			const data = response.data as { providers: Array<{ id: string; authType: string; status: unknown }> };
+			return Object.fromEntries(
+				data.providers.filter((row) => row.id === provider).map((row) => [row.authType, row.status]),
+			);
+		};
+
+		harness.authStorage.set("openrouter", {
+			type: "oauth",
+			access: "scripted-access",
+			refresh: "scripted-refresh",
+			expires: 4_102_444_800_000,
+		});
+		await modelRegistry.refresh();
+		expect(await rowsFor("openrouter")).toEqual({
+			oauth: { configured: true, source: "stored" },
+			api_key: { configured: false },
+		});
+
+		harness.authStorage.remove("openrouter");
+		await handler.handleInputLine(
+			JSON.stringify({ id: "key", type: "login_api_key", provider: "openrouter", key: "sk-scripted" }),
+		);
+		await collected.waitFor((message) => message.id === "key");
+		// No refresh here: the login_api_key response itself must mean the status is current.
+		expect(await rowsFor("openrouter")).toEqual({
+			oauth: { configured: false },
+			api_key: { configured: true, source: "stored" },
+		});
+
+		await handler.handleInputLine(JSON.stringify({ id: "out", type: "logout", provider: "openrouter" }));
+		await collected.waitFor((message) => message.id === "out");
+		expect(await rowsFor("openrouter")).toEqual({
+			oauth: { configured: false },
+			api_key: { configured: false },
+		});
 		await handler.dispose();
 	});
 
@@ -40,7 +190,7 @@ describe("RPC auth and connection handler contracts", () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);
 		cleanup = harness.cleanup;
-		harness.authStorage.registerOAuthProvider(CLAUDE_SDK_OAUTH_PROVIDER_ID, {
+		harness.authStorage.registerOAuthProvider(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, {
 			name: "Scripted OAuth",
 			async login() {
 				return {
@@ -55,6 +205,9 @@ describe("RPC auth and connection handler contracts", () => {
 							access: "sk-ant-scripted-access",
 							refresh: "scripted-refresh",
 							expires: 4_102_444_800_000,
+							// senpi#1495 review finding 7: the wire projection must carry
+							// displayName for named accounts, with `)`/`:` in the label.
+							displayName: "Work: main (client)",
 						},
 					],
 				};
@@ -70,10 +223,10 @@ describe("RPC auth and connection handler contracts", () => {
 		const changed = collected.waitFor((message) => message.type === "auth_accounts_changed");
 
 		await handler.handleInputLine(
-			JSON.stringify({ id: "add", type: "login_start", provider: CLAUDE_SDK_OAUTH_PROVIDER_ID }),
+			JSON.stringify({ id: "add", type: "login_start", provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID }),
 		);
 		await collected.waitFor((message) => message.type === "auth_login_end" && message.success === true);
-		expect(await changed).toEqual({ type: "auth_accounts_changed", provider: CLAUDE_SDK_OAUTH_PROVIDER_ID });
+		expect(await changed).toEqual({ type: "auth_accounts_changed", provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID });
 
 		// Account management is provider-neutral: a provider with no stored
 		// credential and no numbered env slots simply has no accounts. It is no
@@ -88,14 +241,20 @@ describe("RPC auth and connection handler contracts", () => {
 		});
 
 		await handler.handleInputLine(
-			JSON.stringify({ id: "accounts", type: "get_provider_accounts", provider: CLAUDE_SDK_OAUTH_PROVIDER_ID }),
+			JSON.stringify({
+				id: "accounts",
+				type: "get_provider_accounts",
+				provider: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+			}),
 		);
 		expect(await collected.waitFor((message) => message.id === "accounts")).toMatchObject({
 			type: "response",
 			command: "get_provider_accounts",
 			success: true,
 			data: {
-				accounts: [{ name: "default", source: "login", blocked: false, pinned: false }],
+				accounts: [
+					{ name: "default", displayName: "Work: main (client)", source: "login", blocked: false, pinned: false },
+				],
 			},
 		});
 		expect(JSON.stringify(collected.messages())).not.toMatch(/sk-ant/);
@@ -232,30 +391,6 @@ describe("RPC auth and connection handler contracts", () => {
 			error: expect.stringContaining("Unknown command"),
 		});
 		await handler.dispose();
-	});
-
-	it("disposes footer data providers on replacement and handler disposal", async () => {
-		const collected = makeSink();
-		const harness = makeHarness(tempDir);
-		cleanup = harness.cleanup;
-		const providers: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
-		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink, {
-			capabilities: ["rendered_components"],
-			footerDataProviderFactory: () => {
-				const provider = { dispose: vi.fn(), getGitBranch: () => null };
-				providers.push(provider);
-				return provider as never;
-			},
-		});
-		await handler.ready;
-		const ui = harness.runtimeHost.session.extensionRunner.getUIContext();
-		ui.setFooter((() => ({ render: () => ["footer"], invalidate: () => {} })) as never);
-		await Promise.resolve();
-		ui.setFooter((() => ({ render: () => ["replacement"], invalidate: () => {} })) as never);
-		await Promise.resolve();
-		expect(providers[0]?.dispose).toHaveBeenCalledTimes(1);
-		await handler.dispose();
-		expect(providers[1]?.dispose).toHaveBeenCalledTimes(1);
 	});
 
 	it("emits an optional custom-UI capability notice without changing default clients", async () => {

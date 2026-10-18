@@ -77,7 +77,11 @@ export function createUi(options: { confirmResults?: boolean[]; selectResult?: s
 	};
 }
 
-export function createCtx(root: TestRoot, ui: TestUi): ExtensionCommandContext {
+export function createCtx(
+	root: TestRoot,
+	ui: TestUi,
+	mode: ExtensionCommandContext["mode"] = "tui",
+): ExtensionCommandContext {
 	const runner = new ExtensionRunner(
 		[],
 		createExtensionRuntime(),
@@ -85,7 +89,7 @@ export function createCtx(root: TestRoot, ui: TestUi): ExtensionCommandContext {
 		SessionManager.inMemory(),
 		ModelRegistry.create(AuthStorage.create(join(root.agentDir, "auth.json"))),
 	);
-	runner.setUIContext(ui, "tui");
+	runner.setUIContext(ui, mode);
 	return runner.createCommandContext();
 }
 

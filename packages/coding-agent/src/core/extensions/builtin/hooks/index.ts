@@ -1,13 +1,30 @@
 import { existsSync, readFileSync } from "node:fs";
-import type { BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext, LoadedHookSources } from "../../types.ts";
+import type {
+	BeforeAgentStartEvent,
+	BeforeAgentStartEventResult,
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionHandler,
+	LoadedHookSources,
+} from "../../types.ts";
+import { formatResultText } from "../ask-user/format.ts";
+import {
+	ASK_USER_ASKED_EVENT,
+	ASK_USER_SETTLED_EVENT,
+	type AskUserAskedEvent,
+	type AskUserSettledEvent,
+} from "../ask-user/notify.ts";
 import { registerHooksCommand } from "./command.ts";
-import { loadHookConfigSources } from "./config-loader.ts";
+import { loadHookConfigSources, loadHookConfigSourcesAsync } from "./config-loader.ts";
 import { dispatchHookEvent, runningHookHandlersStatusLabel } from "./dispatcher.ts";
 import {
+	buildNotificationHookInput,
 	buildPostCompactHookInput,
 	buildPreCompactHookInput,
 	buildSessionStartHookInput,
 	dispatchLifecycleHookEvent,
+	dispatchNotificationHookEvent,
+	notificationResultDetails,
 	postCompactResultDetails,
 	preCompactResultDetails,
 	recordLifecycleHookResult,
@@ -24,7 +41,7 @@ import {
 	promptContextFromResult,
 	safeDiagnosticDetails,
 } from "./prompt-adapter.ts";
-import { applyStopHookResult, buildStopHookInput, createStopTurnTracker } from "./stop-adapter.ts";
+import { registerStopLifecycle } from "./stop-lifecycle.ts";
 import {
 	applyPostToolUseResult,
 	applyPreToolUseResult,
@@ -56,7 +73,6 @@ export type {
 export default function hooksExtension(pi: ExtensionAPI): void {
 	const pendingPromptContexts: PendingPromptHookContext[] = [];
 	const pendingPreToolContexts = new Map<string, readonly string[]>();
-	const stopTurnTracker = createStopTurnTracker();
 
 	const refreshState = (ctx: ExtensionContext) => {
 		const sources = ctx.getLoadedHookSources?.() ?? fallbackHookSources(ctx.cwd);
@@ -84,6 +100,59 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 		);
 		return { parsed, trust, storage };
 	};
+	const stopLifecycle = registerStopLifecycle(pi, { refreshState });
+
+	for (const channel of [ASK_USER_ASKED_EVENT, ASK_USER_SETTLED_EVENT]) {
+		pi.events.on(channel, async (data) => {
+			const event = data as AskUserAskedEvent | AskUserSettledEvent;
+			const { ctx, request, variant } = event;
+			const response = "response" in event ? event.response : undefined;
+			const headers = request.questions.map((question) => question.header).join(", ");
+			// Capture session identity before asynchronous I/O or a session switch.
+			const input = buildNotificationHookInput(
+				{
+					kind:
+						response === undefined
+							? "ask-user-asked"
+							: response.status === "timed_out"
+								? "ask-user-timeout"
+								: "ask-user-settled",
+					message:
+						response === undefined
+							? `Question asked (${headers})`
+							: response.status === "timed_out"
+								? `Question timed out (${headers}): ${formatResultText(variant, response, request.questions, request.required === true)}`
+								: `Question ${response.status} (${headers})`,
+					requestId: request.requestId,
+					source: "ask-user",
+					status: response?.status ?? "pending",
+					title: headers,
+				},
+				ctx,
+			);
+			const sources = ctx.getLoadedHookSources?.() ?? fallbackHookSources(ctx.cwd);
+			const parsed = await loadHookConfigSourcesAsync(sources);
+			const handlers = parsed.executableHandlers.filter((handler) => handler.event === "Notification");
+			if (handlers.length === 0) return;
+			const storage = new FileHookStateStorage({ agentDir: sources.agentDir, cwd: sources.cwd });
+			const [globalTrust, projectTrust] = await Promise.all([
+				storage.readAsync("global"),
+				ctx.isProjectTrusted() ? storage.readAsync("project") : emptyHookTrustState(),
+			]);
+			const result = await dispatchNotificationHookEvent({
+				cwd: ctx.cwd,
+				handlers,
+				input,
+				...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
+				trustState: mergeTrustStates(globalTrust, projectTrust),
+			});
+			const details = notificationResultDetails(result);
+			recordLifecycleHookResult(pi, "Notification", {
+				...details,
+				diagnostics: [...parsed.diagnostics, ...details.diagnostics],
+			});
+		});
+	}
 
 	pi.on("session_start", async (event, ctx) => {
 		const state = refreshState(ctx);
@@ -101,7 +170,7 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 
 	pi.on("input", async (event, ctx) => {
 		if (event.source === "extension") return undefined;
-		stopTurnTracker.reset();
+		stopLifecycle.resetTurn();
 		pendingPromptContexts.splice(0);
 		const state = refreshState(ctx);
 		const input = buildUserPromptHookInput({
@@ -146,7 +215,9 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 		return { action: "continue" };
 	});
 
-	pi.on("before_agent_start", async (event) => {
+	const onBeforeAgentStart: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult> = async (event) => {
+		// UserPromptSubmit context belongs to the prompt that queued it, never to a preview.
+		if (event.preview === true) return undefined;
 		const pending = pendingPromptContexts.shift();
 		if (pending === undefined) return undefined;
 
@@ -170,7 +241,8 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 			result.systemPrompt = systemPrompt;
 		}
 		return result;
-	});
+	};
+	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
 	pi.on("tool_call", async (event, ctx) => {
 		pendingPreToolContexts.delete(event.toolCallId);
@@ -246,19 +318,6 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 		});
 		recordLifecycleHookResult(pi, "PostCompact", postCompactResultDetails(result));
 		return undefined;
-	});
-
-	pi.on("agent_end", async (event, ctx) => {
-		const state = refreshState(ctx);
-		const result = await dispatchHookEvent({
-			cwd: ctx.cwd,
-			handlers: state.parsed.executableHandlers,
-			input: buildStopHookInput(event, ctx),
-			signal: ctx.signal,
-			trustOptions: { platform: process.platform },
-			trustState: state.trust,
-		});
-		await applyStopHookResult(pi, ctx, result, stopTurnTracker.turnKey(ctx));
 	});
 
 	registerHooksCommand(pi, refreshState);

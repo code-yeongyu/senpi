@@ -11,7 +11,7 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createInMemoryModelRegistry } from "./model-runtime-test-utils.ts";
 import { createHarness } from "./suite/harness.ts";
 
-const MODEL = getModel("openai-codex", "gpt-5.5")!;
+const MODEL = getModel("chatgpt-subscription", "gpt-5.5")!;
 const directories: string[] = [];
 
 function setup() {

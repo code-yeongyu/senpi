@@ -4,6 +4,8 @@ import { getModel } from "../src/compat.ts";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context, ProviderNativeContent } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 function createSseResponse(events: Array<{ event: string; data: string }>): Response {
 	const body = events.map(({ event, data }) => `event: ${event}\ndata: ${data}\n`).join("\n");
 	return new Response(body, {
@@ -14,12 +16,14 @@ function createSseResponse(events: Array<{ event: string; data: string }>): Resp
 
 function createFakeAnthropicClient(response: Response, onCreate?: (params: unknown) => void): Anthropic {
 	return {
-		messages: {
-			create: (params: unknown) => {
-				onCreate?.(params);
-				return {
-					asResponse: async () => response,
-				};
+		beta: {
+			messages: {
+				create: (params: unknown) => {
+					onCreate?.(params);
+					return {
+						asResponse: async () => response,
+					};
+				},
 			},
 		},
 	} as Anthropic;
@@ -93,7 +97,7 @@ describe("Anthropic provider-native content blocks", () => {
 			{ event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
 		]);
 
-		const stream = streamAnthropic(model, context, {
+		const stream = streamAnthropic(model, normalizeContext(context), {
 			client: createFakeAnthropicClient(response),
 		});
 		const result = await stream.result();
@@ -160,7 +164,7 @@ describe("Anthropic provider-native content blocks", () => {
 			{ event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
 		]);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			client: createFakeAnthropicClient(response),
 		}).result();
 
@@ -210,7 +214,7 @@ describe("Anthropic provider-native content blocks", () => {
 			},
 		]);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			client: createFakeAnthropicClient(response),
 		}).result();
 

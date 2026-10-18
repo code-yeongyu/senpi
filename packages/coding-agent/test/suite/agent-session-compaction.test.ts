@@ -1,11 +1,14 @@
 import type { AgentMessage, PrepareNextTurnContext } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
-	type Context,
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
 	fauxToolCall,
+	getCurrentSystemPrompt,
+	getCurrentTools,
 	type SimpleStreamOptions,
+	type TranscriptContext,
+	toToolDeclaration,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -64,7 +67,13 @@ async function runAutoCompaction(
 }
 
 function stubRunAutoCompaction(session: Harness["session"]) {
-	const stub = vi.fn(async (_reason: "overflow" | "threshold", _willRetry: boolean): Promise<void> => {});
+	const stub = vi.fn(
+		async (
+			_reason: "overflow" | "threshold",
+			_willRetry: boolean,
+			_options?: { keepRecentTokensOverride?: number },
+		): Promise<void> => {},
+	);
 	Reflect.set(session, "_runAutoCompaction", stub);
 	return stub;
 }
@@ -150,7 +159,7 @@ function createAssistant(
 function useSummaryStreamFn(
 	harness: Harness,
 	summary: string,
-	onRequest?: (context: Context, options: SimpleStreamOptions | undefined) => void,
+	onRequest?: (context: TranscriptContext, options: SimpleStreamOptions | undefined) => void,
 ): () => number {
 	let callCount = 0;
 	harness.session.agent.streamFunction = (model, context, options) => {
@@ -351,7 +360,57 @@ describe("AgentSession compaction characterization", () => {
 		expect(statsAfter.tokens.cacheRead).toBe(statsBefore.tokens.cacheRead + summaryUsage.cacheRead);
 		expect(statsAfter.tokens.cacheWrite).toBe(statsBefore.tokens.cacheWrite + summaryUsage.cacheWrite);
 		expect(statsAfter.cost).toBe(statsBefore.cost + summaryUsage.cost.total);
+		// C-AG-4: the fork keeps the prompt in agent state, so the compacted transcript leads with the summary.
 		expect(harness.session.messages[0]?.role).toBe("compactionSummary");
+		expect(harness.session.messages.some((message) => message.role === "system")).toBe(false);
+	});
+
+	it("checkpoints the replayed system state and folds summarized and retained system patches into it", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("declared")]);
+		await harness.session.prompt("declare the prompt");
+		// C-AG-4: the fork declares the prompt and tools from agent state and persists no system head,
+		// so the checkpoint folds only the system patches recorded in the transcript.
+		expect(harness.session.messages.some((message) => message.role === "system")).toBe(false);
+
+		harness.sessionManager.appendMessage({
+			role: "system",
+			content: "summarized instruction",
+			sections: { early: "<early>1</early>" },
+			toolsRemoved: [{ name: "bash" }],
+			timestamp: Date.now(),
+		});
+		const firstKeptEntryId = harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "kept before patch" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendMessage({
+			role: "system",
+			content: "retained instruction",
+			sections: { extra: "<extra>late</extra>" },
+			toolsRemoved: [{ name: "read" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "kept after patch" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendCompaction("compacted", firstKeptEntryId, 100);
+
+		const messages = harness.sessionManager.buildSessionContext().messages;
+		expect(messages.map((message) => message.role)).toEqual(["system", "compactionSummary", "user", "user"]);
+		const checkpoint = messages[0];
+		if (checkpoint?.role !== "system") throw new Error("expected checkpoint system message");
+		expect(checkpoint.content).toBe("summarized instruction\n\nretained instruction");
+		expect(checkpoint.sections).toEqual({
+			early: "<early>1</early>",
+			extra: "<extra>late</extra>",
+		});
+		// No transcript-declared tool set exists for the removals to apply to; the session tools are agent state.
+		expect(checkpoint.toolsAdded).toBeUndefined();
 	});
 
 	it("allows a queued prompt to start when manual compaction ends", async () => {
@@ -470,15 +529,12 @@ describe("AgentSession compaction characterization", () => {
 			streamSimple: () => createAssistantMessageEventStream(),
 		});
 		seedCompactableSession(harness);
-		harness.setResponses([
-			(_context, options) => {
-				expect(options?.apiKey).toBeUndefined();
-				expect(options?.headers).toEqual({
-					Authorization: "Bearer ambient-token",
-				});
-				return fauxAssistantMessage("summary with bearer auth");
-			},
-		]);
+		const summaryResponse = (_context: TranscriptContext, options: SimpleStreamOptions | undefined) => {
+			expect(options?.apiKey).toBeUndefined();
+			expect(options?.headers).toEqual({ Authorization: "Bearer ambient-token" });
+			return fauxAssistantMessage("summary with bearer auth");
+		};
+		harness.setResponses([summaryResponse]);
 
 		const result = await harness.session.compact();
 
@@ -498,7 +554,7 @@ describe("AgentSession compaction characterization", () => {
 		harness.session.agent.sessionId = "active-routing-session";
 		harness.session.agent.transport = "websocket";
 
-		let requestContext: Context | undefined;
+		let requestContext: TranscriptContext | undefined;
 		let requestOptions: SimpleStreamOptions | undefined;
 		useSummaryStreamFn(harness, "standalone summary", (context, options) => {
 			requestContext = context;
@@ -508,8 +564,8 @@ describe("AgentSession compaction characterization", () => {
 		await harness.session.compact();
 
 		expect(transformContext).toHaveBeenCalledTimes(1);
-		expect(requestContext?.systemPrompt).not.toBe(harness.session.agent.state.systemPrompt);
-		expect(requestContext?.tools).toBeUndefined();
+		expect(getCurrentSystemPrompt(requestContext?.messages ?? [])).not.toBe(harness.session.agent.state.systemPrompt);
+		expect(getCurrentTools(requestContext?.messages ?? [])).toEqual([]);
 		expect(JSON.stringify(requestContext?.messages)).toContain("<conversation>");
 		expect(requestOptions).toMatchObject({ cacheRetention: "none" });
 		expect(requestOptions?.sessionId).not.toBe("active-routing-session");
@@ -529,7 +585,7 @@ describe("AgentSession compaction characterization", () => {
 			harness.session.agent.sessionId = "active-routing-session";
 			harness.session.agent.transport = "websocket";
 
-			let requestContext: Context | undefined;
+			let requestContext: TranscriptContext | undefined;
 			let requestOptions: SimpleStreamOptions | undefined;
 			useSummaryStreamFn(harness, "cache-friendly summary", (context, options) => {
 				requestContext = context;
@@ -538,15 +594,18 @@ describe("AgentSession compaction characterization", () => {
 
 			await harness.session.compact();
 
-			expect(requestContext?.systemPrompt).toBe(harness.session.agent.state.systemPrompt);
-			expect(requestContext?.tools).toEqual(harness.session.agent.state.tools);
+			expect(getCurrentSystemPrompt(requestContext?.messages ?? [])).toBe(harness.session.agent.state.systemPrompt);
+			// C-AG-3: the transcript carries tool declarations, not the executable agent tools.
+			expect(getCurrentTools(requestContext?.messages ?? [])).toEqual(
+				harness.session.agent.state.tools.map(toToolDeclaration),
+			);
 			expect(JSON.stringify(requestContext?.messages)).not.toContain("<conversation>");
 			expect(requestOptions).toMatchObject({
 				cacheRetention: "short",
 				affinitySessionId: harness.sessionManager.getSessionId(),
 				transport: "websocket",
-				toolChoice: "none",
 			});
+			expect(requestOptions).not.toHaveProperty("toolChoice");
 			expect(requestOptions?.sessionId).not.toBe(harness.sessionManager.getSessionId());
 		} finally {
 			if (previousExperimental === undefined) {
@@ -717,24 +776,37 @@ describe("AgentSession compaction characterization", () => {
 			content: [{ type: "text" as const, text: "continue" }],
 			timestamp: timestamp - 1,
 		};
-		let supersedingCompaction: Promise<void> | undefined;
+		// Every overflow rung is superseded by a listener's threshold compaction: a
+		// superseded rung stays spent, so the ladder still runs out after two of them.
+		const supersedingCompactions: Promise<void>[] = [];
 		harness.session.subscribe((event) => {
-			if (event.type === "compaction_start" && event.reason === "overflow" && !supersedingCompaction) {
-				supersedingCompaction = runAutoCompaction(harness.session, "threshold", false);
+			if (event.type === "compaction_start" && event.reason === "overflow") {
+				supersedingCompactions.push(runAutoCompaction(harness.session, "threshold", false));
 			}
 		});
 
 		harness.session.agent.state.messages = [userMessage, firstOverflow];
 		await checkCompaction(harness.session, firstOverflow);
-		if (!supersedingCompaction) throw new Error("Expected the listener to supersede overflow compaction");
-		await supersedingCompaction;
+		expect(supersedingCompactions).toHaveLength(1);
+		await Promise.all(supersedingCompactions);
 		harness.session.agent.state.messages = [userMessage, secondOverflow];
 		await checkCompaction(harness.session, secondOverflow);
+		expect(supersedingCompactions).toHaveLength(2);
+		await Promise.all(supersedingCompactions);
+
+		const thirdOverflow = createAssistant(harness, {
+			stopReason: "error",
+			errorMessage: "prompt is too long",
+			timestamp: timestamp + 2,
+		});
+		harness.session.agent.state.messages = [userMessage, thirdOverflow];
+		await checkCompaction(harness.session, thirdOverflow);
+		expect(supersedingCompactions).toHaveLength(2);
 
 		const terminalOverflowFailures = harness
 			.eventsOfType("compaction_end")
 			.filter((event) =>
-				event.errorMessage?.startsWith("Context overflow recovery failed after one compact-and-retry attempt"),
+				event.errorMessage?.startsWith("Context overflow recovery failed after two compact-and-retry attempts"),
 			);
 		expect(terminalOverflowFailures).toHaveLength(1);
 	});
@@ -772,9 +844,13 @@ describe("AgentSession compaction characterization", () => {
 		});
 		harnesses.push(harness);
 		const seedTimestamp = Date.now() - 2_000;
+		// The faux provider bills call 1 against the REAL dynamic system prompt plus the tool
+		// schema (~3.3k tokens at the time of writing), so the seed only tops the context up: it
+		// must leave call 1 under the threshold while the 300-repeat tool result alone carries the
+		// assembled context over it. Keep the seed well clear of the boundary; the prompt grows.
 		harness.sessionManager.appendMessage({
 			role: "user",
-			content: [{ type: "text", text: "prior context ".repeat(220) }],
+			content: [{ type: "text", text: "prior context ".repeat(100) }],
 			timestamp: seedTimestamp,
 		});
 		harness.sessionManager.appendMessage(
@@ -815,7 +891,10 @@ describe("AgentSession compaction characterization", () => {
 			throw new Error("Expected a successful assistant tool call and its appended tool result");
 		}
 		const assembledContext = estimateContextTokens([toolCallResponse, toolResult]);
-		expect(toolCallResponse.usage.totalTokens).toBeLessThan(threshold);
+		// shouldCompact() triggers on `tokens > contextWindow - reserve`, so a call-1 response that
+		// lands exactly on the threshold still did not require compaction. Asserting a strict `<`
+		// here made the test fail whenever the estimate rounded onto the boundary.
+		expect(toolCallResponse.usage.totalTokens).toBeLessThanOrEqual(threshold);
 		expect(assembledContext.tokens).toBeGreaterThan(threshold);
 		expect(compactionEndsAtCall2).toBe(1);
 		expect(call2Context).toContain("tool result threshold summary");
@@ -886,7 +965,9 @@ describe("AgentSession compaction characterization", () => {
 			throw new Error("Expected the terminating tool result in the persisted session context");
 		}
 		const persistedContext = estimateContextTokens(harness.sessionManager.buildSessionContext().messages);
-		expect(terminatingToolCall.usage.totalTokens).toBeLessThan(threshold);
+		// Same boundary as above: the tool call alone must not have been over the compaction
+		// trigger, and the trigger is a strict `>`.
+		expect(terminatingToolCall.usage.totalTokens).toBeLessThanOrEqual(threshold);
 		expect(persistedContext.tokens).toBeGreaterThan(threshold);
 		expect(harness.faux.state.callCount).toBe(1);
 		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);
@@ -1556,7 +1637,7 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
 	});
 
-	it("stops after one compact-and-retry when a second response is also truncated", async () => {
+	it("stops after two compact-and-retries when a third response is also truncated", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1_000_000, maxTokens: 100 }],
 			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
@@ -1586,14 +1667,19 @@ describe("AgentSession compaction characterization", () => {
 					stopReason: "length",
 					timestamp: ++timestamp,
 				}),
+			() =>
+				fauxAssistantMessage("z".repeat(64), {
+					stopReason: "length",
+					timestamp: ++timestamp,
+				}),
 		]);
 
 		await harness.session.prompt("x".repeat(5000));
 
-		expect(harness.faux.state.callCount).toBe(2);
-		expect(harness.eventsOfType("compaction_start").filter((event) => event.reason === "overflow")).toHaveLength(1);
+		expect(harness.faux.state.callCount).toBe(3);
+		expect(harness.eventsOfType("compaction_start").filter((event) => event.reason === "overflow")).toHaveLength(2);
 		expect(harness.eventsOfType("compaction_end").at(-1)?.errorMessage).toBe(
-			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+			"Context overflow recovery failed after two compact-and-retry attempts. Try reducing context or switching to a larger-context model.",
 		);
 	});
 
@@ -1621,10 +1707,14 @@ describe("AgentSession compaction characterization", () => {
 			...lengthOverflowMessage,
 			timestamp: Date.now() + 1,
 		});
+		await sessionInternals._checkCompaction({
+			...lengthOverflowMessage,
+			timestamp: Date.now() + 2,
+		});
 
-		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(1);
+		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(2);
 		expect(compactionErrors).toContain(
-			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+			"Context overflow recovery failed after two compact-and-retry attempts. Try reducing context or switching to a larger-context model.",
 		);
 	});
 
@@ -1845,7 +1935,7 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.session.agent.hasQueuedMessages()).toBe(true);
 	});
 
-	it("does not retry overflow recovery more than once", async () => {
+	it("climbs two compaction rungs, the second summary-only, before giving up on an overflow", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		const overflowMessage = createAssistant(harness, {
@@ -1866,14 +1956,21 @@ describe("AgentSession compaction characterization", () => {
 			...overflowMessage,
 			timestamp: Date.now() + 1,
 		});
+		await checkCompaction(harness.session, {
+			...overflowMessage,
+			timestamp: Date.now() + 2,
+		});
 
-		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(1);
+		expect(runAutoCompactionSpy.mock.calls).toEqual([
+			["overflow", true],
+			["overflow", true, { keepRecentTokensOverride: 0 }],
+		]);
 		expect(compactionErrors).toContain(
-			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+			"Context overflow recovery failed after two compact-and-retry attempts. Try reducing context or switching to a larger-context model.",
 		);
 	});
 
-	it("blocks pre-prompt continuation after overflow recovery already failed", async () => {
+	it("gives a new prompt a fresh recovery budget after overflow recovery already failed (oh-my-openagent#8411)", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		const firstOverflow = createAssistant(harness, {
@@ -1893,18 +1990,24 @@ describe("AgentSession compaction characterization", () => {
 		};
 		const runAutoCompactionSpy = stubRunAutoCompaction(harness.session);
 
-		//#given - overflow recovery already used its compact-and-retry attempt
-		await checkCompaction(harness.session, firstOverflow);
-		harness.session.agent.state.messages = [userMessage, secondOverflow];
+		const prePromptCompactionStub = vi.fn(async (): Promise<boolean> => false);
+		Reflect.set(harness.session, "_runPrePromptCompaction", prePromptCompactionStub);
 
-		//#when - a continuation tries to start another turn while the latest assistant is still overflowed
+		//#given - overflow recovery already spent every rung inside the previous turn
+		await checkCompaction(harness.session, firstOverflow);
+		await checkCompaction(harness.session, secondOverflow);
+		harness.session.agent.state.messages = [userMessage, secondOverflow];
+		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(2);
+
+		//#when - a continuation starts another turn while the latest assistant is still overflowed
 		const prompt = harness.session.prompt("continue goal");
 
-		//#then - the prompt is blocked before another doomed provider request can be sent
+		//#then - the new turn gets its own overflow compaction instead of the previous turn's stale latch
 		await expect(prompt).rejects.toThrow(
-			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+			"Context remains above the compaction threshold because compaction did not complete",
 		);
-		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(1);
+		expect(prePromptCompactionStub).toHaveBeenCalledTimes(1);
+		expect(prePromptCompactionStub.mock.calls[0]?.slice(2)).toEqual(["overflow", true, false, undefined]);
 	});
 
 	it("does not consume the overflow compact-and-retry attempt when compaction fails before retrying", async () => {
@@ -1934,7 +2037,7 @@ describe("AgentSession compaction characterization", () => {
 		const overflowStarts = harness.eventsOfType("compaction_start").filter((event) => event.reason === "overflow");
 		const overflowEnds = harness.eventsOfType("compaction_end").filter((event) => event.reason === "overflow");
 		const terminalOverflowFailures = overflowEnds.filter((event) =>
-			event.errorMessage?.startsWith("Context overflow recovery failed after one compact-and-retry attempt"),
+			event.errorMessage?.startsWith("Context overflow recovery failed after two compact-and-retry attempts"),
 		);
 		expect(overflowStarts).toHaveLength(2);
 		expect(overflowEnds).toHaveLength(2);
@@ -1944,7 +2047,7 @@ describe("AgentSession compaction characterization", () => {
 	it("auto-retries overflow recovery when a provider alias differs but current context is still near the limit", async () => {
 		const harness = await createHarness({
 			api: "openai-codex-responses",
-			provider: "openai-codex",
+			provider: "chatgpt-subscription",
 			models: [
 				{
 					id: "gpt-5.5",

@@ -37,6 +37,34 @@ describe("cell result runtime propagation", () => {
 		expect(result.details.cells?.[0]?.runtime).toEqual(runtime);
 	});
 
+	it("delivers a kernel memory notice as its own text part and the report in details", async () => {
+		const builder = makeBuilder(makeState());
+
+		const result = await builder.finalize({
+			type: "result",
+			cellId: "cell-memory",
+			ok: true,
+			valueRepr: "1",
+			durationMs: 5,
+			memory: { liveBytes: 2048, measure: "heap", gcRan: true, notice: "[memory notice]" },
+		});
+
+		expect(result.content).toEqual([
+			{ type: "text", text: "1" },
+			{ type: "text", text: "[memory notice]" },
+		]);
+		expect(result.details.memory).toEqual({ liveBytes: 2048, measure: "heap", gcRan: true });
+	});
+
+	it("adds no content part or memory details when the kernel reports no memory", async () => {
+		const builder = makeBuilder(makeState());
+
+		const result = await builder.finalize({ type: "result", cellId: "cell-plain", ok: true, durationMs: 5 });
+
+		expect(result.content).toHaveLength(1);
+		expect(result.details).not.toHaveProperty("memory");
+	});
+
 	it("omits runtime from details when the kernel identity is unknown", async () => {
 		const builder = makeBuilder(makeState());
 

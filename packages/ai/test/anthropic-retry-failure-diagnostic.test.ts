@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import type { Context, Model } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 function makeModel(): Model<"anthropic-messages"> {
 	return {
 		id: "claude-sonnet-4-20250514",
@@ -66,7 +68,10 @@ describe("anthropic provider_retry_failure diagnostic", () => {
 		const fetchMock = vi.fn(async () => makeErrorResponse(429, body, { "retry-after": "2" }));
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamAnthropic(model, context, { apiKey: "sk-test", maxRetries: 0 }).result();
+		const result = await streamAnthropic(model, normalizeContext(context), {
+			apiKey: "sk-test",
+			maxRetries: 0,
+		}).result();
 
 		expect(result.stopReason).toBe("error");
 		const diagnostics = result.diagnostics ?? [];
@@ -87,7 +92,10 @@ describe("anthropic provider_retry_failure diagnostic", () => {
 		const fetchMock = vi.fn(async () => makeErrorResponse(429, body, { "retry-after": "1258" }));
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamAnthropic(model, context, { apiKey: "sk-test", maxRetries: 0 }).result();
+		const result = await streamAnthropic(model, normalizeContext(context), {
+			apiKey: "sk-test",
+			maxRetries: 0,
+		}).result();
 
 		expect(result.errorMessage).toMatch(/\(retry-after-ms: 1258000\)$/);
 	});
@@ -118,7 +126,10 @@ describe("anthropic provider_retry_failure diagnostic", () => {
 		);
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamAnthropic(model, context, { apiKey: "sk-test", maxRetries: 0 }).result();
+		const result = await streamAnthropic(model, normalizeContext(context), {
+			apiKey: "sk-test",
+			maxRetries: 0,
+		}).result();
 
 		expect(result.stopReason).toBe("error");
 		const retryDiagnostics = (result.diagnostics ?? []).filter((d) => d.type === "provider_retry_failure");
@@ -142,7 +153,10 @@ describe("anthropic provider_retry_failure diagnostic", () => {
 		);
 		vi.stubGlobal("fetch", fetchMock);
 
-		const result = await streamAnthropic(model, context, { apiKey: "sk-test", maxRetries: 0 }).result();
+		const result = await streamAnthropic(model, normalizeContext(context), {
+			apiKey: "sk-test",
+			maxRetries: 0,
+		}).result();
 
 		const retryDiagnostics = (result.diagnostics ?? []).filter((d) => d.type === "provider_retry_failure");
 		expect(retryDiagnostics).toHaveLength(1);

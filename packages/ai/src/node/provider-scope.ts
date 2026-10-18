@@ -32,6 +32,11 @@ export function setProviderScopeStrictMode(enabled: boolean): void {
 	setImagesProviderScopeStrictMode(enabled);
 }
 
+/** The scope the caller is running in, or undefined outside any scope. */
+export function activeProviderScope(): ProviderScope | undefined {
+	return providerScopeStorage.getStore();
+}
+
 export function runWithProviderScope<T>(scope: ProviderScope, fn: () => T): T {
 	if (scope.state === "closed") throw new Error("Provider scope is closed");
 	return providerScopeStorage.run(scope, fn);

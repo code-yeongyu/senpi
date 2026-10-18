@@ -6,6 +6,9 @@ import { allowNetwork } from "../../test-network-env.ts";
 // Regression for https://github.com/code-yeongyu/senpi/issues/887.
 
 const FORK_ONLY_PROVIDERS = ["alibaba-token-plan", "opengateway"] as const;
+// OpenGateway refreshes from its own public listing (#2552), so it never uses the pi.dev overlay.
+const PI_DEV_OVERLAY_PROVIDER = "alibaba-token-plan";
+const SELF_REFRESHING_PROVIDER = "opengateway";
 const UPSTREAM_SERVED_PROVIDER = "anthropic";
 
 function catalog500(): Response {
@@ -13,10 +16,10 @@ function catalog500(): Response {
 }
 
 function fetchedProviderIds(calls: Parameters<typeof fetch>[]): string[] {
-	return calls.map((call) => {
-		const url = new URL(String(call[0]));
-		return decodeURIComponent(url.pathname.replace(/^\/api\/models\/providers\//, ""));
-	});
+	return calls
+		.map((call) => new URL(String(call[0])))
+		.filter((url) => url.pathname.startsWith("/api/models/providers/"))
+		.map((url) => decodeURIComponent(url.pathname.replace(/^\/api\/models\/providers\//, "")));
 }
 
 async function createRuntime(catalogBaseUrl?: string): Promise<ModelRuntime> {
@@ -47,8 +50,10 @@ describe("fork-only builtin providers and the pi.dev catalog overlay (#887)", ()
 		const fetched = fetchedProviderIds(fetchSpy.mock.calls);
 		for (const providerId of FORK_ONLY_PROVIDERS) {
 			expect(fetched, `no catalog fetch expected for ${providerId}`).not.toContain(providerId);
-			expect(result.errors.has(providerId), `no refresh error expected for ${providerId}`).toBe(false);
 		}
+		expect(result.errors.has(PI_DEV_OVERLAY_PROVIDER)).toBe(false);
+		// The only OpenGateway failure left is its own gateway's, never a pi.dev overlay warning.
+		expect(result.errors.get(SELF_REFRESHING_PROVIDER)?.message).toMatch(/OpenGateway catalog request failed/);
 		expect(fetched).toContain(UPSTREAM_SERVED_PROVIDER);
 		expect(result.errors.has(UPSTREAM_SERVED_PROVIDER)).toBe(true);
 	});
@@ -61,8 +66,9 @@ describe("fork-only builtin providers and the pi.dev catalog overlay (#887)", ()
 		await runtime.refresh({ allowNetwork: true });
 
 		const fetched = fetchedProviderIds(fetchSpy.mock.calls);
-		for (const providerId of FORK_ONLY_PROVIDERS) {
-			expect(fetched, `custom catalog base URL must still fetch ${providerId}`).toContain(providerId);
-		}
+		expect(fetched, "custom catalog base URL must still fetch the overlay").toContain(PI_DEV_OVERLAY_PROVIDER);
+		expect(fetched, "OpenGateway keeps its own refresh under a custom catalog").not.toContain(
+			SELF_REFRESHING_PROVIDER,
+		);
 	});
 });

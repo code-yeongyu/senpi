@@ -85,6 +85,71 @@ export function renderLines(component: EvalComponent): string[] {
 	return component.render(80);
 }
 
+const PLAIN_FG_COLORS = {
+	accent: "#010101",
+	border: "#020202",
+	borderAccent: "#030303",
+	borderMuted: "#040404",
+	success: "#050505",
+	error: "#060606",
+	warning: "#070707",
+	muted: "#080808",
+	dim: "#090909",
+	text: "#0a0a0a",
+	thinkingText: "#0b0b0b",
+	userMessageText: "#0c0c0c",
+	customMessageText: "#0d0d0d",
+	customMessageLabel: "#0e0e0e",
+	toolTitle: "#0f0f0f",
+	toolOutput: "#101010",
+	mdHeading: "#111111",
+	mdLink: "#121212",
+	mdLinkUrl: "#131313",
+	mdCode: "#141414",
+	mdCodeBlock: "#151515",
+	mdCodeBlockBorder: "#161616",
+	mdQuote: "#171717",
+	mdQuoteBorder: "#181818",
+	mdHr: "#191919",
+	mdListBullet: "#1a1a1a",
+	toolDiffAdded: "#1b1b1b",
+	toolDiffRemoved: "#1c1c1c",
+	toolDiffContext: "#1d1d1d",
+	syntaxComment: "#1e1e1e",
+	syntaxKeyword: "#1f1f1f",
+	syntaxFunction: "#202020",
+	syntaxVariable: "#202020",
+	syntaxString: "#222222",
+	syntaxNumber: "#232323",
+	syntaxType: "#242424",
+	syntaxOperator: "#252525",
+	syntaxPunctuation: "#262626",
+	thinkingOff: "#272727",
+	thinkingMinimal: "#282828",
+	thinkingLow: "#292929",
+	thinkingMedium: "#2a2a2a",
+	thinkingHigh: "#292929",
+	thinkingXhigh: "#2a2a2a",
+	thinkingMax: "#2b2b2b",
+	bashMode: "#2c2c2c",
+};
+
+const PLAIN_BG_COLORS = {
+	selectedBg: "#303030",
+	userMessageBg: "#313131",
+	customMessageBg: "#323232",
+	toolPendingBg: "#333333",
+	toolSuccessBg: "#343434",
+	toolErrorBg: "#353535",
+};
+
+import { Theme } from "@code-yeongyu/senpi";
+
+/** A real `Theme` whose styling functions return the text unchanged: the render tests read layout, not color. */
+export function plainTheme(): Theme {
+	return new Theme(PLAIN_FG_COLORS, PLAIN_BG_COLORS, "truecolor", { name: "eval-render-plain-test" });
+}
+
 export function stripAnsi(text: string): string {
 	return text.replace(/\u001b\[[0-9;]*m/gu, "");
 }

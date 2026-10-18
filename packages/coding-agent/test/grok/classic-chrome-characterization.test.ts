@@ -9,14 +9,15 @@ import { FooterComponent } from "../../src/modes/interactive/components/footer.t
 import { WorkingStatusIndicator } from "../../src/modes/interactive/components/status-indicator.ts";
 import { ToolExecutionComponent } from "../../src/modes/interactive/components/tool-execution.ts";
 import { InteractiveMode } from "../../src/modes/interactive/interactive-mode.ts";
-import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
+import { getResolvedThemeColors, initTheme } from "../../src/modes/interactive/theme/theme.ts";
 
 type HeaderFixture = {
 	isInitialized: boolean;
 	registerSignalHandlers(): void;
+	resumeQuestionMouseCapture(): void;
 	getChangelogForDisplay(): undefined;
 	fdPath: string | undefined;
-	session: { scopedModels: unknown[] };
+	session: { scopedModels: unknown[]; releaseSettledSessionMemory(): void };
 	options: { verbose: boolean };
 	settingsManager: {
 		getQuietStartup(): boolean;
@@ -49,7 +50,7 @@ type HeaderFixture = {
 	mountInteractiveTui(renderer: Container, components: readonly Container[]): void;
 	setupKeyHandlers(): void;
 	setupEditorSubmitHandler(): void;
-	themeController: { applyFromSettings(): Promise<void> };
+	themeController: { applyFromSettings(): void; waitForTerminalColors(): Promise<void> };
 	version: string;
 	getStartupExpansionState(): boolean;
 	rebindCurrentSession(): Promise<void>;
@@ -69,6 +70,16 @@ type BorderFixture = {
 type BorderMethod = (this: BorderFixture) => void;
 
 const RAW = (value: string) => value;
+// D-14 adopted the upstream OKHSL dark palette, so the classic chrome is pinned by the dark theme token
+// each byte is painted with (layout and token routing), not by the pre-sync RGB literals.
+const tokenRgb = (token: string): string => {
+	const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/.exec(getResolvedThemeColors("dark")[token] ?? "");
+	if (!match) throw new Error(`dark theme token ${token} has no resolved hex color`);
+	return match
+		.slice(1)
+		.map((channel) => parseInt(channel, 16))
+		.join(";");
+};
 const fg = (rgb: string, text: string) => `\x1b[38;2;${rgb}m${text}\x1b[39m`;
 const bg = (rgb: string, text: string) => `\x1b[48;2;${rgb}m${text}\x1b[49m`;
 const line = (text: string, width: number) => `${text}${" ".repeat(width - visibleWidth(text))}`;
@@ -88,9 +99,10 @@ function createHeaderFixture(): HeaderFixture {
 	return {
 		isInitialized: false,
 		registerSignalHandlers: () => {},
+		resumeQuestionMouseCapture: () => {},
 		getChangelogForDisplay: () => undefined,
 		fdPath: undefined,
-		session: { scopedModels: [] },
+		session: { scopedModels: [], releaseSettledSessionMemory: () => {} },
 		options: { verbose: true },
 		settingsManager: {
 			getQuietStartup: () => false,
@@ -121,7 +133,7 @@ function createHeaderFixture(): HeaderFixture {
 		},
 		setupKeyHandlers: () => {},
 		setupEditorSubmitHandler: () => {},
-		themeController: { applyFromSettings: async () => {} },
+		themeController: { applyFromSettings: () => {}, waitForTerminalColors: async () => {} },
 		version: "9.9.9",
 		getStartupExpansionState: () => false,
 		rebindCurrentSession: async () => {},
@@ -200,8 +212,8 @@ describe("classic chrome characterization", () => {
 		await init.call(fixture);
 
 		const rendered = fixture.headerContainer.render(120).join("\n");
-		const muted = "128;128;128";
-		const dim = "102;102;102";
+		const muted = tokenRgb("muted");
+		const dim = tokenRgb("dim");
 		const compactInstructions = [
 			fg(dim, "") + fg(muted, " interrupt"),
 			fg(dim, "/") + fg(muted, " clear/exit"),
@@ -211,7 +223,7 @@ describe("classic chrome characterization", () => {
 		].join(fg(muted, " · "));
 		const expected = [
 			"",
-			line(` ${fg("138;190;183", "senpi")}${fg(dim, " v9.9.9")}`, 120),
+			line(` ${fg(tokenRgb("accent"), "senpi")}${fg(dim, " v9.9.9")}`, 120),
 			line(` ${compactInstructions}`, 120),
 			line(` ${fg(dim, "Press  to show full startup help and loaded resources.")}`, 120),
 			line("", 120),
@@ -247,18 +259,18 @@ describe("classic chrome characterization", () => {
 
 		expect(editor).toBeInstanceOf(CustomEditor);
 		expect(editor.getPaddingX()).toBe(0);
-		expect(editor.borderColor("─")).toBe(fg("80;80;80", "─"));
+		expect(editor.borderColor("─")).toBe(fg(tokenRgb("borderMuted"), "─"));
 	});
 
 	it("keeps the built-in footer byte-identical", () => {
 		const footer = new FooterComponent(createFooterSession(), footerData);
 		const rendered = footer.render(80).join("\n");
 		const expected =
-			fg("138;190;183", "/tmp/project") +
-			fg("80;80;80", " • ") +
-			fg("128;128;128", "25K/200K (12.3%) (auto)") +
+			fg(tokenRgb("accent"), "/tmp/project") +
+			fg(tokenRgb("borderMuted"), " • ") +
+			fg(tokenRgb("muted"), "25K/200K (12.3%) (auto)") +
 			" ".repeat(36) +
-			fg("138;190;183", "faux-1");
+			fg(tokenRgb("accent"), "faux-1");
 		expect(rendered).toBe(expected);
 	});
 
@@ -275,15 +287,16 @@ describe("classic chrome characterization", () => {
 		);
 		try {
 			const rendered = component.render(80).join("\n");
+			const pending = tokenRgb("toolPendingBg");
 			const expected = [
 				"",
-				bg("40;40;50", line("", 80)),
-				bg("40;40;50", line(` ${fg("212;212;212", "classic_characterization")}`, 80)),
-				bg("40;40;50", line("", 80)),
-				bg("40;40;50", line(" {", 80)),
-				bg("40;40;50", line('   "value": "x"', 80)),
-				bg("40;40;50", line(" }", 80)),
-				bg("40;40;50", line("", 80)),
+				bg(pending, line("", 80)),
+				bg(pending, line(` ${fg(tokenRgb("toolTitle"), "classic_characterization")}`, 80)),
+				bg(pending, line("", 80)),
+				bg(pending, line(" {", 80)),
+				bg(pending, line('   "value": "x"', 80)),
+				bg(pending, line(" }", 80)),
+				bg(pending, line("", 80)),
 			].join("\n");
 			expect(rendered).toBe(expected);
 		} finally {
@@ -296,7 +309,7 @@ describe("classic chrome characterization", () => {
 		const indicator = new WorkingStatusIndicator(ui, "Working");
 		try {
 			const rendered = indicator.render(80).join("\n");
-			expect(rendered).toBe(`\n${line(` ${fg("138;190;183", "⠋")} ${fg("128;128;128", "Working")}`, 80)}`);
+			expect(rendered).toBe(`\n${line(` ${fg(tokenRgb("accent"), "⠋")} ${fg(tokenRgb("muted"), "Working")}`, 80)}`);
 		} finally {
 			indicator.dispose();
 		}
@@ -314,6 +327,6 @@ describe("classic chrome characterization", () => {
 		).updateEditorBorderColor;
 		updateEditorBorderColor.call(fixture);
 		const rendered = fixture.editor.borderColor("─");
-		expect(rendered).toBe(fg("80;80;80", "─"));
+		expect(rendered).toBe(fg(tokenRgb("thinkingOff"), "─"));
 	});
 });

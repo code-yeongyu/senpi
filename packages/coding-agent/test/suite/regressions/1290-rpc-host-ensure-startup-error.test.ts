@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../../../src/config.ts";
 import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
+import { reapProcessesUnder } from "../../helpers/spawned-host-reaper.ts";
 
 /**
  * Regression: a startup failure must surface its own cause.
@@ -20,8 +21,13 @@ import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 const roots: string[] = [];
 
 afterEach(async () => {
-	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
+	for (const root of roots.splice(0)) {
+		// This case makes registration fail AFTER the host is up, so the fixture it started is
+		// detached and unregistered: the sandbox path is the only handle left to reap it by.
+		await reapProcessesUnder(root);
+		await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+	}
+}, 60_000);
 
 async function scratch(label: string): Promise<{ root: string; agentDir: string; socket: string }> {
 	const root = await mkdtemp(join(tmpdir(), `senpi-host-ensure-${label}-`));

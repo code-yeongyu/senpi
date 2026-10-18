@@ -79,31 +79,36 @@ function catalogModel(id: string): Model<"anthropic-messages"> {
 	};
 }
 
-function modelById(provider: ReturnType<typeof composeModelProvider>, id: string): Model<"claude-sdk-oauth"> {
+function modelById(provider: ReturnType<typeof composeModelProvider>, id: string): Model<"anthropic-subscription"> {
 	const model = provider.getModels().find((entry) => entry.id === id);
 	if (model === undefined) throw new Error(`Expected model ${id}`);
-	return model as Model<"claude-sdk-oauth">;
+	return model as Model<"anthropic-subscription">;
 }
 
 describe("models.json custom models under extension providers", () => {
 	it("inherits extension api and baseUrl and validates the composed provider", () => {
-		const config = configFor("claude-sdk-oauth", [{ id: "claude-fable-5-1" }]);
-		const provider = composeModelProvider("claude-sdk-oauth", undefined, config, extension);
+		const config = configFor("anthropic-subscription", [{ id: "claude-fable-5-1" }]);
+		const provider = composeModelProvider("anthropic-subscription", undefined, config, extension);
 
 		const model = modelById(provider, "claude-fable-5-1");
 		expect(model.api).toBe("claude-sdk-oauth");
 		expect(model.baseUrl).toBe("claude-sdk-oauth");
 		expect(() =>
-			validateExtensionProvider("claude-sdk-oauth", undefined, config.getProvider("claude-sdk-oauth"), extension),
+			validateExtensionProvider(
+				"anthropic-subscription",
+				undefined,
+				config.getProvider("anthropic-subscription"),
+				extension,
+			),
 		).not.toThrow();
 	});
 
 	it("preserves extension catalog models and gives extension definitions precedence", () => {
-		const config = configFor("claude-sdk-oauth", [
+		const config = configFor("anthropic-subscription", [
 			{ id: "claude-fable-5-1" },
 			{ id: "claude-opus-5", name: "custom-name" },
 		]);
-		const provider = composeModelProvider("claude-sdk-oauth", undefined, config, extension);
+		const provider = composeModelProvider("anthropic-subscription", undefined, config, extension);
 		const models = provider.getModels();
 
 		expect(models.map((model) => model.id)).toEqual(["claude-opus-5", "claude-sonnet-5", "claude-fable-5-1"]);

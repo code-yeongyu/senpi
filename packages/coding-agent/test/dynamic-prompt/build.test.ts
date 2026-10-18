@@ -1,5 +1,9 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { buildDynamicSystemPrompt } from "../../src/core/dynamic-prompt/build.ts";
+
+function occurrences(haystack: string, needle: string): number {
+	return haystack.split(needle).length - 1;
+}
 
 describe("buildDynamicSystemPrompt", () => {
 	const baseOptions = {
@@ -75,6 +79,14 @@ describe("buildDynamicSystemPrompt", () => {
 		expect(prompt).toContain("Smallest correct change");
 	});
 
+	test("renders the handoff section exactly once", () => {
+		// when
+		const prompt = buildDynamicSystemPrompt(baseOptions);
+
+		// then
+		expect(occurrences(prompt, "## Handoff")).toBe(1);
+	});
+
 	test("does not include tuning section by default", () => {
 		const prompt = buildDynamicSystemPrompt(baseOptions);
 
@@ -91,17 +103,27 @@ describe("buildDynamicSystemPrompt", () => {
 		expect(prompt).toContain("Custom tuning content.");
 	});
 
-	test("includes current date", () => {
+	// senpi#2093: date and cwd reach the model as an environment-context message instead.
+	test("carries neither the current date nor the working directory", () => {
 		const prompt = buildDynamicSystemPrompt(baseOptions);
-		const today = new Date().toISOString().slice(0, 10);
 
-		expect(prompt).toContain(`Current date: ${today}`);
+		expect(prompt).not.toContain("Current date:");
+		expect(prompt).not.toContain("Current working directory:");
+		expect(prompt).not.toContain("/test/project");
 	});
 
-	test("includes working directory", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
+	test("is byte-identical across dates and working directories", () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		try {
+			vi.setSystemTime(new Date("2026-09-24T12:00:00.000Z"));
+			const first = buildDynamicSystemPrompt(baseOptions);
+			vi.setSystemTime(new Date("2026-09-25T12:00:00.000Z"));
+			const second = buildDynamicSystemPrompt({ ...baseOptions, cwd: "C:\\Users\\test\\other" });
 
-		expect(prompt).toContain("Current working directory: /test/project");
+			expect(second).toBe(first);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	test("appends AGENTS.md context files", () => {
@@ -153,19 +175,6 @@ describe("buildDynamicSystemPrompt", () => {
 		expect(prompt).not.toContain("hidden-skill");
 	});
 
-	test("does NOT accept customPrompt (SYSTEM.md removed)", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		expect(prompt).toContain("## Intent Gate");
-		expect(prompt).toContain("once context is sufficient, act");
-	});
-
-	test("does NOT accept appendSystemPrompt (APPEND_SYSTEM.md removed)", () => {
-		const prompt = buildDynamicSystemPrompt(baseOptions);
-
-		expect(prompt).toBeTruthy();
-	});
-
 	test("includes custom prompt guidelines", () => {
 		const prompt = buildDynamicSystemPrompt({
 			...baseOptions,
@@ -173,14 +182,5 @@ describe("buildDynamicSystemPrompt", () => {
 		});
 
 		expect(prompt).toContain("Use read to examine files instead of cat or sed.");
-	});
-
-	test("normalizes cwd path separators", () => {
-		const prompt = buildDynamicSystemPrompt({
-			...baseOptions,
-			cwd: "C:\\Users\\test\\project",
-		});
-
-		expect(prompt).toContain("Current working directory: C:/Users/test/project");
 	});
 });

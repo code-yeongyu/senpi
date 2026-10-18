@@ -226,7 +226,6 @@ describe("extension filesystem policies", () => {
 					requestedPath = root;
 					const tool = createGrepTool(root, {
 						filesystemPolicy: checker,
-						operations: { isDirectory: backend.isDirectory, readFile: async () => "needle\n" },
 					});
 					execute = () => tool.execute("grep-policy", { path: requestedPath, pattern: "needle" });
 					break;

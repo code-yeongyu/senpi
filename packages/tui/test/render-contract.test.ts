@@ -52,6 +52,15 @@ class ThrowingComponent implements tuiModule.Component, tuiModule.Focusable {
 
 class DifferentThrowingComponent extends ThrowingComponent {}
 
+/** Distinct class name: the render-error log dedupes per component class per process. */
+class HostLogDirectoryThrowingComponent implements tuiModule.Component {
+	render(_width: number): string[] {
+		throw new Error("render exploded");
+	}
+
+	invalidate(): void {}
+}
+
 class RawOverWideComponent implements tuiModule.Component {
 	line = "";
 
@@ -255,6 +264,28 @@ describe("TUI render contract", () => {
 			await driveRender(tui, terminal);
 			assert.strictEqual(renderErrorStats().writes, Math.max(initial, 1) + 1);
 			tui.stop();
+		});
+	});
+
+	it("writes the render-error diagnostic to the host-provided log directory", async () => {
+		// Given: a TUI constructed with the host's resolved agent directory
+		await withTempHome(async (home) => {
+			const logDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "senpi-render-logdir-"));
+			try {
+				const terminal = new LoggingVirtualTerminal(50, 4);
+				const tui = new tuiModule.TUI(terminal, undefined, logDirectory);
+				tui.addChild(new HostLogDirectoryThrowingComponent());
+
+				// When: a child throws and the render path logs it
+				await driveRender(tui, terminal);
+				tui.stop();
+
+				// Then: the diagnostic lands in the host directory, not a path derived from HOME
+				assert.ok(fs.existsSync(path.join(logDirectory, "senpi-debug.log")));
+				assert.ok(!fs.existsSync(path.join(home, ".senpi", "agent", "senpi-debug.log")));
+			} finally {
+				fs.rmSync(logDirectory, { recursive: true, force: true });
+			}
 		});
 	});
 });

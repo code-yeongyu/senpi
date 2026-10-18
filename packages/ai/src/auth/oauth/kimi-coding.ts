@@ -1,18 +1,20 @@
 /**
  * Kimi Code (subscription) OAuth flow
  *
- * RFC 8628 device authorization grant against https://auth.kimi.com with JSON
- * responses. The access token authenticates requests to
- * https://api.kimi.com/coding as an `Authorization: Bearer` header.
+ * RFC 8628 device authorization grant against the region's auth host
+ * (https://auth.kimi.com or https://auth.kimi.ai) with JSON responses. The
+ * access token authenticates requests to that region's coding API as an
+ * `Authorization: Bearer` header; see kimi-region.ts for the host table.
  */
 
-import { getProviderEnvValue } from "../../utils/provider-env.ts";
+import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import { sleep } from "../../utils/sleep.ts";
 import type { OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
+import { kimiCodeIdentityHeaders } from "./kimi-identity.ts";
+import { chooseKimiCodeLoginEndpoints, kimiCodeCredentialEnv, kimiCodeEndpointsForCredential } from "./kimi-region.ts";
 
 const CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
-const DEFAULT_OAUTH_HOST = "https://auth.kimi.com";
 const DEVICE_CODE_TIMEOUT_SECONDS = 15 * 60;
 const DEFAULT_POLL_INTERVAL_SECONDS = 5;
 const REQUEST_TIMEOUT_MS = 30 * 1000;
@@ -32,11 +34,6 @@ type TokenResponse = {
 	refresh: string;
 	expires: number;
 };
-
-function getOauthHost(): string {
-	const override = getProviderEnvValue("KIMI_CODE_OAUTH_HOST") || getProviderEnvValue("KIMI_OAUTH_HOST");
-	return (override || DEFAULT_OAUTH_HOST).replace(/\/+$/, "");
-}
 
 function requestSignal(signal: AbortSignal): AbortSignal {
 	return AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), signal]);
@@ -71,6 +68,7 @@ async function startDeviceAuthorization(oauthHost: string, signal: AbortSignal):
 	const response = await fetch(`${oauthHost}/api/oauth/device_authorization`, {
 		method: "POST",
 		headers: {
+			...kimiCodeIdentityHeaders(),
 			"Content-Type": "application/x-www-form-urlencoded",
 			Accept: "application/json",
 		},
@@ -153,6 +151,7 @@ async function pollForToken(
 			const response = await fetch(`${oauthHost}/api/oauth/token`, {
 				method: "POST",
 				headers: {
+					...kimiCodeIdentityHeaders(),
 					"Content-Type": "application/x-www-form-urlencoded",
 					Accept: "application/json",
 				},
@@ -218,7 +217,7 @@ async function refreshToken(oauthHost: string, refreshTokenValue: string, signal
 			await sleep(1000 * 2 ** (attempt - 1), signal);
 		}
 		if (signal.aborted) {
-			throw new Error("Kimi Code token refresh aborted");
+			throw new Error("Kimi Code token refresh aborted", { cause: signal.reason });
 		}
 
 		let response: Response;
@@ -226,6 +225,7 @@ async function refreshToken(oauthHost: string, refreshTokenValue: string, signal
 			response = await fetch(`${oauthHost}/api/oauth/token`, {
 				method: "POST",
 				headers: {
+					...kimiCodeIdentityHeaders(),
 					"Content-Type": "application/x-www-form-urlencoded",
 					Accept: "application/json",
 				},
@@ -249,23 +249,33 @@ async function refreshToken(oauthHost: string, refreshTokenValue: string, signal
 		// Unauthorized: the stored credential is dead; Models clears it and prompts re-login.
 		if (response.status === 401 || response.status === 403 || json?.error === "invalid_grant") {
 			const description = typeof json?.error_description === "string" ? `: ${json.error_description}` : "";
-			throw new Error(`Kimi Code token refresh unauthorized (status ${response.status})${description}`);
+			throw new OAuthTokenEndpointError(
+				`Kimi Code token refresh unauthorized (status ${response.status})${description}`,
+				response.status,
+			);
 		}
 
 		if (isRetryableRefreshFailure(response) && attempt < REFRESH_MAX_RETRIES) {
-			lastError = new Error(`Kimi Code token refresh failed with status ${response.status}`);
+			lastError = new OAuthTokenEndpointError(
+				`Kimi Code token refresh failed with status ${response.status}`,
+				response.status,
+			);
 			continue;
 		}
 
 		const text = JSON.stringify(json);
-		throw new Error(`Kimi Code token refresh failed with status ${response.status}${text ? `: ${text}` : ""}`);
+		throw new OAuthTokenEndpointError(
+			`Kimi Code token refresh failed with status ${response.status}${text ? `: ${text}` : ""}`,
+			response.status,
+		);
 	}
 
 	throw lastError ?? new Error("Kimi Code token refresh failed");
 }
 
 async function loginKimiCoding(interaction: ProviderAuthInteraction): Promise<OAuthCredential> {
-	const oauthHost = getOauthHost();
+	const endpoints = await chooseKimiCodeLoginEndpoints(interaction);
+	const oauthHost = endpoints.oauthHost;
 	const device = await startDeviceAuthorization(oauthHost, interaction.signal);
 	interaction.notify({
 		type: "device_code",
@@ -275,7 +285,13 @@ async function loginKimiCoding(interaction: ProviderAuthInteraction): Promise<OA
 		expiresInSeconds: device.expiresInSeconds,
 	});
 	const token = await pollForToken(oauthHost, device, interaction.signal);
-	return { type: "oauth", access: token.access, refresh: token.refresh, expires: token.expires };
+	return {
+		type: "oauth",
+		access: token.access,
+		refresh: token.refresh,
+		expires: token.expires,
+		...(endpoints.env ? { env: endpoints.env } : {}),
+	};
 }
 
 export const kimiCodingOAuth: OAuthAuth = {
@@ -286,11 +302,26 @@ export const kimiCodingOAuth: OAuthAuth = {
 	login: loginKimiCoding,
 
 	refresh: async (credential, signal) => {
-		const token = await refreshToken(getOauthHost(), credential.refresh, signal);
-		return { type: "oauth", access: token.access, refresh: token.refresh, expires: token.expires };
+		const env = kimiCodeCredentialEnv(credential);
+		const token = await refreshToken(
+			kimiCodeEndpointsForCredential(credential).oauthHost,
+			credential.refresh,
+			signal,
+		);
+		return {
+			type: "oauth",
+			access: token.access,
+			refresh: token.refresh,
+			expires: token.expires,
+			...(env ? { env } : {}),
+		};
 	},
 
 	async toAuth(credential) {
-		return { headers: { Authorization: `Bearer ${credential.access}` } };
+		const { apiBaseUrl } = kimiCodeEndpointsForCredential(credential);
+		return {
+			headers: { ...kimiCodeIdentityHeaders(), Authorization: `Bearer ${credential.access}` },
+			...(apiBaseUrl ? { baseUrl: apiBaseUrl } : {}),
+		};
 	},
 };

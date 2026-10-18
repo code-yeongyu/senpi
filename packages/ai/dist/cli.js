@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { builtinProviders } from "./providers/all.js";
@@ -40,6 +41,7 @@ async function login(providerId) {
         throw new Error(`Unknown provider: ${providerId}`);
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     try {
+        // This dev CLI does not persist an installation ID; apps should reuse one across logins.
         const credential = await provider.auth.oauth.login({
             signal: new AbortController().signal,
             prompt: (authPrompt) => answerPrompt(rl, authPrompt),
@@ -60,7 +62,7 @@ async function login(providerId) {
                         break;
                 }
             },
-        });
+        }, { getDeviceId: randomUUID });
         const auth = loadAuth();
         auth[providerId] = credential;
         saveAuth(auth);

@@ -1,5 +1,6 @@
-import { chmodSync, closeSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { rotateLogIfNeeded } from "../log-file-rotation.ts";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_STRING_LENGTH = 200;
@@ -72,31 +73,14 @@ function formatLine(
 function writeLine(filePath: string, line: string, maxBytes: number): void {
 	mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
 	const text = `${line}\n`;
-	if (fileExceedsCap(filePath, Buffer.byteLength(text), maxBytes)) {
-		rmSync(`${filePath}.1`, { force: true });
-		renameSync(filePath, `${filePath}.1`);
-		chmodSync(`${filePath}.1`, 0o600);
-	}
+	rotateLogIfNeeded(filePath, Buffer.byteLength(text), maxBytes);
 	const descriptor = openSync(filePath, "a", 0o600);
 	try {
 		writeSync(descriptor, text);
+		fchmodSync(descriptor, 0o600);
 	} finally {
 		closeSync(descriptor);
 	}
-	chmodSync(filePath, 0o600);
-}
-
-function fileExceedsCap(filePath: string, incomingBytes: number, maxBytes: number): boolean {
-	try {
-		return statSync(filePath).size + incomingBytes > maxBytes;
-	} catch (error) {
-		if (isMissingFileError(error)) return false;
-		throw error;
-	}
-}
-
-function isMissingFileError(error: unknown): boolean {
-	return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function serializeValue(value: unknown, seen: WeakSet<object>): unknown {

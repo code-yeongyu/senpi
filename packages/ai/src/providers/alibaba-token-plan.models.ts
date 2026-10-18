@@ -2,7 +2,13 @@
 // Do not edit manually - run 'npm run generate-models' to update
 
 import values from "./data/alibaba-token-plan.json" with { type: "json" };
-import { flattenModelCatalog, type ModelCatalog } from "../model-catalog.ts";
+import { flattenChatModelCatalog, flattenClassifierModelCatalog, flattenImageModelCatalog, type ChatModelCatalog, type ClassifierModelCatalog, type ImageModelCatalog } from "../model-catalog.ts";
 
-export const ALIBABA_TOKEN_PLAN_MODELS: ModelCatalog<typeof values, "alibaba-token-plan"> =
-	flattenModelCatalog("alibaba-token-plan", values);
+export const ALIBABA_TOKEN_PLAN_MODELS: ChatModelCatalog<typeof values, "alibaba-token-plan"> =
+	flattenChatModelCatalog("alibaba-token-plan", values);
+
+export const ALIBABA_TOKEN_PLAN_IMAGE_MODELS: ImageModelCatalog<typeof values, "alibaba-token-plan"> =
+	flattenImageModelCatalog("alibaba-token-plan", values);
+
+export const ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS: ClassifierModelCatalog<typeof values, "alibaba-token-plan"> =
+	flattenClassifierModelCatalog("alibaba-token-plan", values);

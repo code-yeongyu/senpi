@@ -1,4 +1,6 @@
 # allow: SIZE_OK — parser, stream capture, bridge calls, and the persistent execution loop share Main globals.
+write(stdout, "{\"type\":\"status\",\"event\":{\"op\":\"kernel-startup\",\"stage\":\"stdlib-imports\"}}\n")
+flush(stdout)
 using Sockets
 
 const SENPI_ORIGINAL_STDOUT = stdout
@@ -7,11 +9,14 @@ out_read, out_write = redirect_stdout()
 err_read, err_write = redirect_stderr()
 redirect_stdin(devnull)
 
+write(SENPI_ORIGINAL_STDOUT, "{\"type\":\"status\",\"event\":{\"op\":\"kernel-startup\",\"stage\":\"runtime-init\"}}\n")
+flush(SENPI_ORIGINAL_STDOUT)
 include("prelude.jl")
 
 const senpi_connection = Dict{String, Any}()
 const senpi_write_lock = ReentrantLock()
 global senpi_current_cell = nothing
+global senpi_memory_cell = nothing
 
 function senpi_escape(text::AbstractString)
     out = IOBuffer()
@@ -156,13 +161,20 @@ function senpi_json_parse(input::AbstractString)
     parsed_result
 end
 
-function senpi_emit(frame)
+function senpi_emit_line(line::String)
     lock(senpi_write_lock) do
-        println(SENPI_ORIGINAL_STDOUT, senpi_json(frame))
+        println(SENPI_ORIGINAL_STDOUT, line)
         flush(SENPI_ORIGINAL_STDOUT)
     end
     nothing
 end
+
+senpi_emit(frame) = senpi_emit_line(senpi_json(frame))
+
+# Startup frames are constant: writing them pre-encoded keeps the generic encoder
+# from running (and specializing) in every fresh or replacement interpreter.
+const SENPI_HOST_INIT_FRAME = "{\"type\":\"status\",\"event\":{\"op\":\"kernel-startup\",\"stage\":\"host-init\"}}"
+const SENPI_READY_FRAME = "{\"type\":\"ready\",\"memoryGlobals\":true}"
 
 function senpi_emit_stream(stream::String, bytes::Vector{UInt8})
     senpi_current_cell === nothing && return nothing
@@ -220,12 +232,15 @@ function senpi_http_body(response::AbstractString)
     String(output)
 end
 
-function senpi_bridge_request(path::String, payload)
+# `read_timeout` (seconds) bounds only the long-lived `wait()` request; ordinary calls read until the host closes.
+function senpi_bridge_request(path::String, payload; read_timeout=nothing)
     port = get(senpi_connection, "port", nothing)
     token = get(senpi_connection, "token", nothing)
     port isa Integer && token isa AbstractString || error("Julia tool bridge is not initialized")
     body = senpi_json(payload)
     socket = connect(ip"127.0.0.1", port)
+    timed_out = Ref(false)
+    timer = read_timeout === nothing ? nothing : Timer(_ -> (timed_out[] = true; close(socket)), Float64(read_timeout))
     try
         request = join([
             "POST " * path * " HTTP/1.1",
@@ -240,12 +255,14 @@ function senpi_bridge_request(path::String, payload)
         Base.write(socket, request)
         flush(socket)
         response = Base.read(socket, String)
+        timed_out[] && throw(SenpiBridgeError("bridge request timed out after $(read_timeout)s", "bridge_timeout"))
         parsed = senpi_json_parse(senpi_http_body(response))
         parsed isa AbstractDict || error("Bridge returned invalid JSON")
         get(parsed, "ok", false) === true && return get(parsed, "value", nothing)
         failure = get(parsed, "error", parsed)
-        error(failure isa AbstractDict ? string(get(failure, "message", failure)) : string(failure))
+        throw(SenpiBridgeError(failure isa AbstractDict ? string(get(failure, "message", failure)) : string(failure), failure isa AbstractDict ? get(failure, "code", nothing) : nothing))
     finally
+        timer === nothing || close(timer)
         close(socket)
     end
 end
@@ -281,6 +298,33 @@ function senpi_set_connection(value)
     end
 end
 
+const SENPI_GLOBALS_INCLUDED = Ref(false)
+
+function senpi_memory_globals(limit::Int)
+    if !SENPI_GLOBALS_INCLUDED[]
+        try
+            include(joinpath(@__DIR__, "globals.jl"))
+            SENPI_GLOBALS_INCLUDED[] = true
+        catch
+            return Dict{String, Any}[]
+        end
+    end
+    Base.invokelatest(() -> senpi_largest_globals(limit))
+end
+
+function senpi_needs_handles(expression)
+    if expression isa Symbol
+        expression in (:handle, :completion, :eval, :include, :getfield, :getglobal, :deserialize) && return true
+        name = string(expression)
+        return startswith(name, "SenpiHandle") || startswith(name, "senpi_handle") ||
+            startswith(name, "senpi_wait") ||
+            (startswith(name, "SENPI_") && (occursin("HANDLE", name) || occursin("WAIT", name)))
+    end
+    expression isa QuoteNode && return senpi_needs_handles(expression.value)
+    expression isa Expr && return any(senpi_needs_handles, expression.args)
+    false
+end
+
 function senpi_run_cell(message)
     cell_id = string(get(message, "cellId", ""))
     code = string(get(message, "code", ""))
@@ -291,17 +335,23 @@ function senpi_run_cell(message)
         if parsed isa Expr && parsed.head === :error
             error(string(parsed.args[1]))
         end
+        # Install bindings before user functions/type annotations capture their world.
+        !SENPI_HANDLES_INCLUDED[] && senpi_needs_handles(parsed) && senpi_ensure_handles()
         value = Core.eval(Main, parsed)
         flush(stdout)
         flush(stderr)
         yield()
         frame = Dict{String, Any}("type" => "result", "cellId" => cell_id, "ok" => true, "durationMs" => round(Int, (time() - started) * 1000))
-        value !== nothing && senpi_should_display_result(parsed) && (frame["valueRepr"] = senpi_json(value))
+        if value !== nothing && senpi_should_display_result(parsed)
+            # Core.eval does not advance this caller's world after a first lazy include.
+            frame["valueRepr"] = SENPI_HANDLES_INCLUDED[] ? Base.invokelatest(senpi_json, value) : senpi_json(value)
+        end
         senpi_emit(frame)
     catch error
         senpi_emit(Dict("type" => "result", "cellId" => cell_id, "ok" => false, "error" => senpi_error(error), "durationMs" => round(Int, (time() - started) * 1000)))
     finally
         global senpi_current_cell = nothing
+        global senpi_memory_cell = cell_id
     end
 end
 
@@ -313,10 +363,18 @@ while !eof(SENPI_ORIGINAL_STDIN)
         message isa AbstractDict || error("Bridge frame must be an object")
         kind = get(message, "type", nothing)
         if kind == "init"
+            senpi_emit_line(SENPI_HOST_INIT_FRAME)
             senpi_set_connection(get(message, "connection", nothing))
-            senpi_emit(Dict("type" => "ready"))
+            senpi_emit_line(SENPI_READY_FRAME)
         elseif kind == "run"
+            global senpi_memory_cell = nothing
             senpi_run_cell(message)
+        elseif kind == "memory-globals"
+            cell_id = get(message, "cellId", nothing)
+            if cell_id == senpi_memory_cell && senpi_current_cell === nothing
+                senpi_emit(Dict("type" => "memory-globals-result", "cellId" => cell_id, "globals" => senpi_memory_globals(5)))
+                global senpi_memory_cell = nothing
+            end
         elseif kind == "close"
             senpi_emit(Dict("type" => "closed"))
             break

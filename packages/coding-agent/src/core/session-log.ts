@@ -1,7 +1,8 @@
-import { chmodSync, closeSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { APP_NAME } from "../config.ts";
 import { envValue } from "./brand.ts";
+import { rotateLogIfNeeded } from "./log-file-rotation.ts";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_STRING_LENGTH = 200;
@@ -9,7 +10,7 @@ const DEBUG_PREFIX = `[${APP_NAME}-session]`;
 const BLOCKED_KEY =
 	/^(?:__proto__|constructor|prototype|headers?|env(?:ironment)?|authorization|credential(?:s)?|password|secret|token|api_?key|client_?secret)$/i;
 const ALLOWED_DATA_KEY =
-	/^(?:action|attemptId|disposition|stage|error|mode|count|willRetry|deferAdmission|delivered|restored|cause|accepted|skipped|rejectionCause|reason|durationMs|kind|retryable|phase|op|bytes|generation|requestId|tokens|tokensBefore|tokensAfter|contextWindow|attempt|aborted)$/;
+	/^(?:action|attemptId|disposition|stage|error|mode|count|willRetry|deferAdmission|delivered|restored|cause|accepted|skipped|rejectionCause|reason|durationMs|kind|retryable|phase|op|bytes|generation|requestId|tokens|tokensBefore|tokensAfter|contextWindow|attempt|aborted|sessionId|role|provider|model|source|actor|from|to|duringTurn|persistDefault)$/;
 const SENSITIVE_TEXT =
 	/((?:authorization\s*[:=]\s*(?:bearer|basic)\s+)|(?:bearer\s+)|(?:[?&](?:api[_-]?key|token|secret|password|auth(?:orization)?)=))[^\s&,"'}\]]+/gi;
 
@@ -23,6 +24,8 @@ export interface SessionLoggerOptions {
 	sink?: (line: string) => void;
 	mirrorToStderr?: boolean;
 	maxBytes?: number;
+	/** Fields stamped on every line (same allowlist), read at log time; an event's own data wins. */
+	context?: () => Record<string, unknown>;
 }
 
 export function createSessionLogger(agentDir: string | undefined, options: SessionLoggerOptions = {}): SessionLogger {
@@ -35,7 +38,7 @@ export function createSessionLogger(agentDir: string | undefined, options: Sessi
 
 	function log(level: "debug" | "info" | "warn", event: string, data?: Record<string, unknown>): void {
 		try {
-			const line = formatLine(level, event, data);
+			const line = formatLine(level, event, options.context ? { ...options.context(), ...data } : data);
 			options.sink?.(line);
 			writeLine(filePath, line, maxBytes);
 			if (options.mirrorToStderr ?? envValue("SESSION_DEBUG") === "1") {
@@ -84,31 +87,14 @@ function formatLine(
 function writeLine(filePath: string, line: string, maxBytes: number): void {
 	mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
 	const text = `${line}\n`;
-	if (fileExceedsCap(filePath, Buffer.byteLength(text), maxBytes)) {
-		rmSync(`${filePath}.1`, { force: true });
-		renameSync(filePath, `${filePath}.1`);
-		chmodSync(`${filePath}.1`, 0o600);
-	}
+	rotateLogIfNeeded(filePath, Buffer.byteLength(text), maxBytes);
 	const descriptor = openSync(filePath, "a", 0o600);
 	try {
 		writeSync(descriptor, text);
+		fchmodSync(descriptor, 0o600);
 	} finally {
 		closeSync(descriptor);
 	}
-	chmodSync(filePath, 0o600);
-}
-
-function fileExceedsCap(filePath: string, incomingBytes: number, maxBytes: number): boolean {
-	try {
-		return statSync(filePath).size + incomingBytes > maxBytes;
-	} catch (error) {
-		if (isMissingFileError(error)) return false;
-		throw error;
-	}
-}
-
-function isMissingFileError(error: unknown): boolean {
-	return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 function serializeValue(value: unknown): unknown {

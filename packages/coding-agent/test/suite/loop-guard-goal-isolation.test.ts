@@ -1,11 +1,12 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { shouldQueueGoalContinuationAfterAgentEnd } from "../../src/core/extensions/builtin/goal/continuation.ts";
+import { didAgentEndCleanly } from "../../src/core/extensions/builtin/goal/continuation.ts";
 import { readGoal } from "../../src/core/extensions/builtin/goal/store.ts";
 import { goalStoreRef } from "../../src/core/extensions/builtin/goal/store-ref.ts";
-import { type Goal, isRecord } from "../../src/core/extensions/builtin/goal/types.ts";
+import { isRecord } from "../../src/core/extensions/builtin/goal/types.ts";
 import { buildLoopGuardBlockReason } from "../../src/core/extensions/builtin/loop-guard/notice.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	cleanAssistantStop,
 	cleanupGoalMonitorTempDirs,
@@ -14,24 +15,13 @@ import {
 	runGoalHandlers,
 } from "./goal-monitor-test-harness.ts";
 
-const ACTIVE_GOAL: Goal = {
-	id: "goal-loop-guard",
-	threadId: "thread-loop-guard",
-	objective: "Finish without looping",
-	status: "active",
-	tokensUsed: 0,
-	timeUsedSeconds: 0,
-	createdAt: 1,
-	updatedAt: 1,
-};
-
 afterEach(async () => {
 	vi.useRealTimers();
 	await cleanupGoalMonitorTempDirs();
 });
 
 describe("loop-guard Goal isolation", () => {
-	it("keeps a Tier-2 block continuable unless the Tier-3 wake is pending", () => {
+	it("treats a Tier-2 loop-guard block after a clean stop as a clean agent end", () => {
 		const blockResult: AgentMessage = {
 			role: "toolResult",
 			toolCallId: "todo-loop",
@@ -42,8 +32,9 @@ describe("loop-guard Goal isolation", () => {
 		};
 		const messages = [cleanAssistantStop(), blockResult];
 
-		expect(shouldQueueGoalContinuationAfterAgentEnd(ACTIVE_GOAL, false, messages)).toBe(true);
-		expect(shouldQueueGoalContinuationAfterAgentEnd(ACTIVE_GOAL, true, messages)).toBe(false);
+		// A loop-guard block result after a clean stop is still a clean end; the pending-wake gate is
+		// evaluateGoalContinuation's (goal-continuation-verdict.test.ts).
+		expect(didAgentEndCleanly(messages)).toBe(true);
 	});
 
 	it("keeps an active Goal active while the loop-guard wake source owns recovery", async () => {
@@ -57,7 +48,13 @@ describe("loop-guard Goal isolation", () => {
 		await runGoalHandlers(harness.handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
 		await harness.tools
 			.get("create_goal")
-			?.execute("create", { objective: "Recover from loop guard" }, undefined, undefined, ctx);
+			?.execute(
+				"create",
+				{ objective: "Recover from loop guard" },
+				undefined,
+				undefined,
+				ctx as ExtensionToolContext,
+			);
 		harness.events.emit("continuation_hold_state", {
 			source: "loop-guard-hard-stop",
 			active: true,

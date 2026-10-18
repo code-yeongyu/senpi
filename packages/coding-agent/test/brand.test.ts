@@ -208,3 +208,13 @@ describe("envValue", () => {
 		]);
 	});
 });
+
+describe("brand changelog contract", () => {
+	test("accepts an absolute changelog path and authored version", () => {
+		expect(
+			parseBrandProfile(
+				JSON.stringify({ name: "omo", changelog: { path: "/tmp/omo.md", version: "2026.9.11-omo" } }),
+			)?.changelog,
+		).toEqual({ path: "/tmp/omo.md", version: "2026.9.11-omo" });
+	});
+});

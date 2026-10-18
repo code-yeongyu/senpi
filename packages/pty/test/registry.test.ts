@@ -110,6 +110,9 @@ describe("SessionRegistry", () => {
 			// regardless of the host OS: POSIX kills the negated process group
 			// (-201), while win32 has no process groups and kills the raw pid.
 			platform: "linux",
+			// Escalate without waiting: these children never report an exit, so the
+			// SIGKILL follow-up is the assertion, not the grace timing.
+			detachedExitGraceMs: 0,
 			createSession({ command }) {
 				return new MockTerminalSession(command, [
 					{
@@ -130,7 +133,7 @@ describe("SessionRegistry", () => {
 
 		expect(first.session.stopCount).toBe(1);
 		expect(second.session.stopCount).toBe(1);
-		expect(killed).toEqual(["-201:SIGTERM", "-201:SIGTERM"]);
+		expect([...killed].sort()).toEqual(["-201:SIGKILL", "-201:SIGKILL", "-201:SIGTERM", "-201:SIGTERM"]);
 		expect(registry.list().every((entry) => entry.state === "exited")).toBe(true);
 	});
 
@@ -185,6 +188,7 @@ describe("SessionRegistry", () => {
 				{ id: "bash_1", session: startupExited, command: "bash" },
 				{ id: "bash_2", session: startupLive, command: "bash" },
 			],
+			detachedExitGraceMs: 0,
 			killProcess(target, signal) {
 				killed.push(`${target}:${signal}`);
 			},
@@ -194,7 +198,7 @@ describe("SessionRegistry", () => {
 
 		expect(registry.get("bash_1")).toBeNull();
 		expect(registry.get("bash_2")?.session).toBe(startupLive);
-		expect(killed).toEqual(["301:SIGTERM"]);
+		expect(killed).toEqual(["301:SIGTERM", "301:SIGKILL"]);
 
 		const child: TrackedDetachedChild = { pid: 302 };
 		const ended = await registry.create({
@@ -206,7 +210,7 @@ describe("SessionRegistry", () => {
 		await registry.sweepExited();
 
 		expect(registry.get(ended.id)?.state).toBe("exited");
-		expect(killed).toEqual(["301:SIGTERM", "302:SIGTERM"]);
+		expect(killed).toEqual(["301:SIGTERM", "301:SIGKILL", "302:SIGTERM", "302:SIGKILL"]);
 	});
 
 	it("preserves `this` when stopping a session whose waitExit is a class method", async () => {

@@ -139,6 +139,15 @@ function renderWith<TParams extends TSchema, TDetails, TState>(
 	}
 }
 
+function grepDetailsSummary(summary: EvalToolCallSummary): string | undefined {
+	const details = summary.details;
+	if (details === undefined || details === null || typeof details !== "object") return undefined;
+	const record = details as { matchCount?: unknown; fileCount?: unknown; engine?: unknown };
+	if (typeof record.fileCount !== "number" || typeof record.engine !== "string") return undefined;
+	if (record.matchCount !== null && typeof record.matchCount !== "number") return undefined;
+	return `matches=${record.matchCount ?? "n/a"} files=${record.fileCount} (${record.engine})`;
+}
+
 function createCoreWidgets(cwd: string): CoreWidgets {
 	const bashDefinition = createBashToolDefinition(cwd);
 	const readDefinition = createReadToolDefinition(cwd);
@@ -155,7 +164,13 @@ function createCoreWidgets(cwd: string): CoreWidgets {
 			}),
 		read: (summary, options) => renderWith(readDefinition, summary, options, {}),
 		write: (summary, options) => renderWith(writeDefinition, summary, options, {}),
-		grep: (summary, options) => renderWith(grepDefinition, summary, options, {}),
+		grep: (summary, options) => {
+			const lines = renderWith(grepDefinition, summary, options, {});
+			if (lines === undefined) return undefined;
+			const extra = grepDetailsSummary(summary);
+			if (extra !== undefined) lines.push(`  ${style(options.theme, "muted", extra)}`);
+			return lines;
+		},
 		find: (summary, options) => renderWith(findDefinition, summary, options, {}),
 		ls: (summary, options) => renderWith(lsDefinition, summary, options, {}),
 	};

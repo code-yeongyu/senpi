@@ -1,13 +1,24 @@
-import { realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { realpathWithoutOpen } from "../../../../utils/paths.ts";
+import type { ToolInfo } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
-import { extractExternalPaths, isExternalPath } from "../permission-system/external-dir.ts";
+import {
+	type AlwaysScope,
+	extractExternalPaths,
+	isExternalPath,
+	toParentDirectoryPattern,
+} from "../permission-system/external-dir.ts";
 import type { Request } from "../permission-system/types.ts";
 import { setApprovedMonitorParent } from "../terminal/monitor-permission.ts";
+import { urlOriginAlias, widerAlwaysScope } from "./always-scope.ts";
+import { parseReadPermission } from "./read-permission.ts";
 
 /** Simplified permission request without ID/session metadata */
-export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always">;
+export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always" | "widerAlways"> & {
+	readonly autoApproveAsk?: true;
+	readonly ruleAliases?: readonly string[];
+};
 
 /** Parser function that extracts permission requests from tool input */
 export type ToolPermissionParser = (
@@ -24,6 +35,40 @@ function fallbackPermissionRequest(permission: string): PermissionRequest {
 	};
 }
 
+/**
+ * An unregistered tool has no declared parser. Falling back to a bare `*` target would let a
+ * pattern-specific configured deny miss the call entirely (an unregistered tool's decision widens
+ * to the preset, not to its actual arg), so the fallback derives the target from the tool's
+ * meaningful arg — path, command, url, or input — and keeps `*` only for a truly arg-less call.
+ */
+function fallbackPermissionRequestFor(toolName: string, input: Record<string, unknown>): PermissionRequest {
+	const found = getStringEntry(input, "path", "file_path", "command", "url", "input", "pattern", "filePath");
+	if (found === undefined) return fallbackPermissionRequest(toolName);
+	const [argKey, arg] = found;
+	// A bare `*` alongside the concrete arg would still match an ask/all rule and widen past a
+	// pattern-specific deny, so the concrete arg is the only target; `*` is the arg-less fallback.
+	// "Allow always" keeps the exact arg; a wider scope is a separate, labelled choice (senpi#3403).
+	const widerAlways = widerAlwaysScope(toolName, argKey, arg);
+	// A URL is also matched as its canonical origin, so a domain grant (a literal origin) applies to
+	// every spelling of that origin; rules on the raw URL, a deny included, still match the raw URL.
+	const originAlias = argKey === "url" ? urlOriginAlias(arg) : undefined;
+	return {
+		permission: toolName,
+		patterns: [arg],
+		always: [arg],
+		...(originAlias === undefined ? {} : { ruleAliases: [arg, originAlias] }),
+		...(widerAlways ? { widerAlways } : {}),
+	};
+}
+
+function getStringEntry(input: Record<string, unknown>, ...keys: string[]): [string, string] | undefined {
+	for (const key of keys) {
+		const value = input[key];
+		if (typeof value === "string") return [key, value];
+	}
+	return undefined;
+}
+
 function getString(input: Record<string, unknown>, ...keys: string[]): string | undefined {
 	for (const key of keys) {
 		const value = input[key];
@@ -32,28 +77,6 @@ function getString(input: Record<string, unknown>, ...keys: string[]): string | 
 		}
 	}
 	return undefined;
-}
-
-type AlwaysScope = "file" | "directory";
-
-function toParentDirectoryPattern(inputPath: string, scope: AlwaysScope): string {
-	if (inputPath === "~" || inputPath === "$HOME") {
-		return `${inputPath}/*`;
-	}
-
-	if (scope === "directory") {
-		return inputPath.endsWith("/") || inputPath.endsWith("\\") ? `${inputPath}*` : `${inputPath}/*`;
-	}
-
-	if (inputPath.endsWith("/") || inputPath.endsWith("\\")) {
-		return `${inputPath}*`;
-	}
-
-	const parentPattern = inputPath.replace(/[\\/][^\\/]+$/, "/*");
-	if (parentPattern === "/*") {
-		return inputPath;
-	}
-	return parentPattern;
 }
 
 function parseFilePath(input: Record<string, unknown>): string | undefined {
@@ -81,6 +104,48 @@ function withExternalDirectoryRequests(
 	];
 }
 
+/** The `eval` class a cell carries on its own, used when its tool-owned parser names anything narrower. */
+export function fallbackEvalPermissionRequest(): PermissionRequest {
+	return { permission: "eval", patterns: ["*"], always: ["*"] };
+}
+
+/**
+ * The permission requests for one call: the builtin registry's answer, or the tool's own parser
+ * when the builtin registry does not own it. An `eval` call is arbitrary code, so its tool's own
+ * parser can never speak for everything the cell does: the `eval` request is always carried
+ * alongside, and a narrower answer (for example `read`) can never approve it (senpi#3211).
+ */
+export function permissionRequestsFor(
+	getTools: () => readonly ToolInfo[],
+	registry: ParserRegistry,
+	toolName: string,
+	input: Record<string, unknown>,
+	cwd: string,
+): PermissionRequest[] {
+	const requests = registry.has(toolName)
+		? registry.parse(toolName, input, cwd)
+		: (toolOwnedPermissionRequests(getTools(), toolName, input, cwd) ?? registry.parse(toolName, input, cwd));
+	if (toolName === "eval" && !requests.some((request) => request.permission === "eval")) {
+		return [...requests, fallbackEvalPermissionRequest()];
+	}
+	return requests;
+}
+
+/** The requests a tool's own `permissionParser` derives from this call, or undefined when the tool declares none. */
+export function toolOwnedPermissionRequests(
+	tools: readonly ToolInfo[],
+	toolName: string,
+	input: Record<string, unknown>,
+	cwd: string,
+): PermissionRequest[] | undefined {
+	const parser = tools.find((tool) => tool.name === toolName)?.permissionParser;
+	return parser?.(input, cwd).map((request) => ({
+		permission: request.permission,
+		patterns: [...request.patterns],
+		always: [...request.always],
+	}));
+}
+
 /** Registry for tool-specific permission parsers */
 export class ParserRegistry {
 	private readonly parsers = new Map<string, ToolPermissionParser>();
@@ -90,11 +155,16 @@ export class ParserRegistry {
 		this.parsers.set(toolName, parser);
 	}
 
+	/** Whether a built-in parser owns this tool */
+	has(toolName: string): boolean {
+		return this.parsers.has(toolName);
+	}
+
 	/** Parse tool input into permission requests */
 	parse(toolName: string, input: Record<string, unknown>, cwd: string): PermissionRequest[] {
 		const parser = this.parsers.get(toolName);
 		if (!parser) {
-			return [fallbackPermissionRequest(toolName)];
+			return [fallbackPermissionRequestFor(toolName, input)];
 		}
 		return parser(toolName, input, cwd);
 	}
@@ -144,11 +214,10 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 	registry.register("monitor", (toolName, input, cwd) => {
 		const path = getString(input, "path");
 		if (path) {
-			try {
-				setApprovedMonitorParent(input, realpathSync(dirname(resolve(cwd, path))));
-			} catch {
-				// Registration performs the authoritative access and canonical-parent check.
-			}
+			// This runs on the host main thread: the parent identity must be derived without open(2)
+			// (realpath opens directories and blocks forever on a wedged autofs trigger). Registration
+			// performs the authoritative access check and re-derives the parent the same way.
+			setApprovedMonitorParent(input, realpathWithoutOpen(dirname(resolve(cwd, path))));
 			return withExternalDirectoryRequests(
 				[{ permission: "read", patterns: [path], always: [path] }],
 				[path],
@@ -204,25 +273,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 	registry.register("apply_patch", parseEditPermission);
 	registry.register("multiedit", parseEditPermission);
 
-	registry.register("read", (_toolName, input, cwd) => {
-		const filePath = parseFilePath(input);
-		if (!filePath) {
-			return [fallbackPermissionRequest("read")];
-		}
-
-		return withExternalDirectoryRequests(
-			[
-				{
-					permission: "read",
-					patterns: [filePath],
-					always: [filePath],
-				},
-			],
-			[filePath],
-			cwd,
-			"file",
-		);
-	});
+	registry.register("read", parseReadPermission);
 
 	registry.register("grep", (_toolName, input, cwd) => {
 		const searchPath = getString(input, "path");
@@ -259,6 +310,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 	};
 
 	registry.register("find", listParser);
+	registry.register("glob", listParser);
 	registry.register("ls", listParser);
 
 	return registry;

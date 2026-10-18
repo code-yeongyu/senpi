@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { createBunLauncherRepairCommand } from "./bun-global-launcher.ts";
 import { type BrandProfile, brandProfile, envValue } from "./core/brand.ts";
 import { findNearestParentConfigDir } from "./nearest-parent-config.ts";
+import { resolveInstallPath } from "./runtime-snapshot/marker.ts";
 import { spawnProcessSync } from "./utils/child-process.ts";
 import { normalizePath } from "./utils/paths.ts";
 import { stripBom } from "./utils/text.ts";
@@ -25,6 +26,10 @@ export const isBunBinary =
 
 /** Detect if Bun is the runtime (compiled binary or bun run) */
 export const isBunRuntime = !!process.versions.bun;
+
+/** Detect the esbuild-bundled Node.js distribution. */
+declare const PI_BUNDLED_NODE: boolean;
+export const isBundledNode = typeof PI_BUNDLED_NODE !== "undefined" && PI_BUNDLED_NODE;
 
 // =============================================================================
 // Install Method Detection
@@ -85,7 +90,8 @@ export function detectInstallMethod(): InstallMethod {
 		return "bun-binary";
 	}
 
-	const resolvedPath = `${__dirname}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
+	const moduleDir = resolveInstallPath(__dirname, findNodePackageDir(__dirname));
+	const resolvedPath = `${moduleDir}\0${process.execPath || ""}`.toLowerCase().replace(/\\/g, "/");
 
 	if (resolvedPath.includes("/pnpm/") || resolvedPath.includes("/.pnpm/")) {
 		return "pnpm";
@@ -104,7 +110,7 @@ export function detectInstallMethod(): InstallMethod {
 }
 
 function getInferredNpmInstall(): { root: string; prefix: string } | undefined {
-	const packageDir = getPackageDir();
+	const packageDir = getInstallPackageDir();
 	const path = process.platform === "win32" || packageDir.includes("\\") ? win32 : { basename, dirname };
 	const parent = path.dirname(packageDir);
 	let root: string | undefined;
@@ -135,7 +141,7 @@ function getSelfUpdateCommandForMethod(
 		case "pnpm": {
 			const match = readCommandOutput("pnpm", ["root", "-g"])
 				? undefined
-				: /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getPackageDir());
+				: /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getInstallPackageDir());
 			const binDirArgs = match
 				? [`--config.global-bin-dir=${process.env.PNPM_HOME || dirname(dirname(match[1]))}`]
 				: [];
@@ -243,7 +249,7 @@ function getGlobalPackageRoots(method: InstallMethod, _packageName: string, npmC
 		case "pnpm": {
 			const root = readCommandOutput("pnpm", ["root", "-g"]);
 			if (root) return [root, dirname(root)];
-			const match = /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getPackageDir());
+			const match = /^(.*[\\/]global[\\/][^\\/]+)[\\/]\.pnpm[\\/]/.exec(getInstallPackageDir());
 			return match ? [match[1]] : [];
 		}
 		case "yarn": {
@@ -307,7 +313,7 @@ function getEntrypointPackageDir(): string | undefined {
 }
 
 function isSelfUpdatePathWritable(): boolean {
-	const packageDir = getPackageDir();
+	const packageDir = getInstallPackageDir();
 	try {
 		accessSync(packageDir, constants.W_OK);
 		accessSync(dirname(packageDir), constants.W_OK);
@@ -318,7 +324,7 @@ function isSelfUpdatePathWritable(): boolean {
 }
 
 function isManagedByGlobalPackageManager(method: InstallMethod, packageName: string, npmCommand?: string[]): boolean {
-	const packageDirs = [getPackageDir(), getEntrypointPackageDir()].filter((dir): dir is string => !!dir);
+	const packageDirs = [getInstallPackageDir(), getEntrypointPackageDir()].filter((dir): dir is string => !!dir);
 	const packageDirCandidates = packageDirs.flatMap((dir) => getPathComparisonCandidates(dir));
 	return getGlobalPackageRoots(method, packageName, npmCommand).some((root) => {
 		return getPathComparisonCandidates(root).some((normalizedRoot) => {
@@ -408,7 +414,75 @@ export function getPackageDir(): string {
 		// Bun binary: process.execPath points to the compiled executable
 		return dirname(process.execPath);
 	}
-	return findNodePackageDir(__dirname);
+	// The module does not move while the process runs, and renderers ask for this per tool card per frame.
+	nodePackageDir ??= findNodePackageDir(__dirname);
+	return nodePackageDir;
+}
+
+let nodePackageDir: string | undefined;
+
+/**
+ * Where the package manager installed this package. Equals `getPackageDir()` except in a process
+ * running from its runtime snapshot (`runtime-snapshot/`), whose assets live in the snapshot.
+ */
+export function getInstallPackageDir(): string {
+	const packageDir = getPackageDir();
+	return resolveInstallPath(packageDir, packageDir);
+}
+
+/** One asset directory shipped with the package, in both the Bun-binary and Node layouts. */
+interface ShippedAsset {
+	/** Directory name next to a compiled Bun binary. */
+	readonly binaryDir: string;
+	/** Path segments under the package's src/ or dist/ root. */
+	readonly sourceSegments: readonly string[];
+	/** A file the directory must contain; a root without it does not ship this asset. */
+	readonly probe: string;
+}
+
+const THEMES_ASSET: ShippedAsset = {
+	binaryDir: "theme",
+	sourceSegments: ["modes", "interactive", "theme"],
+	probe: "dark.json",
+};
+
+const EXPORT_TEMPLATE_ASSET: ShippedAsset = {
+	binaryDir: "export-html",
+	sourceSegments: ["core", "export-html"],
+	probe: "template.html",
+};
+
+const INTERACTIVE_ASSETS: ShippedAsset = {
+	binaryDir: "assets",
+	sourceSegments: ["modes", "interactive", "assets"],
+	probe: "clankolas.png",
+};
+
+function assetDirIn(root: string, asset: ShippedAsset): string {
+	if (isBunBinary) {
+		return join(root, asset.binaryDir);
+	}
+	const srcOrDist = existsSync(join(root, "src")) ? "src" : "dist";
+	return join(root, srcOrDist, ...asset.sourceSegments);
+}
+
+/**
+ * Resolve a shipped asset directory, preferring PACKAGE_DIR but never trusting it blindly.
+ *
+ * PACKAGE_DIR relocates the package root (Nix/Guix store paths), and a Bun binary that embeds this
+ * CLI pins it to the binary's own root. When such a root is inherited by a Node install of the CLI,
+ * the Node layout resolves under it to a directory that cannot exist and startup dies on ENOENT
+ * (an omo binary keeps its themes in a flat theme/, so the inherited root has no dist/ tree at all).
+ * Fall back to the running install whenever the preferred root does not actually ship the asset. When
+ * neither ships it the install is genuinely broken, and the running install's own path is returned so
+ * the resulting error names the tree that was supposed to carry the asset rather than a foreign root.
+ */
+function resolveShippedAssetDir(asset: ShippedAsset): string {
+	const preferred = assetDirIn(getPackageDir(), asset);
+	if (existsSync(join(preferred, asset.probe))) {
+		return preferred;
+	}
+	return assetDirIn(isBunBinary ? dirname(process.execPath) : findNodePackageDir(__dirname), asset);
 }
 
 /**
@@ -418,13 +492,7 @@ export function getPackageDir(): string {
  * - For tsx (src/): src/modes/interactive/theme/
  */
 export function getThemesDir(): string {
-	if (isBunBinary) {
-		return join(getPackageDir(), "theme");
-	}
-	// Theme is in modes/interactive/theme/ relative to src/ or dist/
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "modes", "interactive", "theme");
+	return resolveShippedAssetDir(THEMES_ASSET);
 }
 
 /**
@@ -434,12 +502,7 @@ export function getThemesDir(): string {
  * - For tsx (src/): src/core/export-html/
  */
 export function getExportTemplateDir(): string {
-	if (isBunBinary) {
-		return join(getPackageDir(), "export-html");
-	}
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "core", "export-html");
+	return resolveShippedAssetDir(EXPORT_TEMPLATE_ASSET);
 }
 
 /** Get path to package.json */
@@ -474,12 +537,7 @@ export function getChangelogPath(): string {
  * - For tsx (src/): src/modes/interactive/assets/
  */
 export function getInteractiveAssetsDir(): string {
-	if (isBunBinary) {
-		return join(getPackageDir(), "assets");
-	}
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "modes", "interactive", "assets");
+	return resolveShippedAssetDir(INTERACTIVE_ASSETS);
 }
 
 /** Get path to a bundled interactive asset */

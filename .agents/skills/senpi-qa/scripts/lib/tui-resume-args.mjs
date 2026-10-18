@@ -11,6 +11,7 @@ export const FIRST_MARKER = "ResumeQaFirstMarkerA1B2C3D4";
 export const FINAL_MARKER = "ResumeQaFinalMarkerE5F6G7H8";
 export const SESSION_ID = "resume-qa-selected";
 export const BOOT_TIMEOUT_MS = 60_000;
+export const BOOT_SENTINELS = ["senpi v", "pi v"];
 export const SELECTOR_TIMEOUT_MS = 30_000;
 export const HYDRATE_TIMEOUT_MS = 180_000;
 export const TEARDOWN_TIMEOUT_MS = 8_000;

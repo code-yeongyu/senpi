@@ -11,9 +11,9 @@
 // implemented in v1.
 
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { ExtensionUIContext } from "../../types.ts";
 import { createMcpLogger } from "./log.ts";
+import { loadMcpSdkTypes } from "./sdk.lazy.ts";
 import { safeTimer } from "./wrap.ts";
 
 /** Declared empty on purpose: maximum server compatibility (form mode only). */
@@ -49,12 +49,18 @@ export function setMcpElicitationUiProvider(provider: McpElicitationUiProvider |
 	legacyUiProvider = provider;
 }
 
-/** Wire the elicitation/create handler onto a fresh client. */
-export function configureMcpElicitation(
+/**
+ * Wire the elicitation/create handler onto a fresh client. Async because the
+ * request schema comes from the lazily loaded SDK; the caller (`buildMcpClient`
+ * in `transport-sdk.ts`) awaits it before any connect, so a mid-call
+ * elicitation still cannot race registration.
+ */
+export async function configureMcpElicitation(
 	client: Client,
 	owner: McpElicitationUiOwner | McpElicitationUiProvider | undefined = legacyUiProvider,
 	timeoutMs: number = MCP_ELICITATION_TIMEOUT_MS,
-): void {
+): Promise<void> {
+	const { ElicitRequestSchema } = await loadMcpSdkTypes();
 	client.setRequestHandler(ElicitRequestSchema, async (request) => {
 		const params = request.params;
 		// URL mode is deliberately unsupported in v1 (form mode only).

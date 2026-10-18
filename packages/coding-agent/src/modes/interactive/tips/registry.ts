@@ -1,4 +1,5 @@
 import { CLI_TIPS } from "./catalog/cli-tips.ts";
+import { COMPUTER_TIPS } from "./catalog/computer-tips.ts";
 import { DAG_TIPS } from "./catalog/dag-tips.ts";
 import { ETHOS_TIPS } from "./catalog/ethos-tips.ts";
 import { INPUT_TIPS } from "./catalog/input-tips.ts";
@@ -22,5 +23,6 @@ export const TIP_DEFINITIONS: readonly TipDefinition[] = [
 	...SUBAGENT_TIPS,
 	...MEMORY_TIPS,
 	...DAG_TIPS,
+	...COMPUTER_TIPS,
 	...ETHOS_TIPS,
 ];

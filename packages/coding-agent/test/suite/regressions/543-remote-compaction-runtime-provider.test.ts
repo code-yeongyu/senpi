@@ -1,4 +1,4 @@
-import type { AssistantMessage, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_COMPACTION_SETTINGS } from "../../../src/core/compaction/index.ts";
 import { runOpenAiRemoteCompaction } from "../../../src/core/extensions/builtin/compaction/openai-remote.ts";
@@ -80,14 +80,12 @@ describe("issue #543: remote compaction for a runtime-registered provider", () =
 	it("dispatches the native remote-compaction request through the model runtime", async () => {
 		// Given an extension provider that owns its own transport for api "openai-responses"
 		// and opts into native remote compaction.
-		const runtimeStream = vi.fn(
-			(_model: Model<"openai-responses">, _context: unknown, options?: SimpleStreamOptions) => ({
-				result: async () => {
-					await options?.onPayload?.({ model: EXTENSION_MODEL.id, input: [] }, EXTENSION_MODEL);
-					return compactionMessage();
-				},
-			}),
-		);
+		const runtimeStream = vi.fn((_model: Model<Api>, _context: unknown, options?: SimpleStreamOptions) => ({
+			result: async () => {
+				await options?.onPayload?.({ model: EXTENSION_MODEL.id, input: [] }, EXTENSION_MODEL);
+				return compactionMessage();
+			},
+		}));
 
 		// When the remote compaction route runs with no injected stream runner.
 		const result = await runOpenAiRemoteCompaction(

@@ -1,5 +1,19 @@
-import { Editor, type EditorOptions, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import {
+	Editor,
+	type EditorOptions,
+	type EditorTheme,
+	isWarpWslSession,
+	type TUI,
+	truncateToWidth,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
+import type { StatusIndicator } from "./status-indicator.ts";
+
+export type CustomEditorOptions = EditorOptions & {
+	/** Render working, compaction, summarization, and retry status in the editor's top border. */
+	embedWorkingStatus?: boolean;
+};
 
 function configuredPadding(padding: number | undefined): number {
 	return Number.isFinite(padding) ? Math.max(0, Math.floor(padding ?? 0)) : 0;
@@ -12,6 +26,9 @@ export class CustomEditor extends Editor {
 	private keybindings: KeybindingsManager;
 	private configuredPaddingX: number;
 	private promptPaddingX: number;
+	private workingStatusIndicator: StatusIndicator | undefined;
+	private replyLabel: string | undefined;
+	public readonly embedWorkingStatus: boolean;
 	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
 
 	// Special handlers that can be dynamically replaced
@@ -21,13 +38,14 @@ export class CustomEditor extends Editor {
 	/** Handler for extension-registered shortcuts. Returns true if handled. */
 	public onExtensionShortcut?: (data: string) => boolean;
 
-	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options?: EditorOptions) {
+	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options?: CustomEditorOptions) {
 		const configuredPaddingX = configuredPadding(options?.paddingX);
 		const promptPaddingX = Math.max(2, configuredPaddingX);
 		super(tui, theme, { ...options, paddingX: promptPaddingX });
 		this.keybindings = keybindings;
 		this.configuredPaddingX = configuredPaddingX;
 		this.promptPaddingX = promptPaddingX;
+		this.embedWorkingStatus = options?.embedWorkingStatus ?? false;
 	}
 
 	override getPaddingX(): number {
@@ -48,6 +66,67 @@ export class CustomEditor extends Editor {
 		);
 	}
 
+	setWorkingStatusIndicator(indicator: StatusIndicator | undefined): void {
+		this.workingStatusIndicator = indicator;
+	}
+
+	setReplyLabel(label: string | undefined): void {
+		this.replyLabel = label;
+	}
+
+	protected override renderTopBorder(width: number, hiddenLineCount: number): string {
+		if (this.replyLabel && width >= 5) {
+			const label = truncateToWidth(this.replyLabel, width - 4, "…");
+			return (
+				this.borderColor("── ") +
+				label +
+				this.borderColor(` ${"─".repeat(Math.max(0, width - visibleWidth(label) - 4))}`)
+			);
+		}
+		if (!this.embedWorkingStatus || !this.workingStatusIndicator || width <= 0) {
+			return super.renderTopBorder(width, hiddenLineCount);
+		}
+
+		let status = this.workingStatusIndicator.renderInBorder(Math.max(1, width - 5));
+		let statusWidth = visibleWidth(status);
+		if (statusWidth === 0) return super.renderTopBorder(width, hiddenLineCount);
+
+		const overflowLabel = hiddenLineCount > 0 ? ` ↑ ${hiddenLineCount} more ` : undefined;
+		const overflowLabelWidth = overflowLabel ? visibleWidth(overflowLabel) : 0;
+		const overflowStart = Math.floor((width - overflowLabelWidth) / 2);
+		const canFitOverflow = () =>
+			overflowLabel !== undefined && overflowLabelWidth + 2 <= width && overflowStart - (3 + statusWidth + 1) >= 1;
+
+		if (overflowLabel && !canFitOverflow()) {
+			status = this.workingStatusIndicator.renderSpinnerInBorder(width);
+			statusWidth = visibleWidth(status);
+		}
+
+		if (canFitOverflow()) {
+			const leftBlockWidth = 3 + statusWidth + 1;
+			return (
+				this.borderColor("── ") +
+				status +
+				this.borderColor(
+					` ${"─".repeat(overflowStart - leftBlockWidth)}${overflowLabel}${"─".repeat(width - overflowStart - overflowLabelWidth)}`,
+				)
+			);
+		}
+
+		if (width >= statusWidth + 5) {
+			return this.borderColor("── ") + status + this.borderColor(` ${"─".repeat(width - statusWidth - 4)}`);
+		}
+
+		status = this.workingStatusIndicator.renderSpinnerInBorder(width);
+		statusWidth = visibleWidth(status);
+		const prefixWidth = Math.min(3, Math.max(0, width - statusWidth));
+		return (
+			this.borderColor("─".repeat(prefixWidth)) +
+			status +
+			this.borderColor("─".repeat(Math.max(0, width - prefixWidth - statusWidth)))
+		);
+	}
+
 	/**
 	 * Register a handler for an app action.
 	 */
@@ -61,8 +140,11 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
-		// Check for clipboard paste keybinding
-		if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
+		// Warp on WSL sends an empty bracketed paste for a clipboard bitmap.
+		if (
+			this.keybindings.matches(data, "app.clipboard.pasteImage") ||
+			(data === "\x1b[200~\x1b[201~" && isWarpWslSession())
+		) {
 			this.onPasteImage?.();
 			return;
 		}

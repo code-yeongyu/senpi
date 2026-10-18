@@ -1,5 +1,70 @@
 # changes
 
+## 2026-10-03 - Pin pi-apply-patch 0.1.4
+
+Upstream 0.1.4 carries three changes. The indented-header fix (pi-apply-patch#46) is ported by #2637, and the line-ending fix (pi-apply-patch#48) is ported here (#2638). The `constrainedSampling` grammar declaration (pi-apply-patch#43) needs no port: senpi already sends the Lark grammar natively (`tool.ts` `freeform`). Only `external-versions.json` changes for the pin.
+
+## 2026-10-03 - Preserve line endings on update (#2638)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/line-endings.ts` (new): `SourceText` parses a file into lines that keep their own ending (`\r\n`, `\n`, lone `\r`). `replace` rewrites only the replaced lines, giving inserted lines the file's first ending. `replacementsAroundContext` splits a matched chunk around its context lines so they stay untouched.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/patch-replace.ts`: `replaceChunks` works on `SourceText` instead of an LF-normalized line array.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/parser.ts`, `streaming-parser.ts`, `types.ts`: each chunk records `contextLineIndices`.
+
+### Why
+
+- Every update rewrote the whole file with LF, so a one-line change to a CRLF or mixed-ending file became a whole-file diff (Codex scenarios `023`/`024` failed). This is Codex's PreserveLineEndings model.
+
+### Why an extension could not handle it
+
+- The replace path is this builtin's own apply engine.
+
+### Expected merge conflict zones
+
+- LOW: `patch-replace.ts` `replaceChunks`; `parser.ts` `parseChunkLines`; `types.ts` `PatchChunk`.
+
+## 2026-10-03 - Reject stray lines between file sections; shared header parsing (#2636)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/text.ts`: adds `parseFileHeader` (trim, then match the Add/Delete/Update marker) and `parseMoveTo` (trim end, as Codex does). `extractPatchedPaths` now lists paths through those two functions instead of its own regex.
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/parser.ts`: reads file headers through `parseFileHeader`/`parseMoveTo`, skips blank lines between sections, and rejects any other line there with `is not a valid hunk header` instead of skipping it.
+
+### Why
+
+- An indented file header was skipped together with its hunk lines while the patch reported success, so the model believed an edit happened that never did (Codex scenario `017_whitespace_padded_hunk_header` failed).
+- The permission system takes per-file approval paths from `extractPatchedPaths`. Sharing one header parser keeps the approved paths equal to the written paths for any whitespace padding.
+
+### Why an extension could not handle it
+
+- The parser and the path extractor are this builtin's own grammar; nothing outside it can change how a patch is read.
+
+### Expected merge conflict zones
+
+- LOW: `parser.ts` top-level section loop and `parseAddHunk`/`parseUpdateHunk` signatures; `text.ts` `extractPatchedPaths`.
+## 2026-09-24 - Pin pi-apply-patch 0.1.3, no port needed (senpi#2079)
+
+Every `src/index.ts` change between 0.1.2 and 0.1.3 is already in senpi's multi-file port: custom Responses API gating (`extension.ts`, broader than upstream's provider list), paths outside cwd (`workspace.ts`), final diff preview in result details (`tool.ts`), per-file mutation queues (`apply.ts`), and failure codes with `failedFiles` / reread classification (`recovery.ts`, `types.ts`). The sync report's single hunk is the whole upstream monolith against senpi's barrel `index.ts`. Only `external-versions.json` changes.
+
+## 2026-09-21 - Recognize provider-prefixed GPT model ids (#1891)
+
+### What changed
+
+- `extension.ts`: recognizes GPT family segments after provider delimiters, case-insensitively, while preserving the existing API-specific JSON/freeform gate.
+
+### Why
+
+- Prefixes such as `codex/gpt-6-astra` already selected a GPT prompt but left its patch tool inactive. The regression covers preset agreement, model switches, lazy activation and real patch execution.
+
+### Why an extension could not handle it
+
+- This builtin owns the activation predicate and tool variant; another extension cannot safely override its decision.
+
+### Expected merge conflict zones
+
+- LOW: `extension.ts` model-id predicate.
+
 ## Binary-safe patch previews (2026-08-05)
 
 ### What changed
@@ -217,3 +282,29 @@ Inactive-tool eligibility is intentionally owned by the registering extension. A
 ### Expected merge conflict zones
 
 - LOW: `preview-format.ts` around `truncatePreview()` when refreshing the vendored apply_patch renderer.
+
+## 2026-10-03 - Bounded, incremental apply_patch streaming render (senpi#2656)
+
+### What changed
+
+`streaming-parser.ts`: `pushDelta` returns the parser's live hunk list (no per-delta `structuredClone`; `finish()` still returns a defensive clone) and adds `getLiveHunks()` / `getPartialLine()` for the render path. `streaming-render.ts`: the streaming box is tail-windowed to 12 lines per file with a sticky per-file header carrying net `(+a -d)` counts (real changes only — unchanged context lines are excluded) and a `… (+N lines above)` marker when a file outgrows the window; the in-flight partial line renders dimmed as the last row; a delta that produces no new visible text keeps the already-rendered box instead of rebuilding or blanking it. `types.ts`: the streaming render state carries the non-cloning accessors, the render key, and a readonly hunk list.
+
+### Why
+
+The streaming box had no height bound and re-parsed plus re-rendered the whole body on every delta, with a per-delta `structuredClone` over every hunk — about 3x the CPU of the comparison TUI, and at 13 s only the first of three files was visible. A bounded, sticky-header box plus incremental, clone-free rendering keeps the stream readable and cuts the per-delta work.
+
+### Why an extension could not handle it
+
+The streaming parser and renderer are internal to this builtin's tool surface; the per-delta clone and the unbounded box are not reachable through the public extension API.
+
+
+### Covered production paths
+
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/streaming-render.ts`
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/streaming-parser.ts`
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/parser.ts`
+- `packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/types.ts`
+
+### Expected merge conflict zones
+
+Upstream edits to `streaming-parser.ts` or `streaming-render.ts` at the next sync.

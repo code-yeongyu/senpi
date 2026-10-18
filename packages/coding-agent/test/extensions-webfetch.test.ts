@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { fetchUrl, MAX_RESPONSE_SIZE_BYTES } from "../src/core/extensions/builtin/webfetch/webfetch/fetcher.ts";
 import { type WebfetchProgressDetails, webfetch } from "../src/core/extensions/builtin/webfetch/webfetch/tool.ts";
-import type { ExtensionContext } from "../src/core/extensions/types.ts";
+import type { ExtensionContext, ExtensionToolContext } from "../src/core/extensions/types.ts";
 
 const servers: Server[] = [];
 const context = {} as ExtensionContext;
@@ -63,7 +63,7 @@ describe("webfetch progress", () => {
 					if (update.details.phase === "downloading") downloading.resolve();
 				}
 			},
-			context,
+			context as ExtensionToolContext,
 		);
 		await downloading.promise;
 		secondChunk.resolve();

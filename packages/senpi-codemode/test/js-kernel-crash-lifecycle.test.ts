@@ -105,7 +105,38 @@ describe("JavaScriptKernel worker crash lifecycle", () => {
 		await expect(withDeadline(queued, 750)).resolves.toMatchObject({ ok: true, valueRepr: "42" });
 		expect(await spawnCount(entry)).toBe(2);
 	});
+
+	it("settles a memory query with the crash error when the worker dies answering it", async () => {
+		const entry = await createQueryCrashWorkerEntry();
+		const kernel = createKernel(entry);
+		await expect(kernel.run({ cellId: "before-query", code: "return 1", timeoutMs: 2_000 })).resolves.toMatchObject({
+			ok: true,
+		});
+
+		await expect(withDeadline(kernel.queryMemory(), 5_000)).rejects.toThrow("intentional memory-query crash");
+	});
 });
+
+async function createQueryCrashWorkerEntry(): Promise<CrashWorkerEntry> {
+	const root = await mkdtemp(join(tmpdir(), "senpi-js-query-crash-"));
+	const entryPath = join(root, "worker-entry.mjs");
+	const spawnLog = join(root, "spawns.txt");
+	const source = `
+import { parentPort } from "node:worker_threads";
+
+if (!parentPort) throw new Error("test worker missing parentPort");
+parentPort.on("message", (message) => {
+  if (message.type === "init") parentPort.postMessage({ type: "ready" });
+  else if (message.type === "run") parentPort.postMessage({ type: "result", cellId: message.cellId, ok: true, valueRepr: "1", durationMs: 0 });
+  else if (message.type === "memory-query") setTimeout(() => { throw new Error("intentional memory-query crash"); }, 0);
+});
+`;
+	await writeFile(entryPath, source);
+	await appendFile(spawnLog, "");
+	const entry = { root, url: pathToFileURL(entryPath), spawnLog };
+	entries.add(entry);
+	return entry;
+}
 
 async function withDeadline<T>(promise: Promise<T>, delayMs: number): Promise<T> {
 	let timeout: NodeJS.Timeout | undefined;

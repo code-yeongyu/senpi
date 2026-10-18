@@ -9,7 +9,7 @@ import lockfile from "proper-lockfile";
 import { afterEach, describe, expect, it } from "vitest";
 import { McpOAuthProvider } from "../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
 import {
-	hashServerUrl,
+	hashServerKey,
 	LockAcquireError,
 	type McpStoredAuth,
 	McpTokenStore,
@@ -52,7 +52,7 @@ describe("McpTokenStore", () => {
 		});
 
 		const index = JSON.parse(readFileSync(join(agentDir, "mcp-auth", "index.json"), "utf-8"));
-		expect(index.linear).toBe(hashServerUrl("https://mcp.linear.app/mcp"));
+		expect(index.linear).toBe(hashServerKey("linear", "https://mcp.linear.app/mcp"));
 	});
 
 	it("supports locked read-modify-write updates", async () => {
@@ -119,8 +119,8 @@ describe("McpTokenStore", () => {
 		const agentDir = await makeAgentDir();
 		const store = new McpTokenStore({ agentDir, serverName: "../evil", serverUrl: "../evil" });
 		await store.write({ codeVerifier: "x" });
-		expect(store.dir).toBe(join(agentDir, "mcp-auth", hashServerUrl("../evil")));
-		expect(/^[0-9a-f]{64}$/.test(hashServerUrl("../evil"))).toBe(true);
+		expect(store.dir).toBe(join(agentDir, "mcp-auth", hashServerKey("../evil", "../evil")));
+		expect(/^[0-9a-f]{64}$/.test(hashServerKey("../evil", "../evil"))).toBe(true);
 		// Nothing escaped the mcp-auth root.
 		expect(existsSync(join(agentDir, "evil"))).toBe(false);
 		expect(existsSync(join(dirname(agentDir), "evil"))).toBe(false);

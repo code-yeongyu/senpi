@@ -1,5 +1,6 @@
-import { chmodSync, closeSync, mkdirSync, openSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, fchmodSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { LOG_SINK_RETRY_MS, rotateLogIfNeeded } from "../../../log-file-rotation.ts";
 
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 200;
@@ -18,6 +19,7 @@ export type ConfigReloadLogEvent =
 	| "reload_requested"
 	| "reload_deferred"
 	| "reload_completed"
+	| "reload_loop_stopped"
 	| "validation_rejected"
 	| "registration_rejected"
 	| "registration_rejection_suppressed"
@@ -34,6 +36,7 @@ export interface ConfigReloadLogDetails {
 	reload_requested: { reason: string; paths: readonly string[] };
 	reload_deferred: { reason: string };
 	reload_completed: { durationMs: number };
+	reload_loop_stopped: { paths: readonly string[]; reloads: number };
 	validation_rejected: { registrationId: string; errorCount: number };
 	registration_rejected: { registrationId: string; errorCount: number };
 	registration_rejection_suppressed: { registrationId: string };
@@ -76,19 +79,19 @@ export function createConfigReloadLogger(
 ): ConfigReloadLogger {
 	const filePath = join(agentDir, "logs", "config-reload.log");
 	const maxBytes = validMaxBytes(options.maxBytes);
-	let disabled = false;
+	let retryAt = 0;
 
 	function log<Event extends ConfigReloadLogEvent>(
 		level: ConfigReloadLogLevel,
 		event: Event,
 		details: ConfigReloadLogDetails[Event],
 	): ConfigReloadLogStatus {
-		if (disabled) return { written: false, disabled: true };
+		if (Date.now() < retryAt) return { written: false, disabled: true };
 		try {
 			writeLine(filePath, JSON.stringify(formatEntry(level, event, details)), maxBytes);
 			return { written: true, disabled: false };
 		} catch {
-			disabled = true;
+			retryAt = Date.now() + LOG_SINK_RETRY_MS;
 			return { written: false, disabled: true };
 		}
 	}
@@ -150,6 +153,12 @@ function formatEntry<Event extends ConfigReloadLogEvent>(
 		case "reload_completed":
 			entry.durationMs = finiteNumber((details as ConfigReloadLogDetails["reload_completed"]).durationMs);
 			break;
+		case "reload_loop_stopped": {
+			const eventDetails = details as ConfigReloadLogDetails["reload_loop_stopped"];
+			entry.paths = safePaths(eventDetails.paths);
+			entry.reloads = finiteNumber(eventDetails.reloads);
+			break;
+		}
 		case "validation_rejected":
 		case "registration_rejected": {
 			const eventDetails = details as ConfigReloadLogDetails["validation_rejected"];
@@ -192,29 +201,12 @@ function safeText(value: string): string {
 function writeLine(filePath: string, line: string, maxBytes: number): void {
 	mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
 	const text = `${line}\n`;
-	if (fileExceedsCap(filePath, Buffer.byteLength(text), maxBytes)) {
-		rmSync(`${filePath}.1`, { force: true });
-		renameSync(filePath, `${filePath}.1`);
-		chmodSync(`${filePath}.1`, 0o600);
-	}
+	rotateLogIfNeeded(filePath, Buffer.byteLength(text), maxBytes);
 	const descriptor = openSync(filePath, "a", 0o600);
 	try {
 		writeSync(descriptor, text);
+		fchmodSync(descriptor, 0o600);
 	} finally {
 		closeSync(descriptor);
 	}
-	chmodSync(filePath, 0o600);
-}
-
-function fileExceedsCap(filePath: string, incomingBytes: number, maxBytes: number): boolean {
-	try {
-		return statSync(filePath).size + incomingBytes > maxBytes;
-	} catch (error) {
-		if (isMissingFileError(error)) return false;
-		throw error;
-	}
-}
-
-function isMissingFileError(error: unknown): boolean {
-	return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }

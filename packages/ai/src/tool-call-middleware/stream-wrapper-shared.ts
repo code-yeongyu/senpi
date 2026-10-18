@@ -225,7 +225,7 @@ export class StreamMessageProjection {
 		const block = this.message.content[contentIndex];
 		if (!isPartialToolCall(block)) return;
 		block.partialJson += delta;
-		block.arguments = parseStreamingJson<Record<string, unknown>>(block.partialJson);
+		block.arguments = parseStreamingJson<ToolCall["arguments"]>(block.partialJson);
 		this.stream.push({ type: "toolcall_delta", contentIndex, delta, partial: this.message });
 	}
 
@@ -236,7 +236,7 @@ export class StreamMessageProjection {
 			type: "toolCall",
 			id: event.id,
 			name: event.name,
-			arguments: event.arguments,
+			arguments: event.arguments as ToolCall["arguments"],
 			...(event.incomplete === true ? { incomplete: true } : {}),
 			...(event.errorMessage === undefined ? {} : { errorMessage: event.errorMessage }),
 		};

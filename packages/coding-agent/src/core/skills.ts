@@ -5,7 +5,10 @@ import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { parseFrontmatter } from "../utils/frontmatter.ts";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
+import { readSkillMarkdownSource, shouldSkipSkillWalkDirectoryName } from "./skill-discovery.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
+
+export { formatSkillsForPrompt } from "./skills-prompt.ts";
 
 /** Max name length per spec */
 const MAX_NAME_LENGTH = 64;
@@ -68,6 +71,8 @@ export interface SkillFrontmatter {
 	name?: string;
 	description?: string;
 	"disable-model-invocation"?: boolean;
+	"argument-hint"?: string;
+	"requires-arguments"?: boolean;
 	[key: string]: unknown;
 }
 
@@ -78,6 +83,10 @@ export interface Skill {
 	baseDir: string;
 	sourceInfo: SourceInfo;
 	disableModelInvocation: boolean;
+	/** Usage hint from the `argument-hint` frontmatter. */
+	argumentHint?: string;
+	/** `requires-arguments` frontmatter; defaults to true when a hint is declared, else false. */
+	requiresArguments?: boolean;
 }
 
 export interface LoadSkillsResult {
@@ -221,12 +230,7 @@ function loadSkillsFromDirInternal(
 		}
 
 		for (const entry of entries) {
-			if (entry.name.startsWith(".")) {
-				continue;
-			}
-
-			// Skip node_modules to avoid scanning dependencies
-			if (entry.name === "node_modules") {
+			if (shouldSkipSkillWalkDirectoryName(entry.name)) {
 				continue;
 			}
 
@@ -283,7 +287,7 @@ function loadSkillFromFile(
 
 	let rawContent: string;
 	try {
-		rawContent = readFileSync(filePath, "utf-8");
+		rawContent = readSkillMarkdownSource(filePath);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "failed to read skill file";
 		diagnostics.push({ type: "warning", message, path: filePath });
@@ -330,6 +334,9 @@ function loadSkillFromFile(
 	if (!hasDescription) {
 		return { skill: null, diagnostics };
 	}
+	const argumentHint = frontmatter["argument-hint"];
+	const hasArgumentHint = typeof argumentHint === "string" && argumentHint.trim() !== "";
+	const requiresArguments = frontmatter["requires-arguments"];
 
 	return {
 		skill: {
@@ -339,54 +346,11 @@ function loadSkillFromFile(
 			baseDir: skillDir,
 			sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
 			disableModelInvocation: frontmatter["disable-model-invocation"] === true,
+			requiresArguments: typeof requiresArguments === "boolean" ? requiresArguments : hasArgumentHint,
+			...(hasArgumentHint && { argumentHint: argumentHint.trim() }),
 		},
 		diagnostics,
 	};
-}
-
-/**
- * Format skills for inclusion in a system prompt.
- * Uses XML format per Agent Skills standard.
- * See: https://agentskills.io/integrate-skills
- *
- * Skills with disableModelInvocation=true are excluded from the prompt
- * (they can only be invoked explicitly via /skill:name commands).
- */
-export function formatSkillsForPrompt(skills: Skill[]): string {
-	const visibleSkills = skills.filter((s) => !s.disableModelInvocation);
-
-	if (visibleSkills.length === 0) {
-		return "";
-	}
-
-	const lines = [
-		"\n\nThe following skills provide specialized instructions for specific tasks.",
-		"Use the read tool to load a skill's file whenever its description even loosely matches the task - loading an irrelevant skill costs little; missing a relevant one degrades the work.",
-		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
-		"",
-		"<available_skills>",
-	];
-
-	for (const skill of visibleSkills) {
-		lines.push("  <skill>");
-		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
-		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
-		lines.push(`    <location>${escapeXml(skill.filePath)}</location>`);
-		lines.push("  </skill>");
-	}
-
-	lines.push("</available_skills>");
-
-	return lines.join("\n");
-}
-
-function escapeXml(str: string): string {
-	return str
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&apos;");
 }
 
 export interface LoadSkillsOptions {

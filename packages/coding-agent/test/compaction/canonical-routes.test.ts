@@ -1,4 +1,4 @@
-import { type AssistantMessage, fauxAssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { type AssistantMessage, fauxAssistantMessage, type Model, normalizeContext } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { convertResponsesMessages } from "../../../ai/src/api/openai-responses-shared.ts";
 import { type CompactionResult, DEFAULT_COMPACTION_SETTINGS } from "../../src/core/compaction/index.ts";
@@ -120,6 +120,7 @@ describe("builtin compaction canonical routes", () => {
 		await handler(
 			{
 				type: "before_agent_start",
+				trigger: "prompt",
 				prompt: "incoming prompt ".repeat(1_500),
 				systemPrompt: "You are senpi.",
 				systemPromptOptions: { cwd: process.cwd() },
@@ -258,7 +259,7 @@ describe("builtin compaction canonical routes", () => {
 		const checkpointIndex = branch.findIndex((entry) => entry.id === "checkpoint");
 		const canonicalInput = convertResponsesMessages(
 			OPENAI_MODEL,
-			{
+			normalizeContext({
 				systemPrompt: "current system prompt",
 				messages: [
 					...convertToLlm(
@@ -268,7 +269,7 @@ describe("builtin compaction canonical routes", () => {
 					),
 					{ role: "user", content: [{ type: "text", text: currentPrompt }], timestamp: 7 },
 				],
-			},
+			}),
 			new Set(["openai"]),
 		);
 		const canonicalPayload = JSON.stringify(canonicalInput);
@@ -401,13 +402,13 @@ describe("builtin compaction canonical routes", () => {
 
 		const canonicalInput = convertResponsesMessages(
 			OPENAI_MODEL,
-			{
+			normalizeContext({
 				systemPrompt: "current system prompt",
 				messages: [
 					...canonicalMessages,
 					{ role: "user", content: [{ type: "text", text: currentPrompt }], timestamp: 7 },
 				],
-			},
+			}),
 			new Set(["openai"]),
 		);
 
@@ -503,7 +504,7 @@ describe("builtin compaction canonical routes", () => {
 				]);
 			const finalProviderInput = convertResponsesMessages(
 				model,
-				{ systemPrompt: "current system prompt", messages: convertToLlm(finalContext) },
+				normalizeContext({ systemPrompt: "current system prompt", messages: convertToLlm(finalContext) }),
 				new Set(["openai"]),
 			);
 			const finalPayload = { model: model.id, input: finalProviderInput, stream: true };
@@ -590,7 +591,7 @@ describe("builtin compaction canonical routes", () => {
 				]);
 			const finalProviderInput = convertResponsesMessages(
 				model,
-				{ systemPrompt: "current system prompt", messages: convertToLlm(finalContext) },
+				normalizeContext({ systemPrompt: "current system prompt", messages: convertToLlm(finalContext) }),
 				new Set(["openai"]),
 			);
 			const finalPayload = { model: model.id, input: finalProviderInput, stream: true };
@@ -760,7 +761,7 @@ describe("builtin compaction canonical routes", () => {
 				model: model.id,
 				input: convertResponsesMessages(
 					model,
-					{ systemPrompt: "current system prompt", messages: convertToLlm(finalContext) },
+					normalizeContext({ systemPrompt: "current system prompt", messages: convertToLlm(finalContext) }),
 					new Set(["openai"]),
 				),
 				stream: true,
@@ -892,7 +893,7 @@ describe("builtin compaction canonical routes", () => {
 				model: model.id,
 				input: convertResponsesMessages(
 					model,
-					{ systemPrompt: "current system prompt", messages: convertToLlm(transformedContext) },
+					normalizeContext({ systemPrompt: "current system prompt", messages: convertToLlm(transformedContext) }),
 					new Set(["openai"]),
 				),
 				stream: true,
@@ -961,7 +962,7 @@ describe("builtin compaction canonical routes", () => {
 				model: OPENAI_MODEL.id,
 				input: convertResponsesMessages(
 					OPENAI_MODEL,
-					{ messages: convertToLlm(markedContext) },
+					normalizeContext({ messages: convertToLlm(markedContext) }),
 					new Set(["openai"]),
 				),
 				stream: true,
@@ -1103,7 +1104,7 @@ describe("builtin compaction canonical routes", () => {
 				model: model.id,
 				input: convertResponsesMessages(
 					model,
-					{ systemPrompt: "current system prompt", messages: convertToLlm(transformedContext) },
+					normalizeContext({ systemPrompt: "current system prompt", messages: convertToLlm(transformedContext) }),
 					new Set(["openai"]),
 				),
 				stream: true,

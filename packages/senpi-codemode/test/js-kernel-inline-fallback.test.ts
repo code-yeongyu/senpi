@@ -1,93 +1,95 @@
-import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-
-interface ChildRun {
-	readonly code: number | null;
-	readonly signal: NodeJS.Signals | null;
-	readonly stdout: string;
-	readonly stderr: string;
-	readonly pid: number;
-}
+import { CHILD_PROBE_TEST_TIMEOUT_MS, startChild } from "./eval/child-probe.ts";
 
 describe("JavaScriptKernel isolated inline fallback", () => {
-	it("times out a synchronous infinite loop and leaves no live child process", async () => {
-		const root = await mkdtemp(join(tmpdir(), "senpi-js-inline-fallback-"));
-		try {
-			const scriptPath = join(root, "fallback-runner.mjs");
-			const kernelUrl = pathToFileURL(join(process.cwd(), "src", "kernels", "js", "context-manager.ts")).href;
-			const missingWorkerUrl = pathToFileURL(join(root, "missing-worker-entry.js")).href;
-			await writeFile(
-				scriptPath,
-				`import { JavaScriptKernel } from ${JSON.stringify(kernelUrl)};
+	it(
+		"times out a synchronous infinite loop and leaves no live child process",
+		async () => {
+			const root = await mkdtemp(join(tmpdir(), "senpi-js-inline-fallback-"));
+			try {
+				const scriptPath = join(root, "fallback-runner.mjs");
+				const kernelUrl = pathToFileURL(join(process.cwd(), "src", "kernels", "js", "context-manager.ts")).href;
+				const missingWorkerUrl = pathToFileURL(join(root, "missing-worker-entry.js")).href;
+				const driverUrl = pathToFileURL(join(process.cwd(), "test", "eval", "inline-timeout-probe.ts")).href;
+				await writeFile(
+					scriptPath,
+					`import { JavaScriptKernel } from ${JSON.stringify(kernelUrl)};
+import { mock } from "node:test";
+import { Worker } from "node:worker_threads";
+import { driveInlineTimeout, INLINE_PROBE_BOUNDS } from ${JSON.stringify(driverUrl)};
 
+const terminations = [];
+const originalTerminate = Worker.prototype.terminate;
+Worker.prototype.terminate = function () {
+  const terminated = originalTerminate.call(this);
+  terminations.push(terminated);
+  return terminated;
+};
+let loopStarted;
+const started = new Promise((resolve) => { loopStarted = resolve; });
 const kernel = new JavaScriptKernel({
   sessionId: "isolated-inline-fallback",
   cwd: process.cwd(),
   parallelPoolWidth: 2,
   workerEntryUrl: new URL(${JSON.stringify(missingWorkerUrl)}),
+  onMessage: (message) => { if (message.type === "text" && message.data.includes("loop-started")) loopStarted(); },
+  interruptBounds: INLINE_PROBE_BOUNDS,
 });
 const baselineWorkerIds = process.report.getReport().workers.map((worker) => worker.header.threadId);
 try {
-  const result = await kernel.run({ cellId: "infinite-loop", code: "return (() => { while (true) {} })()", timeoutMs: 150 });
+  await kernel.run({ cellId: "warm", code: "1 + 1" });
+  mock.timers.enable({ apis: ["setTimeout"] });
+  const running = kernel.run({ cellId: "infinite-loop", code: 'print("loop-started"); return (() => { while (true) {} })()', timeoutMs: INLINE_PROBE_BOUNDS.cellTimeoutMs });
+  const result = await driveInlineTimeout(started, running, async (milliseconds) => {
+    mock.timers.tick(milliseconds);
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+  mock.timers.reset();
   await kernel.close();
-  await new Promise((resolve) => setImmediate(resolve));
+  await Promise.all(terminations);
   const liveWorkerIds = process.report.getReport().workers
     .map((worker) => worker.header.threadId)
     .filter((threadId) => !baselineWorkerIds.includes(threadId));
-  process.stdout.write(JSON.stringify({ mode: kernel.mode, result, liveWorkerIds }));
+  process.stdout.write(JSON.stringify({ mode: kernel.mode, result, liveWorkerIds }) + "\\n");
 } finally {
+  mock.timers.reset();
   await kernel.close();
+  await Promise.all(terminations);
+  Worker.prototype.terminate = originalTerminate;
 }
 `,
-			);
+				);
 
-			const childRun = await runChildWithDeadline(scriptPath, 5_000);
-			expect(childRun.signal, JSON.stringify(childRun)).toBeNull();
-			expect(childRun.code).toBe(0);
-			expect(childRun.stderr).toBe("");
-			const output: unknown = JSON.parse(childRun.stdout);
-			expect(output).toMatchObject({
-				mode: "inline",
-				result: { ok: false, error: { message: expect.stringMatching(/timed out/i) } },
-				liveWorkerIds: [],
-			});
-			expect(isProcessAlive(childRun.pid)).toBe(false);
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
-	}, 8_000);
-});
-
-async function runChildWithDeadline(scriptPath: string, deadlineMs: number): Promise<ChildRun> {
-	const child = spawn(process.execPath, ["--import", "tsx", scriptPath], {
-		cwd: process.cwd(),
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-	const pid = child.pid;
-	if (pid === undefined) throw new Error("failed to spawn inline fallback test child");
-	let stdout = "";
-	let stderr = "";
-	child.stdout.on("data", (chunk: Buffer) => {
-		stdout += chunk.toString("utf8");
-	});
-	child.stderr.on("data", (chunk: Buffer) => {
-		stderr += chunk.toString("utf8");
-	});
-	const result = await new Promise<{ readonly code: number | null; readonly signal: NodeJS.Signals | null }>(
-		(resolve) => {
-			const deadline = setTimeout(() => child.kill("SIGKILL"), deadlineMs);
-			child.once("exit", (code, signal) => {
-				clearTimeout(deadline);
-				resolve({ code, signal });
-			});
+				const child = startChild(
+					{ command: process.execPath, args: ["--import", "tsx", scriptPath], cwd: process.cwd() },
+					{ resultLine: true },
+				);
+				try {
+					const output: unknown = JSON.parse(await child.resultLine());
+					expect(output).toMatchObject({
+						mode: "inline",
+						result: { ok: false, error: { message: expect.stringMatching(/timed out/i) } },
+						liveWorkerIds: [],
+					});
+					const childRun = await child.closed;
+					expect(childRun.signal, JSON.stringify(childRun)).toBeNull();
+					expect(childRun.code).toBe(0);
+					expect(childRun.stderr).toBe("");
+					expect(isProcessAlive(childRun.pid)).toBe(false);
+				} finally {
+					child.dispose();
+				}
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
 		},
+		CHILD_PROBE_TEST_TIMEOUT_MS,
 	);
-	return { ...result, stdout, stderr, pid };
-}
+});
 
 function isProcessAlive(pid: number): boolean {
 	try {

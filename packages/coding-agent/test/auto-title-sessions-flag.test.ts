@@ -2,7 +2,12 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, test } from "vitest";
 import { parseArgs } from "../src/cli/args.ts";
 import { resolveAutoTitleSessions } from "../src/main.ts";
-import { AUTO_TITLE_SESSIONS_CAPABILITY } from "../src/modes/rpc/custom-capability.ts";
+import {
+	AUTO_TITLE_PER_SESSION_CAPABILITY,
+	AUTO_TITLE_SESSIONS_CAPABILITY,
+	MEDIA_PLACEHOLDERS_CAPABILITY,
+	RETAIN_ON_DISCONNECT_CAPABILITY,
+} from "../src/modes/rpc/custom-capability.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import { waitForSessionName } from "./agent-session-auto-title-helpers.ts";
@@ -30,7 +35,7 @@ describe("resolveAutoTitleSessions", () => {
 		expect(resolveAutoTitleSessions("rpc", parsed, false, [AUTO_TITLE_SESSIONS_CAPABILITY])).toBe(true);
 	});
 
-	test.each(["rpc", "print", "json", "app-server"] as const)("honors the flag in %s mode", (appMode) => {
+	test.each(["rpc", "print", "json"] as const)("honors the flag in %s mode", (appMode) => {
 		const parsed = parseArgs(["--mode", "rpc", "--multi-session", "--auto-title-sessions"]);
 		expect(resolveAutoTitleSessions(appMode, parsed, false)).toBe(true);
 	});
@@ -48,6 +53,26 @@ describe("resolveAutoTitleSessions", () => {
 	test("suppresses auto-titling for interactive resumes with context messages", () => {
 		const parsed = parseArgs([]);
 		expect(resolveAutoTitleSessions("interactive", parsed, true)).toBe(false);
+	});
+
+	test("honors per-session auto_title true without the host flag", () => {
+		const parsed = parseArgs(["--mode", "rpc", "--multi-session"]);
+		expect(resolveAutoTitleSessions("rpc", parsed, false, [], true)).toBe(true);
+	});
+
+	test("honors per-session auto_title false against the host flag", () => {
+		const parsed = parseArgs(["--mode", "rpc", "--multi-session", "--auto-title-sessions"]);
+		expect(resolveAutoTitleSessions("rpc", parsed, false, [], false)).toBe(false);
+	});
+
+	test("keeps the interactive default when per-session auto_title is absent", () => {
+		const parsed = parseArgs([]);
+		expect(resolveAutoTitleSessions("interactive", parsed, false, [], undefined)).toBe(true);
+	});
+
+	test("still suppresses a per-session auto_title true resume with context messages", () => {
+		const parsed = parseArgs(["--mode", "rpc", "--multi-session"]);
+		expect(resolveAutoTitleSessions("rpc", parsed, true, [], true)).toBe(false);
 	});
 });
 
@@ -99,7 +124,17 @@ describe("RPC protocol capabilities", () => {
 		const registry = { list: () => [] } as never;
 		const router = new SessionCommandRouter(registry, new SessionEventWriter(() => {}), { cwd: "/tmp" });
 		const response = await router.handle({ id: "probe", type: "get_protocol_info" });
-		expect(response).toMatchObject({ data: { capabilities: ["multi_session", AUTO_TITLE_SESSIONS_CAPABILITY] } });
+		expect(response).toMatchObject({
+			data: {
+				capabilities: expect.arrayContaining([
+					"multi_session",
+					AUTO_TITLE_SESSIONS_CAPABILITY,
+					AUTO_TITLE_PER_SESSION_CAPABILITY,
+					MEDIA_PLACEHOLDERS_CAPABILITY,
+					RETAIN_ON_DISCONNECT_CAPABILITY,
+				]),
+			},
+		});
 	});
 });
 

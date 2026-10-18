@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
+import { once } from "node:events";
 import { mkdtemp, rm, stat } from "node:fs/promises";
-import { createConnection, createServer } from "node:net";
+import { createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -52,7 +53,75 @@ describe("Windows RPC socket security", () => {
 		expect(socket.destroyed).toBe(true);
 		server.close();
 	});
+
+	// Platform contract: on win32 the secret handshake is the only boundary of a named pipe, so a wrong
+	// secret must end the connection before the listener reads, or answers, a single JSONL frame.
+	it.skipIf(process.platform !== "win32")(
+		"refuses a wrong secret on a real named pipe before answering any JSONL byte",
+		async () => {
+			const root = await mkdtemp(join(tmpdir(), "senpi-rpc-pipe-"));
+			const secret = randomBytes(32);
+			const address = resolveSocketTransportAddress(join(root, "rpc.sock"), "win32", secret);
+			const authenticated: Socket[] = [];
+			const server = createServer((connection) =>
+				authenticateSocket(connection, secret, () => {
+					authenticated.push(connection);
+					connection.on("data", () =>
+						connection.write(`${JSON.stringify({ type: "response", success: true })}\n`),
+					);
+				}),
+			);
+			try {
+				server.listen(address);
+				await once(server, "listening");
+				expect(address).toMatch(/^\\\\\.\\pipe\\senpi-rpc-/);
+
+				const refused = await pipeExchange(address, randomBytes(32));
+				expect(refused).toEqual({ kind: "closed", bytes: 0 });
+				expect(authenticated).toHaveLength(0);
+
+				// The same pipe answers the same frame once the secret is right, so the refusal above is the
+				// handshake's verdict and not a pipe that never served anything.
+				const answered = await pipeExchange(address, secret);
+				expect(answered).toEqual({ kind: "answered", record: { type: "response", success: true } });
+				expect(authenticated).toHaveLength(1);
+			} finally {
+				for (const connection of authenticated) connection.destroy();
+				server.close();
+				await rm(root, { recursive: true, force: true });
+			}
+		},
+	);
 });
+
+/** Connects, sends the handshake and one JSONL frame, and reports the first answered line or the close. */
+async function pipeExchange(
+	address: string,
+	secret: Uint8Array,
+): Promise<
+	{ readonly kind: "answered"; readonly record: unknown } | { readonly kind: "closed"; readonly bytes: number }
+> {
+	const socket = createConnection(address);
+	// A refused client may see EPIPE/ECONNRESET on its own write; the close and its byte count are the verdict.
+	socket.on("error", () => {});
+	await once(socket, "connect");
+	let received = Buffer.alloc(0);
+	const outcome = new Promise<
+		{ readonly kind: "answered"; readonly record: unknown } | { readonly kind: "closed"; readonly bytes: number }
+	>((resolve) => {
+		socket.on("data", (chunk: Buffer) => {
+			received = Buffer.concat([received, chunk]);
+			const newline = received.indexOf(0x0a);
+			if (newline === -1) return;
+			resolve({ kind: "answered", record: JSON.parse(received.subarray(0, newline).toString("utf8")) });
+			socket.destroy();
+		});
+		socket.once("close", () => resolve({ kind: "closed", bytes: received.length }));
+	});
+	sendSocketHandshake(socket, secret);
+	socket.write(`${JSON.stringify({ id: "probe", type: "get_protocol_info" })}\n`);
+	return outcome;
+}
 
 describe("resolveSocketTransportAddress", () => {
 	it("maps a logical Windows socket path to one deterministic named pipe", () => {

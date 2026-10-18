@@ -119,9 +119,21 @@ async function runInteractive(deps: AuthCommandDeps): Promise<void> {
 			validateState: (state) => provider?.consumeState(state) ?? false,
 		});
 		const loopbackResult = channel.usesLoopback ? channel.waitForCode() : undefined;
-		provider = buildProvider(deps, channel.redirectUrl, (url) => deps.openBrowser?.(url));
+		const usesLoopback = channel.usesLoopback;
+		provider = buildProvider(deps, channel.redirectUrl, async (url) => {
+			const instruction = usesLoopback
+				? ""
+				: `\nThen run /mcp auth-complete ${deps.serverName} <redirect-url> with the final redirect URL.`;
+			const announcement = `Open this URL to authorize ${deps.serverName}:\n${url.toString()}${instruction}`;
+			deps.notify(announcement);
+			try {
+				await deps.openBrowser?.(url);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				deps.notify(`Browser launch failed: ${message}\n${announcement}`, "warning");
+			}
+		});
 		const begin = await beginAuthorization(provider, deps.flow);
-		if (begin.authorizationUrl !== undefined) deps.notify(`Opening browser to authorize ${deps.serverName}...`);
 		if (!channel.usesLoopback) {
 			deps.pending.set(deps.serverName, provider);
 			if (begin.authorizationUrl === undefined) {
@@ -133,13 +145,10 @@ async function runInteractive(deps: AuthCommandDeps): Promise<void> {
 					},
 				);
 			}
-			deps.notify(
-				`Complete the browser flow, then run /mcp auth-complete ${deps.serverName} <redirect-url> with the final redirect URL.`,
-			);
 			return;
 		}
-		const { code } = await (loopbackResult ?? channel.waitForCode());
-		await finishAuthorization(provider, code, deps.flow);
+		const { code, iss } = await (loopbackResult ?? channel.waitForCode());
+		await finishAuthorization(provider, code, deps.flow, iss);
 		await deps.onReconnect();
 		deps.notify(`MCP server ${deps.serverName} authorized`);
 	} finally {

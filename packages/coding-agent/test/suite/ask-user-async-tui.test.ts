@@ -1,0 +1,269 @@
+import { setKeybindings } from "@earendil-works/pi-tui";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { ExtensionToolContext, QuestionRequest } from "../../src/core/extensions/types.ts";
+import { KeybindingsManager } from "../../src/core/keybindings.ts";
+import { askUserAnswerKeyHint } from "../../src/modes/interactive/components/ask-user-answer-key.ts";
+import { ASK_USER_WIDGET_KEY } from "../../src/modes/interactive/components/ask-user-async-widget.ts";
+import { AskUserQuestionComponent } from "../../src/modes/interactive/components/ask-user-question.ts";
+import { initTheme } from "../../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../../src/utils/ansi.ts";
+import type { Harness } from "./harness.ts";
+import { createFakeInteractiveMode, type FakeInteractiveMode } from "./helpers/ask-user-async-fake-mode.ts";
+import { ASYNC_QUESTIONS, createAskUserDelivery } from "./helpers/ask-user-delivery.ts";
+
+const ESC = "\x1b";
+const CTRL_ENTER = "\x1b[13;5u";
+const ALT_A = "\x1ba";
+const DOWN = "\x1b[B";
+const SPACE = " ";
+
+function buildRequest(): QuestionRequest {
+	return {
+		requestId: "req-1",
+		questions: [
+			{
+				id: "auth",
+				header: "Auth",
+				question: "Which auth method?",
+				options: [
+					{ label: "OAuth", description: "Token login" },
+					{ label: "API key", description: "Static key" },
+				],
+				multiSelect: false,
+			},
+		],
+		waitForAnswer: false,
+		timeoutMs: 30 * 60_000,
+	};
+}
+
+function overlay(fake: FakeInteractiveMode): AskUserQuestionComponent | undefined {
+	return fake.editorContainer.children.find((child) => child instanceof AskUserQuestionComponent);
+}
+
+function tuiQuestion(fake: FakeInteractiveMode) {
+	const question = fake.createExtensionUIContext().question;
+	if (!question) throw new Error("the TUI ui context has no question bridge");
+	return question;
+}
+
+const harnesses: Harness[] = [];
+afterEach(() => {
+	for (const h of harnesses.splice(0)) h.cleanup();
+	vi.useRealTimers();
+});
+
+describe("async ask-user question in the interactive TUI", () => {
+	beforeAll(() => {
+		initTheme("dark");
+		setKeybindings(new KeybindingsManager());
+	});
+
+	it("shows the collapsed widget above the editor and no overlay", async () => {
+		const fake = createFakeInteractiveMode();
+		const pending = fake.createExtensionUIContext().question?.(buildRequest(), { timeout: 30 * 60_000 });
+		expect(pending).toBeInstanceOf(Promise);
+
+		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toContain("Question pending (1 unanswered)");
+		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toContain("just type your reply");
+		expect(overlay(fake)).toBeUndefined();
+		expect(fake.editorContainer.children).toContain(fake.editor);
+		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
+	});
+
+	it("opens the component on the shortcut and resolves the question without delivering itself", async () => {
+		const fake = createFakeInteractiveMode({ isStreaming: true });
+		const pending = fake.createExtensionUIContext().question?.(buildRequest(), { timeout: 30 * 60_000 });
+		if (!pending) throw new Error("question() returned nothing");
+
+		expect(fake.pressEditorKey(ALT_A)).toBe(true);
+		const component = overlay(fake);
+		if (!component) throw new Error("shortcut did not mount the question component");
+		expect(fake.ui.setFocus).toHaveBeenLastCalledWith(component);
+
+		component.handleInput("1");
+		component.handleInput(CTRL_ENTER);
+		const response = await pending;
+
+		expect(response).toMatchObject({ status: "answered", answers: { auth: { selected: ["OAuth"] } } });
+		// Delivery belongs to the extension; the widget only resolves the question.
+		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
+		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toBeUndefined();
+		expect(overlay(fake)).toBeUndefined();
+		expect(fake.editorContainer.children).toContain(fake.editor);
+	});
+
+	it("turns ordinary editor text into the comment answer exactly once", async () => {
+		const fake = createFakeInteractiveMode({ isStreaming: true });
+		const pending = fake.createExtensionUIContext().question?.(buildRequest(), { timeout: 30 * 60_000 });
+		if (!pending) throw new Error("question() returned nothing");
+
+		await fake.submitEditorText("just use bun");
+		const response = await pending;
+
+		expect(response).toMatchObject({ status: "comment-submitted", comment: "just use bun", unanswered: ["auth"] });
+		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
+		expect(fake.session.prompt).not.toHaveBeenCalled();
+		expect(fake.onInputCallback).not.toHaveBeenCalled();
+		expect(fake.editor.setText).toHaveBeenCalledWith("");
+		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toBeUndefined();
+
+		await fake.submitEditorText("second message");
+		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
+		expect(fake.session.prompt).toHaveBeenCalledWith(
+			"second message",
+			expect.objectContaining({ streamingBehavior: "steer" }),
+		);
+	});
+
+	it("keeps slash and bash commands out of the comment path", async () => {
+		const fake = createFakeInteractiveMode({ isStreaming: false });
+		const pending = fake.createExtensionUIContext().question?.(buildRequest(), { timeout: 30 * 60_000 });
+		if (!pending) throw new Error("question() returned nothing");
+		await fake.submitEditorText("/debug");
+		expect(fake.handleDebugCommand).toHaveBeenCalledTimes(1);
+		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
+		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toContain("Question pending");
+	});
+
+	it("returns to the widget on Esc without sending anything", async () => {
+		const fake = createFakeInteractiveMode({ isStreaming: true });
+		const pending = fake.createExtensionUIContext().question?.(buildRequest(), { timeout: 30 * 60_000 });
+		if (!pending) throw new Error("question() returned nothing");
+
+		fake.pressEditorKey(ALT_A);
+		overlay(fake)?.handleInput(ESC);
+
+		expect(overlay(fake)).toBeUndefined();
+		expect(fake.editorContainer.children).toContain(fake.editor);
+		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toContain("Question pending (1 unanswered)");
+		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
+
+		await fake.submitEditorText("ok go");
+		expect(await pending).toMatchObject({ status: "comment-submitted", comment: "ok go" });
+		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
+	});
+
+	it("drops the widget on abort without delivering", async () => {
+		const fake = createFakeInteractiveMode();
+		const controller = new AbortController();
+		const pending = fake
+			.createExtensionUIContext()
+			.question?.(buildRequest(), { timeout: 30 * 60_000, signal: controller.signal });
+		if (!pending) throw new Error("question() returned nothing");
+		controller.abort();
+		expect(await pending).toMatchObject({ status: "cancelled", unanswered: ["auth"] });
+		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toBeUndefined();
+		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
+	});
+
+	it("moves the wake source 1 -> 0 and delivers exactly one framed message per answer", async () => {
+		const delivery = await createAskUserDelivery();
+		harnesses.push(delivery.harness);
+		vi.useFakeTimers({ toFake: ["Date"], now: 0 });
+		const fake = createFakeInteractiveMode({ isStreaming: true });
+		const ctx = delivery.context(tuiQuestion(fake), false);
+
+		const result = await delivery.tool.execute(
+			"tc-async",
+			{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
+			undefined,
+			undefined,
+			ctx as ExtensionToolContext,
+		);
+		expect(result.details).toMatchObject({ accepted: true, status: "pending" });
+		expect(delivery.wakeEvents).toEqual([
+			{
+				source: "ask-user",
+				activeCount: 1,
+				items: [{ id: "tc-async", description: "Library", deadlineAtMs: 1_800_000 }],
+			},
+		]);
+		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toContain("Question pending (1 unanswered)");
+
+		const settled = delivery.settled(ctx, "tc-async");
+		await fake.submitEditorText("just use bun");
+		await settled;
+		expect(delivery.wakeEvents).toEqual([
+			{
+				source: "ask-user",
+				activeCount: 1,
+				items: [{ id: "tc-async", description: "Library", deadlineAtMs: 1_800_000 }],
+			},
+			{ source: "ask-user", activeCount: 0, items: [] },
+		]);
+		// Exactly one framed message, delivered by the extension and not by the widget.
+		expect(delivery.deliveries).toEqual([
+			{
+				content: [
+					{
+						type: "text",
+						text: "[Answer to question tc-async]\nThe user responded: (see [The user's comment for question tc-async] below)\nUnanswered: Library",
+					},
+					{ type: "text", text: "[The user's comment for question tc-async]" },
+					{ type: "text", text: "just use bun" },
+				],
+				options: { deliverAs: "steer" },
+			},
+		]);
+		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
+	});
+
+	it("delivers exactly one timeout message when the pending question expires unanswered", async () => {
+		const delivery = await createAskUserDelivery(1);
+		harnesses.push(delivery.harness);
+		const fake = createFakeInteractiveMode({ isStreaming: false });
+		const ctx = delivery.context(tuiQuestion(fake));
+		vi.useFakeTimers();
+
+		await delivery.tool.execute(
+			"tc-timeout",
+			{ questions: ASYNC_QUESTIONS, waitForAnswer: false },
+			undefined,
+			undefined,
+			ctx as ExtensionToolContext,
+		);
+		const settled = delivery.settled(ctx, "tc-timeout");
+		await vi.advanceTimersByTimeAsync(60_000);
+		await expect(settled).resolves.toMatchObject({ status: "timed_out" });
+
+		expect(delivery.deliveries).toHaveLength(1);
+		expect(String(delivery.deliveries[0]?.content)).toContain("(사용자가 답변을 안하고 timeout 으로 종료됨)");
+		expect(delivery.deliveries[0]?.options).toEqual({ deliverAs: "followUp" });
+		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
+		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toBeUndefined();
+	});
+
+	it("carries a drafted answer across Esc into the typed comment reply", async () => {
+		const fake = createFakeInteractiveMode({ isStreaming: true });
+		const onProgress = vi.fn();
+		const pending = tuiQuestion(fake)(buildRequest(), { timeout: 30 * 60_000, onProgress });
+
+		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toContain("Question pending (1 unanswered)");
+		expect(overlay(fake)).toBeUndefined();
+
+		fake.pressEditorKey(ALT_A);
+		// Space retains an optional draft; digits now submit a single question immediately (#1645).
+		overlay(fake)?.handleInput(DOWN);
+		overlay(fake)?.handleInput(SPACE);
+		expect(onProgress).toHaveBeenLastCalledWith(
+			expect.objectContaining({ answers: { auth: { selected: ["API key"] } } }),
+		);
+
+		overlay(fake)?.handleInput(ESC);
+		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toContain("Question pending (0 unanswered)");
+		await fake.submitEditorText("go with the key");
+		expect(await pending).toMatchObject({
+			answers: { auth: { selected: ["API key"] } },
+			comment: "go with the key",
+		});
+		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
+		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toBeUndefined();
+	});
+
+	it("renders the shortcut hint from the registered key", () => {
+		const fake = createFakeInteractiveMode();
+		void fake.createExtensionUIContext().question?.(buildRequest(), { timeout: 30 * 60_000 });
+		expect(stripAnsi(fake.widgetText(ASK_USER_WIDGET_KEY) ?? "")).toContain(askUserAnswerKeyHint());
+	});
+});

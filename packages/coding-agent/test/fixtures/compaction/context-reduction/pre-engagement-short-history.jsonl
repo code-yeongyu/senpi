@@ -1,0 +1,7 @@
+{"type":"session","id":"test-context-reduction-001","timestamp":"2026-10-11T00:00:00.000Z","cwd":"/test/project","provider":"faux","modelId":"faux","thinkingLevel":"off"}
+{"type":"message","timestamp":"2026-10-11T00:00:01.000Z","message":{"role":"user","content":"short message 1","timestamp":1}}
+{"type":"message","timestamp":"2026-10-11T00:00:02.000Z","message":{"role":"user","content":"short message 2","timestamp":2}}
+{"type":"message","timestamp":"2026-10-11T00:00:03.000Z","message":{"role":"user","content":"short message 3","timestamp":3}}
+{"type":"message","timestamp":"2026-10-11T00:00:04.000Z","message":{"role":"user","content":"short message 4","timestamp":4}}
+{"type":"message","timestamp":"2026-10-11T00:00:05.000Z","message":{"role":"user","content":"short message 5","timestamp":5}}
+{"type":"message","timestamp":"2026-10-11T00:00:06.000Z","message":{"role":"user","content":"short message 6","timestamp":6}}

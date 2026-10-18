@@ -58,6 +58,7 @@ function matcherSubject(input: HookInputWire): MatcherSubject {
 	switch (input.event) {
 		case "UserPromptSubmit":
 		case "Stop":
+		case "Notification":
 			return { kind: "ignored" };
 		case "PreToolUse":
 		case "PostToolUse":

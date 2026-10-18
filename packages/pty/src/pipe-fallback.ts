@@ -120,6 +120,14 @@ export class PipeFallbackSession {
 		});
 	}
 
+	get pid(): number | undefined {
+		return this.child?.pid;
+	}
+
+	get processGroupId(): number | undefined {
+		return process.platform === "win32" ? undefined : this.child?.pid;
+	}
+
 	start(): this {
 		if (this.exitResult !== null) throw new Error("Cannot restart exited pipe fallback session");
 		if (this.child !== null) throw new Error("Pipe fallback session has already been started");

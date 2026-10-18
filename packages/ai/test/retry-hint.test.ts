@@ -571,3 +571,15 @@ describe("parseRetryAfterMsMarker", () => {
 		expect(parseRetryAfterMsMarker(msg)).toBe(45_000);
 	});
 });
+
+describe("limit reset prose", () => {
+	it("a rate-limited body that says its limit resets in N minutes yields that window (senpi#2660)", () => {
+		const bodyText =
+			"Devin stream error resource_exhausted: Reached free model rate limit. Upgrade to Max for higher limits, or switch to a different model. Your limit will reset in 9 minutes (at 16:56 UTC).";
+		expect(extract429RetryAfterMs({ bodyText })).toBe(9 * 60_000);
+	});
+
+	it("a non-rate-limited body that mentions a reset is not a hint", () => {
+		expect(extract429RetryAfterMs({ status: 500, bodyText: "cache will reset in 5 minutes" })).toBeUndefined();
+	});
+});

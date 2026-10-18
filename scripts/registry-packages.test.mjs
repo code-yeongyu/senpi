@@ -8,7 +8,9 @@ import {
 const completeSources = [...registrySourcePackageNames].map((name) => ({ name }));
 
 test("resolves every registry package source exactly once", () => {
-	assert.equal(resolveRegistryPackages(completeSources).length, 7);
+	// The owned-alias content is enumerated by publish-registry-dependencies.test.mjs; this asserts
+	// resolution completeness, so it tracks the mapping instead of restating its size.
+	assert.equal(resolveRegistryPackages(completeSources).length, registrySourcePackageNames.size);
 });
 
 test("rejects a missing registry package source", () => {

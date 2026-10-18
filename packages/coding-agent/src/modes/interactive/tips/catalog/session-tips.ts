@@ -25,12 +25,13 @@ export const SESSION_TIPS = [
 	{
 		id: "continue-session",
 		bindings: [],
-		render: () => `${APP_NAME} -c continues your most recent session; ${APP_NAME} -r opens the session picker.`,
+		render: () =>
+			`Use /resume or /sessions to reopen a past session; from the shell, ${APP_NAME} -r opens the same picker and ${APP_NAME} -c continues the most recent one.`,
 	},
 	{
 		id: "session-name",
 		bindings: [],
-		render: () => "Use /name <name> to label a session so it is easy to spot in the footer and in /resume.",
+		render: () => "Use /rename [name] to label a session so it is easy to spot in the footer and in /resume.",
 	},
 	{
 		id: "session-info",

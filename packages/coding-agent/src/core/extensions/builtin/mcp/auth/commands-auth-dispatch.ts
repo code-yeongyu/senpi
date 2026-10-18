@@ -1,3 +1,4 @@
+import { openBrowser } from "../../../../../utils/open-browser.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../../types.ts";
 import { createMcpLogger } from "../log.ts";
 import type { McpService } from "../service.ts";
@@ -9,7 +10,7 @@ export async function handleMcpAuthCommand(
 	subcommand: string,
 	args: readonly string[],
 	ctx: ExtensionCommandContext,
-	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
+	pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool" | "appendEntry">,
 	service: McpService,
 ): Promise<void> {
 	const name = args[0] ?? "";
@@ -25,7 +26,10 @@ export async function handleMcpAuthCommand(
 		env: target.env,
 		hasUI: ctx.hasUI,
 		logger: createMcpLogger(name),
-		notify: (message, type) => ctx.ui.notify(message, type),
+		notify: (message, type) => {
+			if (ctx.hasUI) pi.appendEntry("mcp-auth", message);
+			else ctx.ui.notify(message, type);
+		},
 		onReconnect: async () => {
 			try {
 				await service.reconnectServer(name);
@@ -34,7 +38,7 @@ export async function handleMcpAuthCommand(
 			}
 			await service.attachSession({ type: "session_start", reason: "reload" }, ctx, pi).catch(() => undefined);
 		},
-		openBrowser: (url) => ctx.ui.notify(`Open this URL to authorize ${name}:\n${url.toString()}`),
+		openBrowser: (url) => openBrowser(url.toString()),
 		pending: service.getPendingAuth(),
 		interactiveGuard: {
 			begin: (serverName) => service.beginInteractiveAuth(serverName),

@@ -1,0 +1,6 @@
+{
+	"js": ["agent", "completion", "display", "env", "log", "output", "parallel", "phase", "pipeline", "print", "read", "tool", "tool_schema", "tools", "workpool", "write"],
+	"py": ["agent", "completion", "display", "env", "log", "output", "parallel", "phase", "pipeline", "print", "read", "tool", "tool_schema", "workpool", "write"],
+	"rb": ["agent", "completion", "display", "display_image", "env", "log", "output", "parallel", "phase", "pipeline", "print", "read", "text", "tool", "tool_schema", "workpool", "write"],
+	"jl": ["agent", "completion", "display", "display_image", "env", "log", "output", "parallel", "phase", "pipeline", "print", "read", "text", "tool", "tool_schema", "workpool", "write"]
+}

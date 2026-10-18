@@ -2,6 +2,7 @@ import { execFile as nodeExecFile } from "node:child_process";
 import { accessSync, constants, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
+import { cursorAgentEnvironment } from "./environment.ts";
 
 export type CursorAgentDirectoryEntry = {
 	name: string;
@@ -20,6 +21,7 @@ export type CursorAgentExecutableDeps = {
 export type VersionProbeOptions = {
 	encoding: "utf8";
 	timeout: number;
+	env: NodeJS.ProcessEnv;
 };
 
 export type VersionProbeCallback = (error: Error | null, stdout: string, stderr: string) => void;
@@ -116,7 +118,12 @@ export function probeCursorAgentVersion(
 	deps: VersionProbeDeps = defaultVersionProbeDeps,
 ): Promise<string> {
 	return new Promise((resolve, reject) => {
-		deps.execFile(executable, ["--version"], { encoding: "utf8", timeout: 10_000 }, (error, stdout) => {
+		const options: VersionProbeOptions = {
+			encoding: "utf8",
+			timeout: 10_000,
+			env: cursorAgentEnvironment(homedir()),
+		};
+		deps.execFile(executable, ["--version"], options, (error, stdout) => {
 			if (error) {
 				reject(error);
 				return;

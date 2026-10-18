@@ -147,8 +147,8 @@ export function transformMessages<TApi extends Api>(
 
 	// First pass: transform messages (unsupported image downgrade, thinking blocks, tool call ID normalization)
 	const transformed = imageAwareMessages.map((msg) => {
-		// User messages pass through unchanged
-		if (msg.role === "user") {
+		// System and user messages pass through unchanged
+		if (msg.role === "system" || msg.role === "user") {
 			return msg;
 		}
 
@@ -238,6 +238,9 @@ export function transformMessages<TApi extends Api>(
 	// result after its declaring assistant. Results are emitted adjacent to their
 	// calls because Anthropic requires that ordering. A reused ID starts a new
 	// pairing window, so a later result cannot repair an earlier call.
+	// System messages are transparent to this accounting: they keep their source
+	// position, and because matched results are pulled forward, one that lands
+	// between a call and its result is emitted after that result.
 	const result: Message[] = [];
 	const toolResultsById = new Map<string, { message: ToolResultMessage; sourceIndex: number; consumed: boolean }[]>();
 	const nextToolCallIndexById = new Map<string, number[]>();

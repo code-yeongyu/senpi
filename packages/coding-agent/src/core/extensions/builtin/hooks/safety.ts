@@ -128,8 +128,8 @@ function validateCommandField(
 			);
 			continue;
 		}
-		const realTarget = realpathSync(target.resolvedPath);
-		const realRoot = realpathSync(resolve(handler.source.pluginRoot ?? ""));
+		const realTarget = realpathSync.native(target.resolvedPath);
+		const realRoot = realpathSync.native(resolve(handler.source.pluginRoot ?? ""));
 		if (!isContained(realRoot, realTarget)) {
 			diagnostics.push(
 				diagnostic(

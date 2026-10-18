@@ -16,7 +16,6 @@ describe("coding-agent signal-exit dependency", () => {
 		const isolatedInstallLock = readJson(
 			join(root, "packages", "coding-agent", "install-lock", "package-lock.json"),
 		);
-		const publishLock = readJson(join(root, "packages", "coding-agent", "publish-deps.lock.json"));
 
 		assert.equal(manifest.dependencies["proper-lockfile"], "4.1.2");
 		assert.equal(manifest.dependencies["signal-exit"], "3.0.7");
@@ -26,7 +25,5 @@ describe("coding-agent signal-exit dependency", () => {
 			"3.0.7",
 		);
 		assert.equal(isolatedInstallLock.packages["node_modules/signal-exit"].version, "3.0.7");
-		assert.equal(publishLock.packages[""].dependencies["signal-exit"], "3.0.7");
-		assert.equal(publishLock.packages["node_modules/signal-exit"].version, "3.0.7");
 	});
 });

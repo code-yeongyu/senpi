@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
+import { elidedImageIds, imageContentId } from "../src/core/image-elision-placeholder.ts";
 import {
 	BLOCKED_IMAGE_PLACEHOLDER,
 	convertToLlmForTransport,
@@ -8,6 +9,8 @@ import {
 	IMAGE_ELISION_PLACEHOLDER,
 	TRANSPORT_IMAGE_BUDGET_BYTES,
 } from "../src/core/messages.ts";
+
+const ELIDED = expect.stringMatching(/^\[Image elided: .+ \(image ids?: [0-9a-f]{12}(, [0-9a-f]{12})*\)$/);
 
 function img(data: string) {
 	return { type: "image", data, mimeType: "image/png" } as const;
@@ -59,7 +62,7 @@ describe("elideOldImages", () => {
 			"image",
 			"image",
 		]);
-		expect((result[0].content as Array<{ type: string; text?: string }>)[0].text).toBe(IMAGE_ELISION_PLACEHOLDER);
+		expect((result[0].content as Array<{ type: string; text?: string }>)[0].text).toEqual(ELIDED);
 	});
 
 	it("keeps the newest block regardless of size and charges it to the budget", () => {
@@ -97,7 +100,7 @@ describe("elideOldImages", () => {
 
 		expect(result[0].content).toEqual([
 			{ type: "text", text: "Read image file [image/png]" },
-			{ type: "text", text: IMAGE_ELISION_PLACEHOLDER },
+			{ type: "text", text: ELIDED },
 		]);
 	});
 
@@ -109,7 +112,12 @@ describe("elideOldImages", () => {
 
 		const result = elideOldImages(messages, { budgetBytes: 60, alwaysKeepNewest: 0 });
 
-		expect(result[0].content).toEqual([{ type: "text", text: IMAGE_ELISION_PLACEHOLDER }]);
+		expect(result[0].content).toEqual([
+			{
+				type: "text",
+				text: `${IMAGE_ELISION_PLACEHOLDER} (image ids: ${imageContentId("A".repeat(60))}, ${imageContentId("B".repeat(60))})`,
+			},
+		]);
 	});
 
 	it("treats later blocks within a message as newer", () => {
@@ -177,8 +185,8 @@ describe("elideOldImages", () => {
 			maxHistoricalImages: 1,
 		});
 
-		expect(result[0].content).toEqual([{ type: "text", text: IMAGE_ELISION_PLACEHOLDER }]);
-		expect(result[2].content).toEqual([{ type: "text", text: IMAGE_ELISION_PLACEHOLDER }]);
+		expect(result[0].content).toEqual([{ type: "text", text: ELIDED }]);
+		expect(result[2].content).toEqual([{ type: "text", text: ELIDED }]);
 		expect(result[4].content).toEqual([img("recent-history")]);
 		expect(result[6].content).toEqual([img("current-a"), img("current-b")]);
 	});
@@ -201,7 +209,7 @@ describe("elideOldImages", () => {
 			toolCallId: "c1",
 			toolName: "read",
 			content: [
-				{ type: "text", text: IMAGE_ELISION_PLACEHOLDER },
+				{ type: "text", text: ELIDED },
 				{ type: "text", text: "OCR result" },
 			],
 		});
@@ -220,6 +228,62 @@ describe("elideOldImages", () => {
 				alwaysKeepNewest: 0,
 			}),
 		).toBe(messages);
+	});
+});
+
+describe("elideOldImages across a growing session (senpi#2768)", () => {
+	const budget = 1000;
+	const elidedIndexes = (result: Message[]): number[] =>
+		result.flatMap((message, index) =>
+			(message.content as Array<{ type: string; text?: string }>).some(
+				(block) => elidedImageIds(block.text ?? "") !== undefined,
+			)
+				? [index]
+				: [],
+		);
+
+	it("moves the cutoff in steps, so a turn that only adds an image resends earlier images unchanged", () => {
+		const history: Message[] = [];
+		let previous: number[] = [];
+		let changedRequests = 0;
+		for (let turn = 0; turn < 40; turn++) {
+			history.push(toolResult(img(String.fromCharCode(65 + (turn % 26)).repeat(100))));
+			const result = elideOldImages(history, { budgetBytes: budget, alwaysKeepNewest: 1 });
+			const elided = elidedIndexes(result);
+			const keptBytes = result.reduce(
+				(sum, message) =>
+					sum +
+					(message.content as Array<{ type: string; data?: string }>)
+						.filter((block) => block.type === "image")
+						.reduce((bytes, block) => bytes + (block.data?.length ?? 0), 0),
+				0,
+			);
+			expect(keptBytes).toBeLessThanOrEqual(budget);
+			expect(previous.every((index) => elided.includes(index))).toBe(true);
+			if (elided.length !== previous.length) changedRequests++;
+			previous = elided;
+		}
+		// 30 requests run over budget; the cutoff moves once per half-budget step, not on each of them.
+		expect(changedRequests).toBeLessThanOrEqual(7);
+	});
+
+	it("moves the historical-image limit in steps too", () => {
+		const history: Message[] = [];
+		let previous: number[] = [];
+		let changedRequests = 0;
+		for (let turn = 0; turn < 30; turn++) {
+			history.push(
+				{ role: "user", content: [img(`shot-${turn}`)] } as unknown as Message,
+				{ role: "assistant", content: [{ type: "text", text: `analyzed ${turn}` }] } as unknown as Message,
+			);
+			const result = elideOldImages(history, { budgetBytes: Number.POSITIVE_INFINITY, maxHistoricalImages: 8 });
+			const elided = elidedIndexes(result);
+			expect(history.length / 2 - elided.length).toBeLessThanOrEqual(8);
+			expect(previous.every((index) => elided.includes(index))).toBe(true);
+			if (elided.length !== previous.length) changedRequests++;
+			previous = elided;
+		}
+		expect(changedRequests).toBeLessThanOrEqual(6);
 	});
 });
 
@@ -247,7 +311,7 @@ describe("convertToLlmForTransport", () => {
 
 		expect((result[0].content as Array<{ type: string; text?: string }>)[0]).toEqual({
 			type: "text",
-			text: IMAGE_ELISION_PLACEHOLDER,
+			text: ELIDED,
 		});
 		expect((result[1].content as Array<{ type: string }>)[0].type).toBe("image");
 	});

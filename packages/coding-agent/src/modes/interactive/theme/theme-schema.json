@@ -14,6 +14,11 @@
 			"pattern": "^[^/]+$",
 			"description": "Theme name. Must not contain '/' because it is reserved for automatic light/dark theme settings."
 		},
+		"appearance": {
+			"type": "string",
+			"enum": ["dark", "light"],
+			"description": "Background the theme is designed for. Detected from the theme colors when omitted."
+		},
 		"vars": {
 			"type": "object",
 			"description": "Reusable color variables",
@@ -21,7 +26,7 @@
 				"oneOf": [
 					{
 						"type": "string",
-						"description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+						"description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
 					},
 					{
 						"type": "integer",
@@ -34,7 +39,7 @@
 		},
 		"colors": {
 			"type": "object",
-			"description": "Theme color definitions (thinkingMax, scrollbarThumb, and search highlight colors are optional and use compatible fallbacks)",
+			"description": "Theme color definitions (scrollbar, thinkingMax, and search highlight colors are optional and use compatible fallbacks)",
 			"required": [
 				"accent",
 				"border",
@@ -137,9 +142,13 @@
 					"$ref": "#/$defs/colorValue",
 					"description": "Selected item background"
 				},
+				"scrollbarTrack": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Fullscreen scrollbar track foreground (falls back to muted when omitted)"
+				},
 				"scrollbarThumb": {
 					"$ref": "#/$defs/colorValue",
-					"description": "Fullscreen scrollbar thumb background (falls back to selectedBg when omitted)"
+					"description": "Fullscreen scrollbar thumb foreground (falls back to text when omitted)"
 				},
 				"searchMatchBg": {
 					"$ref": "#/$defs/colorValue",
@@ -200,6 +209,10 @@
 				"mdLinkUrl": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Markdown link URL"
+				},
+				"skillMention": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Resolved $skill mention in the prompt editor, rendered bold (falls back to mdLink when omitted)"
 				},
 				"mdCode": {
 					"$ref": "#/$defs/colorValue",
@@ -338,7 +351,7 @@
 			"oneOf": [
 				{
 					"type": "string",
-					"description": "Hex color (#RRGGBB), variable reference, or empty string for terminal default"
+					"description": "Hex color (#RGB or #RRGGBB), OKLCH or OKHSL color, variable reference, or empty string for terminal default"
 				},
 				{
 					"type": "integer",

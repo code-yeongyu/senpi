@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ToolDefinition } from "../../types.ts";
 import type { APPLY_PATCH_PARAMS } from "./constants.ts";
+import type { ContextLineIndex } from "./line-endings.ts";
 
 export type ParsedPatch =
 	| { type: "add"; filePath: string; content: string }
@@ -10,7 +11,12 @@ export type PatchChunk = {
 	changeContexts: string[];
 	oldLines: string[];
 	newLines: string[];
+	contextLineIndices: ContextLineIndex[];
 	isEndOfFile: boolean;
+	/** Real added/removed line counts by prefix, tracked at parse time (context lines excluded,
+	 * so a `+` line whose text equals a context line still counts as an addition). */
+	addedCount: number;
+	removedCount: number;
 };
 
 export type ApplyPatchWireMode = "freeform" | "json" | "none";
@@ -128,9 +134,15 @@ export type ApplyPatchRenderState = {
 	collapsed?: string;
 	expanded?: string;
 	streamingInput?: string;
-	streamingParser?: { pushDelta: (delta: string) => ParsedPatch[] };
-	streamingHunks?: ParsedPatch[];
+	streamingParser?: {
+		pushDelta: (delta: string) => ParsedPatch[];
+		getLiveHunks?: () => readonly ParsedPatch[];
+		getPartialLine?: () => string;
+	};
+	streamingHunks?: readonly ParsedPatch[];
 	streamingError?: string;
+	/** Last rendered body fingerprint, so a delta that changes nothing skips the rebuild. */
+	streamingLastRenderKey?: string;
 };
 
 export type ApplyPatchToolDefinition = ToolDefinition<

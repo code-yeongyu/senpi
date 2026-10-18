@@ -27,6 +27,11 @@ export class RuntimeCredentials implements CredentialStore {
 		this.store = store;
 	}
 
+	/** The store extension OAuth providers register into; a session's ModelRegistry reads it (senpi#3434). */
+	get backingStore(): CredentialStore {
+		return this.store;
+	}
+
 	registerOAuthProvider(providerId: string, oauth: OAuthAuth): void {
 		asExtensionOAuthRegistry(this.store)?.registerOAuthProvider(providerId, oauth);
 	}
@@ -45,6 +50,15 @@ export class RuntimeCredentials implements CredentialStore {
 
 	hasRuntimeApiKey(providerId: string): boolean {
 		return this.overrides.has(providerId);
+	}
+
+	/**
+	 * Reads that found the backing store locked and answered from its cached snapshot.
+	 * Stores that never report contention count as 0.
+	 */
+	busyReadCount(): number {
+		const store = this.store as CredentialStore & { getBusyReadCount?: () => number };
+		return typeof store.getBusyReadCount === "function" ? store.getBusyReadCount() : 0;
 	}
 
 	async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {

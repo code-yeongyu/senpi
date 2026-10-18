@@ -54,7 +54,9 @@ export async function runTextToolLeakScenario({ apiName, truncated, driveTurn, e
 			];
 		},
 		prompt: `Run the requested operation and finish with ${finalMarker}.`,
-		extraArgs: ["--approve"],
+		// Recovery recognizes declared tools. The default eval-enabled surface intentionally
+		// hides bash, so select the direct shell surface this scenario actually exercises.
+		extraArgs: ["--approve", "--tools", "bash"],
 		modelOverrides: { recoverTextToolCalls: true },
 		timeoutMs: 120000,
 	});

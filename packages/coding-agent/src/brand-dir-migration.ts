@@ -19,8 +19,17 @@ export const MIGRATION_MARKER = ".migrated-from-senpi";
 /** Regenerable state: caches, logs and build worktrees are rebuilt on demand. */
 const SKIPPED_ENTRIES = new Set(["cache", "logs", "omo-local-update"]);
 
+/**
+ * The OmO desktop app owns `~/.omo/desktop*` (code-yeongyu/omo-desktop-app#1829); the engine never writes there.
+ * darwin and win32 volumes fold case, so `Desktop` names the same folder there.
+ */
+function isDesktopReserved(entry: string): boolean {
+	const name = process.platform === "darwin" || process.platform === "win32" ? entry.toLowerCase() : entry;
+	return name === "desktop" || name.startsWith("desktop.init-");
+}
+
 function isSkipped(entry: string): boolean {
-	return SKIPPED_ENTRIES.has(entry) || entry.endsWith(".log");
+	return SKIPPED_ENTRIES.has(entry) || entry.endsWith(".log") || isDesktopReserved(entry);
 }
 
 export interface BrandDirMigrationResult {

@@ -1,4 +1,671 @@
+## 2026-10-17 - No fixed auto-continue cap; a no-progress guard instead (oh-my-openagent#10280)
+
+### What changed
+
+- `continuation.ts`: `GOAL_UNATTENDED_CONTINUATION_LIMIT` (150) and the `unattended` deny reason are gone. `GOAL_NO_PROGRESS_CONTINUATION_LIMIT` (60) and the `no-progress` deny reason replace them, read from the new persisted `Goal.noProgressContinuations`. `hasGoalTodoProgress` compares only the todo part of the continuation signature.
+- `store.ts`: every counted delivery increments `noProgressContinuations` (monitor-delayed deliveries stay exempt); `resetContinuationStreak(ref, { progress })` clears it, `{ unattended }` (human input) clears both counters, and status transitions zero it.
+- `monitor-continuation.ts`: a turn is progress when its tool effect is new, the todo state changed, or it carried a human-input monitor notification (`isHumanInputMonitorNotification`). A tool effect is `toolEffectFingerprint`: every call's name and arguments, and every result's error flag and text. Results mask run-to-run noise only (ISO timestamps, clock times, durations, `pid N`, 6+ digit numbers, 8+ hex ids), so a small counter that really advances (`12/200 modules`) stays visible. Arguments of non-mutating tools mask every number and long hex id, so `sleep N`, `--bail=N` or a timestamp argument is not a new action; arguments of mutating tools (`edit`, `write`, `apply_patch`, `todo`, decided by tool kind) stay exact so distinct edits never merge. Output alone is not the fingerprint because repeated edits of one file print the same text. A turn whose tool results all failed has no fingerprint and is never progress; a fingerprint matching any of the last `GOAL_TOOL_EFFECT_WINDOW` (256) tool turns is a repeat; with an empty window (first tool turn, after a reload or input reset) a fingerprint only seeds. So re-running the same failing test, swallowing its exit code, varying a counter or timestamp argument, sleeping a growing N, polling a status that only gains a timestamp, or rotating through a fixed set of reads is not progress, while an advancing build counter or a new edit is. Varied narration still resets the consecutive streak (#539/#567) but no longer the no-progress count. A human-input monitor delivery also resets the unattended count and clears the repetition and toolless windows, like typed input.
+- `continuation-recovery.ts` / `lifecycle-helpers.ts`: new mechanical block reason `NO_PROGRESS_BLOCKED_REASON`, so the notice ends with "Send any message to resume." `UNATTENDED_CONTINUATION_BLOCKED_REASON` stays mechanical so goals persisted with it still resume. `goal_continuation_guard_tripped` and `goal-continuation-stopped` add `noProgressContinuations`; `unattendedContinuations` stays as an informational count.
+
+### Why
+
+- A persistent setup paused after 150 continuations even while it worked, because the budget refilled only on typed input and a person's message delivered through a monitor never counted. Thresholds: across 593 local goal sessions (30 days), toolless stretches that recovered into tool use peaked at 29 (p99 7); the #1139 stall ran 122 toolless turns. 60 is twice the measured peak and above the #447 50-turn pin.
+
+- This supersedes the 2026-08-27 unattended continuation backstop (#1139) entry below.
+
+### Why an extension could not handle it
+
+- Admission, the persisted counters and progress detection are private to the goal builtin.
+
+### Expected merge conflict zones
+
+- LOW: the deny-reason union, `afterAgentEnd` progress detection, `recordContinuationDelivered` / `resetContinuationStreak`.
+
+## 2026-10-14 - Provider-recovery continuations back off and wake when the pool frees up (senpi#3264)
+
+### What changed
+
+- New `provider-retry.ts`: `providerRetryDelayMs(attempt, retryAt, now)` (first retry immediate, then 15 s doubling to 30 min; a stated unblock time wins, capped at 6 h) and `providerRetryAt(messages, now)` (earliest future ISO instant in the failed turn's `errorMessage`, e.g. "blocked until ..."; assistant text is never scanned).
+- `monitor-continuation.ts`: `afterAgentSettled` counts consecutive provider-recovery attempts (reset by a turn that ends cleanly and by every continuation-state reset: session start, accepted user input, a goal change) and, when the delay is positive, arms a `providerRetry` timer instead of queueing at once; the timer fires through the normal `providerRecovery` admission (same cap, same single-flight and unattended guards).
+- `wait-progress.ts`: `GoalWaitKind` gains `providerRetry`, rendered "provider unavailable · goal retries in ...". RPC clients see it as the `kind` of `goal_continuation_timer_state`.
+
+### Why
+
+- With every pooled account blocked, provider recovery re-queued at once after each failed turn: 8 continuations in under 30 s hit the cap and blocked the goal, and nothing woke it when an account freed up (senpi#3264). Regression: `test/suite/regressions/3264-goal-provider-retry-backoff.test.ts`.
+
+### Why an extension could not handle it
+
+- This is the goal extension's own continuation scheduler.
+
+### Expected merge conflict zones
+
+- LOW: `afterAgentSettled`, `#schedule` delay selection and `#continueIfEligible` path mapping in `monitor-continuation.ts`; `formatGoalWaitLabel` in `wait-progress.ts`.
+
 # goal Extension Changes
+
+## 2026-10-12 - Name on-duty todo waits (senpi#3163)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts`: `collectOnDutySources` combines active wake-source names, an active goal, a pending continuation, and pending messages into the `waiting` suppression. It renders the `todo-waiting` footer, emits the existing reminder event with `reason: "waiting"` and `sources`, and logs the reason and source names at debug level.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` exposes its existing live source-name projection; `packages/coding-agent/src/core/extensions/builtin/goal/index.ts` passes those names to the backstop and clears the waiting footer on agent start, session start, and tree navigation.
+- A goal whose continuation stopped (stale stop) is not an on-duty source: it gets the `goal-stopped` suppression, so the goal's own stop notice stays visible and no `todo-waiting` footer or nudge contradicts it.
+- The two hidden nudges, the cap and its stop notice (owned by oh-my-openagent#10026 above), the setting, and the chain resets are unchanged.
+- `goal-todo-owed-backstop.test.ts` covers named waits, source drain, footer clearing, telemetry, debug logging, and a stopped goal not counting as waiting. `docs/settings.md` and the unreleased changelog describe the behavior.
+
+### Why
+
+Open todo work can legitimately wait for a background child or another continuation owner. The old suppression hid that reason.
+
+### Why an extension could not handle it
+
+The goal builtin owns the continuation latch, wake-source registry, todo backstop chain, and lifecycle hooks.
+
+### Expected merge conflict zones
+
+`todo-owed-backstop.ts` suppression and notice, `index.ts` lifecycle and agent-end input assembly, and the source-name projection in `monitor-continuation.ts`.
+
+## 2026-10-12 - The todo-owed stop notice names the cause and the resume action (oh-my-openagent#10026)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts`: the chain cap counts only consecutive continuations that closed nothing. `TodoOwedBackstop` remembers the open tasks at each nudge and restarts the chain when a later turn end finds one of them closed (adding tasks is not progress). Before, the chain reset only on direct user input, `session_start` or `session_tree`, so a long unattended run that once used both nudges got no automatic continuation on its next real early stop. The single notice shown at the cap (`reason: "capped"`) now comes from the exported `buildTodoOwedStopNotice(openTasks, now, continuations)`: the open tasks, the `Now:` anchor, the consecutive continuations that closed nothing, and the actions that resume it (a reply, `/todo done`, `/todo drop`). Suppression clauses and the hidden reminders are unchanged.
+- `packages/coding-agent/test/suite/goal-todo-owed-backstop.test.ts`: a progress run (each nudged turn closes a task) keeps getting fresh continuations and notifies only at the final stall; a wake source emitted on the real bus keeps the session silent; the capped notice is compared whole with `buildTodoOwedStopNotice`.
+
+### Why
+
+The owner's error rule: every notice shows its reason and the user's action. The old text gave neither the cause nor any option besides typing.
+
+### Why an extension could not handle it
+
+The backstop is itself a builtin extension, and the change is confined to its notice text.
+
+### Expected merge conflict zones
+
+- None upstream: `todo-owed-backstop.ts` is fork-only.
+
+## 2026-10-12 - RPC clients see a goal's continuation wait and can run it now (senpi#3196)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/rpc-wait-surface.ts` (new): `publishGoalContinuationEvent` sends every continuation event to `pi.events` and also through `pi.rpc.emit`, so RPC clients with the `extension_events` capability receive `goal_continuation_scheduled`, `goal_continuation_timer_state` and `goal_continuation_resumed` as `extension_event`s. A stale-context error from a retired runtime is dropped; any other error propagates. `registerGoalFireNowRequest` registers the `goal_continuation_fire_now` extension request.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: the five continuation emits go through that publisher. The armed `goal_continuation_timer_state` payload now carries `dueAtMs`. `fireNow()` runs the armed continuation at once through the same `#continueIfEligible` path as the timer, keeping the armed drain-fire flag; it answers `{ fired: false, reason: "held" }` while a direct-input hold is active and `{ fired: false, reason: "not_armed" }` when nothing is armed.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: registers the fire-now request on the monitor continuation.
+
+### Why
+
+The OmO desktop showed a goal that was deliberately waiting on a monitor or child as idle: the scheduled continuation, its due time and its wake sources reached only in-process listeners and the TUI ticker (code-yeongyu/omo-desktop-app#2307). The desktop also needs a "Check now" that does not bypass eligibility.
+
+### Why an extension could not handle it
+
+The goal extension is the only owner of the continuation timer and its schedule data; another extension cannot observe the armed timer or fire it through the goal's admission checks.
+
+### Expected merge conflict zones
+
+- `monitor-continuation.ts` emit sites (`#schedule`, `#continueIfEligible`, `#cancelTimer`, the hold/disarm path) and the class fields near `#scheduledContinuationKind`.
+- `index.ts` where `MonitorAwareGoalContinuation` is constructed.
+
+## 2026-10-09 - Cover live stale stops and explain them to the model (senpi#3053)
+
+### What changed
+
+- `packages/coding-agent/test/suite/regressions/3026-stale-goal-accounting.test.ts`: active work accrues through the real extension, stale admission fires during that session, and subsequent `sendUserMessage` and `sendMessage({ triggerTurn: true })` turns retain the committed tokens/time. Both cases pass unchanged production at ca49caf25f and fail if `syncContinuationGoal` no longer clears the stopped accounting window.
+- `packages/coding-agent/src/core/extensions/builtin/goal/format.ts`: model tool JSON includes a `continuation` object for stale-stopped goals, with stable `status: "stale_stopped"` and a neutral explanation of stale progress and user-message or `/goal resume` recovery. Human-readable status formatting remains separate.
+- `packages/coding-agent/src/core/extensions/builtin/goal/types.ts`: declares the model-facing continuation object without changing persisted state, UI snapshots, or app-server protocol.
+- `packages/coding-agent/test/suite/regressions/3026-stale-goal-model-output.test.ts`: inspects the registered `get_goal` result's parsed status token and structured message, with active, paused, and completed controls. It does not pin explanation prose.
+
+### Why
+
+The earlier accounting tests started with a goal already stopped on disk and did not guard retirement of an existing live window. The model's paused snapshot also lacked an explicit stale-stop cause and recovery explanation.
+
+### Why an extension could not handle it
+
+The builtin owns live accounting synchronization and the goal tool response consumed by the model.
+
+### Expected merge conflict zones
+
+`format.ts` model response construction, `types.ts` response shape, and the two regression files. Keep UI labels, paused snapshots, persistent active-plus-marker state, and the accounting guards intact.
+
+## 2026-10-09 - Pin stopped accounting and show paused-style stale status (senpi#3026)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: documents the lead's don't-count rule at accounting admission. Stale-stopped non-user-input turns remain excluded; active turns still accrue their assistant tokens and time. The existing one-shot stale-stop/reopen notice and no-auto-restart behavior remain intact.
+- `packages/coding-agent/src/core/extensions/builtin/goal/types.ts`: adds a shared display-status projection and the optional stop checkpoint to tool snapshots; the stored status and accounting fields do not change.
+- `packages/coding-agent/src/core/extensions/builtin/goal/ui.ts`: stale-stopped goals use the paused rendering branch and read `Goal stopped: no progress (send a message or /goal resume)` without a pursuit timer.
+- `packages/coding-agent/src/core/extensions/builtin/goal/format.ts`: `/goal` labels the stop; tool snapshots project paused status and preserve the checkpoint for client/rendering consumers.
+- `packages/coding-agent/src/core/extensions/builtin/goal/renderers.ts`: stopped cards use the paused glyph/color and recovery label through details and JSON fallback. Normal goal cards and committed usage totals remain unchanged.
+- `packages/coding-agent/test/suite/regressions/3026-stale-goal-accounting.test.ts`: real extension `sendUserMessage` and trigger-turn delivery tests pin current behavior in both directions; opening a stale window in a mutant fails both stopped cases.
+- `packages/coding-agent/test/suite/regressions/3026-stale-goal-status.test.ts`: failing-first coverage for the footer, `/goal`, light/dark cards, JSON snapshots, and app-server projection.
+
+### Why
+
+The lead decided that a stopped goal does not accrue background-turn usage and must look stopped, not actively pursued. A stale-stop marker previously froze usage while every display still said active or pursuing.
+
+### Why an extension could not handle it
+
+The builtin owns accounting admission, goal-tool snapshots, and the footer/card rendering paths.
+
+### Expected merge conflict zones
+
+`index.ts` accounting admission; `types.ts` tool snapshot shape; `format.ts`, `ui.ts`, and `renderers.ts` status formatting. Preserve internal active-plus-marker state and accepted-input/resume recovery. The historical notice entry below predates the lead's accounting decision.
+
+## 2026-10-09 - Explain stale goal recovery at stop and reopen (senpi#3026)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: a claimed stale denial emits one informational recovery notice before best-effort stop publication; repeated denial probes do not repeat it.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: startup and resume show the same notice for a stale-stopped active goal. Extension reload and rendering do not show it, and reopening never restarts the goal.
+- `packages/coding-agent/test/suite/regressions/3026-stale-goal-notice.test.ts`: covers stop deduplication, startup/resume, reload and state controls, and two separate reopens.
+- `packages/coding-agent/docs/session-format.md`: documents the recovery notice and client elapsed-time calculation from committed time plus the last usage checkpoint.
+
+### Why
+
+Stale stops persisted without telling the user how to continue. Usage-accounting policy remains unchanged pending the lead's product decision.
+
+### Why an extension could not handle it
+
+The builtin owns the locked stale-stop claim and session-open admission.
+
+### Expected merge conflict zones
+
+`lifecycle-helpers.ts` denial side effects and `index.ts` session-start handler. Keep notice emission outside rendering and reload paths, retain locked-claim deduplication, and preserve no-auto-restart admission.
+
+## 2026-10-09 - Failed stop publication cannot skip lifecycle cleanup (senpi#3014)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: independently catch and warn on both additive stop-entry appends, including the engine-pause history lookup, then return the persisted stop decision. Capture the session logger before the asynchronous claim so reporting a retired-context failure does not read that context again.
+- Lifecycle regressions drive stale and cap denials through the real agent-end handler, its UI/timer synchronization, the todo backstop and shutdown. A failed first append still attempts the second entry.
+
+### Why
+
+An append failure escaped after the goal file was stopped, skipping the caller's cleanup. A stale goal accrued another 600 seconds at shutdown, and blocking guards skipped UI synchronization and the todo backstop.
+
+### Why an extension could not handle it
+
+The builtin owns the persisted stop decision and must return it even when additive publication fails.
+
+### Expected merge conflict zones
+
+`lifecycle-helpers.ts` denial publication and logger import. Preserve independent best-effort writes and the return of the persisted goal.
+
+## 2026-10-09 - Guard side effects precede additive stop publication (senpi#3007, senpi#3014)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: after claiming and persisting a blocking denial, deliver the existing warning and `goal_continuation_guard_tripped` event before appending the additive stop entries.
+- The delayed-monitor cap regression now checks the blocked reason, guard payload and stopped-entry payload together, including a missing entry writer and a writer whose publication throws after append.
+
+### Why
+
+The new append ran before the existing guard side effects. A missing writer in the delayed-monitor fixture, or a failing entry publication in a real session, threw after the goal was blocked but prevented the guard notification and event.
+
+### Why an extension could not handle it
+
+The builtin's shared denial handler owns both the guard side effects and the additive stop entries.
+
+### Expected merge conflict zones
+
+`lifecycle-helpers.ts` denial handling. Preserve the locked claim and publish the existing guard side effects before the additive entry writes.
+
+## 2026-10-09 - Durable continuation stop decisions and frozen stale accounting (senpi#3007)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: every active-goal guard denial except eligibility/single-flight appends `goal-continuation-stopped` after a durable stop claim, with `engine-paused` for stale (`goal-stale`) and output repetition (`goal-repeat`).
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts`: a claimed stop is ineligible on session-start until reset, so reopening or rebuilding the extension cannot silently restart a stale goal. A later real turn can still trip a blocking guard.
+- `packages/coding-agent/src/core/extensions/builtin/goal/store.ts`: claims a denial under the goal-file lock, closes the stale measurement tail, advances the measurement checkpoint when usage is committed, and resets the claim on accepted input, explicit resume, or continuation delivery. Blocking guards retain the existing status-transition counter reset.
+- `packages/coding-agent/src/core/extensions/builtin/goal/types.ts` and `packages/coding-agent/src/core/extensions/builtin/goal/persistence.ts`: optional sanitized `continuationStoppedAt` persists the claim across retries and reopen.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts` and `packages/coding-agent/src/core/extensions/builtin/goal/elapsed-ticker.ts`: stopped active goals retire live accounting and freeze elapsed time; the queue path synchronizes a changed goal even when its status remains active.
+- `packages/coding-agent/src/core/extensions/builtin/goal/direct-input-lifecycle.ts`: accepted input starts accounting again after resetting the stopped goal.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: a stale or overflow denial on the accepted-user-turn path reaches the same denial handler instead of returning silently.
+
+### Why
+
+Stale continuation denials left active goals with an open measurement window and no durable signal, so idle clients displayed an ever-growing pursuit timer.
+
+### Why an extension could not handle it
+
+This builtin owns admission, persisted goal state, and its accounting window.
+
+### Expected merge conflict zones
+
+Goal store mutations, denial admission, direct-input reset, and accounting/UI synchronization. Preserve the locked claim and measurement checkpoint together to avoid duplicate entries or elapsed double-counting.
+
+## 2026-10-06 - A GPT-6 Astra receiver gets the goal contract without the completion audit (senpi#2796)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/prompt.ts`: `buildContinuationPrompt(goal, { modelId })` renders a shorter prompt when the receiver is `gpt-6-astra` or `gpt-6-astra-fast` (a provider prefix is tolerated; `isGpt6AstraReceiver`): the untrusted objective, the four legal turn endings, and the blocked floor `update_goal` enforces. The completion audit, the no-progress check, and the usage lines are not rendered for that receiver. Every other model id, and an undefined one, renders exactly the previous prompt.
+- `lifecycle-helpers.ts` and `monitor-continuation.ts`: the two continuation call sites pass `ctx.model?.id`.
+- `test/suite/goal-modules.test.ts`: the Astra receiver drops the audit and stays under half the default length while keeping the contract lines; Sol, 6.1 Sol, Luna, Claude, Kimi, a near-miss id, and `undefined` render `toBe` the unpinned prompt.
+
+### Why
+
+- The audit's "uncertainty means not achieved - gather stronger evidence" line is unpassable for a model whose prior is already to verify broadly; on a 12-hour session it was injected 46 times and every wake added a gate to the todo list. Other models were not observed doing this, so they keep the audit.
+
+### Why an extension could not handle it
+
+- The continuation prompt is built inside this builtin's wake path.
+
+### Expected merge conflict zones
+
+- `prompt.ts`: the top of the file and the new function after `buildContinuationPrompt`; the two `buildContinuationPrompt(goal` call sites.
+
+## 2026-10-05 - Record the actual wake trigger and label cache accounting (senpi#2778)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` and `cache-warm.ts`: resumed events and entries record `wakeCause` (`timer` or `sources-drained`) and the original planned `dueAtMs`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/cache-warm-renderer.ts`: early source drains and timer backstops have distinct explanations. Old entries without a cause say it was not recorded. Cache figures are labeled cumulative prior-turn accounting, the discount is conditional on reuse, and the next cache hit is explicitly unverified.
+
+### Why
+
+- A source draining before its backstop was labeled a scheduled wake. Aggregated request usage was presented as tokens that had stayed warm, although no provider request had verified reuse.
+
+### Why an extension could not handle it
+
+- This builtin owns the timer/drain distinction, durable wait entries, and their renderer.
+
+### Expected merge conflict zones
+
+- `monitor-continuation.ts`: resumed payload construction; `cache-warm.ts`: durable entry type; `cache-warm-renderer.ts`: wake explanation and cache line.
+
+## 2026-10-02 - Stale-context detection recognizes a reload retirement (senpi#2549)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/stale-context.ts`: `isStaleExtensionContextError` also matches `STALE_EXTENSION_GENERATION_AFTER_RELOAD_MESSAGE` ("stale extension generation after reload"), the message `AgentSession.reload()` retires the old generation with. The runner keeps the first retirement message, so a context retired by a reload never carries the replacement prefix the check looked for.
+- `packages/coding-agent/src/core/extensions/builtin/goal/elapsed-ticker.ts` and `packages/coding-agent/src/core/extensions/builtin/goal/wait-ticker.ts`: `sync()` returns without arming the interval when its immediate render hit a retired ctx (the tick already cleared `ctx`), instead of leaving an inert interval running until the next `stop()`. The next live `sync()` arms it.
+- Tests (`packages/coding-agent/test/suite/regressions/2549-stale-context-detection.test.ts`): the check recognizes the errors a context retired by a real harness reload and by a real dispose throw, rejects unrelated errors, `GoalElapsedTicker` retires on the reload error, and neither goal ticker arms an interval for a sync whose first render is stale, while the next live sync does.
+
+### Why
+
+- On main the reload error was not recognized, so `GoalElapsedTicker`, `GoalWaitTicker`, the monitor continuation and stop lifecycle (#1028) rethrew it from their timer callbacks, and the monitor footer ticker fixed for senpi#2549 shares this check.
+
+### Why an extension could not handle it
+
+- The check is the goal builtin's own helper, shared by the terminal builtin's ticker.
+
+### Expected merge conflict zones
+
+- `stale-context.ts`. Fork-only surface.
+
+## 2026-10-01 - The no-goal todo reminder names when a goal is worth registering (senpi#2505)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-gate.ts` `staleGoalTodoReminder`: the fix line is "Register one with create_goal only when the work must outlive this turn - it waits on external state or needs more than one verify-and-fix round" (the stale-goal variant adds that a new goal archives the completed one), and the closing line is "Otherwise continue without a goal." The old text ("If this todo list tracks a durable objective (multi-step work that should survive across turns), register it now with create_goal so progress is tracked and audited. ... If the todos are trivial short-lived bookkeeping for the current turn, continue without a goal.") asked the model to classify its own list, and GPT-6 Astra registered a goal for a single-turn status question. `test/suite/goal-todo-stale-reminder.test.ts` is unchanged (it asserts the no-goal and stale-goal lines and `undefined` for live goals).
+
+### Why
+
+- The reminder is a decision rule now, the same one the `create_goal` tool description already states, so a single-turn request stops picking up a goal, a completion audit and an `update_goal` call.
+
+### Why an extension could not handle it
+
+- This is the goal builtin's own reminder text.
+
+### Expected merge conflict zones
+
+- `todo-gate.ts` `staleGoalTodoReminder`.
+
+## 2026-10-01 - Goal mutations are atomic across processes (senpi#2499)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/goal-file-lock.ts` (new): `withGoalFileLock(ref, fn)` runs `fn` inside the existing in-process `serializeByKey` tail and, inside that, holds a proper-lockfile lock for the whole read-modify-write, using the lockfile-policy backoff (100ms..1s) and `isLockError`. `GOAL_LOCK_OPTIONS` (`stale: 10s`, `update: 2s`, `realpath: false`) is shared by every goal-lock contender: a goal RMW takes milliseconds, so a live holder is never seen as stale, while a holder killed mid-mutation is reclaimed within ~10s. `GOAL_LOCK_WAIT_BUDGET_MS` (15s) exceeds the stale window, so waiters ride through a crashed holder; only an exhausted budget throws `GoalStoreBusyError`. `fn` receives `HeldGoalLock`: `write(goal)` and `assertHeld()` throw `GoalStoreLockCompromisedError` right before a write once the lock was reclaimed. The lock directory is `.goal-lock-<sha256(basename)[:40]>` beside the goal file (`goalLockFilePath`), because the default `<file>.lock` overflows NAME_MAX for a goal basename already at 255 bytes. Only the parent directory is created before locking, never a placeholder goal file, so a pending legacy import still runs.
+- `packages/coding-agent/src/core/extensions/builtin/goal/store.ts`: `writeGoal`, `createGoal`, `updateGoal`, `clearGoal`, `accountGoalUsage`, `recordContinuationDelivered`, and `resetContinuationStreak` run under `withGoalFileLock` and write through `held.write`, with `held.assertHeld()` before the history and full-objective side writes. New `migrateLegacyGoal(ref)` runs `migrateLegacyGoalFile` under the same lock.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: `session_start` calls `migrateLegacyGoal` instead of `migrateLegacyGoalFile`, so a concurrent mutation in another process cannot overwrite a freshly imported legacy goal.
+
+### Why
+
+- `serializeByKey` is an in-process `Map` of promise tails, so two processes holding the same session (shared session holders, a TUI plus a desktop or daemon host, a `PI_GOAL_STORE_FILE` child) interleaved read-modify-write cycles: two processes x 300 usage updates kept 303 of 600, and a completion in one process was reverted to `active` by the other.
+
+### Why an extension could not handle it
+
+- Goal is a manually ported builtin (`MANUAL_PACKAGES` in `scripts/sync-builtin-extensions.mjs`); its store is maintained here.
+
+### Expected merge conflict zones
+
+- LOW: the import block, each mutation's `withGoalFileLock(ref, async (held) => ...)` opening and `held.write` call in `store.ts`, and the `session_start` migration call in `index.ts`. An upstream pi-goal sync that restores `serializeByKey(goalFilePath(ref), ...)` or direct `writeGoalFile` calls must keep the cross-process lock and the guarded write.
+
+## 2026-09-30 - Drop test-only goal exports (senpi#2447)
+
+### What changed
+
+- `prompt.ts`: removed `buildMonitorStallNotice`, a one-line wrapper over `buildGoalStallNotice(n, { liveSources: ["terminal-monitors"] })` that only a test called. The earlier entry describing it is historical.
+- `continuation.ts`: removed `shouldQueueGoalContinuationWhenIdle` and `shouldQueueGoalContinuationAfterAgentEnd`. Neither had a production caller; production gates through `evaluateGoalContinuation` and `didAgentEndCleanly`, whose message-shape rows the suite now asserts directly.
+
+### Why
+
+- The exports existed only to be tested. The verdict suite (`goal-continuation-verdict.test.ts`) owns the status, pending and idle gating at the production entry.
+
+### Why an extension could not handle it
+
+- Goal is a manually ported builtin (`MANUAL_PACKAGES` in `scripts/sync-builtin-extensions.mjs`), so its source is maintained here.
+
+### Expected merge conflict zones
+
+- LOW: the tail of `prompt.ts` and the predicate block above `didAgentEndCleanly` in `continuation.ts`. An upstream pi-goal sync that re-adds them can drop them again.
+
+## 2026-09-28 - Terminal provider 401/403 blocks the goal on the first hit (senpi#2293)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: `terminalProviderAuthFailure(event)` returns `{ httpStatus: 401 | 403, provider, model }` when the turn ends with an error, `willRetry: false`, and no system-owned abort. It reads the adapter's `providerDiagnostic` first (`httpStatus` 401/403, or category `auth`); only when the message carries no diagnostic does it fall back to a leading `401`/`403` in `errorMessage`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation-recovery.ts`: `PROVIDER_AUTH_BLOCKED_REASON_PREFIX`, `providerAuthBlockedReason`, and `providerAuthRecoveryHint` (names `provider/model`, `/login <provider>`, the key/token for 401 or the model's plan access for 403 (the Copilot plan for `github-copilot`), and any proxy or gateway). `isMechanicalContinuationBlock` treats reasons with the prefix as mechanical.
+- `packages/coding-agent/src/core/extensions/builtin/goal/agent-end-continuation.ts`: an active goal whose turn ended with a terminal 401/403 is blocked before the system-abort and provider-recovery routing, with one warning notice.
+
+### Why
+
+Since 2026-08-24, terminal provider errors queue a guarded `providerRecovery` continuation. A rejected credential or a model the account cannot use fails identically on every continuation, so the goal burned all 8 continuations and ended with `continuation cap reached. Send any message to resume.`; the next message looped again. Reported on GitHub Copilot with kimi-k3, whose endpoint answered 403 with an empty body.
+
+### Why an extension could not handle it
+
+Agent-end routing, goal blocking, and the mechanical-block set are private to the goal builtin.
+
+### Expected merge conflict zones
+
+- LOW in `agent-end-continuation.ts` (the block after the policy-rejection check), `terminal-provider-error.ts` (new export), `continuation-recovery.ts` (`isMechanicalContinuationBlock`).
+
+## 2026-09-25 - Turn-end todo-owed backstop for main sessions without an active goal (senpi#2121)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts` (new): `TodoOwedBackstop` evaluates at the tail of the `agent_end` handler, after `continueGoalAfterAgentEnd` returned. A turn owes a nudge only when every clause holds: main session (`ctx.sessionManager.getHeader()?.parentSession === undefined` and `ctx.mode` not in `{print, json}` - the set `terminal/notify.ts` never wakes; child sessions are untagged today, so they pass and are treated as main), `event.aborted !== true` and `didAgentEndCleanly(event.messages)` with a last stopReason other than `length`, no pending messages, no active goal, no continuation pending, at least one open todo task (`todo-gate.ts openTodoTaskContents`), no live wake source (`monitor-continuation.ts hasActiveWakeSources`), no `ask_user_question` / `request_user_input` tool call in the run's messages, a final paragraph that does not end a sentence with `?`, and `todo.turnEndBackstop` enabled. Delivery is a hidden followUp exactly like `queueHiddenGoalPrompt` (`pi.sendMessage({ customType: "senpi.todo-owed", content, display: false }, { triggerTurn: true, deliverAs: "followUp" })`) with the Ask/Now/Next anchors from `todotools/state.ts getLatestTodoStateFromBranchEntries` + `describeAskNowNext`; the second delivery prefixes "Second and final reminder. ". After two, `ctx.ui.notify("Agent stopped with N open todo tasks (Now: ...). Send a message to continue.", "warning")` fires once per chain, then nothing. `todo_owed_reminder` is emitted per delivery/cap; every suppression logs one debug line naming the first failing clause. No timers anywhere.
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: instantiates the backstop, resets its chain on `session_start` and `session_tree`, and calls `afterAgentEnd` at the tail of the `agent_end` handler.
+- `packages/coding-agent/src/core/extensions/builtin/goal/direct-input-lifecycle.ts`: optional `onAcceptedDirectInput` dependency, fired for every accepted non-extension input; the goal builtin wires it to reset the backstop chain.
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts`: `didAgentEndCleanly` is now exported (the backstop reuses the goal's own clean-end predicate instead of restating it).
+
+### Why
+
+A text-only end of turn with open todo work and no question stops an unattended run mid-task. The Anthropic Opus 5.5 guide ("Unattended agentic runs") prescribes exactly this harness shape: name the open items in a short user message and stop after two or three automatic continuations. The goal path already owns the turn end when a goal is active; this backstop covers only the gap where nothing does.
+
+### Why an extension could not handle it
+
+The predicate needs the goal builtin's own continuation state (clean-end predicate, continuation latch, wake sources, direct-input lifecycle); a foreign extension cannot see any of it.
+
+### Expected merge conflict zones
+
+- LOW in `index.ts` (tail of the `agent_end` handler, the `session_start` reset), `direct-input-lifecycle.ts` (dis injection), `continuation.ts` (the `export` keyword).
+
+## 2026-09-24 - Sync with pi-goal 0.3.1 (senpi#2079)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/prompt.ts`: the continuation prompt calls the objective "untrusted goal data" instead of "user-provided data" (pi-goal#4). The rest of senpi's continuation guidance is unchanged.
+- Not ported: pi-goal 0.3.1 removes the blocked -> active auto-resume on every user prompt. senpi never had that path: `direct-input-lifecycle.ts` reactivates a goal on accepted direct input only for mechanical continuation blocks (`isMechanicalContinuationBlock`), so user-interrupt and model-declared blocks already stay blocked until `/goal resume`.
+- The sync report's remaining hunks are whole-file differences between upstream's smaller module set and senpi's extended one; applying them would revert senpi-only behavior, so they were not applied.
+
+### Why
+
+`create_goal` can store an objective the model inferred, so calling it user-provided overstated its authority in every hidden continuation turn.
+
+### Why an extension could not handle it
+
+The continuation prompt is built inside this builtin.
+
+### Expected merge conflict zones
+
+- LOW in `prompt.ts` first objective sentence.
+
+## 2026-09-23 - One cache-warm card per wait; reloads keep the parked wait (senpi#2051)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/parked-wait.ts` (new): `findParkedGoalWait(branch, goalId)` reads the pending wait (last `goal-cache-warmup` entry is a `scheduled` one for this goal, no message after it).
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: `rearmMonitorBackstop` passes the parked wait to `#schedule`, which then keeps its iteration, cache snapshot, delay and original `dueAtMs` (timer armed for the remaining time), re-emits `goal_continuation_scheduled` for live consumers, and appends no entry.
+- `packages/coding-agent/src/core/extensions/builtin/goal/cache-warm-renderer.ts` + `index.ts`: `isSameGoalCacheWarmCard` registered as the renderer's `replaces` option, so a same-goal entry directly after the previous card updates it in place.
+
+### Why
+
+- A config reload re-armed the backstop through a fresh generation: a new iteration-1 entry without cache figures and a full backstop from the reload time, which can land after the prompt-cache TTL. Three stacked cards were observed for one wait.
+
+### Why an extension could not handle it
+
+- Goal-owned logic; documented here by convention (fork-only directory).
+
+### Expected merge conflict zones
+
+- `#schedule` and `rearmMonitorBackstop` in `monitor-continuation.ts`.
+
+## 2026-09-22 - claude-sdk-oauth provider id renamed to anthropic-subscription in the exhaustion classifier comment (senpi#1989)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: doc comment names the `anthropic-subscription` account-rotating proxy. The classifier itself compares `message.api !== "claude-sdk-oauth"`, which is the FROZEN wire api id (see the api-id split entry in `builtin/anthropic-subscription/changes.md`) and stays byte-identical.
+
+### Why
+
+Comment accuracy after the provider-id rename; the wire api id does not move, so the classifier keeps matching messages from the renamed provider.
+
+### Why an extension could not handle it
+
+Terminal-provider-error classification is goal-extension core logic; nothing for another extension to override.
+
+### Expected merge conflict zones
+
+- `terminal-provider-error.ts` comment block, against classifier changes.
+
+## 2026-09-20 - Resume blocked goals on manual continue (#1871)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts` resumes a blocked goal when a `manual-continue` custom message starts. The user-authorized transition clears blocked metadata and continuation counters, restarts accounting, and refreshes the goal UI without queuing another turn.
+- Regression coverage drives idle, steering, and follow-up dot submissions through `AgentSession`, including model, user-interrupt, and provider blocks. Paused/completed goals, ordinary input, image submissions, unrelated custom messages, and sessions without goals retain their behavior.
+
+### Why
+
+- The dot shortcut bypasses ordinary input events, so the direct-input lifecycle never saw the user's request to continue. The conversation resumed while its goal remained blocked.
+
+### Why an extension could not handle it
+
+- This is implemented in the existing goal extension using its message lifecycle hook. No core or public extension API change is needed.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: imports and message lifecycle handlers.
+
+## 2026-09-13 - Park on the earliest authoritative question deadline (senpi#1645)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/channel-state-subscriptions.ts` forwards the full wake-source event. `monitor-continuation.ts` takes the minimum supplied ask-user item deadline instead of inferring every request's deadline from the settings window.
+- A changed minimum reparks an already scheduled monitor timer, including while direct input holds it. Progress retains the same cache-warm iteration and does not append another transcript row. The settings heuristic remains for count-only events; the clamp, past-deadline extra window and last-source drain rule are unchanged. This supersedes the metadata-free behavior described in the 2026-09-10 park entry below.
+- The real ask-user/goal integration world now supports multiple request IDs, independent request timeouts and UI progress. Tests cover 30m/5m ordering, settlement recomputation, progress extension, and no repeated warmup transcript entries.
+
+### Why
+
+- Multiple pending requests can have different idle deadlines, and typing extends one request without changing the pending count. The parked timer must follow the current minimum without introducing a periodic prompt or a transcript row per keystroke.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` owns the single timer, direct-input holds and admission checks. Event consumers cannot reschedule it from outside the coordinator.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: schedule, noteAskUserWait and setWakeSourceCount; `channel-state-subscriptions.ts`: callback signature and wake-event forwarding. No prompt or backstop-bound constants change.
+
+## Blocked is earned, not asserted: live-channel and goal-turn guards (2026-09-11)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/blocked-audit.ts` (new): `GOAL_BLOCKED_MIN_GOAL_TURNS = 3`, `goalTurnsSinceActivation(entries, goal)` (the calling turn plus every goal-continuation entry delivered since `lastStartedAt`, restarting at the last real user message), and the two rejection messages the model reads.
+- `packages/coding-agent/src/core/extensions/builtin/goal/tool-registration.ts`: `update_goal` with status `blocked` now runs `assertBlockedAuditIsEarned` before the transition. It throws while any live resumption channel can still deliver (naming the channels) and while the goal has spent fewer than three goal turns on the blocker. `complete` is untouched. The `update_goal` description states both rejections and that retries themselves are unbounded; the `create_goal` description replaces "only when explicitly requested ... do not infer goals from ordinary tasks" with the decision rule the harness already nudges through `staleGoalTodoReminder` (register a goal for work that outlives the turn: it waits on external state, or the requested outcome needs more than one verify-and-fix round).
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts`: `liveWakeSources()` exposes the live channel kinds the private snapshot already tracked; `packages/coding-agent/src/core/extensions/builtin/goal/index.ts` passes it to `registerGoalTools`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/prompt.ts`: the blocked audit is restructured as codex's no-progress check plus a three-condition audit. New: progress is defined against status restatements, plans, hypotheses, and untaken next steps; retries are declared unbounded with a widen-the-source rule; the pre-threshold ending is stated positively (say the blocker once, take the next available action, leave the goal active). The recurrence bullet now names the goal-turn floor the tool enforces instead of self-counted "materially different attempts". The completion audit gains the scope-match rule ("a narrow check never supports a broad claim") and "the audit has to prove completion; failing to find remaining work is not proof", each replacing the weaker line in place.
+- `packages/coding-agent/src/core/extensions/builtin/goal/todo-gate.ts`: the open-todo rejection no longer says "finish each task and mark it done"; it asks for the remaining work or an honest drop and names closing an unfinished task as a false completion.
+- Tests: `packages/coding-agent/test/suite/goal-blocked-guards.test.ts` (new: turn counting, both rejections, the accepted block, the user-message restart, and completion staying ungated), `goal-prompt-question-routing.test.ts` and `prompt-single-home.test.ts` updated. RED captured on the test-only commit `47e808925` (3 failed / 5 passed, each failure "promise resolved instead of rejecting"); GREEN after the guards.
+
+### Why
+
+- Blocked was the only stop the model could declare unilaterally, and it was certified in prose. Across 703 sessions since 2026-09-04 (16,688 turns) GPT-6 Astra called `update_goal(blocked)` 24 times against 3 for claude-fable and 5 for claude-opus. In one session both blocked calls landed on the second goal turn of a run, each claiming three exhausted paths, while the data called missing sat in a KV namespace the model had not read; the same session had already reported a completion verified by one probe of a different model than the user's. The two conditions a harness can check - a channel that can still deliver, and turns actually spent on this blocker - move that judgment out of prose. Codex states the same three-turn rule in `ext/goal/templates/goals/continuation.md` and its `update_goal` schema but enforces neither; senpi can, because continuations are session entries.
+- The floor is a floor, never a cap: nothing here limits attempts, and both messages say so. This matches the owner's standing instruction that a goal is not to be terminated as blocked while any executable path remains.
+
+### Why an extension could not handle it
+
+- The builtin owns the goal tools, the wake-source registry, and the continuation prompt. Only it can reject its own status transition or count the continuations it delivered.
+
+### Expected merge conflict zones
+
+- MEDIUM: `prompt.ts` audits and `tool-registration.ts` descriptions are edited often; `index.ts` `registerGoalTools` dependency object gains one field.
+
+## 2026-09-09 - Stop automatic goal recovery after terminal policy rejection (#1520)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: distinguish terminal classifier refusals/sensitive stops and the Codex safety-block error diagnostic from infrastructure failures, only after the explicit retry owner reports `willRetry: false`. The unstructured Codex diagnostic carries no policy code, so it is trusted only on `api === "openai-codex-responses"`; another provider or gateway emitting the same sentence keeps the existing provider/system recovery path. Structured classifier refusals stay provider-independent because they carry their own policy details.
+- `packages/coding-agent/src/core/extensions/builtin/goal/agent-end-continuation.ts`: persist the active goal as blocked before recovery routing and synchronize the monitor to clear staged recoveries and armed timers. The goal identity/objective survive; no continuation is delivered or counted. This is not a mechanical block that unrelated input automatically resumes.
+- `packages/coding-agent/test/suite/goal-policy-rejection.test.ts`: the identity gate is a literal copy of an id owned by `packages/ai`, so the suite drives the same lifecycle once per api id in the shipped Codex catalog (`CHATGPT_SUBSCRIPTION_MODELS`). Renaming that api fails the suite instead of silently disarming the guard while the hardcoded cases stay green.
+
+### Why
+
+- `db6069f83` intentionally kept goals active after infrastructure retry exhaustion. Policy rejection was missing from that distinction, so settlement queued up to eight hidden follow-ups to an already rejected request. Non-policy provider/system recovery and explicit retry ownership remain unchanged.
+
+### Why an extension could not handle it
+
+- The builtin owns goal recovery routing, persistence, timers, and settlement admission. An external extension cannot veto its queued continuation.
+
+### Expected merge conflict zones
+
+- LOW: `agent-end-continuation.ts` routing/imports and `terminal-provider-error.ts` predicates.
+
+## 2026-09-10 - Route user-only blockers through the question tool
+
+### What changed
+
+- `prompt.ts`: goal continuation now names the question tool as a fifth legal ending, asks user-only blockers before the blocked audit, counts materially different attempts, and routes stall notices to questions.
+- `tool-registration.ts`: `update_goal` tells the model that a missing user decision is a question, not a blocked status, until the user fails to answer.
+
+### Why
+
+- A goal can be blocked by information only the user can provide; routing that case through the question tool preserves progress and makes the wait explicit.
+
+### Why an extension could not handle it
+
+- The goal continuation prompt and `update_goal` tool description define the model-facing goal protocol and must be changed at their source.
+
+### Expected merge conflict zones
+
+- LOW: `prompt.ts` continuation and stall guidance; `tool-registration.ts` update description.
+
+## 2026-09-10 - Park the continuation on a pending ask-user question
+
+### What changed
+
+- `monitor-continuation.ts`: the coordinator tracks the `ask-user` wake source the ask-user extension publishes while an async question is pending (`WAKE_SOURCE_STATE_EVENT{source:"ask-user"}`). While that source is live, `#schedule` arms ONE `monitor` timer at the question's idle deadline instead of the periodic backstop, so no continuation prompt reaches the model while the user is deciding. The deadline is recorded when the source count rises (a newly asked question restarts the window) from `ctx.getAskUserSettings().timeoutMinutes` (default 30), cleared when the count reaches zero, and clamped through `resolveGoalMonitorContinuationDelayMs` so a misconfigured setting cannot park the goal past the monitor's [1s, 1h] bounds. A deadline that has already passed - the extension restarts its idle timer whenever the user interacts - parks for one more window rather than reverting to the backstop.
+- Answer and timeout both drop the wake source, so the existing drain fire (1s after the last source reaches zero) resumes the goal exactly once; the deadline timer is only the backstop for a question whose source never drains.
+- `prompt.ts`: `buildGoalStallNotice` gains one ask-user line ("A question to the user is pending; wait for the answer or the timeout, do not ask it again, and do not treat the wait as a stall.") and excludes `ask-user` from the generic "inspect the live channel / stop or replace it" fallback, which is wrong advice for a question only the user can resolve.
+- `test/suite/goal-wake-sources.test.ts`, `test/suite/goal-monitor-continuation.test.ts`: cover the park (no prompt before the 30m deadline with the 270s backstop configured, one prompt at the deadline), the single drain wake, the stall-notice line, and the regression that a turn still awaiting a tool result queues no continuation.
+
+### Why
+
+- An async question keeps the turn's work open while the user decides. The 270s backstop would re-prompt the main model roughly every 4m30s for the whole 30-minute answer window - full-context turns the model cannot act on, and the same wait would eventually be read as a stall and audited as blocked. Parking on the question's own deadline keeps exactly one wake: the answer (drain fire) or the timeout.
+
+### Why an extension could not handle it
+
+- The wake-source ledger, the single-flight timer and the admission verdict live inside the built-in goal continuation coordinator; no extension hook can observe or replace that timer. The stall notice is built by the same package.
+
+### Expected merge conflict zones
+
+- LOW in `monitor-continuation.ts` around `#schedule`'s delay selection and `#setWakeSourceCount`.
+- MEDIUM in `prompt.ts`: todo 14 of the same plan edits `buildContinuationPrompt` and the closing lines of `buildGoalStallNotice`; this change only adds the ask-user advice bullet and the fallback exclusion.
+
+## 2026-09-08 - Recover malformed empty tool-use turns
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/continuation.ts`: distinguish `toolUse` assistant turns with no tool-call blocks from intentional tool termination and admit only the malformed case on immediate continuation.
+- `packages/coding-agent/src/core/extensions/builtin/goal/agent-end-continuation.ts`: route malformed empty tool-use turns through `providerRecovery`.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` and `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`: populate the malformed-turn fact in every verdict input.
+- `packages/coding-agent/test/suite/goal-continuation-verdict.test.ts`: cover malformed and intentional tool-use verdicts.
+
+### Why
+
+- A provider can emit `toolUse` without any tool-call block. Nothing executed, so treating it as a deliberate terminating tool leaves an active goal permanently stalled.
+
+### Why an extension could not handle this
+
+- The built-in goal extension owns agent-end admission and its recovery routing.
+
+### Expected merge conflict zones
+
+- LOW: continuation eligibility and agent-end verdict-input construction.
+
+## 2026-09-08 - The monitor backstop is a periodic re-check again, default 270s
+
+### What changed
+
+- `cache-warm.ts`: `GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS` is 270_000 (the 5m Anthropic prompt-cache TTL minus the 30s safety buffer) instead of 3_570_000. `resolveGoalMonitorContinuationDelayMs` is otherwise unchanged: it still takes only `goalBackstopMaxSeconds`, never the prompt-cache safe wait, and clamps into [1s, 1h].
+- `monitor-continuation.ts`: no code change; the `#schedule` comment now describes the backstop as the periodic re-check floor under the drain fire.
+- The mirrors of the default moved with it: `core/settings-manager.ts` `getPromptCacheGoalBackstopMaxSeconds()` (270), `core/settings-shapes.ts`, `core/extensions/runner.ts`, and the fake contexts in `test/suite/goal-monitor-test-harness.ts` and `test/suite/goal-ticker-stale-context.test.ts`.
+- `cache-keepalive/index.ts`: comment only; the loop stays decoupled from the goal timer because the configured backstop may still sit past the TTL.
+
+### Why
+
+- A wake source can be misconfigured - a monitor filter that never matches, a stream that never ends, a background job that never exits. With the 3570s default from 2026-09-07 (code-yeongyu/oh-my-openagent#7720) such a goal parked for an hour before it could notice. The owner decided that a full re-check turn every 4m30s is the right price for never stranding a goal on a source that will not deliver. The event-driven drain fire stays the normal path, and a wait you trust can opt back into the cheaper long backstop with `promptCache.goalBackstopMaxSeconds: 3570`.
+
+### Why an extension could not handle it
+
+- The delay is chosen inside the built-in goal continuation coordinator, which owns the wake-source ledger, the single-flight timer, and the admission verdict. No extension hook can observe or replace that timer.
+
+### Expected merge conflict zones
+
+- LOW: the `GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS` constant and its doc comment in `cache-warm.ts`.
+- LOW: the `resolveGoalMonitorContinuationDelayMs` docstring and the `#schedule` comment.
+
+## 2026-09-07 - The monitor wait is a stall backstop, not a cache-warm cadence (code-yeongyu/oh-my-openagent#7720)
+
+### What changed
+
+- `cache-warm.ts`: `resolveGoalMonitorContinuationDelayMs` takes only `goalBackstopMaxSeconds` and no longer reads the prompt-cache safe wait. It returns `goalBackstopMaxSeconds * 1000` (default `GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS`, 3_570_000, for a missing, non-finite, or non-positive setting) clamped into [1s, 1h]. `GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS` stays exported as the accounting fallback for a continuation whose scheduled delay is no longer known; it is never the armed delay.
+- `monitor-continuation.ts`: `#schedule` passes only `getPromptCacheGoalBackstopMaxSeconds()`, so a live wake source arms the stall backstop instead of a ~270s cache-safe timer. The drain fire in `#setWakeSourceCount` (1s after the last wake source reaches zero) stays the single normal continuation path, and the backstop still admits one continuation if it fires while sources are live. `GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS` is re-exported here for callers and tests.
+- `cache-warm-renderer.ts`: the scheduled notice says "Stall backstop ... - the goal resumes as soon as a wake source delivers" instead of claiming the timed wake keeps the prompt cache warm. Event names (`goal_continuation_scheduled`, `goal_continuation_resumed`, `goal_continuation_timer_state`) and the `goal-cache-warmup` entry type are unchanged, because omo-desktop-app consumes them.
+
+### Why
+
+- With the default 5m Anthropic TTL the backstop was a 270s timer, and every firing admitted a `monitorDelayed` continuation - a full main-model turn - even though wake sources were still live. The turn ended, `afterAgentEnd` re-armed the timer, and the session paid for the whole accumulated context every ~4m30s for as long as it waited, with no progress to show for it. The wait exists to let the wake sources deliver; a timer is only needed to break a stall.
+
+### Why an extension could not handle it
+
+- The delay is chosen inside the built-in goal continuation coordinator, which owns the wake-source ledger, the single-flight timer, and the admission verdict. No extension hook can observe or replace that timer.
+
+### Expected merge conflict zones
+
+- LOW: the `resolveGoalMonitorContinuationDelayMs` signature and its single call site in `#schedule`.
+- LOW: the scheduled-phase `whyLine` string in `cache-warm-renderer.ts`.
+
+## 2026-09-07 - Block continuation after an unrecovered context overflow (#1422)
+
+### What changed
+
+- `continuation.ts`: `GoalContinuationInput.lastTurnStuckOnContextOverflow` and the `context-overflow` deny reason; `evaluateGoalContinuation` denies on every automatic path when the last turn was stuck on a context overflow, before eligibility.
+- `continuation-recovery.ts`: `CONTEXT_OVERFLOW_BLOCKED_REASON` ("context overflow ended the turn (compaction did not recover)") joins the mechanical blocks, so accepted direct input resumes the goal.
+- `lifecycle-helpers.ts` / `monitor-continuation.ts`: the verdict input derives the flag from the last assistant message through `core/compaction/stuck-overflow.ts` (agent-end paths and session-start).
+
+### Why
+
+- A provider overflow was treated like any terminal provider error: `providerRecovery` re-sent the identical context and the provider rejected it identically, three times in 30 s in the reported session. The context does not change between attempts, so re-prompting is deterministic failure.
+
+### Expected merge conflict zones
+
+- LOW: the verdict input type, the deny-reason union, and `blockedReasonForContinuationGuard`.
+
+## 2026-09-04 - update_goal points at the audits instead of restating them
+
+### What changed
+
+- `tool-registration.ts`: the `update_goal` description drops the blocked-audit prose (live-resumption-channel test, three-consecutive-turn recurrence, hard/slow/uncertain caveat) that `buildContinuationPrompt` already teaches on every goal turn. It now states what the tool itself enforces: the audits decide, `complete` is rejected while todo tasks are open, `blocked` needs a reason, resume restarts the blocked audit, pause/resume are not this tool, and the final usage report follows a successful `complete`.
+- `prompt.ts`: the continuation prompt drops its own two repetitions - the trailing "do not call update_goal unless the audit is satisfied" line (already the first sentence of both audits) and the "repeating that the work is done" clause (already in the four-ways bullet).
+
+### Why
+
+- The same policy shipped twice per goal turn: 254 tokens in the tool schema and again inside the 819-token continuation prompt. Behavior is unchanged because the continuation prompt remains the single home of both audits and is present whenever a goal is active.
+
+### Expected merge conflict zones
+
+- LOW: the description string literal and the two removed lines in the prompt array.
 
 ## 2026-08-28 - RPC session resume does not deadlock on stopped-goal prompts
 
@@ -1019,7 +1686,6 @@ surface; no core extension API change is required.
 
 - LOW in `prompt.ts` if the standalone goal continuation wording changes.
 
-
 ## Overview
 Persistent per-thread goal tracking as an in-tree builtin. Ports the standalone
 `pi-goal` extension into senpi with no dependency on it, file-based persistence,
@@ -1294,7 +1960,6 @@ codex-aligned tool naming, and budget-driven behavior removed. An optional
 - MEDIUM: `index.ts`, `tool-registration.ts`, and `ui.ts` retain senpi's split
   registration, elapsed ticker, and core abort-event integration.
 
-
 ## Reload no longer auto-starts a stopped goal; gap-abort blocks active goal (2026-07-27)
 
 ### What changed
@@ -1336,3 +2001,24 @@ stale-ctx error (`stale-context.ts`) inside `tick()` and retire (clear the
 interval, drop the ctx); `GoalWaitTicker.stop()` tolerates a stale ctx on its
 final clear render. A later `sync()` with a live ctx re-arms them. Covered by
 `test/suite/goal-ticker-stale-context.test.ts`.
+
+## 2026-09-24 — Goal cache-warm consumes the prompt-cache lifetime classification (#831, #2090)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/cache-warm.ts` reads `resolvePromptCacheLifetime()`. For a best-effort cache, `estimateCacheWarmMetrics()` reports `cacheLifetime: "best-effort"` with the cached tokens and no `ttlSeconds` or savings estimate, and the new `resolveGoalBackstopMaxSecondsForCache()` replaces an unconfigured (270 s default) backstop with `GOAL_MONITOR_BEST_EFFORT_BACKSTOP_SECONDS` (3570). An explicitly configured backstop other than the default is kept. Explicit-TTL and unknown lanes are unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts` passes the active model's lifetime into the backstop resolution when a monitor wait is scheduled.
+- `packages/coding-agent/src/core/extensions/builtin/goal/cache-warm-renderer.ts` renders a best-effort card as "~N tokens were cached after the prior turn · provider caching is best-effort, with no expiry to beat", without TTL, warmth, or savings copy.
+- `packages/coding-agent/src/core/extensions/builtin/goal/parked-wait.ts` restores the `cacheLifetime` marker when a reload re-arms a parked wait.
+
+### Why
+
+- The 270 s default backstop exists to land the re-check inside a 5-minute TTL. A best-effort cache (direct DeepSeek) has no TTL, so that wake only preserved a fabricated expiry and the card claimed a "5m prompt-cache TTL". Explicit-TTL lanes now show their real TTL (30m for OpenAI GPT-5.6+/GPT-6).
+
+### Why an extension could not handle it
+
+- The Goal extension owns the monitor timer, the `goal-cache-warmup` entry/event payload and its renderer; no other extension can change the delay or copy after scheduling.
+
+### Expected merge conflict zones
+
+- LOW: `cache-warm.ts` backstop constants and metrics function, the delay expression in `monitor-continuation.ts` `#schedule()`, the `warmLine()` branch in `cache-warm-renderer.ts`, and `parseCache()` in `parked-wait.ts`.

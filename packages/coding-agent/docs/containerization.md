@@ -13,6 +13,7 @@ There are two general options. You can either
 | Gondolin extension | Built-in tools and `!` commands | Local micro-VM isolation while keeping auth on host | See [`examples/extensions/gondolin/`](../examples/extensions/gondolin/). |
 | Plain Docker | Whole `senpi` process in a local container | Simple local isolation | Provider API keys enter the container. |
 | OpenShell | Whole `senpi` process in a policy-controlled sandbox | Local or remote managed sandbox | Requires an OpenShell gateway |
+| Docker Sandboxes | Whole `senpi` process in a managed sandbox | Local isolation with provider keys kept on the host | Requires Docker Sandboxes (`sbx`) and a kit that includes `senpi`. |
 
 Extensions run wherever the `senpi` process runs. If you run host `senpi` with a tool-routing extension, other custom extension tools still run on the host unless they also delegate their operations.
 
@@ -109,3 +110,47 @@ openshell sandbox download senpi-sandbox /workspace/repo ./repo-out
 OpenShell providers can keep raw model API keys outside the sandbox.
 When inference routing is configured, code inside the sandbox can call `https://inference.local`, and the gateway injects the configured provider credentials upstream.
 Configure senpi to use the corresponding OpenAI-compatible or Anthropic-compatible endpoint if you want model traffic to use this route.
+
+## Docker Sandboxes
+
+[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) is a managed sandbox runtime from Docker that runs the whole `senpi` process inside a sandbox.
+It is one of the container boundaries [No Built-in Sandbox](security.md#no-built-in-sandbox) points to.
+
+Unlike the Plain Docker pattern above, the provider credential is not passed into the container.
+The sandbox receives a sentinel value instead, and the `sbx` proxy substitutes the real credential on egress to `api.anthropic.com`.
+Credentials are wired at creation time, so store yours on the host before you create the sandbox.
+
+For a Claude Pro/Max subscription, run `claude setup-token` on a machine with Claude Code, then store the result on the host.
+If an `anthropic` secret is already bound, remove it first: otherwise the proxy adds an `x-api-key` header alongside the Bearer token and Anthropic rejects the request.
+`sbx secret set-custom` reads the token from stdin, so it stays out of shell history.
+
+```bash
+sbx secret rm anthropic
+
+sbx secret set-custom \
+  --host api.anthropic.com \
+  --env ANTHROPIC_OAUTH_TOKEN \
+  --placeholder 'sk-ant-oat01-{rand}'
+```
+
+The sandbox gets an OAuth-shaped placeholder, not the real token, and the proxy swaps it on egress to that host; `ANTHROPIC_OAUTH_TOKEN` is a variable senpi already reads and prefers over an API key, so no extra senpi configuration is needed.
+
+For an API key, store it with `sbx secret set anthropic` instead. The kit wires it the same way, as a sentinel the proxy substitutes on egress.
+
+With the credential stored, launch `senpi` from the project you want mounted. The community `pi-kit` bakes upstream `pi` into its image, not `senpi`, so use a kit that installs `@code-yeongyu/senpi` (or install it inside the sandbox) and start `senpi` from it:
+
+```bash
+sbx run --kit "<your-senpi-kit>" senpi
+```
+
+The current directory becomes the sandbox workspace.
+
+Do not authenticate from inside the sandbox: `/login` there writes a real token into the container and defeats the proxy model.
+
+Scripted use works the same way:
+
+```bash
+sbx exec <sandbox-name> -- senpi -p "list the failing tests"
+```
+
+See the upstream [pi kit documentation](https://github.com/docker/sbx-kits-contrib/tree/main/pi) for the credential matrix, troubleshooting, and pinning; the same secret wiring applies to a `senpi` kit.

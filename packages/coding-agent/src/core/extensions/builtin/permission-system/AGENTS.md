@@ -7,6 +7,7 @@ Builtin extension #3. Full port of opencode's permission flow. Loads preset/rule
 ```
 permission-system/
 ├── index.ts            # Extension entry — wires session_start / tool_call / session_shutdown + UI prompt
+├── internal-tools.ts   # Engine-owned bookkeeping tool classification
 ├── service.ts          # Permission service core (ask/reply/list)
 ├── evaluate.ts         # Rule evaluator with wildcard matching
 ├── wildcard.ts         # Wildcard matcher
@@ -23,6 +24,14 @@ permission-system/
 ├── external-dir.ts     # Detects writes outside repo root → forces ask
 └── changes.md          # Fork tracker (apply_patch path extraction 2026-04-13)
 ```
+
+## EVAL CELLS (senpi#3210)
+
+- An `eval` call is decided like any tool without a parser of its own: one `eval` request with pattern `*`, evaluated against the active preset. Approving it approves running the cell's code with this process's rights. Plain Node/Bun side effects inside the cell (`fs`, `child_process`, `Bun.*`, network) do not reach the permission system.
+- Calls a cell makes through `tool.*` (bash, write, edit, …) go through the dispatch authorizer (`dispatch-policy.ts`) and get their own decision, as if the model had called them directly.
+- An "always" answer on `eval` therefore allows arbitrary code for the rest of the session.
+- An `eval` tool's own `permissionParser` never downgrades the class: the shared resolver (`permissionRequestsFor` in `parsers.ts`, used by both the `tool_call` handler and `dispatch-policy.ts`) adds the `eval` request to any call whose tool-owned requests don't include it, so a `read`-class answer can never approve a cell (`fallbackEvalPermissionRequest`). It matches the exact name `eval`; a differently named tool whose execution is arbitrary code would need the same guard.
+- Invariant, pinned by `test/permission/eval-preset-floor.test.ts`: under every preset the `eval` call is at least as strict as the strictest of `bash`, `edit` and `write`, and it is `allow` only when every permission is allowed. `decideAuto` never approves `eval`, and any reviewer or judge layered on `auto` must decline it (or review only the nested `tool.*` calls), never approve a cell wholesale.
 
 ## WHERE TO LOOK
 
@@ -46,7 +55,7 @@ permission-system/
 5. **Project settings** (`.senpi/settings.json` `permission`).
 6. **CLI preset** (`--permission-preset`).
 7. **CLI flags** (`--permission`).
-8. **Session approvals** — in-memory "always allow" rules; new ones are appended to `<projectDir>/.senpi/permissions-approved.jsonl` on session shutdown.
+8. **Session approvals** — in-memory "always allow" rules; new ones are persisted to the agent-dir store at `<agentDir>/permissions/approved/<project-hash>.jsonl` (validated, allow-only, symlink-safe), appended at answer time and at session shutdown. The legacy `<projectDir>/.senpi/permissions-approved.jsonl` is imported once, validated, then removed.
 9. **No match** — interactive → ask; non-interactive → block (`non-interactive.ts`).
 
 Presets other than `full-access` start with `*=ask` so they mask lower-precedence wildcard allows before adding their own allows.

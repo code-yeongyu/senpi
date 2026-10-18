@@ -969,15 +969,18 @@ describe("permission integration", () => {
 			]);
 		});
 
-		it("should give CLI precedence over static rules", async () => {
-			// given
-			const cliRules: Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }];
-			const staticRules: Ruleset = [{ permission: "bash", pattern: "*", action: "deny" }];
+		it("should give CLI precedence over a static allow in last-match order", async () => {
+			// given a CLI allow and a static allow that are both configured rules (a CLI deny would not
+			// be overridable by an approval under HIGH 2, and a CLI allow is a configured source, so it
+			// lives in the static ruleset, later in last-match order)
+			const staticRules: Ruleset = [
+				{ permission: "bash", pattern: "*", action: "deny" },
+				{ permission: "bash", pattern: "*", action: "allow" },
+			];
 
-			// Create service with CLI rules as approved (highest precedence)
-			const { service, cleanup } = createTestService(staticRules, cliRules);
+			const { service, cleanup } = createTestService(staticRules);
 
-			// when - CLI allow should win over static deny
+			// when - the later configured allow wins over the earlier deny
 			const result = await service.ask(
 				createRequest({
 					permission: "bash",
@@ -1011,10 +1014,10 @@ describe("permission integration", () => {
 			];
 
 			// when
-			appendApproved(tempDir, rules);
+			appendApproved(tempDir, tempDir, rules);
 
 			// then
-			const loaded = loadApproved(tempDir);
+			const loaded = loadApproved(tempDir, tempDir);
 			expect(loaded).toEqual(rules);
 		});
 
@@ -1032,11 +1035,11 @@ describe("permission integration", () => {
 
 			// Get approved rules and persist them
 			const approved = service.getApproved();
-			appendApproved(tempDir, approved);
+			appendApproved(tempDir, tempDir, approved);
 			cleanup();
 
 			// when - create new service with loaded approved rules
-			const loadedApproved = loadApproved(tempDir);
+			const loadedApproved = loadApproved(tempDir, tempDir);
 			const {
 				service: service2,
 				askedEvents,
@@ -1064,17 +1067,17 @@ describe("permission integration", () => {
 			const rules2: Ruleset = [{ permission: "edit", pattern: "src/*", action: "allow" }];
 
 			// when
-			appendApproved(tempDir, rules1);
-			appendApproved(tempDir, rules2);
+			appendApproved(tempDir, tempDir, rules1);
+			appendApproved(tempDir, tempDir, rules2);
 
 			// then
-			const loaded = loadApproved(tempDir);
+			const loaded = loadApproved(tempDir, tempDir);
 			expect(loaded).toEqual([...rules1, ...rules2]);
 		});
 
 		it("should return empty array when no persistence file exists", () => {
 			// when
-			const result = loadApproved(tempDir);
+			const result = loadApproved(tempDir, tempDir);
 
 			// then
 			expect(result).toEqual([]);
@@ -1083,28 +1086,28 @@ describe("permission integration", () => {
 		it("should clear approved rules", () => {
 			// given
 			const rules: Ruleset = [{ permission: "bash", pattern: "git *", action: "allow" }];
-			appendApproved(tempDir, rules);
+			appendApproved(tempDir, tempDir, rules);
 
 			// when
-			clearApproved(tempDir);
+			clearApproved(tempDir, tempDir);
 
 			// then
-			const loaded = loadApproved(tempDir);
+			const loaded = loadApproved(tempDir, tempDir);
 			expect(loaded).toEqual([]);
 		});
 
-		it("should load approved rules from cwd even when project settings define sessionDir", () => {
-			// given
+		it("should load approved rules from the agent-dir store even when project settings define sessionDir", () => {
+			// given a project whose settings name a different sessionDir, with approvals in the agent-dir store
 			const sessionDir = createTempProject();
 			const approvedRules: Ruleset = [{ permission: "bash", pattern: "git *", action: "allow" }];
-			appendApproved(tempDir, approvedRules);
+			appendApproved(tempDir, tempDir, approvedRules);
 			writeFileSync(join(tempDir, ".pi", "settings.json"), JSON.stringify({ sessionDir }, null, 2));
 			const settingsManager = SettingsManager.create(tempDir);
 
-			// when
-			const loaded = loadPermissionSettings(settingsManager, [], tempDir);
+			// when settings load with the agent dir the store is keyed by
+			const loaded = loadPermissionSettings(settingsManager, [], tempDir, undefined, tempDir);
 
-			// then
+			// then the store's rules load regardless of the sessionDir setting
 			expect(loaded.approved).toEqual(approvedRules);
 			cleanupTempProject(sessionDir);
 		});
@@ -1319,57 +1322,15 @@ describe("permission integration", () => {
 		});
 
 		describe("non-interactive handler", () => {
-			it("should allow when CLI override allows", () => {
-				// given
-				const request = createRequest({ id: "req-noui", patterns: ["ls"] });
-				const cliOverride: Ruleset = [{ permission: "bash", pattern: "*", action: "allow" }];
-				const staticRuleset: Ruleset = [{ permission: "bash", pattern: "*", action: "deny" }];
-				const events: Array<{ event: string; data: unknown }> = [];
-
-				// when
-				const result = handleNoUI(request, staticRuleset, cliOverride, (event, data) =>
-					events.push({ event, data }),
-				);
-
-				// then
-				expect(result).toBeUndefined();
-				expect(events).toHaveLength(2);
-				expect(events[0]?.event).toBe("permission_asked");
-				expect(events[1]?.event).toBe("permission_replied");
-				expect((events[1]?.data as { reply: string } | undefined)?.reply).toBe("allow");
-			});
-
-			it("should reject when CLI override denies", () => {
-				// given
-				const request = createRequest({ id: "req-noui-2", patterns: ["ls"] });
-				const cliOverride: Ruleset = [{ permission: "bash", pattern: "*", action: "deny" }];
-				const staticRuleset: Ruleset = [];
-				const events: Array<{ event: string; data: unknown }> = [];
-
-				// when
-				const result = handleNoUI(request, staticRuleset, cliOverride, (event, data) =>
-					events.push({ event, data }),
-				);
-
-				// then
-				expect(result).toEqual({
-					requestID: "req-noui-2",
-					reply: "reject",
-					message: "Permission denied by CLI flag: bash",
-				});
-			});
-
 			it("should auto-reject when no rules match in no-UI mode", () => {
 				// given
 				const request = createRequest({ id: "req-noui-3", patterns: ["ls", "pwd"] });
-				const cliOverride: Ruleset = [];
-				const staticRuleset: Ruleset = [];
 				const events: Array<{ event: string; data: unknown }> = [];
 
 				// when
-				const result = handleNoUI(request, staticRuleset, cliOverride, (event, data) =>
-					events.push({ event, data }),
-				);
+				const result = handleNoUI(request, {
+					emitEvent: (event, data) => events.push({ event, data }),
+				});
 
 				// then
 				expect(result).toEqual({

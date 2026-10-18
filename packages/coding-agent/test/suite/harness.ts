@@ -13,17 +13,19 @@ import type {
 	FauxProviderRegistration,
 	FauxResponseStep,
 	Model,
+	ToolResultMessage,
 } from "@earendil-works/pi-ai/compat";
 import { registerFauxProvider, streamSimple } from "@earendil-works/pi-ai/compat";
+import { makeTempDir, onTempCleanup } from "../../../../scripts/vitest-temp.ts";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
-import type { ExtensionRunner } from "../../src/core/extensions/index.ts";
+import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
 import { convertToLlmForTransport } from "../../src/core/messages.ts";
 import type { ModelRegistry } from "../../src/core/model-registry.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
-import type { Settings } from "../../src/core/settings-manager.ts";
-import { SettingsManager } from "../../src/core/settings-manager.ts";
+import { type Settings, SettingsManager } from "../../src/core/settings-manager.ts";
 import type { InlineExtension, ResourceLoader } from "../../src/index.ts";
+import { theme } from "../../src/modes/interactive/theme/theme.ts";
 import {
 	type CreateTestExtensionsResultInput,
 	createTestExtensionsResult,
@@ -61,10 +63,58 @@ export function getAssistantTexts(harness: Harness): string[] {
 		.map((message) => getMessageText(message));
 }
 
+/** The latest result of `toolName` in the session transcript. */
+export function getToolResult(harness: Harness, toolName: string): ToolResultMessage {
+	const result = harness.session.messages.findLast(
+		(message): message is ToolResultMessage => message.role === "toolResult" && message.toolName === toolName,
+	);
+	if (!result) throw new Error(`No ${toolName} tool result`);
+	return result;
+}
+
+/** An extension UI context that does nothing, with `overrides` applied. */
+export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {}): ExtensionUIContext {
+	return {
+		select: async () => undefined,
+		confirm: async () => false,
+		input: async () => undefined,
+		notify: () => {},
+		onTerminalInput: () => () => {},
+		setStatus: () => {},
+		setWorkingMessage: () => {},
+		setWorkingVisible: () => {},
+		setWorkingIndicator: () => {},
+		setHiddenThinkingLabel: () => {},
+		setWidget: () => {},
+		setFooter: () => {},
+		setHeader: () => {},
+		setTitle: () => {},
+		custom: async <T>() => undefined as T,
+		pasteToEditor: () => {},
+		setEditorText: () => {},
+		getEditorText: () => "",
+		editor: async () => undefined,
+		addAutocompleteProvider: () => {},
+		setEditorComponent: () => {},
+		getEditorComponent: () => undefined,
+		get theme() {
+			return theme;
+		},
+		getAllThemes: () => [],
+		getTheme: () => undefined,
+		setTheme: () => ({ success: false, error: "Theme switching not available in tests" }),
+		getToolsExpanded: () => false,
+		setToolsExpanded: () => {},
+		...overrides,
+	};
+}
+
 export interface HarnessOptions {
 	models?: FauxModelDefinition[];
 	api?: string;
 	provider?: string;
+	/** Forwarded to the faux provider so a stream can be held open deterministically. */
+	fauxStreamOptions?: { tokensPerSecond?: number };
 	settings?: Partial<Settings>;
 	systemPrompt?: string;
 	tools?: AgentTool[];
@@ -76,12 +126,13 @@ export interface HarnessOptions {
 	extensionFlagValues?: Map<string, boolean | string>;
 	withConfiguredAuth?: boolean;
 	upstreamModelId?: string;
-	serviceTier?: "auto" | "flex" | "priority";
+	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	onPayload?: (payload: unknown) => void;
 	prepareNextTurnWithContext?: AgentOptions["prepareNextTurnWithContext"];
 	persistSession?: boolean;
 	autoTitleSessions?: boolean;
 	fallbackNow?: () => number;
+	fallbackWallNow?: () => number;
 	retryRandom?: () => number;
 	transportImageBudget?: { budgetBytes: number; alwaysKeepNewest: number };
 	modelsJson?: Record<string, unknown>;
@@ -90,6 +141,18 @@ export interface HarnessOptions {
 	settingsContent?: string;
 	retryProfile?: import("@earendil-works/pi-ai/utils/retry-profile/types").RetryPolicyProfile;
 	evalOnlyToolNames?: string[];
+	/** Send the senpi#2093 environment-context message. Off by default so transcript-pinning tests stay exact. */
+	environmentContext?: boolean;
+	/** Headers every faux response reports through `onResponse`. */
+	fauxResponseHeaders?: Record<string, string>;
+	/** Build a sibling session on another harness's faux provider, agent dir, and model registry. */
+	siblingOf?: Harness;
+	/** With `siblingOf`: build a fresh model runtime instead of sharing it, as `/new` does in the CLI. */
+	siblingFreshRuntime?: boolean;
+	/** Session to continue, for example to test a resume. Default: a new in-memory session. */
+	sessionManager?: SessionManager;
+	/** Working directory tools and extensions see as `ctx.cwd`. Default: the harness temp dir. */
+	cwd?: string;
 }
 
 export interface Harness {
@@ -113,29 +176,34 @@ export interface Harness {
 	cleanup: () => void;
 }
 
-function createTempDir(): string {
-	const tempDir = join(tmpdir(), `pi-suite-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-	mkdirSync(tempDir, { recursive: true });
-	return tempDir;
-}
+const cleanups = new Set<() => void>();
+onTempCleanup(() => {
+	for (const cleanup of [...cleanups].reverse()) cleanup();
+});
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
-	const tempDir = createTempDir();
-	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
-		api: options.api,
-		provider: options.provider,
-		models: options.models,
-	});
-	fauxProvider.setResponses([]);
+	const tempDir = makeTempDir(join(tmpdir(), "pi-suite-"));
+	const sibling = options.siblingOf;
+	const sharedRegistry = options.siblingFreshRuntime ? undefined : sibling?.modelRegistry;
+	const fauxProvider: FauxProviderRegistration =
+		sibling?.faux ??
+		registerFauxProvider({
+			api: options.api,
+			provider: options.provider,
+			models: options.models,
+			tokensPerSecond: options.fauxStreamOptions?.tokensPerSecond,
+			...(options.fauxResponseHeaders === undefined ? {} : { responseHeaders: options.fauxResponseHeaders }),
+		});
+	if (!sibling) fauxProvider.setResponses([]);
 	const model = fauxProvider.getModel();
 	const toolMap = options.tools ? Object.fromEntries(options.tools.map((tool) => [tool.name, tool])) : undefined;
 	const withConfiguredAuth = options.withConfiguredAuth ?? true;
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
-	const sessionManager = options.persistSession
-		? SessionManager.create(tempDir, join(tempDir, "sessions"))
-		: SessionManager.inMemory();
-	const agentDir = join(tempDir, "agent");
+	const sessionManager =
+		options.sessionManager ??
+		(options.persistSession ? SessionManager.create(tempDir, join(tempDir, "sessions")) : SessionManager.inMemory());
+	const agentDir = sibling ? join(sibling.tempDir, "agent") : join(tempDir, "agent");
 	if (options.fileSettings) {
 		mkdirSync(agentDir, { recursive: true });
 		writeFileSync(
@@ -147,16 +215,18 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		? SettingsManager.create(tempDir, agentDir)
 		: SettingsManager.inMemory(options.settings);
 
-	const authStorage = AuthStorage.inMemory();
-	if (withConfiguredAuth) {
+	const authStorage = sibling?.authStorage ?? AuthStorage.inMemory();
+	if (withConfiguredAuth && !sibling) {
 		await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "faux-key" }));
 	}
 	const modelsPath = options.modelsJson === undefined ? undefined : join(tempDir, "models.json");
 	if (modelsPath) writeFileSync(modelsPath, JSON.stringify(options.modelsJson));
-	const modelRegistry = modelsPath
-		? await createModelRegistry(authStorage, modelsPath)
-		: await createInMemoryModelRegistry(authStorage);
-	if (withConfiguredAuth) {
+	const modelRegistry =
+		sharedRegistry ??
+		(modelsPath
+			? await createModelRegistry(authStorage, modelsPath)
+			: await createInMemoryModelRegistry(authStorage));
+	if (withConfiguredAuth && !sharedRegistry) {
 		modelRegistry.registerProvider(model.provider, {
 			baseUrl: model.baseUrl,
 			apiKey: "faux-key",
@@ -168,6 +238,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 				api: registeredModel.api,
 				reasoning: registeredModel.reasoning,
 				input: registeredModel.input,
+				inputLimits: registeredModel.inputLimits,
 				cost: registeredModel.cost,
 				contextWindow: registeredModel.contextWindow,
 				maxTokens: registeredModel.maxTokens,
@@ -236,7 +307,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		agent,
 		sessionManager,
 		settingsManager,
-		cwd: tempDir,
+		cwd: options.cwd ?? tempDir,
 		agentDir,
 		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader,
@@ -248,7 +319,9 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		extensionRunnerRef,
 		autoTitleSessions: options.autoTitleSessions,
 		fallbackNow: options.fallbackNow,
+		fallbackWallNow: options.fallbackWallNow,
 		retryRandom: options.retryRandom ?? (() => 0.5),
+		environmentContext: options.environmentContext ?? false,
 	});
 
 	const events: AgentSessionEvent[] = [];
@@ -256,6 +329,13 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		events.push(event);
 	});
 
+	const cleanup = () => {
+		if (!cleanups.delete(cleanup)) return;
+		session.dispose();
+		if (!sibling) fauxProvider.unregister();
+		if (existsSync(tempDir)) rmSync(tempDir, { recursive: true });
+	};
+	cleanups.add(cleanup);
 	return {
 		agent,
 		session,
@@ -279,12 +359,6 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 			return events.filter((event): event is Extract<AgentSessionEvent, { type: T }> => event.type === type);
 		},
 		tempDir,
-		cleanup() {
-			session.dispose();
-			fauxProvider.unregister();
-			if (existsSync(tempDir)) {
-				rmSync(tempDir, { recursive: true });
-			}
-		},
+		cleanup,
 	};
 }

@@ -1,12 +1,13 @@
+import { MONITOR_NOTIFICATION_CUSTOM_TYPE, type MonitorNotificationDetail } from "../monitor-state-event.ts";
 import type { MonitorEvent } from "./monitor-registry.ts";
 import { getTerminalNotificationDelivery, type TerminalNotifierDeps } from "./notify.ts";
 import { sanitizeTerminalOutput } from "./output-format.ts";
 import type { MonitorDeliverySettings } from "./settings.ts";
+import { FIRE_BUDGET_AUTO_MUTE_SUMMARY } from "./shared.ts";
 
 const SYSTEM_REMINDER_OPEN = "<system-reminder>";
 const SYSTEM_REMINDER_CLOSE = "</system-reminder>";
 const QUEUE_OVERHEAD_CHARS = 512;
-const MONITOR_NOTIFICATION_CUSTOM_TYPE = "senpi-monitor:notification";
 const WAKE_STREAK_QUIET_GAP_MULTIPLIER = 2;
 
 export interface MonitorNotificationScheduler {
@@ -30,7 +31,10 @@ export interface MonitorNotifierDeps extends TerminalNotifierDeps {
 
 interface Overflow {
 	readonly id: string;
+	readonly description: string;
 	count: number;
+	kinds: Set<MonitorEvent["type"]>;
+	humanInput: boolean;
 }
 
 function boundedPositiveInt(value: number, fallback: number, minimum: number, maximum: number): number {
@@ -108,7 +112,7 @@ export class MonitorNotifier {
 			event.type !== "summary" &&
 			(this.#events.length >= settings.maxLinesPerInjection || this.#eventChars + rendered.length > queueLimit)
 		) {
-			this.#recordOverflow(event.id);
+			this.#recordOverflow(event);
 		} else {
 			this.#events.push(event);
 			this.#eventChars += rendered.length;
@@ -144,10 +148,18 @@ export class MonitorNotifier {
 		this.#lastInjectedBatch.clear();
 	}
 
-	#recordOverflow(id: string): void {
-		const overflow = this.#overflow.get(id) ?? { id, count: 0 };
+	#recordOverflow(event: MonitorEvent): void {
+		const overflow = this.#overflow.get(event.id) ?? {
+			id: event.id,
+			description: event.description,
+			count: 0,
+			kinds: new Set<MonitorEvent["type"]>(),
+			humanInput: false,
+		};
 		overflow.count++;
-		this.#overflow.set(id, overflow);
+		overflow.kinds.add(event.type);
+		if (event.type === "line" && event.humanInput === true) overflow.humanInput = true;
+		this.#overflow.set(event.id, overflow);
 	}
 
 	#schedule(delayMs: number): void {
@@ -206,14 +218,19 @@ export class MonitorNotifier {
 		) {
 			this.#consecutiveWakes = 0;
 		}
-		const deliversSummary = selected.some((event) => event.type === "summary");
+		const deliversSummary = selected.some(
+			// A fire-budget auto-mute summary is a mute, not a completion: exempting it keeps the
+			// session-global wake streak — the notifier's own pause state — from being cleared.
+			(event) => event.type === "summary" && event.summary !== FIRE_BUDGET_AUTO_MUTE_SUMMARY,
+		);
 		const reachesBudget = !deliversSummary && this.#consecutiveWakes + 1 >= settings.wakeBudget;
 		const pauseNotice = reachesBudget
 			? "Monitor paused after repeated updates. Completion still wakes this session; peek bash_output or re-arm only for intermediate events."
 			: "";
 		const content = this.#buildMessage(selected, overflowCount, pauseNotice, settings.maxCharsPerInjection);
 
-		delivery.send(content, reachesBudget ? { forceWake: true } : undefined);
+		const details = { monitors: this.#monitorDetails(selected, injectedIds) };
+		delivery.send(content, reachesBudget ? { forceWake: true, details } : { details });
 		this.#lastWakeAt = now;
 		for (const id of injectedIds) {
 			this.#lastInjectionAt.set(id, now);
@@ -266,6 +283,24 @@ export class MonitorNotifier {
 		);
 		const remainingIds = new Set([...deferred.map((event) => event.id), ...this.#overflow.keys()]);
 		if (remainingIds.size > 0) this.#scheduleNextRateLimit(remainingIds, now, settings);
+	}
+
+	#monitorDetails(events: readonly MonitorEvent[], ids: ReadonlySet<string>): MonitorNotificationDetail[] {
+		return [...ids].map((id) => {
+			const own = events.filter((event) => event.id === id);
+			const overflow = this.#overflow.get(id);
+			const kinds = new Set<MonitorEvent["type"]>(own.map((event) => event.type));
+			for (const kind of overflow?.kinds ?? []) kinds.add(kind);
+			const humanInput =
+				own.some((event) => event.type === "line" && event.humanInput === true) || overflow?.humanInput === true;
+			return {
+				id,
+				description: own[0]?.description ?? overflow?.description ?? id,
+				eventCount: own.length + (overflow?.count ?? 0),
+				kinds: [...kinds],
+				...(humanInput ? { humanInput: true as const } : {}),
+			};
+		});
 	}
 
 	#buildMessage(

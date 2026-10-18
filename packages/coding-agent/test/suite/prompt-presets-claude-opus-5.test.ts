@@ -24,7 +24,7 @@ function createModel(id: string, provider: string, api: Api = "anthropic-message
 
 function hasOpus5CatalogSignal(model: Model<Api>): boolean {
 	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
-	return searchable.includes("opus-5");
+	return searchable.includes("opus-5") && !searchable.includes("opus-5-5") && !searchable.includes("opus-5.5");
 }
 
 function getOpus5CatalogModels(): Model<Api>[] {
@@ -52,20 +52,25 @@ describe("Claude Opus 5 prompt preset", () => {
 		expect(preset?.prompt).toContain("You are senpi");
 	});
 
-	it.each(["claude-opus-4-5", "claude-opus-4.5", "claude-opus-4-8", "claude-fable-5", "some-opus-compatible-router"])(
-		"does not route %s to the claude-opus-5 preset",
-		(modelId) => {
-			// given
-			const settings: PromptPresetSettings = { promptPreset: "auto" };
-			const model = createModel(modelId, "anthropic");
+	it.each([
+		"claude-opus-4-5",
+		"claude-opus-4.5",
+		"claude-opus-4-8",
+		"claude-opus-5-5",
+		"claude-opus-5.5",
+		"claude-fable-5",
+		"some-opus-compatible-router",
+	])("does not route %s to the claude-opus-5 preset", (modelId) => {
+		// given
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel(modelId, "anthropic");
 
-			// when
-			const presetName = resolvePresetName(model, settings);
+		// when
+		const presetName = resolvePresetName(model, settings);
 
-			// then
-			expect(presetName).not.toBe("claude-opus-5");
-		},
-	);
+		// then
+		expect(presetName).not.toBe("claude-opus-5");
+	});
 
 	it.each(["claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-fable-5"])(
 		"keeps %s on its own preset after adding claude-opus-5",
@@ -104,6 +109,18 @@ describe("Claude Opus 5 prompt preset", () => {
 
 		// then
 		expect(preset?.name).toBe("claude-opus-5");
+	});
+
+	it("routes user questions through ask_user_question when it is available", () => {
+		const settings: PromptPresetSettings = { promptPreset: "auto" };
+		const model = createModel("claude-opus-5", "anthropic");
+
+		const preset = resolvePreset(model, settings);
+
+		expect(preset?.prompt).toContain("ask_user_question");
+		expect(preset?.prompt).toContain(
+			"ask after doing everything that does not depend on the answer, through ask_user_question when it is available",
+		);
 	});
 
 	it("does not include GPT or Kimi tuning in the claude-opus-5 preset", () => {

@@ -19,6 +19,12 @@ function tryCurlyQuoteVariant(filePath: string): string {
 	return filePath.replace(/'/g, "\u2019");
 }
 
+// Windows Explorer "Copy as path" wraps the path in double quotes (senpi#2170).
+function unquotedPath(filePath: string): string | undefined {
+	const match = /^@?(["'])(.+)\1$/.exec(filePath.trim());
+	return match?.[2];
+}
+
 function fileExists(filePath: string): boolean {
 	try {
 		accessSync(filePath, constants.F_OK);
@@ -56,6 +62,11 @@ export function resolveReadPath(filePath: string, cwd: string): string {
 		return resolved;
 	}
 
+	const unquoted = unquotedPath(filePath);
+	if (unquoted !== undefined) {
+		return resolveReadPath(unquoted, cwd);
+	}
+
 	// Try macOS AM/PM variant (narrow no-break space before AM/PM)
 	const amPmVariant = tryMacOSScreenshotPath(resolved);
 	if (amPmVariant !== resolved && fileExists(amPmVariant)) {
@@ -88,6 +99,11 @@ export async function resolveReadPathAsync(filePath: string, cwd: string): Promi
 
 	if (await pathExists(resolved)) {
 		return resolved;
+	}
+
+	const unquoted = unquotedPath(filePath);
+	if (unquoted !== undefined) {
+		return resolveReadPathAsync(unquoted, cwd);
 	}
 
 	// Try macOS AM/PM variant (narrow no-break space before AM/PM)

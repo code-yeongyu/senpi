@@ -24,18 +24,27 @@ permissions:
 jobs:
   gate:
     name: Review claim gate
-    if: github.event_name == 'pull_request_target'
+    # A job skipped by `if:` still posts a check run under its name, concluded "skipped". On a
+    # review event that run lands on the PR head and replaces this required check's real result, so
+    # the gate evaluates on review events too, after release-claim has had its chance to drop a claim.
+    # No concurrency group: a cancelled run stays on the head as a required result and blocks the merge,
+    # and the gate is a read-only label check, so overlapping runs are harmless.
+    needs: release-claim
+    if: >-
+      !cancelled() &&
+      (github.event_name == 'pull_request_target' || github.event_name == 'pull_request_review')
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    concurrency:
-      group: review-claim-gate-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
     steps:
       - name: Fail while a review claim label is present
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const labels = context.payload.pull_request.labels.map((l) => l.name);
+            const { owner, repo } = context.repo;
+            const live = await github.paginate(github.rest.issues.listLabelsOnIssue, {
+              owner, repo, issue_number: context.payload.pull_request.number, per_page: 100,
+            });
+            const labels = live.map((l) => l.name);
             const claims = labels.filter((l) => l === 'will-review' || l === 'in-review');
             if (claims.length > 0) {
               core.setFailed(`Merge blocked: active review claim label(s): ${claims.join(', ')}. The claimer must submit their review (approve or request changes) to release the claim.`);
@@ -53,7 +62,7 @@ jobs:
             echo "| --- | --- |"
             echo "| Job status | ${{ job.status }} |"
             echo "| PR | #${{ github.event.pull_request.number }} |"
-            echo "| Event | ${{ github.event.action }} |"
+            echo "| Event | ${{ github.event_name }} / ${{ github.event.action }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   claim:

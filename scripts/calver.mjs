@@ -17,7 +17,8 @@
  *   release's suffix instead of returning a lower calendar version.
  *
  * Tolerance:
- * - Registry/git failures (404, network, timeout, ENOTFOUND, etc.) are
+ * - Unpublished packages (404) contribute an empty version baseline.
+ * - Other registry/git failures (network, timeout, ENOTFOUND, etc.) are
  *   downgraded to stderr warnings; this module NEVER throws on a single
  *   source failure. A totally offline run still returns a valid CalVer.
  *
@@ -35,13 +36,12 @@
 
 import { execFileSync } from "node:child_process";
 
-const DEFAULT_PACKAGES = [
-	"@code-yeongyu/senpi",
-	"@earendil-works/pi-ai",
-	"@earendil-works/pi-agent-core",
-	"@code-yeongyu/senpi-server",
-	"@earendil-works/pi-tui",
-];
+import { queryNpmRegistry } from "./npm-registry.mjs";
+import { registryPackageNames } from "./registry-packages.mjs";
+
+// Use the publish allowlist: source manifests may be private but rewritten for
+// publication. Private-only workspaces (server, chord, sqlite) have no registry name.
+const DEFAULT_PACKAGES = [...registryPackageNames.values()];
 
 const REGISTRY_TIMEOUT_MS = 30000;
 const CALVER_RE = /^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-(\d+))?$/;
@@ -64,12 +64,8 @@ function computeToday(now = new Date()) {
  */
 function fetchRegistryVersions(pkg) {
 	try {
-		const stdout = execFileSync("npm", ["view", pkg, "versions", "--json"], {
-			encoding: "utf-8",
-			stdio: ["ignore", "pipe", "pipe"],
-			timeout: REGISTRY_TIMEOUT_MS,
-		});
-		const trimmed = stdout.trim();
+		const stdout = queryNpmRegistry(pkg, "versions");
+		const trimmed = stdout?.trim();
 		if (!trimmed) {
 			return [];
 		}

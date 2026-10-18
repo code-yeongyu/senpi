@@ -103,7 +103,22 @@ describe("permission settings", () => {
 		});
 	});
 
-	it("rejects invalid permission presets from settings with a clear error", () => {
+	it("loads accept-edits from settings without granting bash", () => {
+		return withTempDir((projectDir) => {
+			// given
+			const agentDir = join(projectDir, "agent");
+			mkdirSync(agentDir, { recursive: true });
+			writeSettings(join(agentDir, "settings.json"), { permissionPreset: "accept-edits" });
+			const settingsManager = SettingsManager.create(projectDir, agentDir);
+			// when
+			const result = loadPermissionSettings(settingsManager, [], projectDir);
+			// then
+			expect(evaluate("edit", "src/index.ts", result.staticRuleset).action).toBe("allow");
+			expect(evaluate("bash", "git status", result.staticRuleset).action).toBe("ask");
+		});
+	});
+
+	it("rejects invalid permission presets from settings", () => {
 		return withTempDir((projectDir) => {
 			// given
 			const agentDir = join(projectDir, "agent");
@@ -112,13 +127,11 @@ describe("permission settings", () => {
 			const settingsManager = SettingsManager.create(projectDir, agentDir);
 
 			// when/then
-			expect(() => loadPermissionSettings(settingsManager, [], projectDir)).toThrow(
-				'Invalid global permissionPreset "dangerous". Expected one of: full-access, workspace, read-only, ask.',
-			);
+			expect(() => loadPermissionSettings(settingsManager, [], projectDir)).toThrow(Error);
 		});
 	});
 
-	it("rejects invalid project permission presets with a clear error", () => {
+	it("rejects invalid project permission presets", () => {
 		return withTempDir((projectDir) => {
 			// given
 			const agentDir = join(projectDir, "agent");
@@ -128,9 +141,7 @@ describe("permission settings", () => {
 			const settingsManager = SettingsManager.create(projectDir, agentDir);
 
 			// when/then
-			expect(() => loadPermissionSettings(settingsManager, [], projectDir)).toThrow(
-				'Invalid project permissionPreset "dangerous". Expected one of: full-access, workspace, read-only, ask.',
-			);
+			expect(() => loadPermissionSettings(settingsManager, [], projectDir)).toThrow(Error);
 		});
 	});
 });

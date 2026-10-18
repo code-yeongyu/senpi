@@ -1,4 +1,5 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { TuiMouseEvent } from "@earendil-works/pi-tui";
 import { describe, expect, test } from "vitest";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
@@ -193,6 +194,75 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered).toContain("https://ast-grep.github.io/");
 		expect(rendered).not.toContain("secret-payload");
 		expect(rendered).not.toContain("encrypted_content");
+	});
+
+	test("#given an Anthropic tool_search_tool_result #when rendering providerNative #then lists the discovered tool names", () => {
+		// given
+		initTheme("dark");
+		const component = new AssistantMessageComponent({
+			...createAssistantMessage([
+				{
+					type: "providerNative",
+					subtype: "tool_search_tool_result",
+					raw: {
+						type: "tool_search_tool_result",
+						tool_use_id: "srvtoolu_123",
+						content: {
+							type: "tool_search_tool_search_result",
+							tool_references: [
+								{ type: "tool_reference", tool_name: "memory" },
+								{ type: "tool_reference", tool_name: "web_search" },
+							],
+						},
+					},
+				},
+			]),
+			api: "anthropic-messages",
+			provider: "anthropic",
+		});
+
+		// when
+		const rendered = component.render(160).join("\n");
+
+		// then
+		expect(rendered).toContain("▸ anthropic · tool_search results");
+		expect(rendered).toContain("2 tools");
+		expect(rendered).toContain("memory");
+		expect(rendered).toContain("web_search");
+		expect(rendered).not.toContain("tool_search_tool_search_result");
+		expect(rendered).not.toContain("srvtoolu_123");
+	});
+
+	test("#given a failed tool search #when rendering providerNative #then the error code and message are shown", () => {
+		// given
+		initTheme("dark");
+		const component = new AssistantMessageComponent({
+			...createAssistantMessage([
+				{
+					type: "providerNative",
+					subtype: "tool_search_tool_result",
+					raw: {
+						type: "tool_search_tool_result",
+						tool_use_id: "srvtoolu_456",
+						content: {
+							type: "tool_search_tool_result_error",
+							error_code: "invalid_tool_input",
+							error_message: "Invalid regular expression pattern",
+						},
+					},
+				},
+			]),
+			api: "anthropic-messages",
+			provider: "anthropic",
+		});
+
+		// when
+		const rendered = component.render(160).join("\n");
+
+		// then
+		expect(rendered).toContain("▸ anthropic · tool_search results");
+		expect(rendered).toContain("invalid_tool_input");
+		expect(rendered).toContain("Invalid regular expression pattern");
 	});
 
 	test("#given OpenAI native web_search_call sources #when rendering providerNative #then displays status query and sources", () => {
@@ -419,6 +489,40 @@ describe("AssistantMessageComponent", () => {
 		expect(visible.trim()).toBe("");
 		expect(hidden).not.toContain("Thought:");
 		expect(hidden.trim()).toBe("");
+	});
+	test("collapses individual thinking runs when clicked", () => {
+		initTheme("dark");
+		const component = new AssistantMessageComponent(
+			createAssistantMessage([
+				{ type: "thinking", thinking: "first reasoning" },
+				{ type: "text", text: "answer" },
+				{ type: "thinking", thinking: "second reasoning" },
+			]),
+		);
+		const width = 80;
+		const lines = component.render(width);
+		const firstThinkingRow = lines.findIndex((line) => stripAnsi(line).includes("first reasoning"));
+		expect(firstThinkingRow).toBeGreaterThanOrEqual(0);
+		const event: TuiMouseEvent = {
+			type: "click",
+			button: "left",
+			x: 1,
+			y: firstThinkingRow,
+			screenX: 1,
+			screenY: firstThinkingRow,
+			width,
+			height: lines.length,
+			shift: false,
+			alt: false,
+			ctrl: false,
+			clickCount: 1,
+		};
+		expect(component.handleMouse(event)?.handled).toBe(true);
+
+		const collapsed = stripAnsi(component.render(width).join("\n"));
+		expect(collapsed).not.toContain("first reasoning");
+		expect(collapsed).toContain("Thinking...");
+		expect(collapsed).toContain("second reasoning");
 	});
 
 	test("uses configured output padding for text and thinking", () => {

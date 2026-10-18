@@ -151,8 +151,16 @@ function applyEdits(code: string, edits: readonly TextEdit[]): string {
 	return output;
 }
 
+// Cells are prepared on the shared host loop (#3205), so Babel runs only for text that can be import syntax: the
+// keyword as a whole word, not `import-1` or `import.meta`. Anything after it (comments, non-ASCII names) still
+// parses; a false positive only costs a parse, a false negative would skip a rewrite. The AST walk runs when
+// `import` is followed by `(` or by a comment that could hide one. The gate never scans a comment body: a
+// comment-matching pattern backtracks quadratically on large data full of `import /*` text.
+const IMPORT_SYNTAX = /\bimport\b(?![-.$])/u;
+const DYNAMIC_IMPORT_SYNTAX = /\bimport\s*[(/]/u;
+
 export function rewriteImports(code: string): string {
-	if (!code.includes("import")) return code;
+	if (!IMPORT_SYNTAX.test(code)) return code;
 	const ast = parseProgram(code);
 	if (!ast) return code;
 	const edits: TextEdit[] = [];
@@ -161,9 +169,11 @@ export function rewriteImports(code: string): string {
 		if (node.type !== "ImportDeclaration" || typeof node.start !== "number" || typeof node.end !== "number") continue;
 		edits.push({ start: node.start, end: node.end, text: rewriteImportDeclaration(node) });
 	}
-	walkNodes(ast.program, (node) => {
-		const edit = dynamicImportEdit(node);
-		if (edit) edits.push(edit);
-	});
+	if (DYNAMIC_IMPORT_SYNTAX.test(code)) {
+		walkNodes(ast.program, (node) => {
+			const edit = dynamicImportEdit(node);
+			if (edit) edits.push(edit);
+		});
+	}
 	return applyEdits(code, edits);
 }

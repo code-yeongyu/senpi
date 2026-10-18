@@ -41,6 +41,12 @@ export interface BoundedRetryContinuation {
 	getActiveSignal(): AbortSignal | undefined;
 	abortActive(): void;
 	timeoutMs: number | undefined;
+	/**
+	 * Subscribes to the retried request's first stream event (its assistant `message_start`); returns
+	 * the unsubscribe. Once the request streams, the provider's own idle and stall guards govern the rest
+	 * of the run, so the watchdog is cleared (senpi#2804).
+	 */
+	onStreamStarted?(listener: () => void): () => void;
 }
 
 export function createProviderTimeoutRetryPlan({
@@ -78,22 +84,35 @@ export async function runBoundedRetryContinuation({
 	getActiveSignal,
 	abortActive,
 	timeoutMs,
+	onStreamStarted,
 }: BoundedRetryContinuation): Promise<void> {
-	const continuation = continueRun();
-	const ownedSignal = getActiveSignal();
-	if (timeoutMs === undefined || ownedSignal === undefined) {
-		await continuation;
-		return;
-	}
-
-	const timer = setTimeout(() => {
-		if (getActiveSignal() === ownedSignal) {
-			abortActive();
-		}
-	}, timeoutMs);
+	// The watchdog bounds only the wait for the retried request to start streaming: a retry that streams
+	// and then works for a long time (a long answer, tool calls, further turns) is not a wedged retry.
+	let streamStarted = false;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const unsubscribe =
+		timeoutMs === undefined
+			? undefined
+			: onStreamStarted?.(() => {
+					streamStarted = true;
+					clearTimeout(timer);
+				});
 	try {
+		const continuation = continueRun();
+		const ownedSignal = getActiveSignal();
+		if (timeoutMs === undefined || ownedSignal === undefined || streamStarted) {
+			await continuation;
+			return;
+		}
+
+		timer = setTimeout(() => {
+			if (!streamStarted && getActiveSignal() === ownedSignal) {
+				abortActive();
+			}
+		}, timeoutMs);
 		await continuation;
 	} finally {
 		clearTimeout(timer);
+		unsubscribe?.();
 	}
 }

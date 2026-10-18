@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadMcpConfig } from "../../src/core/extensions/builtin/mcp/config.ts";
 import { getMcpService, McpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	attach,
 	awaitMcpToolRegistration,
@@ -52,13 +53,19 @@ describe("MCP disk metadata cache", () => {
 		await expect(readCounter(counterFile)).rejects.toMatchObject({ code: "ENOENT" });
 
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
-		const result = await tool.execute("tc-cache", { value: "warm" }, undefined, undefined, testContext());
+		const result = await tool.execute(
+			"tc-cache",
+			{ value: "warm" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 
 		expect(textContent(result)).toBe("fixture tool_1 value=warm mode=alpha");
 		expect(await readCounter(counterFile)).toBe(1);
 	});
 
-	it("does not trust expired cache entries and rewrites them from a fresh fixture catalog", async () => {
+	it("refreshes an aged matching catalog and withdraws tools missing from the fresh listing", async () => {
 		const root = makeCacheRoot("ttl");
 		const counterFile = join(root.agentDir, "ttl-spawns.txt");
 		setConfig(root, { fx: stdioServer(["--tools", "2", "--spawn-counter-file", counterFile]) });
@@ -66,10 +73,10 @@ describe("MCP disk metadata cache", () => {
 		const pi = capturingPi();
 
 		await attach(root, pi);
-		await awaitMcpToolRegistration("fx");
-		await awaitCacheTools(root, ["tool_1", "tool_2"]);
+		expect(await getMcpService().whenAttachSettled(10_000)).toBe("settled");
 
-		expect(dedupedRegisteredTools(pi)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
+		expect(withoutMcpUtilityTools(pi.activeTools)).toEqual(["mcp_fx_tool_1", "mcp_fx_tool_2"]);
+		expect(pi.activeTools).not.toContain("mcp_fx_fake");
 		expect(await readCounter(counterFile)).toBe(1);
 		const cache = await readCache(root);
 		expect(cache.servers.fx.tools.map((tool) => tool.name)).toEqual(["tool_1", "tool_2"]);

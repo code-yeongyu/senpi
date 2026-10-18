@@ -26,6 +26,7 @@ type SubmitContext = {
 		isCompacting: boolean;
 		isStreaming: boolean;
 		isBashRunning: boolean;
+		messages: unknown[];
 		prompt: (text: string, options?: unknown) => Promise<void>;
 	};
 	flushPendingBashComponents: () => void;
@@ -37,12 +38,14 @@ type SubmitContext = {
 	pendingImages: Map<number, unknown>;
 	optimisticUserEchoes: ReturnType<typeof createEchoControllerStub>;
 	takeSubmissionImages: (submittedText: string) => unknown[];
+	beginUserEcho: (text: string, images?: readonly unknown[]) => string | undefined;
 	shutdown: () => Promise<void>;
 };
 
 type InteractiveModePrivate = {
 	setupEditorSubmitHandler(this: SubmitContext): void;
 	takeSubmissionImages(this: SubmitContext, submittedText: string): unknown[];
+	beginUserEcho(this: SubmitContext, text: string, images?: readonly unknown[]): string | undefined;
 };
 
 const interactiveModePrototype = InteractiveMode.prototype as unknown as InteractiveModePrivate;
@@ -58,6 +61,7 @@ function createSubmitContext(): SubmitContext {
 			isCompacting: false,
 			isStreaming: false,
 			isBashRunning: false,
+			messages: [],
 			prompt: vi.fn(async () => {}),
 		},
 		flushPendingBashComponents: vi.fn(),
@@ -68,11 +72,13 @@ function createSubmitContext(): SubmitContext {
 		pendingImages: new Map(),
 		optimisticUserEchoes: createEchoControllerStub(),
 		takeSubmissionImages: vi.fn(() => []),
+		beginUserEcho: vi.fn(() => undefined),
 		shutdown: vi.fn(async () => {}),
 	};
 	// Borrowed receiver: resolve markers with the REAL production helper (its
 	// only dependencies are the pendingImages map above).
 	context.takeSubmissionImages = interactiveModePrototype.takeSubmissionImages.bind(context);
+	context.beginUserEcho = interactiveModePrototype.beginUserEcho.bind(context);
 	return context;
 }
 

@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import type {
 	AuthContext,
 	Credential,
@@ -80,14 +79,6 @@ describe("cursor-cli-oauth login and availability", () => {
 		const resolution = await resolveCursorCliOauthLane(deps);
 		expect(resolution.lane).toBe("file-store");
 		expect(resolution.account.access).toBe("fresh-token");
-	});
-
-	it("contains no alternate lane value in the implementation", async () => {
-		const source = await readFile(
-			new URL("../../src/core/extensions/builtin/cursor-cli-oauth/oauth-login.ts", import.meta.url),
-			"utf8",
-		);
-		expect(source).not.toContain(`am${"bient"}`);
 	});
 
 	it("reports configured only for non-empty OAuth account slots", async () => {

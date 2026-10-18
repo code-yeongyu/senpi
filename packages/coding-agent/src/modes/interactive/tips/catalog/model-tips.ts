@@ -5,7 +5,15 @@ export const MODEL_TIPS = [
 	{
 		id: "thinking-level",
 		bindings: ["app.thinking.cycle"],
-		render: (keys) => `Use ${keys("app.thinking.cycle")} to cycle the model's thinking level.`,
+		render: (keys) =>
+			`Use /thinking <level> to set the thinking level, /thinking to pick one, or ${keys("app.thinking.cycle")} to cycle through them.`,
+	},
+	{
+		id: "efforts-command",
+		bindings: [],
+		requiresCommand: "efforts",
+		render: () =>
+			"Use /efforts <level> to set the reasoning effort for the current model; /efforts alone lists the levels it supports.",
 	},
 	{
 		id: "favorite-model-rotation",

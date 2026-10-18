@@ -59,6 +59,7 @@ function createCommandFixture(initialPhases: TodoPhase[] = [], options: { editor
 		setCurrentPhases: (next) => {
 			phases = clonePhases(next);
 		},
+		getCurrentAsk: () => undefined,
 		syncWidget: () => {},
 	});
 

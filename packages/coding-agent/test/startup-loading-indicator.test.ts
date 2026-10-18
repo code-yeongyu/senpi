@@ -36,20 +36,13 @@ describe("createStartupLoadingIndicator", () => {
 		vi.useRealTimers();
 	});
 
-	it("writes nothing before the grace delay and nothing when stopped within it", () => {
+	// The startup work this indicator covers is synchronous module loading (extension imports),
+	// which starves every timer until it is done. A first frame that waits on a timer is drawn
+	// only after the work it was meant to announce - measured on a real pty: first byte at 2.27s,
+	// one frame before the TUI took over. The first frame therefore draws in start() itself.
+	it("draws the first frame synchronously in start() with a hidden cursor", () => {
 		const { indicator, writes } = makeIndicator();
 		indicator.start();
-		vi.advanceTimersByTime(119);
-		expect(writes).toEqual([]);
-		indicator.stop();
-		vi.advanceTimersByTime(1000);
-		expect(writes).toEqual([]);
-	});
-
-	it("draws the first frame after the grace delay with a hidden cursor", () => {
-		const { indicator, writes } = makeIndicator();
-		indicator.start();
-		vi.advanceTimersByTime(120);
 		expect(writes).toHaveLength(1);
 		expect(writes[0]).toContain(HIDE_CURSOR);
 		expect(writes[0]).toContain(CLEAR_LINE);
@@ -57,10 +50,24 @@ describe("createStartupLoadingIndicator", () => {
 		expect(writes[0]).toContain("Loading senpi");
 	});
 
-	it("animates frames on the interval, rewriting a single line", () => {
+	it("erases the line and restores the cursor when stopped within the grace delay", () => {
 		const { indicator, writes } = makeIndicator();
 		indicator.start();
-		vi.advanceTimersByTime(120);
+		vi.advanceTimersByTime(119);
+		expect(writes).toHaveLength(1);
+		indicator.stop();
+		expect(writes).toHaveLength(2);
+		expect(writes[1]).toBe(CLEAR_LINE + SHOW_CURSOR);
+		vi.advanceTimersByTime(1000);
+		expect(writes).toHaveLength(2);
+	});
+
+	it("animates frames on the interval after the grace delay, rewriting a single line", () => {
+		const { indicator, writes } = makeIndicator();
+		indicator.start();
+		vi.advanceTimersByTime(119);
+		expect(writes).toHaveLength(1);
+		vi.advanceTimersByTime(1);
 		vi.advanceTimersByTime(80);
 		vi.advanceTimersByTime(80);
 		expect(writes).toHaveLength(3);
@@ -70,9 +77,12 @@ describe("createStartupLoadingIndicator", () => {
 		expect(writes[2]).toContain("C");
 	});
 
-	it("setPhase updates the rendered line immediately once drawing", () => {
+	it("setPhase updates the rendered line immediately, before any timer fires", () => {
 		const { indicator, writes } = makeIndicator();
 		indicator.start();
+		indicator.setPhase("extensions & models");
+		expect(writes).toHaveLength(2);
+		expect(writes.at(-1)).toContain("extensions & models");
 		vi.advanceTimersByTime(120);
 		indicator.setPhase("opening session");
 		expect(writes.at(-1)).toContain("opening session");

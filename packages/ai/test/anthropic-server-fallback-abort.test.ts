@@ -15,6 +15,8 @@ import { buildBaseOptions } from "../src/api/simple-options.ts";
 import { getModel } from "../src/compat.ts";
 import type { Context, ProviderNativeContent } from "../src/types.ts";
 
+import { normalizeContext } from "../src/utils/transcript.ts";
+
 const encoder = new TextEncoder();
 const SUBSTITUTE_TEXT = "SUBSTITUTE_MODEL_OUTPUT";
 
@@ -62,10 +64,12 @@ function createChunkedSseResponse(events: readonly SseEvent[], onChunk?: (index:
 
 function createFakeAnthropicClient(response: Response, captureSignal?: (signal?: AbortSignal) => void): Anthropic {
 	return {
-		messages: {
-			create: (_params: unknown, requestOptions?: { signal?: AbortSignal }) => {
-				captureSignal?.(requestOptions?.signal);
-				return { asResponse: async () => response };
+		beta: {
+			messages: {
+				create: (_params: unknown, requestOptions?: { signal?: AbortSignal }) => {
+					captureSignal?.(requestOptions?.signal);
+					return { asResponse: async () => response };
+				},
 			},
 		},
 	} as unknown as Anthropic;
@@ -143,7 +147,7 @@ describe("Anthropic server-side fallback receipt abort", () => {
 		// `abortServerSideFallback: false` escape hatch must keep working.
 		const model = getModel("anthropic", "claude-fable-5");
 		const body = createChunkedSseResponse(midStreamReceiptEvents);
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			client: createFakeAnthropicClient(body.response),
 		}).result();
 
@@ -174,7 +178,7 @@ describe("Anthropic server-side fallback receipt abort", () => {
 			...substituteOutputEvents,
 		]);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			abortServerSideFallback: true,
 			client: createFakeAnthropicClient(body.response),
 		}).result();
@@ -195,7 +199,7 @@ describe("Anthropic server-side fallback receipt abort", () => {
 		let transportSignal: AbortSignal | undefined;
 		const body = createChunkedSseResponse(midStreamReceiptEvents);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			abortServerSideFallback: true,
 			client: createFakeAnthropicClient(body.response, (signal) => {
 				transportSignal = signal;
@@ -233,7 +237,7 @@ describe("Anthropic server-side fallback receipt abort", () => {
 			if (index === receiptIndex) callerAbort.abort();
 		});
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			abortServerSideFallback: true,
 			signal: callerAbort.signal,
 			client: createFakeAnthropicClient(body.response),
@@ -258,7 +262,7 @@ describe("Anthropic sticky-served fallback detection", () => {
 			...substituteOutputEvents,
 		]);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			abortServerSideFallback: true,
 			client: createFakeAnthropicClient(body.response),
 		}).result();
@@ -282,7 +286,7 @@ describe("Anthropic sticky-served fallback detection", () => {
 			...substituteOutputEvents,
 		]);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			abortServerSideFallback: true,
 			client: createFakeAnthropicClient(body.response),
 		}).result();
@@ -297,7 +301,7 @@ describe("Anthropic sticky-served fallback detection", () => {
 		const model = getModel("anthropic", "claude-fable-5");
 		const body = createChunkedSseResponse([messageStart("anthropic.claude-fable-5-v1:0"), ...substituteOutputEvents]);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			abortServerSideFallback: true,
 			client: createFakeAnthropicClient(body.response),
 		}).result();
@@ -313,7 +317,7 @@ describe("Anthropic sticky-served fallback detection", () => {
 			...substituteOutputEvents,
 		]);
 
-		const result = await streamAnthropic(model, context, {
+		const result = await streamAnthropic(model, normalizeContext(context), {
 			client: createFakeAnthropicClient(body.response),
 		}).result();
 
@@ -325,8 +329,12 @@ describe("Anthropic sticky-served fallback detection", () => {
 describe("abortServerSideFallback option seam", () => {
 	it("survives buildBaseOptions, which copies a fixed field list", () => {
 		const model = getModel("anthropic", "claude-fable-5");
-		expect(buildBaseOptions(model, context, { abortServerSideFallback: true }).abortServerSideFallback).toBe(true);
-		expect(buildBaseOptions(model, context, { abortServerSideFallback: false }).abortServerSideFallback).toBe(false);
-		expect(buildBaseOptions(model, context, {}).abortServerSideFallback).toBeUndefined();
+		expect(
+			buildBaseOptions(model, normalizeContext(context), { abortServerSideFallback: true }).abortServerSideFallback,
+		).toBe(true);
+		expect(
+			buildBaseOptions(model, normalizeContext(context), { abortServerSideFallback: false }).abortServerSideFallback,
+		).toBe(false);
+		expect(buildBaseOptions(model, normalizeContext(context), {}).abortServerSideFallback).toBeUndefined();
 	});
 });

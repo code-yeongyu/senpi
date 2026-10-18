@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CURSOR_AGENT_ENVIRONMENT_PASSTHROUGH } from "../../src/core/extensions/builtin/cursor-cli-oauth/environment.ts";
 import { CursorAgentNotInstalledError } from "../../src/core/extensions/builtin/cursor-cli-oauth/executable.ts";
 import {
 	type CursorCliModelCatalogDeps,
@@ -10,6 +11,7 @@ import {
 	resolveCursorCliModelCatalog,
 	STATIC_CURSOR_CLI_MODELS,
 } from "../../src/core/extensions/builtin/cursor-cli-oauth/models.ts";
+import { runModelsProbe } from "../../src/core/extensions/builtin/cursor-cli-oauth/models-probe.ts";
 
 const FIXTURE_PATH = fileURLToPath(new URL("./fixtures/cursor-agent-models.txt", import.meta.url));
 const temporaryDirectories: string[] = [];
@@ -98,6 +100,7 @@ describe("resolveCursorCliModelCatalog", () => {
 
 	it("returns the exact static fallback when the executable is missing", async () => {
 		const agentDir = await temporaryDirectory();
+		const runProbe = vi.fn<CursorCliModelCatalogDeps["runProbe"]>(async () => {});
 		const models = await resolveCursorCliModelCatalog({
 			agentDir,
 			settings: { modelCatalogTtlHours: 24 },
@@ -105,9 +108,11 @@ describe("resolveCursorCliModelCatalog", () => {
 				resolveExecutable: () => {
 					throw new CursorAgentNotInstalledError();
 				},
+				runProbe,
 			},
 		});
 
+		expect(runProbe).not.toHaveBeenCalled();
 		expect(models).toEqual(STATIC_CURSOR_CLI_MODELS);
 		expect(models.map((model) => model.id)).toEqual([
 			"auto",
@@ -141,7 +146,11 @@ describe("resolveCursorCliModelCatalog", () => {
 		const models = await resolveCursorCliModelCatalog({
 			agentDir,
 			settings: { modelCatalogTtlHours: 24 },
-			deps: { resolveExecutable: () => executable },
+			deps: {
+				resolveExecutable: () => executable,
+				runProbe: (probeExecutable, stdoutPath, timeoutMs) =>
+					runModelsProbe({ executable: probeExecutable, stdoutPath, timeoutMs, home: agentDir }),
+			},
 		});
 
 		expect(models).toHaveLength(93);
@@ -169,5 +178,55 @@ describe("resolveCursorCliModelCatalog", () => {
 		const cache = await readFile(join(agentDir, "cursor-cli-oauth", "models.json"), "utf8");
 		expect(cache).toContain('"model-a"');
 		expect(cache).not.toContain("authentication unavailable");
+	});
+});
+
+describe("runModelsProbe", () => {
+	const LEAKABLE_VARIABLES = ["SSH_CONNECTION", "SSH_CLIENT", "MOSH_SERVER", "SENPI_PROBE_SECRET"] as const;
+	const previous = new Map<string, string | undefined>();
+
+	afterEach(() => {
+		for (const [name, value] of previous) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+		previous.clear();
+	});
+
+	it("spawns cursor-agent models with the explicit environment inside the given HOME", async () => {
+		// Given: a parent that looks like a remote session and carries a secret
+		for (const name of LEAKABLE_VARIABLES) {
+			previous.set(name, process.env[name]);
+			process.env[name] = `leaked-${name}`;
+		}
+		const directory = await temporaryDirectory();
+		const home = join(directory, "account-home");
+		const dump = join(directory, "env.json");
+		const stdoutPath = join(directory, "stdout.txt");
+		const executable = join(directory, "fake-cursor-agent.mjs");
+		await writeFile(
+			executable,
+			`#!/usr/bin/env node\nimport { writeFileSync } from "node:fs";\nif (process.argv[2] !== "models") process.exit(2);\nwriteFileSync(${JSON.stringify(dump)}, JSON.stringify(process.env));\nprocess.stdout.write("model-a - Model A\\n");\n`,
+			"utf8",
+		);
+		await chmod(executable, 0o755);
+
+		// When: the probe runs
+		await runModelsProbe({ executable, stdoutPath, timeoutMs: 15_000, home });
+
+		// Then: the child saw only the allowlist, rooted in the account HOME
+		const childEnv = JSON.parse(await readFile(dump, "utf8")) as Record<string, string>;
+		// macOS libSystem injects __CF_USER_TEXT_ENCODING into every child regardless of the env passed to spawn.
+		const allowed = new Set<string>([
+			"HOME",
+			"AGENT_CLI_CREDENTIAL_STORE",
+			"__CF_USER_TEXT_ENCODING",
+			...CURSOR_AGENT_ENVIRONMENT_PASSTHROUGH,
+		]);
+		expect(Object.keys(childEnv).filter((key) => !allowed.has(key))).toEqual([]);
+		expect(childEnv.HOME).toBe(home);
+		expect(childEnv.AGENT_CLI_CREDENTIAL_STORE).toBe("file");
+		for (const name of LEAKABLE_VARIABLES) expect(childEnv).not.toHaveProperty(name);
+		expect(await readFile(stdoutPath, "utf8")).toBe("model-a - Model A\n");
 	});
 });

@@ -1,8 +1,20 @@
+export const TERMINAL_MOUSE_MODES = ["off", "whilePending", "always"] as const;
+export type TerminalMouseMode = (typeof TERMINAL_MOUSE_MODES)[number];
+
+export function isTerminalMouseMode(value: unknown): value is TerminalMouseMode {
+	return value === "off" || value === "whilePending" || value === "always";
+}
+
 export interface TerminalSettings {
+	mouse?: TerminalMouseMode; // default: whilePending; off also disables fullscreen capture
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
 	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
+	// Terminal capability overrides (upstream e86823096); "auto" defers to detection.
+	hyperlinks?: boolean | "auto";
+	images?: "kitty" | "iterm2" | "auto" | false;
+	trueColor?: boolean | "auto";
 	// Persistent-terminal tool suite (builtin `terminal` extension) config.
 	defaultCols?: number; // default: 120 (PTY width for new sessions)
 	defaultRows?: number; // default: 40 (PTY height for new sessions)
@@ -15,6 +27,7 @@ export interface TerminalSettings {
 	monitorMaxLinesPerInjection?: number; // default: 50 (bounded monitor event batch)
 	monitorMaxCharsPerInjection?: number; // default: 4096 (bounded monitor event batch)
 	monitorWakeBudget?: number; // default: 5 (consecutive monitor-only wake limit)
+	maxDurableMonitors?: number | "unlimited"; // default: "unlimited" (persistent monitors per session; invalid values mean unlimited)
 }
 
 export interface BranchSummarySettings {

@@ -6,7 +6,7 @@
  *   2. retry-after header      (strict integer delta-seconds `^\d+$`, else HTTP-date)
  *   3. x-ratelimit-reset{,-requests,-tokens}  (epoch seconds, max-wins)
  *   4. JSON retryDelay strings (ms/s/m units, recursive, max-wins; numeric rejected)
- *   5. body prose              (ms-marker, seconds-marker, relative, resets-at ISO8601)
+ *   5. body prose              (ms-marker, seconds-marker, relative, resets-in, resets-at ISO8601)
  *
  * Eligibility gate: status 429 OR body marks rate-limit error.
  * Explicit zero = 0 (beats lower-precedence positives).
@@ -139,6 +139,10 @@ function fromBodyProse(bodyText: string, nowMs: number): number | undefined {
 	m = bodyText.match(
 		/(?:try again|retry|wait after).*?(?:in\s+)?(\d+(?:\.\d+)?)\s*(ms|s|sec|seconds?|m|min|minutes?)\b/i,
 	);
+	if (m) return convertUnit(Number.parseFloat(m[1]), m[2]);
+
+	// limit prose: [limit will] reset(s) in N <unit>
+	m = bodyText.match(/\bresets?\s+in\s+(\d+(?:\.\d+)?)\s*(ms|s|sec|seconds?|m|min|minutes?)\b/i);
 	if (m) return convertUnit(Number.parseFloat(m[1]), m[2]);
 
 	// resets at <ISO8601-with-tz>

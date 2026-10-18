@@ -24,8 +24,12 @@ export type {
 	SwitchSessionHandler,
 } from "./runner.ts";
 export { ExtensionRunner } from "./runner.ts";
+export * from "./session-control-types.ts";
 export type {
 	AfterProviderResponseEvent,
+	AgentActivityOutcome,
+	AgentBeforeSettleEvent,
+	AgentBeforeSettleEventResult,
 	AgentEndEvent,
 	AgentSettledEvent,
 	AgentStartEvent,
@@ -44,14 +48,22 @@ export type {
 	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
+	BoundaryContextPreview,
+	BoundaryResult,
+	BoundaryState,
 	BuildSystemPromptOptions,
+	CompactionEntryDraft,
 	// Context
 	CompactOptions,
+	ContextEditEntryDraft,
 	// Events - Agent
 	ContextEvent,
 	// Event Results
 	ContextEventResult,
 	ContextUsage,
+	ContextWithSystemEvent,
+	CustomEntryDraft,
+	CustomMessageEntryDraft,
 	CustomToolCallEvent,
 	CustomToolResultEvent,
 	EditorFactory,
@@ -59,6 +71,7 @@ export type {
 	EditToolResultEvent,
 	// Message and Entry Rendering
 	EntryRenderer,
+	EntryRendererOptions,
 	EntryRenderOptions,
 	ExecOptions,
 	ExecResult,
@@ -86,8 +99,10 @@ export type {
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,
+	ExtensionToolContext,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
 	FilesystemOperation,
 	FilesystemPolicy,
@@ -108,6 +123,7 @@ export type {
 	InputEvent,
 	InputEventResult,
 	InputSource,
+	KernelPreludeContribution,
 	KeybindingsManager,
 	LoadExtensionsResult,
 	LsToolCallEvent,
@@ -116,6 +132,7 @@ export type {
 	MarkdownTransformer,
 	// Events - Message
 	MessageEndEvent,
+	MessageEndEventResult,
 	MessageRenderer,
 	MessageRenderOptions,
 	MessageStartEvent,
@@ -123,6 +140,7 @@ export type {
 	ModelSelectEvent,
 	ModelSelectEventResult,
 	ModelSelectSource,
+	NormalizedBuildSystemPromptOptions,
 	PowerShellToolCallEvent,
 	PowerShellToolResultEvent,
 	ProjectTrustContext,
@@ -133,6 +151,7 @@ export type {
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,
+	ProviderStreamEvent,
 	ReadToolCallEvent,
 	ReadToolResultEvent,
 	// Commands
@@ -153,10 +172,15 @@ export type {
 	SessionBeforeSwitchResult,
 	SessionBeforeTreeEvent,
 	SessionBeforeTreeResult,
+	SessionBoundaryDraft,
 	SessionCompactEvent,
 	SessionCompactFailedEvent,
+	SessionContext,
 	SessionEvent,
 	SessionInfoChangedEvent,
+	SessionKind,
+	SessionParkedEvent,
+	SessionResumedEvent,
 	SessionShutdownEvent,
 	// Events - Session
 	SessionStartEvent,
@@ -167,6 +191,8 @@ export type {
 	SetThinkingLevelHandler,
 	SystemPromptChangeEvent,
 	TerminalInputHandler,
+	ThinkingLevelSelectEvent,
+	ToolAnnotations,
 	// Events - Tool
 	ToolCallEvent,
 	ToolCallEventResult,
@@ -178,13 +204,22 @@ export type {
 	ToolExecutionMode,
 	ToolExecutionStartEvent,
 	ToolExecutionUpdateEvent,
+	ToolExposure,
 	ToolInfo,
+	ToolLoadout,
+	ToolLoadoutChanges,
+	ToolNamespace,
+	ToolPermissionRequest,
 	ToolRenderResultOptions,
 	ToolResultEvent,
 	ToolResultEventResult,
 	TreePreparation,
 	TurnEndEvent,
+	TurnEndEventResult,
 	TurnStartEvent,
+	UIPromptEndEvent,
+	UIPromptKind,
+	UIPromptStartEvent,
 	// Events - User Bash
 	UserBashEvent,
 	UserBashEventResult,
@@ -196,6 +231,7 @@ export type {
 // Type guards
 export {
 	defineTool,
+	EMPTY_SESSION_CONTEXT,
 	ExecuteToolError,
 	isBashToolResult,
 	isEditToolResult,

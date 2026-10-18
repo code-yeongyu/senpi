@@ -2,22 +2,22 @@ import { getRegisteredFauxProvider } from "./providers/faux.ts";
 import type {
 	Api,
 	AssistantMessageEventStream,
-	Context,
 	Model,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
+	TranscriptContext,
 } from "./types.ts";
 
 export type ApiStreamFunction = (
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: StreamOptions,
 ) => AssistantMessageEventStream;
 
 export type ApiStreamSimpleFunction = (
 	model: Model<Api>,
-	context: Context,
+	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ) => AssistantMessageEventStream;
 
@@ -36,6 +36,8 @@ export interface ApiProviderInternal {
 export type RegisteredApiProvider = {
 	provider: ApiProviderInternal;
 	sourceId?: string;
+	/** Kept by `clearApiProviders()`; removed only through `unregisterApiProviders(sourceId)`. */
+	survivesClear?: boolean;
 };
 
 /** Browser-neutral shape installed by the node-only provider-scope subpath. */
@@ -88,6 +90,7 @@ function wrapStreamSimple<TApi extends Api>(
 function createRegisteredProvider<TApi extends Api, TOptions extends StreamOptions>(
 	provider: ApiProvider<TApi, TOptions>,
 	sourceId?: string,
+	survivesClear?: boolean,
 ): RegisteredApiProvider {
 	return {
 		provider: {
@@ -96,16 +99,18 @@ function createRegisteredProvider<TApi extends Api, TOptions extends StreamOptio
 			streamSimple: wrapStreamSimple(provider.api, provider.streamSimple),
 		},
 		sourceId,
+		...(survivesClear ? { survivesClear } : {}),
 	};
 }
 
 export function registerApiProvider<TApi extends Api, TOptions extends StreamOptions>(
 	provider: ApiProvider<TApi, TOptions>,
 	sourceId?: string,
+	options?: { survivesClear?: boolean },
 ): void {
 	const scope = getActiveProviderScope();
 	const registry = scope ? scope.overlay : apiProviderRegistry;
-	registry.set(provider.api, createRegisteredProvider(provider, sourceId));
+	registry.set(provider.api, createRegisteredProvider(provider, sourceId, options?.survivesClear));
 }
 
 /** Registers a builtin once, retaining its immutable identity for active scopes. */
@@ -150,11 +155,18 @@ export function unregisterApiProviders(sourceId: string): void {
 	const scope = getActiveProviderScope();
 	const registry = scope ? scope.overlay : apiProviderRegistry;
 	for (const [api, entry] of registry.entries()) {
-		if (entry.sourceId === sourceId) registry.delete(api);
+		if (entry.sourceId !== sourceId) continue;
+		registry.delete(api);
+		// A scope overlay already falls back to the builtin; the global registry must get it back.
+		const builtin = builtinApiProviderRegistry.get(api);
+		if (!scope && builtin) registry.set(api, builtin);
 	}
 }
 
 export function clearApiProviders(): void {
 	const scope = getActiveProviderScope();
-	(scope ? scope.overlay : apiProviderRegistry).clear();
+	const registry = scope ? scope.overlay : apiProviderRegistry;
+	for (const [api, entry] of registry) {
+		if (!entry.survivesClear) registry.delete(api);
+	}
 }

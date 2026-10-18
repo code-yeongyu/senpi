@@ -1,18 +1,25 @@
-import type { ExtensionContext } from "@code-yeongyu/senpi";
+import { type ExtensionContext, withBundledBunCommands } from "@code-yeongyu/senpi";
 import type { AgentExecuteTool } from "../bridges/agent-bridge.ts";
 import type { EvalSchemaToolInfo } from "../bridges/schema-bridge.ts";
 import type { CompletionRequest, CompletionResult } from "../completion/handler.ts";
+import { resolveJsIsolation } from "../config/feature-settings.ts";
+import { withoutUntrustedInterpreter } from "../config/project-trust.ts";
 import {
 	type CodemodeSettings,
 	loadCodemodeSettings,
 	type ResolvedCodemodeSettings,
 	resolveEnabledLanguages,
 } from "../config/settings.ts";
+import { JsEnvironments } from "../environments/js-environments.ts";
+import { PythonEnvironments } from "../environments/python-environments.ts";
+import type { HandleRegistry } from "../handles/handle-registry.ts";
 import {
 	createInterpreterDetector,
 	getInterpreterAvailability,
 	type InterpreterAvailability,
 } from "../interpreters/detect.ts";
+import { processRuntimeInfo } from "../kernels/js/process-worker.ts";
+import { sessionEnvironmentFrom } from "../kernels/session-env.ts";
 import { resolveSessionArtifactsDir } from "../output/streaming-output.ts";
 import type { EnabledEvalLanguages, EvalLanguage, EvalRuntimes } from "../tool/types.ts";
 import { jsRuntimeInfo, runtimesFromAvailability } from "./runtime-info.ts";
@@ -45,6 +52,8 @@ export type SessionRuntime = {
 	readonly artifactsDir: string;
 	readonly executeTool: AgentExecuteTool;
 	readonly spawns: boolean;
+	readonly pythonEnvironments?: PythonEnvironments;
+	readonly jsEnvironments: JsEnvironments;
 };
 
 export async function createRuntime(
@@ -53,30 +62,58 @@ export async function createRuntime(
 	event: unknown,
 	complete: (request: CompletionRequest, ctx: ExtensionContext) => Promise<CompletionResult>,
 	options: RuntimeFactoryOptions,
+	handles?: HandleRegistry,
 ): Promise<SessionRuntime> {
 	const loaded = await loadCodemodeSettings({ cwd: ctx.cwd });
+	const trusted = withoutUntrustedInterpreter(
+		loaded.settings,
+		loaded.source,
+		ctx.cwd,
+		typeof ctx.isProjectTrusted === "function" ? () => ctx.isProjectTrusted() : undefined,
+	);
 	const settings: ResolvedCodemodeSettings = {
-		...loaded.settings,
-		languages: resolveEnabledLanguages(loaded.settings),
+		...trusted.settings,
+		languages: resolveEnabledLanguages(trusted.settings),
 	};
 	const availability = await getInterpreterAvailability(settings, createInterpreterDetector());
+	const pyReason = availability.py.detected.ok ? undefined : availability.py.detected.reason;
+	reportSettingsProblems(ctx, [
+		...loaded.warnings,
+		...(trusted.warning === undefined ? [] : [trusted.warning]),
+		...(pyReason === undefined ? [] : [pyReason]),
+	]);
 	const enabledLanguages = enabledLanguagesFrom(settings, availability);
+	const jsProcessIsolation = resolveJsIsolation(settings) === "process";
 	const artifacts = resolveSessionArtifactsDir(ctx.sessionManager.getSessionFile());
 	const activeTools = new Set(pi.getActiveTools());
 	const executeTool = createExecuteTool(pi, activeTools);
 	const create = options.createSessionManager ?? createCodemodeSessionManager;
 	const sessionId = sessionIdFrom(event);
+	const sessionEnv = { ...sessionEnvironmentFrom(ctx), ...bundledBunPathEntry() };
 	const configuredPoolWidth = settings.parallelPoolWidth;
 	const parallelPoolWidth = Number.isFinite(configuredPoolWidth) ? Math.max(1, Math.trunc(configuredPoolWidth)) : 1;
+	const pythonEnvironments =
+		availability.py.detected.ok && enabledLanguages.py
+			? new PythonEnvironments({
+					artifactsDir: artifacts.dir,
+					cwd: ctx.cwd,
+					interpreter: availability.py.detected.path,
+					settings,
+				})
+			: undefined;
 	const manager = await create({
 		sessionId,
+		ownerSessionId: ctx.sessionManager.getSessionId(),
 		cwd: ctx.cwd,
+		sessionEnv,
 		settings,
 		availability,
 		artifactsDir: artifacts.dir,
 		executeTool,
 		listTools: () => pi.getAllTools(),
 		complete,
+		...(handles === undefined ? {} : { handles }),
+		...(pythonEnvironments === undefined ? {} : { environments: { python: pythonEnvironments } }),
 	});
 	return {
 		sessionId,
@@ -84,12 +121,32 @@ export async function createRuntime(
 		parallelPoolWidth,
 		manager,
 		enabledLanguages,
-		runtimes: runtimesFromAvailability(availability, jsRuntimeInfo()),
+		runtimes: runtimesFromAvailability(
+			availability,
+			(jsProcessIsolation ? processRuntimeInfo(undefined) : undefined) ??
+				jsRuntimeInfo(process.versions, process.execPath, jsProcessIsolation),
+		),
 		settings,
 		artifactsDir: artifacts.dir,
 		executeTool,
 		spawns: activeTools.has(settings.taskTools.task),
+		jsEnvironments: new JsEnvironments({
+			artifactsDir: artifacts.dir,
+			cwd: ctx.cwd,
+			runtime: jsRuntimeInfo().name,
+			env: { ...process.env, ...sessionEnv },
+			settings,
+		}),
+		...(pythonEnvironments === undefined ? {} : { pythonEnvironments }),
 	};
+}
+
+/** Settings problems reach the user: a notice with a UI, otherwise stderr (print and RPC runs). */
+function reportSettingsProblems(ctx: ExtensionContext, problems: readonly string[]): void {
+	for (const problem of problems) {
+		if (ctx.hasUI) ctx.ui.notify(`[senpi-codemode] ${problem}`, "warning");
+		else console.error(`[senpi-codemode] ${problem}`);
+	}
 }
 
 export function createExecuteTool(pi: CodemodeRuntimeAPI, activeTools?: ReadonlySet<string>): AgentExecuteTool {
@@ -100,6 +157,17 @@ export function createExecuteTool(pi: CodemodeRuntimeAPI, activeTools?: Readonly
 	return Object.assign(executeTool, {
 		isToolAvailable: (name: string): boolean => activeTools?.has(name) ?? pi.getActiveTools().includes(name),
 	});
+}
+
+// In a compiled executable, Bun Shell runs `bun` as this executable unless PATH has one, which booted
+// a second agent from `bun test` in a cell (omo#9362). Kernel children get the same bundled `bun`
+// directory the bash tool's PATH carries.
+function bundledBunPathEntry(): Record<string, string> {
+	const env = withBundledBunCommands(process.env);
+	if (env === process.env) return {};
+	const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+	const value = env[pathKey];
+	return value === undefined ? {} : { [pathKey]: value };
 }
 
 function sessionIdFrom(event: unknown): string {

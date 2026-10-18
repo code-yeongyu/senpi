@@ -78,10 +78,24 @@ export default function (pi: ExtensionAPI) {
 						);
 						return null;
 					}
-					const commandLine = `code -g ${quoteCmdArg(file)}`;
+					// VS Code's --goto parser rejects drive-letter paths (and still exits 0), so pass a plain file argument.
+					const commandLine = `code ${quoteCmdArg(file)}`;
 					return pi.exec("cmd", ["/d", "/s", "/c", commandLine], { cwd: ctx.cwd });
 				}
 				return pi.exec("code", ["-g", file], { cwd: ctx.cwd });
+			};
+
+			// `code` can print a usage error and still exit 0 (senpi#2646), so stderr on success is reported too.
+			const reportOpen = (file: string, openResult: { code: number; stderr: string }) => {
+				const openStderr = openResult.stderr.trim();
+				if (openResult.code !== 0) {
+					ctx.ui.notify(
+						`Failed to open ${file} (exit ${openResult.code})${openStderr ? `: ${openStderr}` : ""}`,
+						"error",
+					);
+				} else if (openStderr) {
+					ctx.ui.notify(`code reported a problem opening ${file}: ${openStderr}`, "warning");
+				}
 			};
 
 			const openSelected = async (fileInfo: FileInfo): Promise<void> => {
@@ -91,13 +105,7 @@ export default function (pi: ExtensionAPI) {
 					if (fileInfo.status === "?") {
 						const openResult = await openWithCode(fileInfo.file);
 						if (!openResult) return;
-						if (openResult.code !== 0) {
-							const openStderr = openResult.stderr.trim();
-							ctx.ui.notify(
-								`Failed to open ${fileInfo.file} (exit ${openResult.code})${openStderr ? `: ${openStderr}` : ""}`,
-								"error",
-							);
-						}
+						reportOpen(fileInfo.file, openResult);
 						return;
 					}
 
@@ -117,13 +125,7 @@ export default function (pi: ExtensionAPI) {
 
 						const openResult = await openWithCode(fileInfo.file);
 						if (!openResult) return;
-						if (openResult.code !== 0) {
-							const openStderr = openResult.stderr.trim();
-							ctx.ui.notify(
-								`Failed to open ${fileInfo.file} (exit ${openResult.code})${openStderr ? `: ${openStderr}` : ""}`,
-								"error",
-							);
-						}
+						reportOpen(fileInfo.file, openResult);
 					}
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);

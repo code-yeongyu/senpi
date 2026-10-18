@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { diagnostic } from "./diagnostics.ts";
 import { parseHookConfig } from "./schema.ts";
 import type { HookDiagnostic, HookSourceMetadata, ParsedHookConfig } from "./types.ts";
@@ -67,7 +68,35 @@ export function loadHookConfigSources(options: HookConfigLoaderOptions): ParsedH
 	return { executableHandlers, diagnostics };
 }
 
-function createSourceCandidates(options: HookConfigLoaderOptions): SourceCandidate[] {
+/** Read files asynchronously, retaining the synchronous parser's source order and diagnostics. */
+export async function loadHookConfigSourcesAsync(
+	options: Omit<HookConfigLoaderOptions, "fileSystem">,
+): Promise<ParsedHookConfig> {
+	const files = new Map<string, { text?: string; error?: unknown }>();
+	const candidates = createSourceCandidates(options);
+	await Promise.all(
+		candidates.map(async (candidate) => {
+			if (candidate.kind !== "file") return;
+			try {
+				files.set(candidate.sourcePath, { text: await readFile(candidate.sourcePath, "utf8") });
+			} catch (error) {
+				files.set(candidate.sourcePath, (error as NodeJS.ErrnoException).code === "ENOENT" ? {} : { error });
+			}
+		}),
+	);
+	return loadHookConfigSources({
+		...options,
+		fileSystem: {
+			readTextFile(path) {
+				const file = files.get(path);
+				if (file?.error !== undefined) throw file.error;
+				return file?.text;
+			},
+		},
+	});
+}
+
+function createSourceCandidates(options: Omit<HookConfigLoaderOptions, "fileSystem">): SourceCandidate[] {
 	const candidates: SourceCandidate[] = [];
 	if (options.globalSettingsHooks !== undefined) {
 		candidates.push({

@@ -13,6 +13,7 @@ import { closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectInstallMethod } from "../config.ts";
+import { runtimeExecArgv } from "../utils/runtime-exec-argv.ts";
 
 export interface OmoLocalWorkerSpawnRequest {
 	agentDir: string;
@@ -37,7 +38,7 @@ function workerCommandArgs(force: boolean): string[] {
 	const modulePath = fileURLToPath(import.meta.url);
 	const extension = modulePath.endsWith(".ts") ? ".ts" : ".js";
 	const cliMainPath = resolve(dirname(modulePath), "..", `cli-main${extension}`);
-	return [...process.execArgv, cliMainPath, ...updateArgs];
+	return [...runtimeExecArgv(), cliMainPath, ...updateArgs];
 }
 
 export const defaultSpawnWorker: OmoLocalSpawnWorker = (request) => {

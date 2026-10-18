@@ -28,12 +28,21 @@ zero real waiting.
 
 ## PERSISTENCE
 
-`store.ts`: one sidecar file per session, strict `version: 1` validation, atomic write
-via temp file + rename, and a promise tail serializing every mutation so command, timer,
-tool, and lifecycle writes cannot interleave. It FAILS CLOSED: unparseable or wrong-version
-state returns a typed error, arms nothing, never silently resets. Session custom entries
-are deliberately NOT the authoritative store; the `loop-tick` entry exists only for
-attribution and noop folding.
+`store.ts` is now a thin domain layer over the shared primitive `core/session-sidecar-store.ts`
+(`createSidecarStore`), which this store's own discipline was extracted into: one sidecar file
+per session at `<baseDir>/<encoded session id>.json`, strict version and session-id validation,
+atomic write via a 0600 temp file + rename, and a per-file promise tail (`serializeByKey`)
+serializing every read-modify-write so command, timer, tool, and lifecycle writes cannot
+interleave. `store.ts` keeps what is loop-specific: `parseLoopPayload` domain validation, the
+per-file store cache, and `remapLoopStoreError`, which re-labels the primitive's
+`InvalidSidecarStoreError` / `UnsupportedSidecarStoreVersionError` as the loop-typed errors
+callers already handle. It FAILS CLOSED: unparseable or wrong-version state returns a typed
+error, arms nothing, never silently resets. Session custom entries are deliberately NOT the
+authoritative store; the `loop-tick` entry exists only for attribution and noop folding.
+
+The primitive is shared, not loop-owned: `builtin/terminal/terminal-manifest.ts` persists its
+monitor manifest through the same `createSidecarStore`. Fix a persistence bug there, not here,
+and keep domain parsing (and error relabeling) on this side of the seam.
 
 ## SCHEDULING INVARIANTS
 
@@ -73,7 +82,10 @@ user — a schedule that cannot be persisted must not keep running.
 
 ## MODEL SURFACE
 
-`schedule_wakeup` (`tools.ts`) is the only model-callable surface. Its TypeBox schema is a
+`schedule_wakeup` (`tools.ts`) is the only model-callable surface. It registers `exposure: "search"`
+with lazy activation disabled; `index.ts` activates it (`setActiveTools`) exactly while a dynamic loop
+is live and retires it when that loop ends or suspends, so no-loop sessions never pay for it.
+Its TypeBox schema is a
 flat object with no root union (several provider conversions rebuild schemas from top-level
 `properties`; a root `anyOf` would arrive empty — same reasoning as `terminal/tools/monitor.ts`).
 `delaySeconds` carries no schema bounds; the executor clamps out-of-range integers (60-3600s)

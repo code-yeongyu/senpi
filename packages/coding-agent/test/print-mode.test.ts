@@ -1,5 +1,6 @@
 import type { AssistantMessage, ImageContent, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { REQUIRED_COMPACTION_ERROR_MESSAGE } from "../src/core/agent-session.ts";
 import type { SessionShutdownEvent } from "../src/index.ts";
 import { runPrintMode } from "../src/modes/print-mode.ts";
 
@@ -65,7 +66,7 @@ function createAssistantMessage(options?: {
 	};
 }
 
-function createToolResultMessage(): ToolResultMessage<unknown> {
+function createToolResultMessage(): ToolResultMessage {
 	return {
 		role: "toolResult",
 		toolCallId: "call-1",
@@ -161,6 +162,32 @@ describe("runPrintMode", () => {
 		expect(errorSpy).toHaveBeenCalledWith("provider failure");
 		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
+	});
+
+	it("json mode returns non-zero when the run ran out of context (senpi#2925)", async () => {
+		const runtimeHost = createRuntimeHost(
+			createAssistantMessage({ stopReason: "error", errorMessage: REQUIRED_COMPACTION_ERROR_MESSAGE }),
+		);
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "json",
+			initialMessage: "Survey the pages",
+		});
+
+		expect(exitCode).toBe(1);
+	});
+
+	it("json mode keeps exit 0 for other error stops", async () => {
+		const runtimeHost = createRuntimeHost(
+			createAssistantMessage({ stopReason: "error", errorMessage: "provider down" }),
+		);
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "json",
+			initialMessage: "Say hi",
+		});
+
+		expect(exitCode).toBe(0);
 	});
 
 	it("prints the last assistant text when a terminating tool result trails it", async () => {

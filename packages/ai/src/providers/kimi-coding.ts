@@ -1,9 +1,10 @@
 import { anthropicMessagesApi } from "../api/anthropic-messages.lazy.ts";
-import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
+import { lazyOAuth } from "../auth/helpers.ts";
 import { loadKimiCodingOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
 import { KIMI_CODE_RETRY_PROFILE } from "../utils/retry-profile/profiles.ts";
 import { KIMI_CODING_MODELS } from "./kimi-coding.models.ts";
+import { kimiCodeApiKeyAuth } from "./kimi-coding-auth.ts";
 
 export function kimiCodingProvider(): Provider<"anthropic-messages"> {
 	return createProvider({
@@ -11,7 +12,7 @@ export function kimiCodingProvider(): Provider<"anthropic-messages"> {
 		name: "Kimi For Coding",
 		baseUrl: "https://api.kimi.com/coding",
 		auth: {
-			apiKey: envApiKeyAuth("Kimi API key", ["KIMI_API_KEY"]),
+			apiKey: kimiCodeApiKeyAuth(),
 			oauth: lazyOAuth({
 				name: "Kimi Code (subscription)",
 				isSubscription: true,

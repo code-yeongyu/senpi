@@ -1,9 +1,15 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import type { ShellCaptureOptions, ShellCaptureRestore } from "../src/kernels/js/worker-shell-capture.d.ts";
-
-type InstallShellCapture = (options: ShellCaptureOptions) => ShellCaptureRestore;
+import type { ShellCaptureRestore } from "../src/kernels/js/worker-shell-capture.d.ts";
+import {
+	emitter,
+	FakeShellError,
+	FakeShellPromise,
+	type InstallShellCapture,
+	installFakeBun,
+	output,
+} from "./eval/fake-bun-shell.ts";
 
 const captureModuleUrl = pathToFileURL(join(process.cwd(), "src", "kernels", "js", "worker-shell-capture.js")).href;
 
@@ -19,196 +25,6 @@ async function loadInstallShellCapture(): Promise<InstallShellCapture> {
 	return loaded.installShellCapture;
 }
 
-type EmittedText = { readonly stream: "stdout" | "stderr"; readonly data: string };
-
-type FakeShellOutput = {
-	readonly stdout: Buffer;
-	readonly stderr: Buffer;
-	readonly exitCode: number;
-};
-
-class FakeShellError extends Error implements FakeShellOutput {
-	readonly name = "ShellError";
-	readonly stdout: Buffer;
-	readonly stderr: Buffer;
-	readonly exitCode: number;
-
-	constructor(output: FakeShellOutput) {
-		super(`Failed with exit code ${output.exitCode}`);
-		this.stdout = output.stdout;
-		this.stderr = output.stderr;
-		this.exitCode = output.exitCode;
-	}
-}
-
-/**
- * Mirrors the Bun 1.4 ShellPromise contract that matters here (verified against bun 1.4.0):
- * - the command starts lazily on the first `then` call;
- * - without `quiet()`, the child's output is streamed to the process' fd 1/2 as it runs;
- * - `text()`/`json()`/`lines()` switch to quiet mode INTERNALLY (not via the instance `quiet` property);
- * - `quiet()`/`nothrow()`/`throws()` return the same promise.
- */
-class FakeShellPromise extends Promise<FakeShellOutput> {
-	static get [Symbol.species](): PromiseConstructor {
-		return Promise;
-	}
-
-	readonly printed: string[];
-	#quiet = false;
-	#nothrow = false;
-	#started = false;
-	readonly #output: FakeShellOutput;
-
-	constructor(output: FakeShellOutput, printed: string[]) {
-		let settle: (value: FakeShellOutput) => void = () => {};
-		let fail: (error: unknown) => void = () => {};
-		super((resolve, reject) => {
-			settle = resolve;
-			fail = reject;
-		});
-		this.#output = output;
-		this.printed = printed;
-		this.#start = () => {
-			if (this.#started) return;
-			this.#started = true;
-			if (!this.#quiet) this.printed.push(this.#output.stdout.toString(), this.#output.stderr.toString());
-			if (this.#output.exitCode !== 0 && !this.#nothrow) fail(new FakeShellError(this.#output));
-			else settle(this.#output);
-		};
-	}
-
-	#start: () => void;
-
-	quiet(): this {
-		this.#quiet = true;
-		return this;
-	}
-
-	nothrow(): this {
-		this.#nothrow = true;
-		return this;
-	}
-
-	throws(shouldThrow: boolean): this {
-		this.#nothrow = !shouldThrow;
-		return this;
-	}
-
-	async text(): Promise<string> {
-		this.#quiet = true;
-		const result = await this.then((value) => value);
-		return result.stdout.toString();
-	}
-
-	// biome-ignore lint/suspicious/noThenProperty: intentional thenable — Bun's ShellPromise starts the command on its own then()
-	override then<TResult1 = FakeShellOutput, TResult2 = never>(
-		onFulfilled?: ((value: FakeShellOutput) => TResult1 | PromiseLike<TResult1>) | null,
-		onRejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
-	): Promise<TResult1 | TResult2> {
-		this.#start();
-		return super.then(onFulfilled, onRejected);
-	}
-}
-
-type FakeSpawnCall = { readonly cmd: readonly string[]; readonly options: Record<string, unknown> };
-
-type FakeBun = {
-	$: FakeShell;
-	spawn: (...args: unknown[]) => FakeSubprocess;
-	spawnSync: (...args: unknown[]) => unknown;
-};
-
-type FakeShell = {
-	(strings: TemplateStringsArray, ...expressions: unknown[]): FakeShellPromise;
-	nothrow(): FakeShell;
-	throws(shouldThrow: boolean): FakeShell;
-	env(values?: Record<string, string>): FakeShell;
-	cwd(path?: string): FakeShell;
-	braces(pattern: string): string[];
-	escape(value: string): string;
-	Shell: () => void;
-	ShellPromise: typeof FakeShellPromise;
-	ShellError: typeof FakeShellError;
-	calls: string[];
-};
-
-type FakeSubprocess = {
-	readonly stderr: ReadableStream<Uint8Array> | undefined;
-	readonly exited: Promise<number>;
-};
-
-function output(stdout: string, stderr = "", exitCode = 0): FakeShellOutput {
-	return { stdout: Buffer.from(stdout), stderr: Buffer.from(stderr), exitCode };
-}
-
-function createFakeBun(): {
-	bun: FakeBun;
-	printed: string[];
-	spawnCalls: FakeSpawnCall[];
-	outputs: Map<string, FakeShellOutput>;
-} {
-	const printed: string[] = [];
-	const spawnCalls: FakeSpawnCall[] = [];
-	const outputs = new Map<string, FakeShellOutput>();
-	const shell = ((strings: TemplateStringsArray) => {
-		const command = strings.join("");
-		return new FakeShellPromise(outputs.get(command) ?? output(""), printed);
-	}) as FakeShell;
-	shell.calls = [];
-	shell.nothrow = () => {
-		shell.calls.push("nothrow");
-		return shell;
-	};
-	shell.throws = (shouldThrow) => {
-		shell.calls.push(`throws:${shouldThrow}`);
-		return shell;
-	};
-	shell.env = () => {
-		shell.calls.push("env");
-		return shell;
-	};
-	shell.cwd = () => {
-		shell.calls.push("cwd");
-		return shell;
-	};
-	shell.braces = (pattern) => [pattern];
-	shell.escape = (value) => value;
-	shell.Shell = () => {};
-	shell.ShellPromise = FakeShellPromise;
-	shell.ShellError = FakeShellError;
-	const spawn = (...args: unknown[]): FakeSubprocess => {
-		const [first, second] = args;
-		const options: Record<string, unknown> = Array.isArray(first)
-			? { ...(second as Record<string, unknown> | undefined) }
-			: { ...(first as Record<string, unknown>) };
-		const cmd = Array.isArray(first) ? (first as string[]) : (options.cmd as string[]);
-		spawnCalls.push({ cmd, options });
-		const stderr =
-			options.stderr === "pipe"
-				? new ReadableStream<Uint8Array>({
-						start(controller) {
-							controller.enqueue(new TextEncoder().encode(`child stderr for ${cmd.join(" ")}\n`));
-							controller.close();
-						},
-					})
-				: undefined;
-		return { stderr, exited: Promise.resolve(0) };
-	};
-	const bun: FakeBun = { $: shell, spawn, spawnSync: () => ({}) };
-	return { bun, printed, spawnCalls, outputs };
-}
-
-function installFakeBun(): ReturnType<typeof createFakeBun> {
-	const fake = createFakeBun();
-	Object.defineProperty(globalThis, "Bun", { value: fake.bun, configurable: true, writable: true });
-	return fake;
-}
-
-function emitter(): { emitted: EmittedText[]; emitText: (stream: "stdout" | "stderr", data: string) => void } {
-	const emitted: EmittedText[] = [];
-	return { emitted, emitText: (stream, data) => emitted.push({ stream, data }) };
-}
-
 describe("JS kernel shell output capture", () => {
 	const hadBun = Object.hasOwn(globalThis, "Bun");
 	const originalBun: unknown = Reflect.get(globalThis, "Bun");
@@ -222,6 +38,8 @@ describe("JS kernel shell output capture", () => {
 	afterEach(() => {
 		restore();
 		restore = () => {};
+		Reflect.deleteProperty(globalThis, "__senpi_session_env_deletions__");
+		Reflect.deleteProperty(globalThis, "__senpi_session_env_applied__");
 		if (hadBun) Object.defineProperty(globalThis, "Bun", { value: originalBun, configurable: true, writable: true });
 		else Reflect.deleteProperty(globalThis, "Bun");
 	});
@@ -308,6 +126,22 @@ describe("JS kernel shell output capture", () => {
 		expect(promise).toBeInstanceOf(FakeShellPromise);
 		expect(fake.printed).toEqual(["idle\n", ""]);
 		expect(emitted).toEqual([]);
+		expect(fake.bun.$.framed).toEqual([false]);
+	});
+
+	it("Given an active cell when `$` runs then the template is framed so its commands read an empty stdin", async () => {
+		const fake = installFakeBun();
+		fake.outputs.set("cat file.txt | wc -c", output("0\n"));
+		const { emitText } = emitter();
+		let active = true;
+		restore = installShellCapture({ isActive: () => active, emitText });
+
+		const framed = await fake.bun.$`cat file.txt | wc -c`.text();
+		active = false;
+		await fake.bun.$`echo after`;
+
+		expect(framed).toBe("0\n");
+		expect(fake.bun.$.framed).toEqual([true, false]);
 	});
 
 	it("Given the captured shell when shell-level configuration methods are used then they chain on the captured shell", () => {
@@ -369,6 +203,97 @@ describe("JS kernel shell output capture", () => {
 
 		expect(fake.spawnCalls).toEqual([{ cmd: ["ls"], options: { cmd: ["ls"], stdout: "pipe", stderr: "pipe" } }]);
 		expect(emitted).toEqual([{ stream: "stderr", data: "child stderr for ls\n" }]);
+	});
+
+	it("Given deleted session keys when capture installs then Bun spawns pin the worker's environment view", async () => {
+		const fake = installFakeBun();
+		process.env.PI_SESSION_ID = "capture-pin-session";
+		globalThis.__senpi_session_env_deletions__ = ["PI_SESSION_FILE"];
+		const { emitText } = emitter();
+		try {
+			restore = installShellCapture({ isActive: () => true, emitText });
+
+			fake.bun.spawn(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+			fake.bun.spawn(["keep"], { env: { CUSTOM: "1" } });
+			await new Promise<void>((resolve) => setImmediate(resolve));
+
+			const pinned = fake.spawnCalls[0]?.options;
+			expect(pinned?.env).toEqual({ ...process.env });
+			expect(pinned?.stderr).toBe("pipe");
+			expect(fake.spawnCalls[1]?.options.env).toEqual({ CUSTOM: "1" });
+			// The shell default environment is seeded from the same view before wrapping.
+			expect(fake.bun.$.calls).toContain("env");
+		} finally {
+			delete process.env.PI_SESSION_ID;
+		}
+	});
+
+	it("Given a session environment applied without deletions when Bun.spawn runs without env then the worker view is pinned", async () => {
+		const fake = installFakeBun();
+		process.env.PI_SESSION_ID = "capture-applied-session";
+		globalThis.__senpi_session_env_deletions__ = [];
+		globalThis.__senpi_session_env_applied__ = true;
+		const { emitText } = emitter();
+		try {
+			restore = installShellCapture({ isActive: () => true, emitText });
+
+			fake.bun.spawn(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+			await new Promise<void>((resolve) => setImmediate(resolve));
+
+			const pinned = fake.spawnCalls[0]?.options;
+			expect(pinned?.env).toEqual({ ...process.env });
+			expect(pinned?.env).toHaveProperty("PI_SESSION_ID", "capture-applied-session");
+		} finally {
+			delete process.env.PI_SESSION_ID;
+		}
+	});
+
+	it("Given a session environment when Bun.spawnSync runs without env then the worker view is pinned and explicit env is kept", () => {
+		const fake = installFakeBun();
+		process.env.PI_SESSION_ID = "capture-sync-session";
+		globalThis.__senpi_session_env_applied__ = true;
+		try {
+			restore = installShellCapture({ isActive: () => true, emitText: emitter().emitText });
+
+			fake.bun.spawnSync(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+			fake.bun.spawnSync(["keep"], { env: { CUSTOM: "1" } });
+			fake.bun.spawnSync({ cmd: ["obj"] });
+
+			expect(fake.spawnSyncCalls[0]?.options.env).toEqual({ ...process.env });
+			expect(fake.spawnSyncCalls[0]?.options.env).toHaveProperty("PI_SESSION_ID", "capture-sync-session");
+			expect(fake.spawnSyncCalls[1]?.options.env).toEqual({ CUSTOM: "1" });
+			expect(fake.spawnSyncCalls[2]?.options.env).toEqual({ ...process.env });
+		} finally {
+			delete process.env.PI_SESSION_ID;
+		}
+	});
+
+	it("Given no session environment when Bun.spawnSync runs then it passes through unchanged and restore reinstates it", () => {
+		const fake = installFakeBun();
+		const originalSpawnSync = fake.bun.spawnSync;
+		restore = installShellCapture({ isActive: () => true, emitText: emitter().emitText });
+		expect(fake.bun.spawnSync).not.toBe(originalSpawnSync);
+
+		fake.bun.spawnSync(["sh", "-c", "true"]);
+		expect(fake.spawnSyncCalls).toEqual([{ cmd: ["sh", "-c", "true"], options: {} }]);
+
+		restore();
+		restore = () => {};
+		expect(fake.bun.spawnSync).toBe(originalSpawnSync);
+	});
+
+	it("Given no session environment when capture installs then spawn options pass through unchanged", async () => {
+		const fake = installFakeBun();
+		const { emitText } = emitter();
+		restore = installShellCapture({ isActive: () => true, emitText });
+
+		fake.bun.spawn(["sh", "-c", 'printf %s "$PI_SESSION_ID"']);
+		await new Promise<void>((resolve) => setImmediate(resolve));
+
+		expect(fake.spawnCalls).toEqual([
+			{ cmd: ["sh", "-c", 'printf %s "$PI_SESSION_ID"'], options: { stderr: "pipe" } },
+		]);
+		expect(fake.bun.$.calls).toEqual([]);
 	});
 
 	it("Given explicit stdio choices or no active cell when Bun.spawn runs then the options pass through unchanged", async () => {

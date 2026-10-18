@@ -1,5 +1,6 @@
-import type { TUI } from "@earendil-works/pi-tui";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { ModelSelectorComponent } from "../src/modes/interactive/components/model-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -16,9 +17,143 @@ describe("model selector", () => {
 		initTheme("dark");
 	});
 
+	beforeEach(() => {
+		setKeybindings(new KeybindingsManager());
+	});
+
 	afterEach(() => {
 		harness?.cleanup();
 		harness = undefined;
+	});
+
+	it("keeps the current model marked while browsing", async () => {
+		harness = await createHarness({
+			models: [
+				{ id: "current-model", name: "Current Model", reasoning: true },
+				{ id: "browsed-model", name: "Browsed Model", reasoning: true },
+			],
+		});
+		const currentModel = harness.getModel("current-model")!;
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			currentModel,
+			harness.settingsManager,
+			harness.session.modelRuntime,
+			[],
+			() => {},
+			() => {},
+		);
+
+		const getModelRow = (id: string): string | undefined =>
+			stripAnsi(selector.render(120).join("\n"))
+				.split("\n")
+				.find((line) => line.includes(`${id} [`))
+				?.trimEnd();
+
+		// D6: the checkmark renders after the model name (upstream #8900 cheap markers).
+		expect(getModelRow("current-model")).toBe(`→   current-model [${currentModel.provider}] ✓`);
+		selector.handleInput("\x1b[B");
+		expect(getModelRow("current-model")).toBe(`    current-model [${currentModel.provider}] ✓`);
+		expect(getModelRow("browsed-model")).toBe(`→   browsed-model [${currentModel.provider}]`);
+		selector.dispose();
+	});
+
+	// #2327: models available only through ambient cloud credentials (AWS env, Google ADC) stay
+	// listed but never lead the list ahead of providers the user configured.
+	it("lists ambient-only providers after configured providers", async () => {
+		harness = await createHarness({
+			models: [{ id: "configured-model", name: "Configured Model", reasoning: true }],
+		});
+		const runtime = harness.session.modelRuntime;
+		const configured = harness.getModel("configured-model")!;
+		const cloud = { ...configured, provider: "amazon-bedrock", id: "cloud-model", name: "Cloud Model" };
+		vi.spyOn(runtime, "refresh").mockResolvedValue({ aborted: false, errors: new Map() });
+		vi.spyOn(runtime, "getAvailableSnapshot").mockReturnValue([cloud, configured]);
+		const actualStatus = runtime.getProviderAuthStatus.bind(runtime);
+		vi.spyOn(runtime, "getProviderAuthStatus").mockImplementation((provider) =>
+			provider === "amazon-bedrock"
+				? { configured: true, source: "environment", label: "AWS access keys", ambient: true }
+				: actualStatus(provider),
+		);
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			undefined,
+			harness.settingsManager,
+			runtime,
+			[],
+			() => {},
+			() => {},
+		);
+
+		const listedIds = stripAnsi(selector.render(120).join("\n"))
+			.split("\n")
+			.flatMap((line) => /(\S+-model) \[/.exec(line)?.[1] ?? []);
+		expect(listedIds).toEqual(["configured-model", "cloud-model"]);
+		selector.dispose();
+	});
+
+	// Upstream #9149 made the selector's separate "set as default" chord follow app.models.save.
+	// The fork has no separate chord: confirming a model already persists it as the default, so a
+	// rebound app.models.save must neither select nor save here, while confirm still does both.
+	it("applies a selection to the session on confirm, and Ctrl+S no longer saves once the save chord is rebound", async () => {
+		setKeybindings(new KeybindingsManager({ "app.models.save": "ctrl+r" }));
+		harness = await createHarness({
+			models: [
+				{ id: "current-model", name: "Current Model", reasoning: true },
+				{ id: "other-model", name: "Other Model", reasoning: true },
+			],
+		});
+		const currentModel = harness.getModel("current-model")!;
+		const onSelect = vi.fn();
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			currentModel,
+			harness.settingsManager,
+			harness.session.modelRuntime,
+			[],
+			onSelect,
+			() => {},
+		);
+		const defaultBefore = harness.settingsManager.getDefaultModel();
+
+		expect(stripAnsi(selector.render(120).join("\n"))).toContain("select as default");
+		selector.handleInput("\x1b[B");
+		selector.handleInput("\x13");
+		expect(onSelect).not.toHaveBeenCalled();
+
+		selector.handleInput("\r");
+		expect(onSelect).toHaveBeenCalledTimes(1);
+		expect(onSelect.mock.calls[0]?.[0]?.id).toBe("other-model");
+		expect(onSelect.mock.calls[0]?.[1]).toEqual({ asDefault: false });
+		// senpi#2870: the selector itself never writes the default for new sessions.
+		expect(harness.settingsManager.getDefaultModel()).toBe(defaultBefore);
+	});
+
+	it("passes asDefault for the save chord (Ctrl+S by default), which makes the selection the default", async () => {
+		setKeybindings(new KeybindingsManager({}));
+		harness = await createHarness({
+			models: [
+				{ id: "current-model", name: "Current Model", reasoning: true },
+				{ id: "other-model", name: "Other Model", reasoning: true },
+			],
+		});
+		const onSelect = vi.fn();
+		const selector = new ModelSelectorComponent(
+			createFakeTui(),
+			harness.getModel("current-model")!,
+			harness.settingsManager,
+			harness.session.modelRuntime,
+			[],
+			onSelect,
+			() => {},
+		);
+
+		selector.handleInput("\x1b[B");
+		selector.handleInput("\x13");
+
+		expect(onSelect).toHaveBeenCalledTimes(1);
+		expect(onSelect.mock.calls[0]?.[0]?.id).toBe("other-model");
+		expect(onSelect.mock.calls[0]?.[1]).toEqual({ asDefault: true });
 	});
 
 	it("lists every catalog that failed to refresh", async () => {

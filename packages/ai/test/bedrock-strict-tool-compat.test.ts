@@ -38,8 +38,10 @@ describe("Bedrock global GPT-5.6 strict tool compat", () => {
 			{ compat?: { supportsStrictMode?: boolean } }
 		>;
 		for (const modelId of STRICT_MODE_MODEL_IDS) {
-			expect(models[modelId], `${modelId} is missing from the shipped Bedrock catalog`).toBeDefined();
-			expect(models[modelId].compat?.supportsStrictMode, `${modelId} lost compat.supportsStrictMode`).toBe(true);
+			// v6 model data (D-3) keys each entry by `<type>:<id>`.
+			const entry = models[`chat:${modelId}`];
+			expect(entry, `${modelId} is missing from the shipped Bedrock catalog`).toBeDefined();
+			expect(entry.compat?.supportsStrictMode, `${modelId} lost compat.supportsStrictMode`).toBe(true);
 		}
 	});
 

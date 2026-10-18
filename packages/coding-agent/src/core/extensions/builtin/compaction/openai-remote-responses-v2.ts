@@ -1,4 +1,4 @@
-import type { AssistantMessage, Model, ProviderHeaders, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import type { SessionBeforeCompactEvent } from "../../types.ts";
 import type { OpenAiRemoteCompactionDetails, OpenAiRemoteInputItem } from "./openai-remote-convert.ts";
@@ -8,23 +8,18 @@ import {
 	OPENAI_REMOTE_COMPACTION_SCHEMA,
 	providerNativeItem,
 } from "./openai-remote-convert.ts";
-import type { OpenAiRemoteCompactionModel, OpenAiRemoteCompactionOrigin } from "./openai-remote-model.ts";
+import type { OpenAiResponsesStreamRunner } from "./openai-remote-dependencies.ts";
+import {
+	type OpenAiRemoteCompactionModel,
+	type OpenAiRemoteCompactionOrigin,
+	openAiRemoteCompactionIdentity,
+} from "./openai-remote-model.ts";
 import type { OpenAiCompactionItem } from "./openai-remote-schema.ts";
-import { runWithRemoteTimeout } from "./openai-remote-timeout.ts";
+import { type RemoteCompactionTimeout, runWithRemoteTimeout } from "./openai-remote-timeout.ts";
 
 type ProviderRequestPreparation = {
 	transformPayload(payload: unknown): Promise<unknown>;
 };
-
-type ResponsesStream = {
-	result(): Promise<AssistantMessage>;
-};
-
-type ResponsesStreamRunner = (
-	model: Model<"openai-responses">,
-	context: { systemPrompt: string; messages: [] },
-	options: SimpleStreamOptions,
-) => ResponsesStream;
 
 type RemoteRequest = {
 	body: { input: OpenAiRemoteInputItem[] };
@@ -62,7 +57,9 @@ function findCompactionOutput(message: AssistantMessage): OpenAiCompactionItem |
 	return undefined;
 }
 
-export function supportsOpenAiResponsesRemoteCompactionV2(model: Model<"openai-responses">): boolean {
+/** The ChatGPT subscription backend serves only v2; its `/codex/responses/compact` route is retired (senpi#2378). */
+export function supportsOpenAiResponsesRemoteCompactionV2(model: OpenAiRemoteCompactionModel): boolean {
+	if (model.api === "openai-codex-responses") return true;
 	if (model.compat?.supportsRemoteCompactionV2 !== undefined) {
 		return model.compat.supportsRemoteCompactionV2;
 	}
@@ -90,12 +87,12 @@ export async function runOpenAiResponsesV2Compaction(args: {
 	auth: { apiKey?: string; headers?: ProviderHeaders; extraBody?: Record<string, unknown> };
 	event: SessionBeforeCompactEvent;
 	headers: ProviderHeaders;
-	model: Model<"openai-responses">;
+	model: OpenAiRemoteCompactionModel;
 	origin: OpenAiRemoteCompactionOrigin;
 	providerRequest?: ProviderRequestPreparation;
 	request: RemoteRequest;
 	sessionId: string;
-	stream: ResponsesStreamRunner;
+	stream: OpenAiResponsesStreamRunner;
 	systemPrompt: string;
 }): Promise<ResponsesV2CompactionResult | undefined> {
 	const stream = args.stream(
@@ -106,6 +103,8 @@ export async function runOpenAiResponsesV2Compaction(args: {
 			cacheRetention: "short",
 			extraBody: args.auth.extraBody,
 			headers: withRemoteCompactionV2Header(args.headers),
+			// One remote request per compaction on the subscription lane: a failure falls back to the local summary.
+			...(args.model.api === "openai-codex-responses" ? { maxRetries: 0 } : {}),
 			sessionId: args.sessionId,
 			signal: args.event.signal,
 			transport: "sse",
@@ -144,8 +143,7 @@ export async function runOpenAiResponsesV2Compaction(args: {
 		details: {
 			schema: OPENAI_REMOTE_COMPACTION_SCHEMA,
 			mode: "openai-remote",
-			provider: args.model.provider,
-			api: "openai-responses",
+			...openAiRemoteCompactionIdentity(args.model),
 			transport: "responses-v2",
 			modelId: args.model.id,
 			responseId,
@@ -186,6 +184,7 @@ type V2CompactionEvent =
 			modelId: string;
 			reason: string;
 			transport: "responses-v2";
+			timeout?: RemoteCompactionTimeout;
 	  };
 
 export async function attemptOpenAiResponsesV2Compaction(
@@ -193,6 +192,7 @@ export async function attemptOpenAiResponsesV2Compaction(
 		emit?: (event: V2CompactionEvent) => void;
 		requestId: string;
 		timeoutMs: number;
+		describeTimeout: (waitedMs: number) => RemoteCompactionTimeout;
 	},
 ): Promise<ResponsesV2CompactionResult | undefined> {
 	args.emit?.({
@@ -208,7 +208,7 @@ export async function attemptOpenAiResponsesV2Compaction(
 		const result = await runWithRemoteTimeout({
 			signal: args.event.signal,
 			timeoutMs: args.timeoutMs,
-			onTimeout: () =>
+			onTimeout: (waitedMs) =>
 				args.emit?.({
 					version: 1,
 					action: "remote_fallback",
@@ -217,6 +217,7 @@ export async function attemptOpenAiResponsesV2Compaction(
 					modelId: args.model.id,
 					reason: "remote-compaction-timeout",
 					transport: "responses-v2",
+					timeout: args.describeTimeout(waitedMs),
 				}),
 			run: (signal) => runOpenAiResponsesV2Compaction({ ...args, event: { ...args.event, signal } }),
 		});

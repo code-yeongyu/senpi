@@ -5,11 +5,12 @@ export const LOCAL_LLM_LIVE_TEST_FLAG = "PI_ENABLE_LOCAL_LLM";
 export const OPENROUTER_LIVE_TEST_FLAG = "PI_ENABLE_OPENROUTER_LIVE";
 export const BASETEN_LIVE_TEST_FLAG = "PI_ENABLE_BASETEN_LIVE";
 export const QWEN_TOKEN_PLAN_LIVE_TEST_FLAG = "PI_ENABLE_QWEN_TOKEN_PLAN_LIVE";
+export const BAI_LIVE_TEST_FLAG = "PI_ENABLE_BAI_LIVE";
 
 const OAUTH_LIVE_TEST_FLAGS = {
 	anthropic: "PI_ENABLE_ANTHROPIC_OAUTH_LIVE",
 	"github-copilot": "PI_ENABLE_GITHUB_COPILOT_LIVE",
-	"openai-codex": "PI_ENABLE_OPENAI_CODEX_LIVE",
+	"chatgpt-subscription": "PI_ENABLE_OPENAI_CODEX_LIVE",
 } as const;
 
 export function isLiveApiTestEnabled(providerFlag: string): boolean {

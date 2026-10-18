@@ -26,9 +26,13 @@ export type ServerConnectionToolsChangedEvent = {
 	readonly type: "tools_changed";
 	readonly serverName: string;
 	readonly generation: number;
+	/** `connect`: raised by every successful connect; `notification`: anything that reports a change. */
+	readonly cause: "connect" | "notification";
 };
 
 export interface ServerConnectionOptions {
+	readonly credentialIdentity?: string;
+	readonly credentialsCurrent?: () => boolean;
 	readonly serverName: string;
 	readonly config: McpServerConfig;
 	readonly logger: McpLogger;

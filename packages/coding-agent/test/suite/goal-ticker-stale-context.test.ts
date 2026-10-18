@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { GoalElapsedTicker } from "../../src/core/extensions/builtin/goal/elapsed-ticker.ts";
-import { MonitorAwareGoalContinuation } from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
+import {
+	GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS,
+	MonitorAwareGoalContinuation,
+} from "../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import type { Goal } from "../../src/core/extensions/builtin/goal/types.ts";
 import { GoalWaitTicker } from "../../src/core/extensions/builtin/goal/wait-ticker.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../src/core/extensions/builtin/monitor-state-event.ts";
@@ -45,7 +48,7 @@ function retiredCtx(onNotify: () => void, options: { readonly staleFrom?: number
 		},
 		hasPendingMessages: stale,
 		getPromptCacheSafeWaitSeconds: () => undefined,
-		getPromptCacheGoalBackstopMaxSeconds: () => 3570,
+		getPromptCacheGoalBackstopMaxSeconds: () => GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS / 1000,
 	} as unknown as ExtensionContext;
 }
 
@@ -195,7 +198,7 @@ describe("goal tickers vs retired extension contexts", () => {
 				},
 				hasPendingMessages: () => false,
 				getPromptCacheSafeWaitSeconds: () => undefined,
-				getPromptCacheGoalBackstopMaxSeconds: () => 3570,
+				getPromptCacheGoalBackstopMaxSeconds: () => GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS / 1000,
 			} as unknown as ExtensionContext;
 			const listeners = new Map<string, Array<(data: unknown) => void>>();
 			const pi = {

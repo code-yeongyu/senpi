@@ -97,7 +97,7 @@ describe("RPC set_model mid-session switch", () => {
 		const handler = createRpcConnectionHandler(createRuntimeHost(harness.session), sink);
 		cleanups.push(() => handler.dispose());
 		await handler.ready;
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write", "grep"]);
 
 		// When: an RPC client switches to a Responses-API GPT model mid-session.
 		const toGpt = await setModelViaRpc(handler, lines, "sw1", GPT_PROVIDER, "gpt-5.5");
@@ -105,7 +105,7 @@ describe("RPC set_model mid-session switch", () => {
 		// Then: the toolset and the prompt guidance update in the same turn.
 		expect(toGpt.success).toBe(true);
 		expect(harness.session.model?.id).toBe("gpt-5.5");
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "apply_patch", "grep"]);
 		expect(harness.session.systemPrompt).toContain("- apply_patch:");
 		expect(harness.session.systemPrompt).not.toContain("- edit:");
 
@@ -114,7 +114,7 @@ describe("RPC set_model mid-session switch", () => {
 
 		// Then: the edit tools and their guidance return.
 		expect(backToNonGpt.success).toBe(true);
-		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "edit", "write"]);
+		expect(harness.session.getActiveToolNames()).toEqual(["read", "bash", "grep", "edit", "write"]);
 		expect(harness.session.systemPrompt).toContain("- edit:");
 		expect(harness.session.systemPrompt).not.toContain("- apply_patch:");
 	});

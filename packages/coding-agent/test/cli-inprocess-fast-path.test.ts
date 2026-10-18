@@ -98,11 +98,12 @@ describe("CLI in-process fast path", () => {
 
 	describe("#given a launch that inherits an Inspector option", () => {
 		test("#when NODE_OPTIONS carries --inspect #then the agent still runs in a spawned child", () => {
-			// Port 0 lets the OS pick a free port, so concurrent runs cannot collide.
-			const result = runCli(["--help"], "--inspect=127.0.0.1:0");
+			// Port 0 lets the OS pick a free port, so concurrent runs cannot collide. The launch must
+			// reach the agent: a cached `--help` is answered before the isolation decision, because no
+			// agent runs for a help screen and there is no socket to hand over.
+			const result = runCli(["--model", "definitely-not-a-real-model-id", "--print", "hi"], "--inspect=127.0.0.1:0");
 
-			expect(result.status, result.stderr).toBe(0);
-			expect(result.stdout).toContain("Usage:");
+			expect(result.status).toBe(1);
 			expect(result.records).toHaveLength(2);
 			const entries = result.records.map((record) => record.entry);
 			expect(entries).toContain(CLI_PATH);

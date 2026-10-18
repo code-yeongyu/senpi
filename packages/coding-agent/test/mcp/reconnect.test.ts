@@ -8,6 +8,7 @@ import {
 	getMcpReconnectDebugSnapshot,
 } from "../../src/core/extensions/builtin/mcp/reconnect.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { delay, readNumberFile, readNumberFileOrZero, serverConfig, waitFor } from "./fixtures/reconnect.ts";
 import {
 	attach,
@@ -78,7 +79,13 @@ describe("MCP auto reconnect", () => {
 		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
-		const first = await tool.execute("tc-first", { value: "first" }, undefined, undefined, testContext());
+		const first = await tool.execute(
+			"tc-first",
+			{ value: "first" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 		await waitFor(
 			() => getMcpService().getConnection("fx")?.state === "connected" && readNumberFile(counterFile) >= 2,
 		);
@@ -101,7 +108,9 @@ describe("MCP auto reconnect", () => {
 		await waitFor(() => getMcpService().getConnection("fx")?.state === "suspended", 20_000);
 		await delay(500);
 
-		expect(readNumberFile(counterFile)).toBeLessThanOrEqual(6);
+		// Each attempt spawns twice: the child dies on the discovery probe, so the legacy handshake gets a fresh
+		// process (senpi#3304). The breaker bound is on attempts, asserted through reconnectCount below.
+		expect(readNumberFile(counterFile)).toBeLessThanOrEqual(12);
 		expect(getMcpService().getServerSnapshots()).toMatchObject([
 			{
 				name: "fx",
@@ -148,9 +157,9 @@ describe("MCP auto reconnect", () => {
 		await awaitMcpToolRegistration("fx");
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
-		await expect(tool.execute("tc-crash", { value: "once" }, undefined, undefined, testContext())).rejects.toThrow(
-			/ToolExecError/,
-		);
+		await expect(
+			tool.execute("tc-crash", { value: "once" }, undefined, undefined, testContext() as ExtensionToolContext),
+		).rejects.toThrow(/ToolExecError/);
 
 		expect(readNumberFile(counterFile)).toBe(1);
 	});
@@ -183,7 +192,13 @@ describe("MCP auto reconnect", () => {
 			throw new Error("transport closed before write");
 		};
 
-		const result = await tool.execute("tc-failed-send", { value: "retried" }, undefined, undefined, testContext());
+		const result = await tool.execute(
+			"tc-failed-send",
+			{ value: "retried" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 
 		expect(textContent(result)).toBe("fixture tool_1 value=retried mode=alpha");
 		expect(failedSendAttempts).toBe(1);
@@ -229,7 +244,13 @@ describe("MCP auto reconnect", () => {
 		};
 
 		await expect(
-			tool.execute("tc-retry-fails", { value: "never" }, undefined, undefined, testContext()),
+			tool.execute(
+				"tc-retry-fails",
+				{ value: "never" },
+				undefined,
+				undefined,
+				testContext() as ExtensionToolContext,
+			),
 		).rejects.toThrow(/ToolExecError: Error: transport closed after reconnect/);
 
 		expect(firstSendFailures).toBe(1);
@@ -256,7 +277,13 @@ describe("MCP auto reconnect", () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		vi.setSystemTime(Date.now() + 31_000);
 
-		const result = await tool.execute("tc-after-crash", { value: "after" }, undefined, undefined, testContext());
+		const result = await tool.execute(
+			"tc-after-crash",
+			{ value: "after" },
+			undefined,
+			undefined,
+			testContext() as ExtensionToolContext,
+		);
 
 		expect(textContent(result)).toBe("fixture tool_1 value=after mode=alpha");
 		expect(readNumberFile(callCounterFile)).toBe(1);

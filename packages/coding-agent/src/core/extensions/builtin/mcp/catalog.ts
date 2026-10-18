@@ -5,6 +5,7 @@ import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
 import type { McpOutputArtifacts } from "./guard/output-guard.ts";
 import type { McpEnsureFreshAuth } from "./health.ts";
+import type { McpInvocationResolver } from "./invocation.ts";
 
 type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 
@@ -21,9 +22,13 @@ export interface McpToolCatalogEntry {
 	agentDir?: string;
 	artifacts?: McpOutputArtifacts;
 	outputGuard?: McpSettings["outputGuard"];
+	invocation?: McpInvocationResolver;
 }
 
-type McpToolCatalogOptions = Pick<McpToolCatalogEntry, "agentDir" | "artifacts" | "ensureFresh" | "outputGuard">;
+type McpToolCatalogOptions = Pick<
+	McpToolCatalogEntry,
+	"agentDir" | "artifacts" | "ensureFresh" | "outputGuard" | "invocation"
+>;
 
 export async function collectToolCatalog(
 	server: string,
@@ -41,12 +46,26 @@ export async function collectToolCatalog(
 		connection,
 		description: tool.description,
 		ensureFresh: options.ensureFresh,
+		invocation: options.invocation,
 		outputGuard: options.outputGuard,
 		requestTimeoutMs: config.requestTimeoutMs,
 		schema: tool.inputSchema,
 		server,
 		tool: tool.name,
 	}));
+}
+
+/** What registering these tools with this catalog's resources and prompts exposes;
+ * equal identities register identical definitions. */
+export function mcpRegistrationIdentity(
+	tools: readonly McpToolCatalogEntry[],
+	catalog: McpCachedServerCatalog | undefined,
+): string {
+	return JSON.stringify([
+		tools.map((entry) => [entry.tool, entry.description, entry.schema, entry.annotations]),
+		catalog?.resources ?? [],
+		catalog?.prompts ?? [],
+	]);
 }
 
 export function cachedToolsToCatalogEntries(
@@ -65,6 +84,7 @@ export function cachedToolsToCatalogEntries(
 		description: tool.description,
 		ensureConnected,
 		ensureFresh: options.ensureFresh,
+		invocation: options.invocation,
 		outputGuard: options.outputGuard,
 		requestTimeoutMs,
 		schema: tool.inputSchema,

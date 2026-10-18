@@ -26,7 +26,9 @@ export class StreamingPatchParser {
 				this.lineBuffer += character;
 			}
 		}
-		return this.snapshot();
+		// Streaming render reads getLiveHunks(); returning the live list here avoids the
+		// per-delta structuredClone over every hunk. finish() still returns a defensive clone.
+		return this.hunks;
 	}
 
 	finish(): ParsedPatch[] {
@@ -46,6 +48,20 @@ export class StreamingPatchParser {
 
 	private snapshot(): ParsedPatch[] {
 		return structuredClone(this.hunks);
+	}
+
+	/**
+	 * The live hunk list without cloning, for streaming render only. Callers must treat it as
+	 * read-only; mutating it corrupts the parser's in-flight state. Avoids the per-delta
+	 * structuredClone over every hunk on the render path.
+	 */
+	getLiveHunks(): readonly ParsedPatch[] {
+		return this.hunks;
+	}
+
+	/** The not-yet-newline-terminated line currently being accumulated, for a dimmed in-flight row. */
+	getPartialLine(): string {
+		return this.lineBuffer;
 	}
 
 	private ensureUpdateHunkIsNotEmpty(line: string): void {
@@ -104,7 +120,15 @@ export class StreamingPatchParser {
 		const hunk = this.currentUpdate();
 		let chunk = hunk.chunks[hunk.chunks.length - 1];
 		if (!chunk || chunk.isEndOfFile) {
-			chunk = { changeContexts: [], oldLines: [], newLines: [], isEndOfFile: false };
+			chunk = {
+				changeContexts: [],
+				oldLines: [],
+				newLines: [],
+				contextLineIndices: [],
+				isEndOfFile: false,
+				addedCount: 0,
+				removedCount: 0,
+			};
 			hunk.chunks.push(chunk);
 		}
 		return chunk;
@@ -183,13 +207,17 @@ export class StreamingPatchParser {
 		const value = line.slice(1);
 		const chunk = this.currentChunk();
 		if (prefix === " ") {
+			chunk.contextLineIndices.push([chunk.oldLines.length, chunk.newLines.length]);
 			chunk.oldLines.push(value);
 			chunk.newLines.push(value);
 		} else if (prefix === "-") {
 			chunk.oldLines.push(value);
+			chunk.removedCount++;
 		} else if (prefix === "+") {
 			chunk.newLines.push(value);
+			chunk.addedCount++;
 		} else if (prefix === undefined) {
+			chunk.contextLineIndices.push([chunk.oldLines.length, chunk.newLines.length]);
 			chunk.oldLines.push("");
 			chunk.newLines.push("");
 		} else {

@@ -129,9 +129,10 @@ describe("cursor exec bridge", () => {
 			),
 		]);
 
+		const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
 		await bridge.piGrep?.({
 			toolCallId: "call-4",
-			args: { pattern: "needle", glob: "*.ts", ignoreCase: true, literal: true, limit: 3 },
+			args: { pattern: "needle", glob: "*.ts", ignoreCase: true, literal: true, limit: 3, unknownFlag: true },
 		} as never);
 		expect(execute).toHaveBeenCalledWith("call-4", {
 			pattern: "needle",
@@ -140,6 +141,8 @@ describe("cursor exec bridge", () => {
 			literal: true,
 			limit: 3,
 		});
+		expect(debug).toHaveBeenCalledWith("[cursor-exec] ignoring unknown pi_grep flag: unknownFlag");
+		debug.mockRestore();
 	});
 
 	it("answers a zero-line pi read with empty output without running the tool", async () => {

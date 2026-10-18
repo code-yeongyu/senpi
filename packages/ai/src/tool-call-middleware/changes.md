@@ -1,5 +1,23 @@
 # Tool Call Middleware Changes
 
+## 2026-09-08 - Preserve server fallback boundaries during recovery
+
+### What changed
+
+- `packages/ai/src/tool-call-middleware/recovery-stream-terminal.ts` removes executable tools before a valid fallback boundary and derives the terminal reason from surviving tools. Server-fallback abort diagnostics remain errors rather than being promoted into tool execution.
+
+### Why
+
+- `packages/ai/src/tool-call-middleware/recovery-stream-terminal.ts` previously retained tools projected before the provider discarded them, reviving abandoned calls in the current turn even though later replay was sanitized.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/tool-call-middleware/recovery-stream-terminal.ts` finalizes provider recovery before session/tool execution or extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/tool-call-middleware/recovery-stream-terminal.ts`: terminal reason calculation and source-error handling.
+
 ## 2026-08-23 - Kimi XTML sep-less channel marker leak
 
 ### What changed and why

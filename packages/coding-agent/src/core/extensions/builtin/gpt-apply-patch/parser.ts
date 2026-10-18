@@ -1,21 +1,17 @@
-import { normalizePatchText, stripHeredoc } from "./text.ts";
+import type { ContextLineIndex } from "./line-endings.ts";
+import { normalizePatchText, parseFileHeader, parseMoveTo, stripHeredoc } from "./text.ts";
 import type { ParsedPatch, PatchChunk } from "./types.ts";
 
 const BEGIN_PATCH_MARKER = "*** Begin Patch";
 const END_PATCH_MARKER = "*** End Patch";
-const ADD_FILE_MARKER = "*** Add File: ";
-const DELETE_FILE_MARKER = "*** Delete File: ";
-const UPDATE_FILE_MARKER = "*** Update File: ";
-const MOVE_TO_MARKER = "*** Move to: ";
 const EOF_MARKER = "*** End of File";
 
-function parseAddHunk(lines: string[], index: number, endIndex: number): [ParsedPatch, number] {
-	const filePath = (lines[index] ?? "").slice(ADD_FILE_MARKER.length);
+function parseAddHunk(lines: string[], filePath: string, index: number, endIndex: number): [ParsedPatch, number] {
 	const contentLines: string[] = [];
 	let nextIndex = index + 1;
 	while (nextIndex < endIndex) {
 		const nextLine = lines[nextIndex] ?? "";
-		if (nextLine.startsWith("*** ")) break;
+		if (nextLine.trim().startsWith("*** ")) break;
 		if (!nextLine.startsWith("+")) throw new Error("Invalid patch format: Add File lines must start with '+'");
 		contentLines.push(nextLine.slice(1));
 		nextIndex++;
@@ -50,6 +46,9 @@ function parseChunkLines(
 ): [Omit<PatchChunk, "changeContexts">, number] {
 	const oldLines: string[] = [];
 	const newLines: string[] = [];
+	let addedCount = 0;
+	let removedCount = 0;
+	const contextLineIndices: ContextLineIndex[] = [];
 	let isEndOfFile = false;
 	let parsedLines = 0;
 	let nextIndex = index;
@@ -65,15 +64,19 @@ function parseChunkLines(
 		const prefix = hunkLine[0];
 		const value = hunkLine.slice(1);
 		if (prefix === undefined) {
+			contextLineIndices.push([oldLines.length, newLines.length]);
 			oldLines.push("");
 			newLines.push("");
 		} else if (prefix === " ") {
+			contextLineIndices.push([oldLines.length, newLines.length]);
 			oldLines.push(value);
 			newLines.push(value);
 		} else if (prefix === "-") {
 			oldLines.push(value);
+			removedCount++;
 		} else if (prefix === "+") {
 			newLines.push(value);
+			addedCount++;
 		} else if (parsedLines > 0) {
 			break;
 		} else {
@@ -85,17 +88,13 @@ function parseChunkLines(
 		nextIndex++;
 	}
 	if (parsedLines === 0) throw new Error("Update hunk does not contain any lines");
-	return [{ oldLines, newLines, isEndOfFile }, nextIndex];
+	return [{ oldLines, newLines, contextLineIndices, isEndOfFile, addedCount, removedCount }, nextIndex];
 }
 
-function parseUpdateHunk(lines: string[], index: number, endIndex: number): [ParsedPatch, number] {
-	const filePath = (lines[index] ?? "").slice(UPDATE_FILE_MARKER.length);
+function parseUpdateHunk(lines: string[], filePath: string, index: number, endIndex: number): [ParsedPatch, number] {
 	let nextIndex = index + 1;
-	let movePath: string | undefined;
-	if ((lines[nextIndex] ?? "").startsWith(MOVE_TO_MARKER)) {
-		movePath = (lines[nextIndex] ?? "").slice(MOVE_TO_MARKER.length);
-		nextIndex++;
-	}
+	const movePath = parseMoveTo(lines[nextIndex] ?? "");
+	if (movePath !== undefined) nextIndex++;
 	const chunks: PatchChunk[] = [];
 	while (nextIndex < endIndex) {
 		const nextLine = lines[nextIndex] ?? "";
@@ -130,24 +129,27 @@ export function parsePatch(patchText: string): ParsedPatch[] {
 	const hunks: ParsedPatch[] = [];
 	let index = 1;
 	while (index < endIndex) {
-		const line = lines[index] ?? "";
-		if (!line.startsWith("*** ")) {
+		// Like Codex, headers are recognized after trimming and any other non-blank line between file sections
+		// is rejected below; skipping it would silently drop the section it introduces.
+		const line = (lines[index] ?? "").trim();
+		if (line === "") {
 			index++;
 			continue;
 		}
-		if (line.startsWith(ADD_FILE_MARKER)) {
-			const [hunk, nextIndex] = parseAddHunk(lines, index, endIndex);
+		const header = parseFileHeader(line);
+		if (header?.kind === "add") {
+			const [hunk, nextIndex] = parseAddHunk(lines, header.path, index, endIndex);
 			hunks.push(hunk);
 			index = nextIndex;
 			continue;
 		}
-		if (line.startsWith(DELETE_FILE_MARKER)) {
-			hunks.push({ type: "delete", filePath: line.slice(DELETE_FILE_MARKER.length) });
+		if (header?.kind === "delete") {
+			hunks.push({ type: "delete", filePath: header.path });
 			index++;
 			continue;
 		}
-		if (line.startsWith(UPDATE_FILE_MARKER)) {
-			const [hunk, nextIndex] = parseUpdateHunk(lines, index, endIndex);
+		if (header?.kind === "update") {
+			const [hunk, nextIndex] = parseUpdateHunk(lines, header.path, index, endIndex);
 			hunks.push(hunk);
 			index = nextIndex;
 			continue;

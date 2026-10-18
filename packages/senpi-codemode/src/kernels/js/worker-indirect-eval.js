@@ -1,3 +1,14 @@
+import { isKernelGlobal } from "./worker-shadow-guard.js";
+
+// A cell may declare a name the kernel or the platform already defines (`const log = []`, `const fetch = ...`). The
+// binding lives in a per-kernel user scope that later cells read through `with`, so it persists for the user's cells
+// while the kernel, its prelude and imported libraries keep the original global. `delete <name>` in a cell restores it.
+const USER_SCOPE_KEY = Symbol.for("senpi.kernel.userScope");
+const USER_SCOPE = "__senpiUserScope";
+// The persistence rewrite itself writes through `globalThis`, so that one name cannot be shadowed.
+const UNSHADOWABLE = new Set(["globalThis"]);
+let shadowedNames = null;
+
 export function indirectEval(source, filename) {
 	const withPragma = filename ? `${source}\n//# sourceURL=${filename}` : source;
 	const geval = globalThis.eval;
@@ -9,10 +20,31 @@ export async function awaitMaybePromise(value) {
 	return await value;
 }
 
-export function wrapUserCode(code) {
-	const persistentCode = persistTopLevelDeclarations(code);
-	if (/\breturn\b/u.test(persistentCode)) return `(async () => {\n${persistentCode}\n})()`;
-	return `(async () => {\n${captureLastExpression(persistentCode)}\n})()`;
+/** Wraps a cell for persistent evaluation; `shadowed` receives the kernel-global names the cell declares. */
+export function wrapUserCode(code, shadowed = []) {
+	shadowedNames = shadowed;
+	let persistentCode;
+	try {
+		persistentCode = persistTopLevelDeclarations(code);
+	} finally {
+		shadowedNames = null;
+	}
+	const body = scanTopLevelStatements(persistentCode).hasTopLevelReturn ? persistentCode : captureLastExpression(persistentCode);
+	const scope = globalThis[USER_SCOPE_KEY];
+	if (shadowed.length === 0 && (scope === undefined || Object.keys(scope).length === 0)) return `(async () => {\n${body}\n})()`;
+	globalThis[USER_SCOPE_KEY] ??= Object.create(null);
+	return `(async (${USER_SCOPE}) => { with (${USER_SCOPE}) { return await (async () => {\n${body}\n})(); } })(globalThis[Symbol.for("senpi.kernel.userScope")])`;
+}
+
+function persistTarget(name) {
+	if (UNSHADOWABLE.has(name)) {
+		throw new Error(
+			`eval cell declares top-level \`${name}\`, which the JS kernel needs to keep cell variables between cells. Rename the binding (for example \`${name}Local\`).`,
+		);
+	}
+	if (!isKernelGlobal(name)) return `globalThis[${JSON.stringify(name)}]`;
+	if (shadowedNames !== null && !shadowedNames.includes(name)) shadowedNames.push(name);
+	return `${USER_SCOPE}[${JSON.stringify(name)}]`;
 }
 
 const IDENTIFIER_START_RE = /[$_\p{ID_Start}]/u;
@@ -266,7 +298,7 @@ function rewriteDeclaration(code, declarationStart, start, end, keyword) {
 		collectPatternNames(pattern, bindings);
 		if (bindings.length === 0) return undefined;
 		if (preserveDeclaration) {
-			for (const name of bindings) assignments.push(`globalThis[${JSON.stringify(name)}] = ${name};`);
+			for (const name of bindings) assignments.push(`${persistTarget(name)} = ${name};`);
 			continue;
 		}
 		const target = rewriteBindingPattern(pattern);
@@ -288,7 +320,7 @@ function rewriteBindingPattern(source) {
 		const target = rewriteBindingPattern(pattern.slice(0, defaultStart));
 		return target === undefined ? undefined : `${target} = ${pattern.slice(defaultStart + 1).trim()}`;
 	}
-	if (IDENTIFIER_RE.test(pattern)) return `globalThis[${JSON.stringify(pattern)}]`;
+	if (IDENTIFIER_RE.test(pattern)) return persistTarget(pattern);
 	if (pattern.startsWith("{") && pattern.endsWith("}")) {
 		const properties = splitPatternElements(pattern.slice(1, -1)).map((property) => rewriteObjectBinding(property));
 		if (properties.some((property) => property === undefined)) return undefined;
@@ -705,7 +737,7 @@ function skipBlockComment(code, start) {
 }
 
 function captureLastExpression(code) {
-	const start = findLastTopLevelStatementStart(code);
+	const start = scanTopLevelStatements(code).lastStatementStart;
 	const head = code.slice(0, start);
 	const tail = code.slice(start).trim();
 	if (!tail || isStatementOnly(tail)) return code;
@@ -726,7 +758,7 @@ function isStatementOnly(source) {
 
 const CONTROL_PAREN_KEYWORDS = new Set(["catch", "for", "if", "switch", "while", "with"]);
 
-function findLastTopLevelStatementStart(code) {
+function scanTopLevelStatements(code) {
 	let start = 0;
 	let round = 0;
 	let square = 0;
@@ -734,6 +766,7 @@ function findLastTopLevelStatementStart(code) {
 	let canStartRegex = true;
 	let lastSignificant = "";
 	let pendingControlParen = false;
+	let hasTopLevelReturn = false;
 	const controlParens = [];
 	for (let index = 0; index < code.length; index += 1) {
 		const char = code[index];
@@ -763,8 +796,11 @@ function findLastTopLevelStatementStart(code) {
 		if (isIdentifierStart(char)) {
 			const end = readIdentifier(code, index);
 			const token = code.slice(index, end);
-			canStartRegex = REGEX_PREFIX_KEYWORDS.has(token);
-			pendingControlParen = CONTROL_PAREN_KEYWORDS.has(token);
+			const isPropertyName = lastSignificant === ".";
+			const atTopLevel = round === 0 && square === 0 && curly === 0;
+			if (token === "return" && atTopLevel && !isPropertyName) hasTopLevelReturn = true;
+			canStartRegex = !isPropertyName && REGEX_PREFIX_KEYWORDS.has(token);
+			pendingControlParen = !isPropertyName && CONTROL_PAREN_KEYWORDS.has(token);
 			lastSignificant = code[end - 1];
 			index = end - 1;
 			continue;
@@ -828,7 +864,7 @@ function findLastTopLevelStatementStart(code) {
 			pendingControlParen = false;
 		}
 	}
-	return start;
+	return { lastStatementStart: start, hasTopLevelReturn };
 }
 
 const STATEMENT_CONTINUATION_KEYWORDS = new Set(["catch", "else", "finally"]);

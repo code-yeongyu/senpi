@@ -57,6 +57,22 @@ function findInput(inputs, suffix) {
 	});
 }
 
+// The structural read's grammar engine (#1685) is a Node-only leaf reached through one lazy
+// `import()` that only a `wasm` language selection triggers, and a failed import falls back to the
+// heuristic folder. Browsers never execute it, and esbuild would otherwise hard-error on its
+// node:fs/node:module reads. Scoped to that module alone: every other senpi module keeps the guard.
+const treeSitterEngineMarker = "read-folders/tree-sitter/engine";
+const lazyTreeSitterEnginePlugin = {
+	name: "lazy-tree-sitter-engine",
+	setup(build) {
+		build.onResolve({ filter: /[/\\]tree-sitter[/\\]engine\.ts$/ }, (args) => {
+			if (args.kind !== "dynamic-import") return;
+			if (!normalizePath(args.importer).includes("packages/agent/src/harness/utils/read-folders/")) return;
+			return { path: args.path, external: true };
+		});
+	},
+};
+
 function includesNodePackage(inputs, packageName) {
 	const marker = `node_modules/${packageName}/`;
 	return Object.keys(inputs).some((input) => normalizePath(input).includes(marker));
@@ -70,7 +86,7 @@ try {
 		format: "esm",
 		logLevel: "silent",
 		outfile: outputPath,
-		plugins: [generatedCatalogDataPlugin, anthropicSdkNodeBuiltinsPlugin],
+		plugins: [generatedCatalogDataPlugin, anthropicSdkNodeBuiltinsPlugin, lazyTreeSitterEnginePlugin],
 	});
 
 	const agentTreeshakeBuild = await build({
@@ -81,10 +97,12 @@ try {
 		logLevel: "silent",
 		metafile: true,
 		outfile: agentTreeshakeOutputPath,
-		plugins: [generatedCatalogDataPlugin, anthropicSdkNodeBuiltinsPlugin],
+		plugins: [generatedCatalogDataPlugin, anthropicSdkNodeBuiltinsPlugin, lazyTreeSitterEnginePlugin],
 		write: false,
 	});
 	const inputs = agentTreeshakeBuild.metafile.inputs;
+	if (Object.keys(inputs).some((input) => normalizePath(input).includes(treeSitterEngineMarker)))
+		throw new Error("Browser bundle reached the Node-only tree-sitter grammar engine");
 	for (const forbiddenInput of [
 		"packages/ai/src/compat.ts",
 		"packages/ai/src/models.generated.ts",

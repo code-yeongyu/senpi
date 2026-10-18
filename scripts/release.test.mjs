@@ -8,6 +8,7 @@ import {
 	CHANGELOGS,
 	DEFAULT_UNRELEASED_SUBSECTIONS,
 	buildUnreleasedBlock,
+	canonicalizeUnreleasedSubsections,
 	insertUnreleasedBlock,
 	resolveNextUnreleasedSubsections,
 } from "./release-changelog.mjs";
@@ -23,12 +24,13 @@ afterEach(() => {
 });
 
 describe("release package versioning", () => {
-	it("updates the pty, client, and protocol workspaces during lockstep releases", () => {
+	it("updates the chord, pty, client, and protocol workspaces during lockstep releases", () => {
 		// Given
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-release-versioning-"));
 		for (const file of [
 			"packages/ai/package.json",
 			"packages/agent/package.json",
+			"packages/chord/package.json",
 			"packages/client/package.json",
 			"packages/coding-agent/package.json",
 			"packages/protocol/package.json",
@@ -61,6 +63,13 @@ describe("release package versioning", () => {
 		const protocolPackage = JSON.parse(
 			readFileSync(join(tempDir, "packages", "protocol", "package.json"), "utf8"),
 		);
+		// Chord is bundled but keeps upstream's own release identity, so it does NOT ride the fork
+		// CalVer lockstep and applyWorkspaceVersions must leave its version untouched (issue #1632).
+		const chordPackage = JSON.parse(
+			readFileSync(join(tempDir, "packages", "chord", "package.json"), "utf8"),
+		);
+		assert.equal(chordPackage.version, "0.0.0");
+		assert.ok(!logs.some((message) => message.includes("packages/chord/package.json")));
 		assert.equal(ptyPackage.version, "2099.1.2");
 		assert.equal(clientPackage.version, "2099.1.2");
 		assert.equal(protocolPackage.version, "2099.1.2");
@@ -126,6 +135,60 @@ describe("release changelog bookkeeping", () => {
 
 		// Then
 		assert.deepEqual(subsections, ["### Fixed"]);
+	});
+
+	it("collapses duplicated and aliased subsections into the canonical order", () => {
+		// Given
+		const capturedSubsections = [
+			"### Added",
+			"### Changed",
+			"### Fixed",
+			"### New Features",
+			"### Breaking Changes",
+			"### Added",
+			"### Changed",
+			"### Fixed",
+			"### Removed",
+		];
+
+		// When
+		const subsections = resolveNextUnreleasedSubsections(capturedSubsections);
+
+		// Then
+		assert.deepEqual(subsections, DEFAULT_UNRELEASED_SUBSECTIONS);
+	});
+
+	it("keeps an unknown subsection once, after the canonical ones", () => {
+		// Given
+		const capturedSubsections = ["### Fixed", "### Security", "### Security", "### Added"];
+
+		// When
+		const subsections = resolveNextUnreleasedSubsections(capturedSubsections);
+
+		// Then
+		assert.deepEqual(subsections, ["### Added", "### Fixed", "### Security"]);
+	});
+
+	it("falls back to the default block when the captured block had no subsections", () => {
+		// Given
+		const capturedSubsections = [];
+
+		// When
+		const subsections = resolveNextUnreleasedSubsections(capturedSubsections);
+
+		// Then
+		assert.deepEqual(subsections, DEFAULT_UNRELEASED_SUBSECTIONS);
+	});
+
+	it("canonicalizeUnreleasedSubsections trims heading whitespace before matching", () => {
+		// Given
+		const capturedSubsections = ["### Fixed ", " ### Added"];
+
+		// When
+		const subsections = canonicalizeUnreleasedSubsections(capturedSubsections);
+
+		// Then
+		assert.deepEqual(subsections, ["### Added", "### Fixed"]);
 	});
 
 	it("inserts the next-cycle section before the stamped release header", () => {

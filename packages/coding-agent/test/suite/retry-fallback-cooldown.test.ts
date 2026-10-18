@@ -98,4 +98,16 @@ describe("SelectorCooldowns", () => {
 		cooldowns.clearAll();
 		expect(cooldowns.isSuppressed("openai/gpt")).toBe(false);
 	});
+	it("clears a model and its thinking-level rungs but not a model whose id extends it (senpi#3311)", () => {
+		const cooldowns = new SelectorCooldowns(() => 0);
+		const base = "openrouter/anthropic/claude-opus-5";
+		for (const key of [base, `${base}:high`, `${base}:batch`, `${base}:batch:high`]) cooldowns.note(key, {});
+
+		cooldowns.clearModel(base);
+
+		expect(cooldowns.isSuppressed(base)).toBe(false);
+		expect(cooldowns.isSuppressed(`${base}:high`)).toBe(false);
+		expect(cooldowns.isSuppressed(`${base}:batch`)).toBe(true);
+		expect(cooldowns.isSuppressed(`${base}:batch:high`)).toBe(true);
+	});
 });

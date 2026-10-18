@@ -1,7 +1,11 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
+import type { Context } from "../context.ts";
 import type { AgentHarnessTool } from "../types.ts";
-import { getOrThrow } from "../types.ts";
+import { FileError, getOrThrow } from "../types.ts";
+import { type ReadFolder, selectedReadFolder } from "../utils/read-folders/index.ts";
+import { prepareReadFolder } from "../utils/read-folders/prepare.ts";
+import { createDefaultReadSummary } from "../utils/segmented-read-view.ts";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -33,6 +37,7 @@ export type ReadImageProcessor = (
 	bytes: Uint8Array,
 	mimeType: string,
 	options: { autoResizeImages: boolean },
+	context: Context,
 ) => Promise<ReadImageProcessorResult>;
 
 export interface ReadToolOptions {
@@ -40,25 +45,31 @@ export interface ReadToolOptions {
 	autoResizeImages?: boolean;
 	/** Optional image conversion/resizing implementation. */
 	imageProcessor?: ReadImageProcessor;
+	/** Structural folder. Default options select the measured folder; omit here for verbatim reads. */
+	folder?: ReadFolder;
 }
 
 export function createReadTool<TContext extends ExecutionToolContext = ExecutionToolContext>(
-	options?: ReadToolOptions,
+	options: ReadToolOptions = { folder: selectedReadFolder },
 ): AgentHarnessTool<TContext, typeof readSchema, ReadToolDetails | undefined> {
 	return {
 		name: "read",
 		label: "read",
 		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
 		parameters: readSchema,
-		async execute(_toolCallId, { path, offset, limit }, signal, _onUpdate, { env }) {
-			const absolutePath = await resolveReadToolPath(env, path, signal);
-			const bytes = getOrThrow(await env.readBinaryFile(absolutePath, signal));
+		async execute(_toolCallId, { path, offset, limit }, _onUpdate, { env }, _invocation, context) {
+			const absolutePath = await resolveReadToolPath(env, path, context);
+			const bytes = getOrThrow(await env.readBinaryFile(absolutePath, context));
+			if (context.abortSignal?.aborted) throw new FileError("aborted", "Operation aborted", absolutePath);
 			const mimeType = detectSupportedImageMimeType(bytes);
 			if (mimeType) {
 				if (options?.imageProcessor) {
-					const processed = await options.imageProcessor(bytes, mimeType, {
-						autoResizeImages: options.autoResizeImages ?? true,
-					});
+					const processed = await options.imageProcessor(
+						bytes,
+						mimeType,
+						{ autoResizeImages: options.autoResizeImages ?? true },
+						context,
+					);
 					if (!processed.ok) {
 						return {
 							content: [{ type: "text", text: `Read image file [${mimeType}]\n${processed.message}` }],
@@ -114,9 +125,21 @@ export function createReadTool<TContext extends ExecutionToolContext = Execution
 			}
 
 			const truncation = truncateHead(selectedContent);
+			// A selected grammar loads lazily here, on the first structural read for its language.
+			const folder = await prepareReadFolder(absolutePath, options.folder);
+			const summary = createDefaultReadSummary({
+				path: absolutePath,
+				text: textContent,
+				offset,
+				limit,
+				folder,
+				truncated: truncation.truncated,
+			});
 			let outputText: string;
 			let details: ReadToolDetails | undefined;
-			if (truncation.firstLineExceedsLimit) {
+			if (summary) {
+				outputText = summary.text;
+			} else if (truncation.firstLineExceedsLimit) {
 				const firstLineSize = formatSize(new TextEncoder().encode(allLines[startLine]).byteLength);
 				outputText = `[Line ${startLineDisplay} is ${firstLineSize}, exceeds ${formatSize(DEFAULT_MAX_BYTES)} limit. Use bash: sed -n '${startLineDisplay}p' ${path} | head -c ${DEFAULT_MAX_BYTES}]`;
 				details = { truncation };

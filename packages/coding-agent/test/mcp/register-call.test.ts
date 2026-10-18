@@ -1,8 +1,9 @@
 import { join } from "node:path";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { convertJsonSchemaToTypeBox } from "../../src/core/extensions/builtin/mcp/expose/schema-compat.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
 import {
 	attach,
@@ -76,7 +77,11 @@ describe("MCP catalog + registerTool bridge", () => {
 		await attachHarnessSession(harness, "fx");
 		harness.setResponses([
 			(context) => {
-				providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
+				providerToolNames.push(
+					getCurrentTools(context.messages)
+						.map((tool) => tool.name)
+						.sort(),
+				);
 				return fauxAssistantMessage(fauxToolCall("mcp_fx_tool_1", { value: "ok" }), { stopReason: "toolUse" });
 			},
 			fauxAssistantMessage("done"),
@@ -145,7 +150,7 @@ describe("MCP catalog + registerTool bridge", () => {
 			{ value: "abort" },
 			controller.signal,
 			() => sawProgress(),
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 		await progress;
 		controller.abort();
@@ -163,8 +168,8 @@ describe("MCP catalog + registerTool bridge", () => {
 		const tool = registeredTool(pi, "mcp_fx_tool_1");
 
 		const [first, second] = await Promise.all([
-			tool.execute("tc-1", { value: "first" }, undefined, undefined, testContext()),
-			tool.execute("tc-2", { value: "second" }, undefined, undefined, testContext()),
+			tool.execute("tc-1", { value: "first" }, undefined, undefined, testContext() as ExtensionToolContext),
+			tool.execute("tc-2", { value: "second" }, undefined, undefined, testContext() as ExtensionToolContext),
 		]);
 
 		expect(textContent(first)).toBe("fixture tool_1 value=first mode=alpha");
@@ -185,7 +190,11 @@ describe("MCP catalog + registerTool bridge", () => {
 		harness.session.setActiveToolsByName(["mcp_fx_tool_1"]);
 		harness.setResponses([
 			(context) => {
-				providerToolNames.push((context.tools ?? []).map((tool) => tool.name).sort());
+				providerToolNames.push(
+					getCurrentTools(context.messages)
+						.map((tool) => tool.name)
+						.sort(),
+				);
 				return fauxAssistantMessage("done");
 			},
 		]);

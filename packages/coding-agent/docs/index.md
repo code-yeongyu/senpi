@@ -52,6 +52,7 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 - [Senpi packages](packages.md) - bundle and share extensions, skills, prompts, and themes.
 - [Custom models](models.md) - add model entries for supported provider APIs.
 - [Custom providers](custom-provider.md) - implement custom APIs and OAuth flows.
+- [Virtual models](virtual-models.md) - route each request to a physical model from an extension.
 
 ## Programmatic usage
 

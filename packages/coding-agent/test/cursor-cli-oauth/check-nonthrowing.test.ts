@@ -24,7 +24,7 @@ import {
  * (cursor-cli-oauth/index.ts:55) and the composer forwards `check`
  * verbatim into pi-ai's `OAuthAuth` (provider-composer.ts `adaptOAuth`), so
  * the tolerance contract of `OAuthAuth.check` ("undefined when not
- * configured") must hold here too — exactly as claude-sdk-oauth's check does.
+ * configured") must hold here too — exactly as anthropic-subscription's check does.
  */
 
 function authContext(): AuthContext {

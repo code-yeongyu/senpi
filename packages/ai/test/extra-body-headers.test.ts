@@ -106,7 +106,7 @@ describe("Anthropic extraBody reserved keys", () => {
 
 describe("Anthropic-compatible provider thinking controls", () => {
 	it("omits explicit disabled thinking for Xiaomi MiMo", async () => {
-		const payload = await capturePayload(getModel("xiaomi", "mimo-v2.5-pro"), undefined);
+		const payload = await capturePayload(getModel("xiaomi", "mimo-v2.6-pro"), undefined);
 
 		expect(payload.thinking).toBeUndefined();
 		expect(payload.output_config).toBeUndefined();
@@ -116,17 +116,5 @@ describe("Anthropic-compatible provider thinking controls", () => {
 		const payload = await capturePayload(getModel("anthropic", "claude-sonnet-4-5"), undefined);
 
 		expect(payload.thinking).toEqual({ type: "disabled" });
-	});
-});
-
-describe("extra headers via options.headers", () => {
-	it("accepts custom headers through SimpleStreamOptions without throwing", async () => {
-		const model = getModel("anthropic", "claude-sonnet-4-5");
-		const s = streamSimple({ ...model!, baseUrl: "http://127.0.0.1:9" }, makeContext(), {
-			apiKey: "fake",
-			headers: { "x-custom-header": "custom-value" },
-		});
-		await s.result();
-		expect(true).toBe(true);
 	});
 });

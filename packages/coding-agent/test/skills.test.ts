@@ -244,7 +244,8 @@ describe("skills", () => {
 			expect(result).toContain("<skill>");
 			expect(result).toContain("<name>test-skill</name>");
 			expect(result).toContain("<description>A test skill.</description>");
-			expect(result).toContain("<location>/path/to/skill/SKILL.md</location>");
+			expect(result).toContain("<location>r0/skill/SKILL.md</location>");
+			expect(result).toContain("<r0>/path/to</r0>");
 		});
 
 		it("should escape XML special characters", () => {

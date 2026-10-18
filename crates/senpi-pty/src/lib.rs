@@ -99,6 +99,16 @@ impl NativePtySession {
     pub fn wait<'env>(&mut self, env: &'env Env) -> NapiResult<PromiseRaw<'env, NativePtyExit>> {
         self.wait_exit(env)
     }
+
+    #[napi(getter)]
+    pub fn pid(&self) -> Option<u32> {
+        self.session.as_ref().and_then(PtySession::pid)
+    }
+
+    #[napi(getter, js_name = "processGroupId")]
+    pub fn process_group_id(&self) -> Option<i32> {
+        self.session.as_ref().and_then(PtySession::process_group_id)
+    }
 }
 
 impl NativePtySession {
@@ -163,26 +173,6 @@ pub fn version() -> String {
 #[napi(js_name = "__senpiPtyAbi1")]
 pub fn senpi_pty_abi_sentinel() -> String {
     NATIVE_PTY_ABI_VERSION.to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn version_matches_crate_version() {
-        assert_eq!(version(), env!("CARGO_PKG_VERSION"));
-    }
-
-    #[test]
-    fn abi_sentinel_matches_abi_version() {
-        assert_eq!(senpi_pty_abi_sentinel(), NATIVE_PTY_ABI_VERSION);
-    }
-
-    #[test]
-    fn portable_pty_backend_is_linked() {
-        let _pty_system = portable_pty::native_pty_system();
-    }
 }
 
 #[cfg(test)]

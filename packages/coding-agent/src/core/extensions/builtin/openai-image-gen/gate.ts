@@ -59,13 +59,22 @@ function isOfficialOpenAiEndpoint(baseUrl: string): boolean {
  * `compat.supportsImageGeneration`. Proxied `openai-responses` endpoints default
  * to the client tool for the same reason they do for web search: a translating
  * gateway rejects the tool type it never implemented.
+ * ChatGPT subscription requests use the same server tool on the official
+ * HTTPS endpoint; third-party subscription proxies are not implicitly enabled.
  */
 export function supportsNativeOpenAiImageGeneration(target: NativeImageGenTarget): boolean {
-	if (target === undefined || target.api !== "openai-responses") {
+	if (target === undefined) {
 		return false;
 	}
 
 	const override = compatImageGenerationOverride(target.compat);
+	if (target.api === "openai-codex-responses") {
+		const endpoint = URL.parse(target.baseUrl);
+		return override !== false && endpoint?.protocol === "https:" && endpoint.hostname === "chatgpt.com";
+	}
+	if (target.api !== "openai-responses") {
+		return false;
+	}
 	return override ?? isOfficialOpenAiEndpoint(target.baseUrl);
 }
 

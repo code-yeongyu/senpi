@@ -56,6 +56,44 @@ describe("trigramJaccard", () => {
 	});
 });
 
+// Handoff blocks restate the user's request after `Ask:` by contract (senpi#2135); recorded from a grok-4.7 run.
+const RESTATED_ASK =
+	"Ask: Add a slugify(title) helper in src/slug.ts, use it in src/index.ts to print slugs for the three sample titles, and add a test file that covers unicode and repeated dashes. — wanted: helper, printed slugs, unicode/dash tests.";
+const MID_TASK_HANDOFF = `${RESTATED_ASK} For you: source is a three-title loop with no helper yet. Now: Add slugify helper. Next: Wire slugify into index.`;
+const FINAL_HANDOFF_PREFIX = `${RESTATED_ASK} For you:`;
+
+describe("handoff blocks (senpi#2135)", () => {
+	it("does not score the restated Ask clause of a new handoff block as a repeat of the previous block", () => {
+		// given: the prefix the stream carried when the final block was aborted
+		// when/then
+		expect(trigramJaccard(normalizeTurnText(FINAL_HANDOFF_PREFIX), normalizeTurnText(MID_TASK_HANDOFF))).toBeLessThan(
+			0.55,
+		);
+	});
+
+	it("keeps an Ask: that no status label closes, so a looping turn containing it still repeats (senpi#2143)", () => {
+		// given: a stuck turn that mentions Ask: but is not a handoff block
+		const loop = "Ask: me anything. I am still waiting for the build to finish before I run the parser tests again.";
+		const state = createRepetitiveTurnsState();
+
+		// when
+		const matches = [recordTurnText(state, loop), recordTurnText(state, loop), recordTurnText(state, loop)];
+
+		// then
+		expect(normalizeTurnText(loop)).toContain("still waiting for the build");
+		expect(matches[2]?.rule).toBe(REPETITIVE_TURNS_RULE_NAME);
+	});
+
+	it("still scores two blocks with the same status as near-duplicates", () => {
+		// given: a model re-emitting the same For you / Now / Next under the same Ask
+		const again = `${RESTATED_ASK} For you: source is a three-title loop with no helper yet. Now: Add slugify helper. Next: Wire slugify into index.`;
+		// when/then
+		expect(trigramJaccard(normalizeTurnText(again), normalizeTurnText(MID_TASK_HANDOFF))).toBeGreaterThanOrEqual(
+			0.55,
+		);
+	});
+});
+
 describe("repetitive-turns detector", () => {
 	it("does not fire on the first two similar turns, then fires on the third consecutive near-duplicate", () => {
 		const state = createRepetitiveTurnsState();

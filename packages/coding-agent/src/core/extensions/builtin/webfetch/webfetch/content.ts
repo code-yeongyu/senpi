@@ -1,21 +1,16 @@
 import { Readability } from "@mozilla/readability";
-import { JSDOM, VirtualConsole } from "jsdom";
-import TurndownService from "turndown";
+import TurndownService from "turndown/lib/turndown.browser.es.js";
+import { applyWebDocumentUrl, normalizeWebUrls, parseWebDocument } from "./parse-web-document.ts";
 
 interface ReadableArticle {
 	readonly title: string;
-	readonly content: string;
+	readonly root: HTMLElement;
 	readonly hasHeading: boolean;
 }
 
-const TAGS_TO_REMOVE = /<(script|style|noscript|iframe|object|embed|meta|link)\b[^>]*>[\s\S]*?<\/\1>/gi;
-const VOID_TAGS_TO_REMOVE = /<(script|style|noscript|iframe|object|embed|meta|link)\b[^>]*\/?>/gi;
-const BLOCK_BREAK_TAGS =
-	/<\/?(address|article|aside|blockquote|br|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>/gi;
 const BLOCK_BREAK_SELECTOR =
 	"address, article, aside, blockquote, dd, div, dl, dt, figcaption, figure, footer, h1, h2, h3, h4, h5, h6, header, hr, li, main, nav, ol, p, pre, section, table, tbody, tfoot, thead, tr, ul";
 const CELL_BREAK_SELECTOR = "td, th";
-const TAGS = /<[^>]+>/g;
 const WHITESPACE = /[\t\f\v \u00a0]+/g;
 const NEWLINE_RUN = /\n{3,}/g;
 const MIN_EXPLICIT_ARTICLE_TEXT_LENGTH = 30;
@@ -54,14 +49,6 @@ const ARTICLE_NOISE_SELECTOR = [
 	".tagTrail",
 	".sidebar",
 ].join(", ");
-const ENTITIES: Readonly<Record<string, string>> = {
-	amp: "&",
-	apos: "'",
-	gt: ">",
-	lt: "<",
-	nbsp: " ",
-	quot: '"',
-};
 
 const turndownService = new TurndownService({
 	headingStyle: "atx",
@@ -73,117 +60,76 @@ const turndownService = new TurndownService({
 turndownService.remove(["script", "style", "noscript", "iframe", "object", "embed", "meta", "link"]);
 
 export function htmlToMarkdown(html: string, url: string): string {
-	const article = extractReadableArticle(html, url);
-	if (!article) return normalizeMarkdown(turndownService.turndown(html));
-
-	const markdown = normalizeMarkdown(turndownService.turndown(article.content));
+	const untouchedDocument = parseWebDocument(html, url);
+	const article = extractReadableArticle(untouchedDocument);
+	const root = article?.root ?? untouchedDocument.body;
+	normalizeWebUrls(root, untouchedDocument);
+	const markdown = normalizeMarkdown(turndownService.turndown(root));
+	if (!article) return markdown;
 	if (!article.title || article.hasHeading || markdown.startsWith(`# ${article.title}`)) return markdown;
 	return `# ${article.title}\n\n${markdown}`.trim();
 }
 
 export function htmlToText(html: string, url: string): string {
-	const article = extractReadableArticle(html, url);
+	const untouchedDocument = parseWebDocument(html, url);
+	const article = extractReadableArticle(untouchedDocument);
 	if (article) {
-		const body = htmlFragmentToPlainText(article.content);
+		const body = htmlFragmentToPlainText(article.root);
 		if (!article.title || article.hasHeading) return body;
 		if (body.startsWith(article.title)) return body;
 		return `${article.title}\n\n${body}`.trim();
 	}
 
-	return htmlFragmentToPlainText(html);
+	return htmlFragmentToPlainText(untouchedDocument.body);
 }
 
-function htmlFragmentToPlainText(html: string): string {
-	try {
-		const dom = new JSDOM(`<body>${html}</body>`, {
-			contentType: "text/html",
-			virtualConsole: new VirtualConsole(),
-		});
-		try {
-			const document = dom.window.document;
-			for (const element of document.querySelectorAll(
-				"script, style, noscript, iframe, object, embed, meta, link",
-			)) {
-				element.remove();
-			}
-			for (const element of document.querySelectorAll("br")) {
-				element.replaceWith(document.createTextNode("\n"));
-			}
-			for (const element of document.querySelectorAll(CELL_BREAK_SELECTOR)) {
-				element.after(document.createTextNode("\n"));
-			}
-			for (const element of document.querySelectorAll(BLOCK_BREAK_SELECTOR)) {
-				element.before(document.createTextNode("\n"));
-				element.after(document.createTextNode("\n"));
-			}
-			return normalizePlainText(document.body.textContent ?? "");
-		} finally {
-			dom.window.close();
-		}
-	} catch (error) {
-		if (!(error instanceof Error)) throw error;
+function htmlFragmentToPlainText(root: HTMLElement): string {
+	const document = root.ownerDocument;
+	const clonedRoot = document.importNode(root, true);
+	for (const element of clonedRoot.querySelectorAll("script, style, noscript, iframe, object, embed, meta, link")) {
+		element.remove();
+	}
+	for (const element of clonedRoot.querySelectorAll("br")) {
+		element.replaceWith(document.createTextNode("\n"));
+	}
+	for (const element of clonedRoot.querySelectorAll(CELL_BREAK_SELECTOR)) {
+		element.after(document.createTextNode("\n"));
+	}
+	for (const element of clonedRoot.querySelectorAll(BLOCK_BREAK_SELECTOR)) {
+		element.before(document.createTextNode("\n"));
+		element.after(document.createTextNode("\n"));
+	}
+	return normalizePlainText(clonedRoot.textContent ?? "");
+}
+
+function extractReadableArticle(untouchedDocument: Document): ReadableArticle | undefined {
+	for (const selector of EXPLICIT_ARTICLE_SELECTORS) {
+		const candidate = untouchedDocument.querySelector<HTMLElement>(selector);
+		if (!candidate) continue;
+		const root = untouchedDocument.importNode(candidate, true);
+		for (const noisyElement of root.querySelectorAll(ARTICLE_NOISE_SELECTOR)) noisyElement.remove();
+		if (normalizePlainText(root.textContent ?? "").length < MIN_EXPLICIT_ARTICLE_TEXT_LENGTH) continue;
+		return {
+			title: selectPreferredTitle(untouchedDocument, untouchedDocument.title),
+			root,
+			hasHeading: root.querySelector("h1, h2, h3, h4, h5, h6") !== null,
+		};
 	}
 
-	return htmlFragmentToPlainTextFallback(html);
-}
-
-function htmlFragmentToPlainTextFallback(html: string): string {
-	return decodeHtmlEntities(
-		normalizePlainText(
-			html
-				.replace(TAGS_TO_REMOVE, "")
-				.replace(VOID_TAGS_TO_REMOVE, "")
-				.replace(BLOCK_BREAK_TAGS, "\n")
-				.replace(TAGS, ""),
-		),
-	);
-}
-
-function extractReadableArticle(html: string, url: string): ReadableArticle | undefined {
-	try {
-		const dom = new JSDOM(html, {
-			url,
-			contentType: "text/html",
-			virtualConsole: new VirtualConsole(),
-		});
-		try {
-			let explicitArticle: ReadableArticle | undefined;
-			for (const selector of EXPLICIT_ARTICLE_SELECTORS) {
-				const candidate = dom.window.document.querySelector(selector);
-				if (!candidate) continue;
-				const clonedNode = candidate.cloneNode(true);
-				if (!(clonedNode instanceof dom.window.Element)) continue;
-				for (const noisyElement of clonedNode.querySelectorAll(ARTICLE_NOISE_SELECTOR)) {
-					noisyElement.remove();
-				}
-				const text = normalizePlainText(clonedNode.textContent ?? "");
-				if (text.length < MIN_EXPLICIT_ARTICLE_TEXT_LENGTH) continue;
-				explicitArticle = {
-					title: selectPreferredTitle(dom.window.document, dom.window.document.title),
-					content: clonedNode.innerHTML,
-					hasHeading: /<h[1-6]\b/i.test(clonedNode.innerHTML),
-				};
-				break;
-			}
-			if (explicitArticle) return explicitArticle;
-
-			const article = new Readability(dom.window.document, {
-				charThreshold: 80,
-				keepClasses: false,
-			}).parse();
-			if (!article?.content || !article.textContent) return undefined;
-			return {
-				title: selectPreferredTitle(dom.window.document, article.title ?? ""),
-				content: article.content,
-				hasHeading: /<h[1-6]\b/i.test(article.content),
-			};
-		} finally {
-			dom.window.close();
-		}
-	} catch (error) {
-		if (error instanceof Error) return undefined;
-		throw error;
-	}
+	const document = applyWebDocumentUrl(untouchedDocument.importNode(untouchedDocument, true), untouchedDocument.URL);
+	const article = new Readability(document, {
+		charThreshold: 80,
+		keepClasses: false,
+		serializer: (element) => element,
+	}).parse();
+	if (!article?.content || !article.textContent) return undefined;
+	const root = document.createElement("div");
+	root.appendChild(article.content);
+	return {
+		title: selectPreferredTitle(document, article.title ?? ""),
+		root,
+		hasHeading: root.querySelector("h1, h2, h3, h4, h5, h6") !== null,
+	};
 }
 
 function selectPreferredTitle(document: Document, fallback: string): string {
@@ -210,25 +156,4 @@ function normalizeMarkdown(markdown: string): string {
 		.replace(/\n[ \t]+/g, "\n")
 		.replace(NEWLINE_RUN, "\n\n")
 		.trim();
-}
-
-export function decodeHtmlEntities(text: string): string {
-	return text.replace(/&(#x[\da-f]+|#\d+|[a-z]+);/gi, (_match, entity: string) => {
-		if (entity.startsWith("#x")) {
-			return decodeCodePoint(Number.parseInt(entity.slice(2), 16));
-		}
-		if (entity.startsWith("#")) {
-			return decodeCodePoint(Number.parseInt(entity.slice(1), 10));
-		}
-		return ENTITIES[entity.toLowerCase()] ?? `&${entity};`;
-	});
-}
-
-function decodeCodePoint(value: number): string {
-	if (!Number.isFinite(value)) return "";
-	try {
-		return String.fromCodePoint(value);
-	} catch {
-		return "";
-	}
 }

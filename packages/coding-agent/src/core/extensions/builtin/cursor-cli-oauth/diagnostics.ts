@@ -132,6 +132,7 @@ export async function collectCursorCliStatus(deps: CursorCliStatusDeps): Promise
 			selectedAccount = selectAccount(accounts, {
 				sessionId: deps.sessionId,
 				pinnedAccount,
+				...(credential.order === undefined ? {} : { accountOrder: credential.order }),
 				now: now(),
 			}).name;
 		} catch {

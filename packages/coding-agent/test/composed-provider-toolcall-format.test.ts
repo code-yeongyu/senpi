@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import {
 	type AssistantMessageEvent,
 	fauxAssistantMessage,
@@ -69,14 +70,20 @@ describe("composed custom provider text tool-call compatibility", () => {
 
 		const stream =
 			method === "stream"
-				? provider.stream(model, {
-						messages: [{ role: "user", content: "Run bash", timestamp: 0 }],
-						tools: [bashTool],
-					})
-				: provider.streamSimple(model, {
-						messages: [{ role: "user", content: "Run bash", timestamp: 0 }],
-						tools: [bashTool],
-					});
+				? provider.stream(
+						model,
+						normalizeContext({
+							messages: [{ role: "user", content: "Run bash", timestamp: 0 }],
+							tools: [bashTool],
+						}),
+					)
+				: provider.streamSimple(
+						model,
+						normalizeContext({
+							messages: [{ role: "user", content: "Run bash", timestamp: 0 }],
+							tools: [bashTool],
+						}),
+					);
 		const events: AssistantMessageEvent[] = [];
 		for await (const event of stream) {
 			events.push(event);

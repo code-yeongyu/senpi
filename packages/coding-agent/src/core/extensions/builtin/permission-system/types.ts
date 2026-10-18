@@ -14,7 +14,7 @@ export type Ruleset = Rule[];
 /** Configuration format for settings.json */
 export type PermissionConfig = Record<string, Action | Record<string, Action>>;
 
-export type PermissionPresetName = "full-access" | "workspace" | "read-only" | "ask";
+export type PermissionPresetName = "full-access" | "workspace" | "accept-edits" | "auto" | "read-only" | "ask";
 
 /** User reply to a permission request */
 export type Reply = "once" | "always" | "reject";
@@ -29,10 +29,14 @@ export type Request = {
 	permission: string;
 	patterns: string[];
 	always: string[];
+	/** A wider "Allow always" scope the prompt may offer (tools without a parser, senpi#3403). */
+	widerAlways?: { readonly label: string; readonly patterns: string[] };
 	metadata: Record<string, unknown>;
+	/** The tool call that raised this request (`parentCallID` when another tool issued it). */
 	tool?: {
-		messageID: string;
+		messageID?: string;
 		callID: string;
+		parentCallID?: string;
 	};
 };
 
@@ -41,6 +45,8 @@ export type ReplyInput = {
 	requestID: string;
 	reply: Reply;
 	message?: string;
+	/** With reply "always": the patterns to approve instead of the request's own (a wider scope). */
+	always?: string[];
 };
 
 /** Error thrown when user rejects a permission request */

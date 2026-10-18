@@ -19,6 +19,7 @@ export const PROJECT_MARKERS: readonly string[] = [
  * the project root, second is the subdir scanned recursively.
  */
 export const PROJECT_RULE_SUBDIRS: ReadonlyArray<readonly [string, string]> = [
+	[".pi", "rules"],
 	[".omo", "rules"],
 	[".claude", "rules"],
 	[".cursor", "rules"],
@@ -38,7 +39,12 @@ export const PROJECT_SINGLE_FILES: readonly string[] = [
 /**
  * User-home rule directories.
  */
-export const USER_HOME_RULE_SUBDIRS: readonly string[] = [".omo/rules", ".opencode/rules", ".claude/rules"];
+export const USER_HOME_RULE_SUBDIRS: readonly string[] = [
+	".pi/rules",
+	".omo/rules",
+	".opencode/rules",
+	".claude/rules",
+];
 
 /**
  * User-home single-file rules. The first one to exist wins per "first-match" semantics.
@@ -54,19 +60,21 @@ export const RULE_FILE_EXTENSIONS: readonly string[] = [".md", ".mdc"];
  * Per-rule source priority for deterministic ordering. Lower = earlier.
  */
 export const SOURCE_PRIORITY: ReadonlyMap<RuleSource, number> = new Map([
-	[".omo/rules", 0],
-	[".claude/rules", 1],
-	[".cursor/rules", 2],
-	[".github/instructions", 3],
-	[".github/copilot-instructions.md", 4],
-	["AGENTS.md", 5],
-	["CLAUDE.md", 6],
-	["CONTEXT.md", 7],
-	["~/.omo/rules", 100],
-	["~/.opencode/rules", 101],
-	["~/.claude/rules", 102],
-	["~/.config/opencode/AGENTS.md", 103],
-	["~/.claude/CLAUDE.md", 104],
+	[".pi/rules", 0],
+	[".omo/rules", 1],
+	[".claude/rules", 2],
+	[".cursor/rules", 3],
+	[".github/instructions", 4],
+	[".github/copilot-instructions.md", 5],
+	["AGENTS.md", 6],
+	["CLAUDE.md", 7],
+	["CONTEXT.md", 8],
+	["~/.pi/rules", 100],
+	["~/.omo/rules", 101],
+	["~/.opencode/rules", 102],
+	["~/.claude/rules", 103],
+	["~/.config/opencode/AGENTS.md", 104],
+	["~/.claude/CLAUDE.md", 105],
 ]);
 
 /**
@@ -101,7 +109,7 @@ export const PROJECT_RULES_END_MARKER = "</project_rules>";
 export const PROJECT_RULES_HEADING = "## Project Instructions";
 
 /**
- * How provider lanes that rebuild the system prompt (see the Claude SDK OAuth builtin) locate the
+ * How provider lanes that rebuild the system prompt (see the Anthropic Subscription builtin) locate the
  * block. The semantic markers cannot: prompt content this builtin does not own - context files
  * before it, extensions appending after it - may legitimately contain them and be extracted instead.
  */

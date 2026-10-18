@@ -88,7 +88,7 @@ describe("risky main-model warning", () => {
 	test("checks a model selected through the full or favorites selector", async () => {
 		const selectedModel = model({ id: "qwen3-coder" });
 		const fakeThis = {
-			session: { setModel: vi.fn(async () => undefined) },
+			session: { setModel: vi.fn(async () => undefined), setSessionModel: vi.fn(async () => undefined) },
 			footer: { invalidate: vi.fn() },
 			updateEditorBorderColor: vi.fn(),
 			showStatus: vi.fn(),
@@ -100,7 +100,10 @@ describe("risky main-model warning", () => {
 		const selectModelFromUi = Reflect.get(InteractiveMode.prototype, "selectModelFromUi");
 		if (typeof selectModelFromUi !== "function") throw new Error("InteractiveMode.selectModelFromUi is missing");
 
-		await selectModelFromUi.call(fakeThis, selectedModel);
+		await selectModelFromUi.call(fakeThis, selectedModel, undefined, {
+			origin: { source: "picker" },
+			persistDefault: false,
+		});
 
 		expect(fakeThis.showRiskyMainModelWarning).toHaveBeenCalledExactlyOnceWith(selectedModel);
 	});

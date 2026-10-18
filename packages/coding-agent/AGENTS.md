@@ -33,8 +33,6 @@ src/core/extensions/builtin/       In-tree fork extensions; bundled extensions (
 src/core/tools/                    Upstream-parity built-in tools
 src/core/compaction/               Core compaction mechanics
 src/modes/interactive/             TUI mode and components
-src/modes/app-server/              App-server transport and RPC registry; runtime.ts
-                                   wiring, search/ fuzzy file search
 src/modes/rpc/                     JSONL RPC mode/client/types, shared Unix-socket multi-session host,
                                    ensureHost handshake, lifecycle supervisor/watchdog, and the ordered command
                                    surface (get_commands / commands_changed)
@@ -55,7 +53,7 @@ src/changes.md                     Root fork-change record
 | Change model/provider/catalog/auth runtime | `src/core/model-runtime.ts` + related `model-*/provider-*` modules |
 | Change keybinding | `src/core/keybindings.ts` |
 | Change interactive UI | `src/modes/interactive/` |
-| Change RPC/app-server | matching directory under `src/modes/` |
+| Change RPC | `src/modes/rpc/` |
 | Add regression | `test/suite/regressions/` |
 | Add or update an example | `examples/` and the matching public docs |
 
@@ -68,9 +66,68 @@ src/changes.md                     Root fork-change record
 - Keep branding consistent: package `@code-yeongyu/senpi`, binary `senpi`, config directory `.senpi`.
 - Preserve the inlined UUIDv7 implementation; do not add a `uuid` dependency.
 - Do not run real providers in tests. Use `test/suite/harness.ts` and the faux provider.
-- RPC-mode JSONL is bounded and strict: LF-only framing, `MAX_RPC_LINE_CHARACTERS` 16 MiB line ceiling with oversized-record resynchronization, and `MAX_RPC_MESSAGE_CHARACTERS` 1,000,000-character message limit (`src/modes/rpc/jsonl.ts`, `src/modes/rpc/rpc-input-validation.ts`); preserve those bounds. App-server outbound stdio waits for stdout backpressure (`transports/stdio.ts`) and WebSocket closes slow clients at queue cap (`transports/websocket-connection-handler.ts`); app-server inbound NDJSON readers are not size-bounded — preserve those contracts.
+- RPC-mode JSONL is bounded and strict: LF-only framing, `MAX_RPC_LINE_CHARACTERS` 16 MiB line ceiling with oversized-record resynchronization, and `MAX_RPC_MESSAGE_CHARACTERS` 1,000,000-character message limit (`src/modes/rpc/jsonl.ts`, `src/modes/rpc/rpc-input-validation.ts`); preserve those bounds.
 - The RPC command surface (`get_commands`, post-baseline `commands_changed`, `command_invocation`/`skill_invocation` metadata) is owned by `src/modes/rpc/`; the suppressed initial `commands_changed` (baseline digest starts `undefined`) is intentional — see `src/modes/rpc/AGENTS.md`.
 - MCP token/log storage preserves restricted directory/file permissions; do not widen inherited child environments. RPC child stderr is currently emitted and embedded raw, so treat diagnostics as potentially secret-bearing and do not claim redaction without implementing it.
+
+## DOCS (`docs/`)
+
+This section replaces the former `docs/AGENTS.md`. `docs/` ships in the npm tarball (`package.json` `files` includes `"docs"`) and `test/documentation.test.ts` rejects any Markdown page there that is not reachable from `docs.json`, so agent guidance lives here instead.
+
+### Navigation manifest
+
+`docs.json` has two top-level keys: `navigation` (ordered section and page list) and `redirects`.
+Sections are `{ "title", "items": [{ "title", "path" }] }`; page paths are relative to `docs/`.
+
+- Every new `.md` file needs an entry in `docs.json` under `navigation`.
+- Renamed or moved pages need a `redirects` entry to avoid broken links.
+- Navigation-only stubs without real content belong in `redirects`, not `navigation`.
+
+### Landing page and images
+
+`index.md` is the landing page. Images live under `docs/images/`:
+`doom-extension.png`, `exy.png`, `interactive-mode.png`, `tree-view.png`.
+
+New images go in `docs/images/`. Don't reference images by absolute URL when a relative path works.
+
+### Protocol and reference pages
+
+These pages must track their implementation counterparts. Treat them as specs, not tutorials.
+
+| Page | Tracks |
+|------|--------|
+| `docs/rpc.md` | `src/modes/rpc/` |
+| `json.md` | JSONL wire format and record shapes |
+| `session-format.md` | Session file structure and field types |
+| `extensions.md` | Public extension API in `src/core/extensions/`; largest page — API tables must match `types.ts` |
+| `release-guide.md` | Release tooling; canonical check/build/test/lock command sequences |
+
+Preserve LF line endings and exact field names in these pages. Field spellings and JSONL record
+structures are asserted by tests; prose-only rewording can still break them.
+
+### Terminology
+
+Docs mix `senpi` and upstream `Pi` branding in legacy text. Don't do broad rebrand sweeps
+during focused edits; update only the immediate context you're working in.
+
+Consistent names: CLI binary is `senpi`, config directory is `.senpi`, npm package is
+`@code-yeongyu/senpi`. Don't use `codex`, `pi`, or `openai-codex` in new prose.
+
+### Security rules
+
+- `bearerTokenEnv` names an environment variable, not a token value. Examples must never put
+  a literal token in the JSON config; the implementation warns when it detects one.
+- OAuth tokens persist under the agent directory at runtime. Don't surface them in doc examples
+  or log snippets.
+- MCP config values are not shell-expanded. Don't document or imply `$VAR` substitution in
+  JSON config examples.
+- `mcp.md` must not advertise URL-mode elicitation; it's not a shipped feature.
+
+### Anti-patterns
+
+- No new `.md` file without a `docs.json` entry.
+- Don't copy claims from upstream Pi docs without verifying they apply to the senpi fork.
+- Don't embed bearer tokens, session IDs, or raw API keys in example output.
 
 ## ANTI-PATTERNS
 
@@ -85,7 +142,7 @@ src/changes.md                     Root fork-change record
 - Run changed test files from this package; issue regressions use `<issue>-<slug>.test.ts`.
 - Code changes require root `bun run check` plus the applicable `senpi-qa` CLI channel and saved evidence.
 - Interactive changes also follow `src/modes/interactive/AGENTS.md`; extension/tool changes follow their nearest child guide.
-- App-server, test, and example changes follow their local `AGENTS.md` files.
+- RPC, test, and example changes follow their local `AGENTS.md` files.
 - Keep `src/changes.md`, nested `changes.md`, public docs, and examples aligned with fork behavior.
 
 ---

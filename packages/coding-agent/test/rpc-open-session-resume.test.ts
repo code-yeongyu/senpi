@@ -15,6 +15,7 @@ import {
 	RpcSessionRegistry,
 	RpcSessionRegistryError,
 } from "../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "./helpers/fake-session-base.ts";
 
 /**
  * Todo 10: open_session resume/create parity + close semantics.
@@ -51,8 +52,7 @@ function makeFactory(calls: CapturedFactoryCall[]): CreateAgentSessionRuntimeFac
 		});
 		return {
 			session: {
-				sessionManager: options.sessionManager,
-				agentDir: options.agentDir,
+				...fakeSessionBase(options),
 				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
 				abort: async () => {},
 				abortBash: () => {},

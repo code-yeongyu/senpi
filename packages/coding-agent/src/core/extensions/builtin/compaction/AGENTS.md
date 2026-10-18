@@ -35,6 +35,7 @@ compaction/
 ├── deterministic-fallback.ts # Classification + construction when summarization fails outright
 ├── summarization-retry.ts, transient-failure.ts, retained-message-safety.ts  # Retry/safety predicates
 ├── openai-remote-{convert,model,schema,timeout,responses-v2}.ts  # Remote-route support modules
+├── model-usability-budget.ts # Startup/switch/resume context admission projection
 └── changes.md                # Fork tracker (restoration tracker, extension hook wiring)
 ```
 

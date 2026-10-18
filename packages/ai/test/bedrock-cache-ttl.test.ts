@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
 import { resolvePromptCacheTtlSeconds } from "../src/index.ts";
 import type { Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 interface CachePointBlock {
 	cachePoint?: { type: string; ttl?: string };
@@ -32,10 +33,10 @@ async function capturePayload(model: Model<"bedrock-converse-stream">): Promise<
 	let capturedPayload: CapturedBedrockPayload | undefined;
 	const stream = streamBedrock(
 		model,
-		{
+		normalizeContext({
 			systemPrompt: "You are helpful.",
 			messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
-		},
+		}),
 		{
 			signal: AbortSignal.abort(),
 			onPayload: (payload) => {

@@ -1,13 +1,13 @@
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
-import {
-	discoverOAuthServerInfo,
-	fetchToken,
-	type OAuthDiscoveryState,
-	type OAuthServerInfo,
+import type {
+	OAuthClientProvider,
+	OAuthDiscoveryState,
+	OAuthServerInfo,
 	auth as sdkAuth,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { loadMcpSdkAuth } from "../sdk.lazy.ts";
 import { isInvalidGrant, OAuthFlowError } from "./oauth-errors.ts";
+import { oauthFetch } from "./oauth-fetch.ts";
 import type { McpOAuthProvider } from "./oauth-provider.ts";
 import { assertS256Supported } from "./oauth-refresh.ts";
 
@@ -37,7 +37,8 @@ export async function beginAuthorization(
 	options: OAuthFlowOptions = {},
 ): Promise<BeginAuthResult> {
 	await assertAuthorizable(provider, options);
-	const result = await sdkAuth(provider, { serverUrl: provider.serverUrl, fetchFn: options.fetchFn });
+	const { auth } = await loadMcpSdkAuth();
+	const result = await auth(provider, { serverUrl: provider.serverUrl, fetchFn: oauthFetch(options.fetchFn) });
 	return {
 		status: result === "AUTHORIZED" ? "authorized" : "redirect",
 		authorizationUrl: provider.lastAuthorizationUrl,
@@ -50,7 +51,7 @@ export async function completeAuthorization(
 	redirectInput: string,
 	options: OAuthFlowOptions = {},
 ): Promise<void> {
-	const { code, state } = parseRedirect(redirectInput, provider.serverName);
+	const { code, state, iss } = parseRedirect(redirectInput, provider.serverName);
 	if (!provider.consumeState(state)) {
 		throw new OAuthFlowError(
 			"state_mismatch",
@@ -58,7 +59,7 @@ export async function completeAuthorization(
 			{ serverName: provider.serverName },
 		);
 	}
-	await finishAuthorization(provider, code, options);
+	await finishAuthorization(provider, code, options, iss);
 }
 
 // Exchange an already-validated authorization code (state was checked by the
@@ -67,13 +68,16 @@ export async function finishAuthorization(
 	provider: McpOAuthProvider,
 	code: string,
 	options: OAuthFlowOptions = {},
+	iss?: string,
 ): Promise<void> {
+	assertAuthorizationResponseIssuer(provider, iss);
 	let result: Awaited<ReturnType<typeof sdkAuth>>;
+	const { auth } = await loadMcpSdkAuth();
 	try {
-		result = await sdkAuth(provider, {
+		result = await auth(provider, {
 			serverUrl: provider.serverUrl,
 			authorizationCode: code,
-			fetchFn: options.fetchFn,
+			fetchFn: oauthFetch(options.fetchFn),
 		});
 	} catch (error) {
 		if (isInvalidGrant(error) || isRejectedAuthorizationCode(error)) {
@@ -92,6 +96,26 @@ export async function finishAuthorization(
 			serverName: provider.serverName,
 		});
 	}
+}
+
+// RFC 9207: an authorization response that names another authorization server, or that omits `iss`
+// although this server promises to send it, may have been injected by a mix-up attack; never exchange its code.
+function assertAuthorizationResponseIssuer(provider: McpOAuthProvider, iss: string | undefined): void {
+	const metadata = provider.discoveryState()?.authorizationServerMetadata;
+	if (metadata === undefined) return;
+	// The SDK keeps unknown metadata fields (loose schema) but does not type this RFC 9207 one.
+	const promised =
+		(metadata as { authorization_response_iss_parameter_supported?: unknown })
+			.authorization_response_iss_parameter_supported === true;
+	if (iss === undefined && !promised) return;
+	if (iss !== undefined && iss === metadata.issuer) return;
+	throw new OAuthFlowError(
+		"needs_auth",
+		iss === undefined
+			? `MCP server ${provider.serverName} authorization response has no issuer although its authorization server promises one; restart with /mcp auth-start ${provider.serverName}.`
+			: `MCP server ${provider.serverName} authorization response names another authorization server (${iss}); restart with /mcp auth-start ${provider.serverName}.`,
+		{ serverName: provider.serverName },
+	);
 }
 
 export async function clientCredentialsGrant(
@@ -135,12 +159,13 @@ export async function clientCredentialsGrant(
 			return params;
 		},
 	};
+	const { fetchToken } = await loadMcpSdkAuth();
 	const tokens = await fetchToken(credentialsProvider, info.authorizationServerUrl, {
 		metadata: info.authorizationServerMetadata,
 		resource: new URL(provider.serverUrl),
-		fetchFn: options.fetchFn,
+		fetchFn: oauthFetch(options.fetchFn),
 	});
-	await provider.saveTokens(tokens);
+	await provider.saveTokens({ ...tokens, issuer: String(info.authorizationServerUrl) });
 }
 
 export async function logout(provider: McpOAuthProvider): Promise<void> {
@@ -151,7 +176,8 @@ async function discover(provider: McpOAuthProvider, options: OAuthFlowOptions): 
 	if (options.discover !== undefined) return options.discover(provider.serverUrl);
 	const cached = provider.discoveryState();
 	if (cached !== undefined) return cached;
-	const info = await discoverOAuthServerInfo(provider.serverUrl, { fetchFn: options.fetchFn });
+	const { discoverOAuthServerInfo } = await loadMcpSdkAuth();
+	const info = await discoverOAuthServerInfo(provider.serverUrl, { fetchFn: oauthFetch(options.fetchFn) });
 	await provider.saveDiscoveryState(toDiscoveryState(info));
 	return info;
 }
@@ -164,7 +190,10 @@ function toDiscoveryState(info: OAuthServerInfo): OAuthDiscoveryState {
 	};
 }
 
-function parseRedirect(input: string, serverName: string): { code: string; state: string | undefined } {
+function parseRedirect(
+	input: string,
+	serverName: string,
+): { code: string; state: string | undefined; iss: string | undefined } {
 	let url: URL;
 	try {
 		url = new URL(input.trim());
@@ -187,7 +216,7 @@ function parseRedirect(input: string, serverName: string): { code: string; state
 			{ serverName },
 		);
 	}
-	return { code, state: url.searchParams.get("state") ?? undefined };
+	return { code, state: url.searchParams.get("state") ?? undefined, iss: url.searchParams.get("iss") ?? undefined };
 }
 
 function isRejectedAuthorizationCode(error: unknown): boolean {

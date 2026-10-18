@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
 import type { Static } from "typebox";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -15,6 +15,7 @@ import type {
 	AgentToolResult,
 	ExtensionAPI,
 	ExtensionContext,
+	ExtensionToolContext,
 	ToolDefinition,
 	ToolRenderContext,
 } from "../../src/core/extensions/types.ts";
@@ -47,7 +48,7 @@ function getLatestTodoResult(harness: Harness) {
 
 function responsesForTodo(params: Record<string, unknown>, finalText = "done") {
 	return [
-		fauxAssistantMessage([fauxToolCall("todo", params)], { stopReason: "toolUse" }),
+		fauxAssistantMessage([fauxToolCall("todo", params as JsonObject)], { stopReason: "toolUse" }),
 		fauxAssistantMessage(finalText),
 	];
 }
@@ -66,6 +67,8 @@ async function captureTodoTool(initialPhases: TodoPhase[] = []) {
 		setCurrentPhases: (phases) => {
 			currentPhases = clonePhases(phases);
 		},
+		getCurrentAsk: () => undefined,
+		setCurrentAsk: () => {},
 		syncWidget: () => {},
 	});
 	if (!capturedTool) throw new Error("Expected todo tool to be registered");
@@ -207,7 +210,13 @@ describe("todo correction wiring", () => {
 		if (!tool.execute) throw new Error("Expected todo execute");
 
 		await expect(
-			tool.execute("blank-target", { op: "done", task: " " } as TodoParams, undefined, undefined, context),
+			tool.execute(
+				"blank-target",
+				{ op: "done", task: " " } as TodoParams,
+				undefined,
+				undefined,
+				context as ExtensionToolContext,
+			),
 		).rejects.toThrow('Blank "task" — pass the exact task text, or omit the field entirely for a bulk operation.');
 		expect(getCurrentPhases()).toEqual(initialPhases);
 	});

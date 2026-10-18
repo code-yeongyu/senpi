@@ -1,18 +1,19 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 
-// Matches only the gpt-5.x "sol" variants (gpt-5.6-sol, -sol-fast, -sol-pro and
-// provider-prefixed forms such as openai/ or openai.). The trailing negative
-// lookahead stops unrelated ids that merely continue with letters after "sol" —
-// notably upstage/solar-pro-3 — from matching.
-const SOL_MODEL_ID_PATTERN = /gpt-5(?:\.\d+)?-sol(?![a-z])/i;
+// Matches GPT-5.x Sol, GPT-6.x Sol (gpt-6-sol, gpt-6.1-sol, Venice's dotless gpt-61-sol) and
+// GPT-6 Astra variants, including provider-prefixed forms. The trailing lookahead excludes
+// unrelated ids that continue with letters.
+const SENSITIVE_MODEL_ID_PATTERN = /(?:gpt-5(?:\.\d+)?-sol|gpt-6(?:\.\d+|\d)?-sol|gpt-6-astra)(?![a-z])/i;
 
 export function isSensitiveHighReasoningModel(model: Pick<Model<Api>, "id">): boolean {
-	return SOL_MODEL_ID_PATTERN.test(model.id);
+	return SENSITIVE_MODEL_ID_PATTERN.test(model.id);
 }
 
+// One rule for every sensitive model, GPT-6 Astra included: warn only above "high", i.e. at xhigh and max.
 export function shouldWarnHighReasoning(model: Pick<Model<Api>, "id">, thinkingLevel: ThinkingLevel): boolean {
-	return (thinkingLevel === "xhigh" || thinkingLevel === "max") && isSensitiveHighReasoningModel(model);
+	const isWarningLevel = thinkingLevel === "xhigh" || thinkingLevel === "max";
+	return isWarningLevel && isSensitiveHighReasoningModel(model);
 }
 
 export interface HighReasoningWarningContent {

@@ -13,7 +13,6 @@
 
 import { Text } from "@earendil-works/pi-tui";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { ResourceUpdatedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { type Static, Type } from "typebox";
 import type { ToolDefinition } from "../../types.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
@@ -22,6 +21,7 @@ import { ToolExecError } from "./errors.ts";
 import type { McpToolDetails } from "./expose/register.ts";
 import type { McpOutputArtifacts } from "./guard/output-guard.ts";
 import { applyMcpOutputGuard } from "./guard/output-guard.ts";
+import { ResourceUpdatedNotificationSchema, registerMcpNotificationHandler } from "./notification-schemas.ts";
 
 export interface McpResourceServer {
 	readonly server: string;
@@ -35,7 +35,7 @@ export interface McpResourceServer {
 
 /** Route resource updated notifications into the shared refresh path. */
 export function subscribeMcpResourceUpdated(client: Client, onChange: () => void): void {
-	client.setNotificationHandler(ResourceUpdatedNotificationSchema, () => {
+	registerMcpNotificationHandler(client, ResourceUpdatedNotificationSchema, () => {
 		onChange();
 	});
 }

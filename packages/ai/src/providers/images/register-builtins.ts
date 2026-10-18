@@ -3,10 +3,10 @@ import type { generateImages as generateImagesOpenRouterFunction } from "../../a
 import { registerBuiltinImagesApiProvider } from "../../images-api-registry.ts";
 import type {
 	AssistantImages,
-	ImagesApi,
+	ImageApi,
+	ImageModel,
 	ImagesContext,
 	ImagesFunction,
-	ImagesModel,
 	ImagesOptions,
 } from "../../types.ts";
 
@@ -17,7 +17,7 @@ interface ImagesProviderModule {
 let openRouterImagesProviderModulePromise: Promise<ImagesProviderModule> | undefined;
 let openAIImagesProviderModulePromise: Promise<typeof generateImagesOpenAIFunction> | undefined;
 
-function createLazyLoadErrorImages<TApi extends ImagesApi>(model: ImagesModel<TApi>, error: unknown): AssistantImages {
+function createLazyLoadErrorImages(model: ImageModel<ImageApi>, error: unknown): AssistantImages {
 	return {
 		api: model.api,
 		provider: model.provider,
@@ -36,8 +36,8 @@ function loadOpenRouterImagesProviderModule(): Promise<ImagesProviderModule> {
 	return openRouterImagesProviderModulePromise;
 }
 
-export const generateImagesOpenRouter: ImagesFunction<"openrouter-images", ImagesOptions> = async (
-	model: ImagesModel<"openrouter-images">,
+export const generateImagesOpenRouter: ImagesFunction<ImagesOptions> = async (
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: ImagesOptions,
 ) => {
@@ -49,8 +49,8 @@ export const generateImagesOpenRouter: ImagesFunction<"openrouter-images", Image
 	}
 };
 
-export const generateImagesOpenAI: ImagesFunction<"openai-images", ImagesOptions> = async (
-	model: ImagesModel<"openai-images">,
+export const generateImagesOpenAI: ImagesFunction<ImagesOptions> = async (
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: ImagesOptions,
 ) => {

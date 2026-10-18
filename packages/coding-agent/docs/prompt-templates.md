@@ -31,6 +31,7 @@ Review the staged changes (`git diff --cached`). Focus on:
 - The filename becomes the command name. `review.md` becomes `/review`.
 - `description` is optional. If missing, the first non-empty line is used.
 - `argument-hint` is optional. When set, the hint is displayed before the description in the autocomplete dropdown.
+- `requires-arguments` is optional. A template with an `argument-hint` expects input: picker Enter completes the command and waits for arguments. Set `requires-arguments: false` when the arguments are optional so Enter submits immediately, or `requires-arguments: true` to wait without a hint.
 
 ### Argument Hints
 

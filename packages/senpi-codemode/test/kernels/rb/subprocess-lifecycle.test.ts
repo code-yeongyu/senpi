@@ -13,7 +13,8 @@ class FakeSubprocess extends EventEmitter {
 	readonly stdout = new PassThrough();
 	readonly stderr = new PassThrough();
 	readonly killedSignals: NodeJS.Signals[] = [];
-	readonly stdin = { writes: [] as string[], write: (chunk: string): number => this.stdin.writes.push(chunk) };
+	readonly stdinWrites: string[] = [];
+	readonly stdin = { writes: this.stdinWrites, write: (chunk: string): unknown => this.stdinWrites.push(chunk) };
 	private readonly exitOnKill: boolean;
 
 	constructor(exitOnKill = true) {

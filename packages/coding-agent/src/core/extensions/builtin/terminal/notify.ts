@@ -11,7 +11,7 @@ export const TERMINAL_NOTIFICATION_CUSTOM_TYPE = "senpi-terminal:notification";
 export interface TerminalNotifierDeps {
 	/** Deliver a model-visible notification without rendering synthetic user input. */
 	readonly sendMessage: (
-		message: { customType: string; content: string; display: boolean },
+		message: { customType: string; content: string; display: boolean; details?: unknown },
 		options: { triggerTurn: boolean; deliverAs: "steer" | "followUp" },
 	) => void;
 	readonly getContext: () => ExtensionContext | undefined;
@@ -22,7 +22,7 @@ export interface TerminalNotifierDeps {
 export const NOTICE_TAIL_MAX_CHARS = 2000;
 
 export interface TerminalNotificationDelivery {
-	readonly send: (content: string, options?: { readonly forceWake?: boolean }) => void;
+	readonly send: (content: string, options?: { readonly forceWake?: boolean; readonly details?: unknown }) => void;
 }
 
 /** Shared terminal-notification guard and notify-mode mapping. */
@@ -37,7 +37,12 @@ export function getTerminalNotificationDelivery(
 	return {
 		send: (content, options) =>
 			deps.sendMessage(
-				{ customType, content, display: false },
+				{
+					customType,
+					content,
+					display: false,
+					...(options?.details === undefined ? {} : { details: options.details }),
+				},
 				{
 					triggerTurn: true,
 					deliverAs: mode === "wake" || options?.forceWake === true ? "steer" : "followUp",

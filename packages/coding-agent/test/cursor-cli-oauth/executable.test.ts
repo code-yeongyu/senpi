@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { homedir } from "node:os";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type CursorAgentExecutableDeps,
 	CursorAgentNotInstalledError,
@@ -154,5 +155,27 @@ describe("probeCursorAgentVersion", () => {
 
 		await expect(probeCursorAgentVersion("/opt/cursor-agent", { execFile })).resolves.toBe("2026.08.11-e8db854");
 		expect(execFile).toHaveBeenCalledOnce();
+	});
+
+	describe("environment", () => {
+		const previousSshConnection = process.env.SSH_CONNECTION;
+
+		afterEach(() => {
+			if (previousSshConnection === undefined) delete process.env.SSH_CONNECTION;
+			else process.env.SSH_CONNECTION = previousSshConnection;
+		});
+
+		it("runs --version with the explicit cursor-agent environment rooted in the user HOME", async () => {
+			process.env.SSH_CONNECTION = "10.0.0.1 50000 10.0.0.2 22";
+			const execFile = vi.fn<VersionProbeDeps["execFile"]>((_file, _args, options, callback) => {
+				expect(options.env.HOME).toBe(homedir());
+				expect(options.env.AGENT_CLI_CREDENTIAL_STORE).toBe("file");
+				expect(options.env).not.toHaveProperty("SSH_CONNECTION");
+				callback(null, "2026.08.11-e8db854\n", "");
+			});
+
+			await probeCursorAgentVersion("/opt/cursor-agent", { execFile });
+			expect(execFile).toHaveBeenCalledOnce();
+		});
 	});
 });

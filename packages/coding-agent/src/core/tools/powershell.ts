@@ -50,10 +50,13 @@ export function createPowerShellToolDefinition(
 	cwd: string,
 	options?: PowerShellToolOptions,
 ): ReturnType<typeof createShellToolDefinition> {
-	return createShellToolDefinition(cwd, powershellToolConfig, {
-		...options,
-		operations: options?.operations ?? createLocalPowerShellOperations(),
-	});
+	return {
+		...createShellToolDefinition(cwd, powershellToolConfig, {
+			...options,
+			operations: options?.operations ?? createLocalPowerShellOperations(),
+		}),
+		exposure: "eval",
+	};
 }
 
 export function createPowerShellTool(cwd: string, options?: PowerShellToolOptions): ReturnType<typeof createBashTool> {

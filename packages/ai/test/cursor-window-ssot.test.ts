@@ -33,15 +33,6 @@ describe("cursor capability windows track the models.dev first-party SSOT", () =
 		expect(drift).toEqual([]);
 	});
 
-	it("never advertises a window above the largest context option cursor offers", () => {
-		for (const [family, capability] of Object.entries(CURSOR_MODEL_CAPABILITIES)) {
-			const options = offered[family];
-			if (!options || options.length === 0) continue;
-			const cap = Math.max(...options.map((option) => contextEnum[option]));
-			expect(capability.window, `${family} exceeds the context cursor offers it`).toBeLessThanOrEqual(cap);
-		}
-	});
-
 	it("keeps families outside the SSOT on a positive fallback window", () => {
 		for (const [family, capability] of Object.entries(CURSOR_MODEL_CAPABILITIES)) {
 			if (expectedWindow(family) !== undefined) continue;

@@ -9,11 +9,15 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	CONTEXT_PROVENANCE_FIELD,
 	copyContextProvenance,
-	getContextProvenance,
+	dropFailedAssistantTurns,
 	type ImageContent,
 	type Message,
 	type TextContent,
 } from "@earendil-works/pi-ai";
+import { ENVIRONMENT_CONTEXT_MESSAGE_TYPE, foldEnvironmentContextIntoNextUserMessage } from "./environment-context.ts";
+import { replaceElidedImages } from "./image-elision-placeholder.ts";
+import { omitProviderRejectedImages } from "./provider-rejected-images.ts";
+import { appendToolResultUserWords } from "./tool-result-user-words.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -85,7 +89,7 @@ export interface CustomMessage<T = unknown> {
 export interface BranchSummaryMessage {
 	role: "branchSummary";
 	summary: string;
-	fromId: string;
+	fromId: string | null;
 	timestamp: number;
 }
 
@@ -97,12 +101,20 @@ export interface CompactionSummaryMessage {
 	timestamp: number;
 }
 
+export interface ConfigurationUpdateMessage {
+	role: "configurationUpdate";
+	content: (TextContent | ImageContent)[];
+	effort: string;
+	timestamp: number;
+}
+
 // Extend CustomAgentMessages via declaration merging
 declare module "@earendil-works/pi-agent-core" {
 	interface CustomAgentMessages {
 		bashExecution: BashExecutionMessage;
 		custom: CustomMessage;
 		branchSummary: BranchSummaryMessage;
+		configurationUpdate: ConfigurationUpdateMessage;
 	}
 }
 
@@ -182,7 +194,8 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 		copyContextProvenance(source, target);
 	// Continuations are append-only here too: the transport array must extend the
 	// previous request verbatim to keep the provider's cache prefix valid.
-	return messages
+	const environmentMessages = new Set<Message>();
+	const converted = messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":
@@ -201,15 +214,15 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 					}
 
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
-					const provenance = { ...getContextProvenance(m), customType: m.customType };
-					return Object.assign(
-						{
-							role: "user" as const,
-							content,
-							timestamp: m.timestamp,
-						},
-						{ [CONTEXT_PROVENANCE_FIELD]: provenance },
-					);
+					const converted = withContextProvenance(m, {
+						role: "user" as const,
+						content,
+						timestamp: m.timestamp,
+					}) as Message & { [CONTEXT_PROVENANCE_FIELD]?: Record<string, unknown> };
+					const provenance = converted[CONTEXT_PROVENANCE_FIELD] ?? {};
+					converted[CONTEXT_PROVENANCE_FIELD] = { ...provenance, customType: m.customType };
+					if (m.customType === ENVIRONMENT_CONTEXT_MESSAGE_TYPE) environmentMessages.add(converted);
+					return converted;
 				}
 				case "branchSummary":
 					return withContextProvenance(m, {
@@ -225,6 +238,9 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						],
 						timestamp: m.timestamp,
 					});
+				case "configurationUpdate":
+					return m;
+				case "system":
 				case "user":
 				case "assistant":
 				case "toolResult":
@@ -236,6 +252,21 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 			}
 		})
 		.filter((m) => m !== undefined);
+	// Failed provider turns (stopReason error/aborted) must never reach an LLM
+	// request: lanes that build requests straight from this output (claude-sdk
+	// prompt bridge, cursor turns) would otherwise replay their partial text and
+	// unexecuted tool calls, and token estimation would count them. Dropping is
+	// deterministic per session state, so the cache-prefix guarantee above holds.
+	// senpi#2118: the environment context then becomes the leading block of the
+	// user message it precedes, so strict-alternation chat templates never see
+	// two consecutive user messages. senpi#2170: images a failed turn proves the
+	// provider rejected are replaced first, while the failed turn is still visible.
+	// senpi#2920: words a user typed into a tool's answer follow that batch's tool
+	// results as a user turn, rebuilt here from the persisted result on every request.
+	return foldEnvironmentContextIntoNextUserMessage(
+		appendToolResultUserWords(dropFailedAssistantTurns(omitProviderRejectedImages(converted))),
+		environmentMessages,
+	);
 }
 
 // ============================================================================
@@ -249,8 +280,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
  */
 export const TRANSPORT_IMAGE_BUDGET_BYTES = 24 * 1024 * 1024;
 
-export const IMAGE_ELISION_PLACEHOLDER =
-	"[Image elided: an older image was removed to keep the request within the provider's size limit. Re-read the source file if you need to view it again.]";
+export { IMAGE_ELISION_PLACEHOLDER } from "./image-elision-placeholder.ts";
 
 export const BLOCKED_IMAGE_PLACEHOLDER = "Image reading is disabled.";
 
@@ -286,58 +316,73 @@ export function dedupeConsecutivePlaceholder(
 }
 
 /**
- * Bound inline image payload at request-build time. Images are considered from
- * newest to oldest. Once an image would exceed the budget, it and every older
- * image are replaced by a text placeholder. The newest protected blocks are
- * kept regardless of size, but still consume the budget.
+ * Bound inline image payload at request-build time. The oldest images are
+ * replaced by a text placeholder in the message that held them, so a dropped
+ * image never moves to another turn.
  *
- * The input and persisted session remain untouched. If every image fits, the
+ * The cutoff moves in fixed steps rather than on every request (senpi#2768).
+ * History only grows by appending, so each image's offset from the oldest one
+ * never changes; images are dropped once they end below a threshold that only
+ * rises when the total crosses the next half-budget step (likewise half the
+ * historical-image limit). A request that just adds an image therefore sends
+ * every earlier image exactly as before, and a provider cache or a sent-history
+ * hash keyed on that history stays valid until the next step. Crossing a step drops up to
+ * half the budget at once, so the request shrinks noticeably then grows back image by image.
+ *
+ * The newest protected blocks, the current turn (when a historical limit is
+ * set) and the newest historical images under that limit are always kept. The
+ * input and persisted session remain untouched. If every image fits, the
  * original array reference is returned.
  */
 export function elideOldImages(messages: Message[], options?: ElideOldImagesOptions): Message[] {
 	const budgetBytes = options?.budgetBytes ?? TRANSPORT_IMAGE_BUDGET_BYTES;
 	const alwaysKeepNewest = options?.alwaysKeepNewest ?? 1;
 	const maxHistoricalImages = options?.maxHistoricalImages;
-	const limitHistory = maxHistoricalImages !== undefined;
 	const lastAssistantIndex = messages.findLastIndex((message) => message.role === "assistant");
+
+	const images: { key: string; bytes: number; currentTurn: boolean }[] = [];
+	messages.forEach((message, messageIndex) => {
+		if ((message.role !== "user" && message.role !== "toolResult") || !Array.isArray(message.content)) return;
+		message.content.forEach((block, blockIndex) => {
+			if (block.type !== "image") return;
+			images.push({
+				key: `${messageIndex}:${blockIndex}`,
+				bytes: block.data.length,
+				currentTurn: maxHistoricalImages !== undefined && messageIndex > lastAssistantIndex,
+			});
+		});
+	});
+
 	const imagesToElide = new Set<string>();
-	let keptImages = 0;
-	let keptHistoricalImages = 0;
-	let imageBytes = 0;
-	let cutoffReached = false;
-
-	for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
-		const message = messages[messageIndex];
-		if ((message.role !== "user" && message.role !== "toolResult") || !Array.isArray(message.content)) {
-			continue;
-		}
-
-		for (let blockIndex = message.content.length - 1; blockIndex >= 0; blockIndex--) {
-			const block = message.content[blockIndex];
-			if (block.type !== "image") continue;
-			const isCurrentTurn = limitHistory && messageIndex > lastAssistantIndex;
-			const isProtectedHistory = limitHistory && !isCurrentTurn && keptHistoricalImages < maxHistoricalImages;
-			const exceedsHistoryLimit = limitHistory && !isCurrentTurn && !isProtectedHistory;
-
-			if (exceedsHistoryLimit || (cutoffReached && !isCurrentTurn && !isProtectedHistory)) {
-				imagesToElide.add(`${messageIndex}:${blockIndex}`);
-				continue;
+	if (maxHistoricalImages !== undefined) {
+		const historical = images.filter((image) => !image.currentTurn);
+		const step = Math.max(1, Math.floor(maxHistoricalImages / 2));
+		const excess = historical.length - maxHistoricalImages;
+		const cutoff = excess > 0 ? Math.ceil(excess / step) * step : 0;
+		for (const image of historical.slice(0, cutoff)) imagesToElide.add(image.key);
+	} else {
+		const protectedKeys = new Set(
+			images.slice(Math.max(0, images.length - alwaysKeepNewest)).map((image) => image.key),
+		);
+		const total = images.reduce((sum, image) => sum + image.bytes, 0);
+		if (total > budgetBytes) {
+			const step = Math.max(1, Math.floor(budgetBytes / 2));
+			const threshold = Math.ceil((total - budgetBytes) / step) * step;
+			let offset = 0;
+			let elidedBytes = 0;
+			let straddler: (typeof images)[number] | undefined;
+			for (const image of images) {
+				const start = offset;
+				offset += image.bytes;
+				if (protectedKeys.has(image.key)) continue;
+				if (offset <= threshold) {
+					imagesToElide.add(image.key);
+					elidedBytes += image.bytes;
+				} else if (start < threshold && straddler === undefined) {
+					straddler = image;
+				}
 			}
-
-			if (
-				isCurrentTurn ||
-				isProtectedHistory ||
-				keptImages < alwaysKeepNewest ||
-				imageBytes + block.data.length <= budgetBytes
-			) {
-				keptImages++;
-				if (!isCurrentTurn) keptHistoricalImages++;
-				imageBytes += block.data.length;
-				continue;
-			}
-
-			cutoffReached = true;
-			imagesToElide.add(`${messageIndex}:${blockIndex}`);
+			if (straddler !== undefined && total - elidedBytes > budgetBytes) imagesToElide.add(straddler.key);
 		}
 	}
 
@@ -351,12 +396,11 @@ export function elideOldImages(messages: Message[], options?: ElideOldImagesOpti
 			return message;
 		}
 
-		const replaced = message.content.map((block, blockIndex): TextContent | ImageContent =>
-			imagesToElide.has(`${messageIndex}:${blockIndex}`) ? { type: "text", text: IMAGE_ELISION_PLACEHOLDER } : block,
-		);
 		return {
 			...message,
-			content: dedupeConsecutivePlaceholder(replaced, IMAGE_ELISION_PLACEHOLDER) as typeof message.content,
+			content: replaceElidedImages(message.content, (blockIndex) =>
+				imagesToElide.has(`${messageIndex}:${blockIndex}`),
+			) as typeof message.content,
 		};
 	});
 }

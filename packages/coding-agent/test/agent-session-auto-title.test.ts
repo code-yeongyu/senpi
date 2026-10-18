@@ -1,13 +1,15 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { type FauxResponseFactory, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	collectTitleRuntimeErrors,
 	createAutoTitleHarness,
 	createDeferred,
+	readTitleFailureLog,
 	waitForCallCount,
 	waitForSessionName,
-	waitForTitleError,
 } from "./agent-session-auto-title-helpers.ts";
 import { getAssistantTexts, type Harness } from "./suite/harness.ts";
 
@@ -26,9 +28,7 @@ describe("agent session auto title", () => {
 	it("forks title generation from the first task prompt and applies the suggested session name", async () => {
 		const titleResponse = createDeferred<ReturnType<typeof fauxAssistantMessage>>();
 		const titleOrTurn: FauxResponseFactory = (context) => {
-			const systemPrompt = Array.isArray(context.systemPrompt)
-				? context.systemPrompt.join("\n")
-				: (context.systemPrompt ?? "");
+			const systemPrompt = getCurrentSystemPrompt(context.messages);
 			if (systemPrompt.includes("<title>")) {
 				return titleResponse.promise;
 			}
@@ -72,9 +72,7 @@ describe("agent session auto title", () => {
 			fauxAssistantMessage(fauxToolCall("probe", {}), { stopReason: "toolUse" }),
 			fauxAssistantMessage("turn complete after tool"),
 			(context) => {
-				const systemPrompt = Array.isArray(context.systemPrompt)
-					? context.systemPrompt.join("\n")
-					: (context.systemPrompt ?? "");
+				const systemPrompt = getCurrentSystemPrompt(context.messages);
 				if (!systemPrompt.includes("<title>")) {
 					return fauxAssistantMessage("", { stopReason: "error", errorMessage: "unexpected non-title call" });
 				}
@@ -105,19 +103,21 @@ describe("agent session auto title", () => {
 		expect(harness.faux.getCallLog()).toHaveLength(1);
 	});
 
-	it("reports title generation errors without blocking the user turn", async () => {
+	it("logs title generation errors quietly without blocking the user turn", async () => {
 		const harness = await createAutoTitleHarness();
 		harnesses.push(harness);
-		const titleError = waitForTitleError(harness);
+		const titleErrors = collectTitleRuntimeErrors(harness);
 		harness.setResponses([
 			fauxAssistantMessage("turn complete"),
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: "title provider failed" }),
 		]);
 
 		await harness.session.prompt("fix the OAuth login button on mobile");
+		await harness.session.waitForSettledSessionWork();
 
 		expect(getAssistantTexts(harness)).toEqual(["turn complete"]);
-		await expect(titleError).resolves.toBe("title provider failed");
+		expect(titleErrors).toEqual([]);
+		expect(readTitleFailureLog(harness)).toMatchObject([{ level: "debug", error: "title provider failed" }]);
 		expect(harness.sessionManager.getSessionName()).toBeUndefined();
 	});
 
@@ -134,9 +134,7 @@ describe("agent session auto title", () => {
 		});
 		let titleAttempts = 0;
 		const titleOrTurn: FauxResponseFactory = (context) => {
-			const systemPrompt = Array.isArray(context.systemPrompt)
-				? context.systemPrompt.join("\n")
-				: (context.systemPrompt ?? "");
+			const systemPrompt = getCurrentSystemPrompt(context.messages);
 			if (!systemPrompt.includes("<title>")) {
 				return fauxAssistantMessage("turn complete");
 			}
@@ -157,16 +155,14 @@ describe("agent session auto title", () => {
 		expect(titleErrors).toEqual([]);
 	});
 
-	it("reports a clean human-readable error once title retries are exhausted", async () => {
+	it("logs a clean human-readable error once title retries are exhausted", async () => {
 		const harness = await createAutoTitleHarness({
 			settings: { retry: { maxRetries: 1, baseDelayMs: 1 } },
 		});
 		harnesses.push(harness);
-		const titleError = waitForTitleError(harness);
+		const titleErrors = collectTitleRuntimeErrors(harness);
 		const titleOrTurn: FauxResponseFactory = (context) => {
-			const systemPrompt = Array.isArray(context.systemPrompt)
-				? context.systemPrompt.join("\n")
-				: (context.systemPrompt ?? "");
+			const systemPrompt = getCurrentSystemPrompt(context.messages);
 			if (!systemPrompt.includes("<title>")) {
 				return fauxAssistantMessage("turn complete");
 			}
@@ -176,7 +172,12 @@ describe("agent session auto title", () => {
 
 		await harness.session.prompt("fix the OAuth login button on mobile");
 
-		await expect(titleError).resolves.toBe("Overloaded (overloaded_error, request req_011CdRmGPa88udPD5fc8dt8U)");
+		await harness.session.waitForSettledSessionWork();
+
+		expect(titleErrors).toEqual([]);
+		expect(readTitleFailureLog(harness)).toMatchObject([
+			{ level: "debug", error: "Overloaded (overloaded_error, request req_011CdRmGPa88udPD5fc8dt8U)" },
+		]);
 		await waitForCallCount(harness, 3);
 		expect(harness.sessionManager.getSessionName()).toBeUndefined();
 	});

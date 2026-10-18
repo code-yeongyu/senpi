@@ -1,13 +1,13 @@
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as path from "node:path";
 import { setKittyProtocolActive } from "./keys.ts";
 import { isMultiplexerSession } from "./mux.ts";
 import { isNativeModifierPressed } from "./native-modifiers.ts";
-import { getNativeModuleCandidates } from "./native-module-path.ts";
+import { getNativePlatformHelper } from "./native-platform.ts";
+import { observeProcessStderrWrites } from "./stderr-observer.ts";
 import { StdinBuffer } from "./stdin-buffer.ts";
-
-const cjsRequire = createRequire(import.meta.url);
+import { queryTmuxCursorPosition } from "./tmux-cursor-query.ts";
+import type { TmuxExecFile } from "./tmux-image-probe.ts";
 
 const TERMINAL_PROGRESS_KEEPALIVE_MS = 1000;
 const TERMINAL_PROGRESS_ACTIVE_SEQUENCE = "\x1b]9;4;3\x07";
@@ -28,13 +28,32 @@ const ERRNO_IN_MESSAGE_PATTERN = /errno:\s*(\d+)/;
 const KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS = 150;
 const KITTY_KEYBOARD_PROTOCOL_QUERY = `\x1b[>${DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u\x1b[c`;
 
+export interface CursorPosition {
+	row: number;
+	column: number;
+	page?: number;
+}
+export function parseCursorPositionResponse(sequence: string): CursorPosition | undefined {
+	const match = /^\x1b\[\?(\d+);(\d+)(?:;(\d+))?R$/.exec(sequence);
+	return match
+		? {
+				row: Number(match[1]),
+				column: Number(match[2]),
+				...(match[3] === undefined ? {} : { page: Number(match[3]) }),
+			}
+		: undefined;
+}
+
 export type KeyboardProtocolNegotiationSequence =
 	| { type: "kitty-flags"; flags: number }
-	| { type: "device-attributes" };
+	| { type: "device-attributes" }
+	| ({ type: "cursor-position" } & CursorPosition);
 
 export function parseKeyboardProtocolNegotiationSequence(
 	sequence: string,
 ): KeyboardProtocolNegotiationSequence | undefined {
+	const cursorPosition = parseCursorPositionResponse(sequence);
+	if (cursorPosition) return { type: "cursor-position", ...cursorPosition };
 	const kittyFlags = sequence.match(/^\x1b\[\?(\d+)u$/);
 	if (kittyFlags) {
 		return { type: "kitty-flags", flags: Number.parseInt(kittyFlags[1]!, 10) };
@@ -53,6 +72,20 @@ export function isAppleTerminalSession(): boolean {
 	return process.platform === "darwin" && process.env.TERM_PROGRAM === "Apple_Terminal";
 }
 
+/**
+ * Refresh terminal dimensions on POSIX platforms by sending SIGWINCH to this process.
+ * Best-effort: some environments (restricted seccomp or LSM policies) return EACCES
+ * for `kill(2)`; in that case the dimensions refresh is skipped rather than crashing.
+ */
+export function refreshTerminalDimensions(): void {
+	if (process.platform === "win32" || process.pid <= 0) return;
+	try {
+		process.kill(process.pid, "SIGWINCH");
+	} catch {
+		// Signal delivery not permitted in this environment; ignore.
+	}
+}
+
 export function normalizeNativeShiftEnterInput(
 	data: string,
 	shouldDetectNativeShiftEnter: boolean,
@@ -66,8 +99,7 @@ export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boole
 	return normalizeNativeShiftEnterInput(data, isAppleTerminal, isShiftPressed);
 }
 
-export function normalizeWarpWslShiftEnterInput(
-	data: string,
+export function isWarpWslSession(
 	env: NodeJS.ProcessEnv = process.env,
 	platform: NodeJS.Platform = process.platform,
 	socketExists: (socketPath: string) => boolean = (socketPath) => {
@@ -77,16 +109,25 @@ export function normalizeWarpWslShiftEnterInput(
 			return false;
 		}
 	},
-): string {
-	if (data !== "\n" || platform !== "linux") return data;
+): boolean {
+	if (platform !== "linux") return false;
 	if (isMultiplexerSession(env) || env.SSH_CONNECTION?.trim() || env.SSH_CLIENT?.trim() || env.SSH_TTY?.trim()) {
-		return data;
+		return false;
 	}
 	const isWarp = Boolean(env.WARP_SESSION_ID?.trim() || env.WARP_TERMINAL_SESSION_UUID?.trim());
 	const interopPath = env.WSL_INTEROP?.trim();
 	const isWsl =
 		isWarp && interopPath !== undefined && /^\/run\/WSL\/\d+_interop$/.test(interopPath) && socketExists(interopPath);
-	return isWarp && isWsl ? NATIVE_SHIFT_ENTER_SEQUENCE : data;
+	return isWarp && isWsl;
+}
+
+export function normalizeWarpWslShiftEnterInput(
+	data: string,
+	env: NodeJS.ProcessEnv = process.env,
+	platform: NodeJS.Platform = process.platform,
+	socketExists?: (socketPath: string) => boolean,
+): string {
+	return data === "\n" && isWarpWslSession(env, platform, socketExists) ? NATIVE_SHIFT_ENTER_SEQUENCE : data;
 }
 
 export function keyboardEnhancementEnabled(): boolean {
@@ -168,6 +209,11 @@ export interface Terminal {
 	 */
 	drainInput(maxMs?: number, idleMs?: number): Promise<void>;
 
+	/** Optional for virtual/custom terminals that cannot answer private DECXCPR. */
+	queryCursorPosition?(): Promise<CursorPosition | undefined>;
+	/** Observe external writes without changing their output policy. */
+	observeExternalWrites?(listener: () => void): () => void;
+
 	// Write output to terminal
 	write(data: string): void;
 
@@ -198,6 +244,8 @@ export interface Terminal {
 }
 
 export interface ProcessTerminalOptions {
+	/** Injectable out-of-band tmux cursor source. */
+	tmuxExecFile?: TmuxExecFile;
 	/**
 	 * When set, stdout writes not issued by this terminal are hidden from the
 	 * screen while the terminal is started and forwarded to this handler
@@ -205,10 +253,14 @@ export interface ProcessTerminalOptions {
 	 * interleave with frames and desynchronize differential rendering.
 	 */
 	onExternalStdoutWrite?: (text: string) => void;
+	/** Observe actual stderr delivery when a host redirects diagnostics before they reach the terminal. */
+	observeExternalStderrWrites?: (listener: () => void) => () => void;
 }
 
 const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
 const DEFAULT_SSH_ESCAPE_TIMEOUT_MS = 100;
+const DEFAULT_BURST_WINDOW_MS = 20;
+const DEFAULT_SSH_BURST_WINDOW_MS = 100;
 
 /**
  * Resolve how long to wait for the rest of an escape sequence before
@@ -227,20 +279,56 @@ export function resolveEscapeTimeoutMs(env: NodeJS.ProcessEnv = process.env): nu
 }
 
 /**
+ * Resolve how long a line break that ends a read with text is held as a possible paste fragment
+ * when the terminal sends no bracketed-paste markers. Paste chunks over SSH arrive further apart,
+ * so the default window is longer there. `PI_TUI_BURST_WINDOW_MS=0` never holds a line break.
+ */
+export function resolveBurstWindowMs(env: NodeJS.ProcessEnv = process.env): number {
+	const raw = env.PI_TUI_BURST_WINDOW_MS?.trim();
+	if (raw !== undefined && raw.length > 0) {
+		const configured = Number(raw);
+		if (Number.isFinite(configured) && configured >= 0) {
+			return configured;
+		}
+	}
+	if (env.SSH_CONNECTION || env.SSH_TTY) {
+		return DEFAULT_SSH_BURST_WINDOW_MS;
+	}
+	return DEFAULT_BURST_WINDOW_MS;
+}
+
+/**
  * Real terminal using process.stdin/stdout
  */
 export class ProcessTerminal implements Terminal {
 	private wasRaw = false;
+	private readonly tmuxExecFile?: TmuxExecFile;
 	private onExternalStdoutWrite?: (text: string) => void;
 	private originalStdoutWrite?: typeof process.stdout.write;
 	private rawStdoutWrite?: (data: string) => void;
+	private readonly observeExternalStderrWrites: (listener: () => void) => () => void;
+	private stopExternalStderrObservation?: () => void;
+	private readonly externalWriteObservers = new Set<() => void>();
+	private keyboardNegotiationSettled = false;
+	private cursorQueryTimedOut = false;
+	private cursorQuery?: {
+		promise: Promise<CursorPosition | undefined>;
+		resolve: (position: CursorPosition | undefined) => void;
+		timer: ReturnType<typeof setTimeout>;
+		issued: boolean;
+		tmuxPane?: string;
+		deadline: number;
+	};
 	private forwardingExternalWrite = false;
 	private inputHandler?: (data: string) => void;
 	private resizeHandler?: () => void;
 	private _kittyProtocolActive = false;
 	private _modifyOtherKeysActive = false;
 	private keyboardProtocolPushed = false;
+	/** DA1 replies owed to keyboard protocol queries. Later DA1 replies answer other queries and are forwarded. */
+	private pendingKeyboardProtocolDeviceAttributes = 0;
 	private keyboardProtocolNegotiationBuffer = "";
+	private discardingPrivateResponse = false;
 	private keyboardProtocolBufferFlushTimer?: ReturnType<typeof setTimeout>;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string | Buffer) => void;
@@ -264,10 +352,79 @@ export class ProcessTerminal implements Terminal {
 
 	constructor(options?: ProcessTerminalOptions) {
 		this.onExternalStdoutWrite = options?.onExternalStdoutWrite;
+		this.observeExternalStderrWrites = options?.observeExternalStderrWrites ?? observeProcessStderrWrites;
+		this.tmuxExecFile = options?.tmuxExecFile;
 	}
 
 	get kittyProtocolActive(): boolean {
 		return this._kittyProtocolActive;
+	}
+
+	queryCursorPosition(): Promise<CursorPosition | undefined> {
+		if (this.cursorQuery) return this.cursorQuery.promise;
+		if (!this.inputHandler || this.cursorQueryTimedOut) return Promise.resolve(undefined);
+		let resolve!: (position: CursorPosition | undefined) => void;
+		const promise = new Promise<CursorPosition | undefined>((settle) => {
+			resolve = settle;
+		});
+		const timer = setTimeout(() => {
+			// CPR has no request id: after a timeout a late reply cannot safely be
+			// associated with a newer query. Stay fail-closed until the next start.
+			this.cursorQueryTimedOut = true;
+			this.settleCursorQuery(undefined);
+		}, 750);
+		this.cursorQuery = {
+			promise,
+			resolve,
+			timer,
+			issued: false,
+			tmuxPane: process.env.TMUX_PANE,
+			deadline: Date.now() + 750,
+		};
+		this.issueCursorQuery();
+		return promise;
+	}
+
+	private issueCursorQuery(): void {
+		if (!this.keyboardNegotiationSettled || !this.cursorQuery || this.cursorQuery.issued) return;
+		this.cursorQuery.issued = true;
+		this.rawWrite("\x1b[?6n");
+		const pending = this.cursorQuery;
+		if (pending?.tmuxPane !== undefined) {
+			void queryTmuxCursorPosition(pending.tmuxPane, pending.deadline, this.tmuxExecFile).then((position) => {
+				if (this.cursorQuery !== pending) return;
+				if (Date.now() >= pending.deadline) this.cursorQueryTimedOut = true;
+				this.settleCursorQuery(this.cursorQueryTimedOut ? undefined : position);
+			});
+		}
+	}
+
+	private settleCursorQuery(position: CursorPosition | undefined): void {
+		const pending = this.cursorQuery;
+		if (!pending) return;
+		this.cursorQuery = undefined;
+		clearTimeout(pending.timer);
+		pending.resolve(position);
+	}
+
+	observeExternalWrites(listener: () => void): () => void {
+		this.externalWriteObservers.add(listener);
+		if (this.inputHandler) {
+			this.installExternalStdoutGuard();
+			this.installExternalStderrObserver();
+		}
+		return () => {
+			this.externalWriteObservers.delete(listener);
+		};
+	}
+
+	private noteExternalWrite(): void {
+		for (const listener of this.externalWriteObservers) listener();
+	}
+
+	private installExternalStderrObserver(): void {
+		if (this.stopExternalStderrObservation || this.externalWriteObservers.size === 0) return;
+		this.stopExternalStderrObservation = this.observeExternalStderrWrites(() => this.noteExternalWrite());
 	}
 
 	private rawWrite(data: string): void {
@@ -280,7 +437,7 @@ export class ProcessTerminal implements Terminal {
 
 	private installExternalStdoutGuard(): void {
 		const handler = this.onExternalStdoutWrite;
-		if (!handler || this.originalStdoutWrite) {
+		if ((!handler && this.externalWriteObservers.size === 0) || this.originalStdoutWrite) {
 			return;
 		}
 		this.originalStdoutWrite = process.stdout.write;
@@ -295,7 +452,8 @@ export class ProcessTerminal implements Terminal {
 			const cb = typeof encodingOrCallback === "function" ? encodingOrCallback : callback;
 			const encoding = typeof encodingOrCallback === "string" ? encodingOrCallback : undefined;
 			const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(encoding);
-			if (this.forwardingExternalWrite) {
+			if (!handler || this.forwardingExternalWrite) {
+				this.noteExternalWrite();
 				rawWrite(text);
 				cb?.(null);
 				return true;
@@ -304,6 +462,7 @@ export class ProcessTerminal implements Terminal {
 			try {
 				handler(text);
 			} catch {
+				this.noteExternalWrite();
 				rawWrite(text);
 			} finally {
 				this.forwardingExternalWrite = false;
@@ -328,6 +487,10 @@ export class ProcessTerminal implements Terminal {
 
 	start(onInput: (data: string) => void, onResize: () => void): void {
 		this.installExternalStdoutGuard();
+		this.installExternalStderrObserver();
+		this.keyboardNegotiationSettled = !keyboardEnhancementEnabled();
+		this.cursorQueryTimedOut = false;
+		this.discardingPrivateResponse = false;
 		this.inputHandler = onInput;
 		this.resizeHandler = onResize;
 
@@ -361,10 +524,8 @@ export class ProcessTerminal implements Terminal {
 		process.stdout.on("resize", this.resizeHandler);
 
 		// Refresh terminal dimensions - they may be stale after suspend/resume
-		// (SIGWINCH is lost while process is stopped). Unix only.
-		if (process.platform !== "win32") {
-			process.kill(process.pid, "SIGWINCH");
-		}
+		// (SIGWINCH is lost while process is stopped). Unix only, best-effort.
+		refreshTerminalDimensions();
 
 		// On Windows, enable ENABLE_VIRTUAL_TERMINAL_INPUT so the console sends
 		// VT escape sequences (e.g. \x1b[Z for Shift+Tab) instead of raw console
@@ -386,20 +547,30 @@ export class ProcessTerminal implements Terminal {
 	 * to handle the case where the response arrives split across multiple events.
 	 */
 	private setupStdinBuffer(): void {
-		this.stdinBuffer = new StdinBuffer({ escapeTimeout: resolveEscapeTimeoutMs() });
+		this.stdinBuffer = new StdinBuffer({
+			escapeTimeout: resolveEscapeTimeoutMs(),
+			burstWindowMs: resolveBurstWindowMs(),
+		});
 
 		// Forward individual sequences to the input handler
 		this.stdinBuffer.on("data", (sequence) => {
-			const negotiationSequence = this.readKeyboardProtocolNegotiationSequence(sequence);
-			if (negotiationSequence === "pending") {
+			if (this.discardingPrivateResponse) {
+				if (sequence.startsWith("\x1b")) this.discardingPrivateResponse = false;
+				else {
+					if (/[\x40-\x7e]/.test(sequence)) this.discardingPrivateResponse = false;
+					return;
+				}
+			}
+			const negotiation = this.readKeyboardProtocolNegotiationSequence(sequence);
+			if (negotiation === "pending") {
 				this.scheduleKeyboardProtocolNegotiationBufferFlush();
 				return; // Wait briefly for the rest of a split Kitty response.
 			}
-			if (this.handleKeyboardProtocolNegotiationSequence(negotiationSequence)) {
+			if (negotiation && this.handleKeyboardProtocolNegotiationSequence(negotiation.parsed)) {
 				return;
 			}
 
-			this.forwardInputSequence(sequence);
+			this.forwardInputSequence(negotiation?.sequence ?? sequence);
 		});
 
 		// Re-wrap paste content with bracketed paste markers for existing editor handling
@@ -438,15 +609,28 @@ export class ProcessTerminal implements Terminal {
 			this.enableModifyOtherKeys();
 		}
 		this.keyboardProtocolPushed = true;
+		this.pendingKeyboardProtocolDeviceAttributes += 1;
 		this.clearKeyboardProtocolNegotiationBuffer();
 		this.rawWrite(KITTY_KEYBOARD_PROTOCOL_QUERY);
 	}
 
 	private handleKeyboardProtocolNegotiationSequence(
-		negotiationSequence: KeyboardProtocolNegotiationSequence | undefined,
+		negotiationSequence: KeyboardProtocolNegotiationSequence,
 	): boolean {
-		if (!negotiationSequence) return false;
 		this.clearKeyboardProtocolNegotiationBuffer();
+		if (negotiationSequence.type === "cursor-position") {
+			if (this.cursorQuery?.issued && this.cursorQuery.tmuxPane === undefined) {
+				const { type: _type, ...position } = negotiationSequence;
+				this.settleCursorQuery(position);
+			}
+			return true;
+		}
+		if (negotiationSequence.type === "device-attributes") {
+			if (this.pendingKeyboardProtocolDeviceAttributes === 0) return false;
+			this.pendingKeyboardProtocolDeviceAttributes -= 1;
+		}
+		this.keyboardNegotiationSettled = true;
+		this.issueCursorQuery();
 		if (negotiationSequence.type === "kitty-flags") {
 			if (negotiationSequence.flags !== 0) {
 				this.disableModifyOtherKeys();
@@ -466,15 +650,16 @@ export class ProcessTerminal implements Terminal {
 		return true;
 	}
 
+	/** Returns the parsed negotiation reply with its full (possibly reassembled) sequence. */
 	private readKeyboardProtocolNegotiationSequence(
 		sequence: string,
-	): KeyboardProtocolNegotiationSequence | "pending" | undefined {
+	): { parsed: KeyboardProtocolNegotiationSequence; sequence: string } | "pending" | undefined {
 		if (this.keyboardProtocolNegotiationBuffer) {
 			const bufferedSequence = this.keyboardProtocolNegotiationBuffer + sequence;
 			const negotiationSequence = parseKeyboardProtocolNegotiationSequence(bufferedSequence);
 			if (negotiationSequence) {
 				this.clearKeyboardProtocolNegotiationBuffer();
-				return negotiationSequence;
+				return { parsed: negotiationSequence, sequence: bufferedSequence };
 			}
 			if (isKeyboardProtocolNegotiationSequencePrefix(bufferedSequence)) {
 				this.setKeyboardProtocolNegotiationBuffer(bufferedSequence);
@@ -484,7 +669,7 @@ export class ProcessTerminal implements Terminal {
 		}
 
 		const negotiationSequence = parseKeyboardProtocolNegotiationSequence(sequence);
-		if (negotiationSequence) return negotiationSequence;
+		if (negotiationSequence) return { parsed: negotiationSequence, sequence };
 		if (isKeyboardProtocolNegotiationSequencePrefix(sequence)) {
 			this.setKeyboardProtocolNegotiationBuffer(sequence);
 			return "pending";
@@ -502,10 +687,14 @@ export class ProcessTerminal implements Terminal {
 		this.keyboardProtocolNegotiationBuffer = "";
 	}
 
-	private flushKeyboardProtocolNegotiationBufferAsInput(): void {
+	private flushKeyboardProtocolNegotiationBufferAsInput(discardTail = false): void {
 		if (!this.keyboardProtocolNegotiationBuffer) return;
 		const sequence = this.keyboardProtocolNegotiationBuffer;
 		this.clearKeyboardProtocolNegotiationBuffer();
+		if (/^\x1b\[\?[\d;]*$/.test(sequence)) {
+			this.discardingPrivateResponse = discardTail;
+			return;
+		}
 		this.forwardInputSequence(sequence);
 	}
 
@@ -513,7 +702,7 @@ export class ProcessTerminal implements Terminal {
 		if (!this.keyboardProtocolNegotiationBuffer || this.keyboardProtocolBufferFlushTimer) return;
 		this.keyboardProtocolBufferFlushTimer = setTimeout(() => {
 			this.keyboardProtocolBufferFlushTimer = undefined;
-			this.flushKeyboardProtocolNegotiationBufferAsInput();
+			this.flushKeyboardProtocolNegotiationBufferAsInput(true);
 		}, KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS);
 	}
 
@@ -556,22 +745,7 @@ export class ProcessTerminal implements Terminal {
 	private enableWindowsVTInput(): void {
 		if (process.platform !== "win32") return;
 		try {
-			const arch = process.arch;
-			if (arch !== "x64" && arch !== "arm64") return;
-
-			// Dynamic require so non-Windows and bundled/browser paths never load the
-			// native helper. Installed packages resolve it from pi-tui; standalone
-			// binaries resolve the copy next to the executable.
-			const nativePath = path.join("native", "win32", "prebuilds", `win32-${arch}`, "win32-console-mode.node");
-			for (const modulePath of getNativeModuleCandidates(nativePath)) {
-				try {
-					const helper = cjsRequire(modulePath) as { enableVirtualTerminalInput?: () => boolean };
-					helper.enableVirtualTerminalInput?.();
-					return;
-				} catch {
-					// Try the next possible packaging location.
-				}
-			}
+			getNativePlatformHelper()?.enableVirtualTerminalInput?.();
 		} catch {
 			// Native helper not available — Shift+Tab won't be distinguishable from Tab.
 		}
@@ -616,6 +790,9 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	stop(): void {
+		this.settleCursorQuery(undefined);
+		this.stopExternalStderrObservation?.();
+		this.stopExternalStderrObservation = undefined;
 		if (this.clearProgressInterval()) {
 			this.rawWrite(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 		}

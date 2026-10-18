@@ -2,7 +2,16 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseJavaScriptResult, runJavaScriptCell, withJavaScriptKernel } from "./eval/js-kernel-harness.ts";
+import {
+	type CapturedJavaScriptRun,
+	parseJavaScriptResult,
+	runJavaScriptCell,
+	withJavaScriptKernel,
+} from "./eval/js-kernel-harness.ts";
+
+function textOf(run: CapturedJavaScriptRun): string {
+	return run.messages.map((message) => (message.type === "text" ? message.data : "")).join("");
+}
 
 describe("JavaScript kernel declaration persistence", () => {
 	it("persists simple top-level declarations across cells", async () => {
@@ -342,6 +351,101 @@ footer\`)`,
 			);
 
 			expect(parseJavaScriptResult(run.result)).toBe("a-)");
+		});
+	});
+
+	it("Given a cell that declares a platform global name when later cells run then they see the cell's value while the kernel and libraries keep the built-in", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const declared = await runJavaScriptCell(kernel, 'const fetch = "shadowed";');
+			expect(declared.result.ok).toBe(true);
+
+			const probe = await runJavaScriptCell(
+				kernel,
+				'return [typeof fetch, typeof globalThis.fetch, typeof (await import("node:path")).join]',
+			);
+			expect(parseJavaScriptResult(probe.result)).toEqual(["string", "function", "function"]);
+		});
+	});
+
+	it("Given let, var and destructured declarations of platform global names when later cells run then each persists for the cells", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			for (const code of [
+				"let URL = 1;",
+				"var structuredClone = 2;",
+				'const [queueMicrotask] = ["q"];',
+				"const { crypto } = { crypto: 3 };",
+			]) {
+				expect((await runJavaScriptCell(kernel, code)).result.ok).toBe(true);
+			}
+
+			const probe = await runJavaScriptCell(
+				kernel,
+				"return [URL, structuredClone, queueMicrotask, crypto, typeof globalThis.URL, typeof globalThis.crypto]",
+			);
+			expect(parseJavaScriptResult(probe.result)).toEqual([1, 2, "q", 3, "function", "object"]);
+		});
+	});
+
+	it("Given a cell that declares a kernel helper name when later cells run then they see the cell's value and the kernel still prints", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			expect((await runJavaScriptCell(kernel, "const log = [1, 2]; const print = 'p';")).result.ok).toBe(true);
+
+			const probe = await runJavaScriptCell(kernel, 'console.log("kernel output"); return [log.length, print]');
+			expect(parseJavaScriptResult(probe.result)).toEqual([2, "p"]);
+			expect(textOf(probe)).toContain("kernel output");
+		});
+	});
+
+	it("Given a shadowed name when a cell deletes it then later cells see the original global again", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			await runJavaScriptCell(kernel, 'const fetch = "shadowed";');
+			await runJavaScriptCell(kernel, "delete fetch;");
+
+			const probe = await runJavaScriptCell(kernel, "return typeof fetch");
+			expect(parseJavaScriptResult(probe.result)).toBe("function");
+		});
+	});
+
+	it("Given a cell that shadows kernel globals when it runs then its output notes each name once and how to restore it", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const declared = await runJavaScriptCell(kernel, "const fetch = 1; const log = 2;");
+
+			expect(textOf(declared)).toContain("`fetch`, `log` shadow kernel or platform globals in your later cells");
+			expect(textOf(declared)).toContain("`delete fetch; delete log` restores them");
+			const plain = await runJavaScriptCell(kernel, "const plainName = 1;");
+			expect(textOf(plain)).not.toContain("shadow");
+		});
+	});
+
+	it("Given a cell that declares globalThis when it runs then it is refused and later cells still persist variables", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const refused = await runJavaScriptCell(kernel, "const globalThis = 1;");
+			expect(refused.result.ok).toBe(false);
+			if (!refused.result.ok) expect(refused.result.error.message).toMatch(/globalThis.*Rename/su);
+
+			await runJavaScriptCell(kernel, "const kept = 5;");
+			expect(parseJavaScriptResult((await runJavaScriptCell(kernel, "return kept")).result)).toBe(5);
+		});
+	});
+
+	it("still allows re-declaring a global an earlier cell created", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			await runJavaScriptCell(kernel, "const shadowGuardReuse = 1;");
+			const redeclare = await runJavaScriptCell(kernel, "const shadowGuardReuse = 2;");
+			expect(redeclare.result.ok).toBe(true);
+
+			const probe = await runJavaScriptCell(kernel, "return shadowGuardReuse");
+			expect(parseJavaScriptResult(probe.result)).toBe(2);
+		});
+	});
+
+	it("does not intercept explicit globalThis assignments", async () => {
+		await withJavaScriptKernel(async (kernel) => {
+			const run = await runJavaScriptCell(
+				kernel,
+				"globalThis.shadowGuardExplicit = 42; return globalThis.shadowGuardExplicit;",
+			);
+			expect(parseJavaScriptResult(run.result)).toBe(42);
 		});
 	});
 });

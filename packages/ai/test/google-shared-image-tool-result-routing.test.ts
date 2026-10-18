@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/api/google-shared.ts";
 import type { Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 function makeModel<TApi extends "google-generative-ai">(
 	api: TApi,
@@ -23,13 +24,16 @@ function makeModel<TApi extends "google-generative-ai">(
 
 function makeContext(model: { api: string; provider: string; id: string }): Context {
 	const now = Date.now();
+	// Same-model tool calls carry a thoughtSignature on the first part (Gemini 3 parallel-call
+	// shape), so the structured functionResponse routing under test stays on the wire path.
+	const thoughtSignature = model.id.startsWith("gemini-3") ? { thoughtSignature: "AAAAAAAAAAAAAAAAAAAAAA==" } : {};
 	return {
 		messages: [
 			{ role: "user", content: "read the files", timestamp: now },
 			{
 				role: "assistant",
 				content: [
-					{ type: "toolCall", id: "call_a", name: "read", arguments: { path: "a.txt" } },
+					{ type: "toolCall", id: "call_a", name: "read", arguments: { path: "a.txt" }, ...thoughtSignature },
 					{ type: "toolCall", id: "call_img", name: "read", arguments: { path: "image.png" } },
 					{ type: "toolCall", id: "call_b", name: "read", arguments: { path: "b.txt" } },
 				],
@@ -76,20 +80,24 @@ function makeContext(model: { api: string; provider: string; id: string }): Cont
 }
 
 describe("google-shared image tool result routing", () => {
-	it("keeps separate synthetic image turn for Gemini 2.x Google API models", () => {
+	// #2114: the synthetic image parts join the single tool-result user turn instead of opening adjacent user turns.
+	it("keeps synthetic image parts inside the single tool-result turn for Gemini 2.x Google API models", () => {
 		const model = makeModel("google-generative-ai", "google", "gemini-2.5-flash");
-		const contents = convertMessages(model, makeContext(model));
+		const contents = convertMessages(model, normalizeContext(makeContext(model)));
 
-		expect(contents).toHaveLength(5);
-		expect(contents[2].parts?.every((part) => part.functionResponse)).toBe(true);
-		expect(contents[3].parts?.[0]?.text).toBe("Tool result image:");
-		expect(contents[3].parts?.[1]?.inlineData).toBeTruthy();
-		expect(contents[4].parts?.[0]?.functionResponse).toBeTruthy();
+		expect(contents.map((content) => content.role)).toEqual(["user", "model", "user"]);
+		const parts = contents[2].parts ?? [];
+		expect(parts).toHaveLength(5);
+		expect(parts[0]?.functionResponse).toBeTruthy();
+		expect(parts[1]?.functionResponse).toBeTruthy();
+		expect(parts[2]?.text).toBe("Tool result image:");
+		expect(parts[3]?.inlineData).toBeTruthy();
+		expect(parts[4]?.functionResponse).toBeTruthy();
 	});
 
 	it("nests image tool results for Gemini 3 Google API models", () => {
 		const model = makeModel("google-generative-ai", "google", "gemini-3-pro-preview");
-		const contents = convertMessages(model, makeContext(model));
+		const contents = convertMessages(model, normalizeContext(makeContext(model)));
 
 		expect(contents).toHaveLength(3);
 		const toolResultTurn = contents[2];

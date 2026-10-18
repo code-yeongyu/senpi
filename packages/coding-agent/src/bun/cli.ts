@@ -1,16 +1,8 @@
 #!/usr/bin/env node
-import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
-import { APP_NAME } from "../config.ts";
+// Order is load-bearing: the sandbox environment is restored before any module reads it,
+// then runtime setup owns process identity and bundled provider/OAuth registration,
+// and only then does the CLI dispatch.
+import "./sandbox-env-setup.ts";
+import "./runtime-setup.ts";
 
-process.title = APP_NAME;
-process.emitWarning = (() => {}) as typeof process.emitWarning;
-
-registerBunOAuthFlows();
-
-import { restoreSandboxEnv } from "./restore-sandbox-env.ts";
-
-restoreSandboxEnv();
-
-await import("./register-bedrock.ts");
-await import("./register-cursor-agent.ts");
 await import("../cli-main.ts");

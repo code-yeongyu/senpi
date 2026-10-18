@@ -28,6 +28,15 @@ export class StatusIndicator extends Loader {
 		this.kind = kind;
 	}
 
+	renderInBorder(width: number): string {
+		const line = super.render(width + 2)[1] ?? "";
+		return truncateToWidth(line.startsWith(" ") ? line.slice(1).trimEnd() : line.trimEnd(), width, "");
+	}
+
+	renderSpinnerInBorder(width: number): string {
+		return truncateToWidth(this.getRenderedIndicator(), width, "");
+	}
+
 	dispose(): void {
 		this.stop();
 	}
@@ -38,12 +47,12 @@ export class StatusIndicator extends Loader {
 }
 
 export class WorkingStatusIndicator extends StatusIndicator {
-	constructor(ui: TUI, message: string, indicator?: LoaderIndicatorOptions) {
+	constructor(ui: TUI, message: string, indicator?: LoaderIndicatorOptions, colorFn?: (text: string) => string) {
 		super(
 			"working",
 			ui,
-			(spinner) => theme.fg("accent", spinner),
-			(text) => theme.fg("muted", text),
+			colorFn ?? ((text) => theme.fg("accent", text)),
+			colorFn ?? ((text) => theme.fg("muted", text)),
 			message,
 			indicator,
 		);
@@ -52,10 +61,22 @@ export class WorkingStatusIndicator extends StatusIndicator {
 
 export class RetryStatusIndicator extends StatusIndicator {
 	private countdown: CountdownTimer | undefined;
+	private compactMessage: string | undefined;
 
-	constructor(ui: TUI, attempt: number, maxAttempts: number, delayMs: number, indicator?: LoaderIndicatorOptions) {
+	constructor(
+		ui: TUI,
+		attempt: number,
+		maxAttempts: number,
+		delayMs: number,
+		indicator?: LoaderIndicatorOptions,
+		providerTrouble = false,
+	) {
 		const retryMessage = (seconds: number) =>
-			`Retrying (${attempt}/${maxAttempts}) in ${seconds}s... (${keyText("app.interrupt")} to cancel)`;
+			providerTrouble
+				? `The model provider may be having trouble. Retrying... (${attempt}/${maxAttempts}, ${seconds > 0 ? `in ${seconds}s` : "now"}; ${keyText("app.interrupt")} to cancel)`
+				: `Retrying (${attempt}/${maxAttempts}) in ${seconds}s... (${keyText("app.interrupt")} to cancel)`;
+		const compactMessage = (seconds: number) =>
+			`Retrying ${attempt}/${maxAttempts} ${seconds > 0 ? `in ${seconds}s` : "now"} (${keyText("app.interrupt")} cancel)`;
 		const retryIndicator =
 			indicator === undefined
 				? undefined
@@ -71,16 +92,25 @@ export class RetryStatusIndicator extends StatusIndicator {
 			retryMessage(Math.ceil(delayMs / 1000)),
 			retryIndicator,
 		);
+		if (providerTrouble) this.compactMessage = compactMessage(Math.ceil(delayMs / 1000));
 		this.countdown = new CountdownTimer(
 			delayMs,
 			ui,
 			(seconds) => {
+				if (providerTrouble) this.compactMessage = compactMessage(seconds);
 				this.setMessage(retryMessage(seconds));
 			},
 			() => {
 				this.countdown = undefined;
 			},
 		);
+	}
+
+	override renderInBorder(width: number): string {
+		if (this.compactMessage && super.render(width + 2).length > 2) {
+			return truncateToWidth(`${this.getRenderedIndicator()} ${theme.fg("muted", this.compactMessage)}`, width, "");
+		}
+		return super.renderInBorder(width);
 	}
 
 	override dispose(): void {
@@ -123,6 +153,12 @@ export class CompactionStatusIndicator extends StatusIndicator {
 	setProgressText(progressText: string): void {
 		if (!this.progressText && progressText) this.setMessage(this.progressLabel);
 		this.progressText = progressText;
+	}
+
+	override renderInBorder(width: number): string {
+		// The embedded editor border goes through this hook, not render(), so route it through the
+		// single-row render below to keep the cancellation hint and the streamed preview.
+		return truncateToWidth((this.render(width)[0] ?? "").trim(), width, "");
 	}
 
 	override render(width: number): string[] {

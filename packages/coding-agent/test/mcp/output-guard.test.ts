@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
 import { applyMcpOutputGuard } from "../../src/core/extensions/builtin/mcp/guard/output-guard.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../src/core/extensions/builtin/mcp/service.ts";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
 import {
 	attach,
 	awaitMcpToolRegistration,
@@ -54,7 +55,7 @@ describe("MCP output guard", () => {
 			{},
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 
 		const preview = textContent(result);
@@ -79,7 +80,7 @@ describe("MCP output guard", () => {
 			{ value: "ok" },
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 
 		expect(textContent(result)).toBe("fixture tool_1 value=ok mode=alpha");
@@ -110,8 +111,8 @@ describe("MCP output guard", () => {
 		const tool = registeredTool(pi, "mcp_fx_huge_output_tool");
 
 		const [first, second] = await Promise.all([
-			tool.execute("tc-concurrent-1", {}, undefined, undefined, testContext()),
-			tool.execute("tc-concurrent-2", {}, undefined, undefined, testContext()),
+			tool.execute("tc-concurrent-1", {}, undefined, undefined, testContext() as ExtensionToolContext),
+			tool.execute("tc-concurrent-2", {}, undefined, undefined, testContext() as ExtensionToolContext),
 		]);
 		const firstPath = extractSpillPath(textContent(first));
 		const secondPath = extractSpillPath(textContent(second));
@@ -133,7 +134,7 @@ describe("MCP output guard", () => {
 			{},
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 		const spillPath = extractSpillPath(textContent(result));
 		expect(existsSync(spillPath)).toBe(true);
@@ -161,7 +162,13 @@ describe("MCP output guard", () => {
 		await awaitMcpToolRegistration("fx");
 
 		await expect(
-			registeredTool(pi, "mcp_fx_iserror_tool").execute("tc-error", {}, undefined, undefined, testContext()),
+			registeredTool(pi, "mcp_fx_iserror_tool").execute(
+				"tc-error",
+				{},
+				undefined,
+				undefined,
+				testContext() as ExtensionToolContext,
+			),
 		).rejects.toThrow();
 		expect(existsSync(join(root.agentDir, "tmp", "mcp-out"))).toBe(false);
 	});
@@ -180,7 +187,7 @@ describe("MCP output guard", () => {
 			{},
 			undefined,
 			undefined,
-			testContext(),
+			testContext() as ExtensionToolContext,
 		);
 
 		const preview = textContent(result);

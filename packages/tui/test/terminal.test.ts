@@ -12,6 +12,7 @@ import {
 	normalizeNativeShiftEnterInput,
 	normalizeWarpWslShiftEnterInput,
 	ProcessTerminal,
+	resolveBurstWindowMs,
 	resolveEscapeTimeoutMs,
 } from "../src/terminal.ts";
 
@@ -84,6 +85,28 @@ function setupTerminalStopHarness(wasRaw: boolean, restoreRawMode: (mode: boolea
 		},
 	};
 }
+
+describe("resolveBurstWindowMs", () => {
+	it("uses PI_TUI_BURST_WINDOW_MS when configured, including 0 to never hold", () => {
+		assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: "80" }), 80);
+		assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: "80", SSH_TTY: "/dev/pts/1" }), 80);
+		assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: "0" }), 0);
+	});
+
+	it("waits longer over SSH, where paste chunks arrive further apart", () => {
+		assert.ok(resolveBurstWindowMs({ SSH_TTY: "/dev/pts/1" }) > resolveBurstWindowMs({}));
+		assert.equal(
+			resolveBurstWindowMs({ SSH_CONNECTION: "1 2 3 4" }),
+			resolveBurstWindowMs({ SSH_TTY: "/dev/pts/1" }),
+		);
+	});
+
+	it("ignores invalid PI_TUI_BURST_WINDOW_MS values", () => {
+		for (const value of ["abc", "-5", "Infinity", ""]) {
+			assert.equal(resolveBurstWindowMs({ PI_TUI_BURST_WINDOW_MS: value }), resolveBurstWindowMs({}));
+		}
+	});
+});
 
 describe("resolveEscapeTimeoutMs", () => {
 	it("uses PI_TUI_ESC_TIMEOUT when configured", () => {
@@ -470,6 +493,21 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		}
 	});
 
+	it("forwards device attributes replies that answer other queries", () => {
+		const harness = setupNegotiation();
+		try {
+			harness.send("\x1b[?7u");
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), undefined);
+
+			// The TUI's color query uses DA1 as its own sentinel.
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), "\x1b[?62;4;52c");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("forwards normal input while waiting for Kitty response", () => {
 		const harness = setupNegotiation();
 		try {
@@ -477,6 +515,32 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 
 			assert.equal(harness.getInput(), "a");
 			assert.equal(harness.terminal.kittyProtocolActive, false);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("holds a newline that follows text within the burst window by default", () => {
+		const harness = setupNegotiation({
+			PI_TUI_BURST_WINDOW_MS: undefined,
+			SSH_TTY: undefined,
+			SSH_CONNECTION: undefined,
+		});
+		try {
+			harness.send("a");
+			harness.send("b\n");
+			assert.equal(harness.getInput(), "b");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("forwards a newline that follows text at once when PI_TUI_BURST_WINDOW_MS is 0", () => {
+		const harness = setupNegotiation({ PI_TUI_BURST_WINDOW_MS: "0", SSH_TTY: undefined, SSH_CONNECTION: undefined });
+		try {
+			harness.send("a");
+			harness.send("b\n");
+			assert.equal(harness.getInput(), "\n");
 		} finally {
 			harness.cleanup();
 		}

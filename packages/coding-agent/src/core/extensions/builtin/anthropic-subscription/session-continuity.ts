@@ -1,0 +1,343 @@
+import { type ContinuityReason, sanitizeReason } from "./session-observability.ts";
+import { sentHashPrefixDigest } from "./session-sync.ts";
+
+export type ContinuityEntrySnapshot = {
+	sdkSessionId: string;
+	accountName: string;
+	modelId: string;
+	systemPromptHash: string;
+	toolsetHash: string;
+	sentCount: number;
+	sentHashes: readonly string[];
+	lastAssistantUuid: string | null;
+	assistantUuidByIndex: ReadonlyMap<number, string>;
+	pendingForkReason: string | null;
+	taintedReason?: string | null;
+	/** Digest of the access token the resident subprocess was spawned with. */
+	credentialDigest?: string;
+};
+
+export type ContinuityBindingSnapshot = {
+	sdkSessionId: string;
+	sentCount: number;
+	sentHashes: readonly string[];
+	sentPrefixHash?: string;
+	lastAssistantUuid: string | null;
+	/** Assistant boundaries as [index, uuid] entries, mirroring the runtime `ContinuityBinding`; a legacy fork anchors inside the hash-proven shared prefix (senpi#1974). */
+	assistantUuidByIndex?: readonly (readonly [number, string])[];
+	accountName: string;
+	modelId: string;
+	systemPromptHash: string;
+	toolsetHash: string;
+	/** Sent-stream digest of a turn that was pushed but never answered (retry checkpoint). */
+	unansweredTurnDigest?: string;
+	/** False until the SDK acknowledged the id; a resume/fork of an unconfirmed id is never attempted. */
+	sdkSessionIdConfirmed?: boolean;
+};
+
+export type ContinuityDecisionInput = {
+	entry: ContinuityEntrySnapshot | undefined;
+	binding: ContinuityBindingSnapshot | undefined;
+	currentHashes: readonly string[];
+	accountName: string;
+	modelId: string;
+	fingerprint: { systemPromptHash: string; toolsetHash: string };
+	transcriptAvailable: boolean;
+	/** false only on the config-dir lane, whose per-account credential roots cannot share a transcript root, so cross-account resume is impossible there. */
+	crossAccountResumeSupported: boolean;
+	idleExpired?: boolean;
+	/** Reason the newest ledger record invalidated this session's binding, when one is pending. */
+	invalidationReason?: string;
+	/** Digest of the access token this turn's attempt authenticates with. */
+	credentialDigest?: string;
+};
+
+export type ContinuityDecision =
+	| { kind: "bootstrap"; reason?: ContinuityReason }
+	| { kind: "delta"; from: number }
+	| { kind: "reattach"; sdkSessionId: string; from: number; reason: ContinuityReason }
+	| { kind: "fork"; sdkSessionId: string; atUuid: string; from: number; reason: ContinuityReason }
+	| { kind: "flatten"; reason: ContinuityReason };
+
+const PENDING_FORK_REASONS: Readonly<Record<string, ContinuityReason>> = {
+	assistant_rewritten: "assistant_rewritten",
+	compaction: "tainted_compaction",
+};
+
+/**
+ * Ledger invalidation reasons that are not themselves observation vocabulary,
+ * mapped onto the closest member. Reasons that ARE members (model_selected,
+ * extensions_removed, assistant_rewritten) pass through `sanitizeReason`, which
+ * also keeps an unknown ledger string from ever reaching an observation.
+ */
+const INVALIDATION_CAUSES: Readonly<Record<string, ContinuityReason>> = {
+	compaction: "tainted_compaction",
+	tree_changed: "branch_diverged",
+	fork: "tainted_fork",
+};
+
+/**
+ * `registry_miss` means what it says: no record was ever found. When the ledger
+ * recorded WHY the binding went away, the cold-seed names that cause instead.
+ * Classification is untouched - only the reason a `bootstrap`/`flatten` reports
+ * changes, and only when it would otherwise be the no-record default.
+ */
+function withRecordedInvalidation(decision: ContinuityDecision, input: ContinuityDecisionInput): ContinuityDecision {
+	if (input.invalidationReason === undefined) return decision;
+	const cause = INVALIDATION_CAUSES[input.invalidationReason] ?? sanitizeReason(input.invalidationReason);
+	if (decision.kind === "bootstrap") return { kind: "bootstrap", reason: cause };
+	if (decision.kind === "flatten" && decision.reason === "registry_miss") return { kind: "flatten", reason: cause };
+	return decision;
+}
+
+function commonPrefixLength(left: readonly string[], right: readonly string[]): number {
+	const limit = Math.min(left.length, right.length);
+	let index = 0;
+	while (index < limit && left[index] === right[index]) index += 1;
+	return index;
+}
+
+/**
+ * The fork point is the last assistant boundary STRICTLY BEFORE the divergence:
+ * forking at the diverged turn itself would carry the stale assistant into the new
+ * branch and leave nothing to re-send.
+ */
+function boundaryBefore(entry: ContinuityEntrySnapshot, count: number): { index: number; uuid: string } | undefined {
+	for (let candidate = count - 1; candidate >= 1; candidate -= 1) {
+		const uuid = entry.assistantUuidByIndex.get(candidate);
+		if (uuid) return { index: candidate, uuid };
+	}
+	return undefined;
+}
+
+/**
+ * Same boundary search for a detached binding's entry list: the newest index at
+ * or below `cap` (index >= 1 mirrors `boundaryBefore` — an assistant at index 0
+ * would precede every user message, which no valid SDK lineage has). Entry order
+ * is not guaranteed, so this scans every entry instead of walking down.
+ */
+function newestBoundaryWithin(
+	entries: readonly (readonly [number, string])[] | undefined,
+	cap: number,
+): { index: number; uuid: string } | undefined {
+	let boundary: { index: number; uuid: string } | undefined;
+	for (const [index, uuid] of entries ?? []) {
+		if (index >= 1 && index <= cap && (!boundary || index > boundary.index)) boundary = { index, uuid };
+	}
+	return boundary;
+}
+
+function forkOrFlatten(
+	entry: ContinuityEntrySnapshot,
+	divergesAt: number,
+	reason: ContinuityReason,
+): ContinuityDecision {
+	const boundary = boundaryBefore(entry, divergesAt);
+	if (!boundary) return { kind: "flatten", reason };
+	return {
+		kind: "fork",
+		sdkSessionId: entry.sdkSessionId,
+		atUuid: boundary.uuid,
+		from: boundary.index,
+		reason,
+	};
+}
+
+function identityDrift(
+	input: ContinuityDecisionInput,
+	entry: Pick<ContinuityEntrySnapshot, "accountName" | "modelId" | "systemPromptHash" | "toolsetHash">,
+): ContinuityReason | null {
+	if (entry.accountName !== input.accountName) return "account_changed";
+	if (entry.modelId !== input.modelId) return "model_changed";
+	if (entry.systemPromptHash !== input.fingerprint.systemPromptHash) return "system_prompt_changed";
+	if (entry.toolsetHash !== input.fingerprint.toolsetHash) return "toolset_changed";
+	return null;
+}
+
+/**
+ * Same-turn retry after a stream-start timeout: the abandoned attempt already
+ * appended its user message to the lineage, so re-attaching would append it a
+ * SECOND time and re-bill the whole conversation. Forking at the pre-turn
+ * assistant boundary rewinds past the un-answered message, so the retry's
+ * request byte-layout matches the failed attempt's (prefix cache read).
+ * Requires the FULL current turn to hash-match the checkpoint, so a different
+ * turn falls through to the ordinary branches below.
+ */
+function retryCheckpointDecision(
+	input: ContinuityDecisionInput,
+	binding: ContinuityBindingSnapshot,
+): ContinuityDecision | undefined {
+	if (binding.unansweredTurnDigest === undefined) return undefined;
+	if (sentHashPrefixDigest(input.currentHashes, input.currentHashes.length) !== binding.unansweredTurnDigest) {
+		return undefined;
+	}
+	if (input.currentHashes.length < binding.sentCount) return undefined;
+	const prefixMatches =
+		binding.sentPrefixHash !== undefined
+			? sentHashPrefixDigest(input.currentHashes, binding.sentCount) === binding.sentPrefixHash
+			: commonPrefixLength(binding.sentHashes, input.currentHashes) === binding.sentCount;
+	if (!prefixMatches) return undefined;
+	// The pre-turn boundary may be unmapped (Claude Code rejected it, senpi#1958); any earlier
+	// mapped boundary still lies inside the prefix just proven, so fork there (senpi#1973).
+	const boundary = binding.lastAssistantUuid
+		? { index: binding.sentCount, uuid: binding.lastAssistantUuid }
+		: newestBoundaryWithin(binding.assistantUuidByIndex, binding.sentCount);
+	if (!boundary) return { kind: "flatten", reason: "timeout_retry" };
+	return {
+		kind: "fork",
+		sdkSessionId: binding.sdkSessionId,
+		atUuid: boundary.uuid,
+		from: boundary.index,
+		reason: "timeout_retry",
+	};
+}
+
+/**
+ * A binding whose SDK id was minted locally and never acknowledged (no init, no
+ * replay echo before the attempt failed) must not be resumed: Claude Code
+ * answers "No conversation found with session ID" and every retry would mint
+ * another dead id (oh-my-openagent#7562). Cold-seed instead.
+ */
+function withoutUnconfirmedResume(
+	decision: ContinuityDecision,
+	binding: ContinuityBindingSnapshot,
+): ContinuityDecision {
+	if (binding.sdkSessionIdConfirmed !== false) return decision;
+	if (decision.kind === "reattach" || decision.kind === "fork") {
+		return { kind: "flatten", reason: "session_unconfirmed" };
+	}
+	return decision;
+}
+
+function decideFromBinding(input: ContinuityDecisionInput, binding: ContinuityBindingSnapshot): ContinuityDecision {
+	if (!input.transcriptAvailable) return { kind: "flatten", reason: "transcript_missing" };
+	const drift = identityDrift(input, binding);
+	// Model identity drift fails closed: the persisted identity no longer matches the turn.
+	// Account drift flattens only on the config-dir lane, whose per-account roots cannot
+	// share a transcript; on shared-root lanes it falls through like prompt/toolset drift
+	// (senpi#1432), so the retry checkpoint forks a same-turn failover at the pre-turn
+	// boundary and a matching prefix reattaches with reason account_changed.
+	if (drift === "model_changed") return { kind: "flatten", reason: drift };
+	if (drift === "account_changed" && !input.crossAccountResumeSupported)
+		return { kind: "flatten", reason: "cross_root_unsupported" };
+	// Prompt/toolset drift instead reattaches like the live path
+	// (oh-my-openagent#7884) - a restart has no live query, so the resume builds a
+	// fresh query carrying the CURRENT options and hooks, and flattening would
+	// re-send the whole conversation for drift the SDK applies per-query anyway.
+	const retry = retryCheckpointDecision(input, binding);
+	if (retry) return retry;
+	if (binding.sentPrefixHash !== undefined) {
+		const prefixMatches =
+			input.currentHashes.length >= binding.sentCount &&
+			sentHashPrefixDigest(input.currentHashes, binding.sentCount) === binding.sentPrefixHash;
+		if (prefixMatches) {
+			return {
+				kind: "reattach",
+				sdkSessionId: binding.sdkSessionId,
+				from: binding.sentCount,
+				reason: drift ?? "registry_miss",
+			};
+		}
+		return {
+			kind: "flatten",
+			reason: input.currentHashes.length < binding.sentCount ? "history_rolled_back" : "sent_stream_diverged",
+		};
+	}
+	const shared = commonPrefixLength(binding.sentHashes, input.currentHashes);
+	if (shared === binding.sentCount) {
+		return {
+			kind: "reattach",
+			sdkSessionId: binding.sdkSessionId,
+			from: binding.sentCount,
+			reason: drift ?? "registry_miss",
+		};
+	}
+	// Invariant (senpi#1974): a fork's atUuid and from name the SAME mapped
+	// boundary — the newest assistant index inside the hash-proven shared prefix —
+	// so the SDK forks after an assistant the current history still contains and
+	// senpi re-sends exactly that boundary's suffix. lastAssistantUuid maps at
+	// binding.sentCount, which can lie past the divergence; no mapped boundary
+	// inside the prefix means the lineage cannot be trusted, so flatten instead of
+	// pairing an unrelated old-branch assistant with a smaller offset.
+	const reason: ContinuityReason = shared < binding.sentCount ? "history_rolled_back" : "sent_stream_diverged";
+	const boundary = newestBoundaryWithin(binding.assistantUuidByIndex, shared);
+	// A missing lastAssistantUuid no longer flattens by itself: an earlier mapped boundary
+	// inside the shared prefix is just as safe a fork point (senpi#1973).
+	if (!boundary) return { kind: "flatten", reason: binding.lastAssistantUuid ? reason : "registry_miss" };
+	return {
+		kind: "fork",
+		sdkSessionId: binding.sdkSessionId,
+		atUuid: boundary.uuid,
+		from: boundary.index,
+		reason,
+	};
+}
+
+/**
+ * Resume-first except after senpi compaction, which replaces the SDK transcript
+ * with the compacted context. Only compaction, a missing transcript, an
+ * unrecoverable boundary, a model identity drift, or account
+ * drift on the config-dir lane on a persisted binding reaches `flatten`; every other
+ * divergence resolves to `fork` (same lineage, new branch) or `reattach` (same
+ * session, new query).
+ */
+export function decideNativeContinuity(input: ContinuityDecisionInput): ContinuityDecision {
+	return withRecordedInvalidation(decideFromState(input), input);
+}
+
+function decideFromState(input: ContinuityDecisionInput): ContinuityDecision {
+	const { entry, binding } = input;
+	if (!entry) {
+		if (!binding) return { kind: "bootstrap" };
+		return withoutUnconfirmedResume(decideFromBinding(input, binding), binding);
+	}
+
+	// The live session's transcript lives under another account's config-dir root: a reattach or
+	// fork there fails with "No conversation found" after a wasted round trip (senpi#2891).
+	if (!input.crossAccountResumeSupported && entry.accountName !== input.accountName) {
+		return { kind: "flatten", reason: "cross_root_unsupported" };
+	}
+
+	const divergence = entry.pendingForkReason ?? entry.taintedReason;
+	// Forking retains the old SDK prefix: it cannot apply senpi's summary or
+	// remove the messages compaction discarded. Seed a fresh transcript instead.
+	if (divergence === "compaction") return { kind: "flatten", reason: "tainted_compaction" };
+	if (divergence) {
+		return forkOrFlatten(entry, entry.sentCount, PENDING_FORK_REASONS[divergence] ?? "other");
+	}
+
+	const shared = commonPrefixLength(entry.sentHashes, input.currentHashes);
+	if (shared < entry.sentCount) {
+		const rolledBack = input.currentHashes.length < entry.sentCount && shared === input.currentHashes.length;
+		return rolledBack
+			? forkOrFlatten(entry, input.currentHashes.length, "history_rolled_back")
+			: forkOrFlatten(entry, shared + 1, "sent_stream_diverged");
+	}
+
+	if (input.idleExpired) {
+		return { kind: "reattach", sdkSessionId: entry.sdkSessionId, from: entry.sentCount, reason: "idle_ttl" };
+	}
+
+	const drift = identityDrift(input, entry);
+	if (drift) {
+		return { kind: "reattach", sdkSessionId: entry.sdkSessionId, from: entry.sentCount, reason: drift };
+	}
+
+	// A refresh revokes the access token the resident subprocess was spawned
+	// with; a delta sent to it fails with 401 "token has been revoked". Resume the
+	// same lineage in a subprocess that carries the current token instead.
+	if (
+		input.credentialDigest !== undefined &&
+		entry.credentialDigest !== undefined &&
+		entry.credentialDigest !== input.credentialDigest
+	) {
+		return {
+			kind: "reattach",
+			sdkSessionId: entry.sdkSessionId,
+			from: entry.sentCount,
+			reason: "credential_refreshed",
+		};
+	}
+
+	return { kind: "delta", from: entry.sentCount };
+}

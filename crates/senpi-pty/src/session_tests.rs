@@ -27,6 +27,29 @@ fn pty_session_streams_raw_bytes_and_exit_code() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn pty_session_reports_shell_pid_and_process_group_after_exit() {
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&output);
+    let mut session = PtySession::start(
+        PtySessionOptions::new("sh").arg("-c").arg("printf 'PID=%s;' $$"),
+        move |chunk| seen.lock().unwrap().extend_from_slice(chunk),
+    )
+    .unwrap();
+    let pid = session.pid().unwrap();
+    let process_group = session.process_group_id().unwrap();
+
+    session.wait().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&output.lock().unwrap()).as_ref(),
+        format!("PID={pid};")
+    );
+    assert_eq!(process_group, pid as i32);
+    assert_eq!(session.pid(), Some(pid));
+    assert_eq!(session.process_group_id(), Some(process_group));
+}
+
 #[test]
 fn background_wait_does_not_complete_before_reader_drain() {
     let output = Arc::new(Mutex::new(Vec::new()));
@@ -354,4 +377,50 @@ fn process_exists(pid: u32) -> bool {
     // SAFETY: libc::kill with signal 0 performs existence/permission checking only. The pid comes
     // from test child output and no Rust memory is shared with libc.
     unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+/// senpi#2161: a session's output carries only its own child's bytes while other sessions are
+/// being spawned on other threads at the same moment.
+#[cfg(unix)]
+#[test]
+fn concurrent_session_spawns_never_leak_bytes_into_another_session() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let spawners: Vec<_> = (0..4)
+        .map(|_| {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    let mut other = PtySession::start(PtySessionOptions::new("true"), |_| {}).unwrap();
+                    other.wait().unwrap();
+                }
+            })
+        })
+        .collect();
+    let mut leaked = Vec::new();
+    for _ in 0..200 {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&output);
+        let mut session = PtySession::start(
+            PtySessionOptions::new("sh").arg("-c").arg("printf 'own;'"),
+            move |chunk| seen.lock().unwrap().extend_from_slice(chunk),
+        )
+        .unwrap();
+        session.wait().unwrap();
+        let text = String::from_utf8_lossy(&output.lock().unwrap()).into_owned();
+        if text != "own;" {
+            leaked.push(text);
+        }
+    }
+    stop.store(true, Ordering::SeqCst);
+    for spawner in spawners {
+        spawner.join().unwrap();
+    }
+    assert!(
+        leaked.is_empty(),
+        "{} of 200 sessions saw foreign bytes, e.g. {:?}",
+        leaked.len(),
+        leaked.first()
+    );
 }

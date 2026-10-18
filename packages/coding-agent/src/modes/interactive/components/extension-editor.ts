@@ -15,9 +15,14 @@ import {
 } from "@earendil-works/pi-tui";
 import type { KeybindingsManager } from "../../../core/keybindings.ts";
 import { editInExternalEditor } from "../external-editor.ts";
+import { restoreInteractiveStderr, takeOverInteractiveStderr } from "../interactive-stderr-guard.ts";
 import { getEditorTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint } from "./keybinding-hints.ts";
+
+export interface ExtensionEditorOptions extends EditorOptions {
+	description?: string;
+}
 
 export class ExtensionEditorComponent extends Container implements Focusable {
 	private editor: Editor;
@@ -43,7 +48,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		prefill: string | undefined,
 		onSubmit: (value: string) => void,
 		onCancel: () => void,
-		options?: EditorOptions,
+		options?: ExtensionEditorOptions,
 		externalEditorCommand?: string,
 	) {
 		super();
@@ -57,17 +62,22 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 			(process.platform === "win32" ? "notepad" : "nano");
 		this.onSubmitCallback = onSubmit;
 		this.onCancelCallback = onCancel;
+		const { description, ...editorOptions } = options ?? {};
 
 		// Add top border
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
 
-		// Add title
+		// Add title and optional description
 		this.addChild(new Text(theme.fg("accent", title), 1, 0));
+		if (description) {
+			this.addChild(new Spacer(1));
+			this.addChild(new Text(theme.fg("text", description), 1, 0));
+		}
 		this.addChild(new Spacer(1));
 
 		// Create editor
-		this.editor = new Editor(tui, getEditorTheme(), options);
+		this.editor = new Editor(tui, getEditorTheme(), editorOptions);
 		if (prefill) {
 			this.editor.setText(prefill);
 		}
@@ -116,6 +126,8 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 	private async handleOpenExternalEditor(): Promise<void> {
 		const content = this.editor.getText();
 		this.tui.stop();
+		// The editor draws on the real terminal: hand fd 1 and fd 2 back first, as the main editor path does.
+		restoreInteractiveStderr();
 		try {
 			const result = await editInExternalEditor({
 				command: this.externalEditorCommand,
@@ -125,6 +137,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 				this.editor.setText(result.content);
 			}
 		} finally {
+			takeOverInteractiveStderr();
 			this.tui.start();
 			this.tui.requestRender(true);
 		}

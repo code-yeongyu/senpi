@@ -22,10 +22,11 @@ export interface WorkstationFacts {
  * Families follow the prompt-preset conventions: Claude/GLM take direct
  * imperatives in a tagged block, GPT (codex) takes terse bounded rules, Kimi
  * takes positive operational constraints (all-caps directives make K2.x
- * overthink), and `default` is the maximum-emphasis fallback for unmatched
- * models.
+ * overthink), the `gemini` dialect takes one plain sentence pair (the
+ * provider's guidance: direct instructions, no persuasive emphasis), and `default` is
+ * the maximum-emphasis fallback for unmatched models.
  */
-export type WorkstationDialect = "default" | "claude" | "codex" | "kimi";
+export type WorkstationDialect = "default" | "claude" | "codex" | "kimi" | "gemini";
 
 // Kernel identity: `<uname -s> <uname -r>` (`Darwin 25.3.0`, `Linux 6.8.0-45-generic`).
 // Deliberately NOT `os.version()` — Node returns the full xnu build string on
@@ -95,6 +96,8 @@ ${executors} on THIS workstation. Match commands, paths, package managers, and p
 		`${executors} on this workstation; match commands, paths, and parallelism to it. Written code may target other platforms — executed code runs here.`,
 	kimi: (executors) =>
 		`${executors} on this workstation — choose commands, paths, and parallelism that fit it. When writing code for another target platform, keep the code portable; only the execution happens here.`,
+	gemini: (executors) =>
+		`${executors} on this workstation; match commands, paths, package managers, and parallel pool sizes to it. Code you write may target another machine; code you run always runs here.`,
 	default: (executors) =>
 		`**EXECUTION HAPPENS HERE.** ${executors} on THIS machine — you MUST match commands, paths, package managers, and parallel pool sizes to the workstation above. Code you WRITE may target a different machine; anything you RUN executes HERE.`,
 };

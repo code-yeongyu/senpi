@@ -13,6 +13,16 @@ describe("collectTips", () => {
 		}
 	});
 
+	it("includes the memory aha-moment tip", () => {
+		const tips = collectTips();
+
+		expect(tips.find((tip) => tip.id === "memory.aha-moment")).toEqual({
+			id: "memory.aha-moment",
+			text: "Memory speaks up on its own: when something remembered would change the next step, an Aha moment! line surfaces it mid-task. Silence means nothing relevant was found.",
+			requiresCommand: "memory",
+		});
+	});
+
 	it("includes the fallback-chains-setting tip", () => {
 		const tips = collectTips();
 
@@ -44,6 +54,11 @@ describe("collectTips", () => {
 			{
 				id: "workflow-skills.visual-qa",
 				text: 'Trigger "visual QA" to capture browser or xterm evidence and review web or terminal interfaces.',
+				requiresCommand: "tasks",
+			},
+			{
+				id: "workflow-skills.report-bug",
+				text: 'Hit a bug? Say "report a bug" - the report-bug skill finds the session, records the exact provider and model, routes it to the right repository, and files an evidence-backed issue only after you confirm.',
 				requiresCommand: "tasks",
 			},
 		];
