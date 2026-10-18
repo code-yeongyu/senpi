@@ -2932,7 +2932,9 @@ export class InteractiveMode {
 		this.assistantTextSegments.clear();
 		this.clearPendingTools();
 		this.clearToolHookStatuses();
+		this.pendingInputProjections.clear();
 		this.renderInitialMessages();
+		this.updatePendingMessagesDisplay();
 	}
 
 	/**
@@ -5146,6 +5148,9 @@ export class InteractiveMode {
 		this.unsubscribe = this.session.subscribe(async (event) => {
 			await this.handleEvent(event);
 		});
+		// Input the pending-input store requeued while the session opened was announced before this subscription:
+		// draw what is queued now, so a reopened session shows it (senpi#3549 P2c).
+		this.updatePendingMessagesDisplay();
 	}
 
 	private async handleEvent(event: AgentSessionEvent): Promise<void> {

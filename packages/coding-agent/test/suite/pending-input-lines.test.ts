@@ -4,7 +4,7 @@ import {
 	applyPendingInputChanges,
 	pendingInputLines,
 } from "../../src/modes/interactive/components/pending-input-lines.ts";
-import { OptimisticUserEchoController } from "../../src/modes/interactive/interactive-mode.ts";
+import { InteractiveMode, OptimisticUserEchoController } from "../../src/modes/interactive/interactive-mode.ts";
 
 // senpi#3549 P2c: the TUI pending display renders the engine projection, never its own lifecycle.
 
@@ -79,5 +79,48 @@ describe("TUI pending-input lines", () => {
 
 		expect(first).toMatch(/^[0-9a-f-]{36}$/);
 		expect(second).not.toBe(first);
+	});
+
+	it("draws the queue right after subscribing, so input the store requeued while the session opened shows", () => {
+		const subscribe = Reflect.get(InteractiveMode.prototype, "subscribeToAgent");
+		const calls: string[] = [];
+		const context = {
+			session: { subscribe: () => calls.push("subscribed") && (() => {}) },
+			handleEvent: async () => {},
+			updatePendingMessagesDisplay: () => calls.push("drawn"),
+		};
+
+		subscribe.call(context);
+
+		expect(calls).toEqual(["subscribed", "drawn"]);
+	});
+
+	it("drops the previous session's projections and draws the queue when a session is rendered", () => {
+		const render = Reflect.get(InteractiveMode.prototype, "renderCurrentSessionState");
+		const projections = new Map([["old", {}]]);
+		let drawn = 0;
+		const clear = { clear: () => {} };
+		const context = {
+			loadedResourcesContainer: clear,
+			chatContainer: clear,
+			pendingMessagesContainer: clear,
+			compactionTransferAbortControllers: new Map(),
+			compactionQueueGeneration: 0,
+			streamingReveal: { stop: () => {} },
+			toolResultReveal: { stop: () => {} },
+			assistantTextSegments: new Map(),
+			clearPendingTools: () => {},
+			clearToolHookStatuses: () => {},
+			renderInitialMessages: () => {},
+			pendingInputProjections: projections,
+			updatePendingMessagesDisplay: () => {
+				drawn += 1;
+			},
+		};
+
+		render.call(context);
+
+		expect(projections.size).toBe(0);
+		expect(drawn).toBe(1);
 	});
 });

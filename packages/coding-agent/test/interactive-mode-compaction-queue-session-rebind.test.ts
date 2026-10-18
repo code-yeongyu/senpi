@@ -72,6 +72,7 @@ it("starts a replacement-session flush while an old transfer remains pending", a
 		readonly clearPendingTools: () => void;
 		readonly clearToolHookStatuses: () => void;
 		readonly renderInitialMessages: () => void;
+		readonly pendingInputProjections: Map<string, unknown>;
 	} = {
 		compactionQueuedMessages: [oldMessage],
 		compactionInFlightMessages: [],
@@ -100,6 +101,7 @@ it("starts a replacement-session flush while an old transfer remains pending", a
 		clearPendingTools: vi.fn(),
 		clearToolHookStatuses: vi.fn(),
 		renderInitialMessages: vi.fn(),
+		pendingInputProjections: new Map(),
 	};
 
 	const flushCompactionQueue = getFlushCompactionQueue();
@@ -164,6 +166,7 @@ it("does not render an accepted old-session prompt failure after session rebind"
 		readonly clearPendingTools: () => void;
 		readonly clearToolHookStatuses: () => void;
 		readonly renderInitialMessages: () => void;
+		readonly pendingInputProjections: Map<string, unknown>;
 	} = {
 		compactionQueuedMessages: [oldMessage],
 		compactionInFlightMessages: [],
@@ -193,6 +196,7 @@ it("does not render an accepted old-session prompt failure after session rebind"
 		clearPendingTools: vi.fn(),
 		clearToolHookStatuses: vi.fn(),
 		renderInitialMessages: vi.fn(),
+		pendingInputProjections: new Map(),
 	};
 
 	await getFlushCompactionQueue()(context);
