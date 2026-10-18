@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { QueuedInputPort } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
+import { attachmentFingerprint, PendingInputAttachments } from "./pending-input-attachments.ts";
 import { SessionPendingInputJournal } from "./pending-input-journal.ts";
 import type { PendingInputProjection } from "./pending-input-projection.ts";
+import { pruneSettledAttachments, type RecoveredInput, recoverQueuedInputs } from "./pending-input-recovery.ts";
 import { createSessionQueuedInputPort } from "./pending-input-session-port.ts";
 import { PENDING_INPUT_TRANSITION, type PendingInputJournal, PendingInputStore } from "./pending-input-store.ts";
 import type { OperationOutcome, PendingInputMode, PendingInputOperationResult } from "./pending-input-types.ts";
@@ -22,6 +24,10 @@ export interface SessionPendingInputsOptions {
 	readonly onChange?: (update: PendingInputUpdate) => void;
 	/** Defaults to the session JSONL; injectable so tests can fail an append. */
 	readonly journal?: PendingInputJournal;
+	/** Defaults to `<session file>.attachments` for a persisted session; none for an in-memory one. */
+	readonly attachments?: PendingInputAttachments;
+	/** Puts an input the store recovered on reopen back into the native queue (the store is the single source). */
+	readonly requeue?: (input: RecoveredInput) => void;
 }
 
 export interface PendingInputUpdate {
@@ -86,15 +92,29 @@ export class SessionPendingInputs {
 		if (journaled) this.store().catch(() => undefined);
 	}
 
+	private readonly attachments = (): PendingInputAttachments =>
+		this.options.attachments ??
+		new PendingInputAttachments({
+			dir: () => {
+				const file = this.options.sessionManager.getSessionFile();
+				return file !== undefined && this.options.sessionManager.isPersisted() ? `${file}.attachments` : undefined;
+			},
+		});
+	private recovered = new Set<string>();
+
 	/**
 	 * How a restored input (from the RPC admission ledger after a reopen) re-enters the native queue: under the
 	 * store's rebound queue id while it is still queued; not at all once the store retired it (delivered, removed,
 	 * failed); `undefined` when the store never held it, so the caller restores it as before.
 	 */
-	async restoreHandle(clientMessageId: string): Promise<{ readonly queuedId: string } | "retired" | undefined> {
+	async restoreHandle(
+		clientMessageId: string,
+	): Promise<{ readonly queuedId: string } | "retired" | "held" | undefined> {
 		if (this.storeOpening === undefined) return undefined;
 		const input = (await this.storeOpening).current(clientMessageId);
 		if (input === undefined) return undefined;
+		// The store already requeued it on open: restoring it again would queue it twice.
+		if (this.recovered.has(clientMessageId)) return "held";
 		return input.phase === "queued" ? { queuedId: input.handle.queuedId } : "retired";
 	}
 
@@ -109,6 +129,8 @@ export class SessionPendingInputs {
 	): Promise<PendingInputOperationResult | undefined> {
 		const store = await this.store();
 		return store.transaction(async (tx) => {
+			// The bytes are durable before the record that names them (P2c check 1).
+			this.attachments().save(input.images ?? []);
 			const result = await tx.submit({
 				clientMessageId: input.clientMessageId,
 				fingerprint: admissionFingerprint(input),
@@ -226,6 +248,10 @@ export class SessionPendingInputs {
 			// crash was never sent and returns to the queue under its id (T28).
 			uncommittedAttemptsAreUnsent: true,
 		}).then((store) => {
+			const attachments = this.attachments();
+			const requeue = this.options.requeue;
+			if (requeue !== undefined) this.recovered = recoverQueuedInputs(store, attachments, requeue);
+			store.subscribe((projections) => pruneSettledAttachments(store, attachments, projections));
 			const onChange = this.options.onChange;
 			if (onChange !== undefined)
 				store.subscribe((projections, cursor) =>
@@ -252,10 +278,6 @@ export class SessionPendingInputs {
 function admissionFingerprint(input: IdentifiedInput): string {
 	const images = (input.images ?? []).map(attachmentFingerprint);
 	return sha256(JSON.stringify([input.mode, input.text, images]));
-}
-
-function attachmentFingerprint(image: ImageContent): string {
-	return `${image.mimeType}:${sha256(image.data)}`;
 }
 
 function sha256(value: string): string {

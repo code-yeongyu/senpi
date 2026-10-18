@@ -167,6 +167,11 @@ export class PendingInputStore {
 		return this.inputs.get(clientMessageId);
 	}
 
+	/** Every input's full record, in the order each was first submitted. */
+	inputsInSubmitOrder(): readonly PendingInput[] {
+		return [...this.inputs.values()];
+	}
+
 	read(clientMessageId: string): PendingInputRead {
 		const input = this.inputs.get(clientMessageId);
 		return input === undefined

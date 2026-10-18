@@ -279,6 +279,7 @@ import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScop
 import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelSwitchAuthError } from "./model-switch-auth-error.ts";
 import { NestedToolCallRunner } from "./nested-tool-calls.ts";
+import type { RecoveredInput } from "./pending-input-recovery.ts";
 import { type PendingInputSnapshot, type PendingInputUpdate, SessionPendingInputs } from "./pending-input-session.ts";
 import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from "./prompt-cache-budget.ts";
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
@@ -1430,6 +1431,7 @@ export class AgentSession {
 			sessionManager: this.sessionManager,
 			nextQueuedId: () => this._mintQueuedId(),
 			onChange: (update) => this._emit({ type: "pending_input_update", ...update }),
+			requeue: (input) => this._requeueRecoveredInput(input),
 		});
 		this.agent.queuedInputPort = this._pendingInputs.queuedInputPort();
 		this.settingsManager = config.settingsManager;
@@ -5850,9 +5852,28 @@ export class AgentSession {
 			input.clientMessageId === undefined
 				? undefined
 				: await this._pendingInputs.restoreHandle(input.clientMessageId);
-		// The pending-input record is the authority: an input it already retired is not queued again.
-		if (restored === "retired") return;
+		// The pending-input record is the authority: an input it already retired, or already requeued itself on
+		// reopen, is not queued again.
+		if (restored === "retired" || restored === "held") return;
 		this._enqueuePreparedInput(restored === undefined ? input : { ...input, queuedId: restored.queuedId });
+	}
+
+	/** An input the pending-input store recovered on reopen, back in the queue under its id (senpi#3549 P2c). */
+	private _requeueRecoveredInput(input: RecoveredInput): void {
+		this._enqueuePreparedInput({
+			clientMessageId: input.clientMessageId,
+			queuedId: input.queuedId,
+			text: input.text,
+			images: [...input.images],
+			mode: input.mode,
+		});
+		if (input.missingAttachments > 0)
+			this._extensionRunner
+				?.getUIContext()
+				.notify(
+					`A queued message was restored without its ${input.missingAttachments === 1 ? "attachment" : `${input.missingAttachments} attachments`}: they could not be read back. Re-attach them if you still need them.`,
+					"warning",
+				);
 	}
 
 	private _enqueuePreparedInput(
