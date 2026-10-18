@@ -41,7 +41,10 @@ export interface PendingInputStoreOptions {
 	readonly onListenerError?: (error: unknown) => void;
 }
 
-/** Called after each committed transition with its projection and the journal cursor it was written at. */
+/**
+ * Called once per committed record with every projection it changed and the journal cursor it was written at.
+ * Every listener sees a record before any of its effects (dispatch, restore to draft) runs.
+ */
 export type PendingInputListener = (projections: readonly PendingInputProjection[], cursor: number) => void;
 
 /** Transitions inside one gated step: each is committed directly, since the caller already holds the gate. */
