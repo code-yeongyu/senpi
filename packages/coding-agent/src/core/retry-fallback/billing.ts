@@ -18,6 +18,10 @@ const BILLING_ERROR_PATTERN = new RegExp(
 		"purchase credits",
 		"credits[-_ ]required",
 		"credits are required",
+		// Anthropic Console spend limits (senpi#3637): a user-set, workspace, or
+		// tier spend limit stays spent until the date the message states.
+		"reached your (?:specified )?(?:workspace )?API usage limits",
+		"enforced_spend_limit_reached",
 		// OpenAI hard-quota exhaustion (senpi#1969). Inlined to keep this module
 		// import-free; the single source of truth is USAGE_LIMIT_EXHAUSTION in
 		// @earendil-works/pi-ai utils/retry.ts.

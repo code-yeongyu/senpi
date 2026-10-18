@@ -9,6 +9,7 @@ import {
 import {
 	isProviderStreamStallError,
 	isProviderTimeoutError,
+	isQuotaExhaustionMessage,
 	isRetryableAssistantError,
 	type RetryPolicy,
 	retryAssistantCall,
@@ -489,6 +490,17 @@ describe("provider retry classification", () => {
 		expect(
 			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: creditsRequired })),
 		).toBe(false);
+	});
+
+	it.each([
+		'400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC."}}',
+		'400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC."}}',
+		'429 {"type":"error","error":{"type":"rate_limit_error","message":"You have reached your API usage limits: your organization has crossed its monthly API usage threshold, set based on your organization\'s API tier. You will regain access on 2026-11-01 at 00:00 UTC.","details":{"error_code":"enforced_spend_limit_reached"}}}',
+	])("keeps anthropic spend limits non-retryable (senpi#3637): %s", (errorMessage) => {
+		// Anthropic Console spend limits resume only on the stated date; the 429 tier cap has no
+		// retry-after, so a same-model retry can never succeed.
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(false);
+		expect(isQuotaExhaustionMessage(errorMessage)).toBe(true);
 	});
 
 	it("keeps the ChatGPT subscription usage limit non-retryable", () => {

@@ -69,6 +69,8 @@ const SENPI_STRUCTURED_RETRYABLE_STATUS_CODES: ReadonlySet<number> = new Set([
 const SENPI_STRUCTURED_TERMINAL_PROVIDER_CODES: ReadonlySet<string> = new Set([
 	"insufficient_quota",
 	"credits_required",
+	// Anthropic tier spend cap (senpi#3637).
+	"enforced_spend_limit_reached",
 	// OpenAI hard account-quota exhaustion (senpi#1969). Declared once in
 	// ../retry.ts as USAGE_LIMIT_EXHAUSTION and consumed here so the two
 	// packages/ai lists cannot drift.
