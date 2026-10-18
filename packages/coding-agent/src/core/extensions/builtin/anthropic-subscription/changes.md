@@ -1,3 +1,21 @@
+## 2026-10-18 - A second account is added, never written over a working one (senpi#3619)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/oauth-login.ts`: `recoveryTargetName` no longer returns a lone account's name. Only the pool's one auth-blocked account, lone or not, is a default re-login target. With one working account stored, a blank name or a login without a prompt adds `account-N`, and the prompt's default (placeholder) is that new name.
+
+### Why
+
+- A beta tester could not add a second Claude account: the omo#7084 fix treated any lone account as the re-login target, so pressing Enter at "Name for this account" (and every login without a prompt, such as RPC or the desktop) wrote the new account's tokens over the first one while `/claude-account add` reported "account added". Regression: `test/suite/regressions/3619-second-claude-account-appends.test.ts` (three cases fail on `main`); the omo#7084 recovery cases in `7084-anthropic-subscription-login-refresh.test.ts` still pass.
+
+### Why an extension could not handle it
+
+- This is the extension; the account-name decision lives in its OAuth login.
+
+### Expected merge conflict zones
+
+- None: fork-only file.
+
 ## 2026-10-16 - A transient failure never rotates or blocks an account (senpi#3466)
 
 ### What changed

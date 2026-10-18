@@ -79,14 +79,13 @@ function toSlot(
 }
 
 /**
- * Recovery target for a re-login (omo#7084): a lone slot, or the pool's one
- * auth-blocked slot, is refreshed in place — identity-safe because no working
- * account is displaced. Anything else stays append-only unless the user names
- * an existing slot explicitly, so a blank or headless re-login never
- * overwrites the newest working slot in a multi-account pool.
+ * Recovery target for a re-login (omo#7084): the pool's one auth-blocked slot,
+ * lone or not, is refreshed in place, because no working account is displaced.
+ * A working slot is never a default target, even a lone one: a blank or
+ * headless login then adds the next account (senpi#3619), and refreshing a
+ * working slot takes typing its name.
  */
 function recoveryTargetName(existing: AccountSlot[]): string | undefined {
-	if (existing.length === 1) return existing[0]?.name;
 	const authBlocked = existing.filter((slot) => slot.blockReason === "auth_error");
 	if (authBlocked.length === 1) return authBlocked[0]?.name;
 	return undefined;

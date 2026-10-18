@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- Adding a second Claude subscription account no longer replaces the first. With one working account stored, pressing Enter at the account-name prompt (or a login with no prompt, such as over RPC or from the desktop) now adds `account-2`; typing the existing name still refreshes that account, and a blank login still refreshes the pool's one auth-blocked account. Thanks to yeah_jun_14 for the report ([#3619](https://github.com/code-yeongyu/senpi/issues/3619)).
 - A host daemon now inherits every credential variable the engine reads, including `CLAUDE_CODE_OAUTH_TOKEN`, `COPILOT_GITHUB_TOKEN`, `HF_TOKEN` and numbered slots such as `OPENAI_API_KEY_2`, so a Claude subscription from the environment works through a host as it does in a direct process (#3531).
 
 - `get_auth_providers` reports a Claude subscription supplied by `CLAUDE_CODE_OAUTH_TOKEN` or an ambient Claude Code login on the subscription's sign-in row instead of its API-key row, so RPC clients show it as a connected subscription. The TUI `/login` picker and `get_auth_providers` share one rule, so a runtime `--api-key` never shows as a configured sign-in, and a stored subscription keeps its row beside one (#3537).
