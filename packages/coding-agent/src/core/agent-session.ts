@@ -1432,6 +1432,10 @@ export class AgentSession {
 			nextQueuedId: () => this._mintQueuedId(),
 			onChange: (update) => this._emit({ type: "pending_input_update", ...update }),
 			requeue: (input) => this._requeueRecoveredInput(input),
+			onOpenFailure: (error) =>
+				this._sessionLogger?.warn("pending_input_store_open_failed", {
+					error: error instanceof Error ? error.message : String(error),
+				}),
 		});
 		this.agent.queuedInputPort = this._pendingInputs.queuedInputPort();
 		this.settingsManager = config.settingsManager;

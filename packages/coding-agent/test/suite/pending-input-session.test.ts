@@ -472,11 +472,18 @@ describe("pending-input recovery on reopen", () => {
 		const onUnhandled = (reason: unknown) => unhandled.push(reason);
 		process.on("unhandledRejection", onUnhandled);
 		try {
-			const after = new SessionPendingInputs({ sessionManager, nextQueuedId: () => "q_2", journal });
+			const reported: unknown[] = [];
+			const after = new SessionPendingInputs({
+				sessionManager,
+				nextQueuedId: () => "q_2",
+				journal,
+				onOpenFailure: (error) => reported.push(error),
+			});
 			await new Promise<void>((resolve) => setImmediate(resolve));
 			await new Promise<void>((resolve) => setImmediate(resolve));
 
 			expect(unhandled).toEqual([]);
+			expect(reported).toEqual([expect.objectContaining({ message: "disk gone" })]);
 			await expect(after.snapshot()).rejects.toThrow("disk gone");
 		} finally {
 			process.off("unhandledRejection", onUnhandled);

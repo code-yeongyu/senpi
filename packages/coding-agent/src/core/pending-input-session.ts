@@ -29,6 +29,8 @@ export interface SessionPendingInputsOptions {
 	readonly attachments?: PendingInputAttachments;
 	/** Puts an input the store recovered on reopen back into the native queue (the store is the single source). */
 	readonly requeue?: (input: RecoveredInput) => void;
+	/** Told when the eager open of a journaled session fails, so a broken journal leaves a trace even unread. */
+	readonly onOpenFailure?: (error: unknown) => void;
 }
 
 export interface PendingInputUpdate {
@@ -90,7 +92,7 @@ export class SessionPendingInputs {
 			.some((entry) => entry.type === "custom" && entry.customType === PENDING_INPUT_TRANSITION);
 		// Opened eagerly, unawaited: every later use awaits this same opening and surfaces its failure, so the
 		// eager start only must not report it a second time as an unhandled rejection.
-		if (journaled) this.store().catch(() => undefined);
+		if (journaled) this.store().catch((error: unknown) => this.options.onOpenFailure?.(error));
 	}
 
 	private readonly attachments = (): PendingInputAttachments =>
