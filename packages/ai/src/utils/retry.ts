@@ -91,6 +91,15 @@ const QUOTA_EXHAUSTION_PATTERNS = [
 	"credits_required",
 	"credits are required",
 
+	// Anthropic Console spend limits (senpi#3637): a limit the user set answers
+	// 400 invalid_request_error "You have reached your specified API usage
+	// limits" (or "specified workspace API usage limits"); the tier's monthly cap
+	// answers 429 rate_limit_error "You have reached your API usage limits: ..."
+	// with error_code enforced_spend_limit_reached and no retry-after. Access
+	// resumes only on the date the message states, so every retry fails.
+	"reached your (?:specified )?(?:workspace )?API usage limits",
+	"enforced_spend_limit_reached",
+
 	// OpenAI hard account-quota exhaustion (senpi#1969): the 429 body carries
 	// `usage_limit_reached` / "The usage limit has been reached", and the account
 	// stays dead until its quota resets — every same-account retry is guaranteed

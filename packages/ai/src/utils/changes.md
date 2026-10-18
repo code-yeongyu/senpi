@@ -1,3 +1,21 @@
+## 2026-10-18 - Anthropic Console spend limits are terminal account exhaustion (senpi#3637)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `QUOTA_EXHAUSTION_PATTERNS` gains `reached your (?:specified )?(?:workspace )?API usage limits` and `enforced_spend_limit_reached`, so Anthropic's spend-limit responses classify as non-retryable account exhaustion: the 400 `invalid_request_error` for a limit the user set ("You have reached your specified API usage limits", or the workspace form) and the tier cap's 429 `rate_limit_error` ("You have reached your API usage limits: ...", `error_code: enforced_spend_limit_reached`, no `retry-after`).
+
+### Why
+
+- None of the three documented wordings matched a classifier. The 400s fell back as `hard-error` and the 429 burned same-model retries before falling back as `transient`; neither pins, so cooldown-expiry reverted the session into the spent key, which keeps refusing until the date in the message (senpi#3637).
+
+### Why an extension could not handle it
+
+- Retry classification is shared by every provider and consumed inside the session retry/fallback engine; there is no hook between a provider error and its classification.
+
+### Expected merge conflict zones
+
+- LOW: the Anthropic Console block of `QUOTA_EXHAUSTION_PATTERNS` in `retry.ts`.
+
 ## 2026-10-15 - Connection failures classify as network from structured transport codes (senpi#3228)
 
 ### What changed

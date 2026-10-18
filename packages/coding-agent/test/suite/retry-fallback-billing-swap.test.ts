@@ -23,6 +23,24 @@ const terminalNonBillingError = "Error: provider rejected the request permanentl
 const usageLimitExhaustedError =
 	'OpenAI API error (429): {"type":"usage_limit_reached","message":"The usage limit has been reached"}';
 
+// Anthropic Console spend limits (senpi#3637), worded as documented at
+// https://platform.claude.com/docs/en/api/rate-limits#spend-limits: a limit the user set (400), a
+// workspace limit (400), and the tier's monthly cap (429 enforced_spend_limit_reached, no retry-after).
+const spendLimitErrors = [
+	[
+		"specified API usage limits 400",
+		'400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC."}}',
+	],
+	[
+		"specified workspace API usage limits 400",
+		'400 {"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC."}}',
+	],
+	[
+		"tier spend cap 429",
+		'429 {"type":"error","error":{"type":"rate_limit_error","message":"You have reached your API usage limits: your organization has crossed its monthly API usage threshold, set based on your organization\'s API tier. You will regain access on 2026-11-01 at 00:00 UTC.","details":{"error_code":"enforced_spend_limit_reached"}}}',
+	],
+] as const;
+
 const billingError = () => fauxAssistantMessage("", { stopReason: "error", errorMessage: creditBalanceError });
 const creditsRequiredBillingError = () =>
 	fauxAssistantMessage("", { stopReason: "error", errorMessage: creditsRequiredError });
@@ -125,6 +143,36 @@ describe("retry fallback billing swap", () => {
 		expect(harness.session.model?.id).toBe("faux-2");
 		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2", "faux-2"]);
 	});
+
+	it.each(spendLimitErrors)(
+		"switches on the first anthropic spend-limit failure (%s) and pins it as billing",
+		async (_label, errorMessage) => {
+			let now = 0;
+			// 5 mirrors the senpi-default turn budget: the 429 cap carries no retry-after and
+			// retrying fails until the stated date, so no same-model retry may be spent.
+			const harness = await createChainHarness(() => now, 5);
+			harnesses.push(harness);
+			harness.setResponses([
+				fauxAssistantMessage("", { stopReason: "error", errorMessage }),
+				fauxAssistantMessage("fallback answer"),
+				fauxAssistantMessage("still fallback"),
+			]);
+
+			await harness.session.prompt("first");
+
+			expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2"]);
+			expect(harness.eventsOfType("retry_fallback_applied").map((event) => event.reason)).toEqual(["billing"]);
+
+			// Access resumes only on the stated date: past every cooldown the session must not
+			// revert into the spent key.
+			now += 31 * 60_000;
+			await harness.session.prompt("second");
+
+			expect(harness.eventsOfType("retry_fallback_reverted")).toEqual([]);
+			expect(harness.session.model?.id).toBe("faux-2");
+			expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2", "faux-2"]);
+		},
+	);
 
 	it("fails on the first attempt when no fallback is configured, keeping the error turn", async () => {
 		const harness = await createHarness({
