@@ -131,6 +131,7 @@ import {
 	type ScopedModel,
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
+import type { PendingInputProjection } from "../../core/pending-input-projection.ts";
 import { formatProviderFailure } from "../../core/provider-failure.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
@@ -218,6 +219,7 @@ import {
 	formatAuthSelectorProviderType,
 	OAuthSelectorComponent,
 } from "./components/oauth-selector.ts";
+import { applyPendingInputChanges, pendingInputLines, type QueuedLine } from "./components/pending-input-lines.ts";
 import {
 	DEFAULT_TAIL_BUDGET,
 	DEFAULT_WARM_CHUNK_SIZE,
@@ -723,10 +725,13 @@ export class OptimisticUserEchoController {
 
 	/** `undefined` means nothing was painted for this submission; every callback then resolves to a no-op. */
 	promptOptions(id: string | undefined): {
+		clientMessageId: string;
 		preflightResult: (success: boolean) => void;
 		promptDisposition: (disposition: "handled" | "queued" | "started") => void;
 	} {
 		return {
+			// Every submission carries its own id, so queued TUI input is kept in durable custody (senpi#3549).
+			clientMessageId: crypto.randomUUID(),
 			preflightResult: (success) => {
 				if (!success) this.reject(id);
 			},
@@ -937,6 +942,8 @@ export class InteractiveMode {
 	private transcriptScrollView: TuiLayouts.ScrollView | undefined;
 	private fullscreenLayoutRoot: Component | undefined;
 	private pendingMessagesContainer: Container;
+	/** The engine's latest projection of each pending input in durable custody (senpi#3549). */
+	private readonly pendingInputProjections = new Map<string, PendingInputProjection>();
 	private statusContainer: Container;
 	private readonly sessionShownTipIds = new Set<string>();
 	private shortcutOverlay: ShortcutOverlay | undefined;
@@ -5191,6 +5198,12 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 
+			case "pending_input_update":
+				applyPendingInputChanges(this.pendingInputProjections, event.changes);
+				this.updatePendingMessagesDisplay();
+				this.ui.requestRender();
+				break;
+
 			case "system_prompt_change":
 				this.showStatus(
 					event.systemPromptName ? `System prompt: ${event.systemPromptName}` : "System prompt changed",
@@ -7261,19 +7274,18 @@ export class InteractiveMode {
 	 * Get all queued messages (read-only).
 	 * Combines session queue and compaction queue.
 	 */
-	private getAllQueuedMessages(): { steering: string[]; followUp: string[] } {
-		return {
-			steering: [
-				...this.session.getSteeringMessages(),
-				...this.compactionInFlightMessages.filter((msg) => msg.mode === "steer").map((msg) => msg.text),
-				...this.compactionQueuedMessages.filter((msg) => msg.mode === "steer").map((msg) => msg.text),
-			],
-			followUp: [
-				...this.session.getFollowUpMessages(),
-				...this.compactionInFlightMessages.filter((msg) => msg.mode === "followUp").map((msg) => msg.text),
-				...this.compactionQueuedMessages.filter((msg) => msg.mode === "followUp").map((msg) => msg.text),
-			],
-		};
+	/** Queued input in display order: steering first, then follow-ups; native entries carry their client id. */
+	private queuedLines(): QueuedLine[] {
+		const native: QueuedLine[] = this.session.getQueuedInputs().map((input) => ({
+			text: input.text,
+			mode: input.mode,
+			...(input.clientMessageId === undefined ? {} : { clientMessageId: input.clientMessageId }),
+		}));
+		const compaction: QueuedLine[] = [...this.compactionInFlightMessages, ...this.compactionQueuedMessages].map(
+			(message) => ({ text: message.text, mode: message.mode }),
+		);
+		const all = [...native, ...compaction];
+		return [...all.filter((line) => line.mode === "steer"), ...all.filter((line) => line.mode === "followUp")];
 	}
 
 	/**
@@ -7341,16 +7353,11 @@ export class InteractiveMode {
 			this.compactionQueuedMessages.length + this.compactionInFlightMessages.length > 0,
 		);
 		this.pendingMessagesContainer.clear();
-		const { steering: steeringMessages, followUp: followUpMessages } = this.getAllQueuedMessages();
-		if (steeringMessages.length > 0 || followUpMessages.length > 0) {
+		const lines = pendingInputLines(this.queuedLines(), this.pendingInputProjections);
+		if (lines.length > 0) {
 			this.pendingMessagesContainer.addChild(new Spacer(1));
-			for (const message of steeringMessages) {
-				const text = theme.fg("dim", `Steering: ${message}`);
-				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
-			}
-			for (const message of followUpMessages) {
-				const text = theme.fg("dim", `Follow-up: ${message}`);
-				this.pendingMessagesContainer.addChild(new TruncatedText(text, 1, 0));
+			for (const line of lines) {
+				this.pendingMessagesContainer.addChild(new TruncatedText(theme.fg("dim", line), 1, 0));
 			}
 			const dequeueHint = this.getAppKeyDisplay("app.message.dequeue");
 			const hintText = theme.fg("dim", `↳ ${dequeueHint} to edit all queued messages`);
