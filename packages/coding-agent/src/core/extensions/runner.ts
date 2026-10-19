@@ -24,7 +24,11 @@ import {
 	DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS,
 	SettingsManager,
 } from "../settings-manager.ts";
-import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import {
+	type BuildSystemPromptOptions,
+	isValidSystemPromptSectionName,
+	renderCustomSections,
+} from "../system-prompt.ts";
 import type { VirtualModelDefinition } from "../virtual-models.ts";
 import { goalFilePath } from "./builtin/goal/persistence.ts";
 import { goalStoreRef } from "./builtin/goal/store-ref.ts";
@@ -2213,6 +2217,25 @@ export class ExtensionRunner {
 		let currentSystemPrompt = systemPrompt;
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 		let systemPromptModified = false;
+		// One copy per emit, shared by every handler, so sections never leak into the session's base options.
+		const currentOptions: BeforeAgentStartEvent["systemPromptOptions"] = {
+			...systemPromptOptions,
+			sections: { ...(systemPromptOptions.sections ?? {}) },
+		};
+		const dropInvalidSections = (extensionPath: string): void => {
+			if (typeof currentOptions.sections !== "object" || currentOptions.sections === null) {
+				currentOptions.sections = {};
+			}
+			for (const [name, content] of Object.entries(currentOptions.sections)) {
+				if (isValidSystemPromptSectionName(name) && typeof content === "string") continue;
+				delete currentOptions.sections[name];
+				this.emitError({
+					extensionPath,
+					event: "before_agent_start",
+					error: `Invalid system prompt section "${name}": names match /^[a-z][a-z0-9_-]*$/ (not "preamble") and content is a string`,
+				});
+			}
+		};
 
 		dispatch: for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_agent_start")) {
 			for (const handler of handlers) {
@@ -2236,10 +2259,15 @@ export class ExtensionRunner {
 						trigger: options.trigger ?? "prompt",
 						images,
 						systemPrompt: currentSystemPrompt,
-						systemPromptOptions,
+						systemPromptOptions: currentOptions,
 						...(options.preview === true ? { preview: true } : {}),
 					};
-					const handlerResult = await handler(event, ctx);
+					let handlerResult: unknown;
+					try {
+						handlerResult = await handler(event, ctx);
+					} finally {
+						dropInvalidSections(ext.path);
+					}
 
 					if (handlerResult) {
 						const result = handlerResult as BeforeAgentStartEventResult;
@@ -2262,6 +2290,12 @@ export class ExtensionRunner {
 					});
 				}
 			}
+		}
+
+		const renderedSections = renderCustomSections(currentOptions.sections);
+		if (renderedSections) {
+			currentSystemPrompt += renderedSections;
+			systemPromptModified = true;
 		}
 
 		if (messages.length > 0 || systemPromptModified) {

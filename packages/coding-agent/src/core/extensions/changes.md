@@ -3521,3 +3521,22 @@ Only the session owns account suppression and pending model selection.
 ### Expected merge conflict zones
 
 The compaction context/action declarations in `types.ts` and callback storage, binding, and context construction in `runner.ts`.
+
+## 2026-10-17 - before_agent_start systemPromptOptions.sections (senpi#3579)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBeforeAgentStart` passes every handler one per-emit copy of the options with `sections` always an object, drops entries with an invalid name or non-string content (reported through `emitError` against the handler that added them), and appends the remaining entries to the final prompt as `<name>\ncontent\n</name>` blocks after the returned-`systemPrompt` chain. `event.systemPrompt` keeps showing the chain without those blocks, so a handler that returns `event.systemPrompt + ...` never duplicates a section.
+- `packages/coding-agent/src/core/extensions/types.ts`: `BeforeAgentStartEvent.systemPromptOptions` is typed `BuildSystemPromptOptions & { sections: Record<string, string> }`, and the doc comment states the append contract.
+
+### Why
+
+Upstream Pi (0.87.0+) gives handlers a normalized `sections` object and renders the prompt from it. Extensions built for that contract (`pi-agent-browser-native` 0.9.6) crashed on `sections.<name> = ...`, and a section added after `sections ??= {}` never reached the model.
+
+### Why an extension could not handle it
+
+The event object and the final prompt both belong to the runner; an extension cannot change what other extensions receive or how their sections are rendered.
+
+### Expected merge conflict zones
+
+The start of `emitBeforeAgentStart` (options copy and `dropInvalidSections`), the handler call inside its dispatch loop, the section append before its return, and the `system-prompt.ts` import in `runner.ts`; the `systemPrompt`/`systemPromptOptions` fields of `BeforeAgentStartEvent` in `types.ts`. Upstream renders the whole prompt from the normalized options, while the fork appends sections to its string prompt, because builtins return `systemPrompt` every turn and upstream treats that as a forced prompt that ignores sections.
