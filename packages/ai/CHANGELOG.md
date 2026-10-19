@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Provider requests name the product that runs them: `getPiUserAgent()` now renders the configured wire identity, so a branded distribution (`SENPI_BRAND.userAgent`) no longer appears as `pi` to every provider, and a standalone install sends `senpi` ([#3720](https://github.com/code-yeongyu/senpi/issues/3720)).
+
 ### Removed
 
 ## [2026.10.19] - 2026-10-19

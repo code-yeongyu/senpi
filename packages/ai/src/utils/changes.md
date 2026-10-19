@@ -1,3 +1,21 @@
+## 2026-10-19 - Provider User-Agent follows the wire identity (senpi#3720)
+
+### What changed
+
+- `packages/ai/src/utils/pi-user-agent.ts`: `getPiUserAgent()` renders `getWireIdentity()` (default `senpi`) instead of the literal `pi`, so every adapter's default `User-Agent` names the product a distribution set at startup. `forcePiUserAgent()` inherits the same identity.
+
+### Why
+
+- `omo-ai` sets `SENPI_BRAND.userAgent = "omo"`, and the Codex path already sends it, but the other seven adapters kept sending `pi (...)`. Gateways classify clients by the first `User-Agent` token, so OmO Native traffic was indistinguishable from a standalone pi install (senpi#3720; magpie bucketed 2,328 calls as `pi` with no `omo` row).
+
+### Why an extension could not handle it
+
+- The default header is built inside each adapter in `packages/ai` before any extension hook runs; a distribution can only influence it through `setWireIdentity`.
+
+### Expected merge conflict zones
+
+- LOW: the body of `getPiUserAgent()` and the `wire-identity` import in `pi-user-agent.ts`, against upstream User-Agent changes.
+
 ## 2026-10-18 - Anthropic compat gains supportsGzipRequestBody (senpi#3643)
 
 ### What changed
