@@ -1,3 +1,21 @@
+## 2026-10-18 - Background-session wake snapshots cross the RPC wire (senpi#3492)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension-state.ts`: the background-session snapshot sink now builds one payload and publishes it on both `pi.events` (`terminal-background-sessions`, consumed in-process by the stop lifecycle) and `pi.rpc.emit`, so JSONL RPC clients receive `{ type: "extension_event", name: "wake_source_state", data }` when they advertise `extension_events`. The monitor state that supervisors consume already crosses the wire through this sink; the background-session channel only reached the in-process bus.
+
+### Why
+
+- senpi#3492: a task supervisor recorded a child task `completed` while the child's three background jobs were still in flight (they exited 22-23 s later). The supervisor can only tell "turn ended" from "work still running" through events that cross RPC, and the background-session channel never did.
+
+### Why an extension could not handle it
+
+- The authoritative background-session set is owned by the terminal builtin's reload-surviving session bundle; every transition (launch, foreground detach, exit, kill, teardown, session rebind) is published through this single sink, and the RPC mirror is the same sink's responsibility — exactly as for monitor snapshots.
+
+### Expected merge conflict zones
+
+- LOW: `extension-state.ts` `onBackgroundState` sink next to the existing `pi.events.emit`.
+
 ## 2026-10-17 - Human-input command monitors (oh-my-openagent#10280)
 
 ### What changed
