@@ -25,6 +25,7 @@ import {
 	sessionOwnership,
 } from "./ownership.ts";
 import { withSessionMoveLock } from "./session-lock.ts";
+import { captureWorkingTree, checkHeadOnRemote, WORKING_TREE_PAYLOAD } from "./working-tree.ts";
 
 export interface ExportSessionForMoveOptions {
 	/** A session no live runtime holds: an RPC host releases it first (`release_session` reason `move`). */
@@ -39,6 +40,8 @@ export interface ExportSessionForMoveOptions {
 	 * inside the move lock, right before the bundle is written (`sealedOutgoingStateDir`: the sealing attempt's folder).
 	 */
 	readonly extensionStateDir?: string | (() => string | undefined | Promise<string | undefined>);
+	/** Carry the uncommitted changes of the session's folder (`working-tree` payload) when it is a git checkout. */
+	readonly workingTree?: boolean;
 	/** Runs inside this process's move queue before anything is read; throw to refuse. */
 	readonly guard?: () => void | Promise<void>;
 	/**
@@ -105,6 +108,7 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 	await copyFile(sessionFile, join(staging, SESSION_BUNDLE_PATH));
 	const sidecars = await copySidecars(dirname(sessionFile), sessionId, staging);
 	const stateFiles = await copyExtensionState(stateDir, staging);
+	const treeFiles = options.workingTree === true ? await stageWorkingTree(sessionFile, staging) : [];
 	const manifest: MoveManifest = {
 		format: MOVE_BUNDLE_FORMAT,
 		moveId,
@@ -115,7 +119,10 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 		session: { path: SESSION_BUNDLE_PATH, sha256: await sha256File(join(staging, SESSION_BUNDLE_PATH)) },
 		sidecars,
 		droppedUserMessages: [...options.droppedUserMessages],
-		payloads: stateFiles.length > 0 ? [{ kind: EXTENSION_STATE_PAYLOAD, files: stateFiles }] : [],
+		payloads: [
+			...(stateFiles.length > 0 ? [{ kind: EXTENSION_STATE_PAYLOAD, files: stateFiles }] : []),
+			...(treeFiles.length > 0 ? [{ kind: WORKING_TREE_PAYLOAD, files: treeFiles }] : []),
+		],
 	};
 	await writeFile(join(staging, MANIFEST_FILE), `${JSON.stringify(manifest, null, 1)}\n`);
 	await rm(options.bundleDir, { recursive: true, force: true });
@@ -156,9 +163,27 @@ async function copyExtensionState(dir: string | undefined, staging: string): Pro
 	return files;
 }
 
-/** Manifest paths use `/` on every OS: the receiver strips the `files/` and `state/` prefixes by that separator. */
+/** Manifest paths use `/` on every OS: the receiver strips the `files/`, `state/` and `tree/` prefixes by that separator. */
 function bundlePath(prefix: string, from: string, source: string): string {
 	return posix.join(prefix, ...relative(from, source).split(sep));
+}
+
+/** The uncommitted changes of the session's folder, when it is a git checkout that has any. */
+async function stageWorkingTree(sessionFile: string, staging: string): Promise<BundleFile[]> {
+	const cwd = await readSessionCwd(sessionFile);
+	if (cwd === undefined || !(await pathExists(cwd))) return [];
+	const head = await checkHeadOnRemote(cwd);
+	if (!head.ok && head.code === "not_a_repository") return [];
+	const dir = join(staging, "tree");
+	const captured = await captureWorkingTree(cwd, dir);
+	if (!captured.changed) {
+		await rm(dir, { recursive: true, force: true });
+		return [];
+	}
+	const files: BundleFile[] = [];
+	for (const file of await filesUnder(dir))
+		files.push({ path: bundlePath("tree", dir, file), sha256: await sha256File(file) });
+	return files;
 }
 
 async function filesUnder(dir: string): Promise<string[]> {

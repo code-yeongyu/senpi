@@ -17,6 +17,7 @@ import {
 	readManifest,
 	sha256File,
 	verifyBundle,
+	WORKING_TREE_PREFIX,
 } from "./bundle.ts";
 import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
 import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
@@ -25,6 +26,7 @@ import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_MOVED_IN, sessionO
 import { requeueInput } from "./requeue.ts";
 import { REVOKED } from "./revoke.ts";
 import { moveLockKey } from "./session-lock.ts";
+import { type ApplyResult, applyWorkingTree, movedTreeDir, WORKING_TREE_PAYLOAD } from "./working-tree.ts";
 
 export interface ImportMovedSessionOptions {
 	readonly bundleDir: string;
@@ -120,7 +122,7 @@ export async function answerMoveStatus(
  */
 export async function importMovedSession(
 	options: ImportMovedSessionOptions,
-): Promise<{ readonly sessionFile: string }> {
+): Promise<{ readonly sessionFile: string; readonly workingTree?: ApplyResult }> {
 	const manifest = await readManifest(options.bundleDir);
 	const targetCwd = resolvePath(options.targetCwd);
 	const sessionDir = options.sessionDir ? normalizePath(options.sessionDir) : getDefaultSessionDir(targetCwd);
@@ -161,13 +163,30 @@ export async function importMovedSession(
 			() => rebindSessionFile(staged, targetCwd, sessionDir),
 			async () => {
 				await replacePredecessor(target, manifest.sessionId, sessionDir);
-				// Before the rename: a crash here re-copies on retry, and after it the state is already in place.
-				await placeExtensionState(staging, manifest, movedStateDir(target, manifest.moveId));
+				// Before the rename: a crash here re-copies on retry, and after it the payloads are already in place.
+				await placePayload(
+					staging,
+					manifest,
+					EXTENSION_STATE_PAYLOAD,
+					EXTENSION_STATE_PREFIX,
+					movedStateDir(target, manifest.moveId),
+				);
+				await placePayload(
+					staging,
+					manifest,
+					WORKING_TREE_PAYLOAD,
+					WORKING_TREE_PREFIX,
+					movedTreeDir(target, manifest.moveId),
+				);
 			},
 		);
 		moveStep("import:accepted");
 		await rm(staging, { recursive: true, force: true });
-		return { sessionFile };
+		// The session has moved either way; uncommitted changes apply only where nothing can be clobbered.
+		const tree = movedTreeDir(target, manifest.moveId);
+		return (await pathExists(tree))
+			? { sessionFile, workingTree: await applyWorkingTree(targetCwd, tree) }
+			: { sessionFile };
 	} catch (error) {
 		if (!(error instanceof MoveFencedError))
 			await options.ledger.fail(
@@ -204,9 +223,6 @@ async function replacePredecessor(target: string, sessionId: string, sessionDir:
 /** Payload files are staged here, next to the staged session file, and placed from this checked copy. */
 const STAGED_PAYLOADS = ".payloads";
 
-const extensionStateFiles = (manifest: MoveManifest) =>
-	manifest.payloads.filter((payload) => payload.kind === EXTENSION_STATE_PAYLOAD).flatMap((p) => p.files);
-
 /** Copies the payload files into staging and checks each copy, so nothing changed after `verifyBundle` is placed. */
 async function stagePayloads(bundleDir: string, manifest: MoveManifest, staging: string): Promise<void> {
 	for (const file of manifest.payloads.flatMap((payload) => payload.files)) {
@@ -217,12 +233,19 @@ async function stagePayloads(bundleDir: string, manifest: MoveManifest, staging:
 	}
 }
 
-async function placeExtensionState(staging: string, manifest: MoveManifest, dir: string): Promise<void> {
-	const files = extensionStateFiles(manifest);
+/** Places one payload kind from its checked staged copy; `readManifest` already proved every file sits under `prefix`. */
+async function placePayload(
+	staging: string,
+	manifest: MoveManifest,
+	kind: string,
+	prefix: string,
+	dir: string,
+): Promise<void> {
+	const files = manifest.payloads.filter((payload) => payload.kind === kind).flatMap((p) => p.files);
 	if (files.length === 0) return;
 	await rm(dir, { recursive: true, force: true });
 	for (const file of files) {
-		const to = join(dir, file.path.slice(EXTENSION_STATE_PREFIX.length));
+		const to = join(dir, file.path.slice(prefix.length));
 		await mkdir(dirname(to), { recursive: true });
 		await copyFile(join(staging, STAGED_PAYLOADS, file.path), to);
 	}
