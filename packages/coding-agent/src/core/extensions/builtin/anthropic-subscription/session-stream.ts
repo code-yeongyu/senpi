@@ -47,6 +47,7 @@ export type ResidentSessionStreamInput = {
 	onContinuityDecision?: (observation: ContinuityObservation) => void;
 	/** Called once per attempt, before dispatch, with whether it re-sends the whole history and that re-send's bytes/4 estimate. */
 	onDispatchShape?: (coldSeed: boolean, estimatedTokens?: number) => void;
+	onAttempt?: Parameters<typeof queryWithAuthLane>[0]["onAttempt"];
 };
 
 function userMessage(content: SDKUserMessage["message"]["content"]): SDKUserMessage["message"] {
@@ -246,5 +247,6 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		...(preferredAccount === undefined ? {} : { preferredAccount }),
 		buildOptions: input.buildOptions,
 		createAttempt: (auth) => createResidentAttempt(input, auth),
+		onAttempt: input.onAttempt,
 	});
 }

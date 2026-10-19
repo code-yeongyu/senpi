@@ -23,6 +23,7 @@ import {
 	type CredentialStore,
 	clampThinkingLevel,
 	createModels,
+	createRequestAttemptProvenance,
 	type DeferredCancelOptions,
 	type DeferredFetchOptions,
 	type DeferredHandle,
@@ -57,6 +58,8 @@ import {
 	type Provider,
 	type ProviderHeaders,
 	type ProviderRequestOptions,
+	type ProviderRequestProvenance,
+	type ProviderResponse,
 	providerNotConfiguredMessage,
 	type SimpleStreamOptions,
 	type StreamOptions,
@@ -237,16 +240,72 @@ function mergeHeaders(
 	return merged;
 }
 
-function withPayloadRequestMetadata(options: StreamOptions, model: Model<Api>): StreamOptions {
-	if (!options.onPayload) return options;
-	const onPayload = options.onPayload;
+function withPayloadRequestMetadata<T extends StreamOptions>(
+	options: T,
+	model: Model<Api>,
+	provenance?: ProviderRequestProvenance,
+	createRequestProvenance?: StreamOptions["createRequestProvenance"],
+): T {
+	const { onPayload, onResponse, onProviderStreamEvent } = options;
 	return {
 		...options,
-		onPayload: async (payload, providerModel) =>
-			await onPayload(payload, providerModel, {
-				model,
-				headers: options.headers ?? {},
-			}),
+		...(createRequestProvenance ? { createRequestProvenance } : {}),
+		...(onPayload
+			? {
+					onPayload: async (payload: unknown, providerModel: Model<Api>) =>
+						await onPayload(payload, providerModel, {
+							model,
+							headers: options.headers ?? {},
+							...(provenance ? { provenance } : {}),
+						}),
+				}
+			: {}),
+		...(provenance && onResponse
+			? {
+					onResponse: (
+						response: ProviderResponse,
+						providerModel: Model<Api>,
+						providerProvenance?: ProviderRequestProvenance,
+					) =>
+						onResponse(
+							response,
+							providerModel,
+							createRequestProvenance ? (providerProvenance ?? provenance) : provenance,
+						),
+				}
+			: {}),
+		...(provenance && onProviderStreamEvent
+			? {
+					onProviderStreamEvent: (
+						data: unknown,
+						providerModel: Model<Api>,
+						providerProvenance?: ProviderRequestProvenance,
+					) =>
+						onProviderStreamEvent(
+							data,
+							providerModel,
+							createRequestProvenance ? (providerProvenance ?? provenance) : provenance,
+						),
+				}
+			: {}),
+	};
+}
+
+function withRequestProvenance(stream: AssistantMessageEventStream, provenance: ProviderRequestProvenance) {
+	const stamp = (message: AssistantMessage): AssistantMessage => {
+		message.requestProvenance ??= provenance;
+		return message;
+	};
+	return {
+		async *[Symbol.asyncIterator](): AsyncGenerator<AssistantMessageEvent> {
+			for await (const event of stream) {
+				stamp(event.type === "done" ? event.message : event.type === "error" ? event.error : event.partial);
+				yield event;
+			}
+		},
+		async result(): Promise<AssistantMessage> {
+			return stamp(await stream.result());
+		},
 	};
 }
 
@@ -905,6 +964,7 @@ export class ModelRuntime implements Models {
 		model: TModel,
 		options: TOptions | undefined,
 		slotAuth?: { apiKey?: string; slotName?: string; rejectedAccess?: string },
+		provenance?: ProviderRequestProvenance,
 	): Promise<PreparedRequest<TModel, TOptions>> {
 		const provider = this.models.getProvider(model.provider);
 		if (!provider) throw new ModelsError("provider", `Unknown provider: ${model.provider}`);
@@ -921,7 +981,7 @@ export class ModelRuntime implements Models {
 		const providerOptions = rawProviderOptions as Omit<TOptions, "transformHeaders"> &
 			ProviderRequestOptions<TModel> & { extraBody?: Record<string, unknown> };
 		let headers = mergeHeaders(resolution.auth.headers, providerOptions.headers);
-		if (transformHeaders) headers = await transformHeaders(headers ?? {});
+		if (transformHeaders) headers = await transformHeaders(headers ?? {}, provenance);
 		// Configured compatibility (extraBody, upstream model id) applies to chat models only.
 		const compatibility: Partial<CompatibilityRequestConfig> = isModelType(model, "chat")
 			? this.getCompatibilityRequestConfig(model)
@@ -1030,6 +1090,10 @@ export class ModelRuntime implements Models {
 		const transcript = normalizeContext(context);
 		return lazyStream(model, async () => {
 			assertChatModel(model);
+			const nextAttempt = createRequestAttemptProvenance();
+			const providerFactory = this.models.getProvider(model.provider)?.providesRequestProvenance
+				? nextAttempt
+				: undefined;
 			const streamOptions = options as CredentialRotationStreamOptions | undefined;
 			const sources = this.couldRotateCredentials(model, streamOptions)
 				? await this.credentialRotationSources(model, streamOptions)
@@ -1057,9 +1121,11 @@ export class ModelRuntime implements Models {
 								prepared.provider.stream(
 									prepared.model as Model<TApi>,
 									transcript,
-									withPayloadRequestMetadata(prepared.options, prepared.model) as ApiStreamOptions<TApi>,
+									prepared.options as ApiStreamOptions<TApi>,
 								),
 							transcript,
+							() => nextAttempt(providerFactory ? undefined : slot),
+							providerFactory,
 						),
 				});
 			}
@@ -1071,9 +1137,11 @@ export class ModelRuntime implements Models {
 					prepared.provider.stream(
 						prepared.model as Model<TApi>,
 						transcript,
-						withPayloadRequestMetadata(prepared.options, prepared.model) as ApiStreamOptions<TApi>,
+						prepared.options as ApiStreamOptions<TApi>,
 					),
 				transcript,
+				nextAttempt,
+				providerFactory,
 			);
 		});
 	}
@@ -1082,28 +1150,40 @@ export class ModelRuntime implements Models {
 	 * One provider request with the #2297 recovery: a stored OAuth token the provider
 	 * refuses before any output is re-exchanged once and the request re-sent.
 	 */
-	private attemptWithTokenRecovery<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
+	private attemptWithTokenRecovery<TOptions extends StreamOptions & ModelsRequestTransforms>(
 		model: Model<Api>,
 		options: TOptions | undefined,
 		slotAuth: { apiKey?: string; slotName?: string } | undefined,
 		send: (prepared: PreparedRequest<Model<Api>, TOptions>) => AssistantMessageEventStream,
 		transcript: TranscriptContext,
+		nextAttempt: () => ProviderRequestProvenance,
+		providerFactory?: StreamOptions["createRequestProvenance"],
 	): Promise<AsyncIterable<AssistantMessageEvent>> {
 		return retryOnceOnRejectedToken(async (rejectedAccess) => {
+			const provenance = nextAttempt();
 			const prepared = await this.prepareRequest(
 				model,
 				options,
 				rejectedAccess === undefined ? slotAuth : { ...slotAuth, rejectedAccess },
+				provenance,
 			);
 			const capturing = {
 				...prepared,
-				options: withLimitCapture(prepared.options, prepared.model.provider, limitAccountOf(slotAuth)),
+				options: withLimitCapture(
+					withPayloadRequestMetadata(prepared.options, prepared.model, provenance, providerFactory),
+					prepared.model.provider,
+					limitAccountOf(slotAuth),
+				),
 			};
+			if (!providerFactory) await capturing.options.onRequestAttempt?.(provenance, prepared.model);
 			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
 				send(capturing),
 			);
 			return {
-				stream: wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages)),
+				stream: withRequestProvenance(
+					wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages)),
+					provenance,
+				),
 				...(prepared.rejectableAccess === undefined ? {} : { rejectableAccess: prepared.rejectableAccess }),
 				...(prepared.rejectedTokenStatuses === undefined
 					? {}
@@ -1141,6 +1221,10 @@ export class ModelRuntime implements Models {
 		}
 		return lazyStream(model, async () => {
 			assertChatModel(model);
+			const nextAttempt = createRequestAttemptProvenance();
+			const providerFactory = this.models.getProvider(model.provider)?.providesRequestProvenance
+				? nextAttempt
+				: undefined;
 			const streamOptions = options as CredentialRotationStreamOptions | undefined;
 			const sources = this.couldRotateCredentials(model, streamOptions)
 				? await this.credentialRotationSources(model, streamOptions)
@@ -1160,9 +1244,11 @@ export class ModelRuntime implements Models {
 								prepared.provider.streamSimple(
 									prepared.model,
 									transcript,
-									withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
+									prepared.options as SimpleStreamOptions,
 								),
 							transcript,
+							() => nextAttempt(providerFactory ? undefined : slot),
+							providerFactory,
 						),
 				});
 			}
@@ -1171,12 +1257,10 @@ export class ModelRuntime implements Models {
 				options,
 				undefined,
 				(prepared) =>
-					prepared.provider.streamSimple(
-						prepared.model,
-						transcript,
-						withPayloadRequestMetadata(prepared.options, prepared.model) as SimpleStreamOptions,
-					),
+					prepared.provider.streamSimple(prepared.model, transcript, prepared.options as SimpleStreamOptions),
 				transcript,
+				nextAttempt,
+				providerFactory,
 			);
 		});
 	}

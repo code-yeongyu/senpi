@@ -45,6 +45,7 @@ import type {
 	ProviderHeaders,
 	ProviderId,
 	ProviderImages,
+	ProviderRequestProvenance,
 	RefreshModelsContext,
 	SimpleStreamOptions,
 	TextContent,
@@ -666,7 +667,7 @@ export type PromptCachePrefixResult =
 export interface ProviderRequestPreparation {
 	messages: AgentMessage[];
 	transformPayload(payload: unknown): Promise<unknown>;
-	transformHeaders(headers: ProviderHeaders): Promise<ProviderHeaders>;
+	transformHeaders(headers: ProviderHeaders, provenance?: ProviderRequestProvenance): Promise<ProviderHeaders>;
 }
 
 export interface ExtensionTreeNavigationOptions {
@@ -1389,6 +1390,8 @@ export interface ContextWithSystemEvent {
 /** Fired before a provider request is sent. Can replace the payload. */
 export interface BeforeProviderRequestEvent {
 	type: "before_provider_request";
+	/** Runtime-owned attempt identity, when available; contains no credential material. */
+	provenance?: ProviderRequestProvenance;
 	payload: unknown;
 	/** Effective request model after auth/base-url/upstream-model resolution. */
 	model?: Model<Api>;
@@ -1403,19 +1406,31 @@ export interface BeforeProviderRequestEvent {
  */
 export interface BeforeProviderHeadersEvent {
 	type: "before_provider_headers";
+	provenance?: ProviderRequestProvenance;
 	headers: ProviderHeaders;
 }
 
 /** Fired after a provider response is received and before the response stream is consumed. */
 export interface AfterProviderResponseEvent {
 	type: "after_provider_response";
+	provenance?: ProviderRequestProvenance;
 	status: number;
 	headers: Record<string, string>;
+}
+
+/** Actual request-local credential selection, emitted before that provider attempt starts. */
+export interface ProviderRequestAttemptEvent {
+	type: "provider_request_attempt";
+	provenance: ProviderRequestProvenance;
+	provider: ProviderId;
+	api: Api;
+	model: string;
 }
 
 /** Fired for a parsed provider stream event before Pi normalizes it. */
 export interface ProviderStreamEvent {
 	type: "provider_stream_event";
+	provenance?: ProviderRequestProvenance;
 	provider: ProviderId;
 	api: Api;
 	model: string;
@@ -1985,6 +2000,7 @@ export type ExtensionEvent =
 	| BeforeProviderHeadersEvent
 	| AfterProviderResponseEvent
 	| ProviderStreamEvent
+	| ProviderRequestAttemptEvent
 	| BeforeAgentStartEvent
 	| AgentStartEvent
 	| AgentEndEvent
@@ -2323,6 +2339,7 @@ export interface ExtensionAPI {
 	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): () => void;
 	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): () => void;
 	on(event: "provider_stream_event", handler: ExtensionHandler<ProviderStreamEvent>): () => void;
+	on(event: "provider_request_attempt", handler: ExtensionHandler<ProviderRequestAttemptEvent>): () => void;
 	on(
 		event: "before_agent_start",
 		handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>,
@@ -2707,6 +2724,8 @@ export interface ExtensionVirtualModel<TState = unknown> extends Omit<VirtualMod
 
 /** Configuration for registering a provider via pi.registerProvider(). */
 export interface ProviderConfig {
+	/** Emits actual attempt provenance through stream options; generic preparation must not guess its account. */
+	providesRequestProvenance?: boolean;
 	/** Display name for the provider in UI. */
 	name?: string;
 	/** Base URL for the API endpoint. Required when defining models. */

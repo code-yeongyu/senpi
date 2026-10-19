@@ -1,3 +1,41 @@
+## 2026-10-18 - Record actual request attempts for usage attribution
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: shares the request-local factory with provider-owned selection, emits generic attempt notifications, and stamps streamed/final messages without overwriting provider evidence.
+- `packages/coding-agent/src/core/provider-composer.ts`: preserves the provider's metadata ownership declaration.
+- `packages/coding-agent/src/core/sdk.ts`: writes bounded `senpi.provider-request-attempt` custom entries and dispatches the public attempt event.
+
+### Why
+
+- `model-runtime.ts`, `provider-composer.ts`, and `sdk.ts`: usage collection needs stable start/completion evidence, including SDK failover and concurrent requests, instead of current login state.
+
+### Why an extension could not handle it
+
+- `model-runtime.ts`, `provider-composer.ts`, and `sdk.ts`: the runtime owns provider dispatch and persistence; a last observed account cannot identify which attempt produced a message.
+
+### Expected merge conflict zones
+
+- `model-runtime.ts` request preparation/stream adapters; `provider-composer.ts` capability projection; `sdk.ts` stream callback wiring. Credential selection and failover policy are unchanged.
+
+## 2026-10-18 - Correlate provider hooks with selected credential attempts
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts` creates request-local IDs and frozen attempt snapshots from actual pool selections. Same-slot retries receive new attempt IDs without increasing the failover index. Unsafe slot labels are omitted. `packages/coding-agent/src/core/sdk.ts` carries the snapshot into existing provider hook events.
+
+### Why
+
+A session-global last account misattributes concurrent requests and responses after credential failover. Extensions need the actual attempt associated with each response.
+
+### Why an extension could not handle it
+
+Credential rotation and rejected-token recovery are runtime-owned; public hooks previously exposed neither the selected slot nor a correlation key.
+
+### Expected merge conflict zones
+
+`model-runtime.ts` request preparation, stream/streamSimple rotation, and rejected-token recovery; `sdk.ts` provider callback wiring. No credential-store or wire-format changes.
+
 ## 2026-10-19 - dispose() says whether the process exits (senpi#3711)
 
 ### What changed

@@ -4,7 +4,14 @@
 
 import { basename } from "node:path";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
-import type { Api, ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
+import type {
+	ImageContent,
+	Model,
+	Provider,
+	ProviderHeaders,
+	ProviderRequestMetadata,
+	ProviderRequestProvenance,
+} from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { getAgentDir } from "../../config.ts";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
@@ -2164,14 +2171,14 @@ export class ExtensionRunner {
 					options?.allowServerSearch ? payload : disableServerSearch(payload),
 					excludeExtensionPath,
 				),
-			transformHeaders: async (headers) => await this.emitBeforeProviderHeaders(headers),
+			transformHeaders: async (headers, provenance) => await this.emitBeforeProviderHeaders(headers, provenance),
 		};
 	}
 
 	async emitBeforeProviderRequest(
 		payload: unknown,
 		excludeExtensionPath?: string,
-		request?: { model: Model<Api>; headers: ProviderHeaders },
+		request?: ProviderRequestMetadata,
 	): Promise<unknown> {
 		let currentPayload = payload;
 
@@ -2183,6 +2190,7 @@ export class ExtensionRunner {
 						type: "before_provider_request",
 						payload: currentPayload,
 						...(request ? { model: request.model, headers: request.headers } : {}),
+						...(request?.provenance ? { provenance: request.provenance } : {}),
 					};
 					const handlerResult = await handler(event, this.createContext(ext.path));
 					if (handlerResult !== undefined) {
@@ -2204,7 +2212,10 @@ export class ExtensionRunner {
 		return currentPayload;
 	}
 
-	async emitBeforeProviderHeaders(headers: ProviderHeaders): Promise<ProviderHeaders> {
+	async emitBeforeProviderHeaders(
+		headers: ProviderHeaders,
+		provenance?: ProviderRequestProvenance,
+	): Promise<ProviderHeaders> {
 		for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_provider_headers")) {
 			for (const handler of handlers) {
 				try {
@@ -2212,6 +2223,7 @@ export class ExtensionRunner {
 					const event: BeforeProviderHeadersEvent = {
 						type: "before_provider_headers",
 						headers,
+						...(provenance ? { provenance } : {}),
 					};
 					await handler(event, this.createContext(ext.path));
 				} catch (err) {

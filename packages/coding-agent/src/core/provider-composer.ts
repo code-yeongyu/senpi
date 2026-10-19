@@ -110,6 +110,7 @@ export type ProviderModelConfig = ProviderChatModelConfig | ProviderImageModelCo
 /** Input type for the extension registerProvider API. */
 export interface ProviderConfigInput {
 	name?: string;
+	providesRequestProvenance?: boolean;
 	baseUrl?: string;
 	apiKey?: string;
 	api?: Api;
@@ -641,6 +642,7 @@ export function composeModelProvider(
 		headers: base?.headers,
 		// Composed providers must not silently drop provider-declared retry profiles.
 		retryPolicy: extension?.retryPolicy ?? base?.retryPolicy,
+		providesRequestProvenance: extension?.providesRequestProvenance ?? base?.providesRequestProvenance,
 		auth: { ...(apiKey ? { apiKey } : {}), ...(oauth ? { oauth } : {}) },
 		getModels: () => getAllModels().filter((model) => isModelType(model, "chat")),
 		getAllModels,

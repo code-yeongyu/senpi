@@ -55,6 +55,7 @@ import type {
 	ProviderHeaders,
 	ProviderImages,
 	ProviderRequestOptions,
+	ProviderRequestProvenance,
 	ProviderStreams,
 	SimpleStreamOptions,
 	ThinkingLevelMap,
@@ -123,7 +124,10 @@ export interface ModelsRefreshResult {
 
 export interface ModelsRequestTransforms {
 	/** Transform fully assembled model/auth/request headers before provider dispatch. */
-	transformHeaders?: (headers: ProviderHeaders) => ProviderHeaders | Promise<ProviderHeaders>;
+	transformHeaders?: (
+		headers: ProviderHeaders,
+		provenance?: ProviderRequestProvenance,
+	) => ProviderHeaders | Promise<ProviderHeaders>;
 }
 
 export type ModelsApiStreamOptions<TApi extends Api> = ApiStreamOptions<TApi> & ModelsRequestTransforms;
@@ -167,6 +171,8 @@ export interface Provider<TApi extends Api = Api> {
 	readonly headers?: ProviderHeaders;
 	/** Omitting it means the shipped senpi default profile applies. */
 	readonly retryPolicy?: RetryPolicyProfile;
+	/** The provider emits its own actual credential-attempt provenance instead of runtime preparation metadata. */
+	readonly providesRequestProvenance?: boolean;
 
 	/**
 	 * Required: at least one of `apiKey`/`oauth`. Every provider has auth

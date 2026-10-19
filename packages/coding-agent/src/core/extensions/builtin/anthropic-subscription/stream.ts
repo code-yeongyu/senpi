@@ -4,6 +4,7 @@ import {
 	type Context,
 	createAssistantMessageDiagnostic,
 	createAssistantMessageEventStream,
+	createRequestAttemptProvenance,
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
@@ -44,6 +45,12 @@ export function streamAnthropicSubscription(
 	const stream = createAssistantMessageEventStream();
 	void (async () => {
 		const output = emptyOutput(model);
+		const nextAttempt = options?.createRequestProvenance ?? createRequestAttemptProvenance();
+		const onAttempt: NonNullable<Parameters<typeof queryWithAuthLane>[0]["onAttempt"]> = async (slot) => {
+			const provenance = nextAttempt(slot);
+			output.requestProvenance = provenance;
+			await options?.onRequestAttempt?.(provenance, model);
+		};
 		const blocks: StreamBlock[] = [];
 		let sdkQuery: SdkQueryHandle | undefined;
 		let closed = false;
@@ -151,6 +158,7 @@ export function streamAnthropicSubscription(
 						model,
 						context,
 						streamOptions: options,
+						onAttempt,
 						providerSettings,
 						pinnedAccount: getSessionClaudeAccountPin(options.sessionId),
 						buildOptions,
@@ -181,6 +189,7 @@ export function streamAnthropicSubscription(
 								).blocks,
 						),
 						query: getSdkBoundary().query,
+						onAttempt,
 						providerSettings,
 						env: options?.env,
 						signal: options?.signal,
@@ -195,6 +204,7 @@ export function streamAnthropicSubscription(
 					});
 
 			for await (const message of messages) {
+				if (message.type === "assistant") output.responseId = message.message.id;
 				const refusal = refusalError(message);
 				if (refusal) throw refusal;
 				const failure =
@@ -209,6 +219,7 @@ export function streamAnthropicSubscription(
 					started = true;
 				}
 				if (message.type === "stream_event") {
+					await options?.onProviderStreamEvent?.(message.event, model, output.requestProvenance);
 					sawStreamEvent = true;
 					applyStreamEvent(
 						{ model, output, blocks, stream, customToolNameToPi: resolvedTools.customToolNameToPi },

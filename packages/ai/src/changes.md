@@ -1,3 +1,41 @@
+## 2026-10-18 - Persist request-bound account provenance
+
+### What changed
+
+- `packages/ai/src/types.ts`: adds optional request-attempt notification/factory callbacks and an assistant-message `requestProvenance` snapshot.
+- `packages/ai/src/request-provenance.ts` and `packages/ai/src/index.ts`: share the frozen, filtered request-local factory without Node-only imports.
+- `packages/ai/src/models.ts`: declares when a provider supplies its own actual-attempt provenance.
+
+### Why
+
+- `types.ts`, `request-provenance.ts`, `index.ts`, and `models.ts`: SDK-owned selection and concurrent attempts must be attributed at their own boundary rather than inferred from a generic credential preparation slot.
+
+### Why an extension could not handle it
+
+- `types.ts`, `request-provenance.ts`, `index.ts`, and `models.ts`: stream contracts and provider ownership are shared runtime contracts; extension-local last-account state cannot supply them safely.
+
+### Expected merge conflict zones
+
+- `types.ts` stream options and assistant message fields; `models.ts` provider capabilities; `index.ts` exports; the new `request-provenance.ts` factory.
+
+## 2026-10-18 - Optional provider request provenance
+
+### What changed
+
+- `packages/ai/src/types.ts` exports readonly `ProviderRequestProvenance` and optional metadata on request, response, and raw stream callbacks. `packages/ai/src/models.ts` allows the header transform to receive the same optional snapshot.
+
+### Why
+
+Consumers need to correlate usage and response IDs with individual credential attempts, including overlapping requests and failover.
+
+### Why an extension could not handle it
+
+Extensions cannot recover a selected credential attempt from provider payloads or session-global account state.
+
+### Expected merge conflict zones
+
+The request callback signatures in `types.ts` and `ModelsRequestTransforms` in `models.ts`; all additions are optional.
+
 ## 2026-10-18 - AnthropicMessagesCompat.supportsGzipRequestBody (senpi#3643)
 
 ### What changed

@@ -1,3 +1,39 @@
+## 2026-10-18 - Public request-attempt notification
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: adds `provider_request_attempt` with a bounded snapshot and the `providesRequestProvenance` provider declaration.
+
+### Why
+
+- `types.ts`: extensions need a request-scoped event from actual selection, including provider-owned SDK lanes.
+
+### Why an extension could not handle it
+
+- `types.ts`: this file owns the public event union, handler overloads, and provider registration contract.
+
+### Expected merge conflict zones
+
+- `types.ts` provider events, event union, handler overloads, and `ProviderConfig`. Existing callbacks and fields remain optional.
+
+## 2026-10-18 - Optional provenance on provider hooks
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts` adds optional `provenance` to the header, payload, response, and raw stream events. `packages/coding-agent/src/core/extensions/runner.ts` forwards the snapshot through header preparation and payload dispatch.
+
+### Why
+
+Extensions can attribute usage to a runtime-selected credential slot without reading credential storage or relying on the last session account.
+
+### Why an extension could not handle it
+
+The public event types and runner own this boundary; extension code cannot reconstruct per-attempt selection or safely correlate concurrent calls.
+
+### Expected merge conflict zones
+
+Provider event declarations and `ProviderRequestPreparation` in `types.ts`; `prepareProviderRequest`, `emitBeforeProviderRequest`, and `emitBeforeProviderHeaders` in `runner.ts`. Existing handlers remain valid because the metadata is optional.
+
 ## 2026-10-19 - Quit budget start, stated precisely (senpi#3711 follow-up)
 
 ### What changed

@@ -1,3 +1,23 @@
+## 2026-10-18 - Attribute SDK requests at actual account selection
+
+### What changed
+
+- `index.ts` declares SDK-owned provenance. `auth-lane.ts` emits only selected lane/name after credential preparation, with no slot for ambient authentication.
+- `session-stream.ts` forwards the per-request callback through resident attempts.
+- `stream.ts` shares the request-local factory, stamps the output, and forwards parsed provider stream events with their actual attempt. `stream-events.ts` preserves the provider response ID when present.
+
+### Why
+
+- `index.ts`, `auth-lane.ts`, `session-stream.ts`, `stream.ts`, and `stream-events.ts`: generic preparation does not identify the SDK account; resident reuse, account failover, and overlapping requests need their own selection evidence.
+
+### Why an extension could not handle it
+
+- `index.ts`, `auth-lane.ts`, `session-stream.ts`, `stream.ts`, and `stream-events.ts`: this is the provider extension that owns selection and the SDK stream. The projection uses no token, digest, credential record, or current-account inference.
+
+### Expected merge conflict zones
+
+- `index.ts` registration; `auth-lane.ts` attempt callbacks; `session-stream.ts` resident input; `stream.ts` output/event bridge; `stream-events.ts` message-start handling. Authentication, refresh, and failover decisions are unchanged.
+
 ## 2026-10-19 - Single-account guidance follows the pin's source and the block's cause (senpi#3672)
 
 ### What changed

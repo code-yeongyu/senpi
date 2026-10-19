@@ -75,6 +75,7 @@ export function registerAnthropicSubscriptionExtension(
 	// model, and compaction with it, plans against the window the requests get. Each registration is the
 	// whole config: the runtime validates a registration on its own, not merged with the previous one.
 	const providerConfig = (longContext: boolean): ProviderConfig => ({
+		providesRequestProvenance: true,
 		baseUrl: CLAUDE_SDK_OAUTH_API_ID,
 		api: CLAUDE_SDK_OAUTH_API_ID,
 		models: anthropicSubscriptionModels(longContext),

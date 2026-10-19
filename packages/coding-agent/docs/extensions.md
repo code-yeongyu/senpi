@@ -943,7 +943,7 @@ pi.on("before_provider_headers", (event, ctx) => {
 });
 ```
 
-Runs once per provider request; retries reuse the same headers rather than re-firing the hook.
+Runs once per runtime-owned credential attempt. Provider-internal transport retries reuse the same headers; credential failover and rejected-token recovery prepare a new attempt and fire the hook again.
 
 #### before_provider_request
 
@@ -977,6 +977,40 @@ pi.on("after_provider_response", (event, ctx) => {
 ```
 
 Header availability depends on provider and transport. Providers that abstract HTTP responses may not expose headers.
+
+#### Request provenance
+
+The four provider hooks above optionally include `event.provenance` for chat requests made through the coding-agent model runtime:
+
+```typescript
+pi.on("provider_stream_event", (event) => {
+  const provenance = event.provenance;
+  if (!provenance) return;
+  const { requestId, attemptId, failoverIndex, slot } = provenance;
+  // Correlate provider response IDs and usage with this attempt, not the last
+  // account observed by the session. Overlapping requests have separate IDs.
+  console.log({ requestId, attemptId, failoverIndex, lane: slot?.lane, name: slot?.name });
+});
+```
+
+`requestId` identifies one runtime stream invocation. `attemptId` changes for each runtime-owned credential attempt, including a rejected-token refresh retry. `failoverIndex` starts at zero and increases only when the selected slot changes; retrying the same slot keeps its index. Transport retries hidden inside a provider share the enclosing attempt.
+
+When the runtime's credential pool selects a slot, `slot.lane` is `"stored"` or `"env"` and `slot.name` is its operational label. It is not a verified account identity. Unsafe labels, including emails and token-shaped labels, are omitted. Unpooled credentials and explicit API keys have no `slot`; do not infer one from session state. Other runtimes and non-chat operations may omit provenance entirely.
+
+Providers with their own selection set `providesRequestProvenance: true`, call `options.createRequestProvenance` after actual selection, and notify `options.onRequestAttempt`. The Anthropic Subscription SDK lane does this for both one-shot and resident queries. Its ambient lane remains unidentified. Generic preparation does not claim an SDK account.
+
+`provider_request_attempt` fires before each selected attempt is dispatched:
+
+```typescript
+pi.on("provider_request_attempt", (event) => {
+  // Only request/attempt IDs, the failover index, and an optional operational slot.
+  console.log(event.provider, event.model, event.provenance);
+});
+```
+
+The session writes the snapshot in a `senpi.provider-request-attempt` custom entry, and completed assistant messages retain `requestProvenance`. These records are local evidence, not model context. Historical messages without the field remain unidentified.
+
+The snapshot and its slot are read-only and frozen. They contain no credential values or display names and are not added to HTTP headers or payloads. Legacy payload, header, and raw stream fields retain their existing contents; provenance does not make those fields safe to log.
 
 ### Model Events
 

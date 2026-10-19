@@ -90,6 +90,8 @@ export type AuthenticatedQueryInput = {
 	pinnedAccount?: string;
 	/** The account this session's SDK transcript lives under; preferred while it can serve (senpi#2891). */
 	preferredAccount?: string;
+	/** Actual selected slot after credential preparation; ambient credentials remain unidentified. */
+	onAttempt?: (slot?: { readonly lane: "stored" | "env"; readonly name: string }) => void | Promise<void>;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
 	createAttempt?: (
 		input: AuthenticatedAttemptInput,
@@ -286,6 +288,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		const ambientAttempt = async () => {
 			const options = input.buildOptions("ambient");
 			options.env = { ...ambientEnvironment, ...options.env };
+			await input.onAttempt?.();
 			return createAttemptMessages(input, { accountName: "ambient", accounts: [], authLane: "ambient", options });
 		};
 		yield* retryAtStandardWindowOnce(ambientAttempt);
@@ -326,6 +329,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 			const accounts = pool.accounts.map((account) => ({ ...account }));
 			const prepared = await prepareSlot(pool, slot, signal);
 			options.env = { ...prepared.env, ...options.env };
+			await input.onAttempt?.({ lane: slot.source === "env" ? "env" : "stored", name: slot.name });
 			return createAttemptMessages(input, {
 				accountName: slot.name,
 				accounts,
