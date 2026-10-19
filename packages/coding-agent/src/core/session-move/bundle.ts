@@ -89,7 +89,7 @@ function parseSessionFileName(value: string): string {
 }
 
 /** Payload kinds this version imports; any other kind refuses the bundle. */
-export const KNOWN_PAYLOAD_KINDS: ReadonlySet<string> = new Set(["extension-state"]);
+export const KNOWN_PAYLOAD_KINDS: ReadonlySet<string> = new Set(["extension-state", "working-tree"]);
 
 function parsePayload(value: unknown): MovePayload {
 	const payload = value as Partial<MovePayload> | null;

@@ -6,6 +6,7 @@
 
 ### Added
 
+- A moved session takes its folder's uncommitted changes along as a patch: `move_session precheck` refuses to offer a move whose last commit is not on a remote, and the receiving device applies the changes to its clean checkout at the same commit or keeps the patch file and says how to apply it ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
 - Extensions can move the state they keep outside the session folder along with a moved session: `session_move_export` hands them a folder to fill at the move release (a handler that fails refuses the move), and `session_move_import` gives it back once on the receiving device at the first open after the move ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
 - RPC `move_session` drives a session move between two hosts through one implementation: the receiver readies, imports and answers status, the sender exports the released session and finishes the move from the receiver's answer; every refusal says why and what to do. Advertised as the `move_session` capability ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).
 - A device receiving a moved session now takes it only after it said it is ready for that move: a bundle for a move it never readied is refused for good, and a ready move that sees no bundle within 10 minutes, or is cancelled by the sender, is declined so the sender can take its session back. A move already receiving or accepted is never declined by either ([#3676](https://github.com/code-yeongyu/senpi/issues/3676)).

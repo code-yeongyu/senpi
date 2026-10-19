@@ -23,16 +23,23 @@ export type RpcMoveSessionCommand = { id?: string; type: "move_session" } & (
 	| { op: "status"; moveId: string; sessionPath?: string }
 	| { op: "export"; sessionPath: string; moveId: string; target: string; droppedUserMessages?: string[] }
 	| { op: "import"; bundleDir: string; cwd: string; from?: string }
+	| { op: "precheck"; sessionPath: string }
 	| { op: "finish"; sessionPath: string; moveId: string; answer: MoveStatus }
 );
 
 /** The receiver's record of a move as a client sees it; `expires_at` while it waits for the bundle. */
 export type RpcMoveRecord = MoveStatus | { state: "ready"; expires_at: string };
 
+/** What became of the sender's uncommitted changes on import; `kept` leaves `patch_file` for the user to apply. */
+export type RpcWorkingTreeResult =
+	| { state: "applied" | "nothing" }
+	| { state: "kept"; reason: "receiver_dirty" | "head_differs" | "conflict"; patch_file: string; detail: string };
+
 export type RpcMoveSessionData =
 	| RpcMoveRecord
 	| { move_id: string; session_id: string; bundle_dir: string; files: number }
-	| { session_id: string; session_path: string }
+	| { session_id: string; session_path: string; working_tree?: RpcWorkingTreeResult }
+	| { head: string }
 	| { ownership: "writable" | "moving" | "moved" };
 
 export interface RpcMoveSessionResponse {

@@ -14,6 +14,7 @@ import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
 import { MoveFencedError, type MoveLedger, type MoveStatus } from "./move-ledger.ts";
 import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
+import { type ApplyResult, applyWorkingTree, movedTreeDir, WORKING_TREE_PAYLOAD } from "./working-tree.ts";
 
 export interface ImportMovedSessionOptions {
 	readonly bundleDir: string;
@@ -74,7 +75,7 @@ export function answerMoveStatus(
  */
 export async function importMovedSession(
 	options: ImportMovedSessionOptions,
-): Promise<{ readonly sessionFile: string }> {
+): Promise<{ readonly sessionFile: string; readonly workingTree?: ApplyResult }> {
 	const manifest = readManifest(options.bundleDir);
 	const targetCwd = resolvePath(options.targetCwd);
 	const sessionDir = options.sessionDir ? normalizePath(options.sessionDir) : getDefaultSessionDir(targetCwd);
@@ -102,11 +103,25 @@ export async function importMovedSession(
 		const sessionFile = await options.ledger.commit(manifest.moveId, () => {
 			replacePredecessor(target, manifest.sessionId, sessionDir);
 			// Before the rename: a crash here re-copies on retry, and after it the state is already in place.
-			placeExtensionState(options.bundleDir, manifest, movedStateDir(target, manifest.moveId));
+			placePayload(
+				options.bundleDir,
+				manifest,
+				EXTENSION_STATE_PAYLOAD,
+				"state/",
+				movedStateDir(target, manifest.moveId),
+			);
+			placePayload(
+				options.bundleDir,
+				manifest,
+				WORKING_TREE_PAYLOAD,
+				"tree/",
+				movedTreeDir(target, manifest.moveId),
+			);
 			return rebindSessionFile(staged, targetCwd, sessionDir);
 		});
 		rmSync(staging, { recursive: true, force: true });
-		return { sessionFile };
+		const tree = movedTreeDir(target, manifest.moveId);
+		return existsSync(tree) ? { sessionFile, workingTree: await applyWorkingTree(targetCwd, tree) } : { sessionFile };
 	} catch (error) {
 		if (!(error instanceof MoveFencedError)) await options.ledger.fail(manifest.moveId, "import_failed");
 		throw error;
@@ -135,14 +150,12 @@ function replacePredecessor(target: string, sessionId: string, sessionDir: strin
 	rmSync(target, { force: true });
 }
 
-function placeExtensionState(bundleDir: string, manifest: MoveManifest, dir: string): void {
-	const files = manifest.payloads
-		.filter((payload) => payload.kind === EXTENSION_STATE_PAYLOAD)
-		.flatMap((p) => p.files);
+function placePayload(bundleDir: string, manifest: MoveManifest, kind: string, prefix: string, dir: string): void {
+	const files = manifest.payloads.filter((payload) => payload.kind === kind).flatMap((p) => p.files);
 	if (files.length === 0) return;
 	rmSync(dir, { recursive: true, force: true });
 	for (const file of files) {
-		const to = join(dir, file.path.replace(/^state\//, ""));
+		const to = join(dir, file.path.startsWith(prefix) ? file.path.slice(prefix.length) : file.path);
 		mkdirSync(dirname(to), { recursive: true });
 		copyFileSync(join(bundleDir, file.path), to);
 	}

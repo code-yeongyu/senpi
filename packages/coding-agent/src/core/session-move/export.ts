@@ -23,6 +23,7 @@ import {
 	sessionOwnership,
 } from "./ownership.ts";
 import { withSessionMoveLock } from "./session-lock.ts";
+import { captureWorkingTree, checkHeadOnRemote, WORKING_TREE_PAYLOAD } from "./working-tree.ts";
 
 export interface ExportSessionForMoveOptions {
 	/** A session no live runtime holds: an RPC host releases it first (`release_session` reason `move`). */
@@ -34,6 +35,8 @@ export interface ExportSessionForMoveOptions {
 	readonly bundleDir: string;
 	/** What the extensions wrote at the move release (`outgoingStateDir`); bundled as the `extension-state` payload. */
 	readonly extensionStateDir?: string;
+	/** Carry the uncommitted changes of the session's folder (`working-tree` payload) when it is a git checkout. */
+	readonly workingTree?: boolean;
 }
 
 /**
@@ -72,6 +75,7 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 	copyFileSync(sessionFile, join(staging, SESSION_BUNDLE_PATH));
 	const sidecars = copySidecars(dirname(sessionFile), sessionId, staging);
 	const stateFiles = copyExtensionState(options.extensionStateDir, staging);
+	const treeFiles = options.workingTree === true ? await stageWorkingTree(sessionFile, staging) : [];
 	const manifest: MoveManifest = {
 		format: MOVE_BUNDLE_FORMAT,
 		moveId,
@@ -82,7 +86,10 @@ async function writeMoveBundle(options: ExportSessionForMoveOptions): Promise<Mo
 		session: { path: SESSION_BUNDLE_PATH, sha256: sha256File(join(staging, SESSION_BUNDLE_PATH)) },
 		sidecars,
 		droppedUserMessages: [...options.droppedUserMessages],
-		payloads: stateFiles.length > 0 ? [{ kind: EXTENSION_STATE_PAYLOAD, files: stateFiles }] : [],
+		payloads: [
+			...(stateFiles.length > 0 ? [{ kind: EXTENSION_STATE_PAYLOAD, files: stateFiles }] : []),
+			...(treeFiles.length > 0 ? [{ kind: WORKING_TREE_PAYLOAD, files: treeFiles }] : []),
+		],
 	};
 	writeFileSync(join(staging, MANIFEST_FILE), `${JSON.stringify(manifest, null, 1)}\n`);
 	rmSync(options.bundleDir, { recursive: true, force: true });
@@ -116,6 +123,23 @@ function copyExtensionState(dir: string | undefined, staging: string): BundleFil
 		mkdirSync(dirname(join(staging, path)), { recursive: true });
 		copyFileSync(source, join(staging, path));
 		return { path, sha256: sha256File(join(staging, path)) };
+	});
+}
+
+async function stageWorkingTree(sessionFile: string, staging: string): Promise<BundleFile[]> {
+	const cwd = readSessionCwd(sessionFile);
+	if (cwd === undefined || !existsSync(cwd)) return [];
+	const head = await checkHeadOnRemote(cwd);
+	if (!head.ok && head.code === "not_a_repository") return [];
+	const dir = join(staging, "tree");
+	const captured = await captureWorkingTree(cwd, dir);
+	if (!captured.changed) {
+		rmSync(dir, { recursive: true, force: true });
+		return [];
+	}
+	return filesUnder(dir).map((file) => {
+		const path = join("tree", relative(dir, file));
+		return { path, sha256: sha256File(file) };
 	});
 }
 

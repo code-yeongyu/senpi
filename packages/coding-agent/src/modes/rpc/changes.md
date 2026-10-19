@@ -16,6 +16,24 @@ The channel between the RPC host and its own helper process is host internals; e
 
 None: every file is new and fork-only.
 
+## 2026-10-19 - move_session precheck and the working tree (senpi#3676)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: no change to the file itself; `RpcMoveSessionCommand` (in fork-only `session-move-wire.ts`) gains `op: "precheck"` and the import answer gains `working_tree`. Request parsing moved to the new fork-only `session-move-request.ts`.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: design v7 section 6: the sender must refuse to offer a move whose HEAD the other device cannot fetch, and uncommitted changes travel as a patch the receiver applies only where it cannot clobber anything.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: the steps are part of the host's move commands.
+
+### Expected merge conflict zones
+
+- None beyond the earlier `move_session` entry: all new code is in fork-only files.
+
 ## 2026-10-19 - move_session: RPC commands that drive a session move (senpi#3676)
 
 ### What changed
