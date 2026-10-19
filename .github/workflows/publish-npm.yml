@@ -104,6 +104,20 @@ jobs:
             cp "${prebuild}" "packages/pty/native/prebuilds/${target}/senpi_pty.${target}.node"
           done
 
+      # The grep tool's loader probes <senpi package>/native/prebuilds/<target>/; without these
+      # files every published runtime falls back to the rg engine (senpi#3513).
+      - name: Stage grep prebuilds into the coding-agent package
+        if: inputs.publish-only == true
+        run: |
+          set -euo pipefail
+          artifacts="packages/pty/.native-prebuild-artifacts"
+          for prebuild in "${artifacts}"/native/prebuilds/*/senpi_grep.*.node; do
+            test -f "${prebuild}" || continue
+            target="$(basename "$(dirname "${prebuild}")")"
+            mkdir -p "packages/coding-agent/native/prebuilds/${target}"
+            cp "${prebuild}" "packages/coding-agent/native/prebuilds/${target}/senpi_grep.${target}.node"
+          done
+
       # coding-agent tool tests resolve rg/fd via system binaries first and only
       # download from GitHub releases as a fallback. Unauthenticated downloads
       # are rate-limited on shared runner egress IPs, which flakes the release

@@ -19,7 +19,11 @@ export function nativePrebuildTarget(platform = process.platform, arch = process
 }
 
 // Each native workspace vendors its host prebuild under its own file name.
-const NATIVE_PREBUILD_FILE_NAMES = new Map([["@earendil-works/pi-pty", (target) => `senpi_pty.${target}.node`]]);
+const NATIVE_PREBUILD_FILE_NAMES = new Map([
+	["@earendil-works/pi-pty", (target) => `senpi_pty.${target}.node`],
+	// The grep tool's native engine; without it every grep runs the rg fallback (senpi#3513).
+	["@code-yeongyu/senpi", (target) => `senpi_grep.${target}.node`],
+]);
 
 export function nativePrebuildFile(target, packageName) {
 	const fileName = NATIVE_PREBUILD_FILE_NAMES.get(packageName);
@@ -75,13 +79,17 @@ function assertNoSourcemaps(filePaths, packageName) {
 	}
 }
 
-export function assertPublishedWorkspacePackFiles(packed, sourcePackageName, options = {}) {
-	const requiredNativePrebuildTargets = options.requiredNativePrebuildTargets ?? [];
-	for (const target of requiredNativePrebuildTargets) {
+function assertSupportedTargets(targets) {
+	for (const target of targets) {
 		if (!SUPPORTED_NATIVE_PREBUILD_TARGETS.includes(target)) {
 			throw new Error(`Unsupported native prebuild target: ${target}`);
 		}
 	}
+}
+
+export function assertPublishedWorkspacePackFiles(packed, sourcePackageName, options = {}) {
+	const requiredNativePrebuildTargets = options.requiredNativePrebuildTargets ?? [];
+	assertSupportedTargets(requiredNativePrebuildTargets);
 	const check = publishedWorkspacePackageChecks().find(
 		(candidate) => candidate.packageName === sourcePackageName,
 	);
@@ -116,7 +124,9 @@ export function assertPublishedWorkspacePackFiles(packed, sourcePackageName, opt
 
 const vendoredRequiredFiles = ["vendor/pi-client/index.js", "vendor/pi-client/index.d.ts", "vendor/pi-protocol/index.js", "vendor/pi-protocol/index.d.ts"];
 
-export function assertSenpiPackedWorkspaceFiles(packed, manifest) {
+export function assertSenpiPackedWorkspaceFiles(packed, manifest, options = {}) {
+	const requiredNativePrebuildTargets = options.requiredNativePrebuildTargets ?? [];
+	assertSupportedTargets(requiredNativePrebuildTargets);
 	const filePaths = packedFilePaths(packed);
 	// The tarball ships no dependency tree: every runtime dependency is a registry edge.
 	const shippedNodeModules = [...filePaths].find((path) => path === "node_modules" || path.startsWith("node_modules/") || path.includes("/node_modules/"));
@@ -145,5 +155,13 @@ export function assertSenpiPackedWorkspaceFiles(packed, manifest) {
 	const missing = vendoredRequiredFiles.filter((path) => !filePaths.has(path));
 	if (missing.length > 0) {
 		throw new Error(`senpi package tarball is missing vendored workspace files: ${missing.join(", ")}`);
+	}
+	// The publish-only run names every release-built target; a tarball without one of their
+	// grep addons would leave that platform on the rg fallback (senpi#3513).
+	const missingGrep = requiredNativePrebuildTargets
+		.map((target) => nativePrebuildFile(target, "@code-yeongyu/senpi"))
+		.filter((path) => !filePaths.has(path));
+	if (missingGrep.length > 0) {
+		throw new Error(`senpi package tarball is missing native grep prebuilds: ${missingGrep.join(", ")}. Stage packages/coding-agent/native/prebuilds/<target>/ before publishing.`);
 	}
 }

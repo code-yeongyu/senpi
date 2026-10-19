@@ -319,10 +319,11 @@ jobs:
             exit 1
           fi
 
-          # The PTY addon lands at the loader-relative path the publish-only job stages
-          # straight into packages/pty; the grep addon stays flat for its own consumers.
+          # Both addons land under the host-named loader path (napi tags such as
+          # linux-x64-gnu are renamed to <platform>-<arch>), which the publish-only job
+          # stages into packages/pty and packages/coding-agent respectively (senpi#3513).
           cp "${pty_file}" "${prebuild_dir}/senpi_pty.${host}.node"
-          cp "${grep_file}" "${artifact_dir}/"
+          cp "${grep_file}" "${prebuild_dir}/senpi_grep.${host}.node"
           {
             echo "artifact=${{ matrix.artifact }}"
             echo "napi_target=${NAPI_TARGET}"
