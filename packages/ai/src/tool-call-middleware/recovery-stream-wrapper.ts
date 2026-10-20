@@ -4,7 +4,11 @@ import { createAntmlInvokeRecoveryStreamParser } from "./protocols/antml/recover
 import { type RecoveryContentKind, RecoveryContentLifecycle } from "./recovery-content-lifecycle.ts";
 import { RecoveryAssistantMessageEventStream } from "./recovery-event-stream.ts";
 import { RecoveryNativeProjection } from "./recovery-native-projection.ts";
-import { type RecoveryStreamFailure, terminateRecoveryStreamForFailure } from "./recovery-stream-failure.ts";
+import {
+	type RecoveryFailureEvent,
+	type RecoveryStreamFailure,
+	terminateRecoveryStreamForFailure,
+} from "./recovery-stream-failure.ts";
 import { RecoveryStreamTerminal } from "./recovery-stream-terminal.ts";
 import { RecoveryTextProjection } from "./recovery-text-projection.ts";
 import { StreamMessageProjection } from "./stream-wrapper-shared.ts";
@@ -55,11 +59,24 @@ export function wrapStreamWithInvokeRecovery(
 			}
 		});
 
-		const terminateForFailure = (source: AssistantMessage, failure: RecoveryStreamFailure): void => {
+		const terminateForFailure = (
+			source: AssistantMessage,
+			failure: RecoveryStreamFailure,
+			event?: RecoveryFailureEvent,
+		): void => {
 			if (!projection || !outerStream.markSourceClosed()) return;
 			finishText();
-			terminateRecoveryStreamForFailure(outerStream, projection, { source, failure, protocol });
+			terminateRecoveryStreamForFailure(outerStream, projection, { source, failure, protocol, event });
 		};
+
+		// The refused event with the validator's state: a provider that breaks the sequential protocol (a block
+		// started while another is open, an index that does not grow) is diagnosed from the message, not guessed.
+		const refusedEvent = (type: string, source: AssistantMessage, index: number): RecoveryFailureEvent => ({
+			type,
+			index,
+			blocks: source.content.length,
+			...contentLifecycle.snapshot(),
+		});
 
 		const prepareContentEvent = (source: AssistantMessage, contentIndex: number): boolean => {
 			if (!projection || !nativeProjection) return false;
@@ -75,13 +92,14 @@ export function wrapStreamWithInvokeRecovery(
 		};
 
 		const canStart = (
+			eventType: string,
 			source: AssistantMessage,
 			contentIndex: number,
 			kind: RecoveryContentKind,
 			failure: RecoveryStreamFailure = "invalid_content_event_order",
 		): boolean => {
 			if (!Number.isSafeInteger(contentIndex) || contentIndex < 0 || contentIndex >= source.content.length) {
-				terminateForFailure(source, failure);
+				terminateForFailure(source, failure, refusedEvent(eventType, source, contentIndex));
 				return false;
 			}
 			const block = source.content[contentIndex];
@@ -90,18 +108,19 @@ export function wrapStreamWithInvokeRecovery(
 				(kind === "thinking" && block?.type === "thinking") ||
 				(kind === "toolCall" && block?.type === "toolCall");
 			if (blockMatches && contentLifecycle.canStart(contentIndex)) return true;
-			terminateForFailure(source, failure);
+			terminateForFailure(source, failure, refusedEvent(eventType, source, contentIndex));
 			return false;
 		};
 
 		const isActive = (
+			eventType: string,
 			source: AssistantMessage,
 			contentIndex: number,
 			kind: RecoveryContentKind,
 			failure: RecoveryStreamFailure = "invalid_content_event_order",
 		): boolean => {
 			if (contentLifecycle.isActive(contentIndex, kind)) return true;
-			terminateForFailure(source, failure);
+			terminateForFailure(source, failure, refusedEvent(eventType, source, contentIndex));
 			return false;
 		};
 
@@ -129,7 +148,7 @@ export function wrapStreamWithInvokeRecovery(
 						outerStream.push({ type: "start", partial: projection.message });
 						break;
 					case "text_start": {
-						if (!canStart(event.partial, event.contentIndex, "text")) return;
+						if (!canStart(event.type, event.partial, event.contentIndex, "text")) return;
 						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection || !nativeProjection)
 							return;
 						const nextText = new RecoveryTextProjection(tools, projection, nativeProjection, event.contentIndex, {
@@ -145,12 +164,12 @@ export function wrapStreamWithInvokeRecovery(
 						break;
 					}
 					case "text_delta":
-						if (!isActive(event.partial, event.contentIndex, "text")) return;
+						if (!isActive(event.type, event.partial, event.contentIndex, "text")) return;
 						if (!prepareContentEvent(event.partial, event.contentIndex) || !textProjection) return;
 						sawToolCall = textProjection.feed(event.delta) || sawToolCall;
 						break;
 					case "text_end":
-						if (!isActive(event.partial, event.contentIndex, "text")) return;
+						if (!isActive(event.type, event.partial, event.contentIndex, "text")) return;
 						if (!prepareContentEvent(event.partial, event.contentIndex)) return;
 						finishText();
 						contentLifecycle.end(event.contentIndex, "text");
@@ -177,7 +196,10 @@ export function wrapStreamWithInvokeRecovery(
 						terminal.sourceError(projection, event.error, sawToolCall, event.reason);
 						return;
 					case "toolcall_start": {
-						if (!canStart(event.partial, event.contentIndex, "toolCall", "invalid_native_event_order")) return;
+						if (
+							!canStart(event.type, event.partial, event.contentIndex, "toolCall", "invalid_native_event_order")
+						)
+							return;
 						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) return;
 						const status = nativeProjection.projectNativeStart(event.partial, event.contentIndex);
 						if (status !== "projected") {
@@ -192,7 +214,10 @@ export function wrapStreamWithInvokeRecovery(
 						break;
 					}
 					case "toolcall_delta":
-						if (!isActive(event.partial, event.contentIndex, "toolCall", "invalid_native_event_order")) return;
+						if (
+							!isActive(event.type, event.partial, event.contentIndex, "toolCall", "invalid_native_event_order")
+						)
+							return;
 						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) return;
 						if (!nativeProjection.projectNativeDelta(event.partial, event.contentIndex, event.delta)) {
 							terminateForFailure(event.partial, "invalid_native_event_order");
@@ -200,7 +225,10 @@ export function wrapStreamWithInvokeRecovery(
 						}
 						break;
 					case "toolcall_end":
-						if (!isActive(event.partial, event.contentIndex, "toolCall", "invalid_native_event_order")) return;
+						if (
+							!isActive(event.type, event.partial, event.contentIndex, "toolCall", "invalid_native_event_order")
+						)
+							return;
 						if (!prepareContentEvent(event.partial, event.contentIndex) || !nativeProjection) return;
 						if (!nativeProjection.projectNativeEnd(event.contentIndex, event.toolCall)) {
 							terminateForFailure(event.partial, "invalid_native_event_order");
@@ -210,7 +238,7 @@ export function wrapStreamWithInvokeRecovery(
 						sawToolCall = true;
 						break;
 					case "thinking_start": {
-						if (!canStart(event.partial, event.contentIndex, "thinking")) return;
+						if (!canStart(event.type, event.partial, event.contentIndex, "thinking")) return;
 						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection || !nativeProjection)
 							return;
 						const outerIndex = projection.startThinking(event.contentIndex, event.partial);
@@ -222,12 +250,12 @@ export function wrapStreamWithInvokeRecovery(
 						break;
 					}
 					case "thinking_delta":
-						if (!isActive(event.partial, event.contentIndex, "thinking")) return;
+						if (!isActive(event.type, event.partial, event.contentIndex, "thinking")) return;
 						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection) return;
 						projection.projectThinkingDelta(event.contentIndex, event.delta, event.partial);
 						break;
 					case "thinking_end":
-						if (!isActive(event.partial, event.contentIndex, "thinking")) return;
+						if (!isActive(event.type, event.partial, event.contentIndex, "thinking")) return;
 						if (!prepareContentEvent(event.partial, event.contentIndex) || !projection) return;
 						projection.finishThinking(event.contentIndex, event.content, event.partial);
 						contentLifecycle.end(event.contentIndex, "thinking");

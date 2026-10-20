@@ -45,11 +45,26 @@ export function mapToolArguments(name: string, argumentsValue: Record<string, un
 	return mapToolArgs(name, argumentsValue);
 }
 
-export function updateUsage(model: Model<Api>, output: AssistantMessage, usage: SdkUsage): void {
-	if (usage.input_tokens != null) output.usage.input = usage.input_tokens;
-	if (usage.output_tokens != null) output.usage.output = usage.output_tokens;
-	if (usage.cache_read_input_tokens != null) output.usage.cacheRead = usage.cache_read_input_tokens;
-	if (usage.cache_creation_input_tokens != null) output.usage.cacheWrite = usage.cache_creation_input_tokens;
+/** Token counts of the responses a query streamed before the current one (see `updateUsage`). */
+export type UsageBase = { input: number; output: number; cacheRead: number; cacheWrite: number };
+
+export function usageBaseOf(output: AssistantMessage): UsageBase {
+	const { input, output: outputTokens, cacheRead, cacheWrite } = output.usage;
+	return { input, output: outputTokens, cacheRead, cacheWrite };
+}
+
+/**
+ * Applies one SDK usage report. The API counts every response from zero, so when a query streams a second
+ * response (Claude Code's output-limit continuation) the caller passes the earlier responses' totals as
+ * `base`; a field the report omits keeps its current value.
+ */
+export function updateUsage(model: Model<Api>, output: AssistantMessage, usage: SdkUsage, base?: UsageBase): void {
+	if (usage.input_tokens != null) output.usage.input = usage.input_tokens + (base?.input ?? 0);
+	if (usage.output_tokens != null) output.usage.output = usage.output_tokens + (base?.output ?? 0);
+	if (usage.cache_read_input_tokens != null)
+		output.usage.cacheRead = usage.cache_read_input_tokens + (base?.cacheRead ?? 0);
+	if (usage.cache_creation_input_tokens != null)
+		output.usage.cacheWrite = usage.cache_creation_input_tokens + (base?.cacheWrite ?? 0);
 	output.usage.totalTokens =
 		output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
 	calculateCost(model, output.usage);

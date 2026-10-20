@@ -23,7 +23,11 @@ function expectInvalidContentOrder(events: readonly AssistantMessageEvent[]): vo
 				{
 					type: "text_tool_call_recovery_invalid_content_event",
 					timestamp: expect.any(Number),
-					details: { protocol: "antml", status: "invalid_content_event_order" },
+					details: {
+						protocol: "antml",
+						status: "invalid_content_event_order",
+						event: expect.objectContaining({ type: expect.any(String), index: expect.any(Number) }),
+					},
 				},
 			],
 		},

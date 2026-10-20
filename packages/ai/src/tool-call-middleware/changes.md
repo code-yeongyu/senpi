@@ -1,5 +1,25 @@
 # Tool Call Middleware Changes
 
+## 2026-10-20 - Name the refused event in a recovery failure diagnostic
+
+### What changed
+
+- `recovery-content-lifecycle.ts`: `snapshot()` returns the validator's state (`activeIndex`, `activeKind`, `lastEndedIndex`).
+- `recovery-stream-failure.ts`: `terminateRecoveryStreamForFailure` takes an optional `event` (`RecoveryFailureEvent`: the refused event's type, its `index`, the block count `blocks` and the lifecycle snapshot) and writes it as `details.event` of the failure diagnostic.
+- `recovery-stream-wrapper.ts`: `canStart` and `isActive` take the event type and pass the refused event through `terminateForFailure`.
+
+### Why
+
+"Invalid assistant content event order" named neither the event nor the state that refused it; the Anthropic Subscription lane's response restarts (Claude Code's output-limit recovery) could only be diagnosed by reconstructing the stream from the CLI's transcript. The diagnostic carries no block content.
+
+### Why an extension could not handle it
+
+The diagnostic is written by the middleware at the moment it refuses the event.
+
+### Expected merge conflict zones
+
+- `recovery-stream-wrapper.ts`: the `canStart` / `isActive` helpers and their call sites.
+
 ## 2026-09-08 - Preserve server fallback boundaries during recovery
 
 ### What changed
