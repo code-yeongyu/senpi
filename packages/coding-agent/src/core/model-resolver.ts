@@ -47,7 +47,7 @@ export const defaultModelPerProvider: Record<string, string> = {
 	anthropic: "claude-opus-5-5",
 	bai: "gpt-5.6-sol",
 	openai: "gpt-6.1-sol",
-	"azure-openai-responses": "gpt-5.4",
+	"azure-openai-responses": "gpt-6.1-sol",
 	"chatgpt-subscription": "gpt-6.1-sol",
 	ollama: "qwen3.5:397b",
 	// Cursor ships no models until its chat protocol is ported; "auto" matches
