@@ -73,7 +73,7 @@ export const defaultModelPerProvider: Record<string, string> = {
 	"minimax-cn": "MiniMax-M2.7",
 	moonshotai: "kimi-k2.6",
 	"moonshotai-cn": "kimi-k2.6",
-	huggingface: "moonshotai/Kimi-K2.6",
+	huggingface: "moonshotai/Kimi-K3",
 	fireworks: "accounts/fireworks/models/kimi-k3",
 	together: "moonshotai/Kimi-K3",
 	venice: "z-ai-glm-5-3",

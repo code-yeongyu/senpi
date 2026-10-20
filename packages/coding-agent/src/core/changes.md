@@ -1,3 +1,21 @@
+## 2026-10-12 - Hugging Face's provider default is Kimi K3
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider` row `huggingface` is `moonshotai/Kimi-K3` (was `moonshotai/Kimi-K2.6`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the bundled `huggingface` catalog lists `moonshotai/Kimi-K3`. `opengateway`, `fireworks`, `together` and `opencode-go` already default to Kimi K3, while Hugging Face still started on K2.6. The default applies only when no model is saved in settings and none is passed on the command line.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in provider default table is core resolver data read before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `huggingface` row of `defaultModelPerProvider`.
+
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 
 ### What changed
