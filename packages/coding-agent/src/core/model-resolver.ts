@@ -78,7 +78,7 @@ export const defaultModelPerProvider: Record<string, string> = {
 	together: "moonshotai/Kimi-K3",
 	venice: "z-ai-glm-5-3",
 	baseten: "zai-org/GLM-5.2",
-	opencode: "kimi-k2.6",
+	opencode: "kimi-k3",
 	"opencode-go": "kimi-k3",
 	"kimi-coding": "kimi-for-coding",
 	meta: "muse-spark-1.3",
