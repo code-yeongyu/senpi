@@ -760,6 +760,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});
 
+	test("github-copilot default tracks current model", () => {
+		expect(defaultModelPerProvider["github-copilot"]).toBe("gpt-6.1-sol");
+	});
+
 	test("amazon-bedrock default tracks current model", () => {
 		expect(defaultModelPerProvider["amazon-bedrock"]).toBe("us.anthropic.claude-opus-5-5");
 	});
