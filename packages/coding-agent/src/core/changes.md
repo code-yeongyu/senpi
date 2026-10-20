@@ -438,6 +438,23 @@ Tool preflight, the agent_end boundary and the queued-input port are AgentSessio
 
 - `packages/coding-agent/src/core/agent-session.ts`: `_installAgentToolHooks` (`beforeToolCall` signal), `preflightToolCall` options and its first lines, the `agent_end` block of `_handleAgentEvent`, the `queuedInputPort` assignment in the constructor, `dispose()`, the `promptDisposition("started")` lines of `_prompt`, and the extension actions object.
 
+## 2026-10-14 - `reducedMotion` setting (senpi#3270)
+
+### What changed
+
+- `packages/coding-agent/src/core/settings-manager.ts`: new optional `reducedMotion` boolean (default `false`) with a `getReducedMotion()` getter. The terminal builtin reads it to keep the footer `watching` glyph static instead of pulsing while the agent idles on monitors.
+
+### Why
+
+- `packages/coding-agent/src/core/settings-manager.ts`: the monitor pulse must respect a user motion preference, and no such setting existed.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/settings-manager.ts`: the typed `Settings` shape and its getters live here; extensions read settings through `SettingsManager`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/settings-manager.ts`: `Settings` interface near `tips`, and the getter block after `getTipsEnabled()`.
 
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 

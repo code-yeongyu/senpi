@@ -24,6 +24,26 @@
 - MEDIUM: `monitor-notify.ts` `notifyEvent` / `#flush` / `#buildMessage`; `command-monitor-source.ts` `#consume`.
 - LOW: `settings.ts` defaults, `monitor-schema.ts` properties, the manifest model/parse/writer command fields.
 
+## 2026-10-14 - Pulse the footer watching glyph while idling on monitors (senpi#3270)
+
+### What changed
+
+- `monitor-status.ts`: `formatMonitorStatus()` takes an optional `animate` flag; when set, the `watching` glyph pulses through a width-1 frame set (`◉◎○`) derived from the clock.
+- `monitor-status-ticker.ts`: `tick()` now calls `formatMonitorStatus()` and re-reads the animate gate inside the stale-context `try` (#2549), so a stale context during formatting or gating is swallowed the same way as the status write. The pulse advances on the existing tick; no new timer.
+- `extension.ts`: passes the animate gate (TUI mode, agent idle, `reducedMotion` off) to the ticker. `reducedMotion` is read once per session.
+
+### Why
+
+A long idle wait on monitors looked frozen; the pulse shows the session is alive.
+
+### Why an extension could not handle it
+
+The footer monitor status and its ticker are owned by this builtin.
+
+### Expected merge conflict zones
+
+`monitor-status-ticker.ts` `tick()` body; `formatMonitorStatus()` signature and glyph selection in `monitor-status.ts`.
+
 ## 2026-10-18 - An unreadable holder start time is reported as unproven (senpi#3658)
 
 ### What changed
