@@ -760,6 +760,13 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});
 
+	test("xiaomi defaults track current model", () => {
+		expect(defaultModelPerProvider.xiaomi).toBe("mimo-v2.6-pro");
+		expect(defaultModelPerProvider["xiaomi-token-plan-cn"]).toBe("mimo-v2.6-pro");
+		expect(defaultModelPerProvider["xiaomi-token-plan-ams"]).toBe("mimo-v2.6-pro");
+		expect(defaultModelPerProvider["xiaomi-token-plan-sgp"]).toBe("mimo-v2.6-pro");
+	});
+
 	test("amazon-bedrock default tracks current model", () => {
 		expect(defaultModelPerProvider["amazon-bedrock"]).toBe("us.anthropic.claude-opus-5-5");
 	});
