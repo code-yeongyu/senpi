@@ -77,7 +77,7 @@ export const defaultModelPerProvider: Record<string, string> = {
 	fireworks: "accounts/fireworks/models/kimi-k3",
 	together: "moonshotai/Kimi-K3",
 	venice: "z-ai-glm-5-3",
-	baseten: "zai-org/GLM-5.2",
+	baseten: "zai-org/GLM-5.3",
 	opencode: "kimi-k2.6",
 	"opencode-go": "kimi-k3",
 	"kimi-coding": "kimi-for-coding",

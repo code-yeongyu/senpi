@@ -760,6 +760,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});
 
+	test("baseten default tracks current model", () => {
+		expect(defaultModelPerProvider.baseten).toBe("zai-org/GLM-5.3");
+	});
+
 	test("amazon-bedrock default tracks current model", () => {
 		expect(defaultModelPerProvider["amazon-bedrock"]).toBe("us.anthropic.claude-opus-5-5");
 	});
