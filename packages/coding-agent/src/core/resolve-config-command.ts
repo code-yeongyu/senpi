@@ -10,6 +10,7 @@ import { spawn } from "child_process";
 import { signalSpawnedChild } from "../utils/child-signal.ts";
 import { getShellConfig } from "../utils/shell.ts";
 import { sleep } from "../utils/sleep.ts";
+import { guardChildStdin } from "./child-stdin-guard.ts";
 
 // Credential helper commands (auth brokers like `omp token …`) are cold-started on
 // every invocation and can fail transiently — broker lock contention, a slow spawn
@@ -78,6 +79,7 @@ function runCommandProcess(
 			const value = stdout.trim();
 			finish({ executed: true, value: code === 0 && value ? value : undefined });
 		});
+		guardChildStdin(child.stdin, "config command");
 		child.stdin?.end(options.stdin);
 	});
 }

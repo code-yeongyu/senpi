@@ -15,6 +15,7 @@
 - A session file left claimed by a stopped engine host no longer blocks reopening its thread. If that host was only frozen or asleep, it can no longer write to the file once another host has taken it over ([#3652](https://github.com/code-yeongyu/senpi/issues/3652)).
 - Each mounted message no longer keeps its own copy of the markdown theme, and a tool card above the kept history no longer keeps a second copy of its result in its renderer: about 640 bytes per message and 2 KB per tool card for the rest of the session ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - A bundled install's RPC host supervisor now starts from its own small program instead of the whole CLI, so each supervisor stays near the size of its own code. The desktop runs one per open thread ([#3743](https://github.com/code-yeongyu/senpi/issues/3743)).
+- A command hook that exits without reading its stdin (for example a quick `UserPromptSubmit` or `SessionStart` shell hook) no longer kills the session with exit code 129 and leaves the terminal in raw / Kitty keyboard mode; the hook's exit code is reported normally. A `!command` config helper that exits before reading its stdin is handled the same way ([oh-my-openagent#10623](https://github.com/code-yeongyu/oh-my-openagent/issues/10623)).
 
 ### Removed
 

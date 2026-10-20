@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { waitForChildProcess } from "../../../../utils/child-process.ts";
 import { killProcessTree, trackDetachedChildPid, untrackDetachedChildPid } from "../../../../utils/shell.ts";
+import { guardChildStdin } from "../../../child-stdin-guard.ts";
 import {
 	applyHookOutputSafety,
 	buildHookEnvironment,
@@ -104,6 +105,7 @@ export async function runCommandHook(
 			else options.signal.addEventListener("abort", onAbort, { once: true });
 		}
 
+		guardChildStdin(child.stdin, "command hook");
 		child.stdin?.end(JSON.stringify(input));
 		const exitCode = await waitForChildProcess(child);
 		return buildResult({
