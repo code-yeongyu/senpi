@@ -1,3 +1,21 @@
+## 2026-10-12 - Alibaba Token Plan's provider default is Qwen3.8-Max
+
+### What changed
+
+- `packages/coding-agent/src/core/model-resolver.ts`: `defaultModelPerProvider` row `alibaba-token-plan` is `qwen3.8-max` (was `qwen3.7-max`).
+
+### Why
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the bundled `alibaba-token-plan` catalog lists `qwen3.8-max`, which `qwen-token-plan-individual` already defaults to, while the Alibaba plan still started on `qwen3.7-max`. The default applies only when no model is saved in settings and none is passed on the command line.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the built-in provider default table is core resolver data read before any extension runs.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-resolver.ts`: the `alibaba-token-plan` row of `defaultModelPerProvider`.
+
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 
 ### What changed

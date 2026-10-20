@@ -40,7 +40,7 @@ type ModelScopeSource = ModelRuntime | ModelRegistry | AvailableModelsSource;
 
 /** Default model IDs for each known provider */
 export const defaultModelPerProvider: Record<string, string> = {
-	"alibaba-token-plan": "qwen3.7-max",
+	"alibaba-token-plan": "qwen3.8-max",
 	"amazon-bedrock": "us.anthropic.claude-opus-5-5",
 	"ant-ling": "Ring-2.6-1T",
 	"anthropic-subscription": "claude-opus-5-5",
