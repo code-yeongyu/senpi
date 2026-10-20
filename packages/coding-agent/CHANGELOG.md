@@ -10,6 +10,8 @@
 
 ### Changed
 
+- The built-in default model for `openrouter` is now `moonshotai/kimi-k3` (was `moonshotai/kimi-k2.6`). It applies only when no model is saved in settings and none is passed on the command line ([#3183](https://github.com/code-yeongyu/senpi/pull/3183)).
+
 ### Fixed
 
 - Claude subscription sessions on current models (Fable 5, Sonnet 5, Haiku 5.5, Opus 4.7 and later) use their native 1M window again, without asking for extra usage. A refusal recorded by an earlier version no longer caps them, and only the older long-context models (Opus 4.6, Sonnet 4.6) still need extra usage for 1M ([#3801](https://github.com/code-yeongyu/senpi/issues/3801)).

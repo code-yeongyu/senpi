@@ -760,6 +760,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});
 
+	test("openrouter default tracks current model", () => {
+		expect(defaultModelPerProvider.openrouter).toBe("moonshotai/kimi-k3");
+	});
+
 	test("amazon-bedrock default tracks current model", () => {
 		expect(defaultModelPerProvider["amazon-bedrock"]).toBe("us.anthropic.claude-opus-5-5");
 	});
