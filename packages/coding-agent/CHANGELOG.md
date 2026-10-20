@@ -10,6 +10,8 @@
 
 ### Changed
 
+- While the agent waits on a blocking question (`ask_user_question` / `request_user_input` with `waitForAnswer`), a regular message you send is now the answer, in the terminal, the desktop and every RPC client: the question settles at once with your message as its answer instead of waiting up to 30 minutes with the message queued as a steer. The question card shows "answered with your message", and `question_resolved` and the tool result carry `resolvedBy: "typed_message"`. Images on the message travel with the answer; slash commands, `!` input and asynchronous questions are unchanged ([#3774](https://github.com/code-yeongyu/senpi/issues/3774)).
+
 ### Fixed
 
 - Each mounted message no longer keeps its own copy of the markdown theme, and a tool card above the kept history no longer keeps a second copy of its result in its renderer: about 640 bytes per message and 2 KB per tool card for the rest of the session ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).

@@ -2,7 +2,10 @@ import { Text } from "@earendil-works/pi-tui";
 import { toolResultUserWords } from "../../../tool-result-user-words.ts";
 import type { ToolDefinition } from "../../types.ts";
 import { TOOL_NAMES } from "./family.ts";
+import { TYPED_MESSAGE } from "./typed-message.ts";
 import { resolveUserWordReferences } from "./user-words.ts";
+
+export const ANSWERED_WITH_MESSAGE = "answered with your message";
 
 export const renderCall: NonNullable<ToolDefinition["renderCall"]> = (args, theme) => {
 	const values = typeof args === "object" && args !== null ? args : {};
@@ -29,6 +32,7 @@ export const renderResult: NonNullable<ToolDefinition["renderResult"]> = (result
 			summary += `; ${Object.keys(details.answers).length} answered`;
 		if ("unanswered" in details && Array.isArray(details.unanswered))
 			summary += `; ${details.unanswered.length} unanswered`;
+		if ("resolvedBy" in details && details.resolvedBy === TYPED_MESSAGE) summary = ANSWERED_WITH_MESSAGE;
 	}
 	return new Text(
 		[summary, ...result.content.flatMap((c) => (c.type === "text" ? [resolveUserWordReferences(c.text, words)] : []))]

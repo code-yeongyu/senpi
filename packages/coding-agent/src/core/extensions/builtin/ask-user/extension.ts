@@ -54,6 +54,15 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 		for (const entry of getPendingQuestions(sessionId)) entry.reattach();
 		void resumeDanglingQuestion(pi, event, ctx);
 	});
+	// While a blocking question waits, a message the user submits is its answer, on every surface
+	// (senpi#3774). Commands, `!` input and extension messages keep their own routing.
+	pi.on("input", (event, ctx) => {
+		if (event.source === "extension" || /^[/!]/.test(event.text.trimStart())) return { action: "continue" };
+		const blocking = getPendingQuestions(ctx.sessionManager.getSessionId()).find(
+			(entry) => entry.request.waitForAnswer,
+		);
+		return blocking?.answerWithMessage(event.text, event.images) ? { action: "handled" } : { action: "continue" };
+	});
 	pi.on("model_select", async (event, ctx) => {
 		sync(ctx, event.model);
 	});

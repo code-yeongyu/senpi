@@ -1,3 +1,4 @@
+import { QuestionAnsweredByMessage } from "../../core/extensions/builtin/ask-user/typed-message.ts";
 import type { ExtensionUIContext, QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
 import { settledQuestionStatus, unansweredQuestionIds } from "./extension-ui-response.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiRequest } from "./rpc-types.ts";
@@ -79,9 +80,16 @@ export class ConnectionQuestionBridge {
 			// An aborted dialog is a cancellation unless the aborting side resolved a
 			// terminal status of its own: the ask-user extension's idle timer settles
 			// the question `timed_out` and aborts with that status, and connections
-			// must see the outcome the extension resolved (docs/rpc.md question).
+			// must see the outcome the extension resolved (docs/rpc.md question). A
+			// message the user typed answers it the same way, with its answer.
 			const cancel = () => {
 				const reason: unknown = opts?.signal?.reason;
+				if (reason instanceof QuestionAnsweredByMessage) {
+					answers = reason.response.answers;
+					comment = reason.response.comment;
+					finish(reason.response.status, reason.response.resolvedBy);
+					return;
+				}
 				finish(reason === "timed_out" ? "timed_out" : "cancelled");
 			};
 			const arm = () => {

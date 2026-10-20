@@ -36,7 +36,7 @@ export type QuestionResponseStatus =
 
 export type QuestionResponse = {
 	status: QuestionResponseStatus;
-	resolvedBy?: "local_ui" | "rpc_connection" | "control_endpoint";
+	resolvedBy?: "local_ui" | "rpc_connection" | "control_endpoint" | "typed_message";
 	answers: QuestionAnswers;
 	comment?: string;
 	unanswered: string[];

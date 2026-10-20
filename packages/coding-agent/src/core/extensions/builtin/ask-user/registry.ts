@@ -1,3 +1,4 @@
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, ExtensionUIDialogOptions } from "../../types.ts";
 import type { PendingQuestion } from "./pending.ts";
 import type { QuestionRequest, QuestionResponse } from "./schema.ts";
@@ -20,6 +21,8 @@ export interface PendingQuestionEntry {
 	detach(): void;
 	rebind(pi: ExtensionAPI, ctx: ExtensionContext, state: AskUserState): void;
 	reattach(): void;
+	/** Settles a blocking question with a message the user submitted; false when it cannot. */
+	answerWithMessage(text: string, images?: ImageContent[]): boolean;
 }
 const sessions = new Map<string, Map<string, PendingQuestionEntry>>();
 type QueuedOutcome = (pi: ExtensionAPI, ctx: ExtensionContext) => void;

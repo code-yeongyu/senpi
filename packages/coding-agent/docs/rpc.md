@@ -4940,7 +4940,12 @@ A late answer after resolution receives a `question_already_resolved` error.
 
 `resolvedBy` identifies the surface that submitted the winning answer: `local_ui` for the terminal
 widget or composer, `rpc_connection` for an RPC client (including the sequential dialog fallback),
-and `control_endpoint` for an answer received through the session's terminal control endpoint.
+`control_endpoint` for an answer received through the session's terminal control endpoint, and
+`typed_message` when the user sent a regular message (a `prompt`, `steer` or composer submission)
+while the blocking question waited: that message is the answer, the outcome is `comment-submitted`
+with the message text as `comment`, and it is not queued as a steer. Images on that message travel
+in the question's tool result. Slash commands, `!` input and asynchronous questions keep their
+usual routing. A client renders `typed_message` as "answered with your message".
 It is omitted for `timed_out` and `cancelled`, the frame's outcomes with no answering surface.
 Restart orphaning and unavailable UI never reach `question_resolved` with their own status: an
 extension that aborts the dialog for either is reported to connections as `cancelled`, and only the

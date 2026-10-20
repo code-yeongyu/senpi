@@ -28,6 +28,7 @@ import {
 	type QuestionResponse,
 	toCanonical,
 } from "./schema.ts";
+import { IMAGE_ONLY_ANSWER, QuestionAnsweredByMessage, TYPED_MESSAGE, typedMessageImages } from "./typed-message.ts";
 
 export interface AskUserState {
 	timedOut: boolean;
@@ -50,6 +51,7 @@ function result(
 					text ??
 					formatModelAnswer(response, request.requestId, request.questions, request.required === true).text,
 			},
+			...(typedMessageImages.get(response) ?? []),
 		],
 		details: formatResultDetails(variant, response, request.requestId, request.questions, request.required === true),
 	};
@@ -155,7 +157,9 @@ export function startQuestion(
 		// bridge that is still waiting learns the outcome only from this abort.
 		// Carry the resolved status as the abort reason: a bare abort reads as a
 		// dismissal, and the RPC bridge would broadcast a timeout as "cancelled".
-		const abortReason: QuestionResponse["status"] = response.status;
+		// A typed message answered without the UI, so the UI gets the whole response.
+		const abortReason: QuestionResponse["status"] | QuestionAnsweredByMessage =
+			response.resolvedBy === TYPED_MESSAGE ? new QuestionAnsweredByMessage(response) : response.status;
 		controller.abort(abortReason);
 	};
 	const pending = createPendingQuestion({
@@ -195,6 +199,16 @@ export function startQuestion(
 			attached = true;
 			controller = new AbortController();
 			attach();
+		},
+		answerWithMessage(text, images) {
+			if (settled || !request.waitForAnswer) return false;
+			const comment = text.trim() || (images?.length ? IMAGE_ONLY_ANSWER : "");
+			if (!comment) return false;
+			const response = pending.submit(draft.answers, comment, TYPED_MESSAGE);
+			if (response === false || response.resolvedBy !== TYPED_MESSAGE) return false;
+			if (images?.length) typedMessageImages.set(response, images);
+			finish(response);
+			return true;
 		},
 	});
 	pi.appendEntry<AskUserQuestionEntry>(ASK_USER_QUESTION_ENTRY, {

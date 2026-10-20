@@ -208,8 +208,11 @@ export interface QuestionRequest {
 /** Outcome of ExtensionUIContext.question. */
 export interface QuestionResponse {
 	status: "answered" | "comment-submitted" | "timed_out" | "cancelled" | "orphaned-after-restart" | "unavailable";
-	/** Answering surface; omitted when the question ended without an answer. */
-	resolvedBy?: "local_ui" | "rpc_connection" | "control_endpoint";
+	/**
+	 * Answering surface; omitted when the question ended without an answer. `typed_message`: a regular
+	 * message the user submitted while the blocking question waited became its answer (senpi#3774).
+	 */
+	resolvedBy?: "local_ui" | "rpc_connection" | "control_endpoint" | "typed_message";
 	answers: Record<string, { selected: string[]; text?: string }>;
 	comment?: string;
 	unanswered: string[];

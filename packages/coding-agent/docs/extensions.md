@@ -799,8 +799,10 @@ Track blocked IDs as a set, not a boolean: requests can overlap. Each question r
 
 Question registration also retains an `ask-user:question` custom session entry containing `{ requestId, headers }`. This is display-only metadata, excluded from model context, for labeling compact answer chips during replay; it is not another bus event. The model-facing `[Answer to question ...]` message keeps the frame and the answer's structure in its first text block; each of the user's own words (a comment, a typed answer) follows after its own label block (`[The user's comment for question <id>]`). A blocking answer keeps its words in the tool result's `details.userWords` (`{ label, text }[]`), and the session's message conversion sends them as a user message after that batch's tool results instead of inside the result. A tool of your own can do the same by setting `details.userWords`.
 
-`resolvedBy` is `local_ui` for a terminal answer, `rpc_connection` for an RPC client answer, and
-`control_endpoint` for an answer through the terminal control endpoint. It is absent for a question
+`resolvedBy` is `local_ui` for a terminal answer, `rpc_connection` for an RPC client answer,
+`control_endpoint` for an answer through the terminal control endpoint, and `typed_message` when a
+regular message the user submitted while the blocking question waited became its answer (the
+`input` it arrived as is handled, never queued as a steer). It is absent for a question
 that ends without an answer. Blocking tool results carry it in their details too. Reload preserves
 pending questions and does not emit `closed` merely for detaching the old UI; an outcome that ends
 while detached is published once on the next live binding.

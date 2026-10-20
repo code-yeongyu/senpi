@@ -6,6 +6,7 @@ import {
 	type QuestionRequest,
 	type QuestionResponse,
 } from "./schema.ts";
+import { TYPED_MESSAGE } from "./typed-message.ts";
 import {
 	INLINE_WORDS,
 	readUserWordBlocks,
@@ -135,12 +136,14 @@ function formatBody(response: QuestionResponse, questions: Questions, words: Wor
 		}
 		case "comment-submitted": {
 			const comment = response.comment?.trim() ?? "";
+			// A typed message answers the whole question, so no part of it reads as unanswered.
+			const typed = response.resolvedBy === TYPED_MESSAGE;
 			const lines = [
-				`The user responded: ${comment.length > 0 ? words.comment(comment) : ""}`,
+				`${typed ? "The user answered with a message" : "The user responded"}: ${comment.length > 0 ? words.comment(comment) : ""}`,
 				...answeredLines(response, questions, words),
 			];
 			const unanswered = response.unanswered.map((id) => headerFor(id, questions));
-			if (unanswered.length > 0) lines.push(`Unanswered: ${unanswered.join(", ")}`);
+			if (!typed && unanswered.length > 0) lines.push(`Unanswered: ${unanswered.join(", ")}`);
 			return lines.join("\n");
 		}
 		case "timed_out": {

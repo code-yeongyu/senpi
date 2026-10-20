@@ -1,3 +1,21 @@
+## 2026-10-20 - A typed message answers a waiting blocking question (senpi#3774)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `QuestionResponse.resolvedBy` gains `"typed_message"`, the surface for a regular message the user submitted while a blocking question waited; the ask-user builtin settles that question with the message as its `comment-submitted` answer.
+
+### Why
+
+The owner decided that a message sent while the agent waits on a blocking question is its answer on every surface, instead of a steer that waits behind the question's 30-minute idle timeout. Clients need to tell that answer apart to render "answered with your message".
+
+### Why an extension could not handle it
+
+The behaviour itself lives in the ask-user builtin (an `input` handler); only the public response type that names the answering surface is upstream-owned.
+
+### Expected merge conflict zones
+
+- LOW: `types.ts` `QuestionResponse.resolvedBy` union.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

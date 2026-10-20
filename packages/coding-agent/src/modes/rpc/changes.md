@@ -1,3 +1,21 @@
+## 2026-10-20 - question_resolved reports a typed-message answer (senpi#3774)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: `RpcQuestionResolvedEvent.resolvedBy` gains `"typed_message"`. The outcome stays `comment-submitted` with the message text as `comment`, so clients that decode only the existing outcome vocabulary keep working.
+
+### Why
+
+A regular message the user sends while a blocking question waits now answers it (owner decision); RPC clients such as the desktop render it as "answered with your message" from this field.
+
+### Why an extension could not handle it
+
+The wire record type is the RPC protocol contract.
+
+### Expected merge conflict zones
+
+- LOW: `rpc-types.ts` `RpcQuestionResolvedEvent.resolvedBy` union.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed
