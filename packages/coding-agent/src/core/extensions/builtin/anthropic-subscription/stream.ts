@@ -27,7 +27,7 @@ import {
 	resolveCompactionOwner,
 	resumeModeSource,
 } from "./settings.ts";
-import { applyStreamEvent } from "./stream-events.ts";
+import { applyStreamEvent, createSdkResponseTracker } from "./stream-events.ts";
 import { withAuthGuidance } from "./stream-guidance.ts";
 import { emptyOutput, errorMessage, mapStopReason, type StreamBlock, updateUsage } from "./stream-protocol.ts";
 import { toolWatch } from "./tool-watch.ts";
@@ -45,6 +45,7 @@ export function streamAnthropicSubscription(
 	void (async () => {
 		const output = emptyOutput(model);
 		const blocks: StreamBlock[] = [];
+		const responses = createSdkResponseTracker();
 		let sdkQuery: SdkQueryHandle | undefined;
 		let closed = false;
 		let wasAborted = false;
@@ -211,7 +212,7 @@ export function streamAnthropicSubscription(
 				if (message.type === "stream_event") {
 					sawStreamEvent = true;
 					applyStreamEvent(
-						{ model, output, blocks, stream, customToolNameToPi: resolvedTools.customToolNameToPi },
+						{ model, output, blocks, stream, customToolNameToPi: resolvedTools.customToolNameToPi, responses },
 						message.event,
 					);
 				} else if (message.type === "assistant") {

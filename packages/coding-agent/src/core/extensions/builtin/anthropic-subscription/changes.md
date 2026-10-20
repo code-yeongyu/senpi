@@ -1,3 +1,26 @@
+## 2026-10-20 - One query, several Anthropic responses: the provider keeps its event protocol sequential
+
+### What changed
+
+- `stream-events.ts`: `applyStreamEvent` ends every block the SDK left open (`closeOpenBlocks`: a `content_block_stop` the provider synthesizes for each block whose `index` is still set, oldest first) before it starts a new block and before a later `message_start`. A later `message_start` (`startResponse`, counted by the new `SdkResponseTracker` in `StreamEventContext`) also records the earlier responses' token counts as the usage base and appends a `claude_sdk_oauth_response_restart` diagnostic (`response`, `closedBlocks`, `previousStopReason`). Blocks keep appending by position, as before.
+- `stream-protocol.ts`: `updateUsage` takes an optional `UsageBase` (`usageBaseOf(output)`) that it adds to the fields a report carries; the API counts every response from zero.
+- `stream.ts`: one `createSdkResponseTracker()` per query, passed in the event context. The terminal `result` usage is applied as before (the SDK's own total).
+- `test/anthropic-subscription-output-limit-continuation.test.ts`: the real provider wrapped by the real `wrapStreamWithModelRecovery` against scripted SDK streams: a continuation after a cap stop between blocks, after a cap stop inside a block, a restart while the continuation's own block is open, a block re-emitted at the same index, and the summed usage.
+
+### Why
+
+Claude Code's output-limit recovery: when a response stops with `max_tokens` (its output cap, 64000 tokens in 2.1.296), the CLI appends its "Output token limit hit. Resume directly …" meta prompt and streams a second response inside the same query; a retried request restarts a response the same way. Every response numbers its blocks from zero and reports its usage from zero, and the restart can arrive while the earlier block is still open. The text-tool-call recovery middleware validates a strict sequential protocol on the provider's events (one open block, indices that only grow) and ends the turn with "Invalid assistant content event order" otherwise; the whole response, 64k tokens of reasoning on Claude Fable 5.1 at `xhigh`, was lost each time, and the usage of the first response was overwritten by the second one's.
+
+### Why an extension could not handle it
+
+The builtin lane maps the SDK stream to pi-ai events; an extension sees only the mapped events, after the middleware has already refused them.
+
+### Expected merge conflict zones
+
+- `stream-events.ts`: `applyStreamEvent` (the `message_start` branch moved to `startResponse`), `StreamEventContext`.
+- `stream.ts`: the `applyStreamEvent` call's context literal.
+- `stream-protocol.ts`: `updateUsage`.
+
 ## 2026-10-19 - Single-account guidance follows the pin's source and the block's cause (senpi#3672)
 
 ### What changed
