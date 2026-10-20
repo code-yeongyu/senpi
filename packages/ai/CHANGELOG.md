@@ -8,6 +8,7 @@
 
 ### Changed
 
+- The OpenGateway model catalog now matches the gateway: it updates limits, prices, or capabilities for 2 models.
 - The bundled model catalog is refreshed: `deepseek-v4.1-flash-1017` appears on the Alibaba and Qwen token plans and Cloudflare, Venice adds `mercury-3`, several models report lower maximum output tokens (Together Qwen3.6-Plus and Qwen3.7-Max, Vercel AI Gateway DeepSeek V4.1 Flash, OpenRouter Qwen3.5 397B, Qwen3.8 27B, DeepSeek Chat and GLM-5), and Cloudflare Workers AI Gemma 4 26B and Nemotron 3 120B change their thinking levels ([#3806](https://github.com/code-yeongyu/senpi/pull/3806)).
 ### Fixed
 
