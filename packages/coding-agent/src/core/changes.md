@@ -1,3 +1,24 @@
+## 2026-10-20 - Environment failures never fall back (desktop#3464)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/environment-failure.ts` (new): `environmentFailure(errorMessage)` returns `executable` (senpi's own "Claude Code executable not found", the SDK's "native binary not found", a `spawn … ENOENT/EACCES/EPERM/UNKNOWN`, the Windows shell's "is not recognized as an internal or external command"), `auth` (401, `unauthorized`, `authentication_error`, an invalid or expired key or token, a signed-out CLI; 403 deliberately excluded because it also means no access to one model, plus a 400 that refuses the credential itself: Anthropic's "This API key is not scoped to a workspace" or any `invalid_request_error` naming the API key or workspace) or `network` (`isPureNetworkTransient`, except a provider-stream watchdog stall, which stays the model's).
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `tryFallback` returns `false` for an environment failure before walking the chain, logging `fallback_skipped_environment`. The network-blip walk that this replaces is removed: `heldForNetworkBlip`, `blipModel`, the `networkBlip` exemptions in `walkFallback`, and `maybeRestorePrimary`'s `boundary` parameter, which only that hold read.
+- `packages/coding-agent/src/core/retry-fallback/candidates.ts`: the `isModelSkipped` filter, used only by the blip walk, is removed.
+- `packages/coding-agent/src/core/agent-session.ts`: `_isHardErrorFallbackEligible` is false for an environment failure, so such a turn ends on its one error; `_maybeRestoreFallbackPrimary` no longer takes a boundary. Task children run the same `AgentSession` with the chain their `open_session.retryFallback` names (`applyRetryFallbackProfile`), so a child that falls back onto an API key the provider refuses stops there instead of walking further down its chain.
+
+### Why
+
+A desktop turn failed with "Claude Code isn't installed", then fell back from claude-opus-4-8 to claude-opus-4-6 on the same provider, which hit the same missing binary: two failures where one said what to do. A missing or unlaunchable binary, a rejected credential and a dead network are the machine's, not the model's; every chain entry meets them. Fallback stays for model-specific retryable errors (rate limit, overload, model unavailable). This reverses senpi#3306's one-turn fallback on a network blip that outlasted the same-model retries.
+
+### Why an extension could not handle it
+
+The decision sits inside the session's retry path and the fallback controller, which no extension hook reaches.
+
+### Expected merge conflict zones
+
+- LOW: `agent-session.ts` gains one condition in `_isHardErrorFallbackEligible`, one import, and loses the boundary argument of `_maybeRestoreFallbackPrimary` at its two call sites.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

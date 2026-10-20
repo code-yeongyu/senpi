@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- A turn that fails because Claude Code is missing or cannot start, because the provider rejected the credentials, or because the network is down no longer falls back to another model: every model meets the same problem, so the turn stops on that one error. Rate limits, overload and an unavailable model still fall back. A network failure that outlasts the same-model retries no longer switches models for the rest of the turn ([desktop#3464](https://github.com/sisyphuslabs/omo-desktop-app/issues/3464)).
 - Each mounted message no longer keeps its own copy of the markdown theme, and a tool card above the kept history no longer keeps a second copy of its result in its renderer: about 640 bytes per message and 2 KB per tool card for the rest of the session ([#2537](https://github.com/code-yeongyu/senpi/issues/2537)).
 - A bundled install's RPC host supervisor now starts from its own small program instead of the whole CLI, so each supervisor stays near the size of its own code. The desktop runs one per open thread ([#3743](https://github.com/code-yeongyu/senpi/issues/3743)).
 

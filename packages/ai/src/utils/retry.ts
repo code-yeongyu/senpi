@@ -518,7 +518,12 @@ const PROVIDER_STREAM_STALL_ERROR_PATTERN =
 const PROVIDER_TRANSPORT_TIMEOUT_ERROR_PATTERN = /^Request timed out\.?$/i;
 
 export function isProviderStreamStallError(message: AssistantMessage): boolean {
-	return message.stopReason === "error" && PROVIDER_STREAM_STALL_ERROR_PATTERN.test(message.errorMessage ?? "");
+	return message.stopReason === "error" && isProviderStreamStallText(message.errorMessage);
+}
+
+/** {@link isProviderStreamStallError} for a caller that holds only the error text. */
+export function isProviderStreamStallText(errorMessage: string | undefined): boolean {
+	return PROVIDER_STREAM_STALL_ERROR_PATTERN.test(errorMessage ?? "");
 }
 
 /** One row per stall watchdog: how to read its message, and how to explain it. */

@@ -40,45 +40,16 @@ describe("senpi#3306 network blips never strand a session on a fallback", () => 
 		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
 	});
 
-	it("#given network resets past the same-model budget #when the next turn starts #then the fallback served once and the primary is back", async () => {
+	it("#given network resets past the same-model budget #when the turn fails #then it never switches and the next turn runs on the primary (desktop#3464)", async () => {
 		const harness = await flakyHarness(harnesses, 1);
-		harness.setResponses([
-			networkReset(),
-			networkReset(),
-			fauxAssistantMessage("fallback answer"),
-			fauxAssistantMessage("primary answer"),
-		]);
+		harness.setResponses([networkReset(), networkReset(), fauxAssistantMessage("primary answer")]);
 
 		await harness.session.prompt("first");
-		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([{ from: primary, to: fallback }]);
-
 		await harness.session.prompt("second");
 
-		expect(harness.eventsOfType("retry_fallback_reverted")).toMatchObject([{ from: fallback, to: primary }]);
+		expect(harness.eventsOfType("retry_fallback_applied")).toEqual([]);
 		expect(harness.session.model?.id).toBe("faux-1");
-		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1", "faux-2", "faux-1"]);
-	});
-
-	it("#given a blip then a rate limit on the fallback in one turn #when the retry continues #then the session stays off the primary", async () => {
-		const harness = await createHarness({
-			models: [{ id: "faux-1" }, { id: "faux-2" }, { id: "faux-3" }],
-			fallbackNow: () => 0,
-			settings: {
-				retry: {
-					enabled: true,
-					baseDelayMs: 1,
-					maxRetries: 0,
-					fallbackChains: { [primary]: [fallback, "faux/faux-3"] },
-				},
-			},
-		});
-		harnesses.push(harness);
-		harness.setResponses([networkReset(), rateLimitedTimeout(), fauxAssistantMessage("third answer")]);
-
-		await harness.session.prompt("first");
-
-		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-2", "faux-3"]);
-		expect(harness.eventsOfType("retry_fallback_reverted")).toEqual([]);
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["faux-1", "faux-1", "faux-1"]);
 	});
 
 	it("#given a rate limit that also mentions a timeout #when the next turn starts on a frozen clock #then the primary stays held", async () => {

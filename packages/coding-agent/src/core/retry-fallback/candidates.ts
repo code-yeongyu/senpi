@@ -20,8 +20,6 @@ export interface CandidateFilters {
 	isSuppressed(base: string): boolean;
 	isAuthAvailable(provider: string): boolean;
 	isCircuitOpen(base: string): boolean;
-	/** A model whose every rung is out for this walk (a network blip on it, senpi#3344). */
-	isModelSkipped?(base: string): boolean;
 	/** Providers whose account-wide usage limit or billing failure this session saw: their entries are skipped. */
 	isProviderSpent?(provider: string): boolean;
 	skip(candidate: string, skipReason: string): void;
@@ -78,10 +76,6 @@ function scanCandidates(
 			continue;
 		}
 		const base = baseSelector(selector);
-		if (filters.isModelSkipped?.(base)) {
-			filters.skip(raw, "network-blip");
-			continue;
-		}
 		if (filters.tried.has(rungSelector(selector))) {
 			filters.skip(raw, "tried");
 			continue;

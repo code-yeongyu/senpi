@@ -282,17 +282,21 @@ describe("retry fallback thinking-level selection", () => {
 		expect(switches.map((record) => `${record.id}:${record.thinking}`)).toEqual(["primary:high"]);
 	});
 
-	it("does not retry a network blip on another rung of the model it just failed on (senpi#3344)", async () => {
+	it("walks to no rung at all after an environment failure (desktop#3464)", async () => {
 		const { controller, switches } = createController({
 			models: [primary, toggle],
 			chains: { "faux/primary": ["faux/primary:off", "faux/toggle"] },
 			current: { model: primary, thinkingLevel: "high" },
 		});
 
-		expect(await controller.tryFallback("transient", { errorMessage: "TypeError: fetch failed (ECONNRESET)" })).toBe(
-			true,
-		);
-		expect(switches.map((record) => `${record.id}:${record.thinking}`)).toEqual(["toggle:high"]);
+		for (const errorMessage of [
+			"TypeError: fetch failed (ECONNRESET)",
+			"Claude Code executable not found for win32-x64. Tried:",
+			"401 Unauthorized",
+		]) {
+			expect(await controller.tryFallback("hard-error", { errorMessage })).toBe(false);
+		}
+		expect(switches).toEqual([]);
 	});
 
 	it("still walks to another rung of the same model after a hard error", async () => {

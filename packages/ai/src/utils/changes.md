@@ -1,3 +1,21 @@
+## 2026-10-20 - isProviderStreamStallText (desktop#3464)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `isProviderStreamStallText(errorMessage)` tests the stall pattern on bare text; `isProviderStreamStallError` delegates to it.
+
+### Why
+
+- The fallback controller holds only the error text and must tell a watchdog stall (the model went quiet) from a network failure (desktop#3464).
+
+### Why an extension could not handle it
+
+- The stall pattern is private to this module; a second copy would drift from the watchdog wording.
+
+### Expected merge conflict zones
+
+- LOW: one exported function beside `isProviderStreamStallError`.
+
 ## 2026-10-18 - Anthropic compat gains supportsGzipRequestBody (senpi#3643)
 
 ### What changed

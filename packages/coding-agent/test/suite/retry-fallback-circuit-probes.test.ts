@@ -60,7 +60,6 @@ describe("fallback circuit probes and failure classes (senpi#2201 review)", () =
 	it.each([
 		{ errorMessage: "HTTP 429: quota exceeded", opens: true },
 		{ errorMessage: "HTTP 400: out of budget", opens: true },
-		{ errorMessage: "HTTP 401: invalid API key", opens: false },
 		{ errorMessage: "HTTP 403: forbidden", opens: false },
 	])("classifies '$errorMessage' as provider health: opens=$opens", async ({ errorMessage, opens }) => {
 		const harness = await make();
@@ -70,6 +69,16 @@ describe("fallback circuit probes and failure classes (senpi#2201 review)", () =
 
 		expect(calledModels(harness)).toEqual(["faux-1", "faux-2"]);
 		expect(breaker(harness).isOpen(primary, now, "sibling")).toBe(opens);
+	});
+
+	it("ends the turn on a rejected credential instead of falling back, and opens no circuit (desktop#3464)", async () => {
+		const harness = await make();
+		harness.setResponses([failure("HTTP 401: invalid API key"), answer()]);
+
+		await harness.session.prompt("provider failure");
+
+		expect(calledModels(harness)).toEqual(["faux-1"]);
+		expect(breaker(harness).isOpen(primary, now, "sibling")).toBe(false);
 	});
 
 	it("keeps a 503 Retry-After open for its own session, but a sibling that never failed keeps its model (senpi#3467)", async () => {

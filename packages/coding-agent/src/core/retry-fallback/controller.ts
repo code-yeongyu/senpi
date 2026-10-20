@@ -18,6 +18,7 @@ import type {
 	FallbackReason,
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
+import { environmentFailure } from "./environment-failure.ts";
 import { pinAfterSwitch } from "./pin.ts";
 import { isPureNetworkTransient } from "./transient-network.ts";
 import { UnusableEntries } from "./unusable.ts";
@@ -30,10 +31,6 @@ export class RetryFallbackController {
 	private readonly triedSelectors = new Set<string>();
 	private state: ActiveFallbackState | undefined;
 	private lastExhaustedChainKey: string | undefined;
-	// A fallback forced by a network blip serves out its turn; only the next turn boundary reverts it.
-	private heldForNetworkBlip = false;
-	// The model a network blip just failed on: none of its rungs is tried in that walk (senpi#3344).
-	private blipModel: string | undefined;
 	// Entries this session itself saw fail out of a chain: only these (or an entry spent for everyone)
 	// may move the session off its model at a turn boundary (senpi#3467).
 	private readonly ownFailures = new Set<string>();
@@ -77,7 +74,6 @@ export class RetryFallbackController {
 
 	clear(): void {
 		this.state = undefined;
-		this.heldForNetworkBlip = false;
 		this.canonicalCache = undefined;
 		this.resetTurn();
 	}
@@ -116,12 +112,7 @@ export class RetryFallbackController {
 	 * fallback that is itself known unusable (billing or an account limit) while the
 	 * original is not is never where the session rests (senpi#2376).
 	 */
-	async maybeRestorePrimary(
-		revertPolicy: "cooldown-expiry" | "never",
-		boundary: "turn" | "continuation" = "turn",
-	): Promise<boolean> {
-		const heldForNetworkBlip = this.heldForNetworkBlip && boundary === "continuation";
-		if (boundary === "turn") this.heldForNetworkBlip = false;
+	async maybeRestorePrimary(revertPolicy: "cooldown-expiry" | "never"): Promise<boolean> {
 		const state = this.state;
 		const current = this.deps.getCurrentSelector();
 		if (!state || state.pinned || !current) return false;
@@ -130,7 +121,7 @@ export class RetryFallbackController {
 		const model = this.deps.registry.find(selector.provider, selector.id);
 		if (!model) return false;
 		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
-		if (!stranded && (heldForNetworkBlip || !this.originalRecovered(state, revertPolicy))) return false;
+		if (!stranded && !this.originalRecovered(state, revertPolicy)) return false;
 		// User override wins: only restore the original thinking level when the
 		// current level still equals the level the fallback switch applied. A manual
 		// setThinkingLevel clears lastAppliedThinkingLevel (see noteManualThinkingLevel).
@@ -205,7 +196,6 @@ export class RetryFallbackController {
 			this.deps.logger.info("fallback_cleared_manual", { selector: formatSelector(model) });
 		}
 		this.state = undefined;
-		this.heldForNetworkBlip = false;
 		this.ownFailures.delete(formatSelector(model));
 		this.deps.cooldowns.clearModel(formatSelector(model));
 		this.unusable.clear(model);
@@ -262,25 +252,14 @@ export class RetryFallbackController {
 		failure: { errorMessage?: string; retryAfterMs?: number },
 		failureObserved = true,
 	): Promise<boolean> {
-		const current = this.deps.getCurrentSelector();
-		const blip = reason === "transient" && isPureNetworkTransient(failure.errorMessage);
-		this.blipModel = blip && current ? formatSelector(current.model) : undefined;
-		try {
-			return await this.walkFallback(reason, failure, failureObserved);
-		} finally {
-			this.blipModel = undefined;
+		// A missing binary, a rejected credential or a dead network is not the model's: every chain
+		// entry meets it too, so the turn ends on that one error instead of a fallback (desktop#3464).
+		const environment = environmentFailure(failure.errorMessage);
+		if (environment !== undefined) {
+			this.deps.logger.info("fallback_skipped_environment", { environment });
+			return false;
 		}
-	}
-
-	private async walkFallback(
-		reason: FallbackReason,
-		failure: { errorMessage?: string; retryAfterMs?: number },
-		failureObserved: boolean,
-	): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
-		// A network blip that outlasted the same-model retries may fall back for this turn, but it
-		// leaves no cooldown or open circuit on the primary, so the next turn boundary reverts (senpi#3306).
-		const networkBlip = reason === "transient" && isPureNetworkTransient(failure.errorMessage);
 		// Only a transient failure that spent its budget opens the shared circuit
 		// here; billing/quota exhaustion is recorded at the failure itself (see
 		// noteHealthFailure) so the final chain entry opens too.
@@ -290,23 +269,18 @@ export class RetryFallbackController {
 		if (failureObserved && current) this.unusable.note(current.model, failure);
 		// A model-wide park (transient, billing) can rule out the current model's other rungs, so the
 		// walk re-scans after noting it; the first scan logs only when no re-scan follows.
-		const modelWidePark = !networkBlip && failureObserved && (reason === "transient" || reason === "billing");
+		const modelWidePark = failureObserved && (reason === "transient" || reason === "billing");
 		let candidate = this.nextCandidate(false, !modelWidePark);
 		if (!current || !candidate) {
 			if (modelWidePark) this.nextCandidate(false, true);
 			return false;
 		}
 		const currentBase = formatSelector(current.model);
-		if (
-			!networkBlip &&
-			failureObserved &&
-			(reason === "transient" || reason === "hard-error" || reason === "billing")
-		) {
+		if (failureObserved && (reason === "transient" || reason === "hard-error" || reason === "billing")) {
 			// A hard error is charged to the rung that failed (a level the model rejects, or any
 			// non-retryable failure there), so it parks only that rung and a
 			// later rung of the same model stays reachable; a transient or billing failure parks the
-			// whole model, which is unhealthy at every level (senpi#3311). A network blip parks
-			// nothing (senpi#3306).
+			// whole model, which is unhealthy at every level (senpi#3311).
 			const parked =
 				reason === "hard-error"
 					? rungSelector({
@@ -323,7 +297,6 @@ export class RetryFallbackController {
 		while (candidate) {
 			try {
 				await this.applyCandidate(current, candidate, reason, limit);
-				this.heldForNetworkBlip ||= networkBlip;
 				return true;
 			} catch (error) {
 				if (!this.deps.isCandidateRefusal?.(error)) throw error;
@@ -384,7 +357,6 @@ export class RetryFallbackController {
 			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
 			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
 			isProviderSpent: (provider) => this.unusable.isProviderSpent(provider),
-			isModelSkipped: (base) => base === this.blipModel,
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
 		if (candidate) {

@@ -315,6 +315,7 @@ import {
 import { isHealthExhaustionFailure } from "./retry-fallback/circuit-probes.ts";
 import { RetryFallbackController } from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
+import { environmentFailure } from "./retry-fallback/environment-failure.ts";
 import {
 	classifyRateLimitedWait,
 	degradeWithoutFallback,
@@ -7207,12 +7208,9 @@ export class AgentSession {
 		});
 	}
 
-	private async _maybeRestoreFallbackPrimary(boundary: "turn" | "continuation" = "turn"): Promise<void> {
+	private async _maybeRestoreFallbackPrimary(): Promise<void> {
 		try {
-			await this._retryFallback.maybeRestorePrimary(
-				this.settingsManager.getRetryFallbackSettings().revertPolicy,
-				boundary,
-			);
+			await this._retryFallback.maybeRestorePrimary(this.settingsManager.getRetryFallbackSettings().revertPolicy);
 			await this._retryFallback.rerouteAroundOpenCircuit();
 		} catch (error) {
 			this._retryFallback.clear();
@@ -9331,7 +9329,7 @@ export class AgentSession {
 			// on the primary, and precedes the admission revalidation below so that
 			// check samples the restored model's context window - the same ordering
 			// the retry-continuation restore uses.
-			await this._maybeRestoreFallbackPrimary("continuation");
+			await this._maybeRestoreFallbackPrimary();
 
 			await this._revalidateScheduledContinuationAdmission();
 			if (this.agent.state.isStreaming) return "taken-over";
@@ -10665,6 +10663,7 @@ export class AgentSession {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
 			!this._isClaudeSdkAuthMissError(message) &&
+			environmentFailure(message.errorMessage) === undefined &&
 			!this._isClaudeSdkSameModelRemintError(message) &&
 			message.stopReason === "error" &&
 			!isContextOverflow(message, this.model?.contextWindow ?? 0) &&
@@ -11330,7 +11329,7 @@ export class AgentSession {
 
 		// Turn boundary: a suppression that expired during the backoff sleep lets
 		// the retry continue on the restored primary instead of the fallback model.
-		await this._maybeRestoreFallbackPrimary("continuation");
+		await this._maybeRestoreFallbackPrimary();
 
 		// Model fallback (or reversion) can select a smaller context window after
 		// the prior retry checks. Revalidate canonical session context immediately

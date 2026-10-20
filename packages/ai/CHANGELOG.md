@@ -6,6 +6,8 @@
 
 ### Added
 
+- `isProviderStreamStallText(errorMessage)` in `utils/retry`: the stream-stall check for a caller that holds only the error text ([desktop#3464](https://github.com/sisyphuslabs/omo-desktop-app/issues/3464)).
+
 ### Changed
 
 ### Fixed
