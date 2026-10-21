@@ -666,12 +666,34 @@ describe("Claude SDK OAuth session registry", () => {
 		expect(entry.taintedReason).toBeNull();
 	});
 
-	it("throws on a second concurrent turn admission", () => {
+	it("queues a second concurrent turn admission behind the active turn", async () => {
 		const { registry, entry } = pumpFixture();
 		void submitSessionTurn(registry, entry, { message: userContent });
-		expect(() => submitSessionTurn(registry, entry, { message: userContent })).toThrow(
-			ConcurrentSessionTurnAdmissionError,
+		let state = "pending";
+		const second = submitSessionTurn(registry, entry, { message: userContent });
+		second.then(
+			() => {
+				state = "resolved";
+			},
+			() => {
+				state = "rejected";
+			},
 		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(state).toBe("pending");
+	});
+
+	it("refuses a second concurrent turn admission once the wait bound elapses", async () => {
+		const { registry, entry } = pumpFixture();
+		void submitSessionTurn(registry, entry, { message: userContent });
+		const second = submitSessionTurn(registry, entry, {
+			message: userContent,
+			scheduleAbort: (callback) => {
+				callback();
+				return () => {};
+			},
+		});
+		await expect(second).rejects.toBeInstanceOf(ConcurrentSessionTurnAdmissionError);
 	});
 
 	it("discards messages from a superseded generation", async () => {
