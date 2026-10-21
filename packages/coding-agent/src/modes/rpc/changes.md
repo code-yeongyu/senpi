@@ -2,6 +2,7 @@
 
 ### What changed
 
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `pauseForRun`, `resumeForRun` and `holdInput` send the run controls as typed calls (a refusal throws its engine error), so a task runner driving a host-session child needs no raw-command path.
 - `connection-handler.ts` fixes a connection's `interactive_user` and `task_parent` capabilities at their first declaration. `abort`/`interrupt` accept `intent: "stop"` from interactive connections only (`stop_requires_interactive_client` otherwise). New commands `hold_input` (interactive connections, or the task parent relaying run guidance into the child it paused, checked by `parentSessionId`), `withdraw_held_input` (`held-input-commands.ts`), `pause_for_run` and `resume_for_run` (`run-hold-commands.ts`, task-parent connections only); field checks live in `pause-command-validation.ts`. `get_state` reports `paused`, `pausedNoticeCount`, `pausedHeldInputCount` and `runPaused`.
 
 ### Why
