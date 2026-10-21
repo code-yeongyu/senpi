@@ -1,3 +1,4 @@
+import type { HistoryReducer } from "../../../session-history-reduce.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 
 export const GOAL_STOP_PAUSED_ENTRY = "goal-stop-paused";
@@ -17,13 +18,20 @@ export function markStopResumed(pi: Pick<ExtensionAPI, "appendEntry">, goalId: s
 	pi.appendEntry<Marker>(GOAL_STOP_RESUMED_ENTRY, { goalId });
 }
 
+/** Whether the user's Stop paused each goal, read without keeping a full-history view (senpi#2537). */
+const stopPausedGoals: HistoryReducer<Map<string, boolean>> = {
+	initial: () => new Map(),
+	add: (goals, entry) => {
+		if (entry.type !== "custom") return goals;
+		const goalId = (entry.data as Partial<Marker> | undefined)?.goalId;
+		if (typeof goalId !== "string") return goals;
+		if (entry.customType === GOAL_STOP_PAUSED_ENTRY) goals.set(goalId, true);
+		else if (entry.customType === GOAL_STOP_RESUMED_ENTRY) goals.set(goalId, false);
+		return goals;
+	},
+};
+
 /** A goal the user's Stop paused (not `/goal pause`) resumes with the session (senpi#3811). */
 export function pausedByStop(ctx: ExtensionContext, goalId: string): boolean {
-	let paused = false;
-	for (const entry of ctx.sessionManager.getEntries()) {
-		if (entry.type !== "custom" || (entry.data as Partial<Marker> | undefined)?.goalId !== goalId) continue;
-		if (entry.customType === GOAL_STOP_PAUSED_ENTRY) paused = true;
-		else if (entry.customType === GOAL_STOP_RESUMED_ENTRY) paused = false;
-	}
-	return paused;
+	return ctx.sessionManager.reduceHistory(stopPausedGoals).get(goalId) === true;
 }

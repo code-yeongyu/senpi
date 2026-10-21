@@ -1,3 +1,4 @@
+import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
 export const HELD_INPUT_ENTRY = "held-input";
@@ -15,6 +16,21 @@ export type HoldInputResult =
 	| { readonly kind: "held"; readonly entryId: string; readonly duplicate: boolean }
 	| { readonly kind: "already_delivered"; readonly revision: number }
 	| { readonly kind: "input_id_conflict"; readonly heldRevision: number };
+
+/** The held-input entries of the whole history, read without keeping a full-history view (senpi#2537). */
+export const heldInputHistory: HistoryReducer<SessionEntry[]> = {
+	initial: () => [],
+	add: (entries, entry) => {
+		if (
+			entry.type === "custom" &&
+			(entry.customType === HELD_INPUT_ENTRY ||
+				entry.customType === HELD_INPUT_WITHDRAWN_ENTRY ||
+				entry.customType === HELD_INPUTS_CONSUMED_ENTRY)
+		)
+			entries.push(entry);
+		return entries;
+	},
+};
 
 type HeldInputData = { inputId: string; revision: number; text: string };
 type SettledInput = { inputId: string; revision: number };

@@ -274,7 +274,7 @@ import type {
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
 import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
-import { HELD_INPUT_ENTRY, HeldInputs, type HoldInputResult } from "./held-inputs.ts";
+import { HELD_INPUT_ENTRY, HeldInputs, type HoldInputResult, heldInputHistory } from "./held-inputs.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputOriginOf } from "./input-origin.ts";
 import { markInterrupted, type StopInterrupt } from "./interrupted-tool-result.ts";
@@ -350,6 +350,7 @@ import { startRunResumeTurn } from "./run-resume-turn.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
 import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
+import type { HistoryReducer } from "./session-history-reduce.ts";
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionProjection } from "./session-manager.ts";
 import {
@@ -1046,6 +1047,17 @@ export type ClearedQueue = {
 
 export const RESUME_EFFECT_ENTRY = "session-resume-effect";
 
+/** Recorded `resume_session` outcomes by effect id, read without keeping a full-history view (senpi#2537). */
+const resumeEffectHistory: HistoryReducer<Map<string, ResumeSessionAnswer>> = {
+	initial: () => new Map(),
+	add: (effects, entry) => {
+		if (entry.type !== "custom" || entry.customType !== RESUME_EFFECT_ENTRY) return effects;
+		const data = entry.data as { effectId?: unknown; answer?: ResumeSessionAnswer } | undefined;
+		if (typeof data?.effectId === "string" && data.answer !== undefined) effects.set(data.effectId, data.answer);
+		return effects;
+	},
+};
+
 export interface ResumeSessionRequest {
 	readonly expectedSeq?: number;
 	readonly mode?: "continue" | "release";
@@ -1732,13 +1744,9 @@ export class AgentSession {
 		);
 		this._engineTurnInput = new EngineTurnInput(this._engineTurnHold);
 		this._runHolds = new RunHolds(this._engineTurnHold);
-		for (const entry of this.sessionManager.getEntries()) {
-			if (entry.type !== "custom" || entry.customType !== RESUME_EFFECT_ENTRY) continue;
-			const data = entry.data as { effectId?: unknown; answer?: ResumeSessionAnswer } | undefined;
-			if (typeof data?.effectId === "string" && data.answer !== undefined)
-				this._resumeEffects.set(data.effectId, data.answer);
-		}
-		this._heldInputs = new HeldInputs(this.sessionManager.getEntries(), (type, data) => {
+		for (const [effectId, answer] of this.sessionManager.reduceHistory(resumeEffectHistory))
+			this._resumeEffects.set(effectId, answer);
+		this._heldInputs = new HeldInputs(this.sessionManager.reduceHistory(heldInputHistory), (type, data) => {
 			const entryId = this.sessionManager.appendCustomEntry(type, data);
 			this._emitEntryAppended(entryId);
 			return entryId;
@@ -6635,6 +6643,7 @@ export class AgentSession {
 	/** Before a human input releases a Stop: the hidden directive and held human input ride ahead of the wakes. */
 	private _captureReleaseExtras(): void {
 		if (!this._engineTurnHold.held || this._engineTurnHold.releasing || this._releaseExtras.length > 0) return;
+		this._releaseExtrasGeneration = this._userAbortGeneration;
 		if (this._stopHoldLive())
 			this._releaseExtras.push({ role: "custom", ...stopResumeDirective(), timestamp: Date.now() });
 		this._releaseExtras.push(...this._takeHeldInputs());
