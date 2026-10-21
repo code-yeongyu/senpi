@@ -1,3 +1,21 @@
+## 2026-10-19 - Remote compaction names the wire identity (senpi#3720)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-model.ts`: `createOpenAiRemoteCompactionHeaders()` reads `getWireIdentity()` for the Codex `originator` and `user-agent` instead of the literal `senpi`, matching the final Codex request contract.
+
+### Why
+
+- The remote-compaction request is the one Codex call built outside `pi-ai`; hardcoding `senpi` there kept a branded distribution's compaction traffic on the engine identity after the rest of the Codex path had moved (senpi#3720).
+
+### Why an extension could not handle it
+
+- The compaction builtin mints these headers itself before the request leaves the extension; `pi-ai` never sees the header map.
+
+### Expected merge conflict zones
+
+- LOW: the `openai-codex-responses` branch of `createOpenAiRemoteCompactionHeaders` and its `getWireIdentity` import.
+
 ## 2026-10-19 - The compaction checkpoint's agent name is folded, not read from a full-history view (senpi#3110)
 
 ### What changed

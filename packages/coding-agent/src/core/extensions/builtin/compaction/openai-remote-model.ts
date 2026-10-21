@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { arch, platform, release } from "node:os";
-import { type Api, extractChatGptSubscriptionAccountId, type Model } from "@earendil-works/pi-ai";
+import { type Api, extractChatGptSubscriptionAccountId, getWireIdentity, type Model } from "@earendil-works/pi-ai";
 
 export type OpenAiRemoteCompactionModel = Model<"openai-responses"> | Model<"openai-codex-responses">;
 
@@ -172,8 +172,9 @@ export function createOpenAiRemoteCompactionHeaders(
 	if (!headers.has("authorization")) return undefined;
 
 	if (model.api === "openai-codex-responses") {
-		headers.set("originator", "senpi");
-		headers.set("user-agent", `senpi (${platform()} ${release()}; ${arch()})`);
+		const identity = getWireIdentity();
+		headers.set("originator", identity);
+		headers.set("user-agent", `${identity} (${platform()} ${release()}; ${arch()})`);
 		headers.set("OpenAI-Beta", "responses=experimental");
 		headers.set("accept", "text/event-stream");
 		if (sessionId) {

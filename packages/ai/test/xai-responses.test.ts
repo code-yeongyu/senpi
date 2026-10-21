@@ -9,7 +9,7 @@ import { xaiProvider } from "../src/providers/xai.ts";
 import type { Api, Context, Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
-const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
+const DEFAULT_USER_AGENT = `senpi (${platform()} ${release()}; ${arch()})`;
 
 type CapturedRequest = {
 	url: string;
@@ -229,7 +229,7 @@ describe("xAI Responses provider", () => {
 
 		expect(captured.url).toBe("https://api.x.ai/v1/responses");
 		expect(captured.headers.get("authorization")).toBe("Bearer xai-test-token");
-		expect(captured.headers.get("user-agent")).toBe(PI_USER_AGENT);
+		expect(captured.headers.get("user-agent")).toBe(DEFAULT_USER_AGENT);
 		expect(captured.headers.get("session_id")).toBe("pi-session-123");
 		expect(captured.body).toMatchObject({
 			model: "grok-4.5",
@@ -351,7 +351,7 @@ describe("xAI Responses provider", () => {
 		).result();
 
 		expect(result.stopReason, result.errorMessage).toBe("stop");
-		expect(userAgent).toBe(PI_USER_AGENT);
+		expect(userAgent).toBe(DEFAULT_USER_AGENT);
 	});
 
 	it("lets explicit headers override the default Responses User-Agent", async () => {
@@ -365,7 +365,7 @@ describe("xAI Responses provider", () => {
 	});
 
 	it("uses pi's User-Agent by default for Completions requests", async () => {
-		expect(await captureCompletionsUserAgent()).toBe(PI_USER_AGENT);
+		expect(await captureCompletionsUserAgent()).toBe(DEFAULT_USER_AGENT);
 	});
 
 	it("lets explicit headers override the default Completions User-Agent", async () => {
