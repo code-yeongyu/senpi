@@ -6555,7 +6555,7 @@ export class AgentSession {
 		if (request.mode === "release" || inherited !== undefined) {
 			// Only the parent's run Resume releases an inherited hold, so a child resumes no turn of its own.
 			this._engineTurnHold.release(
-				holds.filter((hold) => hold.kind === "session_hold").map((hold) => hold.key),
+				holds.filter((hold) => hold.kind === "session_hold" || hold.kind === "unattended").map((hold) => hold.key),
 				"resume_session",
 			);
 			return answered({ resumed: true, ...idle });
