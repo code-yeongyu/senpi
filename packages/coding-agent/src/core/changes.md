@@ -3,9 +3,14 @@
 ### What changed
 
 - `packages/coding-agent/src/core/agent-session.ts`: `stop()` adds a `session_hold` to the shared hold ledger before it aborts; human input releases it and the turn first carries a hidden directive naming the interrupted tool calls; `resumeSession()` continues the work even when nothing was held. `pauseForRun`/`resumeForRun` keep a task child paused for its parent's run and resume it in one turn. `packages/coding-agent/src/core/engine-turn-hold.ts` adds the `session_hold`, `run_fence` and `inherited_hold` kinds, the run release causes and `session_notice` events; a run fence alone holds only wakes tagged with its run. `packages/coding-agent/src/core/run-holds.ts` keeps the fence and inherited-hold rules (owner, high-water seq, the child's own seq cutoff). `packages/coding-agent/src/core/held-inputs.ts` holds human input idempotently by input id. `packages/coding-agent/src/core/extensions/` adds `session_hold_changed`, `ctx.getPauseState()` and `ctx.fenceRun()`.
+- `packages/coding-agent/src/core/agent-session.ts`: `resume_session`, `beginResume`, `resumeForRun` and the TUI `/resume` never wait on a turn that will not start: the resumed turn's start is awaited only until its send settles, so a newer Stop during admission answers `turnStarted: false` (no `turnId` for `resumeForRun`) and leaves no `agent_start` listener behind.
+- `packages/coding-agent/src/core/agent-session.ts`: both resume paths share one settlement rule (`_startResumeTurn`, `run-resume-turn.ts`): held input and notices are consumed only when the resumed turn started, its send succeeded and no newer Stop aborted it, so a Stop during a `resumeForRun` turn keeps them held.
+- `packages/coding-agent/src/core/agent-session.ts`: human input held by a run-owned pause or by a newer Stop keeps its images and its command, skill and template expansion (`_holdPreparedInput`), and is held under its `clientMessageId` so a replay is held once; `held-inputs.ts` stores the images.
+- `packages/coding-agent/src/core/agent-session.ts`: `resume_session {mode: "release"}` also releases an `unattended` hold, so it never answers `resumed: true` for a session that stays paused only by that hold.
 
 ### Why
 
+- Review of senpi#3871: a `resume_session` whose turn never started hung the RPC connection, a Stop during a run-resume turn consumed the parent's relayed guidance, held human input lost its images, and release mode reported a resume it did not perform.
 - After Stop, the next automatic wake (a terminal or monitor notice, a detached cell, a goal continuation, a child task) started a new turn, so Stop only interrupted the current turn instead of pausing the work.
 
 ### Why an extension could not handle it

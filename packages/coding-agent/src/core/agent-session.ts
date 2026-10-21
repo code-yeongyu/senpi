@@ -7295,7 +7295,6 @@ export class AgentSession {
 	/**
 	 * Abort current operation and wait for agent to become idle.
 	 */
-
 	async abort(options?: { readonly cause?: AgentAbortCause }): Promise<void> {
 		// The first named cause wins until the `agent_end` it explains is emitted (or a new run starts):
 		// a plain abort racing a replacement's teardown never erases the replacement's cause.

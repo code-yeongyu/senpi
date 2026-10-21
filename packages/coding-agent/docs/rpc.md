@@ -59,8 +59,10 @@ turn runs after it. Every field below is optional, so the bare form keeps workin
 ```
 
 `expectedSeq` is the `pauseSeq` the client rendered; a different current seq answers `resumed: false, reason:
-"stale"` and changes nothing. `mode: "release"` releases the Stop without starting a turn (the notices ride the next
-human message). `message` is delivered first in the resumed turn. A repeated `effectId` answers the recorded outcome
+"stale"` and changes nothing. `mode: "release"` releases the Stop and an `unattended` hold without starting a turn
+(the notices ride the next human message). `message` is delivered first in the resumed turn. The answer comes once the
+resumed turn has started, or with `turnStarted: false` once it is clear no turn starts (for example a newer Stop landed
+while the turn was admitted); held input and notices stay held until a turn that no newer Stop aborted delivers them. A repeated `effectId` answers the recorded outcome
 with `replayed: true` and resumes nothing again, also after a reopen. A session with nothing held answers
 `not_paused`; a task child held only for its parent's run answers `resume_through_parent` with `parentSessionId`.
 
@@ -2763,8 +2765,8 @@ reports `paused`, `pausedNoticeCount` and `pausedHeldInputCount`.
 
 Hold human input for a paused session and deliver it at the start of the turn that resumes it. An interactive
 connection may hold input. A `task_parent` connection may relay a person's run guidance into the child it paused for
-that run: it sends `parentSessionId` (the session that sent `pause_for_run`) and `origin: "human"`, and another parent
-is refused with `wrong_parent`. Any other connection is refused with `hold_input_requires_interactive_client`.
+that run: it sends `parentSessionId` (the session that sent `pause_for_run`), and another parent is refused with
+`wrong_parent`. `origin` is optional; when present it must be `"human"`. Any other connection is refused with `hold_input_requires_interactive_client`.
 Idempotent by `inputId`: the same id and `revision` answers the existing entry, an id that was
 already delivered answers `alreadyDelivered: true`, and the same id with another revision is refused with
 `input_id_conflict`.
@@ -2808,10 +2810,11 @@ with a higher `parentPauseSeq` raises the hold; a different `parentSessionId` is
 #### resume_for_run
 
 Release a run-owned pause and start this child's resumed turn: held human input first, then the notices held while
-paused, then a directive about the interrupted turn. `task_parent` connections only. A `parentPauseSeq` older than
-the newest one this child saw answers `released: false, reason: "stale"`. A Stop the user gave this child directly
-is released only when its sequence is at or below `childSeqCutoff`; a newer one survives (`otherHoldLive: true`) and
-no turn starts.
+paused, then a directive about the interrupted turn. `task_parent` connections only. A `parentPauseSeq` other than
+the newest one this child saw (older or newer) answers `released: false, reason: "stale"`. A Stop the user gave this
+child directly is released only when its sequence is at or below `childSeqCutoff`; a newer one survives
+(`otherHoldLive: true`) and no turn starts. `turnId` is absent when the resumed turn did not start (a Stop landed while
+it was admitted). Held input and notices are consumed only by a resumed turn that no newer Stop aborted.
 
 ```json
 {"type": "resume_for_run", "parentSessionId": "s-parent", "parentPauseSeq": 2, "resumeId": "rs-1", "childSeqCutoff": 4}
