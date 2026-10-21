@@ -875,4 +875,31 @@ describe("Anthropic provider-native replay", () => {
 		const assistantPayload = payload.messages?.find((message) => message.role === "assistant");
 		expect(assistantPayload?.content).toEqual([pairedUse, pairedResult, { type: "text", text: "kept" }]);
 	});
+
+	it("replays a same-model context-management compaction block verbatim", async () => {
+		// The API drops the turns before a compaction block on later requests; leaving the block out
+		// silently resends the whole uncompacted history.
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		const compaction = {
+			type: "compaction",
+			content: "Summary of the earlier turns.",
+			encrypted_content: "opaque-compaction-state",
+		};
+		const assistant = assistantMessage(
+			[
+				{ type: "providerNative", subtype: "compaction", raw: compaction },
+				{ type: "text", text: "kept" },
+			],
+			{ stopReason: "stop" },
+		);
+
+		const payload = await capturePayload(model, [
+			{ role: "user", content: "hello", timestamp: 1 },
+			assistant,
+			{ role: "user", content: "follow up", timestamp: 2 },
+		]);
+
+		const assistantPayload = payload.messages?.find((message) => message.role === "assistant");
+		expect(assistantPayload?.content).toEqual([compaction, { type: "text", text: "kept" }]);
+	});
 });

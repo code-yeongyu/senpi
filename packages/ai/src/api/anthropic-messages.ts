@@ -1712,6 +1712,25 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							block.thinkingSignature = block.thinkingSignature || "";
 							block.thinkingSignature += event.delta.signature;
 						}
+					} else if (event.delta.type === "compaction_delta") {
+						// A compaction block starts without its summary; the single delta carries the block's final
+						// value (null content = a failed compaction), so it is assigned, as the SDK's accumulator does.
+						const index = blocks.findIndex((b) => b.index === event.index);
+						const block = blocks[index];
+						if (
+							block &&
+							block.type === "providerNative" &&
+							isRecord(block.raw) &&
+							block.raw.type === "compaction"
+						) {
+							block.raw = {
+								...block.raw,
+								content: event.delta.content,
+								...("encrypted_content" in event.delta
+									? { encrypted_content: event.delta.encrypted_content }
+									: {}),
+							};
+						}
 					}
 				} else if (event.type === "content_block_stop") {
 					const index = blocks.findIndex((b) => b.index === event.index);
