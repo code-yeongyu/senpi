@@ -1,5 +1,6 @@
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
+import { McpConnectionAttempt } from "./connection-attempt.ts";
 import type {
 	ServerConnectionListener,
 	ServerConnectionOptions,
@@ -14,12 +15,7 @@ import { subscribeMcpServerLogging } from "./logging.ts";
 import { isMcpNeedsAuthError } from "./needs-auth.ts";
 import { subscribeMcpListChanged } from "./notifications.ts";
 import { subscribeMcpResourceUpdated } from "./resources.ts";
-import {
-	connectMcpTransport,
-	createMcpTransport,
-	type McpTransportConnection,
-	shutdownMcpTransport,
-} from "./transport.ts";
+import { connectMcpTransport, createMcpTransport, type McpTransportConnection } from "./transport.ts";
 import { type McpAsyncErrorSink, wrapAsync } from "./wrap.ts";
 
 export type {
@@ -37,14 +33,10 @@ export class ServerConnection {
 	readonly #authProvider: McpOAuthProvider | undefined;
 	readonly #elicitationUiProvider: ServerConnectionOptions["elicitationUiProvider"];
 	#state: ServerConnectionState;
-	#generation = 0;
-	#connection: McpTransportConnection | undefined;
-	#pendingConnection: McpTransportConnection | undefined;
-	#pendingConnect: Promise<Client> | undefined;
+	readonly #attempt: McpConnectionAttempt;
 	#lastError: Error | undefined;
 	readonly #stateListeners = new Set<ServerConnectionListener<ServerConnectionStateChangedEvent>>();
 	readonly #toolsListeners = new Set<ServerConnectionListener<ServerConnectionToolsChangedEvent>>();
-	readonly #shutdownConnections = new Map<McpTransportConnection, Promise<void>>();
 
 	constructor(options: ServerConnectionOptions) {
 		this.serverName = options.serverName;
@@ -54,6 +46,14 @@ export class ServerConnection {
 		this.#authProvider = options.authProvider;
 		this.#elicitationUiProvider = options.elicitationUiProvider;
 		this.#state = options.config.enabled ? "idle" : "disabled";
+		this.#attempt = new McpConnectionAttempt({
+			serverName: this.serverName,
+			state: () => this.#state,
+			setState: (state) => this.#setState(state),
+			client: () => this.client,
+			create: () => this.#createTransportConnection(),
+			open: (connection, generation) => this.#connectTransport(connection, generation),
+		});
 	}
 
 	get state(): ServerConnectionState {
@@ -63,7 +63,7 @@ export class ServerConnection {
 		return this.#lastError;
 	}
 	get generation(): number {
-		return this.#generation;
+		return this.#attempt.generation;
 	}
 
 	refreshCapturedDiagnostics(): void {
@@ -82,83 +82,38 @@ export class ServerConnection {
 	}
 
 	get client(): Client {
-		if (this.#connection === undefined) {
+		if (this.#attempt.connection === undefined) {
 			throw new ConnectError(`MCP server ${this.serverName} is not connected`, {
 				phase: "client",
 				serverName: this.serverName,
 			});
 		}
-		return this.#connection.client;
+		return this.#attempt.connection.client;
 	}
 
 	getRootPid(): number | null {
-		return this.#connection?.getRootPid() ?? null;
+		return this.#attempt.connection?.getRootPid() ?? null;
 	}
 	connect(): Promise<Client> {
-		if (this.#state === "disabled") {
-			return Promise.reject(this.#connectError(`MCP server ${this.serverName} is disabled`, "connect"));
-		}
-		if (this.#state === "connected") return Promise.resolve(this.client);
-		if (this.#pendingConnect) return this.#pendingConnect;
-
-		const generation = this.#generation;
-		let connection: McpTransportConnection;
-		try {
-			connection = this.#createTransportConnection();
-		} catch (error) {
-			return Promise.reject(error);
-		}
-		this.#pendingConnect = this.#openConnection(connection, generation).finally(() => {
-			if (this.#pendingConnect !== undefined && generation === this.#generation) this.#pendingConnect = undefined;
-		});
-		// Emit "connecting" only after the single-flight promise is published, so a listener that calls
-		// connect() joins this attempt instead of starting a second one.
-		if (generation === this.#generation) this.#setState("connecting");
-		return this.#pendingConnect;
+		return this.#attempt.connect();
 	}
 
-	// Own the connection before discovery so a concurrent dispose can abort the probe.
-	async #openConnection(connection: McpTransportConnection, generation: number): Promise<Client> {
-		this.#pendingConnection = connection;
-		try {
-			return await this.#connectTransport(connection, generation);
-		} finally {
-			if (this.#pendingConnection === connection) this.#pendingConnection = undefined;
-		}
-	}
-
-	async renew(): Promise<Client> {
-		if (this.#state === "disabled") {
-			throw this.#connectError(`MCP server ${this.serverName} is disabled`, "renew");
-		}
-		this.#generation++;
-		this.#pendingConnect = undefined;
-		this.#setState("idle");
-		await this.#disposeOwnedConnections();
-		return this.connect();
+	renew(): Promise<Client> {
+		return this.#attempt.renew();
 	}
 
 	bumpGeneration(): Promise<void> {
-		this.#generation++;
-		this.#pendingConnect = undefined;
 		this.#lastError = undefined;
-		if (this.#state !== "disabled") this.#setState("idle");
-		return this.#disposeOwnedConnections();
+		return this.#attempt.invalidate("idle");
 	}
 
 	disable(): Promise<void> {
-		this.#generation++;
-		this.#pendingConnect = undefined;
 		this.#lastError = undefined;
-		this.#setState("disabled");
-		return this.#disposeOwnedConnections();
+		return this.#attempt.invalidate("disabled");
 	}
 
 	async dispose(): Promise<void> {
-		this.#generation++;
-		this.#pendingConnect = undefined;
-		this.#setState("disabled");
-		await this.#disposeOwnedConnections();
+		await this.#attempt.invalidate("disabled");
 	}
 
 	markDegraded(error: Error): void {
@@ -178,7 +133,7 @@ export class ServerConnection {
 		this.#emit(this.#toolsListeners, {
 			type: "tools_changed",
 			serverName: this.serverName,
-			generation: this.#generation,
+			generation: this.generation,
 			cause,
 		});
 	}
@@ -208,8 +163,8 @@ export class ServerConnection {
 		connection.transport.onclose = wrapAsync(
 			"connection.transport.onclose",
 			() => {
-				if (this.#shutdownConnections.has(connection)) return;
-				if (connection === this.#pendingConnection && this.#state === "connecting") {
+				if (this.#attempt.isShuttingDown(connection)) return;
+				if (connection === this.#attempt.pendingConnection && this.#state === "connecting") {
 					const closeError = this.#connectError(`MCP server ${this.serverName} transport closed`, "close", true);
 					const capturedError = diagnoseCapturedMcpConnectFailure({
 						config: this.#config,
@@ -221,8 +176,8 @@ export class ServerConnection {
 					if (capturedError !== null) this.markDegraded(capturedError);
 					return;
 				}
-				if (connection !== this.#connection && connection !== this.#pendingConnection) return;
-				if (generation === this.#generation && this.#state !== "disabled") {
+				if (connection !== this.#attempt.connection && connection !== this.#attempt.pendingConnection) return;
+				if (generation === this.generation && this.#state !== "disabled") {
 					this.markDegraded(this.#connectError(`MCP server ${this.serverName} transport closed`, "close", true));
 				}
 			},
@@ -236,9 +191,9 @@ export class ServerConnection {
 			this.#trackTransport(connection, generation);
 			await connectMcpTransport(connection);
 		} catch (error) {
-			if (this.#pendingConnection === connection) this.#pendingConnection = undefined;
-			await this.#shutdown(connection);
-			if (generation !== this.#generation || this.#state === "disabled") {
+			if (this.#attempt.pendingConnection === connection) this.#attempt.pendingConnection = undefined;
+			await this.#attempt.shutdown(connection);
+			if (generation !== this.generation || this.#state === "disabled") {
 				throw this.#connectError(`MCP server ${this.serverName} connect was superseded`, "connect", true);
 			}
 			if (error instanceof ConnectError && error.phase === "modern-stdio") {
@@ -260,12 +215,12 @@ export class ServerConnection {
 			this.markDegraded(connectError);
 			throw connectError;
 		}
-		if (generation !== this.#generation || this.#state === "disabled") {
-			await this.#shutdown(connection);
+		if (generation !== this.generation || this.#state === "disabled") {
+			await this.#attempt.shutdown(connection);
 			throw this.#connectError(`MCP server ${this.serverName} connect was superseded`, "connect", true);
 		}
-		if (this.#pendingConnection === connection) this.#pendingConnection = undefined;
-		this.#connection = connection;
+		if (this.#attempt.pendingConnection === connection) this.#attempt.pendingConnection = undefined;
+		this.#attempt.connection = connection;
 		this.#lastError = undefined;
 		// Subscribe to list_changed on the fresh client (even if the server never
 		// declared the capability) so dynamic catalog updates reach the service.
@@ -281,34 +236,6 @@ export class ServerConnection {
 		return connection.client;
 	}
 
-	async #disposeOwnedConnections(): Promise<void> {
-		const connections = new Set<McpTransportConnection>();
-		const connection = this.#connection;
-		this.#connection = undefined;
-		if (connection !== undefined) connections.add(connection);
-		const pendingConnection = this.#pendingConnection;
-		this.#pendingConnection = undefined;
-		if (pendingConnection !== undefined) connections.add(pendingConnection);
-		await Promise.all([...connections].map((item) => this.#shutdown(item)));
-	}
-
-	async #shutdown(connection: McpTransportConnection): Promise<void> {
-		const pending = this.#shutdownConnections.get(connection);
-		if (pending !== undefined) {
-			await pending;
-			return;
-		}
-		const shutdown = (async () => {
-			await shutdownMcpTransport(connection);
-		})();
-		this.#shutdownConnections.set(connection, shutdown);
-		try {
-			await shutdown;
-		} finally {
-			this.#shutdownConnections.delete(connection);
-		}
-	}
-
 	#setState(state: ServerConnectionState, error?: Error): void {
 		if (this.#state === state) return;
 		const previousState = this.#state;
@@ -318,7 +245,7 @@ export class ServerConnection {
 			serverName: this.serverName,
 			previousState,
 			state,
-			generation: this.#generation,
+			generation: this.generation,
 			error,
 		});
 	}

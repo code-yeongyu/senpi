@@ -1,3 +1,24 @@
+## 2026-10-21 - Serialize MCP renewal with transport teardown (senpi#3915)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/connection-attempt.ts` owns physical connection attempts, generation invalidation, single-flight renewal and teardown. A connect waits for the retiring transport to close, and concurrent renewals join the same replacement attempt.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts` delegates attempt ownership while retaining diagnostics, connection state events and catalog subscriptions. Teardown ownership is published before idle listeners can reconnect.
+- Teardown also joins shutdowns already started by a failed connect, even after that catch path removes its pending connection. A forced handshake failure with held cleanup reproduces overlapping real server processes without this barrier.
+
+### Why
+
+- Renewal and generation invalidation previously cleared the pending connect and published idle before awaiting shutdown. A competing connect or renewal could open a replacement while the old server was still alive. A held real-transport shutdown reproduces two live fixture PIDs for one connection in all three competing-call paths.
+- The original warm-cache spawn count can also increase through sequential health-ping recovery under load; an extra spawn alone does not establish overlap. The regression tests assert physical process overlap directly.
+
+### Why an extension could not handle it
+
+- Physical transport ownership and generation invalidation are internal to the builtin MCP connection. Another extension cannot serialize these private lifecycle operations.
+
+### Expected merge conflict zones
+
+- `ServerConnection` lifecycle methods and transport ownership in `packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts`; the extracted fork-only `connection-attempt.ts`. Service-level deferred attach disposal (senpi#3911) is unchanged.
+
 ## 2026-10-14 - Negotiate modern MCP behind an SDK lifecycle bridge (senpi#3304)
 
 ### What changed
