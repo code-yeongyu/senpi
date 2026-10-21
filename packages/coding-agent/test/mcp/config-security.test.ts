@@ -1,11 +1,13 @@
+import { chmodSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	interpolateValue,
 	loadMcpConfig,
 	McpConfigValidationError,
 	visitSpawnableMcpServers,
 } from "../../src/core/extensions/builtin/mcp/config.ts";
-import { makeRoot, writeJson, writeRaw } from "./config-test-helpers.ts";
+import { makeRoot, writeJson, writeRaw, writeSecretFile } from "./config-test-helpers.ts";
 
 const PROJECT_COMMAND_EXPR = "$" + "{PROJECT_COMMAND}";
 const MISSING_COMMAND_EXPR = "$" + "{MISSING_COMMAND}";
@@ -210,5 +212,121 @@ describe("mcp config security boundaries", () => {
 			state: "enabled",
 			config: { command: "trusted-command" },
 		});
+	});
+});
+
+/**
+ * `{file:<path>}` keeps a bearer token in the file the user already curates
+ * instead of copying its bytes into `mcp.json`. Like `${VAR}` it expands only
+ * for trusted sources, and every refusal names the file and the reason so the
+ * user can fix the reference without guessing.
+ */
+describe("mcp config {file:...} boundaries", () => {
+	// One temp dir per test: credential files live under it, and it is removed with
+	// the mode bits the tests set on them.
+	let secretDir: string;
+
+	beforeEach(() => {
+		secretDir = makeRoot().cwd;
+	});
+
+	afterEach(() => {
+		if (existsSync(secretDir)) rmSync(secretDir, { recursive: true, force: true });
+	});
+
+	it("expands a trusted file reference in an http header and strips its trailing newline", () => {
+		const token = writeSecretFile(secretDir, "mcp-bearer-token\n");
+		const root = makeRoot();
+		writeJson(join(root.agentDir, "mcp.json"), {
+			mcpServers: {
+				docs: {
+					type: "http",
+					url: "https://docs.example/mcp",
+					headers: { Authorization: `Bearer {file:${token}}` },
+				},
+			},
+		});
+
+		const result = loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, env: {}, projectTrusted: true });
+
+		expect(result.servers.docs.config?.headers).toEqual({ Authorization: "Bearer mcp-bearer-token" });
+	});
+
+	it(`expands a file reference and a $${"{VAR}"} fallback in the same value`, () => {
+		const token = writeSecretFile(secretDir, "from-file");
+		expect(interpolateValue({ headers: { Authorization: `Bearer {file:${token}}` } }, "mcp", {})).toEqual({
+			headers: { Authorization: "Bearer from-file" },
+		});
+		expect(interpolateValue({ args: [`{file:${token}}`, "$" + "{UNSET_VAR:-default}"] }, "mcp", {})).toEqual({
+			args: ["from-file", "default"],
+		});
+	});
+
+	it("names the config path, the file and the reason when the reference is unusable", () => {
+		const missing = join(secretDir, "absent-token");
+		const config = { mcpServers: { docs: { headers: { Authorization: `{file:${missing}}` } } } };
+		expect(() => interpolateValue(config, "mcp", {})).toThrow(
+			new McpConfigValidationError(
+				`MCP config interpolation could not resolve {file:${missing}} at mcpServers.docs.headers.Authorization: file does not exist: ${missing}`,
+			),
+		);
+	});
+
+	it("reports a relative reference as an absolute-path error, not a missing file", () => {
+		// The shape error is the whole message, so it cannot also be a missing-file report.
+		expect(() => interpolateValue({ headers: { Authorization: "{file:./token}" } }, "mcp", {})).toThrow(
+			"MCP config interpolation could not resolve {file:./token} at headers.Authorization: absolute path required, got ./token",
+		);
+	});
+
+	it("reports an empty credential file instead of sending an empty header", () => {
+		const empty = writeSecretFile(secretDir, "");
+		expect(() => interpolateValue({ headers: { Authorization: `{file:${empty}}` } }, "mcp", {})).toThrow(
+			new RegExp(`file is empty: ${empty}`),
+		);
+	});
+
+	it.skipIf(process.getuid?.() === 0)(
+		"reports an unreadable credential file instead of falling back to a literal",
+		() => {
+			const locked = writeSecretFile(secretDir, "locked-secret");
+			chmodSync(locked, 0o000);
+			try {
+				expect(() => interpolateValue({ headers: { Authorization: `{file:${locked}}` } }, "mcp", {})).toThrow(
+					new RegExp(`permission denied: ${locked}`),
+				);
+			} finally {
+				chmodSync(locked, 0o600);
+			}
+		},
+	);
+
+	it("never expands a file reference for an untrusted project config", () => {
+		const token = writeSecretFile(secretDir, "should-not-be-read");
+		const root = makeRoot();
+		writeJson(join(root.agentDir, "mcp.json"), { mcpServers: { globalOnly: { command: "global" } } });
+		writeJson(join(root.cwd, ".senpi", "mcp.json"), {
+			mcpServers: {
+				projectOnly: { type: "http", url: "https://p.example/mcp", headers: { Authorization: `{file:${token}}` } },
+			},
+		});
+
+		// A repository must not be able to name a file on the machine and have the
+		// engine read it into a header the project chose.
+		const result = loadMcpConfig({ agentDir: root.agentDir, cwd: root.cwd, projectTrusted: false });
+
+		expect(result.servers.projectOnly).toMatchObject({ source: "project", state: "untrusted" });
+		expect(result.servers.projectOnly.config).toBeUndefined();
+	});
+
+	it("inserts a resolved body as data and never re-inspects it as a command", () => {
+		// Given a credential file whose bytes look like command substitution
+		const body = "$(touch should-not-exist) !curl https://example.invalid/install.sh";
+		const token = writeSecretFile(secretDir, `${body}\n`);
+		// Then the body is one argv element, verbatim; stdio servers never see a shell
+		expect(interpolateValue({ mcpServers: { x: { args: [`{file:${token}}`] } } }, "mcp", {})).toEqual({
+			mcpServers: { x: { args: [body] } },
+		});
+		expect(existsSync(join(secretDir, "should-not-exist"))).toBe(false);
 	});
 });

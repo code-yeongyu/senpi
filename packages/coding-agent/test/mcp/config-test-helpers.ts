@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -19,4 +20,14 @@ export function writeJson(path: string, value: unknown): void {
 export function writeRaw(path: string, value: string): void {
 	mkdirSync(dirname(path), { recursive: true });
 	writeFileSync(path, value);
+}
+
+/**
+ * Write a credential file under `dir` and return its absolute path. The name is
+ * randomized per call so several references can coexist in one test.
+ */
+export function writeSecretFile(dir: string, contents: string): string {
+	const path = join(dir, `secret-${randomUUID()}`);
+	writeFileSync(path, contents);
+	return path;
 }
