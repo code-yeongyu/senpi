@@ -12,6 +12,8 @@ const replayableTypes: ReadonlySet<string> = new Set([
 	"text_editor_code_execution_tool_result",
 	"tool_search_tool_result",
 	"container_upload",
+	// A context-management compaction block stands in for the turns it summarized; later requests must carry it.
+	"compaction",
 	// Stored fallback markers are audit metadata, not valid Messages input tags.
 ]);
 

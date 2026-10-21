@@ -1,3 +1,22 @@
+## 2026-10-21 - Anthropic context-management compaction blocks keep their summary and replay on same-model turns
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the stream loop handles `content_block_delta` events of type `compaction_delta` for a provider-native `compaction` block, assigning the delta's `content` (and its `encrypted_content` when the delta carries one) onto the stored block, the way the Anthropic SDK's own message accumulator does.
+- `packages/ai/src/api/anthropic-native-replay-blocks.ts`: `replayableTypes` includes `"compaction"`, so a stored compaction block is sent back verbatim on a same-model assistant turn.
+
+### Why
+
+- With context-management compaction (`compact_20260112`), the API streams a `compaction` block whose summary arrives in a single `compaction_delta` after the block starts. The adapter ignored that delta, so the stored block kept `content: null`, and the replay filter then dropped the block on the next request because `compaction` was not a replayable type. The API drops every turn before a compaction block when it is sent back, so without it each later request resent the whole uncompacted history instead of continuing from the summary.
+
+### Why an extension could not handle it
+
+- Both steps happen inside the adapter. An extension can observe the raw `compaction_delta` through `provider_stream_event`, but it cannot change the assistant message the adapter stores, and by the time the payload hook runs the block has already been filtered out of the converted messages; putting it back there would mean re-deriving the adapter's same-model replay rules outside the adapter.
+
+### Expected merge conflict zones
+
+- LOW: the `content_block_delta` branch of the stream loop in `anthropic-messages.ts`; the `replayableTypes` set in `anthropic-native-replay-blocks.ts`.
+
 ## 2026-10-20 - chatgpt-subscription failures carry a classified providerDiagnostic (senpi#3771)
 
 ### What changed

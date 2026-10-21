@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Anthropic context-management compaction now carries across turns: the summary that streams in a compaction block's `compaction_delta` is kept, and the block is sent back on later requests to the same model instead of being dropped, so later requests continue from the summary rather than resending the full uncompacted history.
+
 ### Removed
 
 ## [2026.10.20-1] - 2026-10-20

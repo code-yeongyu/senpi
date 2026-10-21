@@ -226,4 +226,79 @@ describe("Anthropic provider-native content blocks", () => {
 		});
 		expect(result.content[0]).not.toHaveProperty("partialJson");
 	});
+
+	it("keeps the compaction summary that arrives in the block's compaction_delta", async () => {
+		// Context-management compaction streams the block empty and sends its summary in one
+		// compaction_delta; the stored block is what later requests send back.
+		const model = getModel("anthropic", "claude-haiku-4-5");
+		const context: Context = {
+			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+		};
+		const response = createSseResponse([
+			{
+				event: "message_start",
+				data: JSON.stringify({
+					type: "message_start",
+					message: { id: "msg_test", usage: { input_tokens: 3, output_tokens: 0 } },
+				}),
+			},
+			{
+				event: "content_block_start",
+				data: JSON.stringify({
+					type: "content_block_start",
+					index: 0,
+					content_block: { type: "compaction", content: null, encrypted_content: null },
+				}),
+			},
+			{
+				event: "content_block_delta",
+				data: JSON.stringify({
+					type: "content_block_delta",
+					index: 0,
+					delta: {
+						type: "compaction_delta",
+						content: "Summary of the earlier turns.",
+						encrypted_content: "opaque",
+					},
+				}),
+			},
+			{ event: "content_block_stop", data: JSON.stringify({ type: "content_block_stop", index: 0 }) },
+			{
+				event: "content_block_start",
+				data: JSON.stringify({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }),
+			},
+			{
+				event: "content_block_delta",
+				data: JSON.stringify({
+					type: "content_block_delta",
+					index: 1,
+					delta: { type: "text_delta", text: "reply" },
+				}),
+			},
+			{ event: "content_block_stop", data: JSON.stringify({ type: "content_block_stop", index: 1 }) },
+			{
+				event: "message_delta",
+				data: JSON.stringify({
+					type: "message_delta",
+					delta: { stop_reason: "end_turn" },
+					usage: { input_tokens: 3, output_tokens: 1 },
+				}),
+			},
+			{ event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
+		]);
+
+		const result = await streamAnthropic(model, normalizeContext(context), {
+			client: createFakeAnthropicClient(response),
+		}).result();
+
+		expect(result.stopReason).toBe("stop");
+		expect(result.content).toEqual([
+			{
+				type: "providerNative",
+				subtype: "compaction",
+				raw: { type: "compaction", content: "Summary of the earlier turns.", encrypted_content: "opaque" },
+			},
+			{ type: "text", text: "reply" },
+		]);
+	});
 });
