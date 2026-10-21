@@ -1,3 +1,21 @@
+## 2026-10-21 - A user Stop pauses the session and the run it started (senpi#3811)
+
+### What changed
+
+`packages/coding-agent/src/core/agent-session.ts`: `stop()` adds a `session_hold` to the shared hold ledger before it aborts; human input releases it and the turn first carries a hidden directive naming the interrupted tool calls; `resumeSession()` continues the work even when nothing was held. `pauseForRun`/`resumeForRun` keep a task child paused for its parent's run and resume it in one turn. `packages/coding-agent/src/core/engine-turn-hold.ts` adds the `session_hold`, `run_fence` and `inherited_hold` kinds, the run release causes and `session_notice` events; a run fence alone holds only wakes tagged with its run. `packages/coding-agent/src/core/run-holds.ts` keeps the fence and inherited-hold rules (owner, high-water seq, the child's own seq cutoff). `packages/coding-agent/src/core/held-inputs.ts` holds human input idempotently by input id. `packages/coding-agent/src/core/extensions/` adds `session_hold_changed`, `ctx.getPauseState()` and `ctx.fenceRun()`.
+
+### Why
+
+After Stop, the next automatic wake (a terminal or monitor notice, a detached cell, a goal continuation, a child task) started a new turn, so Stop only interrupted the current turn instead of pausing the work.
+
+### Why an extension could not handle it
+
+Turn admission, the hold ledger and the abort path are engine-owned; omo's runner needs the session's pause state and run fences to pause the workflow it started.
+
+### Expected merge conflict zones
+
+`agent-session.ts` (`stop`, `prompt`, `resumeSession`, the wake gate in `sendCustomMessage`), `engine-turn-hold.ts` (kinds, causes, `isHeld`, `releaseAll`), `engine-turn-limit.ts` (`isUserDirectedTurn`), extension `types.ts`/`runner.ts` (context actions).
+
 ## 2026-10-21 - Human-input seam: who typed an input (senpi#3811)
 
 ### What changed

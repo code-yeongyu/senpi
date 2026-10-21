@@ -474,6 +474,18 @@ and call `ctx.noteHeldWake("goal")` (or its own source key) instead of charging.
 Source-only notices are consumed on release and reported through
 `held_wakes_released`; they never require a model payload to clear the hold.
 
+#### session_hold_changed
+
+`pi.on("session_hold_changed", (event, ctx) => ...)` fires when this session becomes paused or resumed
+(senpi#3811). `event.change` is `"paused"` or `"resumed"`, `event.pauseSeq` is the session's pause sequence, and
+`event.holds` lists the live records as `{ kind, key, data? }`: `session_hold` for a user Stop, `run_fence` for a
+run the Stop paused, `inherited_hold` while a parent's run keeps this task child paused, and `unattended`. A
+workflow runner uses it to pause the run a stopped session started.
+
+`ctx.getPauseState()` returns the same `{ pauseSeq, holds }` snapshot. `ctx.fenceRun({ kind, id })` keeps wakes
+whose `details.runRef` names that run as notices until the user resumes; untagged wakes are not affected by a
+fence. Human input and `resume_session` release fences together with the user's Stop.
+
 #### held_wakes_released
 
 `pi.on("held_wakes_released", (event, ctx) => ...)` receives

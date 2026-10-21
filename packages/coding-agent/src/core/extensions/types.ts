@@ -540,6 +540,10 @@ export interface ExtensionContext {
 	engineTurnsHeld?(): boolean;
 	/** Note a source-owned wake without rendering or charging its continuation. */
 	noteHeldWake?(source: string): void;
+	/** This session's hold records and its pause sequence (senpi#3811). */
+	getPauseState?(): { pauseSeq: number; holds: SessionHoldRecord[] };
+	/** Hold wakes tagged `details.runRef` for this run until the user resumes (senpi#3811). */
+	fenceRun?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
@@ -1273,6 +1277,21 @@ export interface HeldWakesReleasedEvent {
 
 export type HeldWakesReleasedEventResult = undefined;
 
+/** A hold record on this session (senpi#3811): `session_hold` (user Stop), `run_fence`, `inherited_hold`, `unattended`. */
+export interface SessionHoldRecord {
+	kind: string;
+	key: string;
+	data?: unknown;
+}
+
+/** Fired when this session's holds change: a user Stop, a run fence, or a release. Omo propagates a Stop to its run. */
+export interface SessionHoldChangedEvent {
+	type: "session_hold_changed";
+	change: "paused" | "resumed";
+	pauseSeq: number;
+	holds: SessionHoldRecord[];
+}
+
 /** Fired when the current session metadata changes. */
 export interface SessionInfoChangedEvent {
 	type: "session_info_changed";
@@ -1447,6 +1466,7 @@ export interface SessionTreeEvent {
 export type SessionEvent =
 	| SessionStartEvent
 	| HeldWakesReleasedEvent
+	| SessionHoldChangedEvent
 	| SessionInfoChangedEvent
 	| SessionParkedEvent
 	| SessionResumedEvent
@@ -2371,6 +2391,7 @@ export interface ExtensionAPI {
 		event: "held_wakes_released",
 		handler: ExtensionHandler<HeldWakesReleasedEvent, HeldWakesReleasedEventResult>,
 	): () => void;
+	on(event: "session_hold_changed", handler: ExtensionHandler<SessionHoldChangedEvent>): () => void;
 	on(event: "session_info_changed", handler: ExtensionHandler<SessionInfoChangedEvent>): () => void;
 	on(event: "session_parked", handler: ExtensionHandler<SessionParkedEvent>): () => void;
 	on(event: "session_resumed", handler: ExtensionHandler<SessionResumedEvent>): () => void;
@@ -3224,6 +3245,8 @@ export interface ExtensionContextActions {
 	isIdle: () => boolean;
 	engineTurnsHeld?: () => boolean;
 	noteHeldWake?: (source: string) => void;
+	getPauseState?: () => { pauseSeq: number; holds: SessionHoldRecord[] };
+	fenceRun?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
 	/** Internal delivery for a human-settled builtin question, never exposed on ExtensionAPI. */
 	questionInput?: () => void;
 	isProjectTrusted: () => boolean;

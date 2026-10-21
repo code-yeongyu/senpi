@@ -48,20 +48,22 @@ export class EngineTurnHoldNotices {
 		return Object.values(this.sources).reduce((sum, count) => sum + count, 0);
 	}
 
-	noticeText(count = this.noticeCount, source?: string): string {
+	noticeText(count = this.noticeCount, source?: string, stopped = false): string {
+		if (stopped)
+			return `Paused: ${count} ${count === 1 ? "update" : "updates"} arrived while paused. Send a message or /resume to continue.`;
 		const sources = [...new Set([...Object.keys(this.wakes), ...(source ? [source] : [])])];
 		const labels = sources.map((key) => (["goal", "monitor", "codemode"].includes(key) ? key : `other (${key})`));
 		return `Paused while no one was here (${labels.join(", ") || "other"}): ${count} automatic wakes held. Resume or send a message to continue.`;
 	}
 
-	note(source: string, pauseSeq: number, message?: CustomMessage): void {
+	note(source: string, pauseSeq: number, message?: CustomMessage, stopped = false): string {
 		const data: HeldNotice = {
 			noticeId: crypto.randomUUID(),
 			producer: source,
 			pauseSeq,
 			at: new Date().toISOString(),
 			heldCount: this.noticeCount + 1,
-			text: this.noticeText(this.noticeCount + 1, source),
+			text: this.noticeText(this.noticeCount + 1, source, stopped),
 			action: "resume_session",
 			...(source !== "goal" && message ? { message } : {}),
 		};
@@ -72,6 +74,7 @@ export class EngineTurnHoldNotices {
 		} finally {
 			this.remember(data);
 		}
+		return data.noticeId;
 	}
 
 	messages(): Array<{ source: string; noticeIds: readonly string[]; message: CustomMessage }> {
@@ -97,17 +100,17 @@ export class EngineTurnHoldNotices {
 		});
 	}
 
-	/** The single held -> released transition. Append before removal; failure retains custody. */
-	consume(source: string, pauseSeq: number, deliveredIds?: readonly string[]): boolean {
+	/** The single held -> released transition. Append before removal; failure retains custody. Returns the consumed ids. */
+	consume(source: string, pauseSeq: number, deliveredIds?: readonly string[]): string[] {
 		const wake = this.wakes[source];
-		if (!wake) return false;
+		if (!wake) return [];
 		const delivered = new Set(deliveredIds ?? wake.noticeIds);
 		const noticeIds = wake.noticeIds.filter((id) => delivered.has(id));
-		if (noticeIds.length === 0) return false;
+		if (noticeIds.length === 0) return [];
 		this.append("session-notices-consumed", { noticeIds, pauseSeq });
 		wake.noticeIds = wake.noticeIds.filter((id) => !delivered.has(id));
 		if (wake.noticeIds.length === 0) delete this.wakes[source];
-		return true;
+		return noticeIds;
 	}
 
 	consumeNotices(pauseSeq: number): void {

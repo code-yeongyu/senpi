@@ -58,6 +58,8 @@ export const DETACH_CONNECTION_CAPABILITY = "detach_connection";
  * client's own `set_client_info` and fixed at that first declaration (see `connection-roles.ts`).
  */
 export const INTERACTIVE_USER_CAPABILITY = "interactive_user";
+/** The connection owns this session as a task child; only it may pause or resume the session for its run (senpi#3811). */
+export const TASK_PARENT_CAPABILITY = "task_parent";
 
 /**
  * HOST capability: this host accepts `open_session.context`, hands it to that session's

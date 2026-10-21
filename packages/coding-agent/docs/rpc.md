@@ -50,12 +50,31 @@ Observe session events for progress and `agent_idle` for settlement. Hosts adver
 `resume_session` and `attended` in `get_protocol_info.capabilities`; classic RPC
 advertises `resume_session` only because it does not accept `open_session`.
 
+After a user Stop (senpi#3811) Resume runs one turn instead: held human input first, then the held notices, then a
+hidden note that the interrupted tool calls were not re-run. The response still acknowledges release admission; the
+turn runs after it. Every field below is optional, so the bare form keeps working:
+
+```json
+{"type":"resume_session","expectedSeq":3,"mode":"continue","message":"Use staging","effectId":"resume-7"}
+```
+
+`expectedSeq` is the `pauseSeq` the client rendered; a different current seq answers `resumed: false, reason:
+"stale"` and changes nothing. `mode: "release"` releases the Stop without starting a turn (the notices ride the next
+human message). `message` is delivered first in the resumed turn. A repeated `effectId` answers the recorded outcome
+with `replayed: true` and resumes nothing again, also after a reopen. A session with nothing held answers
+`not_paused`; a task child held only for its parent's run answers `resume_through_parent` with `parentSessionId`.
+
+```json
+{"type":"response","command":"resume_session","success":true,"data":{"resumed":true,"pauseSeq":3,"turnStarted":true,"deliveredNotices":2,"deliveredHeldInputs":1}}
+```
+
 `get_state` and `open_session.state` include:
 
 ```typescript
 paused: boolean;
 pausedNoticeCount: number;
-holds: { kind: "unattended"; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+// HoldKind = "unattended" | "session_hold" | "run_fence" | "inherited_hold" (senpi#3811)
 ```
 
 `since` is an ISO timestamp. This is the shared engine hold ledger; this release
@@ -2724,6 +2743,79 @@ answers after the turn settled.
 
 ```json
 {"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3"}}
+```
+
+With `"intent": "stop"` (on `abort` or `interrupt`) the command is a user Stop: the session is paused before the
+turn is stopped, and automatic wakes that arrive later (terminal and monitor notices, detached eval cells, goal
+continuations, task and team deliveries) are kept as notices instead of starting a turn. Only a connection that
+declared the `interactive_user` capability with `set_client_info` may send it; any other connection gets
+`stop_requires_interactive_client`. The capability is fixed at its first declaration on a connection. `interrupt`
+with `"intent": "stop"` also stops an automatic turn that started after the one `turnId` named, and pauses an
+idle session. Human input (`prompt`, `steer`, `follow_up` on an `interactive_user` connection) or `resume_session` releases the pause. The same commands from any other connection are automatic: while a Stop or a run hold is live they answer `heldAsNotice: true` and are delivered as a notice when the session resumes (an `unattended` hold alone is released by any prompt, as before); `get_state`
+reports `paused`, `pausedNoticeCount` and `pausedHeldInputCount`.
+
+```json
+{"type": "set_client_info", "width": 120, "capabilities": ["interactive_user"]}
+{"type": "abort", "intent": "stop", "awaitIdle": true}
+```
+
+#### hold_input
+
+Hold human input for a paused session and deliver it at the start of the turn that resumes it. Interactive
+connections only. Idempotent by `inputId`: the same id and `revision` answers the existing entry, an id that was
+already delivered answers `alreadyDelivered: true`, and the same id with another revision is refused with
+`input_id_conflict`.
+
+```json
+{"type": "hold_input", "inputId": "g-1", "revision": 1, "text": "Use the staging database"}
+```
+
+```json
+{"type": "response", "command": "hold_input", "success": true, "data": {"entryId": "a1b2c3", "duplicate": false}}
+```
+
+#### withdraw_held_input
+
+Withdraw held input before it is delivered. Interactive connections only.
+
+```json
+{"type": "withdraw_held_input", "inputId": "g-1"}
+```
+
+```json
+{"type": "response", "command": "withdraw_held_input", "success": true, "data": {"withdrawn": true}}
+```
+
+#### pause_for_run
+
+Pause this session because its parent's run was paused (a task child of a stopped session). Only a connection that
+declared the `task_parent` capability may send it. The child keeps every automatic wake as a notice and holds human
+input instead of starting a turn; its own `resume_session` is refused until the parent resumes the run. A later call
+with a higher `parentPauseSeq` raises the hold; a different `parentSessionId` is refused with `wrong_parent`.
+`childSeq` is this session's own pause sequence, which the parent passes back as `childSeqCutoff` on resume.
+
+```json
+{"type": "pause_for_run", "parentSessionId": "s-parent", "parentPauseSeq": 2, "runRef": {"kind": "dag", "id": "r1"}}
+```
+
+```json
+{"type": "response", "command": "pause_for_run", "success": true, "data": {"held": true, "childSeq": 4}}
+```
+
+#### resume_for_run
+
+Release a run-owned pause and start this child's resumed turn: held human input first, then the notices held while
+paused, then a directive about the interrupted turn. `task_parent` connections only. A `parentPauseSeq` older than
+the newest one this child saw answers `released: false, reason: "stale"`. A Stop the user gave this child directly
+is released only when its sequence is at or below `childSeqCutoff`; a newer one survives (`otherHoldLive: true`) and
+no turn starts.
+
+```json
+{"type": "resume_for_run", "parentSessionId": "s-parent", "parentPauseSeq": 2, "resumeId": "rs-1", "childSeqCutoff": 4}
+```
+
+```json
+{"type": "response", "command": "resume_for_run", "success": true, "data": {"released": true, "otherHoldLive": false, "turnId": "7"}}
 ```
 
 #### dequeue_message

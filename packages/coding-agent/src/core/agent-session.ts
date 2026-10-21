@@ -268,13 +268,16 @@ import type {
 	CompactionRejectionCause,
 	FilesystemPolicyChecker,
 	ModelSelectSource,
+	SessionHoldRecord,
 	ToolChildJob,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
 import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
+import { HELD_INPUT_ENTRY, HeldInputs, type HoldInputResult } from "./held-inputs.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputOriginOf } from "./input-origin.ts";
+import { markInterrupted, type StopInterrupt } from "./interrupted-tool-result.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
 import {
 	isManualContinueSubmission,
@@ -342,6 +345,8 @@ import {
 	usageLimitScope,
 } from "./retry-fallback/usage-limit.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
+import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
+import { startRunResumeTurn } from "./run-resume-turn.ts";
 import { isSessionBusySnapshot, type SessionActivitySnapshot, WakeSourceTracker } from "./session-activity.ts";
 import { type ControlEndpointHost, createSessionControlActions } from "./session-control-actions.ts";
 import { computeSessionFailureReport, type SessionFailureReport } from "./session-failure-report.ts";
@@ -373,6 +378,7 @@ import {
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
+import { stopResumeDirective } from "./stop-resume-directive.ts";
 import {
 	type ClampedThinkingSelection,
 	clampThinkingSelection,
@@ -1038,6 +1044,26 @@ export type ClearedQueue = {
 	readonly ordered: readonly QueuedInput[];
 };
 
+export const RESUME_EFFECT_ENTRY = "session-resume-effect";
+
+export interface ResumeSessionRequest {
+	readonly expectedSeq?: number;
+	readonly mode?: "continue" | "release";
+	readonly message?: string;
+	readonly effectId?: string;
+}
+
+export interface ResumeSessionAnswer {
+	readonly resumed: boolean;
+	readonly reason?: "stale" | "not_paused" | "resume_through_parent";
+	readonly parentSessionId?: string;
+	readonly pauseSeq: number;
+	readonly turnStarted: boolean;
+	readonly deliveredNotices: number;
+	readonly deliveredHeldInputs: number;
+	readonly replayed?: boolean;
+}
+
 /** A human input about to be queued or admitted (senpi#3811 design 4.4). */
 export interface HumanInputAdmittedEvent {
 	readonly kind: "prompt" | "steer" | "follow_up" | "answer" | "resume";
@@ -1060,6 +1086,10 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 export interface PromptOptions extends ClientMessageIdentity {
 	/** Internal: this input was already reported to `onHumanInputAdmitted` by the caller, so it is not reported again. */
 	humanInputReported?: boolean;
+	/** Internal: the pause seq when `prompt()` accepted this input; a Stop after it holds the input (senpi#3811). */
+	observedPauseSeq?: number;
+	/** Internal: called when a newer Stop turned this input into held input instead of a turn. */
+	onHeldByNewerStop?: () => void;
 	/** Where the input sorts among queued inputs if it ends up queued (a replaying client keeps its order). */
 	enqueueOrder?: number;
 	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
@@ -1248,6 +1278,13 @@ export class AgentSession {
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
 	private readonly _humanInputListeners = new Set<(event: HumanInputAdmittedEvent) => void>();
+	private readonly _heldInputs: HeldInputs;
+	private readonly _runHolds: RunHolds;
+	private readonly _resumeEffects = new Map<string, ResumeSessionAnswer>();
+	private _stopInterrupt: StopInterrupt | undefined;
+	private _deliveredHeldInputIds: string[] = [];
+	private readonly _releaseExtras: CustomMessage[] = [];
+	private _releaseExtrasGeneration = 0;
 	private _engineTurnPauseRecorded = false;
 	// The pause warning is shown once per pause: a stream of refused events would otherwise add one line each (senpi#2537).
 	private _engineTurnPauseNotified = false;
@@ -1688,9 +1725,24 @@ export class AgentSession {
 			this._sessionStartEvent.attended === false,
 			(type, data) => this._emitEntryAppended(this.sessionManager.appendCustomEntry(type, data)),
 			(message) => this._extensionRunner.getUIContext().notify(message, "info"),
-			(event) => this._emit(event),
+			(event) => {
+				this._emit(event);
+				if (event.type === "session_paused" || event.type === "session_resumed") this._emitHoldChanged(event);
+			},
 		);
 		this._engineTurnInput = new EngineTurnInput(this._engineTurnHold);
+		this._runHolds = new RunHolds(this._engineTurnHold);
+		for (const entry of this.sessionManager.getEntries()) {
+			if (entry.type !== "custom" || entry.customType !== RESUME_EFFECT_ENTRY) continue;
+			const data = entry.data as { effectId?: unknown; answer?: ResumeSessionAnswer } | undefined;
+			if (typeof data?.effectId === "string" && data.answer !== undefined)
+				this._resumeEffects.set(data.effectId, data.answer);
+		}
+		this._heldInputs = new HeldInputs(this.sessionManager.getEntries(), (type, data) => {
+			const entryId = this.sessionManager.appendCustomEntry(type, data);
+			this._emitEntryAppended(entryId);
+			return entryId;
+		});
 		this._autoTitleSessions = config.autoTitleSessions ?? false;
 
 		const initialModel = this.agent.state.model;
@@ -2009,7 +2061,8 @@ export class AgentSession {
 
 		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
 			try {
-				return await this._emitAfterToolCallHooks(toolCall, args, result, isError);
+				const override = await this._emitAfterToolCallHooks(toolCall, args, result, isError);
+				return markInterrupted(this._stopInterrupt, isError, result.details, override);
 			} finally {
 				this._toolExecutionDepth--;
 			}
@@ -5188,17 +5241,39 @@ export class AgentSession {
 			submittedByCommand: options?.source === "extension",
 		});
 		this._promptsInFlight++;
+		const observedPauseSeq = this._engineTurnHold.currentPauseSeq;
+		let heldByNewerStop = false;
 		try {
-			if ((options?.inputOrigin ?? inputOriginOf(options?.source)) === "person") this._beginPersonInput();
+			const origin = options?.inputOrigin ?? inputOriginOf(options?.source);
+			if (origin === "person" && this._runHolds.inheritedOwner() !== undefined) {
+				// A run-owned pause holds a person's input for the parent's run Resume instead of starting a turn (senpi#3811).
+				emitUserActivity(this, "prompt");
+				this._runHolds.releaseDirectStops();
+				this._heldInputs.hold({ inputId: `prompt-${crypto.randomUUID()}`, revision: 0, text });
+				hold.accepted();
+				options?.promptDisposition?.("handled");
+				options?.preflightResult?.(true);
+				return;
+			}
+			if (origin === "person") this._beginPersonInput();
 			await this._prompt(text, {
 				...options,
+				observedPauseSeq,
+				onHeldByNewerStop: () => {
+					heldByNewerStop = true;
+				},
 				promptDisposition: (disposition) => {
 					hold.accepted();
-					if (disposition === "started" || disposition === "queued")
+					if (!heldByNewerStop && (disposition === "started" || disposition === "queued"))
 						this._engineTurnInput.admit(disposition === "queued", (message) => this.agent.steer(message));
 					options?.promptDisposition?.(disposition);
 				},
 			});
+			if (heldByNewerStop) {
+				// A Stop landed after this input was accepted: it became held input and the released holds come back.
+				this._deliveredHeldInputIds.length = 0;
+				this._engineTurnInput.reject();
+			}
 		} finally {
 			this._promptsInFlight--;
 			// No await unless a release is pending: settling must not delay a prompt's completion.
@@ -5218,7 +5293,8 @@ export class AgentSession {
 		emitUserActivity(this, "prompt");
 		this._deadlineTracker.clearHold();
 		this._engineResumeWindow = false;
-		this._engineTurnInput.begin();
+		this._captureReleaseExtras();
+		this._engineTurnInput.begin({ consumeAtSettlement: this._stopHoldLive() });
 	}
 
 	/**
@@ -5231,7 +5307,16 @@ export class AgentSession {
 		if (this._promptsInFlight > 0 || this._isAgentRunActive || !this.isIdle) return undefined;
 		// Turns deferred by the agent_settled window or the session_start gate still enter prompt() later.
 		if (this._agentSettledDelivery.active || this._extensionRunner.sessionStartTurnsHeld()) return undefined;
-		return this._engineTurnInput.settle((sources) => this._extensionRunner.emitHeldWakesReleased(sources));
+		// Held human input counts as delivered only if no newer Stop aborted the turn that carried it (senpi#3811).
+		const newerStop = this._releaseExtrasGeneration !== this._userAbortGeneration;
+		if (newerStop) this._deliveredHeldInputIds.length = 0;
+		return this._engineTurnInput.settle(
+			async (sources) => {
+				this._heldInputs.consume(this._deliveredHeldInputIds.splice(0));
+				await this._extensionRunner.emitHeldWakesReleased(sources);
+			},
+			{ newerStop },
+		);
 	}
 
 	private _isExtensionCommandText(text: string, options?: PromptOptions): boolean {
@@ -5662,7 +5747,7 @@ export class AgentSession {
 			if (environmentContext) messages.push(environmentContext);
 
 			// Add user message
-			messages.push(...this._engineTurnInput.messages());
+			messages.push(...this._releaseExtras.splice(0), ...this._engineTurnInput.messages());
 			const userContent: (TextContent | ImageContent)[] = userTextContent(expandedText, options?.textBlocks);
 			if (currentImages) {
 				userContent.push(...currentImages);
@@ -5699,6 +5784,22 @@ export class AgentSession {
 			// so make one final admission decision against the complete request.
 			await this._enforceFinalProviderAdmission(messages);
 			throwIfCancelled();
+			if (options.observedPauseSeq !== undefined && this._stopAddedSince(options.observedPauseSeq)) {
+				// A Stop landed after this input was accepted: keep it for the next release (senpi#3811 test 3).
+				this._heldInputs.hold({
+					inputId: options.clientMessageId ?? `prompt-${crypto.randomUUID()}`,
+					revision: 0,
+					text: expandedText,
+				});
+				if (consumedNextTurnMessages !== undefined && consumedNextTurnMessages.length > 0)
+					this._pendingNextTurnMessages = [...consumedNextTurnMessages, ...this._pendingNextTurnMessages];
+				options.onHeldByNewerStop?.();
+				await emitInputDisposition("handled");
+				promptDisposition?.("handled");
+				preflightResult?.(true);
+				messages = undefined;
+				return;
+			}
 			await emitInputDisposition("started");
 		} catch (error) {
 			await emitInputDisposition("rejected");
@@ -6238,7 +6339,8 @@ export class AgentSession {
 			options?.deliverAs !== "nextTurn" &&
 			options?.triggerTurn !== false &&
 			(this.isStreaming || options?.triggerTurn === true) &&
-			this._engineTurnHold.holdsSource(engineWakeSource(message.customType))
+			(this._engineTurnHold.holdsSource(engineWakeSource(message.customType)) ||
+				this._runHolds.holdsWake(message.details))
 		) {
 			this._engineTurnHold.note(engineWakeSource(message.customType), appMessage);
 			deferredTurnClaim?.resolve("finished-without-start");
@@ -6380,8 +6482,80 @@ export class AgentSession {
 
 	/** Explicit user Resume; attachment alone must never call this. */
 	resumeSession(): Promise<void> {
+		return this.beginResume({}).then(({ settled }) => settled);
+	}
+
+	/** Resume and wait until the resumed work has settled (TUI, tests). */
+	async resumeSessionRequest(request: ResumeSessionRequest): Promise<ResumeSessionAnswer> {
+		const { answer, settled } = await this.beginResume(request);
+		await settled;
+		return answer;
+	}
+
+	/**
+	 * Resume after a Stop or an unattended hold (senpi#3811 design 4.9). The answer is ready once the release is
+	 * admitted; `settled` resolves when the resumed work has settled. Every request field is optional.
+	 */
+	async beginResume(request: ResumeSessionRequest): Promise<{ answer: ResumeSessionAnswer; settled: Promise<void> }> {
 		this._humanInputAdmitted("resume");
-		return this._engineTurnRelease.resume(
+		const replayed = request.effectId === undefined ? undefined : this._resumeEffects.get(request.effectId);
+		if (replayed !== undefined) return { answer: { ...replayed, replayed: true }, settled: Promise.resolve() };
+		const result = await this._resumeOnce(request);
+		if (request.effectId !== undefined && result.answer.resumed) {
+			this._resumeEffects.set(request.effectId, result.answer);
+			this._emitEntryAppended(
+				this.sessionManager.appendCustomEntry(RESUME_EFFECT_ENTRY, {
+					effectId: request.effectId,
+					answer: result.answer,
+				}),
+			);
+		}
+		return result;
+	}
+
+	private async _resumeOnce(
+		request: ResumeSessionRequest,
+	): Promise<{ answer: ResumeSessionAnswer; settled: Promise<void> }> {
+		const pauseSeq = this._engineTurnHold.currentPauseSeq;
+		const holds = this._engineTurnHold.holds;
+		const idle = { pauseSeq, turnStarted: false, deliveredNotices: 0, deliveredHeldInputs: 0 };
+		const answered = (answer: ResumeSessionAnswer) => ({ answer, settled: Promise.resolve() });
+		if (holds.length === 0 && !this._engineTurnHold.awaitingInput)
+			return answered({ resumed: false, reason: "not_paused", ...idle });
+		const inherited = this._runHolds.inheritedOwner();
+		if (inherited !== undefined && holds.every((hold) => hold.kind === "inherited_hold"))
+			return answered({
+				resumed: false,
+				reason: "resume_through_parent",
+				parentSessionId: inherited.parentSessionId,
+				...idle,
+			});
+		if (request.expectedSeq !== undefined && request.expectedSeq !== pauseSeq)
+			return answered({ resumed: false, reason: "stale", ...idle });
+		if (request.mode === "release" || inherited !== undefined) {
+			// Only the parent's run Resume releases an inherited hold, so a child resumes no turn of its own.
+			this._engineTurnHold.release(
+				holds.filter((hold) => hold.kind === "session_hold").map((hold) => hold.key),
+				"resume_session",
+			);
+			return answered({ resumed: true, ...idle });
+		}
+		if (request.message !== undefined)
+			this._heldInputs.hold({
+				inputId: `resume-${request.effectId ?? crypto.randomUUID()}`,
+				revision: 0,
+				text: request.message,
+			});
+		const deliveredNotices = this._engineTurnHold.noticeCount;
+		const deliveredHeldInputs = this._heldInputs.pending().length;
+		if (this._stopHoldLive() || this._engineTurnHold.fences.length > 0 || deliveredHeldInputs > 0) {
+			const { settled } = await this._resumeAfterStop();
+			return {
+				answer: { resumed: true, pauseSeq, turnStarted: true, deliveredNotices, deliveredHeldInputs },
+				settled,
+			};
+		}
+		const settled = this._engineTurnRelease.resume(
 			this._engineTurnHold,
 			async (message, admit) => {
 				const generation = this._userAbortGeneration;
@@ -6399,6 +6573,190 @@ export class AgentSession {
 			},
 			(sources) => this._extensionRunner.emitHeldWakesReleased(sources),
 		);
+		return {
+			answer: {
+				resumed: true,
+				pauseSeq,
+				turnStarted: deliveredNotices > 0,
+				deliveredNotices,
+				deliveredHeldInputs: 0,
+			},
+			settled,
+		};
+	}
+
+	/**
+	 * One turn after a Stop: held human input, then notices, then the directive. Resolves once that turn started and
+	 * returns its settlement, which consumes held input and notices only if no newer Stop aborted the turn.
+	 */
+	private async _resumeAfterStop(): Promise<{ settled: Promise<void> }> {
+		const generation = this._userAbortGeneration;
+		const sources = this._engineTurnHold.releaseAll("resume_session");
+		let consume: (() => void) | undefined;
+		await startRunResumeTurn({
+			heldInputs: () => this._heldInputs.pending(),
+			heldWakes: () => this._engineTurnHold.messages(),
+			send: (message) => this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true),
+			turnStarted: () => this._nextTurnStart(),
+			consume: (inputIds, wakeSources) => {
+				consume = () => {
+					this._heldInputs.consume(inputIds);
+					for (const source of wakeSources) this._engineTurnHold.consume(source);
+				};
+			},
+		});
+		const settled = (async () => {
+			await this.waitForIdle();
+			if (generation !== this._userAbortGeneration) {
+				this._engineTurnHold.rejectInput();
+				return;
+			}
+			consume?.();
+			const remaining = this._engineTurnHold.finish();
+			if (!this._engineTurnHold.held)
+				await this._extensionRunner.emitHeldWakesReleased({ ...sources, ...remaining });
+		})();
+		return { settled };
+	}
+
+	/** Human input kept while a run-owned hold blocks turns; idempotent by input id (senpi#3811). */
+	holdInput(input: { inputId: string; revision: number; text: string }): HoldInputResult {
+		return this._heldInputs.hold(input);
+	}
+
+	withdrawHeldInput(inputId: string): boolean {
+		return this._heldInputs.withdraw(inputId);
+	}
+
+	get pausedHeldInputCount(): number {
+		return this._heldInputs.pending().length;
+	}
+
+	/** Before a human input releases a Stop: the hidden directive and held human input ride ahead of the wakes. */
+	private _captureReleaseExtras(): void {
+		if (!this._engineTurnHold.held || this._engineTurnHold.releasing || this._releaseExtras.length > 0) return;
+		if (this._stopHoldLive())
+			this._releaseExtras.push({ role: "custom", ...stopResumeDirective(), timestamp: Date.now() });
+		this._releaseExtras.push(...this._takeHeldInputs());
+	}
+
+	private _takeHeldInputs(): CustomMessage[] {
+		const pending = this._heldInputs.pending();
+		this._deliveredHeldInputIds.push(...pending.map((input) => input.inputId));
+		return pending.map((input) => ({
+			role: "custom",
+			customType: HELD_INPUT_ENTRY,
+			content: input.text,
+			display: true,
+			timestamp: Date.now(),
+		}));
+	}
+
+	/** A parent's Stop reaching this child (senpi#3811): hold every automatic turn until the parent's run Resume. */
+	async pauseForRun(owner: {
+		parentSessionId: string;
+		parentPauseSeq: number;
+		runRef: RunRef;
+	}): Promise<InheritResult> {
+		const result = this._runHolds.inherit(owner);
+		if ("childSeq" in result) await this.abort();
+		return result;
+	}
+
+	async resumeForRun(request: {
+		parentSessionId: string;
+		parentPauseSeq: number;
+		childSeqCutoff: number;
+	}): Promise<ReleaseInheritedResult & { turnId?: string }> {
+		const released = this._runHolds.releaseInherited(request);
+		if (!released.released || released.otherHoldLive || this._engineTurnHold.isHeld()) return released;
+		const turnId = await startRunResumeTurn({
+			heldInputs: () => this._heldInputs.pending(),
+			heldWakes: () => this._engineTurnHold.messages(),
+			send: (message) => this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true),
+			turnStarted: () => this._nextTurnStart(),
+			consume: (inputIds, sources) => {
+				this._heldInputs.consume(inputIds);
+				for (const source of sources) this._engineTurnHold.consume(source);
+			},
+		});
+		return { ...released, turnId };
+	}
+
+	private _pauseState(): { pauseSeq: number; holds: SessionHoldRecord[] } {
+		const holds = this._engineTurnHold.holds.map(({ kind, key, data }) => ({
+			kind,
+			key,
+			...(data === undefined ? {} : { data }),
+		}));
+		return { pauseSeq: this._engineTurnHold.currentPauseSeq, holds };
+	}
+
+	private _emitHoldChanged(event: { type: "session_paused" | "session_resumed"; pauseSeq: number }): void {
+		const change = event.type === "session_paused" ? "paused" : "resumed";
+		void this._extensionRunner
+			.emit({ type: "session_hold_changed", change, ...this._pauseState(), pauseSeq: event.pauseSeq })
+			.catch((error: unknown) => this._sessionLogger.warn("session_hold_changed_failed", { error: String(error) }));
+	}
+
+	private _nextTurnStart(): Promise<string> {
+		return new Promise((resolve) => {
+			const unsubscribe = this.subscribe((event) => {
+				if (event.type !== "agent_start") return;
+				unsubscribe();
+				resolve(String(this.externalAdmission.turnEpoch));
+			});
+		});
+	}
+
+	noteAutomaticInput(text: string): boolean {
+		const userHold = this._engineTurnHold.holds.some(
+			(hold) => hold.kind === "session_hold" || hold.kind === "inherited_hold",
+		);
+		if (!userHold) return false;
+		const message: CustomMessage = {
+			role: "custom",
+			customType: "rpc-automatic-input",
+			content: text,
+			display: true,
+			timestamp: Date.now(),
+		};
+		this._engineTurnHold.note(`rpc-input:${crypto.randomUUID()}`, message);
+		return true;
+	}
+
+	private _stopAddedSince(observedPauseSeq: number): boolean {
+		return this._engineTurnHold.holds.some(
+			(hold) =>
+				hold.kind === "session_hold" &&
+				((hold.data as { localSeq?: number } | undefined)?.localSeq ?? 0) > observedPauseSeq,
+		);
+	}
+
+	private _stopHoldLive(): boolean {
+		return this._engineTurnHold.holds.some((hold) => hold.kind === "session_hold");
+	}
+
+	get pauseView(): {
+		pauseSeq: number;
+		records: { kind: string; key: string; runRef?: { kind: string; id: string }; parentSessionId?: string }[];
+	} {
+		return {
+			pauseSeq: this._engineTurnHold.currentPauseSeq,
+			records: this._engineTurnHold.holds.map(({ kind, key, data }) => {
+				const value = (data ?? {}) as { runRef?: { kind: string; id: string }; parentSessionId?: string };
+				return {
+					kind,
+					key,
+					...(value.runRef === undefined ? {} : { runRef: value.runRef }),
+					...(value.parentSessionId === undefined ? {} : { parentSessionId: value.parentSessionId }),
+				};
+			}),
+		};
+	}
+
+	get runPaused(): boolean {
+		return this._engineTurnHold.fences.length > 0;
 	}
 
 	get paused(): boolean {
@@ -6900,9 +7258,21 @@ export class AgentSession {
 		return this._resourceLoader;
 	}
 
+	/** A user Stop: hold automatic turns until human input or resume_session, then stop the running turn (senpi#3811). */
+	async stop(): Promise<void> {
+		this._runHolds.stamp();
+		this._stopInterrupt = { pauseSeq: this._engineTurnHold.currentPauseSeq, at: new Date().toISOString() };
+		try {
+			await this.abort();
+		} finally {
+			this._stopInterrupt = undefined;
+		}
+	}
+
 	/**
 	 * Abort current operation and wait for agent to become idle.
 	 */
+
 	async abort(options?: { readonly cause?: AgentAbortCause }): Promise<void> {
 		// The first named cause wins until the `agent_end` it explains is emitted (or a new run starts):
 		// a plain abort racing a replacement's teardown never erases the replacement's cause.
@@ -10113,9 +10483,12 @@ export class AgentSession {
 				isIdle: () => this.isIdle,
 				engineTurnsHeld: () => this._engineTurnHold.holdsSource("goal"),
 				noteHeldWake: (source) => this._engineTurnHold.note(source),
+				getPauseState: () => this._pauseState(),
+				fenceRun: (runRef) => this._runHolds.fence(runRef),
 				questionInput: () => {
 					this._humanInputAdmitted("answer");
-					this._engineTurnInput.begin();
+					this._captureReleaseExtras();
+					this._engineTurnInput.begin({ consumeAtSettlement: this._stopHoldLive() });
 					this._engineResumeWindow = false;
 					this._personAnswerPending = true;
 					// The answer's follow-on (if any) enters prompt() synchronously after this; settle once it has.

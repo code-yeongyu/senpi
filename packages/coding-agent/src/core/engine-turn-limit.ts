@@ -2,6 +2,7 @@ import { CONTINUE_FROM_LEAF_CUSTOM_TYPE } from "./continue-from-leaf.ts";
 import { MANUAL_CONTINUE_CUSTOM_TYPE } from "./manual-continue.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
+import { STOP_RESUME_CUSTOM_TYPE } from "./stop-resume-directive.ts";
 
 export const MAX_ENGINE_TURNS_PER_USER_INPUT = 150;
 export const MAX_ENGINE_TURNS_PER_RESUME_WINDOW = 8;
@@ -45,7 +46,11 @@ export function engineTurnLimitNotice(stop: EngineTurnStop): string {
 
 /** A `.` manual continue or a continue-from-leaf is the user's own request, not an automatic turn. */
 export function isUserDirectedTurn(customType: string): boolean {
-	return customType === MANUAL_CONTINUE_CUSTOM_TYPE || customType === CONTINUE_FROM_LEAF_CUSTOM_TYPE;
+	return (
+		customType === MANUAL_CONTINUE_CUSTOM_TYPE ||
+		customType === CONTINUE_FROM_LEAF_CUSTOM_TYPE ||
+		customType === STOP_RESUME_CUSTOM_TYPE
+	);
 }
 
 function isUserMessage(entry: SessionEntry): boolean {

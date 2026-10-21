@@ -1,3 +1,22 @@
+## 2026-10-21 - A user Stop pauses the goal with the session (senpi#3811)
+
+### What changed
+
+- `index.ts`: a user-aborted turn while the session holds a `session_hold` (a user Stop) sets the goal to `paused` and records `goal-stop-paused`; a plain interrupt with no Stop still blocks it with `user interrupted the turn`. At the next `agent_end` after the Stop is released (a human message or Resume), a goal the Stop paused becomes `active` again and records `goal-stop-resumed`.
+- `stop-pause.ts`: reads the session's holds through `ctx.getPauseState()` and the two markers. A goal paused with `/goal pause` never resumes this way.
+
+### Why
+
+After a Stop the goal ended blocked, so resuming the session did not resume the goal. Stop now pauses the work as a whole and a message or Resume continues it.
+
+### Why an extension could not handle it
+
+This is the goal builtin; it uses the public `ctx.getPauseState()` added in the same change.
+
+### Expected merge conflict zones
+
+The two `user interrupted the turn` branches (`agent_end`, `session_abort`) in `index.ts`.
+
 ## 2026-10-21 - Revalidate held goal continuations before charging (senpi#3853)
 
 ### What changed

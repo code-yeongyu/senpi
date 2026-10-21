@@ -72,8 +72,11 @@ export function startFakeModelServer({ port = 0, turns = [{ text: "OK" }] } = {}
 			}
 
 			const streamId = callIndex;
-			const turn = turns[Math.min(callIndex, turns.length - 1)] || { text: "OK" };
-			callIndex++;
+			// Interactive sessions auto-title their first prompts with a side request; answering it here keeps the
+			// scripted turns aligned with the agent's own turns.
+			const titleRequest = JSON.stringify(body.messages?.[0] ?? body.system ?? body.instructions ?? "").includes("Generate a concise title");
+			const turn = titleRequest ? { text: "<title>QA session</title>" } : turns[Math.min(callIndex, turns.length - 1)] || { text: "OK" };
+			if (!titleRequest) callIndex++;
 			const modelId = body.model || "mock";
 
 			if (turn.error) return sendProviderError(res, turn.error);
