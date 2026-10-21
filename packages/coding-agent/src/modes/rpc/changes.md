@@ -2,19 +2,19 @@
 
 ### What changed
 
-`connection-handler.ts` fixes a connection's `interactive_user` and `task_parent` capabilities at their first declaration. `abort`/`interrupt` accept `intent: "stop"` from interactive connections only (`stop_requires_interactive_client` otherwise). New commands `hold_input` (interactive connections, or the task parent relaying run guidance into the child it paused, checked by `parentSessionId`), `withdraw_held_input` (`held-input-commands.ts`), `pause_for_run` and `resume_for_run` (`run-hold-commands.ts`, task-parent connections only); field checks live in `pause-command-validation.ts`. `get_state` reports `paused`, `pausedNoticeCount`, `pausedHeldInputCount` and `runPaused`.
+- `connection-handler.ts` fixes a connection's `interactive_user` and `task_parent` capabilities at their first declaration. `abort`/`interrupt` accept `intent: "stop"` from interactive connections only (`stop_requires_interactive_client` otherwise). New commands `hold_input` (interactive connections, or the task parent relaying run guidance into the child it paused, checked by `parentSessionId`), `withdraw_held_input` (`held-input-commands.ts`), `pause_for_run` and `resume_for_run` (`run-hold-commands.ts`, task-parent connections only); field checks live in `pause-command-validation.ts`. `get_state` reports `paused`, `pausedNoticeCount`, `pausedHeldInputCount` and `runPaused`.
 
 ### Why
 
-The desktop and omo's runner need to say who stopped a session and to pause and resume task children for their parent's run.
+- The desktop and omo's runner need to say who stopped a session and to pause and resume task children for their parent's run.
 
 ### Why an extension could not handle it
 
-Connection roles and command dispatch are core RPC.
+- Connection roles and command dispatch are core RPC.
 
 ### Expected merge conflict zones
 
-The `set_client_info` and command switch in `connection-handler.ts`; the command and response unions in `rpc-types.ts`.
+- The `set_client_info` and command switch in `connection-handler.ts`; the command and response unions in `rpc-types.ts`.
 
 ## 2026-10-21 - interactive_user connection role (senpi#3811)
 
