@@ -274,7 +274,7 @@ import type {
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
 import { createUserActivitySource, emitUserActivity, type UserActivityKind } from "./extensions/user-activity.ts";
 import { deliveryIdOf, ExternalAdmission } from "./external-admission.ts";
-import { HELD_INPUT_ENTRY, HeldInputs, type HoldInputResult, heldInputHistory } from "./held-inputs.ts";
+import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, heldInputHistory } from "./held-inputs.ts";
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputOriginOf } from "./input-origin.ts";
 import { markInterrupted, type StopInterrupt } from "./interrupted-tool-result.ts";
@@ -1102,8 +1102,6 @@ export interface PromptOptions extends ClientMessageIdentity {
 	observedPauseSeq?: number;
 	/** Internal: called when a newer Stop turned this input into held input instead of a turn. */
 	onHeldByNewerStop?: () => void;
-	/** Internal: a run-owned pause holds this person's prepared input for the parent's run Resume (senpi#3811). */
-	holdForRun?: boolean;
 	/** Where the input sorts among queued inputs if it ends up queued (a replaying client keeps its order). */
 	enqueueOrder?: number;
 	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
@@ -5255,15 +5253,17 @@ export class AgentSession {
 		let heldByNewerStop = false;
 		try {
 			const origin = options?.inputOrigin ?? inputOriginOf(options?.source);
-			// A run-owned pause holds a person's prepared input for the parent's run Resume instead of a turn (senpi#3811).
-			const holdForRun = origin === "person" && this._runHolds.inheritedOwner() !== undefined;
-			if (holdForRun) {
-				emitUserActivity(this, "prompt");
-				this._runHolds.releaseDirectStops();
-			} else if (origin === "person") this._beginPersonInput();
+			if (origin === "person" && this._runHolds.inheritedOwner() !== undefined) {
+				// A run-owned pause holds every person input before anything runs, a "." or a command included (senpi#3811).
+				this._holdForRun(text, options);
+				hold.accepted();
+				options?.promptDisposition?.("handled");
+				options?.preflightResult?.(true);
+				return;
+			}
+			if (origin === "person") this._beginPersonInput();
 			await this._prompt(text, {
 				...options,
-				holdForRun,
 				observedPauseSeq,
 				onHeldByNewerStop: () => {
 					heldByNewerStop = true;
@@ -5323,6 +5323,28 @@ export class AgentSession {
 			},
 			{ newerStop },
 		);
+	}
+
+	/**
+	 * Hold a person's raw input for the parent's run Resume under its client id, so a replay is held once; its
+	 * commands, skills and templates run when it is delivered. The child's own Stop goes only once the input is held.
+	 */
+	private _holdForRun(text: string, options: PromptOptions | undefined): void {
+		if (options?.signal?.aborted) {
+			const error = new Error("Prompt cancelled before acceptance");
+			error.name = "AbortError";
+			throw error;
+		}
+		emitUserActivity(this, "prompt");
+		const images = options?.images;
+		const held = this._heldInputs.hold({
+			inputId: options?.clientMessageId ?? `prompt-${crypto.randomUUID()}`,
+			revision: 0,
+			text,
+			...(images === undefined || images.length === 0 ? {} : { images }),
+			...((options?.expandPromptTemplates ?? true) ? { prepare: true as const } : {}),
+		});
+		if (held.kind === "held") this._runHolds.releaseDirectStops();
 	}
 
 	/** Hold a person's prepared input (expanded text and images) under its client id, so a replay is held once. */
@@ -5619,14 +5641,6 @@ export class AgentSession {
 				}
 			}
 			titlePrompt = options?.sessionTitlePrompt === false ? undefined : (options?.sessionTitlePrompt ?? text);
-			if (options.holdForRun === true) {
-				this._holdPreparedInput(expandedText, currentImages, options);
-				emitPendingCommandInvocation();
-				await emitInputDisposition("handled");
-				promptDisposition?.("handled");
-				preflightResult?.(true);
-				return;
-			}
 
 			// If streaming, queue via steer() or followUp() based on option
 			if (this.isStreaming) {
@@ -6554,6 +6568,8 @@ export class AgentSession {
 			return answered({ resumed: false, reason: "stale", ...idle });
 		if (request.mode === "release" || inherited !== undefined) {
 			// Only the parent's run Resume releases an inherited hold, so a child resumes no turn of its own.
+			// A person's resume attends the session like their input does, so an unattended hold it frees stays freed.
+			this._engineTurnHold.attend();
 			this._engineTurnHold.release(
 				holds.filter((hold) => hold.kind === "session_hold" || hold.kind === "unattended").map((hold) => hold.key),
 				"resume_session",
@@ -6626,10 +6642,12 @@ export class AgentSession {
 	}
 
 	/** The resume turn both resume paths start; held input and notices are consumed only if no newer Stop aborted it. */
-	private _startResumeTurn(): ReturnType<typeof startRunResumeTurn> {
+	private async _startResumeTurn(): ReturnType<typeof startRunResumeTurn> {
 		const generation = this._userAbortGeneration;
+		await this._takeHeldCommands();
 		return startRunResumeTurn({
-			heldInputs: () => this._heldInputs.pending(),
+			heldInputs: () =>
+				this._heldInputs.pending().map((input) => ({ ...input, text: this._preparedHeldText(input) })),
 			heldWakes: () => this._engineTurnHold.messages(),
 			send: (message) => this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true),
 			turnStarted: (until) => this._nextTurnStart(until),
@@ -6665,13 +6683,44 @@ export class AgentSession {
 		this._releaseExtras.push(...this._takeHeldInputs());
 	}
 
+	/**
+	 * Held input is prepared when delivered, not when held (senpi#3811). Takes the held extension commands and
+	 * manual-continue "." inputs (the delivering turn continues the work itself) out of custody now, and returns the
+	 * run of those commands in the order they were typed; the run reports a failure instead of rejecting.
+	 */
+	private _takeHeldCommands(): Promise<void> {
+		const commands: string[] = [];
+		for (const input of this._heldInputs.pending()) {
+			if (input.prepare !== true) continue;
+			const command = this._isExtensionCommandText(input.text);
+			const hasMessages = this.agent.state.messages.length > 0;
+			const hasImages = (input.images?.length ?? 0) > 0;
+			if (!command && !isManualContinueSubmission({ text: input.text, hasMessages, hasImages })) continue;
+			this._heldInputs.consume([input.inputId]);
+			if (command) commands.push(input.text);
+		}
+		return (async () => {
+			for (const text of commands) await this._tryExecuteExtensionCommand(text);
+		})().catch((error: unknown) => this._sessionLogger.warn("held_command_failed", { error: String(error) }));
+	}
+
+	/** A held person input's text as the model receives it: skills and prompt templates expanded. */
+	private _preparedHeldText(input: HeldInput): string {
+		if (input.prepare !== true) return input.text;
+		return expandPromptTemplateWithMetadata(this._expandSkillCommand(input.text), [...this.promptTemplates]).text;
+	}
+
 	private _takeHeldInputs(): CustomMessage[] {
+		void this._takeHeldCommands();
 		const pending = this._heldInputs.pending();
 		this._deliveredHeldInputIds.push(...pending.map((input) => input.inputId));
 		return pending.map((input) => ({
 			role: "custom",
 			customType: HELD_INPUT_ENTRY,
-			content: input.images === undefined ? input.text : [{ type: "text", text: input.text }, ...input.images],
+			content:
+				input.images === undefined
+					? this._preparedHeldText(input)
+					: [{ type: "text", text: this._preparedHeldText(input) }, ...input.images],
 			display: true,
 			timestamp: Date.now(),
 		}));

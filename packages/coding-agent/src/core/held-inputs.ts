@@ -11,6 +11,8 @@ export interface HeldInput {
 	readonly revision: number;
 	readonly text: string;
 	readonly images?: ImageContent[];
+	/** A person's input held before preparation: its commands, skills and templates run when it is delivered. */
+	readonly prepare?: true;
 	readonly entryId: string;
 }
 
@@ -34,7 +36,7 @@ export const heldInputHistory: HistoryReducer<SessionEntry[]> = {
 	},
 };
 
-type HeldInputData = { inputId: string; revision: number; text: string; images?: ImageContent[] };
+type HeldInputData = { inputId: string; revision: number; text: string; images?: ImageContent[]; prepare?: true };
 type SettledInput = { inputId: string; revision: number };
 
 function isHeldInputData(value: unknown): value is HeldInputData {
@@ -44,6 +46,7 @@ function isHeldInputData(value: unknown): value is HeldInputData {
 		typeof data.inputId === "string" &&
 		typeof data.revision === "number" &&
 		typeof data.text === "string" &&
+		(data.prepare === undefined || data.prepare === true) &&
 		(data.images === undefined || (Array.isArray(data.images) && data.images.every(isImageContent)))
 	);
 }

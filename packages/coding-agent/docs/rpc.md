@@ -62,8 +62,9 @@ turn runs after it. Every field below is optional, so the bare form keeps workin
 "stale"` and changes nothing. `mode: "release"` releases the Stop and an `unattended` hold without starting a turn
 (the notices ride the next human message). `message` is delivered first in the resumed turn. The answer comes once the
 resumed turn has started, or with `turnStarted: false` once it is clear no turn starts (for example a newer Stop landed
-while the turn was admitted); held input and notices stay held until a turn that no newer Stop aborted delivers them. A repeated `effectId` answers the recorded outcome
-with `replayed: true` and resumes nothing again, also after a reopen. A session with nothing held answers
+while the turn was admitted); held input and notices stay held until a turn that no newer Stop aborted delivers them.
+A repeated `effectId` answers the recorded outcome with `replayed: true` and resumes nothing again, also after a
+reopen. A session with nothing held answers
 `not_paused`; a task child held only for its parent's run answers `resume_through_parent` with `parentSessionId`.
 
 ```json
@@ -2766,10 +2767,10 @@ reports `paused`, `pausedNoticeCount` and `pausedHeldInputCount`.
 Hold human input for a paused session and deliver it at the start of the turn that resumes it. An interactive
 connection may hold input. A `task_parent` connection may relay a person's run guidance into the child it paused for
 that run: it sends `parentSessionId` (the session that sent `pause_for_run`), and another parent is refused with
-`wrong_parent`. `origin` is optional; when present it must be `"human"`. Any other connection is refused with `hold_input_requires_interactive_client`.
-Idempotent by `inputId`: the same id and `revision` answers the existing entry, an id that was
-already delivered answers `alreadyDelivered: true`, and the same id with another revision is refused with
-`input_id_conflict`.
+`wrong_parent`. `origin` is optional; when present it must be `"human"`. Any other connection is refused with
+`hold_input_requires_interactive_client`. Idempotent by `inputId`: the same id and `revision` answers the existing
+entry, an id that was already delivered answers `alreadyDelivered: true`, and the same id with another revision is
+refused with `input_id_conflict`.
 
 ```json
 {"type": "hold_input", "inputId": "g-1", "revision": 1, "text": "Use the staging database"}
