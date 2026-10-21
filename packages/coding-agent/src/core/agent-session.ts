@@ -6569,9 +6569,9 @@ export class AgentSession {
 		const deliveredNotices = this._engineTurnHold.noticeCount;
 		const deliveredHeldInputs = this._heldInputs.pending().length;
 		if (this._stopHoldLive() || this._engineTurnHold.fences.length > 0 || deliveredHeldInputs > 0) {
-			const { settled } = await this._resumeAfterStop();
+			const { turnStarted, settled } = await this._resumeAfterStop();
 			return {
-				answer: { resumed: true, pauseSeq, turnStarted: true, deliveredNotices, deliveredHeldInputs },
+				answer: { resumed: true, pauseSeq, turnStarted, deliveredNotices, deliveredHeldInputs },
 				settled,
 			};
 		}
@@ -6606,49 +6606,45 @@ export class AgentSession {
 	}
 
 	/**
-	 * One turn after a Stop: held human input, then notices, then the directive. Resolves once that turn started and
-	 * returns its settlement, which consumes held input and notices only if no newer Stop aborted the turn.
+	 * One turn after a Stop: held human input, then notices, then the directive. Resolves once that turn started (or
+	 * once its send settled without one) and returns its settlement, which finishes the release only if the shared
+	 * resume settlement delivered the turn.
 	 */
-	private async _resumeAfterStop(): Promise<{ settled: Promise<void> }> {
-		const generation = this._userAbortGeneration;
+	private async _resumeAfterStop(): Promise<{ turnStarted: boolean; settled: Promise<void> }> {
 		const sources = this._engineTurnHold.releaseAll("resume_session");
-		let consume: (() => void) | undefined;
-		const { sent } = await startRunResumeTurn({
-			heldInputs: () => this._heldInputs.pending(),
-			heldWakes: () => this._engineTurnHold.messages(),
-			send: (message) => this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true),
-			turnStarted: () => this._nextTurnStart(),
-			consume: (inputIds, wakeSources) => {
-				consume = () => {
-					this._heldInputs.consume(inputIds);
-					for (const source of wakeSources) this._engineTurnHold.consume(source);
-				};
-			},
-		});
+		const { turnId, delivered } = await this._startResumeTurn();
 		const settled = (async () => {
-			await this.waitForIdle();
-			if (generation !== this._userAbortGeneration) {
+			if (!(await delivered)) {
 				this._engineTurnHold.rejectInput();
 				return;
 			}
-			// Idle can arrive before the send that started the turn has resolved: consume only once it was sent.
-			try {
-				await sent;
-			} catch (error) {
-				this._sessionLogger.warn("resume_turn_send_failed", { error: String(error) });
-				this._engineTurnHold.rejectInput();
-				return;
-			}
-			consume?.();
 			const remaining = this._engineTurnHold.finish();
 			if (!this._engineTurnHold.held)
 				await this._extensionRunner.emitHeldWakesReleased({ ...sources, ...remaining });
 		})();
-		return { settled };
+		return { turnStarted: turnId !== undefined, settled };
+	}
+
+	/** The resume turn both resume paths start; held input and notices are consumed only if no newer Stop aborted it. */
+	private _startResumeTurn(): ReturnType<typeof startRunResumeTurn> {
+		const generation = this._userAbortGeneration;
+		return startRunResumeTurn({
+			heldInputs: () => this._heldInputs.pending(),
+			heldWakes: () => this._engineTurnHold.messages(),
+			send: (message) => this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true),
+			turnStarted: (until) => this._nextTurnStart(until),
+			idle: () => this.waitForIdle(),
+			current: () => generation === this._userAbortGeneration,
+			consume: (inputIds, sources) => {
+				this._heldInputs.consume(inputIds);
+				for (const source of sources) this._engineTurnHold.consume(source);
+			},
+			sendFailed: (error) => this._sessionLogger.warn("resume_turn_send_failed", { error: String(error) }),
+		});
 	}
 
 	/** Human input kept while a run-owned hold blocks turns; idempotent by input id (senpi#3811). */
-	holdInput(input: { inputId: string; revision: number; text: string }): HoldInputResult {
+	holdInput(input: { inputId: string; revision: number; text: string; images?: ImageContent[] }): HoldInputResult {
 		return this._heldInputs.hold(input);
 	}
 
@@ -6699,18 +6695,11 @@ export class AgentSession {
 	}): Promise<ReleaseInheritedResult & { turnId?: string }> {
 		const released = this._runHolds.releaseInherited(request);
 		if (!released.released || released.otherHoldLive || this._engineTurnHold.isHeld()) return released;
-		const { turnId, sent } = await startRunResumeTurn({
-			heldInputs: () => this._heldInputs.pending(),
-			heldWakes: () => this._engineTurnHold.messages(),
-			send: (message) => this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true),
-			turnStarted: () => this._nextTurnStart(),
-			consume: (inputIds, sources) => {
-				this._heldInputs.consume(inputIds);
-				for (const source of sources) this._engineTurnHold.consume(source);
-			},
-		});
-		sent.catch((error: unknown) => this._sessionLogger.warn("run_resume_send_failed", { error: String(error) }));
-		return { ...released, turnId };
+		const { turnId, delivered } = await this._startResumeTurn();
+		delivered.catch((error: unknown) =>
+			this._sessionLogger.warn("run_resume_settle_failed", { error: String(error) }),
+		);
+		return turnId === undefined ? released : { ...released, turnId };
 	}
 
 	private _pauseState(): { pauseSeq: number; holds: SessionHoldRecord[] } {
@@ -6729,12 +6718,16 @@ export class AgentSession {
 			.catch((error: unknown) => this._sessionLogger.warn("session_hold_changed_failed", { error: String(error) }));
 	}
 
-	private _nextTurnStart(): Promise<string> {
+	private _nextTurnStart(until: Promise<void>): Promise<string | undefined> {
 		return new Promise((resolve) => {
 			const unsubscribe = this.subscribe((event) => {
 				if (event.type !== "agent_start") return;
 				unsubscribe();
 				resolve(String(this.externalAdmission.turnEpoch));
+			});
+			void until.then(() => {
+				unsubscribe();
+				resolve(undefined);
 			});
 		});
 	}

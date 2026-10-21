@@ -1,3 +1,4 @@
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { CustomMessage } from "./messages.ts";
 import { STOP_RESUME_CUSTOM_TYPE, stopResumeDirective } from "./stop-resume-directive.ts";
 
@@ -5,11 +6,20 @@ type Message = Pick<CustomMessage, "customType" | "content" | "display" | "detai
 type Part = Extract<CustomMessage["content"], readonly unknown[]>[number];
 
 export interface RunResumePorts {
-	readonly heldInputs: () => readonly { readonly inputId: string; readonly text: string }[];
+	readonly heldInputs: () => readonly {
+		readonly inputId: string;
+		readonly text: string;
+		readonly images?: readonly ImageContent[];
+	}[];
 	readonly heldWakes: () => readonly { readonly source: string; readonly message: Message }[];
 	readonly send: (message: Message) => Promise<void>;
-	readonly turnStarted: () => Promise<string>;
+	/** The next turn's id once it starts, or undefined once `until` settles first; it stops listening either way. */
+	readonly turnStarted: (until: Promise<void>) => Promise<string | undefined>;
+	readonly idle: () => Promise<void>;
+	/** False once a Stop newer than the one this resume released has landed. */
+	readonly current: () => boolean;
 	readonly consume: (inputIds: readonly string[], sources: readonly string[]) => void;
+	readonly sendFailed: (error: unknown) => void;
 }
 
 function partsOf(content: Message["content"]): Part[] {
@@ -17,29 +27,44 @@ function partsOf(content: Message["content"]): Part[] {
 }
 
 /**
- * The child's turn after its parent's run Resume (senpi#3811), as ONE message so it is one turn: held human input
- * first, then the wakes held while paused, then the directive naming the interrupted turn. Answers with the started
- * turn's id once it is running, and `sent`, which settles once the message was sent and its held input and wakes were
- * handed to `consume` (it rejects when the send failed, and then consumes nothing).
+ * The turn after a Stop or a parent's run Resume (senpi#3811), as ONE message so it is one turn: held human input
+ * first, then the wakes held while paused, then the directive naming the interrupted turn. Answers once that turn
+ * started, or once the send settled without starting one (a newer Stop during admission), so a resume never waits on
+ * a turn that will not come. `delivered` is the one settlement rule both resume paths share: it hands the held input
+ * and wakes to `consume` only if the turn started, its send succeeded, and no newer Stop aborted it.
  */
-export async function startRunResumeTurn(ports: RunResumePorts): Promise<{ turnId: string; sent: Promise<void> }> {
+export async function startRunResumeTurn(
+	ports: RunResumePorts,
+): Promise<{ turnId: string | undefined; delivered: Promise<boolean> }> {
 	const inputs = ports.heldInputs();
 	const wakes = ports.heldWakes();
 	const content: Part[] = [
-		...inputs.map(
-			(input): Part => ({ type: "text", text: `The user wrote while the run was paused:\n${input.text}` }),
-		),
+		...inputs.flatMap((input): Part[] => [
+			{ type: "text", text: `The user wrote while the run was paused:\n${input.text}` },
+			...(input.images ?? []),
+		]),
 		...wakes.flatMap((wake) => partsOf(wake.message.content)),
 		...partsOf(stopResumeDirective().content),
 	];
-	const started = ports.turnStarted();
+	const sendSettled = Promise.withResolvers<void>();
+	const started = ports.turnStarted(sendSettled.promise);
 	const sending = ports.send({ customType: STOP_RESUME_CUSTOM_TYPE, content, display: inputs.length > 0 });
-	const sent = sending.then(() =>
+	sending.then(sendSettled.resolve, sendSettled.resolve);
+	const turnId = await started;
+	const delivered = (async () => {
+		await ports.idle();
+		try {
+			await sending;
+		} catch (error) {
+			ports.sendFailed(error);
+			return false;
+		}
+		if (turnId === undefined || !ports.current()) return false;
 		ports.consume(
 			inputs.map((input) => input.inputId),
 			wakes.map((wake) => wake.source),
-		),
-	);
-	const turnId = await started;
-	return { turnId, sent };
+		);
+		return true;
+	})();
+	return { turnId, delivered };
 }
