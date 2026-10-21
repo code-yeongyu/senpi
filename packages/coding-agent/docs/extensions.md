@@ -2075,6 +2075,28 @@ pi.sendMessage({
   - `"followUp"` - Waits for agent to finish. Delivered only when agent has no more tool calls.
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
 - `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`). Requested from a `session_start` handler, the turn starts once every extension's `session_start` handler has returned.
+- `items` - Make the message an itemized batch: one `{ itemId, producer, runRef?, content?, details? }` per wake it
+  carries. The call then returns a promise of one receipt per item, `{ itemId, entryId, disposition, noticeId? }`.
+  Admission is atomic: if a pause applies to the batch or to any item (a Stop, a parent's run pause, an unattended
+  hold, or a fence on that item's `runRef`), every item is stored as its own notice entry (`notice_persisted`, with
+  the item's own `content` and `details`, or the batch content when an item has none); otherwise the batch is
+  delivered as one message and every receipt names that message's entry (`message_persisted`). A held item's notice
+  is delivered on its own when the session resumes, and a later wake from the same producer never replaces it.
+  Without `items`, `sendMessage` returns nothing, as before.
+
+```typescript
+const receipts = await pi.sendMessage(
+  { customType: "my-coordinator:wake", content: "Task A finished\n\nTask B finished", display: false },
+  {
+    triggerTurn: true,
+    deliverAs: "followUp",
+    items: [
+      { itemId: "a", producer: "task", runRef: { kind: "task", id: "t1" }, content: "Task A finished" },
+      { itemId: "b", producer: "task", content: "Task B finished" },
+    ],
+  },
+);
+```
 
 ### pi.sendUserMessage(content, options?)
 

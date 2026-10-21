@@ -1,7 +1,8 @@
 import type { CustomMessage } from "./messages.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
-type HeldWake = { noticeIds: string[]; message?: CustomMessage };
+/** `items` holds each itemized notice's own payload by notice id; no later wake replaces one (senpi#3811). */
+type HeldWake = { noticeIds: string[]; message?: CustomMessage; items: Map<string, CustomMessage> };
 interface HeldNotice {
 	noticeId: string;
 	producer: string;
@@ -11,17 +12,22 @@ interface HeldNotice {
 	text: string;
 	action: "resume_session";
 	message?: CustomMessage;
+	itemId?: string;
+	runRef?: unknown;
 }
 
-/** Durable notice custody, retaining only the latest model payload for each source. */
+/**
+ * Durable notice custody. A plain wake keeps only the latest model payload of its source; an itemized notice keeps
+ * its own payload and is delivered on its own.
+ */
 export class EngineTurnHoldNotices {
 	private wakes: Record<string, HeldWake> = Object.create(null);
-	private readonly append: (type: string, data: unknown) => void;
+	private readonly append: (type: string, data: unknown) => unknown;
 	private readonly warn: (error: unknown) => void;
 
 	constructor(
 		entries: readonly SessionEntry[],
-		append: (type: string, data: unknown) => void,
+		append: (type: string, data: unknown) => unknown,
 		warn: (error: unknown) => void,
 	) {
 		this.append = append;
@@ -32,10 +38,7 @@ export class EngineTurnHoldNotices {
 				this.remember(entry.data as HeldNotice);
 			} else if (entry.customType === "session-notices-consumed") {
 				const ids = new Set((entry.data as { noticeIds: string[] }).noticeIds);
-				for (const [source, wake] of Object.entries(this.wakes)) {
-					wake.noticeIds = wake.noticeIds.filter((id) => !ids.has(id));
-					if (wake.noticeIds.length === 0) delete this.wakes[source];
-				}
+				for (const [source, wake] of Object.entries(this.wakes)) this.forget(source, wake, ids);
 			}
 		}
 	}
@@ -77,26 +80,48 @@ export class EngineTurnHoldNotices {
 		return data.noticeId;
 	}
 
+	/**
+	 * Store one item of an itemized batch as its own notice entry (senpi#3811 design 4.5). Unlike `note`, a write
+	 * that fails throws and keeps nothing, so the sender keeps the item instead of trusting a receipt.
+	 */
+	noteItem(
+		source: string,
+		pauseSeq: number,
+		message: CustomMessage,
+		item: { readonly itemId: string; readonly runRef?: unknown },
+		stopped = false,
+	): { noticeId: string; entryId: string } {
+		const data: HeldNotice = {
+			noticeId: crypto.randomUUID(),
+			producer: source,
+			pauseSeq,
+			at: new Date().toISOString(),
+			heldCount: this.noticeCount + 1,
+			text: this.noticeText(this.noticeCount + 1, source, stopped),
+			action: "resume_session",
+			message,
+			itemId: item.itemId,
+			...(item.runRef === undefined ? {} : { runRef: item.runRef }),
+		};
+		const entryId = this.append("session-notice", data);
+		if (typeof entryId !== "string") throw new Error("the notice entry was not written");
+		this.remember(data);
+		return { noticeId: data.noticeId, entryId };
+	}
+
 	messages(): Array<{ source: string; noticeIds: readonly string[]; message: CustomMessage }> {
 		return Object.entries(this.wakes).flatMap(([source, wake]) => {
-			if (source === "goal" || !wake.message) return [];
+			const items = [...wake.items].map(([noticeId, message]) => ({ source, noticeIds: [noticeId], message }));
+			const noticeIds = wake.noticeIds.filter((id) => !wake.items.has(id));
+			if (source === "goal" || !wake.message || noticeIds.length === 0) return items;
 			const message = wake.message;
-			const noticeIds = [...wake.noticeIds];
-			if (source !== "monitor") return [{ source, noticeIds, message }];
-			const prefix = `${wake.noticeIds.length} automatic monitor wakes held. Latest event:\n`;
-			return [
-				{
-					source,
-					noticeIds,
-					message: {
-						...message,
-						content:
-							typeof message.content === "string"
-								? prefix + message.content
-								: [{ type: "text" as const, text: prefix }, ...message.content],
-					},
-				},
-			];
+			if (source !== "monitor") return [{ source, noticeIds, message }, ...items];
+			const prefix = `${noticeIds.length} automatic monitor wakes held. Latest event:\n`;
+			const content =
+				typeof message.content === "string"
+					? prefix + message.content
+					: [{ type: "text" as const, text: prefix }, ...message.content];
+			return [{ source, noticeIds, message: { ...message, content } }, ...items];
 		});
 	}
 
@@ -108,21 +133,31 @@ export class EngineTurnHoldNotices {
 		const noticeIds = wake.noticeIds.filter((id) => delivered.has(id));
 		if (noticeIds.length === 0) return [];
 		this.append("session-notices-consumed", { noticeIds, pauseSeq });
-		wake.noticeIds = wake.noticeIds.filter((id) => !delivered.has(id));
-		if (wake.noticeIds.length === 0) delete this.wakes[source];
+		this.forget(source, wake, new Set(noticeIds));
 		return noticeIds;
 	}
 
+	/** Settle the notices no turn delivers: plain wakes of a source that kept no payload. */
 	consumeNotices(pauseSeq: number): void {
 		for (const [source, wake] of Object.entries(this.wakes)) {
-			if (!wake.message) this.consume(source, pauseSeq);
+			if (wake.message) continue;
+			const plain = wake.noticeIds.filter((id) => !wake.items.has(id));
+			if (plain.length > 0) this.consume(source, pauseSeq, plain);
 		}
 	}
 
 	private remember(notice: HeldNotice): void {
-		const wake = this.wakes[notice.producer] ?? { noticeIds: [] };
+		const wake = this.wakes[notice.producer] ?? { noticeIds: [], items: new Map() };
 		wake.noticeIds.push(notice.noticeId);
-		if (notice.message) wake.message = notice.message;
+		if (notice.itemId !== undefined && notice.message) wake.items.set(notice.noticeId, notice.message);
+		else if (notice.message) wake.message = notice.message;
 		this.wakes[notice.producer] = wake;
+	}
+
+	private forget(source: string, wake: HeldWake, ids: ReadonlySet<string>): void {
+		wake.noticeIds = wake.noticeIds.filter((id) => !ids.has(id));
+		for (const id of ids) wake.items.delete(id);
+		if (!wake.noticeIds.some((id) => !wake.items.has(id))) delete wake.message;
+		if (wake.noticeIds.length === 0) delete this.wakes[source];
 	}
 }

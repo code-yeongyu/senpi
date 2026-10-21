@@ -268,6 +268,9 @@ import type {
 	CompactionRejectionCause,
 	FilesystemPolicyChecker,
 	ModelSelectSource,
+	SendMessageItem,
+	SendMessageOptions,
+	SendMessageReceipt,
 	SessionHoldRecord,
 	ToolChildJob,
 } from "./extensions/types.ts";
@@ -278,6 +281,7 @@ import { HELD_INPUT_ENTRY, type HeldInput, HeldInputs, type HoldInputResult, hel
 import { shouldWarnHighReasoning } from "./high-reasoning-warning.ts";
 import { customTurnOrigin, type InputOrigin, inputOriginOf } from "./input-origin.ts";
 import { markInterrupted, type StopInterrupt } from "./interrupted-tool-result.ts";
+import { deliveredReceipts, type ItemizedAdmission, itemNoticeMessage } from "./itemized-send.ts";
 import { LazyToolActivation } from "./lazy-tool-activation.ts";
 import {
 	isManualContinueSubmission,
@@ -1287,6 +1291,8 @@ export class AgentSession {
 	private _engineTurnStarts: EngineTurnStartRecord[] = [];
 	private _engineResumeWindow: boolean;
 	private readonly _engineTurnHold: EngineTurnHold;
+	/** Itemized batches waiting for the entry their one message is written to (senpi#3811). */
+	private readonly _persistWatchers = new WeakMap<object, ItemizedAdmission>();
 	private readonly _engineTurnRelease = new EngineTurnRelease();
 	private readonly _engineTurnInput: EngineTurnInput;
 	private readonly _humanInputListeners = new Set<(event: HumanInputAdmittedEvent) => void>();
@@ -1735,7 +1741,11 @@ export class AgentSession {
 		this._engineTurnHold = new EngineTurnHold(
 			this.sessionManager.reduceHistory(engineTurnHoldHistory),
 			this._sessionStartEvent.attended === false,
-			(type, data) => this._emitEntryAppended(this.sessionManager.appendCustomEntry(type, data)),
+			(type, data) => {
+				const entryId = this.sessionManager.appendCustomEntry(type, data);
+				this._emitEntryAppended(entryId);
+				return entryId;
+			},
 			(message) => this._extensionRunner.getUIContext().notify(message, "info"),
 			(event) => {
 				this._emit(event);
@@ -3641,6 +3651,7 @@ export class AgentSession {
 					);
 					this._incrementMessageRevision();
 					this.externalAdmission.observePersisted(event.message);
+					this._takePersistWatcher(event.message)?.persisted(entryId);
 				} else if (
 					event.message.role === "user" ||
 					event.message.role === "assistant" ||
@@ -3657,6 +3668,7 @@ export class AgentSession {
 				const errorMessage = error instanceof Error ? error.message : String(error);
 				// A refused delivery is settled, not left held: a held start would queue every later delivery.
 				this.externalAdmission.observeRefused(event.message, errorMessage);
+				this._takePersistWatcher(event.message)?.failed(error);
 				this._sessionLogger.warn("transcript_write_failed", { role: event.message.role, error: errorMessage });
 				this._transcriptWriteFailures.record(event.message, error);
 				this._emit({ type: "transcript_write_failed", role: event.message.role, errorMessage });
@@ -6336,6 +6348,82 @@ export class AgentSession {
 		}
 	}
 
+	/** Whether a triggered automatic wake reaches the hold gate at all (senpi#3811). */
+	private _wakeGateApplies(
+		customType: string,
+		options: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" } | undefined,
+	): boolean {
+		return (
+			customTurnOrigin(customType) === "engine" &&
+			options?.deliverAs !== "nextTurn" &&
+			options?.triggerTurn !== false &&
+			(this.isStreaming || options?.triggerTurn === true)
+		);
+	}
+
+	/** An itemized batch, admitted where a plain `sendMessage` is, answering one receipt per item (design 4.5). */
+	private _sendItemizedMessage<T>(
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		options: SendMessageOptions & { items: readonly SendMessageItem[] },
+	): Promise<readonly SendMessageReceipt[]> {
+		const receipts = Promise.withResolvers<readonly SendMessageReceipt[]>();
+		const admit = (claim?: DeferredTurnClaim): void => {
+			this._admitItemized(message, options, claim).then(receipts.resolve, (error: unknown) => {
+				if (error instanceof ModelNotReadyError) this._noticeProviderRequired(error.message);
+				receipts.reject(error);
+			});
+		};
+		if (options.triggerTurn === true && this._agentSettledDelivery.deferTriggerTurn((claim) => admit(claim)))
+			return receipts.promise;
+		if (!this._agentSettledDelivery.defer(() => admit())) admit();
+		return receipts.promise;
+	}
+
+	/**
+	 * The atomic admission of an itemized batch: if a live hold applies to the batch or to any item (by that item's
+	 * producer and run), every item becomes its own notice entry; otherwise the batch is delivered as one message
+	 * and every item's receipt names the entry that message was written to.
+	 */
+	private _admitItemized<T>(
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		options: SendMessageOptions & { items: readonly SendMessageItem[] },
+		claim?: DeferredTurnClaim,
+	): Promise<readonly SendMessageReceipt[]> {
+		const { items } = options;
+		const held =
+			this._wakeGateApplies(message.customType, options) &&
+			(this._engineTurnHold.holdsSource(engineWakeSource(message.customType)) ||
+				this._runHolds.holdsWake(message.details) ||
+				items.some(
+					(item) =>
+						this._engineTurnHold.holdsSource(item.producer) || this._runHolds.holdsWake({ runRef: item.runRef }),
+				));
+		if (held) {
+			claim?.resolve("finished-without-start");
+			return Promise.resolve(
+				items.map((item) => {
+					const notice = this._engineTurnHold.noteItem(item.producer, itemNoticeMessage(message, item), item);
+					return { itemId: item.itemId, disposition: "notice_persisted" as const, ...notice };
+				}),
+			);
+		}
+		const outcome = Promise.withResolvers<readonly SendMessageReceipt[]>();
+		this.sendCustomMessage(message, options, claim, undefined, {
+			persisted: (entryId) => outcome.resolve(deliveredReceipts(items, entryId)),
+			failed: outcome.reject,
+			droppedByAbort: () => {
+				this._admitItemized(message, options).then(outcome.resolve, outcome.reject);
+			},
+		}).catch(outcome.reject);
+		return outcome.promise;
+	}
+
+	private _takePersistWatcher(message: AgentMessage): ItemizedAdmission | undefined {
+		const watcher = this._persistWatchers.get(message);
+		this._persistWatchers.delete(message);
+		return watcher;
+	}
+
 	/**
 	 * Send a custom message to the session. Creates a CustomMessageEntry.
 	 *
@@ -6356,6 +6444,7 @@ export class AgentSession {
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
 		releasedWake?: () => boolean,
+		itemized?: ItemizedAdmission,
 	): Promise<void> {
 		const userAbortGeneration = this._userAbortGeneration;
 		const appMessage = {
@@ -6367,12 +6456,10 @@ export class AgentSession {
 			details: message.details,
 			timestamp: Date.now(),
 		} satisfies CustomMessage<T>;
+		if (itemized !== undefined) this._persistWatchers.set(appMessage, itemized);
 		if (
 			!releasedWake &&
-			customTurnOrigin(message.customType) === "engine" &&
-			options?.deliverAs !== "nextTurn" &&
-			options?.triggerTurn !== false &&
-			(this.isStreaming || options?.triggerTurn === true) &&
+			this._wakeGateApplies(message.customType, options) &&
 			(this._engineTurnHold.holdsSource(engineWakeSource(message.customType)) ||
 				this._runHolds.holdsWake(message.details))
 		) {
@@ -6396,7 +6483,12 @@ export class AgentSession {
 		try {
 			if (waitForExistingSessionWork) {
 				await this._waitForSettledSessionWork();
-				if (userAbortGeneration !== this._userAbortGeneration) return;
+				if (userAbortGeneration !== this._userAbortGeneration) {
+					// A plain wake is dropped here; an itemized batch is decided again so no item leaves custody.
+					this._persistWatchers.delete(appMessage);
+					itemized?.droppedByAbort();
+					return;
+				}
 				finishSessionWork = this._sessionWorkBarrier.begin();
 			}
 
@@ -6875,6 +6967,7 @@ export class AgentSession {
 				if (index >= 0) this.agent.state.messages.splice(index, 1);
 			}
 			this.externalAdmission.observeRefused(appMessage, error instanceof Error ? error.message : String(error));
+			this._takePersistWatcher(appMessage)?.failed(error);
 		}
 	}
 
@@ -6964,14 +7057,14 @@ export class AgentSession {
 
 	private _appendCustomMessage(appMessage: CustomMessage): void {
 		this.agent.state.messages.push(appMessage);
-		this._emitEntryAppended(
-			this.sessionManager.appendCustomMessageEntry(
-				appMessage.customType,
-				appMessage.content,
-				appMessage.display,
-				appMessage.details,
-			),
+		const entryId = this.sessionManager.appendCustomMessageEntry(
+			appMessage.customType,
+			appMessage.content,
+			appMessage.display,
+			appMessage.details,
 		);
+		this._emitEntryAppended(entryId);
+		this._takePersistWatcher(appMessage)?.persisted(entryId);
 		this._incrementMessageRevision();
 		this._emit({ type: "message_start", message: appMessage });
 		this._emit({ type: "message_end", message: appMessage });
@@ -10469,6 +10562,7 @@ export class AgentSession {
 					if (this._agentSettledDelivery.defer(send)) return;
 					send();
 				},
+				sendItemizedMessage: (message, options) => this._sendItemizedMessage(message, options),
 				sendUserMessage: (content, options) => {
 					const reportError = (err: unknown) => {
 						if (err instanceof ModelNotReadyError) {

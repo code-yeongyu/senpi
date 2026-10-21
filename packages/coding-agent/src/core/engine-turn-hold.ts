@@ -55,14 +55,14 @@ export class EngineTurnHold {
 	private goalDeferred = false;
 	private generationValue = 0;
 	private attended: boolean;
-	private readonly append: (type: string, data: unknown) => void;
+	private readonly append: (type: string, data: unknown) => unknown;
 	private readonly notify: (message: string) => void;
 	private readonly emit: (event: SessionHoldEvent) => void;
 
 	constructor(
 		entries: readonly SessionEntry[],
 		unattended: boolean,
-		append: (type: string, data: unknown) => void,
+		append: (type: string, data: unknown) => unknown,
 		notify: (message: string) => void,
 		emit: (event: SessionHoldEvent) => void,
 	) {
@@ -215,6 +215,23 @@ export class EngineTurnHold {
 			disposition: "notice_persisted",
 		});
 		if (!this.attended) this.showNotice();
+	}
+
+	/** One held item of an itemized batch: its own notice entry and `session_notice` event (senpi#3811 design 4.5). */
+	noteItem(
+		source: string,
+		message: CustomMessage,
+		item: { readonly itemId: string; readonly runRef?: unknown },
+	): { noticeId: string; entryId: string } {
+		const notice = this.notices.noteItem(source, this.pauseSeq, message, item, this.stopped);
+		this.emit({
+			type: "session_notice",
+			noticeIds: [notice.noticeId],
+			noticeCount: this.noticeCount,
+			disposition: "notice_persisted",
+		});
+		if (!this.attended) this.showNotice();
+		return notice;
 	}
 
 	messages(): ReturnType<EngineTurnHoldNotices["messages"]> {

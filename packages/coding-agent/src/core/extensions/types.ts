@@ -2596,10 +2596,18 @@ export interface ExtensionAPI {
 	// Actions
 	// =========================================================================
 
-	/** Send a custom message to the session. */
+	/**
+	 * Send a custom message to the session. With `items` the message is an itemized batch (senpi#3811): if a live
+	 * hold applies to any item it is stored as one notice per item, otherwise it is delivered as one message, and the
+	 * call answers one receipt per item once each item is in durable custody.
+	 */
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options: SendMessageOptions & { items: readonly SendMessageItem[] },
+	): Promise<readonly SendMessageReceipt[]>;
+	sendMessage<T = unknown>(
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		options?: SendMessageOptions,
 	): void;
 
 	/**
@@ -3032,10 +3040,42 @@ export interface ExtensionShortcut {
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
+export interface SendMessageOptions {
+	triggerTurn?: boolean;
+	deliverAs?: "steer" | "followUp" | "nextTurn";
+}
+
+/** One wake inside an itemized `sendMessage` batch (senpi#3811 design 4.5). */
+export interface SendMessageItem {
+	readonly itemId: string;
+	/** Producer label the held notice is counted under. */
+	readonly producer: string;
+	/** The run this item belongs to: a fence on that run holds the batch. */
+	readonly runRef?: { readonly kind: "dag" | "task" | "workpool" | "team"; readonly id: string };
+	/** This item's own payload, stored as its notice if the batch is held; defaults to the batch content. */
+	readonly content?: CustomMessage["content"];
+	/** This item's own details for its notice; the batch details are not copied into a per-item notice. */
+	readonly details?: unknown;
+}
+
+/** Where an item of an itemized batch went: its own notice entry, or the one message entry that carried it. */
+export interface SendMessageReceipt {
+	readonly itemId: string;
+	readonly entryId: string;
+	readonly disposition: "notice_persisted" | "message_persisted";
+	readonly noticeId?: string;
+}
+
 export type SendMessageHandler = <T = unknown>(
 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	options?: SendMessageOptions,
 ) => void;
+
+/** Admits an itemized batch and answers one receipt per item (senpi#3811 design 4.5). */
+export type SendItemizedMessageHandler = <T = unknown>(
+	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+	options: SendMessageOptions & { items: readonly SendMessageItem[] },
+) => Promise<readonly SendMessageReceipt[]>;
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
@@ -3207,6 +3247,8 @@ export interface ExtensionRuntimeState {
  */
 export interface ExtensionActions {
 	sendMessage: SendMessageHandler;
+	/** Hosts without itemized custody omit it: an itemized send is then delivered plainly and answers no receipts. */
+	sendItemizedMessage?: SendItemizedMessageHandler;
 	sendUserMessage: SendUserMessageHandler;
 	appendEntry: AppendEntryHandler;
 	setSessionName: SetSessionNameHandler;
