@@ -179,3 +179,21 @@ The catalog's private fetch helper creates the failure.
 ### Expected merge conflict zones
 
 - LOW: the Kimi K3 cost constants when upstream reprices Kimi models.
+
+## 2026-10-20 - Placeholder tokens in earlier entries name real vendors (code-yeongyu/oh-my-openagent#10579)
+
+### What changed
+
+- No code change. In earlier entries of this tracker, `[OI]` in the `openai.ts` provider-family line means OpenAI. Read those entries with the real names.
+
+### Why
+
+- A model wrote those entries and emitted placeholder tokens in place of the vendor names. Tracker entries are append-only, so the correction is recorded here instead of editing the old lines.
+
+### Why an extension could not handle it
+
+- This is tracker text, not runtime behavior.
+
+### Expected merge conflict zones
+
+- None.

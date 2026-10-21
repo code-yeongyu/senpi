@@ -164,3 +164,21 @@ Shared retry decisions and cross-package error contracts are core request mechan
 ### Expected merge conflict zones
 
 - `isRetryableAssistantError` and the new shared error module.
+
+## 2026-10-20 - Placeholder tokens in earlier entries name real vendors (code-yeongyu/oh-my-openagent#10579)
+
+### What changed
+
+- No code change. In earlier entries of this tracker, `[OI]` in the `overflow.ts` classification line means OpenAI. Read those entries with the real names.
+
+### Why
+
+- A model wrote those entries and emitted placeholder tokens in place of the vendor names. Tracker entries are append-only, so the correction is recorded here instead of editing the old lines.
+
+### Why an extension could not handle it
+
+- This is tracker text, not runtime behavior.
+
+### Expected merge conflict zones
+
+- None.
