@@ -24,7 +24,22 @@ export type AccountSlot = {
 	authRecoveryGrant?: string;
 	/** Digest of the `anthropic` OAuth grant this account was copied from (senpi#3259), so the copy runs once. */
 	importedFrom?: string;
+	/**
+	 * The Claude account (account uuid / organization uuid) the login's token exchange named
+	 * (senpi#3928). Only `id` is compared; absent on accounts stored by older builds.
+	 */
+	identity?: AccountIdentity;
 };
+
+export type AccountIdentity = { id: string; email?: string };
+
+/** Validates an identity read from a login result or from storage. */
+export function accountIdentity(value: unknown): AccountIdentity | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const { id, email } = value as { id?: unknown; email?: unknown };
+	if (typeof id !== "string" || id.trim() === "") return undefined;
+	return typeof email === "string" && email.trim() !== "" ? { id, email } : { id };
+}
 
 export type SlotState = Record<
 	string,
@@ -129,6 +144,7 @@ export function upsertAccount(
 		refresh: slot.refresh,
 		expires: slot.expires,
 		source: slot.source,
+		...(slot.identity === undefined ? {} : { identity: slot.identity }),
 	};
 	return {
 		...credential,

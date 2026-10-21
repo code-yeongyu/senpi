@@ -1,3 +1,23 @@
+## 2026-10-21 - Add account tells Claude accounts apart by identity (senpi#3928)
+
+### What changed
+
+- `accounts.ts`: `AccountSlot.identity?: { id, email? }` (the account uuid / organization uuid the login's token exchange named) with the `accountIdentity` validator. `upsertAccount` records the refreshing login's identity on the slot it refreshes.
+- `oauth-login.ts`: `toSlot` keeps the login's identity. `login()` finds a stored slot with the same identity: an `auth_error`-blocked one is refreshed in place without asking; otherwise only a login whose chosen name is that slot's (Reconnect, or Enter on the offered refresh) refreshes it, and any other name throws `ClaudeAccountAlreadyConnectedError` ("That Claude account is already connected as '<name>'...") before anything is returned, so nothing is persisted. `recoveryTargetName` never offers a slot whose recorded identity differs from the login's, so a different account no longer replaces a lone saved one.
+
+### Why
+
+claude.ai's authorize page completes as the browser's existing claude.ai session and has no supported account chooser (`prompt=select_account` is not honored, anthropics/claude-code#87922), so Add account in a signed-in browser returned the same account and stored a duplicate. Identity is the only reliable signal of "same account" vs "second account".
+
+### Must not break
+
+- omo#7084 recovery: a blank re-login still refreshes a lone or single `auth_error` slot whose identity is unknown or equal.
+- Slots stored by older builds carry no identity and keep today's behavior until their next login records one.
+
+### Expected merge-conflict zones
+
+`oauth-login.ts` (`toSlot`, `recoveryTargetName`, `promptAccountName`, the end of `login`), `accounts.ts` (`AccountSlot`, `upsertAccount`).
+
 ## 2026-10-20 - Native-1M models are requested by their plain id; only legacy ids use the [1m] opt-in (senpi#3801)
 
 ### What changed

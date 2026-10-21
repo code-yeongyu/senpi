@@ -1,3 +1,13 @@
+## 2026-10-21 - Anthropic OAuth login records the account identity (senpi#3928)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/anthropic.ts`: `exchangeAuthorizationCode` reads `account.uuid`, `organization.uuid` and `account.email_address` from the authorization-code response and returns `identity: { id: "<account>/<organization>", email? }` on the credential (`id` is the account uuid alone when no organization is named; no identity when no account is named). Refresh responses are unchanged. Same shape as the open #2048 so the two converge.
+
+### Why
+
+Without it no pool can tell a second sign-in of the same Claude account from a new account (senpi#3928).
+
 ## 2026-10-21 - AssistantMessage.failureSource (senpi#3866)
 
 ### What changed

@@ -9,8 +9,10 @@ import type {
 } from "@earendil-works/pi-ai";
 import { loadAnthropicOAuth } from "@earendil-works/pi-ai/oauth";
 import {
+	type AccountIdentity,
 	type AccountSlot,
 	type AnthropicSubscriptionCredential,
+	accountIdentity,
 	addAccount,
 	emptyCredential,
 	listAccounts,
@@ -71,11 +73,35 @@ function requestClaudeEnvironment(value: unknown): Record<string, string> {
 }
 
 function toSlot(
-	credential: { access: string; refresh: string; expires: number },
+	credential: { access: string; refresh: string; expires: number; identity?: unknown },
 	name: string,
 	source: AccountSlot["source"],
 ): AccountSlot {
-	return { name, access: credential.access, refresh: credential.refresh, expires: credential.expires, source };
+	const identity = accountIdentity(credential.identity);
+	return {
+		name,
+		access: credential.access,
+		refresh: credential.refresh,
+		expires: credential.expires,
+		source,
+		...(identity === undefined ? {} : { identity }),
+	};
+}
+
+/** A login that returned an account the pool already holds, and does not target it (senpi#3928). */
+export class ClaudeAccountAlreadyConnectedError extends Error {
+	constructor(readonly accountName: string) {
+		super(
+			`That Claude account is already connected as '${accountName}'. Nothing was saved. To add a different Claude account, sign out of claude.ai in your browser (or use a private window) and add the account again.`,
+		);
+		this.name = "ClaudeAccountAlreadyConnectedError";
+	}
+}
+
+/** Two known identities that differ: the slot is someone else, so never a refresh target. */
+function isOtherAccount(slot: AccountSlot, identity: AccountIdentity | undefined): boolean {
+	const stored = accountIdentity(slot.identity);
+	return stored !== undefined && identity !== undefined && stored.id !== identity.id;
 }
 
 /**
@@ -85,16 +111,22 @@ function toSlot(
  * an existing slot explicitly, so a blank or headless re-login never
  * overwrites the newest working slot in a multi-account pool.
  */
-function recoveryTargetName(existing: AccountSlot[]): string | undefined {
-	if (existing.length === 1) return existing[0]?.name;
-	const authBlocked = existing.filter((slot) => slot.blockReason === "auth_error");
+function recoveryTargetName(existing: AccountSlot[], identity: AccountIdentity | undefined): string | undefined {
+	// A slot whose recorded account differs from this login's is never displaced (senpi#3928).
+	const [lone] = existing;
+	if (existing.length === 1 && lone) return isOtherAccount(lone, identity) ? undefined : lone.name;
+	const authBlocked = existing.filter((slot) => slot.blockReason === "auth_error" && !isOtherAccount(slot, identity));
 	if (authBlocked.length === 1) return authBlocked[0]?.name;
 	return undefined;
 }
 
-async function promptAccountName(callbacks: OAuthLoginCallbacks, existing: AccountSlot[]): Promise<string> {
+async function promptAccountName(
+	callbacks: OAuthLoginCallbacks,
+	existing: AccountSlot[],
+	identity: AccountIdentity | undefined,
+): Promise<string> {
 	if (existing.length === 0) return "default";
-	const recovery = recoveryTargetName(existing);
+	const recovery = recoveryTargetName(existing, identity);
 	const fallback = `account-${existing.length + 1}`;
 	if (!callbacks.onPrompt) return recovery ?? fallback;
 	const names = existing.map((slot) => slot.name).join(", ");
@@ -224,7 +256,20 @@ export function createOAuthConfig(deps: {
 			const credential = await flow.login(interaction);
 
 			const existingAfter = listAccounts(current);
-			const name = await promptAccountName(callbacks, existingAfter);
+			const identity = accountIdentity(credential.identity);
+			const sameAccount =
+				identity === undefined
+					? undefined
+					: existingAfter.find((slot) => accountIdentity(slot.identity)?.id === identity.id);
+			// An auth-blocked copy of this account is recovered in place; otherwise only a login that
+			// names its slot (Reconnect, or Enter on the offered refresh) may refresh it (senpi#3928).
+			const name =
+				sameAccount?.blockReason === "auth_error"
+					? sameAccount.name
+					: await promptAccountName(callbacks, existingAfter, identity);
+			if (sameAccount !== undefined && name !== sameAccount.name) {
+				throw new ClaudeAccountAlreadyConnectedError(sameAccount.name);
+			}
 			return upsertAccount(current, toSlot(credential, name, "login"));
 		},
 

@@ -6,6 +6,7 @@
 
 ### Added
 
+- The Anthropic OAuth login records which Claude account it signed in to: the authorization-code exchange's account and organization ids become `identity` on the returned credential (display email included), so a credential pool can tell one account from another ([#3928](https://github.com/code-yeongyu/senpi/issues/3928)).
 - `AssistantMessage.failureSource?: "local"` marks a failure raised by local code rather than a provider, so retry and model fallback can skip it ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
 
 ### Changed
