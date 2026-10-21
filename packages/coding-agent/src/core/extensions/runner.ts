@@ -519,7 +519,7 @@ export class ExtensionRunner {
 	private isIdleFn: () => boolean = () => true;
 	private engineTurnsHeldFn: () => boolean = () => false;
 	private noteHeldWakeFn: (source: string) => void = () => {};
-	private pauseActions: Pick<ExtensionContextActions, "getPauseState" | "fenceRun"> = {};
+	private pauseActions: Pick<ExtensionContextActions, "getPauseState" | "fenceRun" | "releaseRunFence"> = {};
 	private questionInput: ExtensionContextActions["questionInput"];
 	private isProjectTrustedFn: () => boolean = () => true;
 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
@@ -671,7 +671,11 @@ export class ExtensionRunner {
 		this.isIdleFn = contextActions.isIdle;
 		this.engineTurnsHeldFn = contextActions.engineTurnsHeld ?? (() => false);
 		this.noteHeldWakeFn = contextActions.noteHeldWake ?? (() => {});
-		this.pauseActions = { getPauseState: contextActions.getPauseState, fenceRun: contextActions.fenceRun };
+		this.pauseActions = {
+			getPauseState: contextActions.getPauseState,
+			fenceRun: contextActions.fenceRun,
+			releaseRunFence: contextActions.releaseRunFence,
+		};
 		this.questionInput = contextActions.questionInput;
 		this.isProjectTrustedFn = contextActions.isProjectTrusted;
 		this.getSignalFn = contextActions.getSignal;
@@ -1501,6 +1505,10 @@ export class ExtensionRunner {
 			fenceRun: (runRef) => {
 				runner.assertActive();
 				runner.pauseActions.fenceRun?.(runRef);
+			},
+			releaseRunFence: (runRef) => {
+				runner.assertActive();
+				runner.pauseActions.releaseRunFence?.(runRef);
 			},
 			isProjectTrusted: () => {
 				runner.assertActive();

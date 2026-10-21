@@ -10507,6 +10507,7 @@ export class AgentSession {
 				noteHeldWake: (source) => this._engineTurnHold.note(source),
 				getPauseState: () => this._pauseState(),
 				fenceRun: (runRef) => this._runHolds.fence(runRef),
+				releaseRunFence: (runRef) => this._runHolds.releaseFences("run_cancelled", [runRef]),
 				questionInput: () => {
 					this._humanInputAdmitted("answer");
 					this._captureReleaseExtras();

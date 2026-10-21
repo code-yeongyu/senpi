@@ -485,6 +485,10 @@ workflow runner uses it to pause the run a stopped session started.
 `ctx.getPauseState()` returns the same `{ pauseSeq, holds }` snapshot. `ctx.fenceRun({ kind, id })` keeps wakes
 whose `details.runRef` names that run as notices until the user resumes; untagged wakes are not affected by a
 fence. Human input and `resume_session` release fences together with the user's Stop.
+`ctx.releaseRunFence({ kind, id })` drops that run's fence when the run is cancelled: call it after the run is
+journaled terminal. Later wakes tagged with the run are admitted again, fences for other runs stay, and releasing a
+run that has no fence does nothing. `session_resumed` (cause `run_cancelled`) fires only when the released fence was
+the last hold.
 
 #### held_wakes_released
 

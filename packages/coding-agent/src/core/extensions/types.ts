@@ -544,6 +544,8 @@ export interface ExtensionContext {
 	getPauseState?(): { pauseSeq: number; holds: SessionHoldRecord[] };
 	/** Hold wakes tagged `details.runRef` for this run until the user resumes (senpi#3811). */
 	fenceRun?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
+	/** Drop this run's fence once the run is journaled cancelled; a run with no fence is a no-op (senpi#3811). */
+	releaseRunFence?(runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }): void;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
@@ -3247,6 +3249,7 @@ export interface ExtensionContextActions {
 	noteHeldWake?: (source: string) => void;
 	getPauseState?: () => { pauseSeq: number; holds: SessionHoldRecord[] };
 	fenceRun?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
+	releaseRunFence?: (runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string }) => void;
 	/** Internal delivery for a human-settled builtin question, never exposed on ExtensionAPI. */
 	questionInput?: () => void;
 	isProjectTrusted: () => boolean;

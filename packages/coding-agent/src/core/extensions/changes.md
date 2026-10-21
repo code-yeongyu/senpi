@@ -2,12 +2,12 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext` gains optional `getPauseState()` (the session's hold records and pause seq) and `fenceRun(runRef)`; new `SessionHoldRecord` and the `session_hold_changed` event, fired when a user Stop, a run fence or a release changes the holds.
-- `packages/coding-agent/src/core/extensions/runner.ts`: binds those two context actions from the session and guards them with `assertActive()`.
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionContext` gains optional `getPauseState()` (the session's hold records and pause seq) `fenceRun(runRef)` and `releaseRunFence(runRef)` (drops a cancelled run's fence); new `SessionHoldRecord` and the `session_hold_changed` event, fired when a user Stop, a run fence or a release changes the holds.
+- `packages/coding-agent/src/core/extensions/runner.ts`: binds those context actions from the session and guards them with `assertActive()`.
 
 ### Why
 
-- `packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/runner.ts`: omo's runner pauses the workflow run a user Stop interrupted, so it must see the Stop and fence wakes tagged with that run.
+- `packages/coding-agent/src/core/extensions/types.ts`, `packages/coding-agent/src/core/extensions/runner.ts`: omo's runner pauses the workflow run a user Stop interrupted, so it must see the Stop and fence wakes tagged with that run, and release the fence when `workflow cancel` ends that run.
 
 ### Why an extension could not handle it
 

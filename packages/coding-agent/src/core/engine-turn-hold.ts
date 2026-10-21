@@ -187,6 +187,7 @@ export class EngineTurnHold {
 	release(keys: string[], cause: HoldReleaseCause): void {
 		const present = [...new Set(keys)].filter((key) => this.records.has(key));
 		if (present.length === 0) return;
+		const wasHeld = this.isHeld();
 		const at = new Date().toISOString();
 		this.append("session-hold", {
 			op: "release",
@@ -196,7 +197,9 @@ export class EngineTurnHold {
 			at,
 		} satisfies HoldEntry);
 		for (const key of present) this.records.delete(key);
-		if (!this.isHeld()) this.emit({ type: "session_resumed", pauseSeq: this.pauseSeq, cause, at });
+		// A fence alone does not hold the session, so dropping one of several fences is not a resume (senpi#3811).
+		if (!this.isHeld() && (wasHeld || this.records.size === 0))
+			this.emit({ type: "session_resumed", pauseSeq: this.pauseSeq, cause, at });
 	}
 
 	holdsSource(source: string): boolean {
