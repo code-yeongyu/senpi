@@ -9,12 +9,14 @@ import {
 } from "../../../credential-pool/model-scope.ts";
 import { usageLimitResetMs } from "../../../credential-pool/reset-time.ts";
 import type { AccountSlot, AnthropicSubscriptionCredential } from "./accounts.ts";
-import { clearExpiredBlocks } from "./affinity.ts";
+import { clearExpiredBlocks, AllAccountsBlockedError, soonestUnblockAt } from "./affinity.ts";
 import type { SdkErrorClassification } from "./errors.ts";
 import { isConfirmedAccountUsageLimit, usageLimitBlockMs } from "./usage-limit-block.ts";
 
 export const MAX_RATE_LIMIT_BLOCK_MS = 48 * 60 * 60 * 1_000;
 export const DEFAULT_RATE_LIMIT_BLOCK_MS = 60_000;
+/** Maximum time to wait for a subscription limit reset (5 hours = 18,000,000 ms). */
+export const MAX_LIMIT_RESET_WAIT_MS = 5 * 60 * 60 * 1_000;
 /** Same-account retries per turn for a transient failure (overload, network, server error); it never rotates. */
 export const TRANSIENT_RETRIES_PER_TURN = 2;
 export const TRANSIENT_RETRY_DELAY_MS = 1_000;
@@ -365,116 +367,221 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	const now = options.now ?? Date.now;
 	const baseBlockMs = options.baseBlockMs ?? DEFAULT_RATE_LIMIT_BLOCK_MS;
 	let accounts = clearExpiredBlocks(withSessionBlocks(options.accounts, options.sessionKey, now()), now());
-	const attemptLimit = options.accountFallback === false ? Math.min(accounts.length, 1) : accounts.length;
 	let lastError: ClassifiedSdkError | undefined;
 	const retriedOnStoredMaterial = new Set<string>();
 	let transientRetriesUsed = 0;
 	let longContextRetried = false;
 	let retryAccountName: string | undefined;
+	let limitResetWaited = false;
 
-	for (let attempt = 0; attempt < attemptLimit; attempt++) {
-		// Each attempt gets its own copy: prepareSlot refreshes the slot in place, and a concurrent
-		// attempt holding the same stored object must still report the token it actually sent.
-		const retrySlot =
-			retryAccountName === undefined ? undefined : accounts.find((slot) => slot.name === retryAccountName);
-		retryAccountName = undefined;
-		const account = { ...(retrySlot ?? options.selectFn(accounts)) };
-		let visibleDeltaEmitted = false;
-		let completed = false;
-		const startedAt = now();
-		try {
-			const attemptStream = await options.runAttempt(account);
-			for await (const event of attemptStream) {
-				const failure = (options.errorFromEvent ?? defaultErrorFromEvent)(event);
-				if (failure !== undefined) throw failure;
-				visibleDeltaEmitted ||= (options.isVisibleDelta ?? defaultIsVisibleDelta)(event);
-				yield event;
-			}
-			completed = true;
-		} catch (error) {
-			const classification = options.classify(error);
-			const classified = new ClassifiedSdkError(classification, error, visibleDeltaEmitted);
-			lastError = classified;
-			if (!classification.retryable) throw classified;
+	outer: while (true) {
+		const attemptLimit =
+			options.accountFallback === false ? Math.min(accounts.length, 1) : accounts.length;
 
-			// A refused 1M window is the account's entitlement, not a limit: never block or rotate it.
-			// Retry once on the same account at the standard window (senpi#3408).
-			if (classification.kind === "long_context_unavailable") {
-				if (visibleDeltaEmitted || longContextRetried) throw classified;
-				longContextRetried = true;
-				options.onLongContextRefused?.();
-				retryAccountName = account.name;
-				attempt--;
-				continue;
-			}
+		let brokeForWait = false;
 
-			// A transient failure says nothing about the account: it is retried in place a bounded
-			// number of times, then the turn fails on this account and the session's own retry and
-			// model fallback take over. It never blocks or rotates the account: moving to another
-			// account writes the whole conversation to a cold prompt cache, and a persisted block would
-			// move every other session off a healthy account too (senpi#2891, senpi#3466).
-			if (isTransient(classification)) {
-				if (visibleDeltaEmitted || transientRetriesUsed >= TRANSIENT_RETRIES_PER_TURN) throw classified;
-				const delayMs = TRANSIENT_RETRY_DELAY_MS * 2 ** transientRetriesUsed;
-				transientRetriesUsed += 1;
-				try {
-					await (options.sleep ?? abortableSleep)(delayMs, options.signal);
-				} catch {
-					throw classified;
-				}
-				retryAccountName = account.name;
-				attempt--;
-				continue;
-			}
-
-			const blocked = blockedAccount(account, classification, now(), attempt, baseBlockMs, error, options.model);
-			// With no session to hold it, a block is shared as before: dropping it would re-send every
-			// sessionless request to the spent account until its window resets.
-			const shared = isSharedVerdict(classification, error) || options.sessionKey === undefined;
-			if (!shared) rememberSessionBlock(options.sessionKey, blocked);
-			const superseded = shared ? await persistBlock(options.store, options.providerId, blocked, now()) : undefined;
-			if (
-				superseded &&
-				!visibleDeltaEmitted &&
-				usable(superseded, now(), options.model) &&
-				!retriedOnStoredMaterial.has(account.name)
-			) {
-				// The rejected token was already replaced in the store: retry this
-				// account once on the stored material instead of failing over.
-				retriedOnStoredMaterial.add(account.name);
-				accounts = replaceAccount(accounts, superseded);
-				attempt--;
-				continue;
-			}
-			accounts = replaceAccount(accounts, blocked);
-			const event: FailoverEvent = {
-				account: blocked,
-				classification,
-				attempt: attempt + 1,
-				visibleDeltaEmitted,
-			};
+		for (let attempt = 0; attempt < attemptLimit; attempt++) {
+			brokeForWait = false;
+			// Each attempt gets its own copy: prepareSlot refreshes the slot in place, and a concurrent
+			// attempt holding the same stored object must still report the token it actually sent.
+			const retrySlot =
+				retryAccountName === undefined ? undefined : accounts.find((slot) => slot.name === retryAccountName);
+			retryAccountName = undefined;
+			let account: AccountSlot;
 			try {
-				if (!visibleDeltaEmitted && attempt + 1 < attemptLimit) {
-					event.nextAccount = options.selectFn(accounts);
+				account = { ...(retrySlot ?? options.selectFn(accounts)) };
+			} catch (error) {
+				if (error instanceof AllAccountsBlockedError) {
+					if (limitResetWaited) {
+						throw new Error("Anthropic Subscription failover exhausted after waiting for limit reset");
+					}
+					const soonest = error.soonestUnblockAt ?? soonestUnblockAt(accounts, now(), options.model);
+					const resetWaitMs = soonest === undefined ? undefined : soonest - now();
+					if (
+						error.blockReason !== "auth_error" &&
+						resetWaitMs !== undefined &&
+						resetWaitMs > 0 &&
+						resetWaitMs <= MAX_LIMIT_RESET_WAIT_MS
+					) {
+						try {
+							await (options.sleep ?? abortableSleep)(resetWaitMs, options.signal);
+						} catch {
+							throw new Error("Anthropic Subscription failover exhausted after waiting for limit reset");
+						}
+						accounts = clearExpiredBlocks(
+							withSessionBlocks(options.accounts, options.sessionKey, now()),
+							now(),
+						);
+						transientRetriesUsed = 0;
+						longContextRetried = false;
+						retryAccountName = undefined;
+						retriedOnStoredMaterial.clear();
+						lastError = undefined;
+						limitResetWaited = true;
+						continue outer;
+					}
+					throw new Error("Anthropic Subscription failover exhausted without an attempt");
 				}
-			} finally {
-				await options.onFailover?.(event);
+				throw error;
 			}
-			if (visibleDeltaEmitted) throw classified;
+			let visibleDeltaEmitted = false;
+			let completed = false;
+			const startedAt = now();
+			try {
+				const attemptStream = await options.runAttempt(account);
+				for await (const event of attemptStream) {
+					const failure = (options.errorFromEvent ?? defaultErrorFromEvent)(event);
+					if (failure !== undefined) throw failure;
+					visibleDeltaEmitted ||= (options.isVisibleDelta ?? defaultIsVisibleDelta)(event);
+					yield event;
+				}
+				completed = true;
+			} catch (error) {
+				const classification = options.classify(error);
+				const classified = new ClassifiedSdkError(classification, error, visibleDeltaEmitted);
+				lastError = classified;
+				if (!classification.retryable) throw classified;
+
+				// A refused 1M window is the account's entitlement, not a limit: never block or rotate it.
+				// Retry once on the same account at the standard window (senpi#3408).
+				if (classification.kind === "long_context_unavailable") {
+					if (visibleDeltaEmitted || longContextRetried) throw classified;
+					longContextRetried = true;
+					options.onLongContextRefused?.();
+					retryAccountName = account.name;
+					attempt--;
+					continue;
+				}
+
+				// A transient failure says nothing about the account: it is retried in place a bounded
+				// number of times, then the turn fails on this account and the session's own retry and
+				// model fallback take over. It never blocks or rotates the account: moving to another
+				// account writes the whole conversation to a cold prompt cache, and a persisted block would
+				// move every other session off a healthy account too (senpi#2891, senpi#3466).
+				if (isTransient(classification)) {
+					if (visibleDeltaEmitted || transientRetriesUsed >= TRANSIENT_RETRIES_PER_TURN) throw classified;
+					const delayMs = TRANSIENT_RETRY_DELAY_MS * 2 ** transientRetriesUsed;
+					transientRetriesUsed += 1;
+					try {
+						await (options.sleep ?? abortableSleep)(delayMs, options.signal);
+					} catch {
+						throw classified;
+					}
+					retryAccountName = account.name;
+					attempt--;
+					continue;
+				}
+
+				const blocked = blockedAccount(account, classification, now(), attempt, baseBlockMs, error, options.model);
+				// With no session to hold it, a block is shared as before: dropping it would re-send every
+				// sessionless request to the spent account until its window resets.
+				const shared = isSharedVerdict(classification, error) || options.sessionKey === undefined;
+				if (!shared) rememberSessionBlock(options.sessionKey, blocked);
+				const superseded = shared ? await persistBlock(options.store, options.providerId, blocked, now()) : undefined;
+				if (
+					superseded &&
+					!visibleDeltaEmitted &&
+					usable(superseded, now(), options.model) &&
+					!retriedOnStoredMaterial.has(account.name)
+				) {
+					// The rejected token was already replaced in the store: retry this
+					// account once on the stored material instead of failing over.
+					retriedOnStoredMaterial.add(account.name);
+					accounts = replaceAccount(accounts, superseded);
+					attempt--;
+					continue;
+				}
+				accounts = replaceAccount(accounts, blocked);
+				const event: FailoverEvent = {
+					account: blocked,
+					classification,
+					attempt: attempt + 1,
+					visibleDeltaEmitted,
+				};
+				try {
+					if (!visibleDeltaEmitted && attempt + 1 < attemptLimit) {
+						try {
+							event.nextAccount = options.selectFn(accounts);
+						} catch (selErr) {
+							if (selErr instanceof AllAccountsBlockedError) {
+								if (limitResetWaited) {
+									throw new Error("Anthropic Subscription failover exhausted after waiting for limit reset");
+								}
+								const soonest = selErr.soonestUnblockAt ?? soonestUnblockAt(accounts, now(), options.model);
+								const resetWaitMs = soonest === undefined ? undefined : soonest - now();
+								if (
+									selErr.blockReason !== "auth_error" &&
+									resetWaitMs !== undefined &&
+									resetWaitMs > 0 &&
+									resetWaitMs <= MAX_LIMIT_RESET_WAIT_MS
+								) {
+									try {
+										await (options.sleep ?? abortableSleep)(resetWaitMs, options.signal);
+									} catch {
+										throw new Error("Anthropic Subscription failover exhausted after waiting for limit reset");
+									}
+									accounts = clearExpiredBlocks(
+										withSessionBlocks(options.accounts, options.sessionKey, now()),
+										now(),
+									);
+									transientRetriesUsed = 0;
+									longContextRetried = false;
+									retryAccountName = undefined;
+									retriedOnStoredMaterial.clear();
+									lastError = undefined;
+									limitResetWaited = true;
+									brokeForWait = true;
+								} else {
+									throw new Error("Anthropic Subscription failover exhausted without an attempt");
+								}
+							} else {
+								throw selErr;
+							}
+						}
+					}
+				} finally {
+					await options.onFailover?.(event);
+				}
+				if (brokeForWait) break;
+				if (visibleDeltaEmitted) throw classified;
+			}
+			if (completed) {
+				forgetSessionBlock(options.sessionKey, account.name);
+				// Outside the attempt's try: clearing is best-effort hygiene after a finished turn, so a store
+				// failure is logged and the block stays for the next success; it never fails or replays the turn.
+				await clearBlockAfterSuccess(options.store, options.providerId, account.name, startedAt).catch(
+					(error: unknown) => {
+						process.stderr.write(
+							`senpi anthropic-subscription: could not clear a stored block on ${account.name}: ${error instanceof Error ? error.message : String(error)}\n`,
+						);
+					},
+				);
+				return;
+			}
 		}
-		if (completed) {
-			forgetSessionBlock(options.sessionKey, account.name);
-			// Outside the attempt's try: clearing is best-effort hygiene after a finished turn, so a store
-			// failure is logged and the block stays for the next success; it never fails or replays the turn.
-			await clearBlockAfterSuccess(options.store, options.providerId, account.name, startedAt).catch(
-				(error: unknown) => {
-					process.stderr.write(
-						`senpi anthropic-subscription: could not clear a stored block on ${account.name}: ${error instanceof Error ? error.message : String(error)}\n`,
-					);
-				},
-			);
-			return;
+
+		if (brokeForWait) continue outer;
+
+		if (!limitResetWaited && !accounts.some((a) => a.blockReason === "auth_error")) {
+			const soonest = soonestUnblockAt(accounts, now(), options.model);
+			const resetWaitMs = soonest === undefined ? undefined : soonest - now();
+			if (resetWaitMs !== undefined && resetWaitMs > 0 && resetWaitMs <= MAX_LIMIT_RESET_WAIT_MS) {
+				try {
+					await (options.sleep ?? abortableSleep)(resetWaitMs, options.signal);
+				} catch {
+					throw lastError ?? new Error("Anthropic Subscription failover exhausted after waiting for limit reset");
+				}
+				accounts = clearExpiredBlocks(withSessionBlocks(options.accounts, options.sessionKey, now()), now());
+				transientRetriesUsed = 0;
+				longContextRetried = false;
+				retryAccountName = undefined;
+				retriedOnStoredMaterial.clear();
+				lastError = undefined;
+				limitResetWaited = true;
+				continue outer;
+			}
 		}
+
+		throw lastError ?? new Error("Anthropic Subscription failover exhausted without an attempt");
 	}
-	throw lastError ?? new Error("Anthropic Subscription failover exhausted without an attempt");
 }
