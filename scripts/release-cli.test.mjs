@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { it } from "node:test";
@@ -39,8 +41,19 @@ for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, f
 	{ mergeStatus: 0, ci: "success", forceTests: true },
 	{ mergeStatus: 0, ci: "success", catalogDirty: true, forceTests: true },
 ]) {
-	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, () => {
+	it(`release CLI with CI ${ci}${catalogDirty ? " and a changed catalog" : ""}${forceTests ? " and --force-tests" : ""} recovers concurrent main advancement and respects merge exit ${mergeStatus}`, async () => {
 		const root = mkdtempSync(join(tmpdir(), "senpi-release-cli-"));
+		// senpi#3874: a command must be able to wait on its test owner without a
+		// wall-clock cutoff killing the CLI and orphaning the command's late writes.
+		let finishMerge;
+		const mergeFinished = new Promise((resolve) => { finishMerge = resolve; });
+		const gate = createServer((socket) => {
+			socket.once("data", () => socket.end("continue"));
+			socket.once("close", finishMerge);
+		});
+		gate.listen(0, "127.0.0.1");
+		await once(gate, "listening");
+		let mergeStarted = false;
 		try {
 			for (const file of WORKSPACE_PACKAGES) {
 				mkdirSync(dirname(join(root, file)), { recursive: true });
@@ -60,6 +73,8 @@ for (const { mergeStatus, ci, catalogDirty = false, manifestStampOnly = false, f
 				const body = `
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { connect } from "node:net";
+import { once } from "node:events";
 const require = createRequire(import.meta.url);
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(calls)}, JSON.stringify([${JSON.stringify(name)}, ...args]) + "\\n");
@@ -76,7 +91,17 @@ if (${JSON.stringify(name)} === "git") {
 	if (args[0] === "rev-parse" && args[1] === "origin/main") { process.stdout.write("fixture-main\\n"); process.exit(0); }
 	if (args[0] === "rev-parse") process.stdout.write("fixture-sha\\n");
 	if (args[0] === "merge-base") process.exit(1);
-	if (args[0] === "merge") process.exit(${mergeStatus});
+	if (args[0] === "merge") {
+		const socket = connect(${gate.address().port}, "127.0.0.1");
+		const continued = once(socket, "data");
+		socket.on("connect", () => socket.write("ready"));
+		await continued;
+		writeFileSync("MERGE_FINISHED", "done");
+		const closed = once(socket, "close");
+		socket.end();
+		await closed;
+		process.exit(${mergeStatus});
+	}
 }
 if (${JSON.stringify(name)} === "npm" && args[0] === "test") {
 	const changelog = require("node:fs").readFileSync(${JSON.stringify(CHANGELOGS[0])}, "utf8");
@@ -97,13 +122,23 @@ if (${JSON.stringify(name)} === "gh") {
 					chmodSync(join(bin, name), 0o755);
 				}
 			}
-			const result = spawnSync(process.execPath, [fileURLToPath(new URL("./release.mjs", import.meta.url)), "--version", "2026.9.12-3", ...(forceTests ? ["--force-tests"] : [])], {
+			const child = spawn(process.execPath, [fileURLToPath(new URL("./release.mjs", import.meta.url)), "--version", "2026.9.12-3", ...(forceTests ? ["--force-tests"] : [])], {
 				cwd: root,
 				env: { ...process.env, PATH: `${bin}${delimiter}${dirname(process.execPath)}` },
-				encoding: "utf8",
-				timeout: 15000,
+			});
+			// Wait for close, not a fixed runtime budget: spawnSync's timeout killed
+			// only the CLI while its current command could still write into root.
+			const result = await new Promise((resolve, reject) => {
+				let stderr = "";
+				child.stdout.resume();
+				child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+				child.once("error", reject);
+				child.once("close", (status, signal) => resolve({ status, signal, stderr }));
 			});
 			const commands = readFileSync(calls, "utf8").trim().split("\n").map(JSON.parse);
+			mergeStarted = commands.some((args) => args[0] === "git" && args[1] === "merge");
+			assert.equal(result.signal, null, result.stderr);
+			if (mergeStarted) assert.equal(readFileSync(join(root, "MERGE_FINISHED"), "utf8"), "done");
 			if (catalogDirty && !forceTests) {
 				// A changed catalog is never pushed to main untested (v2026.10.19-1): without --force-tests the release stops
 				// before it commits, tags or pushes anything.
@@ -176,6 +211,8 @@ if (${JSON.stringify(name)} === "gh") {
 				["git", "push", "origin", "v2026.9.12-3"],
 			] : []);
 		} finally {
+			if (mergeStarted) await mergeFinished;
+			await new Promise((resolve, reject) => gate.close((error) => error ? reject(error) : resolve()));
 			rmSync(root, { recursive: true, force: true });
 		}
 	});

@@ -1,3 +1,21 @@
+## 2026-10-21 - Release CLI tests own command completion before cleanup (senpi#3874)
+
+### What changed
+
+- `scripts/release-cli.test.mjs`: run the CLI asynchronously, drain its output and await `close` before assertions or temporary-directory removal. The merge stub waits on a socket event from the test owner and completes a late write before exiting; the test closes its socket server before cleanup. No cleanup retries are used.
+
+### Why
+
+- `scripts/release-cli.test.mjs`: the 15-second `spawnSync` timeout killed only the release CLI under load, leaving its active command stub alive. Assertions saw a null exit status or an incomplete command log, and cleanup could race the orphan's writes and fail with `ENOTEMPTY`.
+
+### Why an extension could not handle it
+
+- `scripts/release-cli.test.mjs`: the process lifetime belongs to the repository test harness, not an extension.
+
+### Expected merge conflict zones
+
+- `scripts/release-cli.test.mjs`: subprocess invocation, merge-stub protocol and temporary-directory teardown.
+
 ## 2026-10-19 - The bundle ships the RPC host supervisor as its own program (senpi#3743)
 
 ### What changed
