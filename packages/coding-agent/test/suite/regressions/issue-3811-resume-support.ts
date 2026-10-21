@@ -1,7 +1,9 @@
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
-import { createHarness, type Harness } from "../harness.ts";
+import type { PromptTemplate } from "../../../src/core/prompt-templates.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "../../utilities.ts";
+import { createHarness, createTestUiContext, type Harness } from "../harness.ts";
 
 export interface ResumeFixture {
 	readonly h: Harness;
@@ -14,19 +16,28 @@ export const runRef = { kind: "dag", id: "r1" } as const;
 export const image = { type: "image", data: "aW1hZ2UtYnl0ZXM=", mimeType: "image/png" } as const;
 
 /** A faux session whose `hold` tool waits for the test, one gate per call (senpi#3811 resume settlement). */
-export async function resumeFixture(options: { unattended?: boolean } = {}): Promise<ResumeFixture> {
+export async function resumeFixture(
+	options: { unattended?: boolean; prompts?: PromptTemplate[]; notify?: (message: string) => void } = {},
+): Promise<ResumeFixture> {
 	const waiters: Array<() => void> = [];
 	const gates: Array<() => void> = [];
 	let api: ExtensionAPI | undefined;
+	const capture = (pi: ExtensionAPI) => {
+		api = pi;
+	};
+	const prompts = options.prompts;
 	const h = await createHarness({
 		...(options.unattended === true
 			? { sessionStartEvent: { type: "session_start", reason: "resume", attended: false } }
 			: {}),
-		extensionFactories: [
-			(pi: ExtensionAPI) => {
-				api = pi;
-			},
-		],
+		...(prompts === undefined
+			? { extensionFactories: [capture] }
+			: {
+					resourceLoader: {
+						...createTestResourceLoader({ extensionsResult: await createTestExtensionsResult([capture]) }),
+						getPrompts: () => ({ prompts, diagnostics: [] }),
+					},
+				}),
 		tools: [
 			{
 				name: "hold",
@@ -41,7 +52,12 @@ export async function resumeFixture(options: { unattended?: boolean } = {}): Pro
 			},
 		],
 	});
-	await h.session.bindExtensions({ mode: "rpc", shutdownHandler: () => {} });
+	const notify = options.notify;
+	await h.session.bindExtensions({
+		mode: "rpc",
+		shutdownHandler: () => {},
+		...(notify === undefined ? {} : { uiContext: createTestUiContext({ notify: (message) => notify(message) }) }),
+	});
 	h.setResponses([
 		fauxAssistantMessage(fauxToolCall("hold", {}), { stopReason: "toolUse" }),
 		...Array.from({ length: 6 }, (_, index) => fauxAssistantMessage(`later turn ${index}`)),

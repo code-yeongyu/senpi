@@ -88,7 +88,7 @@ describe("senpi#3811 held human input keeps what the person sent", () => {
 		expect(fixture.h.session.pausedHeldInputCount).toBe(1);
 	});
 
-	it("runs an extension command typed while the run is paused instead of holding its raw text", async () => {
+	it("holds an extension command typed while the run is paused and runs it when the run resumes", async () => {
 		// Given a child paused for its parent's run and an extension command
 		const fixture = await textFixture();
 		fixtures.push(fixture);
@@ -99,14 +99,21 @@ describe("senpi#3811 held human input keeps what the person sent", () => {
 				ran.push(args);
 			},
 		});
-		await pausedForRun(fixture);
+		const childSeq = await pausedForRun(fixture);
 
 		// When the person types the command
 		await fixture.h.session.prompt("/note remember staging");
 
-		// Then the command ran and nothing was held for the model
+		// Then nothing ran while paused: the command is held
+		expect(ran).toEqual([]);
+		expect(fixture.h.session.pausedHeldInputCount).toBe(1);
+		expect(fixture.h.faux.state.callCount).toBe(0);
+
+		// And the run Resume runs it, without handing its raw text to the model
+		await fixture.h.session.resumeForRun({ parentSessionId: "p", parentPauseSeq: 1, childSeqCutoff: childSeq });
+		await settle(fixture);
 		expect(ran).toEqual(["remember staging"]);
 		expect(fixture.h.session.pausedHeldInputCount).toBe(0);
-		expect(fixture.h.faux.state.callCount).toBe(0);
+		expect(JSON.stringify(fixture.h.faux.getCallLog().at(-1)?.context.messages)).not.toContain("/note");
 	});
 });

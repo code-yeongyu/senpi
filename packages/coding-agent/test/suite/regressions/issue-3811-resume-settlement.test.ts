@@ -114,4 +114,28 @@ describe("senpi#3811 resume settlement", () => {
 		expect(fixture.h.session.paused).toBe(false);
 		expect(fixture.h.faux.state.callCount).toBe(0);
 	});
+
+	it("attends the session when release mode frees an unattended hold, like a person's input", async () => {
+		// Given an unattended session whose notices reach the UI
+		const notices: string[] = [];
+		const fixture = await resumeFixture({ unattended: true, notify: (message) => notices.push(message) });
+		fixtures.push(fixture);
+
+		// When the user releases it, later stops it, and a background wake arrives
+		await settlesWithin(fixture.h.session.resumeSessionRequest({ mode: "release" }), "resume_session release");
+		await fixture.h.session.stop();
+		notices.length = 0;
+		fixture
+			.api()
+			.sendMessage(
+				{ customType: "senpi-monitor:probe", content: "background wake", display: false },
+				{ triggerTurn: true },
+			);
+		await settle(fixture);
+
+		// Then the wake is held without the unattended-session notice: the session is attended
+		expect(fixture.h.faux.state.callCount).toBe(0);
+		expect(fixture.h.session.paused).toBe(true);
+		expect(notices).toEqual([]);
+	});
 });
