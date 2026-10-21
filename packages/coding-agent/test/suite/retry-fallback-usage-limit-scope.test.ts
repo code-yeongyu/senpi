@@ -4,6 +4,7 @@ import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { RetryFallbackController, type RetryFallbackControllerDeps } from "../../src/core/retry-fallback/controller.ts";
 import { SelectorCooldowns } from "../../src/core/retry-fallback/cooldown.ts";
+import { limitResetClause } from "../../src/core/retry-fallback/usage-limit.ts";
 
 function model(provider: string, id: string): Model<Api> {
 	return { ...getModel("anthropic", "claude-opus-4-5"), provider, id };
@@ -14,7 +15,12 @@ const opus = model("anthropic-subscription", "claude-opus-5-5");
 const kimi = model("kimi-coding", "kimi-k3");
 const models = [fable, opus, kimi];
 
-function createController(chain: readonly string[], now: () => number = () => 0, wallNow: () => number = now) {
+function createController(
+	chain: readonly string[],
+	now: () => number = () => 0,
+	wallNow: () => number = now,
+	options: { readonly withoutWallNow?: boolean } = {},
+) {
 	let current: { model: Model<Api> } = { model: fable };
 	const events: unknown[] = [];
 	const deps: RetryFallbackControllerDeps = {
@@ -24,6 +30,7 @@ function createController(chain: readonly string[], now: () => number = () => 0,
 			getAll: () => models,
 		},
 		cooldowns: new SelectorCooldowns(now, undefined, wallNow),
+		...(options.withoutWallNow ? {} : { wallNow }),
 		logger: { debug: () => {}, info: () => {}, warn: () => {} },
 		switchModel: async (next) => {
 			current = { model: next };
@@ -36,6 +43,27 @@ function createController(chain: readonly string[], now: () => number = () => 0,
 }
 
 const fullChain = ["anthropic-subscription/claude-opus-5-5", "kimi-coding/kimi-k3"];
+
+describe("limitResetClause", () => {
+	const now = new Date(2026, 9, 19, 12, 0);
+
+	it("#given a reset later today #then it names the local time", () => {
+		const reset = new Date(2026, 9, 19, 13, 30);
+		const time = reset.toLocaleString(undefined, { hour: "2-digit", minute: "2-digit" });
+		expect(limitResetClause(reset.toISOString(), now)).toBe(`; it resets at ${time}`);
+	});
+
+	it("#given a reset on another day #then it names the weekday too", () => {
+		const reset = new Date(2026, 9, 24, 23, 0);
+		const time = reset.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+		expect(limitResetClause(reset.toISOString(), now)).toBe(`; it resets at ${time}`);
+	});
+
+	it("#given no reset or an unreadable one #then it adds nothing", () => {
+		expect(limitResetClause(undefined, now)).toBe("");
+		expect(limitResetClause("not a time", now)).toBe("");
+	});
+});
 
 describe("retry fallback usage-limit scope", () => {
 	it("#given an account-wide Claude session limit #when falling back #then it skips the other models on that exhausted provider", async () => {
@@ -57,6 +85,78 @@ describe("retry fallback usage-limit scope", () => {
 				}),
 			],
 		});
+	});
+
+	it("#given a usage limit that names its reset #when falling back #then the event says when it resets", async () => {
+		const wall = Date.parse("2026-10-19T15:00:00.000Z");
+		const { controller, events } = createController(
+			fullChain,
+			() => 0,
+			() => wall,
+		);
+
+		await controller.tryFallback("hard-error", {
+			errorMessage: "You've hit your session limit \u00b7 resets in 2 hours",
+		});
+
+		expect(events).toEqual([expect.objectContaining({ limit: "account", resetsAt: "2026-10-19T17:00:00.000Z" })]);
+	});
+
+	it("#given a usage limit with a retry-after and no reset words #when falling back #then the reset is the retry-after", async () => {
+		const wall = Date.parse("2026-10-19T15:00:00.000Z");
+		const { controller, events } = createController(
+			fullChain,
+			() => 0,
+			() => wall,
+		);
+
+		await controller.tryFallback("hard-error", {
+			errorMessage: "You've hit your session limit",
+			retryAfterMs: 30 * 60_000,
+		});
+
+		expect(events).toEqual([expect.objectContaining({ limit: "account", resetsAt: "2026-10-19T15:30:00.000Z" })]);
+	});
+
+	it("#given both a named reset and a retry-after #when falling back #then the later one is the reset", async () => {
+		const wall = Date.parse("2026-10-19T15:00:00.000Z");
+		const { controller, events } = createController(
+			fullChain,
+			() => 0,
+			() => wall,
+		);
+
+		await controller.tryFallback("hard-error", {
+			errorMessage: "You've hit your session limit \u00b7 resets in 2 hours",
+			retryAfterMs: 30 * 60_000,
+		});
+
+		expect(events).toEqual([expect.objectContaining({ limit: "account", resetsAt: "2026-10-19T17:00:00.000Z" })]);
+	});
+
+	it("#given a controller without a wall clock #when a usage limit with a reset falls back #then the event carries no reset", async () => {
+		const { controller, events } = createController(fullChain, () => 0, undefined, { withoutWallNow: true });
+
+		await controller.tryFallback("hard-error", {
+			errorMessage: "You've hit your session limit \u00b7 resets in 2 hours",
+			retryAfterMs: 30 * 60_000,
+		});
+
+		expect(events[0]).toEqual(expect.objectContaining({ limit: "account" }));
+		expect(events[0]).not.toHaveProperty("resetsAt");
+	});
+
+	it("#given a usage limit with no reset at all #when falling back #then the event carries no reset", async () => {
+		const { controller, events } = createController(
+			fullChain,
+			() => 0,
+			() => 0,
+		);
+
+		await controller.tryFallback("hard-error", { errorMessage: "You've hit your session limit" });
+
+		expect(events[0]).toEqual(expect.objectContaining({ limit: "account" }));
+		expect(events[0]).not.toHaveProperty("resetsAt");
 	});
 
 	it("#given a limit scoped to one model #when falling back #then the next model on the same provider serves the turn", async () => {

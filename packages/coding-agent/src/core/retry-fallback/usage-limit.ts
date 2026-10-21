@@ -77,6 +77,19 @@ export function describeUsageLimitEntry(entry: SessionEntry): SessionEntry {
 }
 
 /** The notice clause naming what hit the limit, or undefined when no usage limit caused the switch. */
+/** "; it resets at <local time>" for a usage limit's known reset (the weekday too when it is not today), else "". */
+export function limitResetClause(resetsAt: string | undefined, now: Date = new Date()): string {
+	if (resetsAt === undefined) return "";
+	const reset = new Date(resetsAt);
+	if (Number.isNaN(reset.getTime())) return "";
+	const sameDay = reset.toDateString() === now.toDateString();
+	const time = reset.toLocaleString(
+		undefined,
+		sameDay ? { hour: "2-digit", minute: "2-digit" } : { weekday: "short", hour: "2-digit", minute: "2-digit" },
+	);
+	return `; it resets at ${time}`;
+}
+
 export function usageLimitCause(from: string, limit: UsageLimitScope | undefined): string | undefined {
 	if (limit === "model") return `${from} hit its usage limit`;
 	if (limit === "account") {

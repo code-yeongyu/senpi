@@ -666,6 +666,8 @@ export type AgentSessionEvent =
 			reason: "transient" | "refusal" | "hard-error" | "billing";
 			/** Set when a usage limit caused the switch: `model` binds one model, `account` the whole provider. */
 			limit?: "model" | "account";
+			/** When that limit resets (ISO), when the engine knows it. */
+			resetsAt?: string;
 	  }
 	| { type: "retry_fallback_succeeded"; model: string; chainKey: string }
 	| {
@@ -1614,6 +1616,7 @@ export class AgentSession {
 			registry: this._modelRegistry,
 			cooldowns: this._selectorCooldowns,
 			circuits: this._fallbackCircuits,
+			wallNow: () => Date.now(),
 			logger: fallbackLogger,
 			switchModel: async (model, thinking, reason) => {
 				await this._switchActiveModel(model, {

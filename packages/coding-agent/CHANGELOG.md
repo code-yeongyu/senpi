@@ -5,6 +5,7 @@
 ### Breaking Changes
 
 ### Added
+- When a usage limit makes the session fall back to another model, `retry_fallback_applied` carries `resetsAt` (ISO) if the limit's reset is known, and the interactive fallback notice says when it resets. The OmO desktop app shows the same reset on its fallback row ([omo-desktop-app#3353](https://github.com/sisyphuslabs/omo-desktop-app/issues/3353)).
 
 ### Changed
 

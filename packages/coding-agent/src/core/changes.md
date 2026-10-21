@@ -1,3 +1,21 @@
+## 2026-10-19 - A usage-limit fallback says when the limit resets (omo-desktop-app#3353)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `retry_fallback_applied` event type gains optional `resetsAt` (ISO), and the session passes the fallback controller a wall clock (`wallNow: () => Date.now()`). The fork-only controller (`retry-fallback/controller.ts`) sets `resetsAt` when a usage limit caused the switch and its reset is known: the later of the reset the limit's message names (`usageLimitResetMs`) and the provider's retry-after, the same reading the selector cooldown uses.
+
+### Why
+
+A spent Claude subscription silently moved the turn to a fallback model: clients knew a limit caused it (`limit`) but not when the subscription would serve again, so neither the TUI nor the desktop could tell the user how long to wait.
+
+### Why an extension could not handle it
+
+The fallback decision and the failure that caused it live inside the session's retry path; extensions only see the emitted event, which is what this adds to.
+
+### Expected merge conflict zones
+
+The `retry_fallback_applied` member of the session event union, and the `RetryFallbackController` construction in the `AgentSession` constructor.
+
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 
 ### What changed

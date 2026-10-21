@@ -1,3 +1,21 @@
+## 2026-10-19 - The fallback notice names when a usage limit resets (omo-desktop-app#3353)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `retry_fallback_applied` notice appends `limitResetClause(event.resetsAt)` ("; it resets at <local time>", with the weekday when it is not today) after the usage-limit cause.
+
+### Why
+
+The notice said a usage limit caused the switch but not when the account can serve again.
+
+### Why an extension could not handle it
+
+The notice is rendered by the interactive mode's own event switch.
+
+### Expected merge conflict zones
+
+The `retry_fallback_applied` case's `why` line.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

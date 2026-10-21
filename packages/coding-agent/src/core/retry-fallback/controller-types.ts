@@ -38,6 +38,8 @@ export interface RetryFallbackControllerDeps {
 		isFallbackEligible?(model: Model<Api>): boolean;
 	};
 	cooldowns: SelectorCooldowns;
+	/** Wall clock for a usage limit's reset time; without it no `resetsAt` is reported. */
+	wallNow?(): number;
 	/** Chain-entry circuits shared with every session in the process on the same agent dir. */
 	circuits?: FallbackCircuitAccess;
 	logger: FallbackLogger;
@@ -53,6 +55,8 @@ export interface RetryFallbackControllerDeps {
 					chainKey: string;
 					reason: FallbackReason;
 					limit?: UsageLimitScope;
+					/** When the usage limit that caused the switch resets (ISO), when its reset is known. */
+					resetsAt?: string;
 			  }
 			| { type: "retry_fallback_reverted"; from: string; to: string; cause?: FallbackRevertCause },
 	): void;

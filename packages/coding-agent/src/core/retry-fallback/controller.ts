@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
+import { usageLimitResetMs } from "../credential-pool/reset-time.ts";
 import { firstUsableCandidate, type UsableCandidate } from "./candidates.ts";
 import {
 	baseSelector,
@@ -322,7 +323,7 @@ export class RetryFallbackController {
 		// A rung the switch itself refuses does not end the walk: the next rung may fit (senpi#2894).
 		while (candidate) {
 			try {
-				await this.applyCandidate(current, candidate, reason, limit);
+				await this.applyCandidate(current, candidate, reason, limit, this.limitResetsAt(limit, failure));
 				this.heldForNetworkBlip ||= networkBlip;
 				return true;
 			} catch (error) {
@@ -340,6 +341,7 @@ export class RetryFallbackController {
 		candidate: { chainKey: string } & UsableCandidate,
 		reason: FallbackReason,
 		limit?: UsageLimitScope,
+		resetsAt?: string,
 	): Promise<void> {
 		const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
 		this.probes.admit(baseSelector(candidate.selector));
@@ -354,9 +356,26 @@ export class RetryFallbackController {
 			lastAppliedThinkingLevel: thinking,
 			...pinAfterSwitch(prior, { from, fromProvider: current.model.provider, reason, limit }),
 		};
-		const scope = limit === undefined ? {} : { limit };
+		const scope = { ...(limit === undefined ? {} : { limit }), ...(resetsAt === undefined ? {} : { resetsAt }) };
 		this.deps.logger.info("fallback_applied", { from, to, chainKey: candidate.chainKey, reason, ...scope });
 		this.deps.emit({ type: "retry_fallback_applied", from, to, chainKey: candidate.chainKey, reason, ...scope });
+	}
+
+	/**
+	 * When a usage limit resets: the later of the reset its message names and the provider's retry-after,
+	 * as the cooldown reads them. Undefined without a limit, a wall clock, or any reset hint.
+	 */
+	private limitResetsAt(limit: UsageLimitScope | undefined, failure: CircuitFailure): string | undefined {
+		const wallNow = this.deps.wallNow;
+		if (limit === undefined || wallNow === undefined) return undefined;
+		const now = wallNow();
+		const resetMs = failure.errorMessage === undefined ? undefined : usageLimitResetMs(failure.errorMessage, now);
+		const retryMs =
+			failure.retryAfterMs !== undefined && Number.isFinite(failure.retryAfterMs) && failure.retryAfterMs > 0
+				? failure.retryAfterMs
+				: undefined;
+		const hintedMs = Math.max(resetMs ?? 0, retryMs ?? 0);
+		return hintedMs > 0 ? new Date(now + hintedMs).toISOString() : undefined;
 	}
 
 	/** The chain governing `current`, when fallback is enabled; a model's own chain wins over an active one. */
