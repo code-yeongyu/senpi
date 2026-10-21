@@ -65,7 +65,10 @@ export class GoalDirectInputLifecycle {
 		const currentGoal = await readGoal(ref);
 		if (currentGoal?.id !== candidate.goalId) return;
 
-		if (currentGoal.status === "blocked" && isMechanicalContinuationBlock(currentGoal.blockedReason)) {
+		if (
+			currentGoal.status === "paused" ||
+			(currentGoal.status === "blocked" && isMechanicalContinuationBlock(currentGoal.blockedReason))
+		) {
 			await resetContinuationStreak(ref, { unattended: true });
 			const reactivated = await updateGoal(ref, { status: "active" }, "user");
 			this.#dependencies.beginAgentGoalAccounting(reactivated);

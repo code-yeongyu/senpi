@@ -29,6 +29,8 @@ import type { CustomMessage } from "./messages.ts";
 export type SessionControlDeliveryMessage = CustomMessage<SessionControlDeliveryDetails>;
 
 export interface ExternalAdmissionPort {
+	/** The shared engine admission gate persisted this message as a paused notice. */
+	readonly hold?: (message: SessionControlDeliveryMessage) => boolean;
 	/** A run is active, or a prompt has claimed its start: new input queues behind it. */
 	readonly isBusy: () => boolean;
 	/** Synchronously enqueues into the runtime's own queue for `lane`. */
@@ -48,6 +50,7 @@ export class ExternalAdmission {
 	private turnEpochValue = 0;
 	private readonly pending = new Map<string, PendingLane>();
 	private readonly emitted = new Set<string>();
+	private readonly notices = new Set<string>();
 	private readonly failed = new Map<string, string>();
 	private fileTakesWrites = true;
 	private readonly emittedListeners = new Set<(deliveryId: string) => void>();
@@ -132,7 +135,7 @@ export class ExternalAdmission {
 		if (this.closedReason !== undefined) throw new Error(this.closedReason);
 		const turn_epoch = this.turnEpochValue;
 		const id = input.delivery_id;
-		if (this.pending.has(id) || this.emitted.has(id) || this.failed.has(id)) {
+		if (this.pending.has(id) || this.emitted.has(id) || this.notices.has(id) || this.failed.has(id)) {
 			return { kind: "already_admitted", turn_epoch };
 		}
 		if (!this.gate().can_admit) return { kind: "held_draft", turn_epoch };
@@ -140,6 +143,7 @@ export class ExternalAdmission {
 			return { kind: "turn_conflict", turn_epoch };
 		}
 		const message = deliveryMessage(input);
+		if (this.port.hold?.(message)) return { kind: "notice_persisted", turn_epoch };
 		if (!this.isBusy() && input.whenIdle !== "queue") {
 			this.pending.set(id, "start");
 			// A start that settles without writing the entry left it queued for later (the runtime's
@@ -163,7 +167,11 @@ export class ExternalAdmission {
 	}
 
 	list(): AdmittedDeliveries {
-		const deliveries = { pending: [...this.pending.keys()], emitted: [...this.emitted] };
+		const deliveries = {
+			pending: [...this.pending.keys()],
+			emitted: [...this.emitted],
+			...(this.notices.size > 0 ? { notices: [...this.notices] } : {}),
+		};
 		if (this.failed.size === 0) return deliveries;
 		const failed = [...this.failed].map(([delivery_id, error]) => ({ delivery_id, error }));
 		return { ...deliveries, failed };
@@ -175,8 +183,26 @@ export class ExternalAdmission {
 		const id = deliveryIdOf(message);
 		if (id === undefined || this.emitted.has(id)) return;
 		this.pending.delete(id);
+		this.notices.delete(id);
 		this.emitted.add(id);
 		for (const listener of this.emittedListeners) listener(id);
+	}
+
+	observeNoticePersisted(message: AgentMessage): void {
+		this.fileTakesWrites = true;
+		const id = deliveryIdOf(message);
+		if (id === undefined) return;
+		this.pending.delete(id);
+		this.notices.add(id);
+	}
+
+	observeNoticesConsumed(messages: readonly AgentMessage[]): void {
+		for (const message of messages) {
+			const id = deliveryIdOf(message);
+			if (id === undefined || !this.notices.delete(id)) continue;
+			this.emitted.add(id);
+			for (const listener of this.emittedListeners) listener(id);
+		}
 	}
 
 	/**

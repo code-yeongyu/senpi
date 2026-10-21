@@ -43,7 +43,7 @@ describe("user abort racing settlement-owned recovery", () => {
 		await Promise.all([abort, prompt]);
 
 		expect(sessionAbortCount).toBe(1);
-		expect(await readGoal(ref)).toMatchObject({ status: "blocked", blockedReason: "user interrupted the turn" });
+		expect(await readGoal(ref)).toMatchObject({ status: "paused" });
 		expect(harness.agent.hasQueuedMessages()).toBe(false);
 		expect(harness.faux.getCallLog()).toHaveLength(1);
 	});
@@ -93,7 +93,7 @@ describe("user abort racing settlement-owned recovery", () => {
 		await abort;
 
 		expect(harness.agent.hasQueuedMessages()).toBe(false);
-		expect(await readGoal(ref)).toMatchObject({ status: "blocked", blockedReason: "user interrupted the turn" });
+		expect(await readGoal(ref)).toMatchObject({ status: "paused" });
 		expect(harness.faux.getCallLog()).toHaveLength(1);
 
 		await harness.session.prompt("ordinary follow-up");
@@ -126,7 +126,7 @@ describe("user abort racing settlement-owned recovery", () => {
 
 		await harness.session.prompt("continue monitoring");
 		await abort;
-		expect(await readGoal(ref)).toMatchObject({ status: "blocked" });
+		expect(await readGoal(ref)).toMatchObject({ status: "paused" });
 
 		const recoverySettled = waitForAgentSettled(harness.session);
 		await harness.session.prompt("/goal resume");

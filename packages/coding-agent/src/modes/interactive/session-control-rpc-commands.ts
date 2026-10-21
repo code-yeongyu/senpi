@@ -196,6 +196,7 @@ function admitInput(
 			return answered(id, command.type, { disposition: "started", ...identity });
 		case "steered":
 		case "queued":
+		case "notice_persisted":
 			return answered(id, command.type, { disposition: "queued", ...identity });
 		case "already_admitted":
 			return answered(id, command.type, { disposition: "queued", duplicate: true, ...identity });

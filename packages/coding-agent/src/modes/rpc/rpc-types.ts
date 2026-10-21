@@ -818,6 +818,10 @@ export interface RpcSessionState {
 	/** True when the active model is served at the priority ("fast") tier. */
 	fastMode: boolean;
 	isStreaming: boolean;
+	/** Human Stop holds all automatic turns until accepted human input or /resume. */
+	paused?: boolean;
+	/** Persisted updates not yet consumed by a resumed model turn. */
+	pausedNoticeCount?: number;
 	isCompacting: boolean;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";

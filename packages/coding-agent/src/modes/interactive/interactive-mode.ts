@@ -5024,8 +5024,12 @@ export class InteractiveMode {
 					return;
 				}
 				if (text === "/resume" || text === "/sessions") {
-					this.showSessionSelector();
 					this.editor.setText("");
+					if (text === "/resume" && this.session.pauseState.paused) {
+						await this.session.resume();
+					} else {
+						this.showSessionSelector();
+					}
 					return;
 				}
 				if (text === "/quit" || text === "/exit") {

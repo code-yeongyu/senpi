@@ -91,7 +91,7 @@ describe("late user abort during agent_end dispatch", () => {
 		expect(abortSpy).toHaveBeenCalledTimes(1);
 		expect(abortSources).toEqual(["system"]);
 		expect(sessionAbortCount).toBe(1);
-		expect(await readGoal(ref)).toMatchObject({ status: "blocked", blockedReason: "user interrupted the turn" });
+		expect(await readGoal(ref)).toMatchObject({ status: "paused" });
 		expect(harness.faux.getCallLog()).toHaveLength(1);
 	});
 });
@@ -158,6 +158,6 @@ async function runLateJoinScenario(options: LateJoinScenario): Promise<void> {
 	expect(abortSpy).toHaveBeenCalledTimes(1);
 	expect(abortSources).toEqual(["user"]);
 	expect(sessionAbortCount).toBe(1);
-	expect(await readGoal(ref)).toMatchObject({ status: "blocked", blockedReason: "user interrupted the turn" });
+	expect(await readGoal(ref)).toMatchObject({ status: "paused" });
 	expect(harness.faux.getCallLog()).toHaveLength(1);
 }

@@ -32,7 +32,7 @@ describe("goal abort lifecycle through the agent session", () => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
 
-	it("keeps an ESC interruption block through the next user run while allowing an explicit completion", async () => {
+	it("pauses after ESC and resumes the goal on accepted human input", async () => {
 		const streamStarted = deferred();
 		const agentEnds: AgentEndSnapshot[] = [];
 		const statusesAtAgentStart: GoalStatus[] = [];
@@ -76,15 +76,14 @@ describe("goal abort lifecycle through the agent session", () => {
 			expect.objectContaining({
 				aborted: true,
 				abortSource: "user",
-				status: "blocked",
+				status: "paused",
 				tokensUsed: expect.any(Number),
 				pendingMessages: false,
 			}),
 		]);
 		expect(agentEnds[0]?.tokensUsed).toBeGreaterThan(0);
 		expect(await readGoal(ref)).toMatchObject({
-			status: "blocked",
-			blockedReason: "user interrupted the turn",
+			status: "paused",
 		});
 
 		harness.setResponses([
@@ -93,7 +92,7 @@ describe("goal abort lifecycle through the agent session", () => {
 		]);
 		await harness.session.prompt("continue after interruption");
 
-		expect(statusesAtAgentStart).toEqual(["active", "blocked"]);
+		expect(statusesAtAgentStart).toEqual(["active", "active"]);
 		expect((await readGoal(ref))?.status).toBe("complete");
 	});
 

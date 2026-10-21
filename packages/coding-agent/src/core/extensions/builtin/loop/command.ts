@@ -211,6 +211,7 @@ async function runResume(ctx: ExtensionCommandContext, deps: LoopCommandDeps, ta
 		return;
 	}
 	const affected = await deps.controller.resume(resolution.value);
+	ctx.resumeSession?.();
 	if (resolution.value === "all") {
 		if (affected.length === 0) {
 			ctx.ui.notify("No paused loops to resume.", "warning");

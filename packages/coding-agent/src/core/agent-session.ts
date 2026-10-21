@@ -264,7 +264,9 @@ import type {
 	CompactionReason,
 	CompactionRejectionCause,
 	FilesystemPolicyChecker,
+	MessagePersistenceReceipt,
 	ModelSelectSource,
+	SendMessageOptions,
 	ToolChildJob,
 } from "./extensions/types.ts";
 import { normalizeToolExposure, RUNTIME_EXTENSION_PATH } from "./extensions/types.ts";
@@ -350,6 +352,12 @@ import {
 	type SessionHeader,
 	SessionManager,
 } from "./session-manager.ts";
+import {
+	SESSION_NOTICES_CONSUMED_ENTRY,
+	SESSION_PAUSE_ENTRY,
+	type SessionPauseState,
+	sessionPauseHistory,
+} from "./session-pause.ts";
 import { generateSessionTitle, sessionTitleRetryPolicy, shouldSkipSessionTitle } from "./session-title-generator.ts";
 import { SessionWorkBarrier } from "./session-work-barrier.ts";
 import {
@@ -508,6 +516,8 @@ export type AgentSessionEvent =
 	/** The session's tool child changed state (senpi#3566; the minimal record todo 14 extends). */
 	| { type: "session_tool_child"; state: "spawned" | "exited" | "respawned"; generation: number; pid: number }
 	| { type: "session_abort" }
+	| ({ type: "session_pause_changed" } & SessionPauseState)
+	| { type: "session_notice"; disposition: "notice_persisted" | "model_consumed"; entryIds: readonly string[] }
 	| {
 			type: "resume_compaction_required";
 			projection: ModelUsabilityBudgetProjection;
@@ -1251,10 +1261,17 @@ export class AgentSession {
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 	private _pendingCustomMessages: CustomMessage[] = [];
+	private readonly _customMessageReceipts = new WeakMap<AgentMessage, SendMessageOptions>();
+	private readonly _queuedCustomMessageReceipts = new Set<AgentMessage>();
 	/** Deliveries from other sessions: admitted once into the queues below, tracked until their entry is written. */
 	readonly externalAdmission = new ExternalAdmission({
 		isBusy: () => this._isAgentRunActive || this._promptStartPending,
-		enqueue: (message, lane) => (lane === "steer" ? this.agent.steer(message) : this.agent.followUp(message)),
+		hold: (message) => !this._admitSessionTurn([message]),
+		enqueue: (message, lane) => {
+			if (!this._admitSessionTurn([message])) return;
+			if (lane === "steer") this.agent.steer(message);
+			else this.agent.followUp(message);
+		},
 		start: (message) =>
 			this.sendCustomMessage(message, { triggerTurn: true }).catch((error: unknown) => {
 				this._sessionLogger.warn("external_delivery_start_failed", {
@@ -1356,6 +1373,9 @@ export class AgentSession {
 	private readonly _agentSettledDelivery = new AgentSettledDelivery();
 	private _suppressQueuedContinuationAfterUserAbort = false;
 	private _userAbortGeneration = 0;
+	/** A failed persistence write must never make Stop fail open in the live session. */
+	private _pausedSessionId: string | undefined;
+	private _noticesInTurn: { generation: number; entryIds: string[]; messages: CustomMessage[] } | undefined;
 	/** Set when clearQueue({ abortWillFollow: true }) drains queues immediately before abort(). */
 	private _hadClearedQueuedMessages = false;
 	private _extensionEventSignal: AbortSignal | undefined = undefined;
@@ -2878,14 +2898,15 @@ export class AgentSession {
 		this.externalAdmission.observeRunSettled();
 		let deferredActions: DeferredAgentSettledAction[] = [];
 		let deferredTurnClaims: DeferredTurnClaim[] = [];
-		this._agentSettledDelivery.begin(this._userAbortGeneration);
+		const deliveryAbortGeneration = this._userAbortGeneration;
+		this._agentSettledDelivery.begin(deliveryAbortGeneration);
 		const settlementEpoch = ++this._settlementEpoch;
 		try {
 			await this._extensionRunner.emit({ type: "agent_settled" });
 			this._emit({ type: "agent_settled" });
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 			({ actions: deferredActions, turnClaims: deferredTurnClaims } = this._agentSettledDelivery.finish(
-				this._userAbortGeneration,
+				this.pauseState.paused ? deliveryAbortGeneration : this._userAbortGeneration,
 			));
 		} finally {
 			this._agentSettledDelivery.cancel();
@@ -2972,7 +2993,12 @@ export class AgentSession {
 		deferredTurnClaim?: DeferredTurnClaim,
 		onQueuedInput?: (input: PreparedClientInput) => void,
 	): Promise<void> {
+		if (!this._admitSessionTurn(Array.isArray(messages) ? messages : [messages])) {
+			deferredTurnClaim?.resolve("finished-without-start");
+			return;
+		}
 		deferredTurnClaim?.resolve("started");
+		this._preparePausedNotices();
 		if (!this._isAgentRunActive) this.externalAdmission.beginTurn();
 		this._isAgentRunActive = true;
 		// A new turn admitted: arm the inactivity lease and the hard max-runtime cap.
@@ -3430,6 +3456,25 @@ export class AgentSession {
 	}
 
 	private async _processAgentEvent(event: AgentEvent, signal: AbortSignal): Promise<void> {
+		if (
+			event.type === "message_end" &&
+			event.message.role === "assistant" &&
+			event.message.stopReason !== "error" &&
+			event.message.stopReason !== "aborted" &&
+			!this.pauseState.paused &&
+			this._noticesInTurn?.generation === this._userAbortGeneration
+		) {
+			const { entryIds, messages } = this._noticesInTurn;
+			this._noticesInTurn = undefined;
+			if (entryIds.length > 0) {
+				this._emitEntryAppended(
+					this.sessionManager.appendCustomEntry(SESSION_NOTICES_CONSUMED_ENTRY, { entryIds }),
+				);
+				this.externalAdmission.observeNoticesConsumed(messages);
+				this._emit({ type: "session_notice", disposition: "model_consumed", entryIds });
+				this._publishPauseState();
+			}
+		}
 		if (event.type === "agent_start") {
 			this._requiredCompactionTurnError = undefined;
 			this._armCircuitProbeWatchdog();
@@ -3527,6 +3572,7 @@ export class AgentSession {
 					);
 					this._incrementMessageRevision();
 					this.externalAdmission.observePersisted(event.message);
+					this._acknowledgeCustomMessage(event.message, { disposition: "message_persisted", entryId });
 				} else if (
 					event.message.role === "user" ||
 					event.message.role === "assistant" ||
@@ -3543,6 +3589,10 @@ export class AgentSession {
 				const errorMessage = error instanceof Error ? error.message : String(error);
 				// A refused delivery is settled, not left held: a held start would queue every later delivery.
 				this.externalAdmission.observeRefused(event.message, errorMessage);
+				const receipt = this._customMessageReceipts.get(event.message);
+				this._customMessageReceipts.delete(event.message);
+				this._queuedCustomMessageReceipts.delete(event.message);
+				receipt?.onPersistenceFailed?.(error);
 				this._sessionLogger.warn("transcript_write_failed", { role: event.message.role, error: errorMessage });
 				this._transcriptWriteFailures.record(event.message, error);
 				this._emit({ type: "transcript_write_failed", role: event.message.role, errorMessage });
@@ -5126,6 +5176,7 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		const abortGeneration = this._userAbortGeneration;
 		// Held synchronously, before any await: an external delivery never overtakes this input.
 		const hold = this.externalAdmission.beginInput({
 			command: this._isExtensionCommandText(text, options),
@@ -5138,7 +5189,14 @@ export class AgentSession {
 			}
 			await this._prompt(text, {
 				...options,
+				pauseAdmissionGeneration: abortGeneration,
 				promptDisposition: (disposition) => {
+					if (
+						disposition === "queued" &&
+						options?.source !== "extension" &&
+						abortGeneration === this._userAbortGeneration
+					)
+						this._resumeSessionPause();
 					hold.accepted();
 					options?.promptDisposition?.(disposition);
 				},
@@ -5156,7 +5214,7 @@ export class AgentSession {
 		);
 	}
 
-	private async _prompt(text: string, options: PromptOptions): Promise<void> {
+	private async _prompt(text: string, options: PromptOptions & { pauseAdmissionGeneration: number }): Promise<void> {
 		const throwIfCancelled = (): void => {
 			if (!options?.signal?.aborted) return;
 			const error = new Error("Prompt cancelled before acceptance");
@@ -5164,6 +5222,28 @@ export class AgentSession {
 			throw error;
 		};
 		throwIfCancelled();
+		if (
+			options.source === "extension" &&
+			!this._admitSessionTurn([
+				{
+					role: "custom",
+					customType: "extension-user-message",
+					content: [...userTextContent(text, options.textBlocks), ...(options.images ?? [])],
+					display: true,
+					timestamp: Date.now(),
+				},
+			])
+		) {
+			options.promptDisposition?.("handled");
+			options.preflightResult?.(true);
+			return;
+		}
+		if (options.source !== "extension" && text.trim() === "/resume") {
+			await this.resume();
+			options.promptDisposition?.("handled");
+			options.preflightResult?.(true);
+			return;
+		}
 		const userAbortPromise = this._userAbortPromise;
 		if (userAbortPromise) {
 			await userAbortPromise;
@@ -5181,7 +5261,11 @@ export class AgentSession {
 				const spaceIndex = text.indexOf(" ");
 				const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
 				if (this._extensionRunner.getCommand(commandName)) {
-					const handled = await this._tryExecuteExtensionCommand(text);
+					const handled = await this._tryExecuteExtensionCommand(
+						text,
+						options.source,
+						options.pauseAdmissionGeneration,
+					);
 					throwIfCancelled();
 					if (handled) {
 						options?.promptDisposition?.("handled");
@@ -5344,6 +5428,11 @@ export class AgentSession {
 					hasImages: (options?.images?.length ?? 0) > 0,
 				})
 			) {
+				if (options.source !== "extension") {
+					await this._assertModelReadyForTurn();
+					if (options.pauseAdmissionGeneration !== this._userAbortGeneration) return;
+					this._resumeSessionPause();
+				}
 				// Report acceptance once the runtime took the continuation - its turn started (as
 				// subscribers see it: after that turn's agent_start) or it was queued into a running
 				// turn - like an ordinary prompt, not after the whole continued turn.
@@ -5612,6 +5701,12 @@ export class AgentSession {
 			// so make one final admission decision against the complete request.
 			await this._enforceFinalProviderAdmission(messages);
 			throwIfCancelled();
+			if (!this._admitSessionTurn(messages, options.source !== "extension", options.pauseAdmissionGeneration)) {
+				messages = undefined;
+				promptDisposition?.("handled");
+				preflightResult?.(true);
+				return;
+			}
 			await emitInputDisposition("started");
 		} catch (error) {
 			await emitInputDisposition("rejected");
@@ -5685,7 +5780,11 @@ export class AgentSession {
 	/**
 	 * Try to execute an extension command. Returns true if command was found and executed.
 	 */
-	private async _tryExecuteExtensionCommand(text: string): Promise<boolean> {
+	private async _tryExecuteExtensionCommand(
+		text: string,
+		source: InputSource | undefined,
+		generation: number,
+	): Promise<boolean> {
 		// Parse command name and args
 		const spaceIndex = text.indexOf(" ");
 		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
@@ -5705,6 +5804,11 @@ export class AgentSession {
 
 		// Get command context from extension runner (includes session control methods)
 		const ctx = this._extensionRunner.createCommandContext();
+		if (source !== "extension") {
+			ctx.resumeSession = () => {
+				if (generation === this._userAbortGeneration) this._resumeSessionPause();
+			};
+		}
 
 		try {
 			await command.handler(args, ctx);
@@ -5838,6 +5942,20 @@ export class AgentSession {
 		behavior: "steer" | "followUp",
 		options?: QueuedInputOptions,
 	): Promise<QueuedInputDisposition> {
+		const abortGeneration = this._userAbortGeneration;
+		if (
+			options?.source === "extension" &&
+			!this._admitSessionTurn([
+				{
+					role: "custom",
+					customType: "extension-user-message",
+					content: [...userTextContent(text), ...(images ?? [])],
+					display: true,
+					timestamp: Date.now(),
+				},
+			])
+		)
+			return "handled";
 		if (options?.source !== "extension") {
 			emitUserActivity(this, "prompt");
 			this._deadlineTracker.clearHold();
@@ -5864,6 +5982,9 @@ export class AgentSession {
 			await this._queueSteer(expandedText, processedInput.images, options);
 		} else {
 			await this._queueFollowUp(expandedText, processedInput.images, options);
+		}
+		if (options?.source !== "extension" && abortGeneration === this._userAbortGeneration) {
+			this._resumeSessionPause();
 		}
 		await this._emitInputDisposition(processedInput.inputId, "queued");
 		if (templateExpansion.template) {
@@ -6121,10 +6242,7 @@ export class AgentSession {
 	 */
 	async sendCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: {
-			triggerTurn?: boolean;
-			deliverAs?: "steer" | "followUp" | "nextTurn";
-		},
+		options?: SendMessageOptions,
 		deferredTurnClaim?: DeferredTurnClaim,
 	): Promise<void> {
 		const userAbortGeneration = this._userAbortGeneration;
@@ -6137,6 +6255,7 @@ export class AgentSession {
 			details: message.details,
 			timestamp: Date.now(),
 		} satisfies CustomMessage<T>;
+		if (options?.onPersisted || options?.onPersistenceFailed) this._customMessageReceipts.set(appMessage, options);
 		const waitForExistingSessionWork =
 			options?.triggerTurn === true &&
 			options.deliverAs !== "nextTurn" &&
@@ -6151,8 +6270,10 @@ export class AgentSession {
 			this._compactionLifecycle.state.status === "running" ? this._compactionLifecycle.state.generation : undefined;
 		let finishSessionWork: (() => void) | undefined;
 		try {
+			if (!this._admitSessionTurn([appMessage])) return;
 			if (waitForExistingSessionWork) {
 				await this._waitForSettledSessionWork();
+				if (!this._admitSessionTurn([appMessage])) return;
 				if (userAbortGeneration !== this._userAbortGeneration) return;
 				finishSessionWork = this._sessionWorkBarrier.begin();
 			}
@@ -6161,6 +6282,7 @@ export class AgentSession {
 				this._pendingNextTurnMessages.push(appMessage);
 			} else if (this.isStreaming && options?.triggerTurn !== false) {
 				deferredTurnClaim?.resolve("delegated");
+				this._queuedCustomMessageReceipts.add(appMessage);
 				if (options?.deliverAs === "followUp") {
 					this.agent.followUp(appMessage);
 				} else {
@@ -6174,6 +6296,7 @@ export class AgentSession {
 						this._compactionLifecycle.state.status !== "completed"))
 			) {
 				deferredTurnClaim?.resolve("delegated");
+				this._queuedCustomMessageReceipts.add(appMessage);
 				if (options?.deliverAs === "followUp") {
 					this.agent.followUp(appMessage);
 				} else {
@@ -6186,6 +6309,8 @@ export class AgentSession {
 				const environmentContext = this._pendingEnvironmentContextMessage();
 				const messages: AgentMessage[] = environmentContext ? [environmentContext, appMessage] : [appMessage];
 				const queueTriggerForLater = (): void => {
+					if (!this._admitSessionTurn([appMessage])) return;
+					this._queuedCustomMessageReceipts.add(appMessage);
 					if (options.deliverAs === "followUp") {
 						this.agent.followUp(appMessage);
 					} else {
@@ -6234,6 +6359,12 @@ export class AgentSession {
 			} else {
 				this._appendCustomMessage(appMessage);
 			}
+		} catch (error) {
+			const receipt = this._customMessageReceipts.get(appMessage);
+			this._customMessageReceipts.delete(appMessage);
+			this._queuedCustomMessageReceipts.delete(appMessage);
+			receipt?.onPersistenceFailed?.(error);
+			throw error;
 		} finally {
 			deferredTurnClaim?.resolve("finished-without-start");
 			finishSessionWork?.();
@@ -6267,6 +6398,9 @@ export class AgentSession {
 			this._appendCustomMessage(appMessage);
 			this.externalAdmission.observePersisted(appMessage);
 		} catch (error) {
+			const callbacks = this._customMessageReceipts.get(appMessage);
+			this._customMessageReceipts.delete(appMessage);
+			callbacks?.onPersistenceFailed?.(error);
 			if (deliveryIdOf(appMessage) !== undefined) {
 				const index = this.agent.state.messages.lastIndexOf(appMessage);
 				if (index >= 0) this.agent.state.messages.splice(index, 1);
@@ -6348,16 +6482,23 @@ export class AgentSession {
 		return environmentContextMessageIfChanged(this.agent.state.messages, resolveEnvironmentContext(this._cwd));
 	}
 
+	private _acknowledgeCustomMessage(message: AgentMessage, receipt: MessagePersistenceReceipt): void {
+		this._queuedCustomMessageReceipts.delete(message);
+		const callbacks = this._customMessageReceipts.get(message);
+		this._customMessageReceipts.delete(message);
+		callbacks?.onPersisted?.(receipt);
+	}
+
 	private _appendCustomMessage(appMessage: CustomMessage): void {
 		this.agent.state.messages.push(appMessage);
-		this._emitEntryAppended(
-			this.sessionManager.appendCustomMessageEntry(
-				appMessage.customType,
-				appMessage.content,
-				appMessage.display,
-				appMessage.details,
-			),
+		const entryId = this.sessionManager.appendCustomMessageEntry(
+			appMessage.customType,
+			appMessage.content,
+			appMessage.display,
+			appMessage.details,
 		);
+		this._emitEntryAppended(entryId);
+		this._acknowledgeCustomMessage(appMessage, { disposition: "message_persisted", entryId });
 		this._incrementMessageRevision();
 		this._emit({ type: "message_start", message: appMessage });
 		this._emit({ type: "message_end", message: appMessage });
@@ -6660,6 +6801,13 @@ export class AgentSession {
 		this._postCompactionDeferredSteeringMessages = [];
 		this._postCompactionDeferredFollowUpMessages = [];
 		this.agent.clearAllQueues();
+		const clearedReceipts = [...this._queuedCustomMessageReceipts];
+		this._queuedCustomMessageReceipts.clear();
+		for (const message of clearedReceipts) {
+			const callbacks = this._customMessageReceipts.get(message);
+			this._customMessageReceipts.delete(message);
+			callbacks?.onPersistenceFailed?.(new Error("Custom message cleared before persistence"));
+		}
 		this.externalAdmission.dropQueued();
 		this._emitQueueUpdate();
 		const cleared = { steering, followUp } as ClearedQueue;
@@ -6710,10 +6858,150 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(options?: { readonly cause?: AgentAbortCause }): Promise<void> {
+		if (options?.cause === undefined) {
+			this._userAbortGeneration += 1;
+			try {
+				this._pauseSession();
+			} catch (error) {
+				await this._abortWithProvenance();
+				throw error;
+			}
+		}
 		// The first named cause wins until the `agent_end` it explains is emitted (or a new run starts):
 		// a plain abort racing a replacement's teardown never erases the replacement's cause.
 		if (options?.cause !== undefined && this._abortCause === undefined) this._abortCause = options.cause;
 		await this._abortWithProvenance();
+	}
+
+	get pauseState(): SessionPauseState {
+		const state = this.sessionManager.reduceHistory(sessionPauseHistory);
+		return {
+			paused: this._pausedSessionId === this.sessionId || state.paused,
+			noticeCount: state.noticeIds.length,
+		};
+	}
+
+	/** Explicit human resume; extensions never call this through sendUserMessage. */
+	async resume(): Promise<void> {
+		await this.prompt(".", { expandPromptTemplates: false });
+	}
+
+	private _publishPauseState(): void {
+		const state = this.pauseState;
+		this._emit({ type: "session_pause_changed", ...state });
+		this._extensionRunner
+			.getUIContext()
+			.setStatus(
+				"session-pause",
+				state.paused
+					? `Paused: resume to continue${state.noticeCount > 0 ? ` (${state.noticeCount} updates arrived while paused)` : ""}`
+					: undefined,
+			);
+	}
+
+	private _pauseSession(): void {
+		if (this.pauseState.paused) return;
+		this._pausedSessionId = this.sessionId;
+		try {
+			this._emitEntryAppended(this.sessionManager.appendCustomEntry(SESSION_PAUSE_ENTRY, { paused: true }));
+		} finally {
+			this._publishPauseState();
+		}
+	}
+
+	private _resumeSessionPause(): void {
+		if (!this.pauseState.paused) return;
+		this._emitEntryAppended(this.sessionManager.appendCustomEntry(SESSION_PAUSE_ENTRY, { paused: false }));
+		this._pausedSessionId = undefined;
+		this._publishPauseState();
+	}
+
+	private _preparePausedNotices(): void {
+		const entryIds = [...this.sessionManager.reduceHistory(sessionPauseHistory).noticeIds];
+		const messages: CustomMessage[] = [];
+		if (entryIds.length > 0) {
+			const contextIds = new Set(this.sessionManager.buildContextEntries().map((entry) => entry.id));
+			for (const message of this.agent.state.messages) {
+				const id = this._entryIdsByMessage.get(message);
+				if (id) contextIds.add(id);
+			}
+			for (const id of entryIds) {
+				const entry = this.sessionManager.getEntry(id);
+				if (entry?.type !== "custom_message") continue;
+				const message: CustomMessage = {
+					role: "custom",
+					customType: entry.customType,
+					content: entry.content,
+					display: entry.display,
+					details: entry.details,
+					timestamp: Date.parse(entry.timestamp),
+				};
+				messages.push(message);
+				this.externalAdmission.observeNoticePersisted(message);
+				// Notices belong to the session, even when the user navigated to another branch
+				// or compacted the original notice out before resuming.
+				if (!contextIds.has(id)) {
+					this.agent.state.messages.push(message);
+					this._entryIdsByMessage.set(message, id);
+					this._incrementMessageRevision();
+				}
+			}
+		}
+		this._noticesInTurn = { generation: this._userAbortGeneration, entryIds, messages };
+	}
+
+	/**
+	 * The session's turn-admission authority. All automatic inputs and continuations pass here;
+	 * only accepted human input at the same Stop generation may release the pause.
+	 * Notices enter durable transcript custody without emitting model-consumption message events.
+	 */
+	private _admitSessionTurn(
+		messages: readonly AgentMessage[] = [],
+		human = false,
+		generation = this._userAbortGeneration,
+	): boolean {
+		if (human && generation === this._userAbortGeneration) this._resumeSessionPause();
+		if (!this.pauseState.paused) return true;
+		const notices =
+			messages.length > 0
+				? messages
+				: [
+						{
+							role: "custom" as const,
+							customType: "session-held-continuation",
+							content: "An automatic continuation was held while the session was paused.",
+							display: true,
+							timestamp: Date.now(),
+						},
+					];
+		for (const message of notices) {
+			if (message.role !== "custom" && message.role !== "user") continue;
+			const notice: CustomMessage =
+				message.role === "custom"
+					? message
+					: {
+							role: "custom",
+							customType: "extension-user-message",
+							content: message.content,
+							display: true,
+							timestamp: message.timestamp,
+						};
+			const entryId = this.sessionManager.appendCustomMessageEntry(
+				notice.customType,
+				notice.content,
+				true,
+				notice.details,
+			);
+			this.agent.state.messages.push(notice);
+			this._entryIdsByMessage.set(notice, entryId);
+			this._incrementMessageRevision();
+			this._emitEntryAppended(entryId);
+			this.externalAdmission.observeNoticePersisted(notice);
+			this._acknowledgeCustomMessage(message, { disposition: "notice_persisted", entryId });
+			this._emit({ type: "session_notice", disposition: "notice_persisted", entryIds: [entryId] });
+		}
+		this._publishPauseState();
+		return false;
 	}
 
 	private async _abortWithProvenance(): Promise<void> {
@@ -6727,7 +7015,9 @@ export class AgentSession {
 		const joinedAgentEndBoundary = this._abortProvenance.hasOpenAgentEndBoundary;
 		this._hadClearedQueuedMessages = false;
 		const shouldEmitAbort =
-			!joinedAgentEndBoundary && !wasMidRun && (hadRetryBackoff || hadCompactionOrPending || hadClearedQueues);
+			!joinedAgentEndBoundary &&
+			!wasMidRun &&
+			(hadRetryBackoff || hadCompactionOrPending || hadClearedQueues || this.pauseState.paused);
 		this.abortCompaction();
 		if (hasPendingTriggerTurnAdmission) this._recordUserAbort();
 		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
@@ -7887,6 +8177,7 @@ export class AgentSession {
 	}
 
 	private _recordUserAbort(): void {
+		if (this._abortCause === undefined) this._pauseSession();
 		this._suppressQueuedContinuationAfterUserAbort = true;
 		this._userAbortGeneration += 1;
 	}
@@ -9306,6 +9597,7 @@ export class AgentSession {
 	): Promise<"continued" | "taken-over"> {
 		await this.agent.waitForIdle();
 		try {
+			if (!this._admitSessionTurn()) return "taken-over";
 			if (this.agent.state.isStreaming) return "taken-over";
 
 			// Pre-admission restore point. A senpi-owned compaction that succeeds
@@ -9325,8 +9617,10 @@ export class AgentSession {
 			await this._maybeRestoreFallbackPrimary("continuation");
 
 			await this._revalidateScheduledContinuationAdmission();
+			if (!this._admitSessionTurn()) return "taken-over";
 			if (this.agent.state.isStreaming) return "taken-over";
 			if (!this._promptOwnsRun) this._transcriptWriteFailures.startRun();
+			this._preparePausedNotices();
 
 			await runBoundedRetryContinuation({
 				continueRun: async () => {
@@ -9682,6 +9976,7 @@ export class AgentSession {
 			}
 
 			this._applyExtensionBindings(this._extensionRunner);
+			this._publishPauseState();
 			this.syncPromptCacheSafeWaitEnv();
 			await this._extensionRunner.emit(this._sessionStartEvent);
 			this._enforceConfiguredDefaultTools();
@@ -9913,6 +10208,7 @@ export class AgentSession {
 				getEffectiveServiceTier: () => this.effectiveServiceTier,
 				getScopedModels: () => this._scopedModels,
 				isIdle: () => this.isIdle,
+				isPaused: () => this.pauseState.paused,
 				getAgentDir: () => this._agentDir,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 				getSignal: () => this._extensionEventSignal ?? this.agent.signal,

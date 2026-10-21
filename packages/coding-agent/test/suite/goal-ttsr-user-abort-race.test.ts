@@ -69,7 +69,7 @@ describe("user abort racing a TTSR system abort", () => {
 		expect(abortSources).toContain("user");
 		expect(abortSources).not.toContain("system");
 		expect(sessionAbortCount).toBe(0);
-		expect(await readGoal(ref)).toMatchObject({ status: "blocked", blockedReason: "user interrupted the turn" });
+		expect(await readGoal(ref)).toMatchObject({ status: "paused" });
 		expect(harness.faux.getCallLog()).toHaveLength(1);
 	});
 

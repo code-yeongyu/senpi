@@ -532,7 +532,7 @@ describe("goal extension contract (budget-free)", () => {
 		expect(await readGoal(storeRefFor(ctx))).toMatchObject({ status: "active" });
 	});
 
-	it("leaves a user-interrupted goal blocked when the user sends a new message", async () => {
+	it("resumes a user-interrupted goal when human input is accepted", async () => {
 		const { tools, handlers } = createGoalHarness();
 		const ctx = await makeCtx("thread-user-abort-no-resume");
 		await tools
@@ -567,12 +567,11 @@ describe("goal extension contract (budget-free)", () => {
 		);
 
 		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
-			status: "blocked",
-			blockedReason: "user interrupted the turn",
+			status: "active",
 		});
 	});
 
-	it("preserves the user-abort block reason", async () => {
+	it("records user abort as paused rather than a blocker", async () => {
 		const { tools, handlers } = createGoalHarness();
 		const ctx = await makeCtx("thread-user-abort-provider-guard");
 		await tools
@@ -594,8 +593,7 @@ describe("goal extension contract (budget-free)", () => {
 		);
 
 		expect(await readGoal(storeRefFor(ctx))).toMatchObject({
-			status: "blocked",
-			blockedReason: "user interrupted the turn",
+			status: "paused",
 		});
 	});
 
@@ -1255,8 +1253,8 @@ function goalContinuationEntries(count: number): SessionEntry[] {
 	})) as unknown as SessionEntry[];
 }
 
-describe("goal extension session_abort blocks an active goal outside an agent run", () => {
-	it("blocks an active goal when session_abort fires (abort during retry backoff or queued continuation)", async () => {
+describe("goal extension session_abort pauses an active goal outside an agent run", () => {
+	it("pauses an active goal when session_abort fires (abort during retry backoff or queued continuation)", async () => {
 		const { tools, handlers, sent } = createGoalHarness();
 		const ctx = await makeCtx("thread-session-abort-gap");
 		await tools
@@ -1276,8 +1274,8 @@ describe("goal extension session_abort blocks an active goal outside an agent ru
 		await runHandlers(handlers, "session_abort", { type: "session_abort" }, ctx);
 
 		const goal = await readGoal(storeRefFor(ctx));
-		expect(goal?.status).toBe("blocked");
-		expect(goal?.blockedReason).toBeTruthy();
+		expect(goal?.status).toBe("paused");
+		expect(goal?.blockedReason).toBeUndefined();
 		expect(sent).toHaveLength(0);
 	});
 

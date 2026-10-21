@@ -539,7 +539,7 @@ describe("loop extension lifecycle", () => {
 		expect(f.userMessages).toEqual([]);
 	});
 
-	it("pauses rather than ends the loop on a user abort", async () => {
+	it("keeps the configured loop scheduled after a user abort", async () => {
 		const f = await fixture();
 		await f.emit("session_start", { reason: "startup" });
 		const created = await f.controller.startFixed({
@@ -553,10 +553,9 @@ describe("loop extension lifecycle", () => {
 		await f.emit("session_abort");
 
 		const entry = (await f.persisted())?.entries[created.loopId];
-		expect(entry?.phase).toBe("suspended");
+		expect(entry?.phase).toBe("waiting");
 		expect(entry?.endReason).toBeUndefined();
-		expect(f.timers.armedKeys).toEqual([]);
-		expect(f.notices.map((notice) => notice.message).join("\n")).toContain("/loop resume");
+		expect(f.timers.armedKeys).toEqual([created.loopId]);
 	});
 });
 

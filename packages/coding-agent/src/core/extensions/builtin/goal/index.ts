@@ -155,6 +155,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 			clearAgentGoalAccounting();
 		}
 		refreshGoalUi(ctx, goal);
+		if (ctx.isPaused?.()) return;
 		// Opening the session earns one reminder; renders and extension reloads do not.
 		// Stale stops retain active status, unlike user-paused or blocking stops.
 		if (
@@ -251,7 +252,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		if (event.message.role !== "custom" || event.message.customType !== MANUAL_CONTINUE_CUSTOM_TYPE) return;
 		const ref = goalStoreRef(ctx);
 		const goal = await readGoal(ref);
-		if (goal?.status !== "blocked") return;
+		if (goal?.status !== "blocked" && goal?.status !== "paused") return;
 		syncContinuationGoal(ctx, await updateGoal(ref, { status: "active" }, "user"));
 	});
 
@@ -271,11 +272,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		blockedThisTurnGoalId = null;
 		completedThisTurnGoalId = null;
 		if (event.aborted === true && event.abortSource === "user" && goal?.status === "active") {
-			goal = await updateGoal(
-				goalStoreRef(ctx),
-				{ status: "blocked", reason: "user interrupted the turn" },
-				"model",
-			);
+			goal = await updateGoal(goalStoreRef(ctx), { status: "paused" }, "user");
 		}
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);
@@ -311,11 +308,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		if (goal?.status !== "active") return;
 		const accounted = await accountCurrentAgentTurn(ctx, "active");
 		if (accounted?.status === "active") {
-			const blocked = await updateGoal(
-				goalStoreRef(ctx),
-				{ status: "blocked", reason: "user interrupted the turn" },
-				"model",
-			);
+			const blocked = await updateGoal(goalStoreRef(ctx), { status: "paused" }, "user");
 			clearAgentGoalAccounting();
 			refreshGoalUiBestEffort(ctx, blocked);
 		}

@@ -536,6 +536,8 @@ export interface ExtensionContext {
 	thinkingLevel?: ThinkingLevel;
 	/** Whether the agent is idle (not streaming) */
 	isIdle(): boolean;
+	/** Engine-owned human Stop latch. Present on every session-backed context. */
+	isPaused?(): boolean;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
@@ -724,6 +726,8 @@ export interface ExtensionToolContext extends ExtensionContext {
  * Includes session control methods only safe in user-initiated commands.
  */
 export interface ExtensionCommandContext extends ExtensionContext {
+	/** Release human Stop from an accepted resume command. Bound only for a current human invocation. */
+	resumeSession?(): void;
 	/** Get the current base system-prompt construction options. */
 	getSystemPromptOptions(): BuildSystemPromptOptions;
 	/** Wait for the agent to finish streaming */
@@ -789,7 +793,7 @@ export interface ExtensionCommandContext extends ExtensionContext {
 export interface ReplacedSessionContext extends ExtensionCommandContext {
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: SendMessageOptions,
 	): Promise<void>;
 
 	sendUserMessage(
@@ -2554,7 +2558,7 @@ export interface ExtensionAPI {
 	/** Send a custom message to the session. */
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: SendMessageOptions,
 	): void;
 
 	/**
@@ -2987,9 +2991,22 @@ export interface ExtensionShortcut {
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
+export interface MessagePersistenceReceipt {
+	readonly disposition: "notice_persisted" | "message_persisted";
+	readonly entryId: string;
+}
+
+export interface SendMessageOptions {
+	triggerTurn?: boolean;
+	deliverAs?: "steer" | "followUp" | "nextTurn";
+	/** Durable custody, not model consumption. A paused notice is consumed only by a later resumed turn. */
+	onPersisted?: (receipt: MessagePersistenceReceipt) => void;
+	onPersistenceFailed?: (error: unknown) => void;
+}
+
 export type SendMessageHandler = <T = unknown>(
 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	options?: SendMessageOptions,
 ) => void;
 
 export type SendUserMessageHandler = (
@@ -3200,6 +3217,7 @@ export interface ExtensionContextActions {
 	getScopedModels: () => readonly ScopedModel[];
 	getAgentDir?: () => string;
 	isIdle: () => boolean;
+	isPaused?: () => boolean;
 	isProjectTrusted: () => boolean;
 	getSignal: () => AbortSignal | undefined;
 	abort: (source?: "user" | "system") => void;

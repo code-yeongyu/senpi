@@ -73,6 +73,7 @@ export interface AdmitExternalMessageInput {
  */
 export type ExternalAdmissionKind =
 	| "started"
+	| "notice_persisted"
 	| "queued"
 	| "steered"
 	| "turn_conflict"
@@ -102,6 +103,8 @@ export interface SessionAdmissionGate {
  * sender, and `already_admitted` until the run that refused it has settled with the file writable.
  */
 export interface AdmittedDeliveries {
+	/** Durable paused notices; not yet consumed by a model turn. */
+	readonly notices?: readonly string[];
 	readonly pending: readonly string[];
 	readonly emitted: readonly string[];
 	readonly failed?: readonly FailedDelivery[];

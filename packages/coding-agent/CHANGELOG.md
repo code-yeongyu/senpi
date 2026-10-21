@@ -24,6 +24,7 @@
 
 ### Fixed
 
+- Stop now pauses the session: background updates that arrive afterwards are kept as notices and nothing restarts until you send a message or resume ([#3811](https://github.com/code-yeongyu/senpi/issues/3811)).
 - Claude subscription sessions on current models (Fable 5, Sonnet 5, Haiku 5.5, Opus 4.7 and later) use their native 1M window again, without asking for extra usage. A refusal recorded by an earlier version no longer caps them, and only the older long-context models (Opus 4.6, Sonnet 4.6) still need extra usage for 1M ([#3801](https://github.com/code-yeongyu/senpi/issues/3801)).
 - The `coding-agent` package passes its lint check again: a no-op `String.raw` in the reserved-keywords list was removed (no behavior change).
 - A session file left claimed by a stopped engine host no longer blocks reopening its thread. If that host was only frozen or asleep, it can no longer write to the file once another host has taken it over ([#3652](https://github.com/code-yeongyu/senpi/issues/3652)).

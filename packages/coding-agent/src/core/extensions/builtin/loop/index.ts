@@ -508,7 +508,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			deliveryStates.set(entry.id, built.deliveryState);
 
 			const busy = !currentCtx.isIdle() || currentCtx.hasPendingMessages();
-			if (busy && isExtensionCommandPayload(built.text)) {
+			if (busy && !currentCtx.isPaused?.() && isExtensionCommandPayload(built.text)) {
 				// Extension commands cannot be queued; hold this delivery until the turn settles.
 				deferredDispatches.push(tick);
 				return;
@@ -526,9 +526,11 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 				folded: noopStreak >= 2,
 			});
 
-			attributedLoopId = entry.id;
-			attributedDeliveryId = tick.deliveryId;
-			attributionResolved = false;
+			if (!currentCtx.isPaused?.()) {
+				attributedLoopId = entry.id;
+				attributedDeliveryId = tick.deliveryId;
+				attributionResolved = false;
+			}
 			// The tick prompt tells the model to call schedule_wakeup, so the tool must be active
 			// before the tick is queued, not after the turn has already read its tool list.
 			syncScheduleWakeupActivation();
@@ -536,6 +538,11 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 				expandPromptTemplates: true,
 				...(busy ? { deliverAs: "followUp" as const } : {}),
 			});
+			if (currentCtx.isPaused?.()) {
+				// The engine owns the persisted notice. No iteration ran, so neither keepalive nor
+				// its spend budget is charged, and the configured fixed schedule stays armed.
+				active.onTickSettled({ loopId: entry.id, deliveryId: tick.deliveryId, outcome: "completed" });
+			}
 			await persist();
 			refreshStatus();
 		}
@@ -561,7 +568,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			const currentCtx = ctx;
 			if (active === undefined || currentCtx === undefined) return;
 			const busy = !currentCtx.isIdle() || currentCtx.hasPendingMessages();
-			const decision = active.onDue(loopId, clock.now(), busy);
+			const decision = active.onDue(loopId, clock.now(), busy, currentCtx.isPaused?.() === true);
 			await persist();
 			if (decision.action === "dispatch") {
 				await dispatchTick(decision.tick);
@@ -805,7 +812,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			// A retrying turn is still in progress: neither settle it nor judge its liveness.
 			if (event.willRetry === true) return;
 			if (event.aborted === true && event.abortSource === "user") {
-				await pauseAttributedLoop();
+				await settleAttributedTick("error", true);
 				return;
 			}
 			await settleAttributedTick(event.aborted === true ? "error" : "completed");
@@ -818,7 +825,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 		});
 
 		pi.on("session_abort", async () => {
-			await pauseAttributedLoop();
+			await settleAttributedTick("error", true);
 		});
 
 		pi.on("session_shutdown", async () => {
@@ -838,35 +845,13 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			ctx = undefined;
 		});
 
-		async function pauseAttributedLoop(): Promise<void> {
-			const active = scheduler;
-			if (active === undefined) return;
-			const targets =
-				attributedLoopId === undefined
-					? Object.values(active.getState().entries)
-							.filter((entry) => entry.phase !== "ended")
-							.map((entry) => entry.id)
-					: [attributedLoopId];
-			const paused: LoopId[] = [];
-			for (const loopId of targets) {
-				if (active.onUserAbort(loopId).action === "paused") paused.push(loopId);
-			}
-			attributedLoopId = undefined;
-			attributedDeliveryId = undefined;
-			attributionResolved = false;
-			if (paused.length === 0) return;
-			await persist();
-			refreshStatus();
-			ctx?.ui.notify("loop paused - /loop resume or /loop stop", "info");
-		}
-
 		/**
 		 * Settles the tick this turn was attributed to, drains a coalesced occurrence, and
 		 * applies the two-strike keepalive to a dynamic iteration that ended without calling
 		 * `schedule_wakeup`. An ordinary user turn clears the attribution first, so keepalive
 		 * can never be charged to it, and a user abort takes the pause path instead.
 		 */
-		async function settleAttributedTick(outcome: "completed" | "error"): Promise<void> {
+		async function settleAttributedTick(outcome: "completed" | "error", userStopped = false): Promise<void> {
 			const active = scheduler;
 			const loopId = attributedLoopId;
 			const deliveryId = attributedDeliveryId;
@@ -881,7 +866,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			const settled = deliveryId === undefined ? undefined : active.onTickSettled({ loopId, deliveryId, outcome });
 			await persist();
 
-			if (!resolved && entry.kind === "dynamic") {
+			if (!resolved && entry.kind === "dynamic" && !userStopped) {
 				const keepalive = active.onTurnEndedWithoutSchedule(loopId);
 				await persist();
 				refreshStatus();

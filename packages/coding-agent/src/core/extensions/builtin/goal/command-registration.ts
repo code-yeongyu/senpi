@@ -45,6 +45,7 @@ export function registerGoalCommand(pi: ExtensionAPI, deps: GoalCommandRegistrat
 						}
 						const goal = await updateGoal(deps.goalStoreRef(ctx), { status: command.status }, "user");
 						if (goal.status === "active") {
+							ctx.resumeSession?.();
 							deps.beginAgentGoalAccounting(goal);
 						} else {
 							deps.stopAgentGoalAccounting(goal.id);

@@ -53,6 +53,7 @@ import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type HistoryReducer, HistoryReductions } from "./session-history-reduce.ts";
 import { planLoadedTail } from "./session-loaded-tail.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
+import { SESSION_PAUSE_ENTRY } from "./session-pause.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
 import { SessionWriteFence } from "./session-write-fence.ts";
 import {
@@ -1115,7 +1116,10 @@ function isDisposableEntry(entry: FileEntry): boolean {
 
 /** A user or assistant message: the first one makes a new session worth a file (#10000). */
 function isConversationEntry(entry: FileEntry): boolean {
-	return entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant");
+	return (
+		(entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant")) ||
+		(entry.type === "custom" && entry.customType === SESSION_PAUSE_ENTRY)
+	);
 }
 
 export class SessionManager {

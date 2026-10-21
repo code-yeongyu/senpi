@@ -30,7 +30,7 @@ export function goalStatusText(goal: Goal, liveElapsedSeconds?: number): string 
 		}
 		case "paused":
 			return goal.continuationStoppedAt === undefined
-				? "Goal paused (/goal resume)"
+				? "Paused: resume to continue"
 				: `Goal ${goalStatusLabel("paused", goal.continuationStoppedAt)}`;
 		case "blocked":
 			return goal.blockedReason ? `Goal blocked: ${goal.blockedReason}` : "Goal blocked";

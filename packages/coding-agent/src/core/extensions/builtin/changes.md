@@ -1643,3 +1643,21 @@ The provider id is resolved inside the package before any extension loads, and t
 - `utils/changes.md`: corrected the stale `shortenPath()` note that claimed it backed the `/sessions` HUD picker; `shortenPath()` itself stays (other consumers remain).
 - Neo (the Go TUI) shipped a native port of the same HUD; it was removed in lockstep to satisfy the repo-wide "no /sessions HUD source" contract: `internal/ui/builtinext/{observer,observer_overlay,observer_viewer,observer_test,transcript,transcript_decode,transcript_render}.go`, the `ResolveSessionsCommandOutcome` resolver and its tests, the `app.sessions.observe` keybinding definition/scope/migration/registry-test entries, the qaharness `observer` scenario, the welcome-menu entry that advertised it, the `/sessions` command in the bridge `get_commands` testdata, and the `task-14-session-observer-tail` visual-claims manifest entry plus its triplet.
 - Why: user-requested cleanup. The HUD duplicated `/resume`'s session-picking surface and the `ctrl+s` chord collided with the more useful `app.session.toggleSort` / `app.models.save` chords that already bind `ctrl+s` in other scopes.
+
+## 2026-10-20 - Loop schedules survive Stop while ticks are held (senpi#3811)
+
+### What changed
+
+- `loop/index.ts` consults the engine pause before tick dispatch and keeps configured timers scheduled after user Stop. `loop/scheduler.ts` does not charge held ticks to the iteration budget. `/loop resume` uses the engine's human-command resume capability.
+
+### Why
+
+Stop must hold automatic turns without deleting a user's configured schedule.
+
+### Why an extension could not handle it
+
+This is the loop builtin's integration with the shared engine admission gate.
+
+### Expected merge conflict zones
+
+`loop/index.ts` tick attribution and abort handling; `loop/scheduler.ts` due dispatch; `loop/command.ts` resume.
