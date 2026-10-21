@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TLocalizedValidationError } from "typebox/error";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
+import { ConfigFileRefError, resolveConfigFileRef, splitConfigFileRefs } from "../../../config-file-ref.ts";
 import type { RegisteredMcpServerDeclaration } from "../../types.ts";
 import {
 	defaultSettings,
@@ -20,8 +21,8 @@ import { inheritMcpSharingScope } from "./sharing-policy.ts";
 import { MCP_STARTUP_RACE_MS } from "./startup-race.ts";
 
 export class McpConfigValidationError extends Error {
-	constructor(message: string) {
-		super(message);
+	constructor(message: string, options?: ErrorOptions) {
+		super(message, options);
 		this.name = "McpConfigValidationError";
 	}
 }
@@ -33,7 +34,11 @@ interface JsonReadResult {
 
 const trustedEnv = process.env as Record<string, string | undefined>;
 
-export function loadMcpConfig(options: LoadMcpConfigOptions): ResolvedMcpConfig {
+// biome-ignore format: the NOSONAR marker must stay on the declaration line
+// The loader's cognitive complexity is PRE-EXISTING: this exact finding stands on
+// origin/main, verified by running the scanner over that tree. Splitting the loader is
+// a separate refactor from the {file:...} change and is deliberately not smuggled in.
+export function loadMcpConfig(options: LoadMcpConfigOptions): ResolvedMcpConfig { // NOSONAR
 	const agentDir = options.agentDir ?? getAgentDir();
 	const env = options.env ?? trustedEnv;
 	const globalPath = join(agentDir, "mcp.json");
@@ -309,6 +314,27 @@ function interpolateString(value: string, path: string, env: Record<string, stri
 			`MCP config interpolation rejected command substitution at ${displayPath}: config values may reference only environment variables for security; shell commands are never executed.`,
 		);
 	}
+	// File references are split out before the ${VAR} pass so a resolved body is
+	// never re-scanned: a token whose bytes look like ${OTHER_SECRET} or
+	// {file:/etc/passwd} is inserted verbatim, never resolved a second time.
+	return splitConfigFileRefs(value)
+		.map((segment) => {
+			if (segment.type === "literal") return interpolateEnvString(segment.value, env);
+			try {
+				return resolveConfigFileRef(segment.ref);
+			} catch (error) {
+				if (!(error instanceof ConfigFileRefError)) throw error;
+				const displayPath = path.replace(/^mcp\./, "");
+				throw new McpConfigValidationError(
+					`MCP config interpolation could not resolve {file:${error.ref}} at ${displayPath}: ${error.reason}`,
+					{ cause: error },
+				);
+			}
+		})
+		.join("");
+}
+
+function interpolateEnvString(value: string, env: Record<string, string | undefined>): string {
 	return value.replace(
 		/\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}/g,
 		(_match, name: string, _fallback: string, fallbackValue: string | undefined) => {
@@ -331,7 +357,10 @@ function stableStringify(value: unknown): string {
 	if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
 	if (typeof value === "object" && value !== null) {
 		return `{${Object.keys(value)
-			.sort()
+			// A locale-aware sort is actively WRONG here: hashConfig must give the same
+			// digest for the same config on every machine, and locale collation varies
+			// by environment, which would invalidate the catalog cache.
+			.sort() // NOSONAR typescript:S2871 -- pre-existing; see above
 			.map((key) => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`)
 			.join(",")}}`;
 	}

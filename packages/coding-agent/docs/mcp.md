@@ -63,8 +63,9 @@ Argument array for `command`. Default `[]`.
 
 ### `env`
 Extra environment variables for the child process. Values support `${VAR}`
-expansion from the trusted parent environment. The child does not inherit your
-whole environment: it sees only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`
+expansion from the trusted parent environment, and `{file:/absolute/path}` to
+read a value from a file. The child does not inherit your whole environment:
+it sees only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`
 and `USER` (on Windows, the system path and profile variables) plus `env`,
 so pass every variable the server reads through `env`.
 
@@ -258,13 +259,14 @@ Semantics:
 
 ### Environment variables in skill servers
 
-`${VAR}` expansion follows the trust of the skill that declares the server,
-the same line senpi draws for `mcp.json` files:
+`${VAR}` and `{file:...}` expansion follow the trust of the skill that declares
+the server, the same line senpi draws for `mcp.json` files:
 
 - **Skills you own** (your user skills directory, packages you installed, and
   the skills of a project you trusted): stdio `command`, `args`, `env` and
-  `cwd` expand exactly like your own `mcp.json`, including `${VAR:-default}`
-  and the refusal of command substitution (a server asking for `$(...)` or a
+  `cwd` expand exactly like your own `mcp.json`, including `${VAR:-default}`,
+  `{file:/absolute/path}` file references, and the refusal of command
+  substitution (a server asking for `$(...)` or a
   leading `!` is skipped with a warning).
 - **Skills of an untrusted project**: nothing expands. The placeholder stays
   literal and senpi warns once, naming the skill and the variable; trust the
@@ -319,7 +321,10 @@ the same line senpi draws for `mcp.json` files:
 ## Security notes
 
 - Config values never pass through a shell; `${VAR}` expansion only reads the
-  trusted parent environment, and only for trusted sources: your own and a
+  trusted parent environment, and `{file:...}` only reads an absolute path (a
+  leading `~` expands against `$HOME`), refusing relative paths and naming the
+  path and reason on any missing, empty, or unreadable file. Both expand only
+  for trusted sources: your own and a
   trusted project's config, and stdio servers of skills you own. Skill remote
   servers never expand variables or send `bearerTokenEnv` (see
   [Environment variables in skill servers](#environment-variables-in-skill-servers)).

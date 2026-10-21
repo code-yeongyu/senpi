@@ -151,7 +151,7 @@ For providers with `models`, non-built-in provider configs need `baseUrl` and an
 
 ### Value Resolution
 
-The `apiKey` and `headers` fields support command execution, environment interpolation, and literals:
+The `apiKey` and `headers` fields support command execution, file references, environment interpolation, and literals:
 
 - **Shell command:** `"!command"` at the start executes the whole value as a command and uses stdout
   ```json
@@ -164,6 +164,19 @@ The `apiKey` and `headers` fields support command execution, environment interpo
   "apiKey": "${KEY_PREFIX}_${KEY_SUFFIX}"
   ```
   `$FOO_BAR` is the variable `FOO_BAR`; use `${FOO}_BAR` when `BAR` is literal text. Missing environment variables make the value unresolved.
+- **File reference:** `"{file:/absolute/path}"` reads that file when the value is resolved and uses its contents.
+  ```json
+  "apiKey": "{file:/home/you/.config/senpi/anthropic-key}"
+  "apiKey": "{file:~/.config/senpi/anthropic-key}"
+  "apiKey": "Bearer {file:/home/you/.config/senpi/registry-token}"
+  ```
+  The path must be absolute; a leading `~` expands against `$HOME` (`USERPROFILE` on Windows). Only
+  trailing whitespace is stripped from the file, so the usual trailing newline never becomes part of
+  the key. The file keeps the secret's only copy on disk, senpi reads it at load time, and rotating
+  the file takes effect on the next load. A path that does not exist, is empty, or cannot be read is
+  an error naming the path and the reason; a relative path is refused rather than resolved against
+  the current directory. File bodies are inserted verbatim and never re-scanned, so a key cannot
+  reference further variables or files.
 - **Escapes:** `"$$"` emits a literal `"$"`; `"$!"` emits a literal `"!"` without triggering command execution.
   ```json
   "apiKey": "$$literal-dollar-prefix"

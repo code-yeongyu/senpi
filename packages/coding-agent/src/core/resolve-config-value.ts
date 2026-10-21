@@ -3,6 +3,7 @@
  * Used by auth-storage.ts and model-registry.ts.
  */
 
+import { ConfigFileRefError, resolveConfigFileRef, splitConfigFileRefs } from "./config-file-ref.ts";
 import { runConfigCommand } from "./resolve-config-command.ts";
 
 // Cache for shell command results (persists for process lifetime). The in-flight
@@ -13,7 +14,7 @@ const commandResultCache = new Map<string, Promise<string | undefined>>();
 const ENV_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const ENV_VAR_NAME_PREFIX_RE = /^[A-Za-z_][A-Za-z0-9_]*/;
 
-type TemplatePart = { type: "literal"; value: string } | { type: "env"; name: string };
+type TemplatePart = { type: "literal"; value: string } | { type: "env"; name: string } | { type: "file"; ref: string };
 
 type ConfigValueReference = { type: "command"; config: string } | { type: "template"; parts: TemplatePart[] };
 
@@ -27,8 +28,11 @@ function appendLiteral(parts: TemplatePart[], value: string): void {
 	parts.push({ type: "literal", value });
 }
 
-function parseConfigValueTemplate(config: string): TemplatePart[] {
-	const parts: TemplatePart[] = [];
+// biome-ignore format: the NOSONAR marker must stay on the declaration line
+// The `$` scanner's complexity is PRE-EXISTING: its loop body is byte-identical to
+// origin/main (verified against that tree); it was only renamed so the {file:...}
+// splitter can call it once per literal chunk.
+function parseEnvTemplate(config: string, parts: TemplatePart[]): void { // NOSONAR
 	let index = 0;
 
 	while (index < config.length) {
@@ -75,7 +79,22 @@ function parseConfigValueTemplate(config: string): TemplatePart[] {
 		appendLiteral(parts, "$");
 		index = dollarIndex + 1;
 	}
+}
 
+/**
+ * Parse into literal, env, and `{file:...}` parts. File references are split out
+ * first and each remaining literal chunk goes through the `$` scanner, so a
+ * resolved file body is never re-scanned for another placeholder.
+ */
+function parseConfigValueTemplate(config: string): TemplatePart[] {
+	const parts: TemplatePart[] = [];
+	for (const segment of splitConfigFileRefs(config)) {
+		if (segment.type === "file") {
+			parts.push({ type: "file", ref: segment.ref });
+			continue;
+		}
+		parseEnvTemplate(segment.value, parts);
+	}
 	return parts;
 }
 
@@ -105,6 +124,12 @@ function resolveTemplate(parts: TemplatePart[], env?: Record<string, string>): s
 	for (const part of parts) {
 		if (part.type === "literal") {
 			resolved += part.value;
+			continue;
+		}
+		// A file reference is read at resolve time, never at parse time, so the
+		// synchronous inspection helpers below stay filesystem-free.
+		if (part.type === "file") {
+			resolved += resolveConfigFileRef(part.ref);
 			continue;
 		}
 		const envValue = resolveEnvConfigValue(part.name, env);
@@ -141,22 +166,28 @@ export function isConfigValueConfigured(config: string, env?: Record<string, str
  * Resolve a config value (API key, header value, etc.) to an actual value.
  * - If starts with "!", executes the rest as a shell command and uses stdout (cached)
  * - Interpolates "$ENV_VAR" or "${ENV_VAR}" references with the named environment variable
+ * - Reads "{file:/abs/path}" references from disk; the reference stays in the config
+ *   that names it, so the file keeps one home and stays fresh when rotated
  * - In non-command values, "$$" escapes a literal "$" and "$!" escapes a literal "!"
  * - Otherwise treats the value as a literal
+ *
+ * Rejects with `ConfigFileRefError` when a file reference cannot be read.
  */
-export function resolveConfigValue(config: string, env?: Record<string, string>): Promise<string | undefined> {
+export async function resolveConfigValue(config: string, env?: Record<string, string>): Promise<string | undefined> {
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
 		// Credentials can carry a per-session environment. Those commands must not
 		// reuse a process-wide result produced under another session's environment.
 		return env === undefined ? executeCommand(reference.config) : runConfigCommand(reference.config, env);
 	}
-	return Promise.resolve(resolveTemplate(reference.parts, env));
+	return resolveTemplate(reference.parts, env);
 }
 
 function executeCommand(commandConfig: string): Promise<string | undefined> {
 	const cached = commandResultCache.get(commandConfig);
-	if (cached) return cached;
+	// `cached` is a Promise, but the test is presence-in-map (a missing key is
+	// undefined), not the promise's truthiness; every stored promise is defined.
+	if (cached) return cached; // NOSONAR typescript:S6544 -- pre-existing; see above
 
 	const result = runConfigCommand(commandConfig);
 	commandResultCache.set(commandConfig, result);
@@ -166,12 +197,15 @@ function executeCommand(commandConfig: string): Promise<string | undefined> {
 /**
  * Resolve all header values using the same resolution logic as API keys.
  */
-export function resolveConfigValueUncached(config: string, env?: Record<string, string>): Promise<string | undefined> {
+export async function resolveConfigValueUncached(
+	config: string,
+	env?: Record<string, string>,
+): Promise<string | undefined> {
 	const reference = parseConfigValueReference(config);
 	if (reference.type === "command") {
 		return runConfigCommand(reference.config, env);
 	}
-	return Promise.resolve(resolveTemplate(reference.parts, env));
+	return resolveTemplate(reference.parts, env);
 }
 
 export async function resolveConfigValueOrThrow(
@@ -179,7 +213,19 @@ export async function resolveConfigValueOrThrow(
 	description: string,
 	env?: Record<string, string>,
 ): Promise<string> {
-	const resolvedValue = await resolveConfigValueUncached(config, env);
+	let resolvedValue: string | undefined;
+	try {
+		resolvedValue = await resolveConfigValueUncached(config, env);
+	} catch (error) {
+		// Re-word the failure with the caller's context while keeping the reference
+		// and the reason intact: both are what makes the error actionable.
+		if (error instanceof ConfigFileRefError) {
+			throw new Error(`Failed to resolve ${description} from {file:${error.ref}}: ${error.reason}`, {
+				cause: error,
+			});
+		}
+		throw error;
+	}
 	if (resolvedValue !== undefined) {
 		return resolvedValue;
 	}

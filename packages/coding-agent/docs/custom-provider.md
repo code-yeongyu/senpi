@@ -183,7 +183,7 @@ pi.registerProvider("my-llm", {
 
 When `models` is provided, it **replaces** all existing models for that provider.
 
-`apiKey` and custom header values use the same config value syntax as `models.json`: `!command` at the start executes a command for the whole value, `$ENV_VAR` and `${ENV_VAR}` interpolate environment variables, `$$` emits a literal `$`, and `$!` emits a literal `!`.
+`apiKey` and custom header values use the same config value syntax as `models.json`: `!command` at the start executes a command for the whole value, `$ENV_VAR` and `${ENV_VAR}` interpolate environment variables, `{file:/absolute/path}` reads the value from a file, `$$` emits a literal `$`, and `$!` emits a literal `!`.
 
 ## Unregister Provider
 

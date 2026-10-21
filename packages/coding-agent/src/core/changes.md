@@ -1,3 +1,24 @@
+## 2026-10-20 - `{file:...}` config values resolve at load time instead of being inlined
+
+### What changed
+
+- `packages/coding-agent/src/core/config-file-ref.ts` (new): `splitConfigFileRefs` cuts a value into literal segments and `{file:<ref>}` references, and `resolveConfigFileRef` reads one reference. `ConfigFileRefError` carries `ref` and `reason` so a caller can add context without re-deriving either. A `~` prefix expands against `$HOME` (`USERPROFILE` on Windows), the path must be absolute, only trailing whitespace is stripped from the body, and every failure names the path and the reason (`absolute path required, got <path>`, `file does not exist`, `file is empty`, `permission denied`, `not a readable file`).
+- `packages/coding-agent/src/core/resolve-config-value.ts`: the template parser gains a `file` part. References are split out before the `$` scanner runs, so each remaining literal chunk is parsed as before and a resolved body is never re-scanned for another placeholder. `resolveConfigValue` / `resolveConfigValueUncached` are `async` (a reference failure rejects rather than throwing synchronously); `resolveConfigValueOrThrow` re-words a reference failure as `Failed to resolve <description> from {file:<ref>}: <reason>` and keeps the original as `cause`. The synchronous inspection helpers (`getConfigValueEnvVarName`, `getConfigValueEnvVarNames`, `getMissingConfigValueEnvVarNames`, `isCommandConfigValue`, `isConfigValueConfigured`) are unchanged and stay filesystem-free: a reference is read at resolve time, never at parse time.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/config.ts`: `interpolateString` resolves `{file:...}` alongside `${VAR}` / `${VAR:-default}`, splitting references out before the env pass for the same re-scan reason. A failure becomes `McpConfigValidationError` naming the config path, the reference and the reason. `McpConfigValidationError` takes an optional `ErrorOptions` so the `ConfigFileRefError` survives as `cause`. `skill-server.ts` inherits this through `interpolateValue`, still gated by its existing trust rules: an untrusted project skill expands nothing.
+- Docs: `docs/models.md` (Value Resolution), `docs/mcp.md` (`env`, skill trust, security notes) and `docs/custom-provider.md` document the reference form.
+
+### Why
+
+A secret on disk should have exactly one home. Inlining it at setup copies the bytes into `mcp.json`, `models.json` and `auth.json`, and the copy goes stale the moment the original file is rotated. Resolving the reference when the engine loads the config keeps one source of truth, always fresh, with nothing new written to disk; the alternative (dropping the entry with a notice) meant a `{file:...}` value silently never imported. The reference is deliberately NOT resolved and NOT refused when it is a symlink, and there is deliberately no permission-MODE policy: `{file:/home/you/.creds/x}` is the user's stated trust decision and the OS already follows it, so adding a `realpath` gate or a mode check would reshape a filesystem trust model the user chose. What does fail closed is every read: a missing, empty, unreadable, or relative reference is an error naming the path and the reason, because a bare `ENOENT` is not actionable for a credential someone wired up deliberately. Path shape is checked before the filesystem is touched so a relative path never reports a misleading missing-file error. Tests: `test/resolve-config-value.test.ts` and `test/mcp/config-security.test.ts`.
+
+### Why an extension could not handle it
+
+Both sites are existing config-load paths inside core (`resolve-config-value.ts` reached from `auth-storage.ts` and `model-registry.ts`) and inside the MCP builtin. Neither is an extension hook: an extension can supply config but cannot change how the engine reads `models.json`, `auth.json`, or trusted `mcp.json` at load.
+
+### Expected merge conflict zones
+
+- LOW: the `TemplatePart` union and the renamed `parseEnvTemplate` in `resolve-config-value.ts` (upstream's `parseConfigValueTemplate` loop moved wholesale into `parseEnvTemplate`), and `interpolateString` in `mcp/config.ts`. `config-file-ref.ts` is new and fork-only, so it conflicts with nothing.
+
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 
 ### What changed
