@@ -61,6 +61,19 @@ async function reapProcessGroup(pid) {
 	return !alive();
 }
 
+// Aperiodic, deterministic filler: a repeated phrase now trips the engine's collapse-repetition stream rule (ttsr),
+// which interrupts the slow reply before the Stop can land.
+function slowFiller() {
+	const words = ["reading", "the", "build", "log", "while", "tests", "settle", "into", "a", "quiet", "state", "before", "checking", "each", "module", "for", "drift", "and", "noting", "what", "changed", "since", "lunch"];
+	let seed = 3811;
+	const out = [];
+	for (let i = 0; i < 160; i++) {
+		seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+		out.push(words[seed % words.length]);
+	}
+	return out.join(" ");
+}
+
 const isTurnRequest = (request) => !JSON.stringify(request.body?.messages?.[0] ?? "").includes("Generate a concise title");
 const turnRequests = (server) => (server?.requests ?? []).filter(isTurnRequest).length;
 
@@ -95,7 +108,7 @@ async function main() {
 						},
 					],
 				},
-				{ text: `${STREAM_MARKER} ${"still working ".repeat(60)}`, chunks: 60, chunkDelayMs: 500 },
+				{ text: `${STREAM_MARKER} ${slowFiller()}`, chunks: 60, chunkDelayMs: 500 },
 				{ text: RESUMED_MARKER },
 				{ text: "spare turn" },
 			],
