@@ -49,9 +49,7 @@ describe("senpi#3811 held human input keeps what the person sent", () => {
 
 		// Then the resumed turn carries the text and the image to the model
 		expect(fixture.h.faux.state.callCount).toBe(1);
-		expect(JSON.stringify(fixture.h.faux.getCallLog().at(-1)?.context.messages)).toContain(
-			"Look at this screenshot",
-		);
+		expect(JSON.stringify(fixture.h.faux.getCallLog().at(-1)?.context.messages)).toContain("Look at this screenshot");
 		expect(deliveredImages(fixture)).toBe(1);
 		expect(fixture.h.session.pausedHeldInputCount).toBe(0);
 	});
