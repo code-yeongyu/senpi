@@ -27,6 +27,9 @@ export function validatePauseCommand(value: Command): string | undefined {
 	if (value.type === "hold_input") {
 		if (!nonEmpty(value.inputId) || !seq(value.revision) || typeof value.text !== "string")
 			return "hold_input needs inputId (1-256 chars), a non-negative integer revision, and text.";
+		if (value.parentSessionId !== undefined && !nonEmpty(value.parentSessionId))
+			return "parentSessionId must be 1-256 characters.";
+		if (value.origin !== undefined && value.origin !== "human") return 'origin must be "human".';
 	}
 	if (value.type === "withdraw_held_input" && !nonEmpty(value.inputId)) return "withdraw_held_input needs inputId.";
 	if (value.type === "pause_for_run") {

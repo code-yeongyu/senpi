@@ -365,6 +365,40 @@ describe("senpi#3811 user Stop pauses the session", () => {
 		expect(conflict.error).toContain("input_id_conflict");
 		expect(await state(rpc)).toMatchObject({ pausedHeldInputCount: 1 });
 	});
+	it("lets the task parent relay guidance into the child it paused for a run, and refuses another parent", async () => {
+		const { fixture } = await pausedFixture();
+		fixtures.push(fixture);
+		const parent = fixture.bind();
+		await parent.send({ type: "set_client_info", capabilities: ["task_parent"] });
+		await parent.send({
+			type: "pause_for_run",
+			parentSessionId: "p",
+			parentPauseSeq: 1,
+			runRef: { kind: "dag", id: "r1" },
+		});
+
+		const relayed = (await parent.send({
+			type: "hold_input",
+			inputId: "guide-1",
+			revision: 0,
+			text: "Use the staging database",
+			parentSessionId: "p",
+			origin: "human",
+		})) as { success: boolean; data?: { duplicate?: boolean } };
+		const intruder = (await parent.send({
+			type: "hold_input",
+			inputId: "guide-2",
+			revision: 0,
+			text: "x",
+			parentSessionId: "someone-else",
+			origin: "human",
+		})) as { success: boolean; error?: string };
+
+		expect(relayed).toMatchObject({ success: true, data: { duplicate: false } });
+		expect(intruder.success).toBe(false);
+		expect(intruder.error).toContain("wrong_parent");
+		expect(fixture.session.pausedHeldInputCount).toBe(1);
+	});
 	it("pauses a task child for its parent's run and resumes it with the held human input first", async () => {
 		const { fixture, probe } = await pausedFixture();
 		fixtures.push(fixture);

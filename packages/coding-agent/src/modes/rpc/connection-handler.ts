@@ -1160,7 +1160,10 @@ export function createRpcConnectionHandler(
 				);
 
 			case "hold_input": {
-				const answer = runHoldInput(session, command, hasRole(INTERACTIVE_USER_CAPABILITY));
+				const answer = runHoldInput(session, command, {
+					interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY),
+					taskParent: hasRole(TASK_PARENT_CAPABILITY),
+				});
 				return answer.ok ? success(id, "hold_input", answer.data) : error(id, "hold_input", answer.error);
 			}
 

@@ -124,7 +124,16 @@ type RpcSessionCommand =
 	  }
 	| { id?: string; type: "interrupt"; turnId?: string; intent?: "stop" | "abort" }
 	/** Human input held for a paused session, delivered when it resumes; idempotent by inputId (senpi#3811). */
-	| { id?: string; type: "hold_input"; inputId: string; revision: number; text: string }
+	| {
+			id?: string;
+			type: "hold_input";
+			inputId: string;
+			revision: number;
+			text: string;
+			/** Required from a task_parent connection: the parent session that paused this child for its run. */
+			parentSessionId?: string;
+			origin?: "human";
+	  }
 	| { id?: string; type: "withdraw_held_input"; inputId: string }
 	/** Task-parent connections only: pause or resume this child for its parent's run (senpi#3811). */
 	| {

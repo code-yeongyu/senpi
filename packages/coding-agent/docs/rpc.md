@@ -2761,8 +2761,11 @@ reports `paused`, `pausedNoticeCount` and `pausedHeldInputCount`.
 
 #### hold_input
 
-Hold human input for a paused session and deliver it at the start of the turn that resumes it. Interactive
-connections only. Idempotent by `inputId`: the same id and `revision` answers the existing entry, an id that was
+Hold human input for a paused session and deliver it at the start of the turn that resumes it. An interactive
+connection may hold input. A `task_parent` connection may relay a person's run guidance into the child it paused for
+that run: it sends `parentSessionId` (the session that sent `pause_for_run`) and `origin: "human"`, and another parent
+is refused with `wrong_parent`. Any other connection is refused with `hold_input_requires_interactive_client`.
+Idempotent by `inputId`: the same id and `revision` answers the existing entry, an id that was
 already delivered answers `alreadyDelivered: true`, and the same id with another revision is refused with
 `input_id_conflict`.
 
