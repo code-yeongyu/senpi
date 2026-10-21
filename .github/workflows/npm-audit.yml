@@ -25,7 +25,9 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Audit production vulnerabilities
-        run: npm audit --omit=dev --audit-level=moderate
+        # GHSA-86w9-cpqp-85rv only; expires 2026-12-20. Installed reachability:
+        # https://github.com/code-yeongyu/senpi/issues/3886
+        run: node scripts/audit-production.mjs
 
       - name: Verify registry signatures
         run: npm audit signatures --omit=dev

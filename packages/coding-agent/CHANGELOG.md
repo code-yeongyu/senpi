@@ -28,6 +28,7 @@
 
 ### Fixed
 
+- The scheduled production dependency audit now excepts only the unreachable node-forge advisory GHSA-86w9-cpqp-85rv until December 20, 2026; other advisories and an expired exception still fail the audit ([#3886](https://github.com/code-yeongyu/senpi/issues/3886)).
 - An idle RPC host (one open session, no work) no longer wakes about eleven times a second. While its supervisor pipe is watched, the supervisor pid is checked every 5 s instead of every 250 ms, and the event-loop stall probe ticks once a second after 2 s without session work, going back to 200 ms as soon as a session works. This cuts the idle CPU of every thread host the desktop keeps open ([#3738](https://github.com/code-yeongyu/senpi/issues/3738)).
 ### Removed
 

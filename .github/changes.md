@@ -1,3 +1,21 @@
+## 2026-10-21 - Bound the unreachable forge advisory exception (senpi#3886)
+
+### What changed
+
+- `.github/workflows/npm-audit.yml`: production auditing invokes `scripts/audit-production.mjs` instead of the unfiltered npm command. Only GHSA-86w9-cpqp-85rv on node-forge is excepted, until 2026-12-20T00:00:00Z; other advisories, malformed reports and expiry fail closed. Registry signature verification stays unchanged.
+
+### Why
+
+- Installed sandbox-runtime 0.0.73 only uses forge for certificate minting/parsing. Gondolin 0.12.0 verifies locally generated cached proxy leaves, not upstream peer signatures. The installed call-site/input assessment is in senpi#3886; a bounded exception avoids suppressing unrelated production findings.
+
+### Why an extension could not handle it
+
+- The scheduled dependency audit executes in GitHub Actions before any runtime extension loads.
+
+### Expected merge conflict zones
+
+- `.github/workflows/npm-audit.yml`: the production audit command and advisory-evidence comment.
+
 ## 2026-10-19 - CI runs the tool child's Job Object containment tests on Windows (senpi#3566)
 
 ### What changed
