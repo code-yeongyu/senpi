@@ -6601,7 +6601,7 @@ export class AgentSession {
 		const generation = this._userAbortGeneration;
 		const sources = this._engineTurnHold.releaseAll("resume_session");
 		let consume: (() => void) | undefined;
-		await startRunResumeTurn({
+		const { sent } = await startRunResumeTurn({
 			heldInputs: () => this._heldInputs.pending(),
 			heldWakes: () => this._engineTurnHold.messages(),
 			send: (message) => this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true),
@@ -6616,6 +6616,14 @@ export class AgentSession {
 		const settled = (async () => {
 			await this.waitForIdle();
 			if (generation !== this._userAbortGeneration) {
+				this._engineTurnHold.rejectInput();
+				return;
+			}
+			// Idle can arrive before the send that started the turn has resolved: consume only once it was sent.
+			try {
+				await sent;
+			} catch (error) {
+				this._sessionLogger.warn("resume_turn_send_failed", { error: String(error) });
 				this._engineTurnHold.rejectInput();
 				return;
 			}
@@ -6679,7 +6687,7 @@ export class AgentSession {
 	}): Promise<ReleaseInheritedResult & { turnId?: string }> {
 		const released = this._runHolds.releaseInherited(request);
 		if (!released.released || released.otherHoldLive || this._engineTurnHold.isHeld()) return released;
-		const turnId = await startRunResumeTurn({
+		const { turnId, sent } = await startRunResumeTurn({
 			heldInputs: () => this._heldInputs.pending(),
 			heldWakes: () => this._engineTurnHold.messages(),
 			send: (message) => this.sendCustomMessage(message, { triggerTurn: true }, undefined, () => true),
@@ -6689,6 +6697,7 @@ export class AgentSession {
 				for (const source of sources) this._engineTurnHold.consume(source);
 			},
 		});
+		sent.catch((error: unknown) => this._sessionLogger.warn("run_resume_send_failed", { error: String(error) }));
 		return { ...released, turnId };
 	}
 

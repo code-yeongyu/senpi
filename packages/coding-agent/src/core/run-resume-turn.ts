@@ -19,9 +19,10 @@ function partsOf(content: Message["content"]): Part[] {
 /**
  * The child's turn after its parent's run Resume (senpi#3811), as ONE message so it is one turn: held human input
  * first, then the wakes held while paused, then the directive naming the interrupted turn. Answers with the started
- * turn's id once it is running; held input and wakes are consumed once the turn was sent.
+ * turn's id once it is running, and `sent`, which settles once the message was sent and its held input and wakes were
+ * handed to `consume` (it rejects when the send failed, and then consumes nothing).
  */
-export async function startRunResumeTurn(ports: RunResumePorts): Promise<string> {
+export async function startRunResumeTurn(ports: RunResumePorts): Promise<{ turnId: string; sent: Promise<void> }> {
 	const inputs = ports.heldInputs();
 	const wakes = ports.heldWakes();
 	const content: Part[] = [
@@ -33,12 +34,12 @@ export async function startRunResumeTurn(ports: RunResumePorts): Promise<string>
 	];
 	const started = ports.turnStarted();
 	const sending = ports.send({ customType: STOP_RESUME_CUSTOM_TYPE, content, display: inputs.length > 0 });
-	const turnId = await started;
-	void sending.then(() =>
+	const sent = sending.then(() =>
 		ports.consume(
 			inputs.map((input) => input.inputId),
 			wakes.map((wake) => wake.source),
 		),
 	);
-	return turnId;
+	const turnId = await started;
+	return { turnId, sent };
 }

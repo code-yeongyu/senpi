@@ -12,6 +12,7 @@ import type {
 	SessionHoldRecord,
 	ToolDefinition,
 } from "../../../src/core/extensions/types.ts";
+import type { HistoryReducer } from "../../../src/core/session-history-reduce.ts";
 import type { SessionEntry } from "../../../src/core/session-manager.ts";
 
 type AnyTool = ToolDefinition<any, any, any>;
@@ -60,6 +61,7 @@ async function goalSession(threadId: string) {
 			getSessionId: () => threadId,
 			getBranch: () => [],
 			getEntries: () => entries,
+			reduceHistory: <S>(reducer: HistoryReducer<S>) => entries.reduce(reducer.add, reducer.initial()),
 		},
 	} as unknown as ExtensionContext;
 	const fire = async (event: string, payload: unknown) => {
