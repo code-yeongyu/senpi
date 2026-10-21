@@ -1102,6 +1102,8 @@ export interface PromptOptions extends ClientMessageIdentity {
 	observedPauseSeq?: number;
 	/** Internal: called when a newer Stop turned this input into held input instead of a turn. */
 	onHeldByNewerStop?: () => void;
+	/** Internal: a run-owned pause holds this person's prepared input for the parent's run Resume (senpi#3811). */
+	holdForRun?: boolean;
 	/** Where the input sorts among queued inputs if it ends up queued (a replaying client keeps its order). */
 	enqueueOrder?: number;
 	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
@@ -5253,19 +5255,15 @@ export class AgentSession {
 		let heldByNewerStop = false;
 		try {
 			const origin = options?.inputOrigin ?? inputOriginOf(options?.source);
-			if (origin === "person" && this._runHolds.inheritedOwner() !== undefined) {
-				// A run-owned pause holds a person's input for the parent's run Resume instead of starting a turn (senpi#3811).
+			// A run-owned pause holds a person's prepared input for the parent's run Resume instead of a turn (senpi#3811).
+			const holdForRun = origin === "person" && this._runHolds.inheritedOwner() !== undefined;
+			if (holdForRun) {
 				emitUserActivity(this, "prompt");
 				this._runHolds.releaseDirectStops();
-				this._heldInputs.hold({ inputId: `prompt-${crypto.randomUUID()}`, revision: 0, text });
-				hold.accepted();
-				options?.promptDisposition?.("handled");
-				options?.preflightResult?.(true);
-				return;
-			}
-			if (origin === "person") this._beginPersonInput();
+			} else if (origin === "person") this._beginPersonInput();
 			await this._prompt(text, {
 				...options,
+				holdForRun,
 				observedPauseSeq,
 				onHeldByNewerStop: () => {
 					heldByNewerStop = true;
@@ -5325,6 +5323,16 @@ export class AgentSession {
 			},
 			{ newerStop },
 		);
+	}
+
+	/** Hold a person's prepared input (expanded text and images) under its client id, so a replay is held once. */
+	private _holdPreparedInput(text: string, images: ImageContent[] | undefined, options: PromptOptions): void {
+		this._heldInputs.hold({
+			inputId: options.clientMessageId ?? `prompt-${crypto.randomUUID()}`,
+			revision: 0,
+			text,
+			...(images === undefined || images.length === 0 ? {} : { images }),
+		});
 	}
 
 	private _isExtensionCommandText(text: string, options?: PromptOptions): boolean {
@@ -5611,6 +5619,14 @@ export class AgentSession {
 				}
 			}
 			titlePrompt = options?.sessionTitlePrompt === false ? undefined : (options?.sessionTitlePrompt ?? text);
+			if (options.holdForRun === true) {
+				this._holdPreparedInput(expandedText, currentImages, options);
+				emitPendingCommandInvocation();
+				await emitInputDisposition("handled");
+				promptDisposition?.("handled");
+				preflightResult?.(true);
+				return;
+			}
 
 			// If streaming, queue via steer() or followUp() based on option
 			if (this.isStreaming) {
@@ -5794,11 +5810,7 @@ export class AgentSession {
 			throwIfCancelled();
 			if (options.observedPauseSeq !== undefined && this._stopAddedSince(options.observedPauseSeq)) {
 				// A Stop landed after this input was accepted: keep it for the next release (senpi#3811 test 3).
-				this._heldInputs.hold({
-					inputId: options.clientMessageId ?? `prompt-${crypto.randomUUID()}`,
-					revision: 0,
-					text: expandedText,
-				});
+				this._holdPreparedInput(expandedText, currentImages, options);
 				if (consumedNextTurnMessages !== undefined && consumedNextTurnMessages.length > 0)
 					this._pendingNextTurnMessages = [...consumedNextTurnMessages, ...this._pendingNextTurnMessages];
 				options.onHeldByNewerStop?.();
@@ -6663,7 +6675,7 @@ export class AgentSession {
 		return pending.map((input) => ({
 			role: "custom",
 			customType: HELD_INPUT_ENTRY,
-			content: input.text,
+			content: input.images === undefined ? input.text : [{ type: "text", text: input.text }, ...input.images],
 			display: true,
 			timestamp: Date.now(),
 		}));

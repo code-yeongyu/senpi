@@ -1,3 +1,4 @@
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionEntry } from "./session-manager.ts";
 
@@ -9,6 +10,7 @@ export interface HeldInput {
 	readonly inputId: string;
 	readonly revision: number;
 	readonly text: string;
+	readonly images?: ImageContent[];
 	readonly entryId: string;
 }
 
@@ -32,13 +34,24 @@ export const heldInputHistory: HistoryReducer<SessionEntry[]> = {
 	},
 };
 
-type HeldInputData = { inputId: string; revision: number; text: string };
+type HeldInputData = { inputId: string; revision: number; text: string; images?: ImageContent[] };
 type SettledInput = { inputId: string; revision: number };
 
 function isHeldInputData(value: unknown): value is HeldInputData {
 	if (typeof value !== "object" || value === null) return false;
 	const data = value as Record<string, unknown>;
-	return typeof data.inputId === "string" && typeof data.revision === "number" && typeof data.text === "string";
+	return (
+		typeof data.inputId === "string" &&
+		typeof data.revision === "number" &&
+		typeof data.text === "string" &&
+		(data.images === undefined || (Array.isArray(data.images) && data.images.every(isImageContent)))
+	);
+}
+
+function isImageContent(value: unknown): value is ImageContent {
+	if (typeof value !== "object" || value === null) return false;
+	const part = value as Record<string, unknown>;
+	return part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string";
 }
 
 function settledOf(value: unknown): SettledInput[] {
