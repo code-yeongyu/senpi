@@ -1,7 +1,7 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SendMessageItem, SendMessageReceipt } from "../../../src/core/extensions/types.ts";
-import { type ResumeFixture, resumeFixture, settle } from "./issue-3811-resume-support.ts";
+import { type ResumeFixture, resumeFixture, settle, settlesWithin } from "./issue-3811-resume-support.ts";
 
 const WAKE = "omo-senpi:wake";
 const fencedRun = { kind: "task", id: "t1" } as const;
@@ -12,11 +12,27 @@ async function textFixture(): Promise<ResumeFixture> {
 	return fixture;
 }
 
-function sendItems(fixture: ResumeFixture, items: readonly SendMessageItem[]): Promise<readonly SendMessageReceipt[]> {
+async function sendItems(
+	fixture: ResumeFixture,
+	items: readonly SendMessageItem[],
+): Promise<readonly SendMessageReceipt[]> {
 	const content = items.map((item) => String(item.content)).join("\n\n");
-	return fixture
+	const receipts = await fixture
 		.api()
 		.sendMessage({ customType: WAKE, content, display: false }, { triggerTurn: true, deliverAs: "followUp", items });
+	// The agent session has item custody, so an itemized send must answer receipts here.
+	if (receipts === undefined) throw new Error("an itemized send on a session with item custody answered no receipts");
+	return receipts;
+}
+
+function nextTurnStart(fixture: ResumeFixture): Promise<void> {
+	return new Promise((resolve) => {
+		const unsubscribe = fixture.h.session.subscribe((event) => {
+			if (event.type !== "agent_start") return;
+			unsubscribe();
+			resolve();
+		});
+	});
 }
 
 function noticeEntries(fixture: ResumeFixture): Array<{ id: string; data: Record<string, unknown> }> {
@@ -146,9 +162,12 @@ describe("senpi#3811 itemized sendMessage custody", () => {
 		fixtures.push(fixture);
 
 		// When an extension sends a message without items
+		// (a plain send answers nothing to await, and its turn starts only after async admission, so wait for that start)
+		const started = nextTurnStart(fixture);
 		const result: unknown = fixture
 			.api()
 			.sendMessage({ customType: WAKE, content: "plain wake", display: false }, { triggerTurn: true });
+		await settlesWithin(started, "the plain wake's turn");
 		await settle(fixture);
 
 		// Then nothing is returned and the turn still runs

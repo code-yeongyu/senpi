@@ -2,7 +2,7 @@
 
 ### What changed
 
-- `packages/coding-agent/src/core/extensions/types.ts`: `pi.sendMessage` accepts `options.items` (`SendMessageItem`: `itemId`, `producer`, optional `runRef`, `content`, `details`) and then returns `Promise<readonly SendMessageReceipt[]>` (`itemId`, `entryId`, `disposition: "notice_persisted" | "message_persisted"`, `noticeId?`); without items it still returns `void`. `ExtensionActions` gains the optional host action `sendItemizedMessage`.
+- `packages/coding-agent/src/core/extensions/types.ts`: `pi.sendMessage` accepts `options.items` (`SendMessageItem`: `itemId`, `producer`, optional `runRef`, `content`, `details`) and then returns `Promise<readonly SendMessageReceipt[] | undefined> | void` (`itemId`, `entryId`, `disposition: "notice_persisted" | "message_persisted"`, `noticeId?`; `undefined` from a host without item custody, `void` from an implementation that predates `items`, so a single-signature `sendMessage(...): void` implementation or test double of `Pick<ExtensionAPI, "sendMessage">` stays assignable); without items it still returns `void`. `ExtensionActions` gains the optional host action `sendItemizedMessage`.
 - `packages/coding-agent/src/core/extensions/loader.ts`: routes an itemized send to that action and returns its receipts; a host without it delivers the batch plainly and answers no receipts.
 - `packages/coding-agent/src/core/extensions/runner.ts`: binds `sendItemizedMessage`, admitting a triggered batch through the same `session_start` turn gate as a plain send and answering its receipts once it runs.
 

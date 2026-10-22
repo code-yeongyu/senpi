@@ -2083,7 +2083,9 @@ pi.sendMessage({
   delivered as one message and every receipt names that message's entry (`message_persisted`). A held item's notice
   is delivered on its own when the session resumes, and a later wake from the same producer never replaces it.
   A host without item custody (an embedder's runtime) delivers the batch as a plain message and the promise
-  answers `undefined`, as an engine without `items` would. Without `items`, `sendMessage` returns nothing, as before.
+  answers `undefined`, as an engine without `items` would. The itemized return type also admits `void`, so an
+  `ExtensionAPI` implementation or test double written with a single `sendMessage(...): void` signature stays
+  assignable; treat `void` like `undefined` (no receipts). Without `items`, `sendMessage` returns nothing, as before.
 
 ```typescript
 const receipts = await pi.sendMessage(

@@ -2599,12 +2599,15 @@ export interface ExtensionAPI {
 	/**
 	 * Send a custom message to the session. With `items` the message is an itemized batch (senpi#3811): if a live
 	 * hold applies to any item it is stored as one notice per item, otherwise it is delivered as one message, and the
-	 * call answers one receipt per item once each item is in durable custody.
+	 * call answers one receipt per item once each item is in durable custody. `undefined` (a host without item custody)
+	 * and `void` (an implementation of this API that predates `items`, such as a test double) both mean no receipts;
+	 * admitting `void` keeps every single-signature `sendMessage(...): void` implementation assignable.
 	 */
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options: SendMessageOptions & { items: readonly SendMessageItem[] },
-	): Promise<readonly SendMessageReceipt[] | undefined>;
+		// biome-ignore lint/suspicious/noConfusingVoidType: void keeps single-signature `sendMessage(...): void` implementations assignable; it means no receipts
+	): Promise<readonly SendMessageReceipt[] | undefined> | void;
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: SendMessageOptions,
