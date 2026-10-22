@@ -89,7 +89,7 @@ export function wrapStreamWithInvokeRecovery(
 				(kind === "text" && block?.type === "text") ||
 				(kind === "thinking" && block?.type === "thinking") ||
 				(kind === "toolCall" && block?.type === "toolCall");
-			if (blockMatches && contentLifecycle.canStart(contentIndex)) return true;
+			if (blockMatches && contentLifecycle.canStart(contentIndex, kind)) return true;
 			terminateForFailure(source, failure);
 			return false;
 		};
