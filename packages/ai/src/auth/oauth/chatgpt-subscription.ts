@@ -13,6 +13,10 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
+import {
+	CHATGPT_SUBSCRIPTION_REJECTED_TOKEN_MESSAGE,
+	CHATGPT_SUBSCRIPTION_REJECTED_TOKEN_STATUSES,
+} from "../../api/chatgpt-subscription-rejected-token.ts";
 import { extractChatGptSubscriptionAccountId } from "../../utils/chatgpt-subscription-auth.ts";
 import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
@@ -394,6 +398,8 @@ async function refreshChatGptSubscriptionToken(refreshToken: string, signal: Abo
 export const chatgptSubscriptionOAuth: OAuthAuth = {
 	name: "ChatGPT Subscription (Plus/Pro)",
 	isSubscription: true,
+	rejectedTokenStatuses: CHATGPT_SUBSCRIPTION_REJECTED_TOKEN_STATUSES,
+	rejectedTokenMessage: CHATGPT_SUBSCRIPTION_REJECTED_TOKEN_MESSAGE,
 
 	async login(interaction) {
 		const method = await interaction.prompt({

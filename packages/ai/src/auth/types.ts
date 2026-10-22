@@ -251,6 +251,12 @@ export interface OAuthAuth {
 	 */
 	rejectedTokenStatuses?: readonly number[];
 
+	/**
+	 * When set, a listed status proves a refused token only if the provider's error text
+	 * matches: some providers answer 401 for refusals a refresh cannot fix.
+	 */
+	rejectedTokenMessage?: RegExp;
+
 	login(interaction: ProviderAuthInteraction, options?: LoginOptions): Promise<OAuthCredential>;
 
 	/**

@@ -41,6 +41,8 @@
 
 ### Fixed
 
+- A ChatGPT subscription whose access token ChatGPT reports as expired ("Your authentication token has expired. Please try refreshing it.", HTTP 401) while its saved expiry still looks valid is refreshed once and the request retried, instead of failing every turn until a new sign-in. Only a 401 whose body names the token as expired or invalid is refreshed; any other 401 (account, workspace, plan, region) is shown as it is, with no refresh and no blocked account slot. When the refresh itself is refused, the error says to sign in to ChatGPT again ([#3407](https://github.com/code-yeongyu/senpi/issues/3407)).
+
 ### Removed
 
 ## [2026.10.20-1] - 2026-10-20

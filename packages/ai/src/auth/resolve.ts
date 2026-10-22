@@ -1,5 +1,6 @@
 import type { ProviderEnv } from "../types.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
+import { formatThrownValue } from "../utils/diagnostics.ts";
 import { ModelsError } from "../utils/models-error.ts";
 import { classifyOAuthRefreshFailure, OAuthRefreshUnavailableError } from "../utils/oauth-refresh-error.ts";
 import {
@@ -177,13 +178,19 @@ function overlayEnvAuthContext(base: AuthContext, env: ProviderEnv): AuthContext
 const DEFAULT_OAUTH_MINIMUM_VALIDITY_MS = 5 * 60 * 1000;
 
 /** Maps a shared-refresh failure onto the `ModelsError` codes callers match on. */
-export function oauthRefreshModelsError(error: unknown, providerId: string): ModelsError {
+export function oauthRefreshModelsError(error: unknown, providerId: string, displayName?: string): ModelsError {
 	if (error instanceof ModelsError) return error;
 	if (error instanceof OAuthRefreshExchangeError) {
 		if (classifyOAuthRefreshFailure(error.cause) === "transient") {
 			return new OAuthRefreshUnavailableError(providerId, error.cause);
 		}
-		return new ModelsError("oauth", `OAuth refresh failed for ${providerId}`, { cause: error.cause });
+		// A refused refresh token never recovers by retrying: the only way forward is a new sign-in (#3407).
+		const detail = error.cause === undefined ? "" : `: ${formatThrownValue(error.cause).trim()}`;
+		return new ModelsError(
+			"oauth",
+			`OAuth refresh failed for ${providerId}${detail}\nThe saved sign-in can no longer be renewed: sign in to ${displayName ?? providerId} again.`,
+			{ cause: error.cause },
+		);
 	}
 	const cause = error instanceof OAuthRefreshStoreError ? error.cause : error;
 	return new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause });
@@ -227,7 +234,7 @@ async function resolveStoredOAuth(
 			});
 		} catch (error) {
 			signal.throwIfAborted();
-			throw oauthRefreshModelsError(error, providerId);
+			throw oauthRefreshModelsError(error, providerId, oauth.name);
 		}
 		if (post?.type !== "oauth") return undefined; // logged out meanwhile
 		const postView = slotName === undefined ? post : projectOAuthSlot(post, slotName);

@@ -124,6 +124,7 @@ interface PreparedRequest<TModel extends AnyModel, TOptions> {
 	options: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
 	rejectableAccess?: string;
 	rejectedTokenStatuses?: readonly number[];
+	rejectedTokenMessage?: RegExp;
 }
 
 interface ModelRuntimeSnapshot {
@@ -944,13 +945,18 @@ export class ModelRuntime implements Models {
 					}
 				: model;
 		const rejectedTokenStatuses = provider.auth.oauth?.rejectedTokenStatuses;
+		const rejectedTokenMessage = provider.auth.oauth?.rejectedTokenMessage;
 		const storedOAuthAccess =
 			resolution.source === "OAuth" && (slotAuth?.apiKey ?? providerOptions.apiKey) === undefined
 				? resolution.auth.apiKey
 				: undefined;
 		return {
 			...(rejectedTokenStatuses !== undefined && storedOAuthAccess !== undefined
-				? { rejectableAccess: storedOAuthAccess, rejectedTokenStatuses }
+				? {
+						rejectableAccess: storedOAuthAccess,
+						rejectedTokenStatuses,
+						...(rejectedTokenMessage === undefined ? {} : { rejectedTokenMessage }),
+					}
 				: {}),
 			provider,
 			model: requestModel,
@@ -1108,6 +1114,9 @@ export class ModelRuntime implements Models {
 				...(prepared.rejectedTokenStatuses === undefined
 					? {}
 					: { rejectedTokenStatuses: prepared.rejectedTokenStatuses }),
+				...(prepared.rejectedTokenMessage === undefined
+					? {}
+					: { rejectedTokenMessage: prepared.rejectedTokenMessage }),
 			};
 		});
 	}
