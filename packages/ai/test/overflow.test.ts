@@ -36,6 +36,24 @@ function createErrorMessage(errorMessage: string, provider = "ollama"): Assistan
 }
 
 describe("isContextOverflow", () => {
+	// oh-my-openagent#10792: inspect the final request, not the sum of SDK requests.
+	it.each([
+		["stop", 352_000, 200, false],
+		["stop", 600_001, 200, true],
+		["length", 600_000, 0, true],
+		["length", 352_000, 0, false],
+	] as const)("classifies %s with request input %i and output %i", (stopReason, input, output, expected) => {
+		const message = createErrorMessage("", "anthropic-subscription");
+		message.stopReason = stopReason;
+		Object.assign(message.usage, {
+			input: 702_000,
+			output: 300,
+			totalTokens: 702_300,
+			contextUsage: { input, output },
+		});
+		expect(isContextOverflow(message, 600_000)).toBe(expected);
+	});
+
 	it("detects the local context exhaustion guard before any provider call", () => {
 		const message = createErrorMessage(
 			"Context window exhausted: the conversation is estimated at 995154 of 1000000 tokens, leaving fewer than 1024 tokens for a response. Compact the conversation, enable auto-compaction, or start a new session before retrying.",
@@ -370,6 +388,22 @@ describe("isContextOverflow", () => {
 	it("does not recover a length stop that reached the desired output limit", () => {
 		const message = createLengthStopMessage({ input: 4062, cacheRead: 0, output: 1024 });
 		expect(isRecoverableLength(message, 1024)).toBe(false);
+	});
+
+	it.each([
+		[{ input: 1_000, output: 16 }, true],
+		[{ input: 1_000, output: 1_024 }, false],
+		[null, false],
+	] as const)("uses request output for length recovery when available", (contextUsage, expected) => {
+		const message = createLengthStopMessage({ input: 2_000, cacheRead: 0, output: 2_048 });
+		Object.assign(message.usage, { contextUsage });
+		expect(isRecoverableLength(message, 1_024)).toBe(expected);
+	});
+
+	it("falls back to message output for a result-only length stop with unknown context usage", () => {
+		const message = createLengthStopMessage({ input: 2_000, cacheRead: 0, output: 16 });
+		Object.assign(message.usage, { contextUsage: null });
+		expect(isRecoverableLength(message, 1_024)).toBe(true);
 	});
 
 	it("treats zero-output length stops as recoverable without context metadata", () => {

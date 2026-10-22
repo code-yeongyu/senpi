@@ -3,13 +3,36 @@ import { getProtocol } from "../../src/tool-call-middleware/context-transformer.
 import { wrapStreamWithToolCallMiddleware } from "../../src/tool-call-middleware/stream-wrapper.ts";
 import {
 	collectEvents,
+	createAssistantMessage,
 	createHermesInnerStream,
+	createScriptedInnerStream,
 	createTextOnlyInnerStream,
 	createThinkingInnerStream,
 	weatherTool,
 } from "./stream-wrapper-fixtures.ts";
 
 export function registerStreamWrapperBasicCases(): void {
+	// oh-my-openagent#10792: re-projecting a message must not turn billing into context.
+	it.each([{ input: 352_000, output: 200 }, null])(
+		"preserves request context %s through the text-tool wrapper",
+		async (contextUsage) => {
+			const message = createAssistantMessage([{ type: "text", text: "done" }]);
+			Object.assign(message.usage, { input: 702_000, totalTokens: 702_005, contextUsage });
+			const inner = createScriptedInnerStream([{ type: "start", partial: message }], {
+				type: "done",
+				reason: "stop",
+				message,
+			});
+			const wrapped = wrapStreamWithToolCallMiddleware(inner, getProtocol("hermes"), [weatherTool]);
+			await collectEvents(wrapped);
+			expect((await wrapped.result()).usage).toMatchObject({
+				input: 702_000,
+				totalTokens: 702_005,
+				contextUsage,
+			});
+		},
+	);
+
 	it("passes text-only streams unchanged when no tool calls are parsed", async () => {
 		// given
 		const innerStream = createTextOnlyInnerStream();

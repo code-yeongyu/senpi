@@ -1,3 +1,29 @@
+## 2026-10-21 - A user Stop pauses the session and the run it started (senpi#3811)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `stop()` adds a `session_hold` to the shared hold ledger before it aborts; human input releases it and the turn first carries a hidden directive naming the interrupted tool calls; `resumeSession()` continues the work even when nothing was held. `pauseForRun`/`resumeForRun` keep a task child paused for its parent's run and resume it in one turn. `packages/coding-agent/src/core/engine-turn-hold.ts` adds the `session_hold`, `run_fence` and `inherited_hold` kinds, the run release causes and `session_notice` events; a run fence alone holds only wakes tagged with its run. `packages/coding-agent/src/core/run-holds.ts` keeps the fence and inherited-hold rules (owner, high-water seq, the child's own seq cutoff). `packages/coding-agent/src/core/held-inputs.ts` holds human input idempotently by input id. `packages/coding-agent/src/core/extensions/` adds `session_hold_changed`, `ctx.getPauseState()` and `ctx.fenceRun()`.
+- `packages/coding-agent/src/core/agent-session.ts`: `resume_session`, `beginResume`, `resumeForRun` and the TUI `/resume` never wait on a turn that will not start: the resumed turn's start is awaited only until its send settles, so a newer Stop during admission answers `turnStarted: false` (no `turnId` for `resumeForRun`) and leaves no `agent_start` listener behind.
+- `packages/coding-agent/src/core/agent-session.ts`: both resume paths share one settlement rule (`_startResumeTurn`, `run-resume-turn.ts`): held input and notices are consumed only when the resumed turn started, its send succeeded and no newer Stop aborted it, so a Stop during a `resumeForRun` turn keeps them held.
+- `packages/coding-agent/src/core/agent-session.ts`: a run-owned pause holds every person input before anything runs (`_holdForRun`), a manual-continue `.`, slash commands and a question answer included (`questionInput` releases nothing and starts no held command while a run-owned pause is live, so the answer's message is held by `prompt()`), so a child under its parent's run pause starts no turn and runs no command. That input is held raw, under its `clientMessageId` so a replay is held once, with its images, and `held-inputs.ts` marks it `prepare`: when it is delivered, its extension commands leave custody and run to completion in the order typed before the delivering turn starts, on every release path (the run Resume and a person's input await `_heldCommandRun`; a question answer's message enters `prompt()` as person input, so its turn awaits the run its `questionInput` release started), a `.` stays held until that turn's settlement consumes it (the resume turn's single settlement rule, or the input release's), so a turn that never started or a newer Stop keeps it held, and skills and prompt templates expand (`_takeHeldCommands`, `_preparedHeldText`). The child's own Stop is released only once the input is actually held, so a cancelled or refused input leaves it in place. Input that a newer Stop turns into held input is still held prepared (`_holdPreparedInput`), with its images.
+- `packages/coding-agent/src/core/agent-session.ts`: the extension context's `releaseRunFence(runRef)` releases that run's fence with cause `run_cancelled` (omo calls it after `workflow cancel` journals the run terminal). `packages/coding-agent/src/core/engine-turn-hold.ts`: `session_paused` and `session_resumed` are paired: `session_paused` fires when the session becomes held and `session_resumed` once when it stops being held, so a run fence alone (which does not pause the session) emits neither, and a fence that outlives the Stop it came with emits no second resume.
+- `packages/coding-agent/src/core/agent-session.ts`: an itemized `sendMessage` (`_sendItemizedMessage`, `_admitItemized`) is admitted where a plain one is and decided atomically: if a live hold applies to the batch or to any item (that item's producer against `session_hold`, `inherited_hold` and `unattended`, its `runRef` against `run_fence`), every item becomes its own notice with its own receipt and `session_notice` event, and the batch's notices are written as one `session-notice` entry, so the batch is admitted all-or-nothing; otherwise the batch is delivered as one message and each item's receipt names the entry that message was written to (a per-message persistence watcher on the `message_end` and direct-append paths). A batch an abort drops before admission is decided again instead of leaving custody. `_admitItemized` is async, so a notice write that fails rejects the receipts, also when the batch was deferred by the `agent_settled` window or the `session_start` gate, and leaves no item in custody, so the sender's retry duplicates nothing. `packages/coding-agent/src/core/engine-turn-hold-notices.ts` keeps each itemized notice's own payload (`noteItems`, one entry holding `{ notices }`, read back item by item on restart), so a later wake from the same producer never replaces it and the release delivers it on its own. `packages/coding-agent/src/core/engine-turn-hold.ts` adds `noteItems`, and its `append` returns the entry id.
+- `packages/coding-agent/src/core/agent-session.ts`: a steer or follow-up decides the paused-session route from `originOf(options)` (an explicit `inputOrigin` wins over the one its `source` implies), so a person's input delivered with an extension source resumes a Stop like a typed message. Human-admission reporting still follows `source`: the question-answer path reports its answer once, through `questionInput`.
+- `packages/coding-agent/src/core/agent-session.ts`: `resume_session {mode: "release"}` also releases an `unattended` hold, so it never answers `resumed: true` for a session that stays paused only by that hold, and it attends the session the way a person's input does, so a later wake on that session gets no unattended-session notice.
+
+### Why
+
+- Review of senpi#3871: a `resume_session` whose turn never started hung the RPC connection, a Stop during a run-resume turn consumed the parent's relayed guidance, held human input lost its images, and release mode reported a resume it did not perform. The omo coordinator could not keep each batched wake in custody: `sendMessage` returned nothing and a held batch became one wake whose payload the next wake of its source replaced. Its delta review found that a `.` typed in a run-paused child started a turn, because the hold ran only after input preparation, and that a preparation error released the child's own Stop with nothing held. A later delta review found that a held batch whose second notice write failed threw synchronously with the first item already kept (and, from a deferred path, left its receipts unanswered), that the person-input and question-answer releases ran held commands alongside the turn they released, that a held `.` was consumed before the resume turn was known to start, and that releasing a lone run fence emitted `session_resumed` for a session that was never paused.
+- After Stop, the next automatic wake (a terminal or monitor notice, a detached cell, a goal continuation, a child task) started a new turn, so Stop only interrupted the current turn instead of pausing the work.
+
+### Why an extension could not handle it
+
+- Turn admission, the hold ledger and the abort path are engine-owned; omo's runner needs the session's pause state and run fences to pause the workflow it started.
+
+### Expected merge conflict zones
+
+- `agent-session.ts` (`stop`, `prompt`, `resumeSession`, the wake gate in `sendCustomMessage`, `_admitItemized`, the `message_end` persistence block), `engine-turn-hold-notices.ts` (`noteItems`, the `session-notice` replay, `messages`, `consume`), `engine-turn-hold.ts` (kinds, causes, `isHeld`, `addHold`/`release` event pairing, `releaseAll`), `engine-turn-limit.ts` (`isUserDirectedTurn`), extension `types.ts`/`runner.ts` (context actions).
+
 ## 2026-10-19 - Extension state follows a moved session (senpi#3676)
 
 ### What changed
@@ -107,6 +133,24 @@ The switch admission and its re-check run inside the session's model-switch path
 ### Expected merge conflict zones
 
 - LOW: `packages/coding-agent/src/core/agent-session.ts`, the `sendUserMessage` action and `questionInput` in the extension binding.
+
+## 2026-10-21 - Session context excludes cumulative SDK billing (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the context memoization fingerprint includes the request measurement, including the distinction between unknown and legacy usage.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: cumulative SDK usage inflated the footer, RPC context fields, extension context thresholds, and compaction. A measurement-only update must also invalidate cached context.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: core owns the memoized context value used by TUI, RPC, stats, and extension automation. Rewriting billing counters in an extension would break usage totals.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/agent-session.ts`, `messageFingerprint`.
 
 ## 2026-10-21 - An input release finishes when its run settles, and returns on every refused exit (senpi#3853)
 

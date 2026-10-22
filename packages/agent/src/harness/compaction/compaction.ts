@@ -163,6 +163,9 @@ export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
 
 /** Calculate total context tokens from provider usage. */
 export function calculateContextTokens(usage: Usage): number {
+	if (usage.contextUsage !== undefined) {
+		return usage.contextUsage === null ? 0 : usage.contextUsage.input + usage.contextUsage.output;
+	}
 	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 }
 function getAssistantUsage(msg: AgentMessage): Usage | undefined {

@@ -16,6 +16,24 @@ The picker's search text is built in the host component; extensions cannot exten
 
 - LOW: `getSessionSearchText` and the `session-manager.ts` import line.
 
+## 2026-10-21 - Paused footer and /resume after Stop (senpi#3811)
+
+### What changed
+
+- `interactive-mode.ts` routes Escape-to-stop through `AgentSession.stop()`, shows a footer line while the session or its run is paused (`pause-footer.ts`), and makes `/resume` resume a paused session; otherwise `/resume` still opens the session picker.
+
+### Why
+
+- After a Stop the user needs to see that updates are waiting and how to continue.
+
+### Why an extension could not handle it
+
+- The footer status and the built-in `/resume` command are interactive-mode internals.
+
+### Expected merge conflict zones
+
+- The `/resume` branch in the editor submit handler and the session-event switch in `interactive-mode.ts`.
+
 ## 2026-10-19 - Suggest a fresh session with a handoff when a large session's cache has expired (senpi#3230)
 
 ### What changed

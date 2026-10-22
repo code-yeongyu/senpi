@@ -217,6 +217,10 @@ export function streamAnthropicSubscription(
 				} else if (message.type === "assistant") {
 					// Same first-id-wins turn identity as applyStreamEvent's message_start (oh-my-openagent#10547).
 					output.responseId ??= message.message.id || undefined;
+					// SDK assistant snapshots have placeholder output counts. Never replace streamed usage with them.
+					if (!sawStreamEvent && message.message.usage) {
+						updateUsage(model, output, message.message.usage, "request-start");
+					}
 				} else if (message.type === "system" && message.subtype === "compact_boundary") {
 					// The query was started with native auto-compact off: a boundary here means Claude
 					// Code compacted anyway. Fail the turn loudly instead of letting a second owner
@@ -249,7 +253,7 @@ export function streamAnthropicSubscription(
 					// A terminal result must never downgrade a toolUse turn that the stream
 					// already established, or the agent loop would stop instead of running
 					// the tool call sitting in `output.content`.
-					if (message.usage) updateUsage(model, output, message.usage);
+					if (message.usage) updateUsage(model, output, message.usage, "query");
 					if (message.stop_reason != null && output.stopReason !== "toolUse") {
 						output.stopReason = mapStopReason(message.stop_reason);
 					}
@@ -279,7 +283,7 @@ export function streamAnthropicSubscription(
 			// A failed result still bills its tokens; managed and resident lanes
 			// throw before the result reaches this loop, so account for it here.
 			const billed = sdkResultFailureUsage(error);
-			if (billed) updateUsage(model, output, billed);
+			if (billed) updateUsage(model, output, billed, "query");
 			output.errorMessage = withAuthGuidance(error, errorMessage(error), claudeCodeRun);
 			markColdSeedOverflow(output, model, coldSeedAttempt, coldSeedEstimate, options?.sessionId);
 			stream.push({ type: "error", reason: output.stopReason, error: output });

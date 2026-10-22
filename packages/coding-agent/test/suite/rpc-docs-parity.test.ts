@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { CONNECTION_ROLE_FIXED } from "../../src/modes/rpc/connection-roles.ts";
+import { CLIENT_CAPABILITIES_NOT_APPLIED } from "../../src/modes/rpc/session-router-capabilities.ts";
 
 /**
  * Every command a client can send must have a `#### <type>` section in the docs/rpc.md that
@@ -98,5 +100,13 @@ describe("docs/rpc.md documents every RpcCommand", () => {
 	it("keeps the exemption list honest", () => {
 		const stale = Object.keys(UNDOCUMENTED).filter((type) => headings.has(type) || !types.includes(type));
 		expect(stale).toEqual([]);
+	});
+});
+
+describe("docs/rpc.md lists the set_client_info error codes", () => {
+	it("names each code a set_client_info can answer", () => {
+		const docs = readFileSync(docsPath, "utf8");
+		const codes = [CONNECTION_ROLE_FIXED, CLIENT_CAPABILITIES_NOT_APPLIED].map((message) => message.split(":")[0]);
+		expect(codes.filter((code) => !docs.includes(`- \`${code}: <reason>\``))).toEqual([]);
 	});
 });

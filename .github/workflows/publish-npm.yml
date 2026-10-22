@@ -122,6 +122,30 @@ jobs:
       - name: Reset auto-generated and npm-install drift files (not part of release diff)
         run: git checkout -- packages/ai/src/models.generated.ts package-lock.json
 
+      # The release's npm test runs the native grep probe tests, which refuse to build the
+      # senpi-grep addon inside a test hook in CI (#3978). Build it once here, as ci.yml does.
+      - name: Setup Rust
+        if: inputs.publish-only != true
+        run: |
+          toolchain=stable
+          if [ -f rust-toolchain.toml ]; then
+            toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          fi
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup default "$toolchain"
+
+      - name: Cache Rust
+        if: inputs.publish-only != true
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build native grep addon
+        if: inputs.publish-only != true
+        working-directory: crates/senpi-grep
+        run: |
+          npm exec --yes --package @napi-rs/cli@3.7.2 -- napi build --platform --release -- --locked
+          node_file=$(ls senpi_grep.*.node)
+          echo "SENPI_GREP_NATIVE_PATH=$PWD/$node_file" >> "$GITHUB_ENV"
+
       - name: Run release
         if: inputs.publish-only != true
         env:

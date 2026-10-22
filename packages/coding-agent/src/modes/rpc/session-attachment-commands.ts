@@ -5,6 +5,7 @@ import type { RpcResponse } from "./rpc-types.ts";
 import { canonicalSessionPath } from "./session-path-key.ts";
 import type { RpcSessionEntry } from "./session-registry-types.ts";
 import { recordAttachment, releaseDisconnectAttachment, releaseOwnerAttachment } from "./session-router-attachments.ts";
+import { recomputeSessionCapabilities } from "./session-router-capabilities.ts";
 import { claimClose, finalizeClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
@@ -63,6 +64,7 @@ export function attachSession(
 	if (owner === undefined) return error(command.id, command.type, "session_not_attached", { reason: "no_connection" });
 	try {
 		attach(host, owner, command.sessionId);
+		void recomputeSessionCapabilities(host, command.sessionId);
 		return {
 			id: command.id,
 			type: "response",

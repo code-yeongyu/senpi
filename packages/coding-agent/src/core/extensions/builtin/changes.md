@@ -16,6 +16,24 @@
 
 - LOW: the imports and helper block at the top of `tps.ts`.
 
+## 2026-10-21 - Handoff estimates do not use cumulative context (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`: the first-reply size estimate prefers an explicit request context measurement, skips an unknown one, and retains the prompt-only calculation for legacy usage.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`: cumulative billing must not inflate the estimated fresh-session size. The request snapshot's input preserves the prompt-only estimate without subtracting cumulative output.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`: this is the builtin's own usage reader.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`, `promptTokensOfFirstReply`.
+
 ## 2026-10-21 - Distinguish human question answers from automatic timeouts (senpi#3853)
 
 ### What changed

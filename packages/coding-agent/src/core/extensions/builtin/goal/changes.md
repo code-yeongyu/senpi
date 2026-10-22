@@ -1,3 +1,36 @@
+## 2026-10-21 - A user Stop pauses the goal with the session (senpi#3811)
+
+### What changed
+
+- `index.ts`: a user-aborted turn while the session holds a `session_hold` (a user Stop) sets the goal to `paused` and records `goal-stop-paused`; a plain interrupt with no Stop still blocks it with `user interrupted the turn`. At the next `agent_end` after the Stop is released (a human message or Resume), a goal the Stop paused becomes `active` again and records `goal-stop-resumed`.
+- `stop-pause.ts`: reads the session's holds through `ctx.getPauseState()` and the two markers. A goal paused with `/goal pause` never resumes this way.
+
+### Why
+
+After a Stop the goal ended blocked, so resuming the session did not resume the goal. Stop now pauses the work as a whole and a message or Resume continues it.
+
+### Why an extension could not handle it
+
+This is the goal builtin; it uses the public `ctx.getPauseState()` added in the same change.
+
+### Expected merge conflict zones
+
+The two `user interrupted the turn` branches (`agent_end`, `session_abort`) in `index.ts`.
+
+## 2026-10-22 - heldBy names the turn's own stop first (senpi#3900, part)
+
+### What changed
+
+- `turn-end-liveness.ts` `heldReason`: when a person's queued message releases a hold, `waiting{on, heldBy}` now names the turn's own stop first (a deadline stop, then a user abort) and only then the session-wide hold-ledger kind. The `ledger-hold` row (`held{<kind>}`, no person input queued) is unchanged, and so is the wire shape (`heldBy?: HeldReason`).
+
+### Why
+
+`heldBy` is a single diagnostic value; the lifecycle consumer (senpi#3864) asked that the turn's own stop win, since that is the stop the person is reacting to. The other half of senpi#3900 (report `waiting` only when the engine will actually start a turn from the queued input, e.g. not after a user abort) is still open there.
+
+### Expected merge conflict zones
+
+- `turn-end-liveness.ts`: `heldReason`.
+
 ## 2026-10-21 - Turn-end liveness verdict (#3863)
 
 ### What changed

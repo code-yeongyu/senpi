@@ -20,6 +20,25 @@
 
 - None: new file.
 
+## 2026-10-21 - Context readers prefer request measurements (omo#10792)
+
+### What changed
+
+- `packages/ai/src/utils/estimate.ts`: `calculateContextTokens` prefers `Usage.contextUsage`; an explicit unknown measurement returns zero so transcript estimation supplies context.
+- `packages/ai/src/utils/overflow.ts`: token-based overflow detection uses request context when present rather than cumulative billed tokens. Error-message classification remains independent. `isRecoverableLength` reads request output when it is measured and falls back to the message output when request context is absent or unknown (`null`), so result-only length stops keep their previous recovery.
+
+### Why
+
+- `packages/ai/src/utils/estimate.ts` and `packages/ai/src/utils/overflow.ts`: the SDK's terminal usage can sum two overlapping full-context requests, exhausting output room or triggering overflow on a conversation that fits.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/estimate.ts` and `packages/ai/src/utils/overflow.ts`: these shared readers run beneath extensions and must understand the additive usage contract for all callers.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/utils/estimate.ts`, `calculateContextTokens`; `packages/ai/src/utils/overflow.ts`, numeric overflow checks.
+
 ## 2026-10-18 - Anthropic compat gains supportsGzipRequestBody (senpi#3643)
 
 ### What changed

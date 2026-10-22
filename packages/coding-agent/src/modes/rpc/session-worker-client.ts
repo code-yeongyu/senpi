@@ -156,6 +156,10 @@ export class SessionWorkerClient {
 					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
 				});
 			},
+			setCapabilities: async (capabilities) => {
+				const result = await this.request({ type: "session_capabilities", capabilities });
+				if (result.type !== "result") throw new Error("Invalid worker session_capabilities response");
+			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
 			dispose: async () => {
 				this.post({ type: "cancel_ui" });

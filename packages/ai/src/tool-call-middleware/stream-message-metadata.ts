@@ -7,6 +7,7 @@ function cloneUsage(usage: Usage): Usage {
 
 function cloneLegacyUsage(usage: Usage): Usage {
 	return {
+		...(usage.contextUsage !== undefined ? { contextUsage: usage.contextUsage } : {}),
 		input: usage.input,
 		output: usage.output,
 		cacheRead: usage.cacheRead,

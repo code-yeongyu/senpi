@@ -1,4 +1,9 @@
-import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
+import {
+	CUSTOM_UNSUPPORTED_CAPABILITY,
+	EXTENSION_EVENTS_CAPABILITY,
+	MEDIA_PLACEHOLDERS_CAPABILITY,
+	QUESTION_CAPABILITY,
+} from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { omitInlineMedia } from "./media-placeholders.ts";
 import { SocketEventSinkActor } from "./socket-event-fanout.ts";
@@ -63,6 +68,8 @@ export class SessionEventFanout {
 	private readonly connectionCapabilities = new Map<string, Set<string>>();
 	private readonly connectionSessions = new Map<string, Set<string>>();
 	private readonly registeredCapabilityConnections = new Set<string>();
+	/** Connections that declared their own set (`set_client_info`); a capability-gated record is filtered only for them. */
+	private readonly declaredConnections = new Set<string>();
 
 	registerConnection(
 		id: string,
@@ -99,6 +106,7 @@ export class SessionEventFanout {
 		this.connectionCapabilities.delete(id);
 		this.connectionSessions.delete(id);
 		this.registeredCapabilityConnections.delete(id);
+		this.declaredConnections.delete(id);
 	}
 
 	attachConnectionToSession(id: string, sessionId: string): void {
@@ -108,6 +116,7 @@ export class SessionEventFanout {
 		sessions.add(sessionId);
 		this.connectionSessions.set(id, sessions);
 		this.replaySnapshot(id, sessionId);
+		if (!this.receives(id, QUESTION_CAPABILITY)) return;
 		for (const frame of this.pendingQuestions.get(sessionId)?.values() ?? []) {
 			this.connections.get(id)?.actor.enqueue(
 				serializeJsonLine({
@@ -122,11 +131,12 @@ export class SessionEventFanout {
 		this.connectionSessions.get(id)?.delete(sessionId);
 	}
 
-	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
+	setConnectionCapabilities(id: string, capabilities: readonly string[], declared = false): void {
 		const registered = this.connections.get(id);
 		if (!registered) return;
 		this.connectionCapabilities.set(id, new Set(capabilities));
 		this.registeredCapabilityConnections.add(id);
+		if (declared) this.declaredConnections.add(id);
 		if (capabilities.includes(EVENT_RESYNC_CAPABILITY)) {
 			registered.actor.enableRecovery((reason) => {
 				const attached = [...(this.connectionSessions.get(id) ?? [])];
@@ -139,6 +149,7 @@ export class SessionEventFanout {
 		if (this.connections.has(id)) {
 			this.connectionCapabilities.set(id, new Set());
 			this.registeredCapabilityConnections.delete(id);
+			this.declaredConnections.delete(id);
 		}
 	}
 
@@ -156,18 +167,26 @@ export class SessionEventFanout {
 		return id === undefined ? false : (this.connectionCapabilities.get(id)?.has(capability) ?? false);
 	}
 
+	/** A capability-gated record reaches a connection that declared it, and one that never declared as today. */
+	receives(id: string | undefined, capability: string): boolean {
+		return id === undefined || !this.declaredConnections.has(id) || this.connectionHas(id, capability);
+	}
+
 	targets(
 		sessionId: string,
 		targetId: string | undefined,
 		isTargeted: boolean,
 		recordType: unknown,
+		capability?: string,
 	): readonly (string | undefined)[] {
 		if (isTargeted) return [targetId];
 		if (typeof recordType === "string" && BROADCAST_LIFECYCLE_RECORDS.has(recordType))
 			return this.connections.size > 0 ? [...this.connections.keys()] : [undefined];
-		return this.connections.size > 0
-			? [...this.connections.keys()].filter((id) => this.connectionSessions.get(id)?.has(sessionId))
-			: [undefined];
+		const attached =
+			this.connections.size > 0
+				? [...this.connections.keys()].filter((id) => this.connectionSessions.get(id)?.has(sessionId))
+				: [undefined];
+		return capability === undefined ? attached : attached.filter((id) => this.receives(id, capability));
 	}
 
 	get(id: string): RegisteredConnection | undefined {
@@ -270,4 +289,12 @@ export class SessionEventFanout {
 			return placeholders ? omitInlineMedia(record) : record;
 		});
 	}
+}
+
+/** The client capability a record needs to reach a connection (omo-desktop-app#4042); undefined for the rest. */
+export function requiredCapability(record: { readonly type?: unknown; readonly method?: unknown }): string | undefined {
+	if (record.type === "extension_event") return EXTENSION_EVENTS_CAPABILITY;
+	if (record.type !== "extension_ui_request") return undefined;
+	if (record.method === "question") return QUESTION_CAPABILITY;
+	return record.method === "custom_unsupported" ? CUSTOM_UNSUPPORTED_CAPABILITY : undefined;
 }

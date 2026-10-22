@@ -1,5 +1,6 @@
 import { isBrowserEngine } from "../../core/browser-engine.ts";
 import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
+import { validatePauseCommand } from "./pause-command-validation.ts";
 
 export const MAX_RPC_MESSAGE_CHARACTERS = 1_000_000;
 
@@ -150,6 +151,8 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 	) {
 		return "effectId must be a non-empty string of at most 256 characters.";
 	}
+	const pauseFieldError = validatePauseCommand(value);
+	if (pauseFieldError !== undefined) return pauseFieldError;
 	if (value.type === "get_pending_inputs" && value.knownClientMessageIds !== undefined) {
 		const ids: unknown = value.knownClientMessageIds;
 		if (

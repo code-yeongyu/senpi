@@ -44,6 +44,8 @@ export class RouterContext {
 	readonly connectionOptions: Parameters<typeof createRpcSessionBinding>[4];
 
 	readonly pendingCapabilities = new Map<string, string[]>();
+	/** The client capabilities each live binding currently answers with (omo-desktop-app#4042). */
+	readonly bindingCapabilities = new WeakMap<RpcSessionBinding, readonly string[]>();
 	/** Roles each connection declared through set_client_info (senpi#3811). */
 	readonly connectionRoles = new ConnectionRoles();
 

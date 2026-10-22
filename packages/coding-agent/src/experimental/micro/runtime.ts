@@ -561,7 +561,10 @@ function usageRecord(entry: Entry): Usage | undefined {
 	return entry.data.usage as unknown as Usage;
 }
 
-function contextTokenCount(usage: Usage): number {
+function contextTokenCount(usage: Usage): number | null {
+	if (usage.contextUsage !== undefined) {
+		return usage.contextUsage === null ? null : usage.contextUsage.input + usage.contextUsage.output;
+	}
 	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 }
 

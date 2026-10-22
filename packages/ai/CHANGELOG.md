@@ -14,6 +14,7 @@
 
 - An API-key login with an empty or missing key is refused with `EmptyApiKeyError` instead of saving an unusable `login-N` account. Providers that work without a key, or fall back to an ambient key, set `apiKey.keyOptional` and keep accepting a blank key; Kimi does, so a blank-key login that only picks the region for `KIMI_API_KEY` still works ([#3867](https://github.com/code-yeongyu/senpi/issues/3867)).
 - `AssistantMessage.promptCacheBreakpoint?: true` marks the end of a stable prefix; the Anthropic adapter keeps a cache checkpoint there, so context reduction no longer re-writes the cached conversation at every step ([#3242](https://github.com/code-yeongyu/senpi/issues/3242)).
+- Context estimation and overflow checks can use the latest request's context separately from cumulative billed usage, preventing internal SDK requests from inflating context pressure ([omo#10792](https://github.com/code-yeongyu/oh-my-openagent/issues/10792)).
 
 ### Removed
 

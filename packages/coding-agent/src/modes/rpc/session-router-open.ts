@@ -4,10 +4,15 @@ import { clearHandoverParkedSession, type HandoverParkedEntry } from "./host-han
 import { parkedOpenCommand } from "./host-handover-parked-open.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
-
 import { sessionHeldCheck } from "./session-held.ts";
 import type { OpenRpcSession } from "./session-registry.ts";
 import { forgetSessionOwnership, releaseOwnedSession, releaseOwnerAttachment } from "./session-router-attachments.ts";
+import {
+	applySessionCapabilities,
+	declareConnectionCapabilities,
+	effectiveSessionCapabilities,
+	recomputeSessionCapabilities,
+} from "./session-router-capabilities.ts";
 import { close } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
@@ -138,32 +143,28 @@ export async function open(
 			host.sessionsByConnection.set(owner, owned);
 		}
 		if (!host.bindings.has(openedSession.sessionId)) {
-			host.bindings.set(
+			const capabilities = effectiveSessionCapabilities(host, openedSession.sessionId);
+			const binding = await host.createBinding(
 				openedSession.sessionId,
-				await host.createBinding(
-					openedSession.sessionId,
-					entry,
-					host.writer,
-					() => void close(host, { type: "close_session", sessionId: openedSession.sessionId }),
-					{
-						...host.connectionOptions,
-						capabilities:
-							owner !== undefined
-								? (host.pendingCapabilities.get(owner) ?? host.connectionOptions?.capabilities ?? [])
-								: host.connectionOptions?.capabilities,
-						connectionRoles: host.connectionRoles,
-						clientInfo: {
-							setCapabilities: (connectionId, capabilities) => {
-								if (connectionId !== undefined) {
-									host.writer.setConnectionCapabilities(connectionId, capabilities);
-									host.pendingCapabilities.set(connectionId, [...capabilities]);
-								}
-							},
-							connectionId: () => host.writer.currentConnection(),
-						},
+				entry,
+				host.writer,
+				() => void close(host, { type: "close_session", sessionId: openedSession.sessionId }),
+				{
+					...host.connectionOptions,
+					capabilities,
+					connectionRoles: host.connectionRoles,
+					clientInfo: {
+						// A stdio host has one client and no connection id, so its declaration is this session's set.
+						setCapabilities: (connectionId, capabilities) =>
+							void (connectionId === undefined
+								? applySessionCapabilities(host, openedSession.sessionId, capabilities)
+								: declareConnectionCapabilities(host, connectionId, capabilities)),
+						connectionId: () => host.writer.currentConnection(),
 					},
-				),
+				},
 			);
+			host.bindings.set(openedSession.sessionId, binding);
+			host.bindingCapabilities.set(binding, capabilities);
 			if (entry.worker) entry.worker.bindingReady = true;
 			// Wake the drain sweep the moment a session settles, so a handoff parks it
 			// without waiting for the next timer tick. Both hooks are OPTIONAL: an
@@ -199,6 +200,8 @@ export async function open(
 			});
 			host.writer.status.publish(openedSession.sessionId, "open", "client");
 		}
+		// An opener that attached to a live binding, or declared while it was being created, is counted now.
+		if (owner !== undefined) await recomputeSessionCapabilities(host, openedSession.sessionId);
 		if (!host.draining && owner !== undefined && host.releasedConnections.has(owner)) {
 			releaseOwnerAttachment(host, owner, openedSession.sessionId);
 			await releaseOwnedSession(host, openedSession.sessionId);

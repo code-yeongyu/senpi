@@ -74,6 +74,7 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 			case "prompt_surface":
 			case "browser_engine":
 			case "permission_preset":
+			case "session_capabilities":
 				queueMicrotask(() => this.emit("message", { type: "result", request: message.request }));
 				break;
 			case "close":

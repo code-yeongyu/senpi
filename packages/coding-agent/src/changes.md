@@ -71,6 +71,24 @@
 
 - LOW: one export line in each barrel's host block.
 
+## 2026-10-21 - Micro context reads the request measurement (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/micro/runtime.ts`: the micro status context count prefers `Usage.contextUsage` while cumulative usage totals retain their existing fields.
+
+### Why
+
+- `packages/coding-agent/src/experimental/micro/runtime.ts`: the same SDK message must not display cumulative billing as context on this independent surface.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/experimental/micro/runtime.ts`: this runtime owns its own context projection.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/experimental/micro/runtime.ts`, `contextTokenCount`.
+
 ## 2026-10-18 - A session is found by the id its file name carries (oh-my-openagent#7471)
 
 ### What changed

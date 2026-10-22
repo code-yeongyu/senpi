@@ -10,7 +10,7 @@ import type {
 	RpcSessionClosedReason,
 	RpcSessionParkedEvent,
 } from "./rpc-types.ts";
-import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
+import { requiredCapability, SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 import { SessionOpenTurns } from "./session-open-turns.ts";
 import { causeOfRecord, type SessionStatusActor, terminalOfLifecycle } from "./session-status.ts";
 import { type SessionOpenedRecord, sessionOpenedLines } from "./session-status-opened.ts";
@@ -211,8 +211,8 @@ export class SessionEventWriter {
 		return this.fanout.get(id) !== undefined;
 	}
 
-	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
-		this.fanout.setConnectionCapabilities(id, capabilities);
+	setConnectionCapabilities(id: string, capabilities: readonly string[], declared = false): void {
+		this.fanout.setConnectionCapabilities(id, capabilities, declared);
 	}
 
 	clearConnectionCapabilities(id: string): void {
@@ -285,7 +285,7 @@ export class SessionEventWriter {
 			return false;
 		}
 		this.openTurns.note(sessionId, record.type);
-		const attached = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
+		const attached = this.fanout.targets(sessionId, targetId, isTargeted, record.type, requiredCapability(record));
 		// Mirroring is an explicit per-subscription opt-in; it adds destinations, never an attachment.
 		const mirrors = isTargeted ? [] : this.status.mirrorTargets(sessionId, String(record.type));
 		const targets = mirrors.length === 0 ? attached : [...new Set([...attached, ...mirrors])];

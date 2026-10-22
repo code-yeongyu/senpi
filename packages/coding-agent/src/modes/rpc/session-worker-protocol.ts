@@ -51,6 +51,8 @@ export type HostToSessionWorker =
 	| { type: "prompt_surface"; request: number; surface: PromptSurface }
 	| { type: "browser_engine"; request: number; engine: BrowserEngine }
 	| { type: "permission_preset"; request: number; preset: string }
+	/** Host to isolate only: the client capabilities the isolate's one binding answers with (omo-desktop-app#4042). */
+	| { type: "session_capabilities"; request: number; capabilities: readonly string[] }
 	| { type: "cancel_ui" }
 	| { type: "close" };
 

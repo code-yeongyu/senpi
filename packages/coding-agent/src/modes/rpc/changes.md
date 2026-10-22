@@ -1,3 +1,79 @@
+## 2026-10-23 - Integrate classic capability updates and Stop protocol types (senpi#4000)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: keep senpi#4009's classic `set_client_info` behavior after the role check, using `SessionClientCapabilities.replace` only when `clientInfo` is absent; shared hosts keep their router-owned per-connection declarations.
+- `packages/coding-agent/src/modes/rpc/session-client-capabilities.ts`: classic declarations replace the initial launch set, cancel withdrawn questions before updating extension-event subscriptions, and retain width-only declarations unchanged.
+- `packages/coding-agent/src/modes/rpc/rpc-session-command-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts`: preserve main's senpi#3811 Stop, held-input and run-pause command, response and session-state fields in senpi#3814's split protocol modules.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: retain the modular public barrel when merging main's monolithic protocol additions.
+
+### Why
+
+- senpi#4009 and senpi#4000 overlap in classic versus shared-host capability handling; merging main must preserve both behaviors and all existing Stop protocol fields.
+
+### Why an extension could not handle it
+
+- The connection handler and wire protocol types are core RPC surfaces, before extension delivery.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` capability declarations and extension-event subscriptions; `packages/coding-agent/src/modes/rpc/rpc-types.ts` and its split command, response and state modules.
+
+## 2026-10-23 - Classic --mode rpc applies set_client_info capabilities (senpi#4006)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: on a connection without the shared-host `clientInfo` registry (classic `--mode rpc`), a `set_client_info` that carries `capabilities` replaces the handler's capability set after the senpi#3811 role check, cancels pending structured questions once when `question` is withdrawn, and re-subscribes extension events when `extension_events` comes or goes (the subscription moved into `subscribeExtensionEvents`, unchanged). A `set_client_info` without `capabilities` keeps the set; the launch-time `SENPI_RPC_CLIENT_CAPABILITIES` stays the initial value. The shared-host branch is unchanged.
+
+### Why
+
+- The handler only assigned the declared set inside the shared-host branch, so a classic client's declaration was accepted and ignored: a client that declared `question` still got single select dialogs, against `docs/rpc.md` "Client information". Regression: `test/suite/regressions/issue-4006-classic-set-client-info-capabilities.test.ts`.
+
+### Why an extension could not handle it
+
+- Client capabilities are read by the RPC connection handler before any extension sees a dialog request.
+
+### Expected merge conflict zones
+
+- HIGH (guaranteed, planned): senpi#4000 rewrites the same `set_client_info` case and the same extension-event subscription helper in `connection-handler.ts` for per-connection capabilities on shared hosts. This change lands first and #4000 rebases onto it, keeping this classic branch as it is.
+
+## 2026-10-21 - Stop intent, held input and run pause commands (senpi#3811)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `pauseForRun`, `resumeForRun` and `holdInput` send the run controls as typed calls (a refusal throws its engine error), so a task runner driving a host-session child needs no raw-command path.
+- `connection-roles.ts` adds `task_parent` to the per-connection roles, so a connection's `interactive_user` and `task_parent` are both fixed at its first explicit `set_client_info` and read per connection by `connection-handler.ts` (never from launch capabilities). `abort`/`interrupt` accept `intent: "stop"` from interactive connections only (`stop_requires_interactive_client` otherwise). New commands `hold_input` (interactive connections, or the task parent relaying run guidance into the child it paused, checked by `parentSessionId`), `withdraw_held_input` (`held-input-commands.ts`), `pause_for_run` and `resume_for_run` (`run-hold-commands.ts`, task-parent connections only); field checks live in `pause-command-validation.ts`. `get_state` reports `paused`, `pausedNoticeCount`, `pausedHeldInputCount` and `runPaused`.
+
+### Why
+
+- The desktop and omo's runner need to say who stopped a session and to pause and resume task children for their parent's run.
+
+### Why an extension could not handle it
+
+- Connection roles and command dispatch are core RPC.
+
+### Expected merge conflict zones
+
+- The `set_client_info` and command switch in `connection-handler.ts`; the command and response unions in `rpc-types.ts`.
+
+## 2026-10-22 - The degraded question asks no trailing comment (sisyphuslabs/omo-desktop-app#4042)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: `degradeQuestion` no longer ends with `ui.input("Anything else? (optional)")`. It asks one `select` per question (and the per-question `input` behind "Other"), then settles through `settledQuestionStatus(answers, undefined)` like the structured path: `answered` when at least one question was answered (the rest are listed in `unanswered`), `cancelled` only when none was; the response carries no `comment` key. An aborted signal stops the fallback before its next dialog and settles `cancelled` (or `timed_out` for a `"timed_out"` abort reason, as the structured bridge does), never `answered`, keeping the partial answers.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: a client without the `question` capability renders each dialog as its own blocking card. The desktop showed the trailing optional input as a new, empty question after every ask; its Remove cannot dismiss a native-callback card, and its Send answered with the card's one option label, which reached the model as the user's comment.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`: the fallback is the RPC connection's own `ExtensionUIContext.question` implementation; the ask-user extension only calls `ctx.ui.question`.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/connection-question-bridge.ts`, the tail of `degradeQuestion`.
+
 ## 2026-10-22 - The record_user_activity refusal no longer repeats the client's value (senpi#3933)
 
 ### What changed
@@ -15,6 +91,30 @@
 ### Expected merge conflict zones
 
 - LOW: the `record_user_activity` case of `handleCommand` in `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+
+## 2026-10-22 - Client capabilities are per connection; a session answers with its attached connections' (omo-desktop-app#4042)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-router-capabilities.ts` (new): a connection's declaration is its own; one that never declared counts as the host default. A session's binding answers with the union of the declarations of the connections attached to it now, recomputed on open, attach, release, disconnect and every declaration, and pushed through the binding's `setCapabilities`.
+- `packages/coding-agent/src/modes/rpc/session-client-capabilities.ts` (new): the set a session handler answers with. Changing it re-subscribes extension events when `extension_events` comes or goes, and withdrawing `question` cancels the pending structured questions through the question bridge, once each.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: reads its capabilities from that set and exposes `setSessionCapabilities`; `set_client_info` keeps the senpi#3811 role check first and records the connection's declaration through `clientInfo` without overwriting the session's set.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`, `session-worker-protocol.ts`, `session-worker-client.ts`, `session-worker.ts`: `RpcSessionBinding.setCapabilities`; a worker binding sends the new host-to-isolate `session_capabilities` message, which the isolate applies to its one binding.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, `session-event-writer.ts`: a connection that declared its own set (`setConnectionCapabilities(..., declared)`) receives `question` requests, `extension_event` records and the custom-unsupported notice only when it declared the matching capability, and the pending-question replay on attach follows the same rule; a connection that never declared receives them exactly as before.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`, `session-router-routing.ts`, `session-router-attachments.ts`, `session-attachment-commands.ts`, `session-router-context.ts`: the open, attach, release and disconnect paths recompute; a `set_client_info` without `capabilities` keeps the declaration; one a session could not take answers `client_capabilities_not_applied`. `bindingCapabilities` records each live binding's set.
+- `packages/coding-agent/src/modes/rpc/session-router-capabilities.ts` `answerSetClientInfo`: the host answers every `set_client_info`, session-scoped included (role check first, then the declaration), because a worker isolate cannot wait for a capability change it would itself apply. While sessions take a new set, a declared connection's filter admits both sets; the new set becomes its filter only once every session took it, and a refusal restores the earlier declaration, filter and sessions. Mirror subscribers stay unfiltered by design (read-only observers).
+
+### Why
+
+- A binding's capabilities were fixed by its first opener, so a session opened by a socket that never sent `set_client_info` degraded every `question` for its whole life. A single session-wide set that the newest declaration overwrites would let any later connection downgrade the answerer, and leave a departed answerer's `question` on a session whose remaining clients cannot render it. Regression: `test/suite/regressions/issue-4042-session-capabilities-follow-connection.test.ts`.
+
+### Why an extension could not handle it
+
+- Connection declarations, attachments and record delivery live in the multi-session router and writer; no extension runs there.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files; the `set_client_info` case and the extension-event subscription in `rebindSession` of `connection-handler.ts`, and `targets` in `session-event-fanout.ts`.
 
 ## 2026-10-21 - RpcClient can publish session context (senpi#3905)
 

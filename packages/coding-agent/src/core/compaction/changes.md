@@ -16,6 +16,24 @@
 
 - `packages/coding-agent/src/core/compaction/compaction.ts`: `findProjectedCutPoint` metadata backup and split-turn classification.
 
+## 2026-10-21 - Compaction reads request context instead of query billing (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `calculateContextTokens` prefers the latest request's input-plus-output measurement. An explicit unknown measurement returns zero so transcript estimation supplies context; absent retains the legacy usage contract.
+
+### Why
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: the SDK bills overlapping internal requests cumulatively. Treating the sum as occupied context doubled percentages and triggered false compaction thresholds.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: core mechanics supply the common calculation to session display, RPC, admission, and extension policy; changing only one extension would leave other consumers wrong.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/compaction/compaction.ts`, `calculateContextTokens`. Keep the additive request snapshot preference ahead of upstream's legacy fallback.
+
 ## 2026-10-11 - Preserve cache-friendly summary hook identity (senpi#3125 delta)
 
 ### What changed

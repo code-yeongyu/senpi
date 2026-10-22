@@ -3,6 +3,7 @@ import type { Model, ProviderDiagnostic, ThinkingSelection } from "@earendil-wor
 
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { QueuedInput } from "../../core/agent-session.ts";
+import type { HoldKind } from "../../core/engine-turn-hold.ts";
 
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ContextUsage } from "../../core/extensions/types.ts";
@@ -101,7 +102,7 @@ export interface RpcSessionModelEntry {
 export interface RpcSessionState {
 	paused: boolean;
 	pausedNoticeCount: number;
-	holds: { kind: "unattended"; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+	holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
 	model?: Model<any>;
 	/**
 	 * Model switch held until the next compaction, or `null` when no switch is held.
@@ -132,6 +133,15 @@ export interface RpcSessionState {
 	/** True when the active model is served at the priority ("fast") tier. */
 	fastMode: boolean;
 	isStreaming: boolean;
+	/** Human input held for delivery when the session resumes (senpi#3811). */
+	pausedHeldInputCount?: number;
+	/** A run this session started is paused by its Stop (senpi#3811). */
+	runPaused?: boolean;
+	/** The pause seq to send as `resume_session.expectedSeq`, and the live hold records (senpi#3811). */
+	pause?: {
+		pauseSeq: number;
+		records: { kind: string; key: string; runRef?: { kind: string; id: string }; parentSessionId?: string }[];
+	};
 	isCompacting: boolean;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";

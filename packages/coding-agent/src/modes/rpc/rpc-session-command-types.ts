@@ -40,7 +40,15 @@ export type RpcSessionCommand =
 			deliverAs?: "steer" | "followUp" | "nextTurn";
 	  }
 	| { id?: string; type: "continue_from_leaf" }
-	| { id?: string; type: "resume_session" }
+	/** Resume after a Stop or an unattended hold. Every field is optional so older clients keep working (senpi#3811). */
+	| {
+			id?: string;
+			type: "resume_session";
+			expectedSeq?: number;
+			mode?: "continue" | "release";
+			message?: string;
+			effectId?: string;
+	  }
 	| { id?: string; type: "append_user_message"; content: unknown }
 	| { id?: string; type: "append_session_entry"; entry: SessionEntry }
 	| ({
@@ -75,8 +83,38 @@ export type RpcSessionCommand =
 			clearQueue?: boolean;
 			/** How long `awaitIdle` waits, 0..60000 ms; default 10000. */
 			graceMs?: number;
+			/** `stop` is a user Stop: the session is paused until human input or resume_session (senpi#3811). */
+			intent?: "stop" | "abort";
 	  }
-	| { id?: string; type: "interrupt"; turnId?: string }
+	| { id?: string; type: "interrupt"; turnId?: string; intent?: "stop" | "abort" }
+	/** Human input held for a paused session, delivered when it resumes; idempotent by inputId (senpi#3811). */
+	| {
+			id?: string;
+			type: "hold_input";
+			inputId: string;
+			revision: number;
+			text: string;
+			/** Required from a task_parent connection: the parent session that paused this child for its run. */
+			parentSessionId?: string;
+			origin?: "human";
+	  }
+	| { id?: string; type: "withdraw_held_input"; inputId: string }
+	/** Task-parent connections only: pause or resume this child for its parent's run (senpi#3811). */
+	| {
+			id?: string;
+			type: "pause_for_run";
+			parentSessionId: string;
+			parentPauseSeq: number;
+			runRef: { kind: "dag" | "task" | "workpool" | "team"; id: string };
+	  }
+	| {
+			id?: string;
+			type: "resume_for_run";
+			parentSessionId: string;
+			parentPauseSeq: number;
+			resumeId: string;
+			childSeqCutoff: number;
+	  }
 	| { id?: string; type: "abort_compaction" }
 	| { id?: string; type: "reload" }
 	| { id?: string; type: "check_reload_veto" }

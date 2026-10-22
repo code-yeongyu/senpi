@@ -120,10 +120,11 @@ function hasQueuedUserInput(input: TurnEndLivenessInput): boolean {
 	return input.expectations.some((expectation) => expectation.kind === "user-input-queued");
 }
 
+/** The turn's own stop (a deadline stop, a user abort) names it before a session-wide hold-ledger kind (#3900). */
 function heldReason(input: TurnEndLivenessInput): HeldReason | undefined {
-	if (input.ledgerHold !== undefined) return input.ledgerHold;
 	if (input.deadlineStop) return "deadline-stop";
 	if (input.endedBy === "user-abort") return "user-abort";
+	if (input.ledgerHold !== undefined) return input.ledgerHold;
 	if (input.isChildSession) return "child-session";
 	if (input.goalStopped) return "goal-stopped";
 	return undefined;

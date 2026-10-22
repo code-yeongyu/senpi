@@ -569,6 +569,13 @@ export interface ProviderNativeContent {
 }
 
 export interface Usage {
+	/**
+	 * Latest request's context when billing covers multiple internal requests.
+	 * Input includes cached reads and writes; output belongs to that request only.
+	 * Null means no request measurement is available (estimate from the transcript).
+	 * Absent preserves the legacy contract: the billing counters describe one request.
+	 */
+	contextUsage?: { readonly input: number; readonly output: number } | null;
 	input: number;
 	output: number;
 	cacheRead: number;

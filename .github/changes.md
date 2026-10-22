@@ -1,3 +1,21 @@
+## 2026-10-22 - The release job builds the senpi-grep addon before its tests (senpi#3978 follow-up)
+
+### What changed
+
+- `.github/workflows/publish-npm.yml`: the `release` job runs the same `Setup Rust`, `Cache Rust` and `Build native grep addon` steps as `ci.yml`'s `test-workspaces`, before `Run release`. The addon path reaches the release's `npm test` through `SENPI_GREP_NATIVE_PATH` in `$GITHUB_ENV`. The steps are skipped in `publish-only` mode, which runs no tests.
+
+### Why
+
+- Since #3978, `scripts/probe-native-grep.test.mjs` refuses to build the addon inside a test hook when `CI` is set, and fails with a message naming the missing `Build native grep addon` step. `ci.yml` gained that step, but the release job did not. The 2026.10.21-3 release run (39840619411) therefore failed its `npm test` with six probe-native-grep failures before tagging anything.
+
+### Why an extension could not handle it
+
+- Workflow steps are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- The `release` job's step list in `publish-npm.yml`, around `Run release`.
+
 ## 2026-10-22 - macOS/Windows CI jobs run on pull requests only for platform-specific diffs (senpi#3957)
 
 ### What changed

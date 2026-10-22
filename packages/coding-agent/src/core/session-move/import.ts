@@ -86,20 +86,24 @@ export async function importMovedSession(
 	const targetCwd = resolvePath(options.targetCwd);
 	const sessionDir = options.sessionDir ? normalizePath(options.sessionDir) : getDefaultSessionDir(targetCwd);
 	const target = join(sessionDir, manifest.sessionFileName);
-	if (existsSync(target) && movedInFor(target, manifest.moveId)) {
-		// The rename already committed; a crash may have lost the ledger write, and the file is the authority.
-		await options.ledger.commit(manifest.moveId, () => undefined);
+	// Once this move's file landed, the move records no failure: only its `accepted` write can have been lost, so it stays
+	// receiving and a re-run accepts it. `fail` asks this under the move's lock, where an overlapping commit cannot race it.
+	const landed = () => existsSync(target) && movedInFor(target, manifest.moveId);
+	if (landed()) {
+		// The rename already committed; a crash or a failed write may have lost `accepted`, and the file is the authority.
+		await options.ledger.accept(manifest.moveId);
 		return { sessionFile: target };
 	}
 	try {
 		await verifyBundle(options.bundleDir, manifest);
 	} catch (error) {
-		if (error instanceof MoveBundleInvalidError) await options.ledger.fail(manifest.moveId, "bundle_invalid");
+		if (error instanceof MoveBundleInvalidError)
+			await options.ledger.fail(manifest.moveId, "bundle_invalid", { unlessLanded: landed });
 		throw error;
 	}
 	const read = options.readIdentity ?? readRepositoryIdentity;
 	if (compareRepositoryIdentities(manifest.repository, await read(targetCwd)) !== "same") {
-		await options.ledger.decline(manifest.moveId, "repository");
+		if (!landed()) await options.ledger.decline(manifest.moveId, "repository");
 		throw new MoveRefusedError(targetCwd, manifest.sourceCwd);
 	}
 	await options.ledger.beginReceive(manifest.moveId);
@@ -119,6 +123,7 @@ export async function importMovedSession(
 			await options.ledger.fail(
 				manifest.moveId,
 				error instanceof MoveBundleInvalidError ? "bundle_invalid" : "import_failed",
+				{ unlessLanded: landed },
 			);
 		throw error;
 	}

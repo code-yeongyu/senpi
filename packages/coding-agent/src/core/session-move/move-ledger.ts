@@ -150,9 +150,19 @@ export class MoveLedger {
 		return this.settle(moveId, { state: "declined", reason }, ["receiving"]);
 	}
 
-	/** A verified import that could not finish; it may end a receiving move but never an accepted one. */
-	fail(moveId: MoveId, reason: FailReason): Promise<MoveRecord> {
-		return this.settle(moveId, { state: "failed", reason }, []);
+	/**
+	 * A verified import that could not finish; it may end a receiving move but never an accepted one. `unlessLanded` is
+	 * asked under the move's lock, right before the write: when this move's session file landed (an overlapping import's
+	 * commit may land it while this call waits for the lock), nothing is recorded and the current record is returned.
+	 */
+	fail(
+		moveId: MoveId,
+		reason: FailReason,
+		options: { readonly unlessLanded?: () => boolean } = {},
+	): Promise<MoveRecord | undefined> {
+		return this.locked(moveId, () =>
+			options.unlessLanded?.() ? this.current(moveId) : this.settleLocked(moveId, { state: "failed", reason }, []),
+		);
 	}
 
 	/** Runs the import's commit (the atomic rename) under the move's lock, then records it accepted. */
@@ -169,18 +179,41 @@ export class MoveLedger {
 	}
 
 	/**
+	 * Records accepted for a move whose session file already landed here (it records `session_moved_in` for this move):
+	 * the file is the authority. A lost `accepted` write leaves `receiving` (the import records no failure once the file
+	 * landed), which becomes accepted. A lost ledger leaves no record, which becomes accepted only if the import is re-run
+	 * before anyone asks: a `status` without the session path fences a missing record as `declined/no_record` first.
+	 * Every answer a sender may have heard (`declined`, `failed`) and an unreceived `ready` are refused, so an answer never
+	 * changes once given.
+	 */
+	accept(moveId: MoveId): Promise<void> {
+		return this.locked(moveId, async () => {
+			const record = await this.read(moveId);
+			if (record !== undefined && record.state !== "receiving" && record.state !== "accepted")
+				throw new MoveFencedError(moveId, record);
+			await this.write(moveId, { state: "accepted" });
+		});
+	}
+
+	/**
 	 * Records a final answer unless one is already there: once a sender may have heard `accepted`, `declined` or
 	 * `failed`, it never changes. Reads through `current()`, so a ready move whose window passed answers `expired`.
 	 * `keeps` names the open states this transition must also leave alone.
 	 */
 	private settle(moveId: MoveId, next: MoveRecord, keeps: readonly MoveRecord["state"][]): Promise<MoveRecord> {
-		return this.locked(moveId, async () => {
-			const record = await this.current(moveId);
-			if (record !== undefined && (FINAL_STATES.includes(record.state) || keeps.includes(record.state)))
-				return record;
-			await this.write(moveId, next);
-			return next;
-		});
+		return this.locked(moveId, () => this.settleLocked(moveId, next, keeps));
+	}
+
+	/** `settle` for a caller that already holds the move's lock. */
+	private async settleLocked(
+		moveId: MoveId,
+		next: MoveRecord,
+		keeps: readonly MoveRecord["state"][],
+	): Promise<MoveRecord> {
+		const record = await this.current(moveId);
+		if (record !== undefined && (FINAL_STATES.includes(record.state) || keeps.includes(record.state))) return record;
+		await this.write(moveId, next);
+		return next;
 	}
 
 	/** The record, with a ready move whose window has passed declined as expired first (on disk, under the lock). */

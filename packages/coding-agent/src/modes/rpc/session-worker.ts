@@ -234,6 +234,11 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			entry.runtime.setPermissionPreset(message.preset);
 			send({ type: "result", request: message.request });
 			return;
+		case "session_capabilities":
+			if (!binding?.setCapabilities) throw new Error("session_closing");
+			await binding.setCapabilities(message.capabilities);
+			send({ type: "result", request: message.request });
+			return;
 		case "cancel_ui":
 			binding?.cancelPendingExtensionUiRequests?.();
 			send({ type: "control_done", control: "cancel_ui" });

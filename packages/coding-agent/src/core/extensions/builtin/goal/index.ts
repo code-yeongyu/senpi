@@ -22,6 +22,7 @@ import { GOAL_CONTINUATION_SCHEDULED_EVENT, MonitorAwareGoalContinuation } from 
 import { reengageGoalAfterReload } from "./reload-reengagement.ts";
 import { registerGoalFireNowRequest } from "./rpc-wait-surface.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
+import { markStopPaused, markStopResumed, pausedByStop, stopHoldLive } from "./stop-pause.ts";
 import { accountGoalUsage, migrateLegacyGoal, readGoal, updateGoal } from "./store.ts";
 import { GOAL_STORE_CHANGED_EVENT, isGoalStoreChangedEvent } from "./store-changed-event.ts";
 import { goalStoreRef as buildGoalStoreRef } from "./store-ref.ts";
@@ -43,6 +44,14 @@ type AgentGoalAccounting = {
 };
 
 export default function goalExtension(pi: ExtensionAPI): void {
+	// A user Stop pauses the goal with the session; a plain interrupt keeps blocking it (senpi#3811).
+	async function pauseOrBlockOnUserAbort(ctx: ExtensionContext, goalId: string): Promise<Goal> {
+		if (stopHoldLive(ctx)) {
+			markStopPaused(pi, goalId);
+			return updateGoal(goalStoreRef(ctx), { status: "paused" }, "user");
+		}
+		return updateGoal(goalStoreRef(ctx), { status: "blocked", reason: "user interrupted the turn" }, "model");
+	}
 	let agentTurnInProgress = false;
 	let staleGoalReminderSentThisTurn = false;
 	let agentGoalAccounting: AgentGoalAccounting | null = null;
@@ -279,12 +288,12 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		agentTurnInProgress = false;
 		blockedThisTurnGoalId = null;
 		completedThisTurnGoalId = null;
+		if (goal?.status === "paused" && !stopHoldLive(ctx) && pausedByStop(ctx, goal.id)) {
+			markStopResumed(pi, goal.id);
+			goal = await updateGoal(goalStoreRef(ctx), { status: "active" }, "user");
+		}
 		if (event.aborted === true && event.abortSource === "user" && goal?.status === "active") {
-			goal = await updateGoal(
-				goalStoreRef(ctx),
-				{ status: "blocked", reason: "user interrupted the turn" },
-				"model",
-			);
+			goal = await pauseOrBlockOnUserAbort(ctx, goal.id);
 		}
 		if (goal?.status === "active") {
 			beginAgentGoalAccounting(goal);
@@ -328,13 +337,9 @@ export default function goalExtension(pi: ExtensionAPI): void {
 		if (goal?.status !== "active") return;
 		const accounted = await accountCurrentAgentTurn(ctx, "active");
 		if (accounted?.status === "active") {
-			const blocked = await updateGoal(
-				goalStoreRef(ctx),
-				{ status: "blocked", reason: "user interrupted the turn" },
-				"model",
-			);
+			const stopped = await pauseOrBlockOnUserAbort(ctx, accounted.id);
 			clearAgentGoalAccounting();
-			refreshGoalUiBestEffort(ctx, blocked);
+			refreshGoalUiBestEffort(ctx, stopped);
 		}
 	});
 

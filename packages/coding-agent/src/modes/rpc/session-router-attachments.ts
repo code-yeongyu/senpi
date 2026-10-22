@@ -1,3 +1,4 @@
+import { recomputeSessionCapabilities } from "./session-router-capabilities.ts";
 import { finalizeClose, tryClaimClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 /** Disconnect semantics shared by socket loss and release_attachment. True means settlement owns the final release. */
@@ -63,12 +64,14 @@ export function recordAttachment(host: RouterContext, owner: string, sessionId: 
 export async function releaseConnection(host: RouterContext, connectionId: string): Promise<string[]> {
 	host.releasedConnections.add(connectionId);
 	host.writer.clearConnectionCapabilities(connectionId);
+	host.pendingCapabilities.delete(connectionId);
 	host.connectionRoles.release(connectionId);
 	for (const sessionId of host.sessionsByConnection.get(connectionId)?.keys() ?? [])
 		host.writer.detachConnectionFromSession(connectionId, sessionId);
 	const opens = host.opensByConnection.get(connectionId);
 	const owned = host.sessionsByConnection.get(connectionId);
 	host.sessionsByConnection.delete(connectionId);
+	for (const sessionId of owned?.keys() ?? []) void recomputeSessionCapabilities(host, sessionId);
 	if (host.draining) {
 		// Drain owns teardown now, even when a client reacts to the announcement early.
 		// Its attachment-draining claim releases these counts once work settles.
@@ -140,6 +143,7 @@ export function releaseOwnerAttachment(host: RouterContext, owner: string, sessi
 		owned.delete(sessionId);
 	} else owned.set(sessionId, count - 1);
 	if (owned.size === 0) host.sessionsByConnection.delete(owner);
+	if (count === 1) void recomputeSessionCapabilities(host, sessionId);
 }
 
 /** Drops per-connection records for a handle the host closed on its own. */

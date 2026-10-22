@@ -30,6 +30,7 @@ import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type Extens
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
 import { RESERVED_MEMORY_REPORT_KEYS } from "../memory-report/memory-report-registry.ts";
+import type { CustomMessage } from "../messages.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { unboundSessionControlActions } from "../session-control-actions.ts";
 import { redactForUpload, type UploadRedactionOptions } from "../share/upload-redaction.ts";
@@ -76,6 +77,9 @@ import type {
 	RegisteredChildModule,
 	RegisteredCommand,
 	RegisteredMcpServerDeclaration,
+	SendMessageItem,
+	SendMessageOptions,
+	SendMessageReceipt,
 	SessionContext,
 	SessionControlActions,
 	SessionKind,
@@ -643,10 +647,25 @@ function createExtensionAPI(
 		},
 
 		// Action methods - delegate to shared runtime
-		sendMessage(message, options): void {
+		// Itemized sends answer receipts (senpi#3811); a plain send stays fire-and-forget.
+		sendMessage: (<T = unknown>(
+			message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+			options?: SendMessageOptions & { items?: readonly SendMessageItem[] },
+		): Promise<readonly SendMessageReceipt[] | undefined> | undefined => {
 			assertActive();
-			runtime.sendMessage(message, options);
-		},
+			const items = options?.items;
+			if (items === undefined) {
+				runtime.sendMessage(message, options);
+				return undefined;
+			}
+			const itemized = runtime.sendItemizedMessage;
+			// A host without item custody delivers the batch plainly and answers no receipts, like an engine without items.
+			if (itemized === undefined) {
+				runtime.sendMessage(message, options);
+				return Promise.resolve(undefined);
+			}
+			return itemized(message, { ...options, items });
+		}) as ExtensionAPI["sendMessage"],
 
 		sendUserMessage(content, options): void {
 			assertActive();

@@ -6,7 +6,7 @@ type AbortAndFireQueuedMessagesThis = {
 	clearAllQueues: () => { steering: string[]; followUp: string[]; ordered?: Array<{ text: string }> };
 	updatePendingMessagesDisplay: () => void;
 	editor: { getText: () => string; setText: (text: string) => void };
-	session: { abort: () => Promise<void> };
+	session: { stop: () => Promise<void> };
 };
 
 describe("RPC teardown when the transport is gone", () => {
@@ -24,7 +24,8 @@ describe("RPC teardown when the transport is gone", () => {
 			clearAllQueues: () => ({ steering: [], followUp: [] }),
 			updatePendingMessagesDisplay: vi.fn(),
 			editor: { getText: () => "", setText: vi.fn() },
-			session: { abort: () => new RpcClient().abort() },
+			// Esc stops the session (senpi#3811); the stop rides the same abort that finds the socket gone.
+			session: { stop: () => new RpcClient().abort() },
 		};
 
 		await expect(abortAndFireQueuedMessages.call(fakeThis)).resolves.toBe(0);

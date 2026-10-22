@@ -87,6 +87,24 @@ const ROWS: ReadonlyArray<readonly [string, string, Partial<TurnEndLivenessInput
 	],
 	[
 		"wake",
+		"a person's input released a hold during a deadline stop: the turn's own stop names it (#3900)",
+		{ ledgerHold: "unattended", deadlineStop: true, expectations: [QUEUED] },
+		{ kind: "waiting", on: [QUEUED], heldBy: "deadline-stop" },
+	],
+	[
+		"wake",
+		"a person's input released a hold after a user abort: the abort names it (#3900)",
+		{ ledgerHold: "session_hold", endedBy: "user-abort", expectations: [QUEUED] },
+		{ kind: "waiting", on: [QUEUED], heldBy: "user-abort" },
+	],
+	[
+		"wake",
+		"queued input retained after a user abort stays visible as a pending-messages fact (#3900)",
+		{ endedBy: "user-abort", expectations: [ENGINE_QUEUED] },
+		{ kind: "waiting", on: [ENGINE_QUEUED], heldBy: "user-abort" },
+	],
+	[
+		"wake",
 		"the user's own queued message releases an active hold",
 		{ ledgerHold: "unattended", expectations: [QUEUED, CHILD] },
 		{ kind: "waiting", on: [QUEUED, CHILD], heldBy: "unattended" },

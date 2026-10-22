@@ -16,6 +16,8 @@ export interface RpcSessionBinding {
 	cancelPendingExtensionUiRequests?(): void;
 	/** `prompt` calls this binding started that have not settled, preflight included. */
 	pendingPrompts?(): readonly Promise<unknown>[];
+	/** The client capabilities this session answers with on a shared host (omo-desktop-app#4042). */
+	setCapabilities?(capabilities: readonly string[]): void | Promise<void>;
 	dispose(): Promise<void>;
 }
 
@@ -99,6 +101,8 @@ export async function createRpcSessionBinding(
 		cancelPendingExtensionUiRequests: () =>
 			runWithProviderScope(entry.scope, () => handler.cancelPendingExtensionUiRequests()),
 		pendingPrompts: () => handler.pendingPrompts(),
+		setCapabilities: (capabilities) =>
+			runWithProviderScope(entry.scope, () => handler.setSessionCapabilities(capabilities)),
 		dispose: () => {
 			toolSpans.closeAll();
 			return runWithProviderScope(entry.scope, () => handler.dispose());

@@ -44,7 +44,15 @@ function createSubmitHarness(): SubmitHarness {
 	const known: { defaultEditor: { onSubmit?: (text: string) => Promise<void> } } & Record<string, unknown> = {
 		defaultEditor: {},
 		editor: stubbed({}),
-		session: stubbed({ isStreaming: false, isCompacting: false, isBashRunning: false, prompt }),
+		session: stubbed({
+			isStreaming: false,
+			isCompacting: false,
+			isBashRunning: false,
+			paused: false,
+			runPaused: false,
+			pausedNoticeCount: 0,
+			prompt,
+		}),
 		isExtensionCommand: vi.fn(() => false),
 		submitAsyncQuestionComment: vi.fn(() => false),
 		lastEditorText: "",

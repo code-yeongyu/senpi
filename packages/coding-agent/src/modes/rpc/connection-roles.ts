@@ -1,4 +1,4 @@
-import { INTERACTIVE_USER_CAPABILITY } from "./custom-capability.ts";
+import { INTERACTIVE_USER_CAPABILITY, TASK_PARENT_CAPABILITY } from "./custom-capability.ts";
 
 /**
  * Connection roles (senpi#3811): the capabilities that say who a connection speaks for, which is what
@@ -7,7 +7,7 @@ import { INTERACTIVE_USER_CAPABILITY } from "./custom-capability.ts";
  * role; launch defaults (`SENPI_RPC_CLIENT_CAPABILITIES`, a host's connection options) never do, so a client
  * can still declare after it attached. Once a connection declared, a different declaration is refused.
  */
-export const CONNECTION_ROLE_CAPABILITIES: readonly string[] = [INTERACTIVE_USER_CAPABILITY];
+export const CONNECTION_ROLE_CAPABILITIES: readonly string[] = [INTERACTIVE_USER_CAPABILITY, TASK_PARENT_CAPABILITY];
 
 /** The one connection of a single-session `--mode rpc` process. */
 export const SOLE_CONNECTION = "sole-connection";
@@ -20,7 +20,8 @@ export function roleConnection(connectionId: string | undefined): string {
 	return connectionId ?? SOLE_CONNECTION;
 }
 
-export const CONNECTION_ROLE_FIXED = "connection_role_fixed: interactive_user cannot change after it is declared";
+export const CONNECTION_ROLE_FIXED =
+	"connection_role_fixed: interactive_user and task_parent cannot change after they are declared";
 
 export class ConnectionRoles {
 	private readonly declared = new Map<string, readonly string[]>();

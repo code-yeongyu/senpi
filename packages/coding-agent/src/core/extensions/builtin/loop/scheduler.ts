@@ -235,7 +235,7 @@ export interface LoopScheduler {
 	currentDeliveryId(loopId: LoopId): DeliveryId | undefined;
 	createFixed(request: CreateFixedRequest): CreateResult;
 	createDynamic(request: CreateDynamicRequest): CreateResult;
-	onDue(loopId: LoopId, nowMs: EpochMs, sessionBusy: boolean): DueResult;
+	onDue(loopId: LoopId, nowMs: EpochMs, sessionBusy: boolean, held?: boolean): DueResult;
 	onTickSettled(input: TickSettledInput): SettledResult;
 	onScheduleWakeup(request: ScheduleWakeupInput): ScheduleWakeupResult;
 	onTurnEndedWithoutSchedule(loopId: LoopId): KeepaliveResult;
@@ -518,7 +518,7 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 			: { ok: true, loopId: id };
 	}
 
-	function onDue(loopId: LoopId, nowMs: EpochMs, sessionBusy: boolean): DueResult {
+	function onDue(loopId: LoopId, nowMs: EpochMs, sessionBusy: boolean, held = false): DueResult {
 		const entry = entryOf(loopId);
 		if (entry === undefined) return { action: "coalesce" };
 
@@ -566,7 +566,7 @@ export function createLoopScheduler(deps: LoopSchedulerDeps): LoopScheduler {
 				lastScheduledForAt: nowMs,
 				queuedForAt: nowMs,
 				coalescedFirePending: false,
-				tickCount: entry.tickCount + 1,
+				tickCount: entry.tickCount + (held ? 0 : 1),
 			};
 			const phase = sessionBusy ? ("queued" as const) : ("running" as const);
 			const next =

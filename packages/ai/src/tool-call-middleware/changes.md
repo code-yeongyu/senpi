@@ -1,5 +1,23 @@
 # Tool Call Middleware Changes
 
+## 2026-10-21 - Preserve request context across legacy projection (omo#10792)
+
+### What changed
+
+- `packages/ai/src/tool-call-middleware/stream-message-metadata.ts`: legacy usage cloning preserves an explicitly supplied `contextUsage`, including `null`, while keeping absent fields absent.
+
+### Why
+
+- `packages/ai/src/tool-call-middleware/stream-message-metadata.ts`: dropping the request measurement would make downstream context readers reinterpret cumulative billing as context.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/tool-call-middleware/stream-message-metadata.ts`: middleware projects provider messages before consumers see them.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/tool-call-middleware/stream-message-metadata.ts`, `cloneLegacyUsage`.
+
 ## 2026-09-08 - Preserve server fallback boundaries during recovery
 
 ### What changed

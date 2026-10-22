@@ -50,21 +50,44 @@ Observe session events for progress and `agent_idle` for settlement. Hosts adver
 `resume_session` and `attended` in `get_protocol_info.capabilities`; classic RPC
 advertises `resume_session` only because it does not accept `open_session`.
 
+After a user Stop (senpi#3811) Resume runs one turn instead: held human input first, then the held notices, then a
+hidden note that the interrupted tool calls were not re-run. The response still acknowledges release admission; the
+turn runs after it. Every field below is optional, so the bare form keeps working:
+
+```json
+{"type":"resume_session","expectedSeq":3,"mode":"continue","message":"Use staging","effectId":"resume-7"}
+```
+
+`expectedSeq` is the `pauseSeq` the client rendered; a different current seq answers `resumed: false, reason:
+"stale"` and changes nothing. `mode: "release"` releases the Stop and an `unattended` hold without starting a turn
+(the notices ride the next human message). `message` is delivered first in the resumed turn. The answer comes once the
+resumed turn has started, or with `turnStarted: false` once it is clear no turn starts (for example a newer Stop landed
+while the turn was admitted); held input and notices stay held until a turn that no newer Stop aborted delivers them.
+A repeated `effectId` answers the recorded outcome with `replayed: true` and resumes nothing again, also after a
+reopen. A session with nothing held answers
+`not_paused`; a task child held only for its parent's run answers `resume_through_parent` with `parentSessionId`.
+
+```json
+{"type":"response","command":"resume_session","success":true,"data":{"resumed":true,"pauseSeq":3,"turnStarted":true,"deliveredNotices":2,"deliveredHeldInputs":1}}
+```
+
 `get_state` and `open_session.state` include:
 
 ```typescript
 paused: boolean;
 pausedNoticeCount: number;
-holds: { kind: "unattended"; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+// HoldKind = "unattended" | "session_hold" | "run_fence" | "inherited_hold" (senpi#3811)
 ```
 
 `since` is an ISO timestamp. This is the shared engine hold ledger; this release
 keys each record by `key` (defaulting to its kind) and preserves opaque `data`
 through a restart. Persisted additions carry `key`/`data`, and release entries list `keys`. It
 implements only `unattended`. Consumers must distinguish kinds rather than infer
-them from the notification text. A first hold emits `session_paused` with `kind`,
-`pauseSeq`, `at`, `noticeCount`, and `persisted`. Releasing emits
-`session_resumed { cause: "input" | "resume_session", pauseSeq, at }`.
+them from the notification text. The first hold that pauses the session emits `session_paused` with `kind`,
+`pauseSeq`, `at`, `noticeCount`, and `persisted`. The release that ends the pause emits
+`session_resumed { cause: "input" | "resume_session", pauseSeq, at }` once; a run fence alone pauses nothing and
+emits neither.
 The ordinary extension UI `notify` event shows the paused count and Resume
 instruction too. Attachment lifecycle extension events remain distinct from
 these engine pause events: attachment never releases any ledger hold.
@@ -1470,6 +1493,33 @@ re-register `capabilities` after every reconnect. `width` is accepted for compat
 renders no extension components, so a component factory passed to `setWidget`, `setHeader`, or `setFooter` never
 reaches the wire.
 
+On a shared host, client capabilities are per connection, whether `set_client_info` carries a `sessionId` or not:
+
+- **The declaration is the connection's own.** A `set_client_info` that carries `capabilities` replaces it; one without
+  `capabilities` (a resize) keeps it. A connection that never declared counts as the host default
+  (`SENPI_RPC_CLIENT_CAPABILITIES` at launch). The `interactive_user` role check runs first, so a refused declaration
+  (`connection_role_fixed`) changes nothing.
+- **A session answers with the union** of the declarations of the connections attached to it now. The host recomputes it
+  on open, attach, release, disconnect and every declaration. A session with nobody attached keeps its set, so a
+  retained session's pending questions are replayed to the client that reattaches.
+- **Capability-gated records go to declarers.** `extension_ui_request { method: "question" }` (and its replay on
+  attach), `extension_event` and `extension_ui_request { method: "custom_unsupported" }` reach an attached connection only
+  when it declared the matching capability. A connection that never declared receives them as before. Mirror
+  subscribers ([`subscribe_sessions`](#subscribe_sessions) `mirror`) are read-only observers and receive mirrored records
+  unfiltered.
+- **Withdrawing `question` cancels.** When `question` leaves a session's set (its last declarer withdrew it or left), each
+  pending structured question is settled once as `question_resolved` with outcome `cancelled`; later questions degrade to
+  single dialogs sent to the prompting connection.
+- **A worker session** gets its set through the host-to-isolate `session_capabilities` message, which applies to that
+  isolate's one session.
+- **A declaration a session could not take** answers `client_capabilities_not_applied`; the connection keeps its earlier
+  declaration and the sessions their earlier sets.
+
+In classic `--mode rpc` (one client over stdio), `SENPI_RPC_CLIENT_CAPABILITIES` is the initial set and a
+`set_client_info` that carries `capabilities` replaces it, after the `interactive_user` role check; one without
+`capabilities` keeps it. Withdrawing `question` settles each pending structured question once as `question_resolved` with
+outcome `cancelled`, and withdrawing or declaring `extension_events` stops or starts extension events.
+
 ### Session kind and context (`open_session`)
 
 `open_session` accepts two additive, opaque per-session fields. Both are inert inside the host: they never take part in
@@ -2501,6 +2551,8 @@ codes or code prefixes in `error`:
 - `invalid_path` (relative `sessionPath`/`cwd`)
 - `open_failed: <detail>`. `open_failed: model_unavailable: <reason>` means the open named a model (`provider`/`modelId`) that could not be resolved, for example an unknown provider; the session is not opened, rather than running on the default model. The in-process runtime adds `errorData { reason: "model_unavailable", requestedModel }`; a worker runtime relays the same error text, so match on the prefix
 - `invalid_session_context: <detail>` (`open_session.context` past a documented cap: more than 32 keys, a key that does not match `^[a-z][a-z0-9_]*$`, a non-string or >16 KiB value, or more than 32 KiB of JSON in total; the detail names the cap and its byte budget)
+- `client_capabilities_not_applied: <reason>` (`set_client_info` whose declared capabilities a session the connection is attached to could not take; the earlier declaration stays)
+- `connection_role_fixed: <reason>` (`set_client_info` that changes an `interactive_user` role the connection already declared)
 - `invalid_subscription: <reason>` (`subscribe_sessions` with a malformed `sessions`, `mirror` or flag; `errorData { reason, action }`)
 - `unknown_subscription: <reason>` (`unsubscribe_sessions` naming a subscription this connection does not hold)
 - `subscription_limit: <reason>` (`subscribe_sessions` on a connection that already holds the documented maximum of 64 subscriptions; `errorData { reason, action }`)
@@ -2864,6 +2916,83 @@ answers after the turn settled.
 
 ```json
 {"type": "response", "command": "interrupt", "success": true, "data": {"interrupted": true, "turnId": "3"}}
+```
+
+With `"intent": "stop"` (on `abort` or `interrupt`) the command is a user Stop: the session is paused before the
+turn is stopped, and automatic wakes that arrive later (terminal and monitor notices, detached eval cells, goal
+continuations, task and team deliveries) are kept as notices instead of starting a turn. Only a connection that
+declared the `interactive_user` capability with `set_client_info` may send it; any other connection gets
+`stop_requires_interactive_client`. The capability is fixed at its first declaration on a connection. `interrupt`
+with `"intent": "stop"` also stops an automatic turn that started after the one `turnId` named, and pauses an
+idle session. Human input (`prompt`, `steer`, `follow_up` on an `interactive_user` connection) or `resume_session` releases the pause. The same commands from any other connection are automatic: while a Stop or a run hold is live they answer `heldAsNotice: true` and are delivered as a notice when the session resumes (an `unattended` hold alone is released by any prompt, as before); `get_state`
+reports `paused`, `pausedNoticeCount` and `pausedHeldInputCount`.
+
+```json
+{"type": "set_client_info", "width": 120, "capabilities": ["interactive_user"]}
+{"type": "abort", "intent": "stop", "awaitIdle": true}
+```
+
+#### hold_input
+
+Hold human input for a paused session and deliver it at the start of the turn that resumes it. An interactive
+connection may hold input. A `task_parent` connection may relay a person's run guidance into the child it paused for
+that run: it sends `parentSessionId` (the session that sent `pause_for_run`), and another parent is refused with
+`wrong_parent`. `origin` is optional; when present it must be `"human"`. Any other connection is refused with
+`hold_input_requires_interactive_client`. Idempotent by `inputId`: the same id and `revision` answers the existing
+entry, an id that was already delivered answers `alreadyDelivered: true`, and the same id with another revision is
+refused with `input_id_conflict`.
+
+```json
+{"type": "hold_input", "inputId": "g-1", "revision": 1, "text": "Use the staging database"}
+```
+
+```json
+{"type": "response", "command": "hold_input", "success": true, "data": {"entryId": "a1b2c3", "duplicate": false}}
+```
+
+#### withdraw_held_input
+
+Withdraw held input before it is delivered. Interactive connections only.
+
+```json
+{"type": "withdraw_held_input", "inputId": "g-1"}
+```
+
+```json
+{"type": "response", "command": "withdraw_held_input", "success": true, "data": {"withdrawn": true}}
+```
+
+#### pause_for_run
+
+Pause this session because its parent's run was paused (a task child of a stopped session). Only a connection that
+declared the `task_parent` capability may send it. The child keeps every automatic wake as a notice and holds human
+input instead of starting a turn; its own `resume_session` is refused until the parent resumes the run. A later call
+with a higher `parentPauseSeq` raises the hold; a different `parentSessionId` is refused with `wrong_parent`.
+`childSeq` is this session's own pause sequence, which the parent passes back as `childSeqCutoff` on resume.
+
+```json
+{"type": "pause_for_run", "parentSessionId": "s-parent", "parentPauseSeq": 2, "runRef": {"kind": "dag", "id": "r1"}}
+```
+
+```json
+{"type": "response", "command": "pause_for_run", "success": true, "data": {"held": true, "childSeq": 4}}
+```
+
+#### resume_for_run
+
+Release a run-owned pause and start this child's resumed turn: held human input first, then the notices held while
+paused, then a directive about the interrupted turn. `task_parent` connections only. A `parentPauseSeq` other than
+the newest one this child saw (older or newer) answers `released: false, reason: "stale"`. A Stop the user gave this
+child directly is released only when its sequence is at or below `childSeqCutoff`; a newer one survives
+(`otherHoldLive: true`) and no turn starts. `turnId` is absent when the resumed turn did not start (a Stop landed while
+it was admitted). Held input and notices are consumed only by a resumed turn that no newer Stop aborted.
+
+```json
+{"type": "resume_for_run", "parentSessionId": "s-parent", "parentPauseSeq": 2, "resumeId": "rs-1", "childSeqCutoff": 4}
+```
+
+```json
+{"type": "response", "command": "resume_for_run", "success": true, "data": {"released": true, "otherHoldLive": false, "turnId": "7"}}
 ```
 
 #### dequeue_message
@@ -5134,7 +5263,7 @@ Set the text in the input editor. Fire-and-forget.
 
 #### question
 
-Present one or more questions to the user. Requires the `question` client capability (advertised in `set_client_info`). Questions are broadcast to all attached connections, not just the requester. Pending questions survive the assistant message and are replayed to connections that attach later via `open_session` state.
+Present one or more questions to the user. Requires the `question` client capability (advertised in `set_client_info`). Questions go to every attached connection that declared `question` and to attached connections that never declared, not just the requester; see [Client information](#client-information). Pending questions survive the assistant message and are replayed to connections that attach later via `open_session` state.
 
 ```json
 {
@@ -5216,7 +5345,7 @@ a terminal outcome while detached is published once through the next bound exten
 
 `RpcSessionState.pendingDialogs` lists the still-open select, confirm, input and editor request frames, including requests that remain live across `new_session`, `switch_session`, `fork`, `clone` and `import_jsonl`. The array is empty once all dialogs are resolved, cancelled or timed out. Clients recovering from a gap can restore these dialogs and remove dialogs absent from this authoritative snapshot.
 
-Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)"), then one `input` for a comment. The result maps back to the same `QuestionResponse`.
+Clients without the `question` capability get a sequential fallback: one `select` per question (options plus "Other (type an answer)", which asks one `input` for that question's typed answer). No comment prompt follows the last question. The result maps back to the same `QuestionResponse` without a `comment`: `answered` when at least one question was answered (the others listed in `unanswered`), `cancelled` when none was. An abort of the question's signal opens no further dialog and settles `cancelled` (or `timed_out` when the abort reason is `"timed_out"`), never `answered`, keeping the answers given before it.
 
 ### Extension UI Responses (stdin)
 

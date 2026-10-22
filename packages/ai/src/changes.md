@@ -71,6 +71,24 @@
 
 - LOW: `AssistantMessage` in `packages/ai/src/types.ts`, next to `endTurn`/`timestamp`.
 
+## 2026-10-21 - Request context is distinct from cumulative billing (omo#10792)
+
+### What changed
+
+- `packages/ai/src/types.ts`: optional `Usage.contextUsage` records the latest request's input (including cache reads/writes) and output separately. `null` means the provider reports cumulative billing but no request measurement; absent preserves the legacy single-request contract. Existing billing fields retain their semantics. The two-part snapshot preserves both prompt-only overflow/anchor calculations and occupied-context totals without subtracting cumulative output.
+
+### Why
+
+- `packages/ai/src/types.ts`: an SDK query can bill multiple requests whose input contexts overlap. Their sum cannot describe the current context window.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the public usage contract must carry the distinction through persistence, provider middleware, and every context consumer without changing billing.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/types.ts`, the optional fields in `Usage`. Keep this additive field if upstream still uses one usage object.
+
 ## 2026-10-21 - AssistantMessage.failureSource (senpi#3866)
 
 ### What changed

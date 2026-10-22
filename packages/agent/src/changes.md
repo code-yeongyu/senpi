@@ -21,6 +21,24 @@
 - MEDIUM: `packages/agent/src/agent-loop.ts` `streamAssistantResponse`: the stream function call, the `start` case, the delta cases and the four terminal `stampTiming` calls.
 - LOW: `packages/agent/src/index.ts`, one `export *` line after `agent-loop.ts`.
 
+## 2026-10-21 - Harness compaction reads request context (omo#10792)
+
+### What changed
+
+- `packages/agent/src/harness/compaction/compaction.ts`: `calculateContextTokens` prefers the optional request measurement and treats an explicit unknown as unmeasured, allowing transcript estimation.
+
+### Why
+
+- `packages/agent/src/harness/compaction/compaction.ts`: cumulative SDK billing for multiple overlapping requests must not trigger compaction as if it occupied one context window.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/harness/compaction/compaction.ts`: the optional harness is independently callable and owns its context estimator below coding-agent extensions.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/harness/compaction/compaction.ts`, `calculateContextTokens`. Preserve the existing fallback for providers without request measurements.
+
 ## 2026-10-21 - A run that failed in the queued-input port is marked local (senpi#3866)
 
 ### What changed
