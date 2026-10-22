@@ -4,9 +4,11 @@
  * supervisor's orchestration; every name stays re-exported there for existing importers.
  */
 import { type ChildProcess, spawn } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { Socket } from "node:net";
-import { extname } from "node:path";
+import { extname, isAbsolute, resolve } from "node:path";
 import { isBunBinary } from "../../config.ts";
+import { absoluteExecArgv, absoluteHostArgs } from "../../utils/paths.ts";
 import { runtimeExecArgv } from "../../utils/runtime-exec-argv.ts";
 import { resolveCliMainPath } from "./host-cli-entry.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
@@ -27,6 +29,8 @@ export interface SupervisorLaunch {
 	/** Optional runtime command used by rebranded/bundled callers. */
 	readonly childCommand?: string;
 	readonly childArgs?: readonly string[];
+	/** The runtime exec argv the default host child re-enters with; `anchorSupervisorCwd` fixes it against the inherited cwd. */
+	readonly execArgv?: readonly string[];
 	/** Explicit ownership directory for callers whose environment is not yet branded. */
 	readonly agentDir?: string;
 	/** Inherited caller-lifetime pipe, distinct from the supervisor-to-host watchdog pipe. */
@@ -179,7 +183,7 @@ export function resolveHostChildLaunch(
 	return {
 		command: process.execPath,
 		args: [
-			...(compiled ? [] : [...runtimeExecArgv(), resolveCliMainPath()]),
+			...(compiled ? [] : [...(launch.execArgv ?? runtimeExecArgv()), resolveCliMainPath()]),
 			"--mode",
 			"rpc",
 			"--multi-session",
@@ -236,6 +240,8 @@ export function spawnHostChild(options: {
 	readonly internal: { readonly dir?: string; readonly secretPath: string };
 	readonly internalSecret?: Buffer;
 	readonly daemonDir: string;
+	/** The supervisor's own cwd (its agent dir), never the directory of whoever ensured it (senpi#3783). */
+	readonly cwd: string;
 	readonly instanceId: string;
 	readonly cleanupPaths: readonly string[];
 	readonly publicSocket: string;
@@ -243,6 +249,7 @@ export function spawnHostChild(options: {
 	const { launch, internalSocket, internal, internalSecret, publicSocket } = options;
 	const childLaunch = spawnableChildLaunch(resolveHostChildLaunch(launch, internalSocket));
 	return spawn(childLaunch.command, childLaunch.args, {
+		cwd: options.cwd,
 		env: {
 			...process.env,
 			...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
@@ -267,4 +274,32 @@ export function spawnHostChild(options: {
 		// CREATE_NO_WINDOW gives the child a console with no window instead.
 		windowsHide: true,
 	});
+}
+
+const absoluteFrom = (from: string, path: string): string => (isAbsolute(path) ? path : resolve(from, path));
+
+/**
+ * The supervisor leaves its caller's cwd before anything else (senpi#3783): it outlives the ensure that started it
+ * and would pin that checkout. Changes the process cwd to `agentDir` (created if missing); the result names it, so the host child is told it.
+ * Every entry reaches this first - `ensureHost`/`handoffHost` (which already absolutized `hostArgs`) and every DIRECT launch
+ * (`host-lifecycle.ts` run as a program, `main()`'s hidden route, the bundled `host-supervisor-entry.ts`) - so path-valued
+ * `hostArgs` are read here with the CLI's own rule (`absoluteHostArgs`) against the INHERITED cwd, before the chdir, and so are the
+ * module specifiers in the runtime exec argv the host child re-enters with (`absoluteExecArgv`: `--import tsx`, `-r ./x.cjs`). */
+export function anchorSupervisorCwd(
+	launch: SupervisorLaunch,
+	agentDir: string,
+): SupervisorLaunch & { readonly agentDir: string } {
+	const from = process.cwd();
+	const anchoredAgentDir = absoluteFrom(from, agentDir);
+	const anchored = {
+		...launch,
+		socket: absoluteFrom(from, launch.socket),
+		hostArgs: absoluteHostArgs(launch.hostArgs, from),
+		execArgv: absoluteExecArgv(launch.execArgv ?? runtimeExecArgv(), from),
+		agentDir: anchoredAgentDir,
+		...(launch.bindSocket !== undefined ? { bindSocket: absoluteFrom(from, launch.bindSocket) } : {}),
+	};
+	mkdirSync(anchoredAgentDir, { recursive: true });
+	process.chdir(anchoredAgentDir);
+	return anchored;
 }

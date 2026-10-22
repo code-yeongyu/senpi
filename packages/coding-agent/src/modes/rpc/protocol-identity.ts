@@ -14,13 +14,13 @@
  * in any language can recompute it and compare two hosts without parsing paths.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { resolve } from "node:path";
 import { parseArgs, resolveSessionRuntime } from "../../cli/args.ts";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
+import { absoluteHostArgs, resolveCliPaths } from "../../utils/paths.ts";
 import { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import type { RpcLaunchProfile, RpcLaunchProfileCore, RpcProtocolIdentity } from "./rpc-types.ts";
 
-export { HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV };
+export { absoluteHostArgs, HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV };
 
 /** Identity of THIS host process, fixed for its lifetime. */
 const INSTANCE_ID = resolveInstanceId(process.env[HOST_INSTANCE_ID_ENV]);
@@ -46,7 +46,7 @@ export function hostGeneration(env: Readonly<Record<string, string | undefined>>
 export function hostLaunchProfile(argv: readonly string[], cwd: string): RpcLaunchProfile {
 	const parsed = parseArgs([...argv], { grokNeoEnabled: false });
 	const core: RpcLaunchProfileCore = {
-		extensions: [...new Set((parsed.extensions ?? []).map((path) => resolve(cwd, path)))].sort(),
+		extensions: [...new Set(resolveCliPaths(cwd, parsed.extensions) ?? [])].sort(),
 		multi_session: parsed.multiSession === true,
 		session_runtime: resolveSessionRuntime(parsed),
 	};
@@ -65,6 +65,13 @@ export function hostLaunchProfile(argv: readonly string[], cwd: string): RpcLaun
  */
 export function socketHostLaunchProfile(hostArgs: readonly string[], cwd: string): RpcLaunchProfile {
 	return hostLaunchProfile(["--mode", "rpc", "--multi-session", "--listen", "unix://", ...hostArgs], cwd);
+}
+
+/** `options` with `hostArgs` made absolute against this process's cwd: the caller-side entry for ensure and handoff. */
+export function withAbsoluteHostArgs<T extends { readonly hostArgs?: readonly string[] }>(options: T): T {
+	return options.hostArgs === undefined
+		? options
+		: { ...options, hostArgs: absoluteHostArgs(options.hostArgs, process.cwd()) };
 }
 
 /** The identity fields of this host's `get_protocol_info` answer. */

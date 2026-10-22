@@ -1,3 +1,64 @@
+## 2026-10-20 - A direct supervisor launch reads relative host args against its inherited cwd (senpi#3783 review round 3)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `anchorSupervisorCwd` runs `absoluteHostArgs` (`utils/paths.ts`, the CLI's `resolveCliPaths` rule) over `hostArgs` against the inherited cwd before it `chdir`s into the agent dir. Every supervisor entry reaches it first through `runHostSupervisor`: `host-lifecycle.ts` run as a program, `main()`'s hidden `--internal-rpc-host-supervisor` route (`supervisor-route.ts`), and the bundled `host-supervisor-entry.ts`; ensure/handoff args are already absolute, so they are unchanged. It also stores `execArgv`: the runtime exec argv the default host child re-enters with (`runtimeExecArgv()`), passed through `absoluteExecArgv` against the same inherited cwd, and `resolveHostChildLaunch` uses it, so `--import tsx` / `-r ./x.cjs` still load from the launcher's directory.
+- `packages/coding-agent/src/modes/rpc/protocol-identity.ts`: `absoluteHostArgs` moved to `utils/paths.ts` and is re-exported here; `withAbsoluteHostArgs` is unchanged.
+
+### Why
+
+Review round 3 of #3784: round 2 stopped absolutizing in the supervisor on the belief that only ensure/handoff start one, but a direct launch (a wrapper, a manual run of the supervisor program) hands relative `--session-dir sessions` / `-e ./ext.ts` straight through, and the host child resolved them against the agent dir. The same cwd move broke cwd-relative runtime exec argv: a supervisor started with `--import tsx` (or any user `--import`/`--require` relative to its cwd) spawned a host child that failed with `Cannot find package 'tsx' imported from <agentDir>/`, which `rpc-socket-ownership.test.ts` (5) and `rpc-host-lifecycle.test.ts` (3) caught. `utils/paths.ts` is already in the supervisor's import graph (`config.ts` imports `normalizePath` from it), so the rule costs no module and the graph stays at 55.
+
+### Why an extension could not handle it
+
+The supervisor's launch anchoring is core RPC host code that runs before any extension.
+
+### Expected merge conflict zones
+
+- LOW: the `hostArgs`/`execArgv` fields in `anchorSupervisorCwd`; the runtime-argv line in `resolveHostChildLaunch`; the `utils/paths.ts` import in `protocol-identity.ts`.
+
+## 2026-10-20 - Caller and host child agree on the launch profile after the supervisor's cwd move (senpi#3783 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/protocol-identity.ts`: `absoluteHostArgs` reads every `--extension`/`-e`/`--skill`/`--prompt-template`/`--theme`/`--session-dir` value with the CLI's own `resolveCliPaths` (`utils/paths.ts`) against the caller's cwd: every `isLocalPath` value (bare names and `file:` URLs included) becomes absolute whether or not it exists yet; package specs (`npm:`, `git:`, `github:`, `http(s):`, `ssh:`, `builtin:`) stay verbatim. `withAbsoluteHostArgs` applies it to ensure/handoff options. `hostLaunchProfile` names extensions through `resolveCliPaths` too, instead of `resolve(cwd, path)`, so `npm:foo` is no longer `<cwd>/npm:foo`.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: `ensureHost` normalizes `hostArgs` first, so the client profile, the registration's `launchProfileId` and the supervisor argv all carry absolute paths.
+- `packages/coding-agent/src/modes/rpc/host-handoff.ts`: `handoffHost` does the same for a direct handoff.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `anchorSupervisorCwd` reads `hostArgs` with the same rule (see the review round 3 entry above).
+
+### Why
+
+Review of #3784: the caller derived the profile in its cwd, the host child in its agent dir, so `<callerCwd>/npm:foo` != `<agentDir>/npm:foo`, `covers()` failed, and an upgrade never handed over. A relative path that did not exist yet silently resolved against the agent dir; review round 2 found the same for a not-yet-existing bare value (`--session-dir sessions`), which an existence check had left relative.
+
+### Why an extension could not handle it
+
+The launch profile and the ensure/handoff entry points are core RPC host code.
+
+### Expected merge conflict zones
+
+- LOW: the first lines of `ensureHost` and `handoffHost`; the `extensions` line of `hostLaunchProfile`; the `hostArgs` field in `anchorSupervisorCwd`.
+
+## 2026-10-20 - The RPC host supervisor leaves the caller's cwd for its agent dir (senpi#3783)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `anchorSupervisorCwd` resolves the launch's socket, agent dir, bind socket and path-valued host args (`--extension`, `--skill`, `--prompt-template`, `--theme`, `--session-dir`) against the inherited cwd, `mkdirSync`s the agent dir, and `process.chdir`s into it.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: `runHostSupervisor` calls `anchorSupervisorCwd` as its first action. The agent dir is always passed to `createHostDaemonPaths` and to `spawnHostChild` as `cwd`.
+- `packages/coding-agent/src/modes/rpc/host-lifecycle-launch.ts`: `spawnHostChild` passes `options.cwd` to `spawn`, so the host child starts in the agent dir even if the supervisor's chdir has not happened yet.
+- Tests: `test/suite/regressions/3783-rpc-supervisor-cwd.test.ts` spawns the real supervisor from a temp caller directory and asserts both the supervisor's and the child's cwd are the agent dir. RED on main (`caller-worktree` != `agent`); GREEN.
+
+### Why
+
+A desktop dev launcher ensured a host from a worktree; the shared supervisor inherited that cwd, pinning the worktree and leaking the lane's directory into a process used by every session.
+
+### Why an extension could not handle it
+
+The supervisor and host child spawn are in the core lifecycle module.
+
+### Expected merge conflict zones
+
+- LOW: `host-lifecycle.ts` first lines of `runHostSupervisor`; `host-lifecycle-launch.ts` `spawnHostChild` options.
+
 ## 2026-10-21 - Admit Resume promptly and preserve park context patches (senpi#3853)
 
 ### What changed
@@ -2026,6 +2087,7 @@ The launch commands in `packages/coding-agent/src/modes/rpc/host-launch.ts` and 
 
 - `defaultHostLaunch` in `packages/coding-agent/src/modes/rpc/host-launch.ts` and `resolveHostChildLaunch` in `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`.
 - `packages/coding-agent/src/modes/rpc/host-exec-argv.ts` is a new fork-only module.
+
 ## 2026-10-02 - A taken-over generation leaves the successor's registration alone (senpi#2536)
 
 ### What changed
@@ -2218,6 +2280,7 @@ Host identity, admission and generation handoff are core RPC host lifecycle; an 
 ### Expected merge conflict zones
 
 - Fork-only files. `createHostCore` and the socket host's capability list and `createHostCore` call in `multi-session-host.ts`; `identityPayload`/`refusal` moving to `host-outcome.ts` from `host-runner.ts`; the `launch` line in `startSuccessor`.
+
 ## 2026-09-30 - An updated client retires a live pre-layout-2 host with no session (senpi#2423)
 
 ### What changed
@@ -4755,6 +4818,7 @@ The host supervisor and child are spawned before either process loads extensions
 ### Expected merge conflict zones
 
 - LOW: the public proxy's attach/detach callbacks and observer event handling in `host-lifecycle.ts`.
+
 ## 2026-09-13 - Register compiled provider modules in each session worker
 
 ### What changed
@@ -5526,6 +5590,7 @@ Socket bind, unlink, and process-teardown ordering are transport lifecycle inter
 ### Why an extension could not handle it
 
 - Socket fan-out and supervisor lifecycle accounting are transport behavior below the extension API.
+
 ## 2026-09-02 - Reap orphaned host dirs outside the endpoint lock
 
 ### What changed
@@ -5551,6 +5616,7 @@ Socket bind, unlink, and process-teardown ordering are transport lifecycle inter
 ### Expected merge conflict zones
 
 - LOW: the `reapOrphanedInternalHostDirs()` / `acquireOwnershipSafeLock()` ordering at the top of `ensureHost`.
+
 ## 2026-09-02 - Size the ensure-host lock wait to the startup critical section
 
 ### What changed
@@ -6812,6 +6878,7 @@ wire shape, multi-session tagging, and payload validation responsibilities.
 - LOW: the `RpcSessionState` interface near `lastAbortSource`; the `buildRpcSessionState` return literal.
 
 - Covered production paths: `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/connection-handler.ts`.
+
 ## 2026-09-30 - Advertise edit-only project preset (senpi#2430)
 
 ### What changed
@@ -7002,6 +7069,7 @@ An extension cannot observe its own SIGKILL. The detached supervisor must hold t
 - `packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts`: activity observation and owner watch.
 - `packages/coding-agent/src/modes/rpc/host-lifecycle.ts`: lifecycle ticker and watcher teardown.
 - `packages/coding-agent/src/modes/rpc/host-successor.ts`: successor boot settings and spawn.
+
 ## 2026-10-13 - Fenced holder attachment (senpi#3255)
 
 ### What changed

@@ -12,6 +12,7 @@ import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
 import {
+	anchorSupervisorCwd,
 	HOST_CHILD_WATCH_FD,
 	parseSupervisorArgs,
 	type SupervisorLaunch,
@@ -70,8 +71,11 @@ export {
 } from "./host-lifecycle-policy.ts";
 export { createInternalSocketPath } from "./host-lifecycle-scratch.ts";
 
-export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void> {
-	const paths = createHostDaemonPaths({ socket: launch.socket, agentDir: launch.agentDir ?? getAgentDir() });
+export async function runHostSupervisor(requested: SupervisorLaunch): Promise<void> {
+	// First, before anything reads a relative path: never keep the caller's cwd (senpi#3783).
+	const launch = anchorSupervisorCwd(requested, requested.agentDir ?? getAgentDir());
+	const agentDir = launch.agentDir;
+	const paths = createHostDaemonPaths({ socket: launch.socket, agentDir });
 	// Which generation this supervisor is: the ensure that spawned it says so, and a DIRECT launch
 	// (the hidden supervisor route, with no ensure behind it) names itself so its child agrees.
 	const told = process.env[HOST_INSTANCE_ID_ENV];
@@ -119,6 +123,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		internal: { ...internal, secretPath: internalSecretPath },
 		...(internalSecret ? { internalSecret } : {}),
 		daemonDir: paths.dir,
+		cwd: agentDir,
 		instanceId,
 		cleanupPaths: hostCrashCleanupPaths({
 			pointerFile: paths.pointerFile,

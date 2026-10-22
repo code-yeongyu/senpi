@@ -27,6 +27,7 @@
  * ensure and `host gc`: an ensure arriving meanwhile attaches to whichever generation the handoff
  * left registered, and gc never judges the endpoint halfway through.
  */
+
 import { createDaemonDirectories, createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration } from "./host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
@@ -36,6 +37,7 @@ import { handoffUnregisteredHost, SESSION_COUNT_TIMEOUT_MS } from "./host-handof
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import { SUCCESSOR_START_BUDGET_MS, startSuccessor } from "./host-successor.ts";
+import { withAbsoluteHostArgs } from "./protocol-identity.ts";
 
 const HANDOFF_PROBE_TIMEOUT_MS = 10_000;
 
@@ -120,7 +122,9 @@ export type HandoffResult =
  * Hands the socket to a new generation of this build. Forced by design: the caller decides
  * whether an upgrade is warranted (`decideHostAction`); this performs the one it asked for.
  */
-export async function handoffHost(options: HandoffHostOptions): Promise<HandoffResult> {
+export async function handoffHost(requested: HandoffHostOptions): Promise<HandoffResult> {
+	// The caller's cwd is the only one its relative paths mean; the successor runs in the agent dir (senpi#3783).
+	const options = withAbsoluteHostArgs(requested);
 	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
 	const release = await acquireHostEnsureLock(options.socket, HANDOFF_LOCK_WAIT_MS);
 	try {

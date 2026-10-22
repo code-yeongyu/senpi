@@ -40,6 +40,7 @@ import { holdProtocolInfo, probeSocketReachable } from "./host-probe.ts";
 import { isHostGenerationProcess } from "./host-process-role.ts";
 import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
+import { withAbsoluteHostArgs } from "./protocol-identity.ts";
 
 export {
 	createHostDaemonPaths,
@@ -70,7 +71,9 @@ const ENSURE_LOCK_WAIT_MS =
 	Math.max(STOP_WAIT_BUDGET_MS + DEFAULT_READINESS_TIMEOUT_MS, HANDOFF_LOCK_HOLD_MS) +
 	10_000;
 const lockOptions = hostEnsureLockOptions(ENSURE_LOCK_WAIT_MS);
-export async function ensureHost(options: EnsureHostOptions): Promise<EnsuredHost> {
+export async function ensureHost(requested: EnsureHostOptions): Promise<EnsuredHost> {
+	// Every path arg is absolute before the profile, the registration or the supervisor sees it (senpi#3783).
+	const options = withAbsoluteHostArgs(requested);
 	const socket = normalizeSocketPath(options.socket);
 	const paths = createHostDaemonPaths({ socket, ...(options.agentDir ? { agentDir: options.agentDir } : {}) });
 	await createDaemonDirectories(paths);

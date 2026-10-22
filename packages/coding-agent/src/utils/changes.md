@@ -1,5 +1,42 @@
 # changes
 
+## 2026-10-20 - `absoluteHostArgs` moves beside `resolveCliPaths` (senpi#3783 review round 3)
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts`: exports `absoluteHostArgs(hostArgs, cwd)`, moved from `modes/rpc/protocol-identity.ts`: each `--extension`/`-e`/`--skill`/`--prompt-template`/`--theme`/`--session-dir` value through `resolveCliPaths` against `cwd`.
+- `packages/coding-agent/src/utils/paths.ts`: exports `absoluteExecArgv(execArgv, cwd)`: each `--import`/`--loader`/`--experimental-loader`/`--require`/`-r`/`--preload` (Bun) value (separate or `=` form) that the runtime would resolve against the cwd becomes absolute: a relative path against `cwd`, a bare package or `#import` through `createRequire(<cwd>/)` (a plain package is kept verbatim when it does not resolve; a bare value naming a file in `cwd`, or an unresolvable `#import`, throws an `ambiguous exec argv` error instead); an existing target is recorded by its real path for relative and bare values alike (senpi#3784 review); ESM flags get a `file:` URL, the others a path; absolute paths and `file:`/`data:`/`node:` URLs stay verbatim.
+
+### Why
+
+The RPC host lifecycle supervisor must apply it before it moves into its agent dir, and this module is already in the supervisor's import graph while `protocol-identity.ts` (which imports the CLI parser) must stay out of it. The supervisor applies `absoluteExecArgv` to the runtime exec argv for the same reason.
+
+### Why an extension could not handle it
+
+Shared by core CLI startup and the core RPC host entry points.
+
+### Expected merge conflict zones
+
+- LOW: the lines after `resolveCliPaths` in `paths.ts`.
+
+## 2026-10-20 - `resolveCliPaths` moves into `utils/paths.ts` (senpi#3783 review round 2)
+
+### What changed
+
+- `packages/coding-agent/src/utils/paths.ts`: exports `resolveCliPaths(cwd, paths)`, moved verbatim from `main.ts` (every `isLocalPath` value through `resolvePath` against `cwd`, package specs verbatim), now taking a `readonly` array.
+
+### Why
+
+The RPC host's caller must read path-valued host args with exactly the CLI's rule, not a parallel copy, so a bare not-yet-existing `--session-dir sessions` means `<caller>/sessions` and never `<agentDir>/sessions`.
+
+### Why an extension could not handle it
+
+The rule is shared by core CLI startup and the core RPC host entry points.
+
+### Expected merge conflict zones
+
+- LOW: the lines after `resolvePath` in `paths.ts`.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed

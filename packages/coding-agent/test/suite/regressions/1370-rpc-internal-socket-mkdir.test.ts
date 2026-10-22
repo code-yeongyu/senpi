@@ -26,8 +26,11 @@ vi.mock("node:child_process", async (importOriginal) => {
 // Regression coverage for https://github.com/code-yeongyu/senpi/issues/1370
 describe("createInternalSocketPath", () => {
 	const created: string[] = [];
+	// runHostSupervisor() moves into its agent dir (#3783); the in-process cases must not leave the worker there.
+	const originalCwd = process.cwd();
 
 	afterEach(() => {
+		process.chdir(originalCwd);
 		vi.restoreAllMocks();
 		vi.unstubAllGlobals();
 		for (const dir of created.splice(0)) rmSync(dir, { recursive: true, force: true });

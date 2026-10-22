@@ -122,7 +122,7 @@ import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
 import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes/rpc/custom-capability.ts";
 import type { PreparableRuntimeFactory, PrepareRuntimeOptions } from "./modes/rpc/host-warm.ts";
 import { dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
-import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
+import { normalizePath, resolveCliPaths, resolvePath } from "./utils/paths.ts";
 import { readPipedStdin } from "./utils/piped-stdin.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
@@ -773,10 +773,6 @@ function buildSessionOptions(
 	}
 
 	return { options, cliThinkingFromModel, diagnostics };
-}
-
-function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | undefined {
-	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
 }
 
 async function promptForMissingSessionCwd(

@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve as nodeResolvePath, parse, relative, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnProcessSync } from "./child-process.ts";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -232,6 +233,97 @@ export function resolvePath(input: string, baseDir: string = process.cwd(), opti
 	const normalized = normalizePath(input, options);
 	const normalizedBaseDir = normalizePath(baseDir);
 	return isAbsolute(normalized) ? nodeResolvePath(normalized) : nodeResolvePath(normalizedBaseDir, normalized);
+}
+
+/** How the CLI reads a path-valued flag (`--extension`, `--skill`, ...): every local value against `cwd`, package specs verbatim. */
+export function resolveCliPaths(cwd: string, paths: readonly string[] | undefined): string[] | undefined {
+	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
+}
+
+const PATH_VALUED_HOST_FLAGS = new Set([
+	"--extension",
+	"-e",
+	"--skill",
+	"--prompt-template",
+	"--theme",
+	"--session-dir",
+]);
+
+/**
+ * An RPC host's path-valued args read with {@link resolveCliPaths} against `cwd`, the directory of whoever launched it
+ * (senpi#3783): every local value becomes absolute, existing or not - a theme NAME too (`--theme dark` is `<cwd>/dark`,
+ * exactly as the CLI reads it) - and package specs stay verbatim. Lives here, beside the rule, because the lifecycle
+ * supervisor needs it before it moves into its agent dir and this module is already in its import graph.
+ */
+export function absoluteHostArgs(hostArgs: readonly string[], cwd: string): string[] {
+	return hostArgs.map((arg, index) =>
+		index > 0 && PATH_VALUED_HOST_FLAGS.has(hostArgs[index - 1] ?? "")
+			? (resolveCliPaths(cwd, [arg])?.[0] ?? arg)
+			: arg,
+	);
+}
+
+/** Runtime exec-argv flags whose value is a module specifier, and whether it is loaded as ESM (`--import`/loaders);
+ * `--preload` is Bun's (`-r`/`--require` are its aliases). */
+const EXEC_ARGV_MODULE_FLAGS = new Map([
+	["--import", true],
+	["--loader", true],
+	["--experimental-loader", true],
+	["--require", false],
+	["-r", false],
+	["--preload", false],
+]);
+
+/** One rule for every specifier (senpi#3784): a `./`/`../` path resolves against `cwd`, a bare one (package or `#import`)
+ * through `createRequire(<cwd>/)`, and an existing target is recorded by its real path, as `require.resolve` returns it. */
+function absoluteModuleSpecifier(flag: string, specifier: string, cwd: string): string {
+	if (isAbsolute(specifier) || /^(?:file|data|node):/.test(specifier)) return specifier;
+	let path: string;
+	if (/^\.\.?(?:[\\/]|$)/.test(specifier)) {
+		path = nodeResolvePath(cwd, specifier);
+	} else {
+		try {
+			path = createRequire(join(cwd, "noop.js")).resolve(specifier);
+		} catch {
+			// no-excuse-ok: catch - a plain unresolvable package stays as written, so Node reports it exactly as before;
+			// one that is really a cwd file or a cwd-scoped `#import` would silently resolve against the agent dir instead.
+			if (!specifier.startsWith("#") && !existsSync(nodeResolvePath(cwd, specifier))) return specifier;
+			throw new Error(
+				`ambiguous exec argv ${flag} ${specifier}: ${cwd} resolves no such package or #import, and it is not a ./ or ../ path; write ./${specifier} or an absolute path for a file`,
+			);
+		}
+	}
+	const canonical = existsSync(path) ? realpathSync(path) : path;
+	return EXEC_ARGV_MODULE_FLAGS.get(flag) === true ? pathToFileURL(canonical).href : canonical;
+}
+
+/**
+ * Exec argv (`runtimeExecArgv()`) read against `cwd`, the directory the process was started from (senpi#3783): each
+ * `--import`/`--loader`/`--experimental-loader`/`--require`/`-r`/`--preload` value, in either `--flag value` or
+ * `--flag=value` form, that the runtime would resolve against the cwd - a relative path, or a bare package or `#import`
+ * resolved from `cwd` - becomes absolute (a `file:` URL for the ESM flags, a path otherwise). Absolute paths and
+ * `file:`/`data:`/`node:` URLs stay verbatim, and so does a package `cwd` cannot resolve; a bare value that names a file
+ * in `cwd`, or an unresolvable `#import`, throws instead of reaching the agent dir unresolved. The RPC host supervisor applies it before it moves into its agent dir, so
+ * a host child it spawns from there still loads what its launcher meant.
+ */
+export function absoluteExecArgv(execArgv: readonly string[], cwd: string): string[] {
+	const result: string[] = [];
+	for (let index = 0; index < execArgv.length; index++) {
+		const arg = execArgv[index] ?? "";
+		const equals = arg.startsWith("--") ? arg.indexOf("=") : -1;
+		const inlineFlag = equals > 0 ? arg.slice(0, equals) : "";
+		if (EXEC_ARGV_MODULE_FLAGS.has(inlineFlag)) {
+			result.push(`${inlineFlag}=${absoluteModuleSpecifier(inlineFlag, arg.slice(equals + 1), cwd)}`);
+			continue;
+		}
+		result.push(arg);
+		const value = execArgv[index + 1];
+		if (EXEC_ARGV_MODULE_FLAGS.has(arg) && value !== undefined) {
+			result.push(absoluteModuleSpecifier(arg, value, cwd));
+			index++;
+		}
+	}
+	return result;
 }
 
 export function getCwdRelativePath(filePath: string, cwd: string): string | undefined {

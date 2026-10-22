@@ -512,7 +512,11 @@ parsing a version string:
   never outranks one that can. Binaries built without git metadata report an epoch of `0`, which is exactly how a
   client reads "this build has no age": a non-zero epoch is comparable, `0` is not.
 - `launch_profile` - what the host was launched with: `core.session_runtime`, `core.multi_session` and
-  `core.extensions` (absolute roots, deduplicated and sorted). `profile_id` is the sha256 of the canonical JSON
+  `core.extensions` (each `--extension` value read the way the CLI reads it, against the launching client's cwd: a
+  local path made absolute, a package spec such as `npm:`, `git:` or `builtin:` kept verbatim; deduplicated and sorted).
+  Hosts built before senpi#3783 made a package spec a path too (`<cwd>/npm:foo`), so their `profile_id` differs from a
+  current client's for the same launch and that host needs one manual restart instead of an automatic upgrade.
+  `profile_id` is the sha256 of the canonical JSON
   of `core` with its keys in that sorted order (`extensions`, `multi_session`, `session_runtime`), so any client
   can recompute it and compare two hosts without comparing paths.
 - `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
