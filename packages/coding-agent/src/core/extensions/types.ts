@@ -2604,7 +2604,7 @@ export interface ExtensionAPI {
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options: SendMessageOptions & { items: readonly SendMessageItem[] },
-	): Promise<readonly SendMessageReceipt[]>;
+	): Promise<readonly SendMessageReceipt[] | undefined>;
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 		options?: SendMessageOptions,
@@ -3071,11 +3071,12 @@ export type SendMessageHandler = <T = unknown>(
 	options?: SendMessageOptions,
 ) => void;
 
-/** Admits an itemized batch and answers one receipt per item (senpi#3811 design 4.5). */
+/** Admits an itemized batch and answers one receipt per item (senpi#3811 design 4.5); `undefined` when the
+ * host has no item custody and delivered the batch as a plain message. */
 export type SendItemizedMessageHandler = <T = unknown>(
 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 	options: SendMessageOptions & { items: readonly SendMessageItem[] },
-) => Promise<readonly SendMessageReceipt[]>;
+) => Promise<readonly SendMessageReceipt[] | undefined>;
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],

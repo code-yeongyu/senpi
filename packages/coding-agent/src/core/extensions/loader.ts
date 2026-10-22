@@ -651,7 +651,7 @@ function createExtensionAPI(
 		sendMessage: (<T = unknown>(
 			message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
 			options?: SendMessageOptions & { items?: readonly SendMessageItem[] },
-		): Promise<readonly SendMessageReceipt[]> | undefined => {
+		): Promise<readonly SendMessageReceipt[] | undefined> | undefined => {
 			assertActive();
 			const items = options?.items;
 			if (items === undefined) {
@@ -659,9 +659,10 @@ function createExtensionAPI(
 				return undefined;
 			}
 			const itemized = runtime.sendItemizedMessage;
+			// A host without item custody delivers the batch plainly and answers no receipts, like an engine without items.
 			if (itemized === undefined) {
 				runtime.sendMessage(message, options);
-				return Promise.resolve([]);
+				return Promise.resolve(undefined);
 			}
 			return itemized(message, { ...options, items });
 		}) as ExtensionAPI["sendMessage"],

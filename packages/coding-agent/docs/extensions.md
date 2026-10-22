@@ -2082,7 +2082,8 @@ pi.sendMessage({
   the item's own `content` and `details`, or the batch content when an item has none); otherwise the batch is
   delivered as one message and every receipt names that message's entry (`message_persisted`). A held item's notice
   is delivered on its own when the session resumes, and a later wake from the same producer never replaces it.
-  Without `items`, `sendMessage` returns nothing, as before.
+  A host without item custody (an embedder's runtime) delivers the batch as a plain message and the promise
+  answers `undefined`, as an engine without `items` would. Without `items`, `sendMessage` returns nothing, as before.
 
 ```typescript
 const receipts = await pi.sendMessage(

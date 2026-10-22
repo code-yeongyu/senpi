@@ -641,12 +641,12 @@ export class ExtensionRunner {
 		};
 		// An itemized send answers its receipts from wherever its admission ends up running (senpi#3811).
 		this.runtime.sendItemizedMessage = (message, options) => {
-			const receipts = Promise.withResolvers<readonly SendMessageReceipt[]>();
+			const receipts = Promise.withResolvers<readonly SendMessageReceipt[] | undefined>();
 			const send = () => {
 				const itemized = actions.sendItemizedMessage;
 				if (itemized === undefined) {
 					actions.sendMessage(message, options);
-					receipts.resolve([]);
+					receipts.resolve(undefined);
 				} else itemized(message, options).then(receipts.resolve, receipts.reject);
 			};
 			if (options.triggerTurn === true) this.sessionStartTurns.admit(send);
