@@ -67,7 +67,10 @@ describe("async ask-user delivery over the RPC bridge", () => {
 		await settled;
 
 		expect(delivery.deliveries).toEqual([
-			{ content: "[Answer to question rpc-answer]\nLibrary: OAuth", options: { deliverAs: "followUp" } },
+			{
+				content: "[Answer to question rpc-answer]\nLibrary: OAuth",
+				options: { deliverAs: "followUp", details: { origin: "ask-user-answer", requestId: "rpc-answer" } },
+			},
 		]);
 	});
 
@@ -89,7 +92,7 @@ describe("async ask-user delivery over the RPC bridge", () => {
 					{ type: "text", text: "[The user's comment for question rpc-steer]" },
 					{ type: "text", text: "use bun" },
 				],
-				options: { deliverAs: "steer" },
+				options: { deliverAs: "steer", details: { origin: "ask-user-answer", requestId: "rpc-steer" } },
 			},
 		]);
 	});
@@ -106,7 +109,10 @@ describe("async ask-user delivery over the RPC bridge", () => {
 		expect(delivery.deliveries).toHaveLength(1);
 		expect(String(delivery.deliveries[0]?.content)).toContain(TIMEOUT_MARKER);
 		expect(String(delivery.deliveries[0]?.content)).toContain("[Answer to question rpc-timeout]");
-		expect(delivery.deliveries[0]?.options).toEqual({ deliverAs: "followUp" });
+		expect(delivery.deliveries[0]?.options).toEqual({
+			deliverAs: "followUp",
+			details: { origin: "ask-user-answer", requestId: "rpc-timeout" },
+		});
 	});
 
 	it("broadcasts the idle timeout as timed_out, not cancelled", async () => {

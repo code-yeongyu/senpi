@@ -407,6 +407,7 @@ import {
 } from "./turn-deadline.ts";
 import { commandShapedName, findUnknownCommand } from "./unknown-command.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
+import { persistedUserMessageDetails, type UserMessageOriginGrant } from "./user-message-origin.ts";
 import { joinUserTextBlocks, keepsTextBlocksVerbatim, userMessageText, userTextContent } from "./user-text-blocks.ts";
 import {
 	findLatestResponse,
@@ -1040,6 +1041,8 @@ export type ClearedQueue = {
 
 /** Options accepted by the queued-input entry points `steer()` and `followUp()`. */
 export interface QueuedInputOptions extends ClientMessageIdentity {
+	/** Optional metadata persisted with the delivered user message. */
+	details?: UserMessage["details"];
 	/**
 	 * Recovery-ordered enqueue position. A reconnecting client replays its pending
 	 * messages with their original order so the queue is rebuilt as the user typed it.
@@ -1052,6 +1055,8 @@ export interface QueuedInputOptions extends ClientMessageIdentity {
 }
 
 export interface PromptOptions extends ClientMessageIdentity {
+	/** Optional metadata persisted with the delivered user message. */
+	details?: UserMessage["details"];
 	/** Where the input sorts among queued inputs if it ends up queued (a replaying client keeps its order). */
 	enqueueOrder?: number;
 	/** Whether to dispatch extension commands and expand skill commands and prompt templates (default: true) */
@@ -5652,6 +5657,7 @@ export class AgentSession {
 				content: userContent,
 				timestamp: Date.now(),
 				...clientMessageIdentity(options),
+				...(options?.details === undefined ? {} : { details: options.details }),
 			});
 
 			// Consume next-turn messages transactionally: a final admission rejection
@@ -6136,6 +6142,7 @@ export class AgentSession {
 			content,
 			timestamp: Date.now(),
 			...clientMessageIdentity(input),
+			...(input.details === undefined ? {} : { details: input.details }),
 		};
 		this._queuedMessages.set(queuedId, message);
 		if (this._promptStartPending && this._skipNextPostCompactionAssistantCheck) {
@@ -6521,8 +6528,10 @@ export class AgentSession {
 		options?: {
 			deliverAs?: "steer" | "followUp";
 			expandPromptTemplates?: boolean;
+			details?: UserMessage["details"];
 		},
 		deferredTurnClaim?: DeferredTurnClaim,
+		originGrant?: UserMessageOriginGrant,
 		inputOrigin: InputOrigin = "extension",
 	): Promise<void> {
 		if (this._engineTurnHold.held && inputOrigin !== "person") {
@@ -6533,6 +6542,7 @@ export class AgentSession {
 			);
 			return;
 		}
+		const details = persistedUserMessageDetails(options?.details, originGrant);
 		const bindingPromptReadiness = this._extensionBindingPromptReadiness;
 		let resolveBindingPromptReadiness: (() => void) | undefined;
 		if (bindingPromptReadiness) {
@@ -6583,6 +6593,7 @@ export class AgentSession {
 				streamingBehavior: options?.deliverAs,
 				images,
 				textBlocks,
+				details,
 				source: "extension",
 				inputOrigin,
 				promptDisposition: (nextDisposition) => {
@@ -6603,9 +6614,9 @@ export class AgentSession {
 			// before prompt() accepted the message must not silently drop it.
 			if (disposition === undefined) {
 				if (options?.deliverAs === "steer") {
-					await this._queueSteer(text, images, { textBlocks });
+					await this._queueSteer(text, images, { textBlocks, details });
 				} else {
-					await this._queueFollowUp(text, images, { textBlocks });
+					await this._queueFollowUp(text, images, { textBlocks, details });
 				}
 			}
 			throw error;
@@ -9980,7 +9991,7 @@ export class AgentSession {
 					if (this._agentSettledDelivery.defer(send)) return;
 					send();
 				},
-				sendUserMessage: (content, options) => {
+				sendUserMessage: (content, options, originGrant) => {
 					const reportError = (err: unknown) => {
 						if (err instanceof ModelNotReadyError) {
 							this._noticeProviderRequired(err.message);
@@ -9999,12 +10010,12 @@ export class AgentSession {
 					// turn claim so agent_idle is not emitted before its deferred agent_start.
 					if (
 						this._agentSettledDelivery.deferTriggerTurn((claim) => {
-							this.sendUserMessage(content, options, claim, inputOrigin).catch(reportError);
+							this.sendUserMessage(content, options, claim, originGrant, inputOrigin).catch(reportError);
 						})
 					) {
 						return;
 					}
-					this.sendUserMessage(content, options, undefined, inputOrigin).catch(reportError);
+					this.sendUserMessage(content, options, undefined, originGrant, inputOrigin).catch(reportError);
 				},
 				appendEntry: (customType, data, options) => {
 					const entryId = this.sessionManager.appendCustomEntry(customType, data, options);

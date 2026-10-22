@@ -2087,6 +2087,7 @@ pi.sendUserMessage("/review src/index.ts", { expandPromptTemplates: true });
   - `"steer"` - Queues the message for delivery after the current assistant turn finishes executing its tool calls
   - `"followUp"` - Waits for agent to finish all tools
 - `expandPromptTemplates` - Dispatch extension commands and expand skill commands and prompt templates. Defaults to `false`.
+- `details` - Optional JSON-serializable metadata, persisted unchanged on the user message and exposed in RPC message/entry events. The built-in ask-user extension sets `{ origin: "ask-user-answer", requestId }` on later answer deliveries; ordinary user input is not stamped. That origin is reserved: when any other extension passes `origin: "ask-user-answer"`, the session drops the `origin` field and keeps the rest of `details`.
 
 A content array with several text parts becomes one user message whose text parts stay separate text blocks; `input` handlers see them joined by a newline, and a handler that rewrites the text turns them into one block. A built-in later ask-user answer (`[Answer to question <id>]` frame plus labelled word blocks) is never rewritten, so its frame and the user's words stay in separate blocks.
 

@@ -51,6 +51,7 @@ import type {
 	ToolResultMessage,
 	TranscriptContext,
 	Usage,
+	UserMessage,
 } from "@earendil-works/pi-ai";
 import type {
 	AutocompleteItem,
@@ -112,6 +113,7 @@ import type {
 	WriteToolInput,
 } from "../tools/index.ts";
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
+import type { UserMessageOriginGrant } from "../user-message-origin.ts";
 import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
@@ -798,7 +800,11 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
 
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+		options?: {
+			deliverAs?: "steer" | "followUp";
+			expandPromptTemplates?: boolean;
+			details?: UserMessage["details"];
+		},
 	): Promise<void>;
 }
 
@@ -2587,7 +2593,11 @@ export interface ExtensionAPI {
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+		options?: {
+			deliverAs?: "steer" | "followUp";
+			expandPromptTemplates?: boolean;
+			details?: UserMessage["details"];
+		},
 	): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
@@ -3016,7 +3026,8 @@ export type SendMessageHandler = <T = unknown>(
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
-	options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean },
+	options?: { deliverAs?: "steer" | "followUp"; expandPromptTemplates?: boolean; details?: UserMessage["details"] },
+	originGrant?: UserMessageOriginGrant,
 ) => void;
 
 export interface AppendEntryOptions {

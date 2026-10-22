@@ -11345,3 +11345,38 @@ Fallback eligibility and the agent_end retry decision are owned by `AgentSession
 
 - `agent-session.ts`: the retry-state fields, the `transformContext` wrapper in `_installAgentNextTurnRefresh`, the start of the agent_end retry block, and `_isHardErrorFallbackEligible`.
 - `retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS`.
+## 2026-10-21 - Retain extension user-message origin details (senpi#3888)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: prompt, queue and `sendUserMessage` options accept `UserMessage.details`; immediate and queued constructors retain it, including delivery retained after a failed admission.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: ask-user answers need positive origin metadata on the persisted user message and RPC entry, not a heuristic based on answer text. Both idle and running paths must retain the same `details`.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: the session constructs user messages from extension input and owns queue retention and persistence.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: `QueuedInputOptions`, `PromptOptions`, immediate and queued user-message construction, and `sendUserMessage` options/forwarding.
+## 2026-10-21 - Reserve the ask-user answer origin for the harness (senpi#3936)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `sendUserMessage` takes an internal `originGrant` and builds persisted `details` through `persistedUserMessageDetails`, which drops a caller-supplied `origin: "ask-user-answer"` and sets it only from the grant. The extension binding forwards the grant.
+- `packages/coding-agent/src/core/user-message-origin.ts` (fork-only): the reserved origin constant, the grant type, and the strip/stamp helpers.
+
+### Why
+
+- `packages/coding-agent/src/core/agent-session.ts`: any extension could pass `details.origin = "ask-user-answer"` and forge the marker consumers use to recognize engine answer frames. The session is where the user message is built, so it is the one place that can strip the marker from every caller, including replaced-session contexts.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/agent-session.ts`: an extension cannot constrain what other extensions pass to `sendUserMessage`; only the session that constructs the message can.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `sendUserMessage` signature and its `details` use, and the `sendUserMessage` extension binding.

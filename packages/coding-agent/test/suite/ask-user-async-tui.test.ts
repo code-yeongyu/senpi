@@ -203,7 +203,7 @@ describe("async ask-user question in the interactive TUI", () => {
 					{ type: "text", text: "[The user's comment for question tc-async]" },
 					{ type: "text", text: "just use bun" },
 				],
-				options: { deliverAs: "steer" },
+				options: { deliverAs: "steer", details: { origin: "ask-user-answer", requestId: "tc-async" } },
 			},
 		]);
 		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
@@ -229,7 +229,10 @@ describe("async ask-user question in the interactive TUI", () => {
 
 		expect(delivery.deliveries).toHaveLength(1);
 		expect(String(delivery.deliveries[0]?.content)).toContain("(사용자가 답변을 안하고 timeout 으로 종료됨)");
-		expect(delivery.deliveries[0]?.options).toEqual({ deliverAs: "followUp" });
+		expect(delivery.deliveries[0]?.options).toEqual({
+			deliverAs: "followUp",
+			details: { origin: "ask-user-answer", requestId: "tc-timeout" },
+		});
 		expect(fake.session.sendUserMessage).not.toHaveBeenCalled();
 		expect(fake.widgetText(ASK_USER_WIDGET_KEY)).toBeUndefined();
 	});

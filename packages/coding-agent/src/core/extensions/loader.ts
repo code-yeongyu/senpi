@@ -38,7 +38,9 @@ import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
 import { time } from "../timings.ts";
 import { validateChildModuleRegistration } from "../tool-dispatch/offload.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
+import { askUserAnswerOriginGrant } from "../user-message-origin.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
+import askUserExtension from "./builtin/ask-user/extension.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
 import { readPermissionPreset } from "./builtin/permission-system/preset-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
@@ -392,6 +394,7 @@ function createExtensionAPI(
 	cwd: string,
 	eventBus: EventBus,
 	session: ExtensionSessionProfile,
+	grantsAskUserAnswerOrigin: boolean,
 ): { api: ExtensionAPI; commit: () => void; discard: () => void } {
 	const pendingFlagValues = new Map<string, boolean | string>();
 	const pendingRuntimeChanges: Array<() => void> = [];
@@ -650,7 +653,10 @@ function createExtensionAPI(
 
 		sendUserMessage(content, options): void {
 			assertActive();
-			runtime.sendUserMessage(content, options);
+			// Only the built-in ask-user factory may obtain the answer-origin grant; the session drops the
+			// reserved origin from every other caller's details (senpi#3936).
+			const grant = grantsAskUserAnswerOrigin ? askUserAnswerOriginGrant(options?.details) : undefined;
+			runtime.sendUserMessage(content, options, grant);
 		},
 
 		appendEntry(customType: string, data?: unknown, options?: AppendEntryOptions): void {
@@ -944,7 +950,7 @@ async function initializeExtension(
 	session: ExtensionSessionProfile,
 ): Promise<Extension> {
 	const extension = createExtension(extensionPath, resolvedPath, cwd);
-	const load = createExtensionAPI(extension, runtime, cwd, eventBus, session);
+	const load = createExtensionAPI(extension, runtime, cwd, eventBus, session, factory === askUserExtension);
 	try {
 		await runOwnedBy(extension, () => factory(load.api));
 		load.commit();

@@ -4351,6 +4351,22 @@ A multi-session host that closes, parks or releases a session mid-turn first pub
 never write, with `"reason": "session_closed"`, on the same broadcast as every `agent_settled`: whoever counted the
 `agent_start` (the supervisor's idle-exit observer included) sees it end. Older hosts never send `reason`.
 
+### entry_appended: ask-user answer origin
+
+A later answer delivered by the built-in ask-user extension is a normal
+`entry.type: "message"` with `entry.message.role: "user"`. Its positive origin marker is
+`entry.message.details: { "origin": "ask-user-answer", "requestId": "<question id>" }`.
+The field is preserved from the session JSONL, in `entry_appended` and entry-history
+responses, for both idle follow-up and running steering delivery. It also appears on
+the corresponding `message_start` / `message_end` message.
+
+The marker is reserved for the harness: it is set only on the built-in ask-user answer
+path, and an extension that passes the same origin to `sendUserMessage` has it dropped.
+Clients may use this marker to group or hide the engine's answer frame without hiding
+ordinary user text. Do not infer origin from `[Answer to question ...]` prose: a user
+can type that text, and ordinary prompts have no marker. Older session entries may
+lack `details`; absence is not positive evidence of engine origin.
+
 ### entry_appended: goal and engine stops
 
 `entry_appended` carries the full durable session entry in `entry`. For `entry.type: "custom"`, self-stops use these `entry.customType` values:

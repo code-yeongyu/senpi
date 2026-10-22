@@ -6112,3 +6112,20 @@ The shared provider-error formatter owns presentation across session, print, and
 ### Expected merge conflict zones
 
 The options type and account-limit branch in `describeProviderFailureForUser`.
+## 2026-10-21 - Optional user-message metadata (senpi#3888)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `UserMessage` has optional JSON-serializable `details: Record<string, unknown>`.
+
+### Why
+
+- `packages/ai/src/types.ts`: session and RPC consumers need a typed field for positive origin metadata, including the ask-user answer marker.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the shared user-message interface is the persisted and streamed message contract.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/types.ts`, the optional `details` member on `UserMessage`.

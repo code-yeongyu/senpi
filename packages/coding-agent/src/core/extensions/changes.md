@@ -3817,3 +3817,41 @@ Only the session owns account suppression and pending model selection.
 ### Expected merge conflict zones
 
 The compaction context/action declarations in `types.ts` and callback storage, binding, and context construction in `runner.ts`.
+## 2026-10-21 - User-message details in extension delivery (senpi#3888)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: both `sendUserMessage` signatures accept optional `details: UserMessage["details"]`.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: ask-user delivers a user message with a positive origin marker that session and RPC consumers can read.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the public extension contract must expose the metadata option before a builtin can pass it.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the `UserMessage` type import and `sendUserMessage` options on the extension API and replacement-session context.
+## 2026-10-21 - Harness-issued ask-user answer origin grant (senpi#3936)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `SendUserMessageHandler` carries `details` and an optional internal `originGrant`; the public `ExtensionAPI.sendUserMessage` signature is unchanged.
+- `packages/coding-agent/src/core/extensions/loader.ts`: the per-extension `sendUserMessage` issues the ask-user answer origin grant only when the extension's factory is the built-in ask-user factory.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the runtime binding forwards the grant to the session action.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: the loader is the only layer that knows which extension made the call, so it decides who may stamp the reserved marker; the session drops it from everyone else.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: caller identity is owned by the loader's per-extension API object, which extensions cannot see or replace.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/loader.ts`: `createExtensionAPI` parameters, its `sendUserMessage`, and the `initializeExtension` call.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the `runtime.sendUserMessage` assignment in `bindCore`.
+- `packages/coding-agent/src/core/extensions/types.ts`: `SendUserMessageHandler`.

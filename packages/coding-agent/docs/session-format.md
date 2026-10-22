@@ -82,11 +82,21 @@ interface ToolCall {
 
 ### Base Message Types (from pi-ai)
 
+User messages may carry optional JSON-serializable `details`. Engine-delivered later
+ask-user answers have `message.details: { "origin": "ask-user-answer", "requestId": "<question id>" }`.
+This is a positive origin marker on the answer message itself, for both idle follow-up
+and running steering delivery (including non-cancelled timeout/restart outcomes).
+Ordinary user input does not receive it, even when its text matches an answer frame.
+The origin is reserved for the harness; an extension that supplies it has it dropped.
+Older sessions lack the marker; frame-shaped text alone is not proof of engine origin.
+The same nested `message.details` survives replay and the RPC `entry_appended` stream.
+
 ```typescript
 interface UserMessage {
   role: "user";
   content: string | (TextContent | ImageContent)[];
   timestamp: number;  // Unix ms
+  details?: Record<string, unknown>;
 }
 
 interface AssistantMessage {

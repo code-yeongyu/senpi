@@ -51,7 +51,10 @@ it.each(["missing", "throw", "reject"] as const)(
 		expect(delivery.deliveries).toEqual([
 			{
 				content: formatUserMessage(response, entry.request.requestId, entry.request.questions),
-				options: { deliverAs: "followUp" },
+				options: {
+					deliverAs: "followUp",
+					details: { origin: "ask-user-answer", requestId: entry.request.requestId },
+				},
 			},
 		]);
 		expect(notify).toHaveBeenCalledTimes(1);

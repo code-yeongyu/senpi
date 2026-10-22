@@ -6,6 +6,8 @@
 
 ### Added
 
+- Async ask-user answer messages carry `details: { origin: "ask-user-answer", requestId }` in session files and RPC events, so clients can distinguish engine-delivered frames from user-typed text. The marker is reserved: only the harness sets it, on the built-in ask-user answer path, and an `origin: "ask-user-answer"` that another extension passes to `sendUserMessage` is dropped ([#3888](https://github.com/code-yeongyu/senpi/issues/3888), [#3936](https://github.com/code-yeongyu/senpi/issues/3936)).
+
 ### Changed
 
 ### Fixed

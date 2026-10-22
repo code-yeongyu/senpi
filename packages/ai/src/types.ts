@@ -702,6 +702,8 @@ export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
 	timestamp: number; // Unix timestamp in milliseconds
+	/** Optional JSON-serializable metadata, retained in session entries and RPC messages. */
+	details?: Record<string, unknown>;
 }
 
 /** A durable Responses configuration change projected into the message stream. */
