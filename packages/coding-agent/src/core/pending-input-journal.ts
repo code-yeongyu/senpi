@@ -201,7 +201,7 @@ export class PendingInputAppendUncertainError extends Error {
 	constructor(cursor: number, file: string, cause: unknown) {
 		const reason = cause instanceof Error ? cause.message : String(cause);
 		super(
-			`Pending input transition ${cursor} was written to ${file} but could not be synced (${reason}). This is a local file error, not a model error; reopen the session to recover.`,
+			`Pending input transition ${cursor} was written to ${file} but could not be synced (${reason}). This is a local file error, not a model error; the next command will attempt recovery.`,
 			{ cause },
 		);
 		this.name = "PendingInputAppendUncertainError";

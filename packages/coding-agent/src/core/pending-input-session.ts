@@ -1,11 +1,21 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { QueuedInputPort } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, QueuedInputPort } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { SessionPendingInputJournal } from "./pending-input-journal.ts";
 import type { PendingInputProjection } from "./pending-input-projection.ts";
-import { createSessionQueuedInputPort } from "./pending-input-session-port.ts";
-import { PENDING_INPUT_TRANSITION, type PendingInputJournal, PendingInputStore } from "./pending-input-store.ts";
-import type { OperationOutcome, PendingInputMode, PendingInputOperationResult } from "./pending-input-types.ts";
+import { createSessionQueuedInputPort, type SessionQueuedInputPort } from "./pending-input-session-port.ts";
+import {
+	isUncertainAppend,
+	PENDING_INPUT_TRANSITION,
+	type PendingInputJournal,
+	PendingInputStore,
+} from "./pending-input-store.ts";
+import type {
+	OperationOutcome,
+	PendingInput,
+	PendingInputMode,
+	PendingInputOperationResult,
+} from "./pending-input-types.ts";
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionManager } from "./session-manager.ts";
 
@@ -79,10 +89,13 @@ export class SessionPendingInputs {
 	readonly lifetimeId = randomUUID();
 	private readonly options: SessionPendingInputsOptions;
 	private storeOpening: Promise<PendingInputStore> | undefined;
-	private port: QueuedInputPort | undefined;
+	private port: SessionQueuedInputPort | undefined;
 	private attempts = 0;
 	/** Bumped synchronously by every clear, so a change can tell a clear it raced from a real divergence. */
 	private clears = 0;
+	private nativeRecovery:
+		| { readonly clientMessageId: string; readonly finish: (inputs: readonly PendingInput[]) => void }
+		| undefined;
 
 	constructor(options: SessionPendingInputsOptions) {
 		this.options = options;
@@ -100,9 +113,12 @@ export class SessionPendingInputs {
 	 */
 	async restoreHandle(clientMessageId: string): Promise<{ readonly queuedId: string } | "retired" | undefined> {
 		if (this.storeOpening === undefined) return undefined;
-		const input = (await this.storeOpening).current(clientMessageId);
-		if (input === undefined) return undefined;
-		return input.phase === "queued" ? { queuedId: input.handle.queuedId } : "retired";
+		const store = await this.storeOpening;
+		return store.transaction(async (tx) => {
+			const input = tx.current(clientMessageId);
+			if (input === undefined) return undefined;
+			return input.phase === "queued" ? { queuedId: input.handle.queuedId } : "retired";
+		});
 	}
 
 	/**
@@ -116,13 +132,28 @@ export class SessionPendingInputs {
 	): Promise<PendingInputOperationResult | undefined> {
 		const store = await this.store();
 		return store.transaction(async (tx) => {
-			const result = await tx.submit({
-				clientMessageId: input.clientMessageId,
-				fingerprint: admissionFingerprint(input),
-				text: input.text,
-				attachments: (input.images ?? []).map(attachmentFingerprint),
-				requestedMode: input.mode,
-			});
+			const clearsAtStart = this.clears;
+			let result: PendingInputOperationResult | undefined;
+			try {
+				result = await tx.submit({
+					clientMessageId: input.clientMessageId,
+					fingerprint: admissionFingerprint(input),
+					text: input.text,
+					attachments: (input.images ?? []).map(attachmentFingerprint),
+					requestedMode: input.mode,
+				});
+			} catch (error) {
+				if (isUncertainAppend(error))
+					this.nativeRecovery = {
+						clientMessageId: input.clientMessageId,
+						finish: (recovered) => {
+							const admitted = recovered.find((entry) => entry.clientMessageId === input.clientMessageId);
+							if (admitted?.phase === "queued" && this.clears === clearsAtStart)
+								enqueue(admitted.handle.queuedId);
+						},
+					};
+				throw error;
+			}
 			if (result?.outcome === "client_message_id_conflict")
 				throw new ClientMessageIdConflictError(input.clientMessageId);
 			const admitted = tx.current(input.clientMessageId);
@@ -151,15 +182,32 @@ export class SessionPendingInputs {
 				handle: current.handle,
 				expectedRevision: request.expectedRevision ?? current.revision,
 			};
-			const result =
-				request.text === undefined
-					? await tx.apply(request.clientMessageId, { type: "remove", ...target })
-					: await tx.apply(request.clientMessageId, {
-							type: "edit",
-							...target,
-							text: request.text,
-							attachments: current.attachments,
-						});
+			let result: PendingInputOperationResult | undefined;
+			try {
+				result =
+					request.text === undefined
+						? await tx.apply(request.clientMessageId, { type: "remove", ...target })
+						: await tx.apply(request.clientMessageId, {
+								type: "edit",
+								...target,
+								text: request.text,
+								attachments: current.attachments,
+							});
+			} catch (error) {
+				if (isUncertainAppend(error))
+					this.nativeRecovery = {
+						clientMessageId: request.clientMessageId,
+						finish: (recovered) => {
+							const input = recovered.find((entry) => entry.clientMessageId === request.clientMessageId);
+							const outcome = input?.operations[target.effectId]?.result.outcome;
+							if (this.clears !== clearsAtStart || (outcome !== "edited" && outcome !== "removed")) return;
+							const native = applyNative();
+							if (native !== outcome)
+								throw new PendingInputDivergenceError(request.clientMessageId, outcome, native);
+						},
+					};
+				throw error;
+			}
 			const outcome = legacyOutcome(result?.outcome);
 			if (outcome !== "edited" && outcome !== "removed") return outcome;
 			const native = applyNative();
@@ -178,11 +226,12 @@ export class SessionPendingInputs {
 	 */
 	async recordCleared(clientMessageIds: readonly string[]): Promise<void> {
 		this.clears += 1;
-		if (this.storeOpening === undefined || clientMessageIds.length === 0) return;
+		const ids = [...clientMessageIds, ...(this.nativeRecovery ? [this.nativeRecovery.clientMessageId] : [])];
+		if (this.storeOpening === undefined || ids.length === 0) return;
 		const store = await this.storeOpening;
 		// One record for the whole clear: it lands or not as a unit, never split around a later entry.
 		await store.transaction(async (tx) => {
-			const queued = clientMessageIds.filter((clientMessageId) => tx.current(clientMessageId)?.phase === "queued");
+			const queued = [...new Set(ids)].filter((clientMessageId) => tx.current(clientMessageId)?.phase === "queued");
 			if (queued.length === 0) return;
 			await tx.applyAll(
 				queued.map((clientMessageId) => ({
@@ -199,6 +248,15 @@ export class SessionPendingInputs {
 	 */
 	async snapshot(knownClientMessageIds: readonly string[] = []): Promise<PendingInputSnapshot> {
 		const store = this.storeOpening === undefined ? undefined : await this.storeOpening;
+		return store === undefined
+			? this.snapshotOf(undefined, knownClientMessageIds)
+			: store.transaction(async () => this.snapshotOf(store, knownClientMessageIds));
+	}
+
+	private snapshotOf(
+		store: PendingInputStore | undefined,
+		knownClientMessageIds: readonly string[],
+	): PendingInputSnapshot {
 		const inputs = (store?.snapshot() ?? []).filter(
 			(input) => input.state !== "delivered" && input.state !== "removed",
 		);
@@ -209,6 +267,22 @@ export class SessionPendingInputs {
 				: { clientMessageId, status: "not_admitted" as const };
 		});
 		return { lifetimeId: this.lifetimeId, throughCursor: store?.throughCursor ?? 0, inputs, outcomes };
+	}
+
+	/**
+	 * Whether a failed claim or release holds this exact message until the next claim: the native queue no longer
+	 * has it, so an edit or removal of a still-queued input applies to that copy instead (senpi#4045).
+	 */
+	holdsRetained(message: AgentMessage): boolean {
+		return this.port?.holdsRetained(message) ?? false;
+	}
+
+	replaceRetained(message: AgentMessage, next: AgentMessage): boolean {
+		return this.port?.replaceRetained(message, next) ?? false;
+	}
+
+	removeRetained(message: AgentMessage): boolean {
+		return this.port?.removeRetained(message) ?? false;
 	}
 
 	/** The agent's queue port. Before the store opens nothing identified is queued, so it drains natively. */
@@ -232,6 +306,11 @@ export class SessionPendingInputs {
 			// The agent port commits consumption before any provider sees an input, so an attempt left `sending` by a
 			// crash was never sent and returns to the queue under its id (T28).
 			uncommittedAttemptsAreUnsent: true,
+			onRecovered: (inputs) => {
+				const native = this.nativeRecovery;
+				this.nativeRecovery = undefined;
+				native?.finish(inputs);
+			},
 		}).then((store) => {
 			const onChange = this.options.onChange;
 			if (onChange !== undefined)
@@ -243,7 +322,7 @@ export class SessionPendingInputs {
 		return this.storeOpening;
 	}
 
-	private async openPort(): Promise<QueuedInputPort | undefined> {
+	private async openPort(): Promise<SessionQueuedInputPort | undefined> {
 		if (this.storeOpening === undefined) return undefined;
 		const store = await this.storeOpening;
 		this.port ??= createSessionQueuedInputPort({
@@ -251,6 +330,7 @@ export class SessionPendingInputs {
 			ownerId: `${process.pid}:${this.lifetimeId}`,
 			writerGeneration: 1,
 			nextAttemptId: () => `${this.lifetimeId}:${++this.attempts}`,
+			clearGeneration: () => this.clears,
 		});
 		return this.port;
 	}

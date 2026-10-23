@@ -32,7 +32,9 @@ export interface PendingInputStoreOptions {
 	readonly nextQueuedId: () => string;
 	readonly dispatch?: (token: DeliveryToken, input: PendingInput) => void;
 	readonly restoreToDraft?: (text: string) => void;
-	/** Passed to every reopen rebind; see the `rebind` event (senpi#3549). */
+	/** Reconciles native custody after an uncertain append has been replayed and synced, under the gate. */
+	readonly onRecovered?: (inputs: readonly PendingInput[]) => void;
+	/** The owner sends only after consumption resolves: reopen rebinds, and recovery releases rejected consumption. */
 	readonly uncommittedAttemptsAreUnsent?: boolean;
 	/**
 	 * Receives a listener's throw; an owner should always supply it, since the default rethrow is uncaught. A committed transition is not undone by a failing observer, and its dispatch
@@ -83,6 +85,8 @@ export class PendingInputStore {
 	private gate: Promise<unknown> = Promise.resolve();
 	private cursor = 0;
 	private unavailable: Error | undefined;
+	private unsentConsumption: PendingInput[] = [];
+	private recoveryEffects: (() => void) | undefined;
 	private readonly options: PendingInputStoreOptions;
 
 	private constructor(options: PendingInputStoreOptions) {
@@ -92,10 +96,7 @@ export class PendingInputStore {
 	/** Rebuilds from the complete journal, then gives every still-pending input a handle of this lifetime. */
 	static async open(options: PendingInputStoreOptions): Promise<PendingInputStore> {
 		const store = new PendingInputStore(options);
-		for (const record of await options.journal.read()) {
-			for (const input of [record.input, ...(record.batch ?? [])]) store.inputs.set(input.clientMessageId, input);
-			store.cursor = Math.max(store.cursor, record.cursor);
-		}
+		await store.rebuild();
 		for (const input of [...store.inputs.values()]) {
 			if (input.phase === "delivered" || input.phase === "removed") continue;
 			const handle = { lifetimeId: options.lifetimeId, queuedId: options.nextQueuedId() };
@@ -106,6 +107,73 @@ export class PendingInputStore {
 			});
 		}
 		return store;
+	}
+
+	private async rebuild(recover = false): Promise<void> {
+		const records = await this.options.journal.read();
+		const inputs = new Map<string, PendingInput>();
+		let cursor = 0;
+		for (const record of records) {
+			for (const input of [record.input, ...(record.batch ?? [])]) inputs.set(input.clientMessageId, input);
+			cursor = Math.max(cursor, record.cursor);
+		}
+		const last = records.at(-1);
+		let checkpoint: PendingInputJournalRecord | undefined;
+		if (recover && last !== undefined) {
+			const changes = new Map([last.input, ...(last.batch ?? [])].map((input) => [input.clientMessageId, input]));
+			// A rejected consumption never reached the provider. Its landed record is corrected by a new
+			// release record, using the live owner's pre-write witness, never by rewriting an old cursor.
+			for (const previous of this.unsentConsumption) {
+				if (inputs.get(previous.clientMessageId)?.phase !== "delivered" || previous.attempt === undefined) continue;
+				const released = reducePendingInput(previous, { type: "release", token: previous.attempt }).next;
+				if (released !== undefined) changes.set(previous.clientMessageId, released);
+			}
+			const [first, ...batch] = changes.values();
+			if (first !== undefined) {
+				checkpoint = {
+					type: PENDING_INPUT_TRANSITION,
+					cursor: cursor + 1,
+					input: first,
+					...(batch.length ? { batch } : {}),
+				};
+				// Reading an unsynced record is not durability. Even a replay/no-op command must pass this fence.
+				await this.options.journal.append(checkpoint);
+				cursor = checkpoint.cursor;
+				for (const input of changes.values()) inputs.set(input.clientMessageId, input);
+			}
+		}
+		this.inputs.clear();
+		for (const [id, input] of inputs) this.inputs.set(id, input);
+		this.cursor = cursor;
+		if (!recover) return;
+		this.unavailable = undefined;
+		this.unsentConsumption = [];
+		this.recoveryEffects = undefined;
+		if (checkpoint !== undefined) this.publish([checkpoint.input, ...(checkpoint.batch ?? [])], checkpoint.cursor);
+	}
+
+	/**
+	 * Only a failed replay or fence is `PendingInputStoreUnavailableError`. Once the journal is recovered, every
+	 * reconciliation runs even when an earlier one throws, so a landed admission is always released, and each
+	 * throw is reported as itself (senpi#4045 review).
+	 */
+	private async recover(): Promise<void> {
+		const effects = this.recoveryEffects;
+		try {
+			await this.rebuild(true);
+		} catch (error) {
+			throw new PendingInputStoreUnavailableError(error);
+		}
+		const failures: unknown[] = [];
+		for (const reconcile of [effects, () => this.options.onRecovered?.([...this.inputs.values()])]) {
+			try {
+				reconcile?.();
+			} catch (error) {
+				failures.push(error);
+			}
+		}
+		if (failures.length > 1) throw new AggregateError(failures, "Pending-input recovery callbacks failed.");
+		if (failures.length === 1) throw failures[0];
 	}
 
 	submit(event: Omit<SubmitEvent, "type" | "handle">): Promise<PendingInputOperationResult | undefined> {
@@ -189,9 +257,8 @@ export class PendingInputStore {
 	}
 
 	private serialize<T>(operation: () => Promise<T>): Promise<T> {
-		const guarded = () => {
-			if (this.unavailable !== undefined)
-				return Promise.reject(new PendingInputStoreUnavailableError(this.unavailable));
+		const guarded = async () => {
+			if (this.unavailable !== undefined) await this.recover();
 			return operation();
 		};
 		const run = this.gate.then(guarded, guarded);
@@ -224,6 +291,7 @@ export class PendingInputStore {
 		const results: (PendingInputOperationResult | undefined)[] = [];
 		const committed: { readonly next: PendingInput; readonly decision: ReturnType<typeof reducePendingInput> }[] = [];
 		const staged = new Map<string, PendingInput>();
+		const unsent: PendingInput[] = [];
 		for (const { clientMessageId, event } of changes) {
 			const current = staged.get(clientMessageId) ?? this.inputs.get(clientMessageId);
 			const decision = reducePendingInput(current, event);
@@ -231,6 +299,13 @@ export class PendingInputStore {
 				decision.result?.clientMessageId === "" ? { ...decision.result, clientMessageId } : decision.result;
 			results.push(result);
 			if (decision.next === undefined || decision.effects.length === 0) continue;
+			if (
+				this.options.uncommittedAttemptsAreUnsent &&
+				event.type === "consumed" &&
+				current?.phase === "sending" &&
+				decision.next.phase === "delivered"
+			)
+				unsent.push(current);
 			staged.set(clientMessageId, decision.next);
 			committed.push({ next: decision.next, decision: { ...decision, result } });
 		}
@@ -247,21 +322,31 @@ export class PendingInputStore {
 			await this.options.journal.append(record);
 		} catch (error) {
 			// A write that may have landed cannot be retried at the same cursor, or the next reopen would see a gap:
-			// stop accepting commands until a reopen rebuilds the store from what the file actually holds.
-			if (isUncertainAppend(error)) this.unavailable = error;
+			// the next command rebuilds under this same gate before it may reduce or append anything.
+			if (isUncertainAppend(error)) {
+				this.unavailable = error;
+				this.unsentConsumption = unsent;
+				this.recoveryEffects = () => {
+					for (const { next, decision } of committed) {
+						const recovered = this.inputs.get(next.clientMessageId);
+						for (const effect of decision.effects) {
+							if (effect.type === "dispatch" && recovered?.attempt?.attemptId === effect.token.attemptId)
+								this.options.dispatch?.(effect.token, recovered);
+							if (effect.type === "restore_to_draft" && recovered?.phase === "removed")
+								this.options.restoreToDraft?.(effect.text);
+						}
+					}
+				};
+			}
 			throw error;
 		}
 		this.cursor = record.cursor;
 		for (const { next } of committed) this.inputs.set(next.clientMessageId, next);
 		// One notification per record: every input it changed, under its one cursor.
-		const projections = committed.map(({ next }) => projectPendingInput(next));
-		for (const listener of this.listeners) {
-			try {
-				listener(projections, record.cursor);
-			} catch (error) {
-				this.reportListenerError(error);
-			}
-		}
+		this.publish(
+			committed.map(({ next }) => next),
+			record.cursor,
+		);
 		for (const { next, decision } of committed) {
 			for (const effect of decision.effects) {
 				if (effect.type === "dispatch") this.options.dispatch?.(effect.token, next);
@@ -269,6 +354,17 @@ export class PendingInputStore {
 			}
 		}
 		return results;
+	}
+
+	private publish(inputs: readonly PendingInput[], cursor: number): void {
+		const projections = inputs.map(projectPendingInput);
+		for (const listener of this.listeners) {
+			try {
+				listener(projections, cursor);
+			} catch (error) {
+				this.reportListenerError(error);
+			}
+		}
 	}
 
 	private reportListenerError(error: unknown): void {
@@ -281,15 +377,19 @@ export class PendingInputStore {
 	}
 }
 
-function isUncertainAppend(error: unknown): error is Error {
+export function isUncertainAppend(error: unknown): error is Error {
 	return error instanceof Error && "code" in error && error.code === "pending_input_append_uncertain";
 }
 
-/** A previous write may have landed without being synced; only a reopen can say what the journal holds. */
+/** Replay or its durability fence failed; a later command can attempt recovery again. */
 export class PendingInputStoreUnavailableError extends Error {
 	readonly code = "pending_input_store_unavailable";
-	constructor(cause: Error) {
-		super("Pending inputs are unavailable after a failed save; reopen the session to recover them.", { cause });
+	constructor(cause: unknown) {
+		const reason = cause instanceof Error ? cause.message : String(cause);
+		super(
+			`Pending inputs could not be recovered from the local journal (${reason}); try again after fixing the file error.`,
+			{ cause },
+		);
 		this.name = "PendingInputStoreUnavailableError";
 	}
 }

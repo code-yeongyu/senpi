@@ -7495,15 +7495,20 @@ export class AgentSession {
 			// An input that already left the native queue answers already_delivered, as without a revision;
 			// replacing the message with itself is a read-only probe of that queue.
 			const queued =
-				message !== undefined && (deferredIndex !== -1 || this.agent.replaceQueuedMessage(message, message));
+				message !== undefined &&
+				(deferredIndex !== -1 ||
+					this.agent.replaceQueuedMessage(message, message) ||
+					this._pendingInputs.holdsRetained(message));
 			return queued ? "conflict" : "already_delivered";
 		}
+		// A failed claim or release holds its drained copy outside the native queue until the next claim (senpi#4045).
 		const stillQueued =
 			message !== undefined &&
 			(deferredIndex !== -1 ||
 				(nextMessage === undefined
-					? this.agent.removeQueuedMessage(message)
-					: this.agent.replaceQueuedMessage(message, nextMessage)));
+					? this.agent.removeQueuedMessage(message) || this._pendingInputs.removeRetained(message)
+					: this.agent.replaceQueuedMessage(message, nextMessage) ||
+						this._pendingInputs.replaceRetained(message, nextMessage)));
 		if (!stillQueued) return "already_delivered";
 		if (deferredIndex !== -1) {
 			if (nextMessage === undefined) deferred.splice(deferredIndex, 1);

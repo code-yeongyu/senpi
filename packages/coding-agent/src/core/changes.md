@@ -1,3 +1,32 @@
+## 2026-10-23 - Recover uncertain pending-input saves in place (senpi#4045)
+
+### What changed
+
+- `packages/coding-agent/src/core/pending-input-store.ts`: reuse journal replay under the live command gate, append a synced checkpoint before admitting another command, and retain live handles, revisions, tokens and listeners. A rejected consumption retains the local owner's unsent witness and records its release during recovery. Only a failed replay or fence is reported as the store being unavailable; once the journal is recovered every reconciliation runs, and a throwing one is reported as itself.
+- `packages/coding-agent/src/core/pending-input-session.ts`: reconcile native admission or mutation only when its record landed; serialize snapshots through recovery and fence retained native work on clear. Expose the retained copies so a change can reach them.
+- `packages/coding-agent/src/core/pending-input-session-port.ts`: retain drained messages and their reservation tokens across a failed claim or release until recovery or an explicit clear. A batch is held only after its claim failed, never while that claim is still reserving it; a held copy can be edited (keeping its reservation) or removed.
+- `packages/coding-agent/src/core/pending-input-journal.ts`: the uncertain-save error describes automatic recovery on the next command.
+- `packages/coding-agent/src/core/agent-session.ts`: `_changeQueuedInput` edits or removes the copy a failed claim or release holds when the native queue no longer has the message, and its revision probe counts that copy as still queued.
+
+### Why
+
+- `packages/coding-agent/src/core/pending-input-store.ts`: a single uncertain append permanently latched the session unavailable, so later prompts failed without contacting a provider.
+- `packages/coding-agent/src/core/pending-input-session.ts` and `packages/coding-agent/src/core/pending-input-session-port.ts`: replay alone cannot restore native work abandoned by a thrown append. A saved admission still needs its enqueue; a failed reservation must not lose its drained messages; rejected consumption has not reached the provider.
+- `packages/coding-agent/src/core/pending-input-journal.ts`: manual reopen is no longer the recovery requirement.
+- `packages/coding-agent/src/core/agent-session.ts`: between a failed claim and the next claim the drained copy is held by the port, so an edit was recorded but never reached it: the change threw a divergence and the next turn sent the old text.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/pending-input-store.ts`, `packages/coding-agent/src/core/pending-input-session.ts`, `packages/coding-agent/src/core/pending-input-session-port.ts`, `packages/coding-agent/src/core/pending-input-journal.ts` and `packages/coding-agent/src/core/agent-session.ts` own cursor allocation, durable custody and the native queue below extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/pending-input-store.ts`: journal replay, serialization and commit publication.
+- `packages/coding-agent/src/core/pending-input-session.ts`: admission, mutations, clear and snapshot.
+- `packages/coding-agent/src/core/pending-input-session-port.ts`: claim and release.
+- `packages/coding-agent/src/core/pending-input-journal.ts`: uncertain-save error text.
+- `packages/coding-agent/src/core/agent-session.ts`: `_changeQueuedInput`, the native remove/replace and the revision probe.
+
 ## 2026-10-20 - Contain project skill links and retain security notices (senpi#3796)
 
 ### What changed
