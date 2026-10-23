@@ -103,7 +103,7 @@ import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { AgentAbortProvenance, type AgentAbortSource } from "./agent-abort-provenance.ts";
 import { AgentBusyError } from "./agent-busy-error.ts";
-import { AgentRunContinuations } from "./agent-run-continuation.ts";
+import { AgentRunContinuations, AgentSettlementInterruptedError } from "./agent-run-continuation.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
@@ -3078,13 +3078,28 @@ export class AgentSession {
 	}
 
 	private async _emitAgentSettled(agentEnd?: AgentEvent): Promise<void> {
-		if (
-			this.agent.state.isStreaming &&
-			(await this._runContinuations.idleOrContinued(agentEnd, () => this.agent.waitForIdle()))
-		) {
-			// The core continued this run with input queued during agent_end; that continuation settles it.
-			this._abortProvenance.closeAgentEndBoundary();
-			return;
+		if (this.agent.state.isStreaming) {
+			try {
+				if (
+					await this._runContinuations.idleOrContinued(agentEnd, () => this.agent.waitForIdle(), {
+						signal: this.agent.signal,
+						timeoutMs: this.agent.listenerSettlementTimeoutMs + 1_000,
+					})
+				) {
+					// The core continued this run with input queued during agent_end; that continuation settles it.
+					this._abortProvenance.closeAgentEndBoundary();
+					return;
+				}
+			} catch (error) {
+				if (!(error instanceof AgentSettlementInterruptedError)) throw error;
+				if (error.reason === "timeout") {
+					console.warn("Agent settlement deadline reached; releasing run-owned waits");
+				}
+				this.agent.abort(error);
+				this.releaseHeldExtensionHandlers();
+				// Do not counterfeit idle: releasing listener waits lets the core's own finalizer run.
+				await this.agent.waitForIdle();
+			}
 		}
 		if (!this._isAgentRunActive) {
 			this._abortProvenance.closeAgentEndBoundary();
@@ -4755,8 +4770,7 @@ export class AgentSession {
 	}
 
 	/**
-	 * An abort (Esc, or the turn deadline) that the run does not honour within the grace is held by an extension handler
-	 * no abort signal reaches: release the turn's held handler waits so it settles (senpi#3650).
+	 * Release both raw subscribers and extension handlers if an abort outlives its grace (senpi#3650, senpi#4054).
 	 */
 	private async _waitForIdleAfterAbort(): Promise<void> {
 		const idle = this.waitForIdle();
@@ -4766,13 +4780,13 @@ export class AgentSession {
 		});
 		const stillHeld = await Promise.race([idle.then(() => false), graceOver]);
 		clearTimeout(graceTimer);
-		if (stillHeld) this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
+		if (stillHeld) this.releaseHeldExtensionHandlers();
 		await idle;
 	}
 
-	/** Adapter for the deadline owner interface: stop waiting on extension handlers that hold the turn (senpi#3650). */
+	/** Deadline-owner adapter, including raw observer waits as well as extension handlers (senpi#4054). */
 	releaseHeldExtensionHandlers(): number {
-		return this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
+		return this.agent.releaseHeldListeners() + this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
 	}
 
 	/** Record a deadline stop durably so the goal engine holds off until admitted user input. */
@@ -8923,6 +8937,9 @@ export class AgentSession {
 			const boundaryJoin = this._abortProvenance.joinOpenBoundary(source);
 			if (boundaryJoin !== undefined) {
 				if (boundaryJoin.userOwned) this._recordUserAbort();
+				// Signal the raw subscriber holding core finalization, without awaiting this boundary from itself.
+				if (!this.agent.signal?.aborted) this.agent.abort();
+				this.releaseHeldExtensionHandlers();
 				return;
 			}
 		}

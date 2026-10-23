@@ -222,7 +222,9 @@ keeps compaction recovery queue-first; the selected queued message becomes the c
 | `tool_execution_update` | Tool streams progress |
 | `tool_execution_end` | Tool completes |
 
-`Agent.subscribe()` listeners are awaited in registration order. `agent_end` means no more loop events will be emitted, but `await agent.waitForIdle()` and `await agent.prompt(...)` only settle after awaited `agent_end` listeners finish.
+`Agent.subscribe()` listeners are awaited in registration order. `agent_end` means no more loop events will be emitted, but `await agent.waitForIdle()` and `await agent.prompt(...)` settle only after the core finalizes, including its subscriber waits. Each subscriber has a 60-second budget by default, configurable with a positive finite `AgentOptions.listenerTimeoutMs`. A timeout logs the listener name (or registration ordinal), event and budget, then ends the current run as a local failure. The timed-out listener is not awaited again during that run's failure events, but its subscription remains registered for later runs.
+
+Abort releases outstanding subscriber waits. It cannot stop arbitrary callback code: subscribers receive the run's abort signal and must use it to stop their own asynchronous work. Late rejection is observed without reopening the finished run.
 
 ## Agent Options
 
@@ -254,6 +256,9 @@ const agent = new Agent({
 
   // Session ID for provider caching
   sessionId: "session-123",
+
+  // Maximum time to await each raw event subscriber (default: 60 seconds)
+  listenerTimeoutMs: 60_000,
 
   // Dynamic API key resolution (for expiring OAuth tokens)
   getApiKey: async (provider) => refreshToken(),

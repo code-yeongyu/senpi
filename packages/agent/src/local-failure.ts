@@ -1,13 +1,18 @@
 import type { QueuedInputPort } from "./agent.ts";
 
 /**
- * Errors raised by the owner's queued-input port (claim, release, commit) inside a run. That code is local
- * bookkeeping, never a provider request, so the run's failure message is marked `failureSource: "local"` (senpi#3866).
+ * Local bookkeeping and observer failures inside a run, never provider failures.
+ * Their failure messages are marked `failureSource: "local"` (senpi#3866, senpi#4054).
  */
 const localFailures = new WeakSet<object>();
 
 export function isLocalFailure(error: unknown): boolean {
 	return typeof error === "object" && error !== null && localFailures.has(error);
+}
+
+export function markLocalFailure<T extends Error>(error: T): T {
+	localFailures.add(error);
+	return error;
 }
 
 async function local<T>(work: () => Promise<T>): Promise<T> {

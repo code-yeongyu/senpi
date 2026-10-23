@@ -1,3 +1,23 @@
+## 2026-10-23 - Settle held raw listeners through the core finalizer (senpi#4054)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-run-continuation.ts`: bound the idle-versus-continued race with a deadline and abort signal, preserving later-agent-start precedence and cleaning all losing listeners/timers.
+- `packages/coding-agent/src/core/agent-session.ts`: use an independent aggregate subscriber budget, so sequential in-budget listeners are not cut off by a single-listener deadline. On interruption, abort/release raw and extension waits and await real core finalization before clearing run-active state. A joined end-boundary Escape now reaches the raw wait; post-grace release includes both kinds of handler.
+- `packages/coding-agent/src/core/provider-failure.ts`: `providerFailureOf` returns nothing for a failure the agent marked `failureSource: "local"` (a subscriber timeout, or the journal failure of senpi#3866), so `agent_end.failure` and the TUI no longer describe it as an unclassified provider error with a provider action.
+
+### Why
+
+The core's raw event listeners were outside the extension-handler budget. The session waited for the core to idle while Escape joined an open end boundary without signaling it. A global one-listener deadline would also incorrectly abort two sequential listeners that each remained within budget.
+
+### Why an extension could not handle it
+
+These are the session/core settlement and abort ownership boundaries. An extension cannot safely clear the run-active flag or release a raw core subscriber.
+
+### Expected merge conflict zones
+
+`_emitAgentSettled`, `_abortActiveAgentAndRetry`, `_waitForIdleAfterAbort` and the deadline-owner release adapter; `AgentRunContinuations.idleOrContinued`.
+
 ## 2026-10-20 - Contain project skill links and retain security notices (senpi#3796)
 
 ### What changed

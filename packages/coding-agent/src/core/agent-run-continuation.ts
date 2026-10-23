@@ -1,5 +1,15 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 
+export class AgentSettlementInterruptedError extends Error {
+	readonly reason: "abort" | "timeout";
+
+	constructor(reason: "abort" | "timeout") {
+		super(`Agent settlement wait interrupted: ${reason}`);
+		this.reason = reason;
+		this.name = "AgentSettlementInterruptedError";
+	}
+}
+
 /**
  * Whether the agent core continued a run after its `agent_end` (senpi#3650 review H1, senpi#3351).
  *
@@ -32,21 +42,40 @@ export class AgentRunContinuations {
 	 * Resolves true once the core starts another loop after `agentEnd`, or false once the agent is idle. Without an
 	 * observed `agentEnd` it only waits for idle, as before.
 	 */
-	async idleOrContinued(agentEnd: AgentEvent | undefined, waitForIdle: () => Promise<void>): Promise<boolean> {
+	async idleOrContinued(
+		agentEnd: AgentEvent | undefined,
+		waitForIdle: () => Promise<void>,
+		options: { signal?: AbortSignal; timeoutMs: number },
+	): Promise<boolean> {
 		const base = agentEnd === undefined ? undefined : this.startsAtEnd.get(agentEnd);
-		if (base === undefined) {
-			await waitForIdle();
-			return false;
-		}
-		if (this.starts > base) return true;
+		if (base !== undefined && this.starts > base) return true;
 		let wake: (() => void) | undefined;
 		const continued = new Promise<true>((resolve) => {
+			if (base === undefined) return;
 			wake = () => resolve(true);
 			this.waiters.add(wake);
 		});
+		const interrupted = Promise.withResolvers<never>();
+		const abort = () => interrupted.reject(new AgentSettlementInterruptedError("abort"));
+		options.signal?.addEventListener("abort", abort, { once: true });
+		const timer = setTimeout(
+			() => interrupted.reject(new AgentSettlementInterruptedError("timeout")),
+			options.timeoutMs,
+		);
+		if (options.signal?.aborted) abort();
 		try {
-			return await Promise.race([continued, waitForIdle().then(() => this.starts > base)]);
+			return await Promise.race([
+				continued,
+				waitForIdle().then(() => base !== undefined && this.starts > base),
+				interrupted.promise,
+			]);
+		} catch (error) {
+			// A new loop observed before recovery owns settlement, even if interruption won the microtask race.
+			if (base !== undefined && this.starts > base) return true;
+			throw error;
 		} finally {
+			clearTimeout(timer);
+			options.signal?.removeEventListener("abort", abort);
 			if (wake !== undefined) this.waiters.delete(wake);
 		}
 	}

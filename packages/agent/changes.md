@@ -1,3 +1,21 @@
+## 2026-10-23 - Document bounded raw subscriber waits (senpi#4054)
+
+### What changed
+
+- `packages/agent/README.md`: document the budget and the subscriber's obligation to stop its own asynchronous work on the supplied signal.
+
+### Why
+
+Subscribers need to know their finite per-callback budget and how to stop their own work when the owner releases its wait.
+
+### Why an extension could not handle it
+
+This documents the core subscription API, below extension lifecycle budgets.
+
+### Expected merge conflict zones
+
+The event subscription example in `packages/agent/README.md`.
+
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
 ### What changed
