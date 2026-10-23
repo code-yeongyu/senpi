@@ -438,6 +438,23 @@ Tool preflight, the agent_end boundary and the queued-input port are AgentSessio
 
 - `packages/coding-agent/src/core/agent-session.ts`: `_installAgentToolHooks` (`beforeToolCall` signal), `preflightToolCall` options and its first lines, the `agent_end` block of `_handleAgentEvent`, the `queuedInputPort` assignment in the constructor, `dispose()`, the `promptDisposition("started")` lines of `_prompt`, and the extension actions object.
 
+## 2026-10-20 - Apply model visibility after provider composition
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: apply models.json `whitelist`, `blacklist`, and `hideFreeModels` after extension model replacement and legacy OAuth projection, before model overrides. Both catalog getters use the final filter, including after refresh publication.
+
+### Why
+
+- `packages/coding-agent/src/core/provider-composer.ts`: extension-declared and refreshed catalogs could replace the filtered list, and OAuth projections could restore hidden models. Free-model visibility keeps using catalog cost rather than user cost overrides.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/provider-composer.ts`: the host owns models.json visibility and catalog composition across all providers.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/provider-composer.ts` at the return of `applyModelsJson` and the final filtering in `composeModelProvider`'s `getAllModels`.
 
 ## 2026-10-18 - A multi-block queued input leaves the queue when it starts (senpi#3588, senpi#3768)
 

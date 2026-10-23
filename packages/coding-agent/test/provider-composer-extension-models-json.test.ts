@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Model, Provider } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ModelConfig } from "../src/core/model-config.ts";
+import { ModelConfig, type ModelsJsonProvider } from "../src/core/model-config.ts";
 import {
 	composeModelProvider,
 	type ProviderConfigInput,
@@ -45,10 +45,14 @@ const extension = {
 	],
 } satisfies ProviderConfigInput;
 
-function configFor(provider: string, models?: readonly { id: string; name?: string }[]) {
+function configFor(
+	provider: string,
+	models?: readonly { id: string; name?: string }[],
+	visibility?: ModelsJsonProvider,
+) {
 	tempDir = mkdtempSync(join(tmpdir(), "senpi-composer-extension-models-json-"));
 	const modelsPath = join(tempDir, "models.json");
-	const providers = models === undefined ? {} : { [provider]: { models } };
+	const providers = models === undefined && visibility === undefined ? {} : { [provider]: { models, ...visibility } };
 	writeFileSync(modelsPath, JSON.stringify({ providers }));
 	return ModelConfig.loadSync(modelsPath);
 }
@@ -86,6 +90,117 @@ function modelById(provider: ReturnType<typeof composeModelProvider>, id: string
 }
 
 describe("models.json custom models under extension providers", () => {
+	it.each([
+		{ whitelist: ["paid"] },
+		{ blacklist: ["free-image", "free-classifier"] },
+		{ hideFreeModels: true },
+	] satisfies ModelsJsonProvider[])("filters non-chat extension models with %j", (visibility) => {
+		const config = configFor("extension-provider", undefined, visibility);
+		const provider = composeModelProvider("extension-provider", undefined, config, {
+			api: "anthropic-messages",
+			baseUrl: "https://example.invalid/v1",
+			apiKey: "test-key",
+			models: [
+				catalogModel("paid"),
+				{
+					id: "free-image",
+					name: "Free image",
+					type: "image",
+					api: "test-image",
+					input: ["text"],
+					output: ["image"],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				},
+				{
+					id: "free-classifier",
+					name: "Free classifier",
+					type: "classifier",
+					api: "test-classifier",
+					input: ["text"],
+					contextWindow: 1000,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				},
+			],
+		});
+
+		expect(provider.getAllModels?.().map((model) => model.id)).toEqual(["paid"]);
+		expect(provider.getModels().map((model) => model.id)).toEqual(["paid"]);
+	});
+
+	describe.each(["declared", "refreshed", "oauth"] as const)("%s catalog visibility", (source) => {
+		it.each([
+			{ name: "whitelist", visibility: { whitelist: ["paid"] }, expected: ["paid"] },
+			{ name: "blacklist", visibility: { blacklist: ["free"] }, expected: ["paid"] },
+			{ name: "hideFreeModels", visibility: { hideFreeModels: true }, expected: ["paid"] },
+			{ name: "empty whitelist", visibility: { whitelist: [] }, expected: [] },
+			{
+				name: "blacklist over whitelist",
+				visibility: { whitelist: ["paid", "free"], blacklist: ["free"] },
+				expected: ["paid"],
+			},
+			{
+				name: "disabled hideFreeModels",
+				visibility: { hideFreeModels: false },
+				expected: ["paid", "free"],
+			},
+			{
+				name: "hideFreeModels before cost overrides",
+				visibility: {
+					hideFreeModels: true,
+					modelOverrides: { paid: { cost: { input: 0, output: 0 } }, free: { cost: { input: 1 } } },
+				},
+				expected: ["paid"],
+			},
+		] satisfies { name: string; visibility: ModelsJsonProvider; expected: string[] }[])(
+			"applies $name to the final model list",
+			async ({ visibility, expected }) => {
+				const config = configFor("extension-provider", undefined, visibility);
+				const models = [
+					{ ...catalogModel("paid"), provider: "extension-provider" },
+					{
+						...catalogModel("free"),
+						provider: "extension-provider",
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					},
+				];
+				const provider = composeModelProvider("extension-provider", undefined, config, {
+					api: "anthropic-messages",
+					baseUrl: "https://example.invalid/v1",
+					apiKey: "test-key",
+					models: source === "declared" ? models : [],
+					...(source === "refreshed" ? { refreshModels: async () => models } : {}),
+					...(source === "oauth"
+						? {
+								oauth: {
+									name: "Test OAuth",
+									login: vi.fn(),
+									refreshToken: async (credential) => credential,
+									getApiKey: (credential) => credential.access,
+									modifyModels: () => models,
+								},
+							}
+						: {}),
+				});
+
+				if (source !== "declared") {
+					if (!provider.refreshModels) throw new Error("Expected refreshModels");
+					await provider.refreshModels({
+						allowNetwork: false,
+						signal: new AbortController().signal,
+						credential: { type: "oauth", access: "test-access", refresh: "test-refresh", expires: 0 },
+						publish: async (publication) => {
+							publication.update?.();
+							return true;
+						},
+					});
+				}
+
+				expect(provider.getAllModels?.().map((model) => model.id)).toEqual(expected);
+				expect(provider.getModels().map((model) => model.id)).toEqual(expected);
+			},
+		);
+	});
+
 	it("inherits extension api and baseUrl and validates the composed provider", () => {
 		const config = configFor("anthropic-subscription", [{ id: "claude-fable-5-1" }]);
 		const provider = composeModelProvider("anthropic-subscription", undefined, config, extension);
