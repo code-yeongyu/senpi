@@ -22,7 +22,7 @@ export function visibleSdkMessage(message: SDKMessage): boolean {
  * never a recorded refusal, a 200k retry, or a rate limit that blocks the account (senpi#3801).
  */
 export function classifyForRequest(error: unknown, askedLegacyLongContext: boolean): SdkErrorClassification {
-	const classification = classifySdkError(error);
+	const classification = classifySdkError(error, askedLegacyLongContext);
 	return classification.kind === "long_context_unavailable" && !askedLegacyLongContext
 		? { kind: "other", retryable: false }
 		: classification;

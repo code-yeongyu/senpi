@@ -104,15 +104,23 @@ export function sdkAssistantFailure(message: Extract<SDKMessage, { type: "assist
 }
 
 /** Classifies Anthropic Subscription error codes and HTTP-shaped fallback text in one place. */
-export function classifySdkError(error: unknown): SdkErrorClassification {
-	const classification = classifyErrorKind(error);
+export function classifySdkError(error: unknown, askedLegacyLongContext = false): SdkErrorClassification {
+	const classification = classifyErrorKind(error, askedLegacyLongContext);
 	if (classification.kind !== "rate_limit") return classification;
 	const modelFamily = rateLimitModelFamily(errorText(error));
 	return modelFamily === undefined ? classification : { ...classification, modelFamily };
 }
 
-function classifyErrorKind(error: unknown): SdkErrorClassification {
+function classifyErrorKind(error: unknown, askedLegacyLongContext: boolean): SdkErrorClassification {
 	const text = errorText(error).toLowerCase();
+	// This billing response can refuse the legacy [1m] tier, but says nothing about the window
+	// unless this attempt requested it. A standard-window request must not retry (senpi#4065).
+	if (/\b400 you're out of extra usage\. add more at claude\.ai\/settings\/usage and keep going\./.test(text)) {
+		return {
+			kind: askedLegacyLongContext ? "long_context_unavailable" : "billing",
+			retryable: askedLegacyLongContext,
+		};
+	}
 	// Claude Code reports an account without the 1M window under the rate_limit code. It is a window
 	// entitlement, not a limit: retry at the standard window instead of blocking the account (senpi#3408).
 	if (/\b(?:extra usage|usage credits) (?:is|are) required for long context\b/.test(text)) {

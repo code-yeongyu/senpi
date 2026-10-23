@@ -1,3 +1,23 @@
+## 2026-10-23 - Exhausted extra usage downgrades only a requested legacy window (senpi#4065)
+
+### What changed
+
+- `errors.ts`: recognizes Claude's exact `400 You're out of extra usage. Add more at claude.ai/settings/usage and keep going.` response as non-retryable billing by default, or a long-context refusal when the attempt requested `[1m]`.
+- `long-context-retry.ts`: passes the actual attempt's legacy-window flag to the shared classifier. Both the ambient retry and managed failover reuse their existing once-only, pre-content refusal path, recording the refusal before rebuilding options at 200k.
+
+### Why
+
+The response does not mention long context, so the existing refusal matcher missed it. Treating it unconditionally as a refusal would incorrectly downgrade requests that never asked for the legacy tier.
+
+### Why an extension could not handle it
+
+This is the builtin extension's request-scoped SDK failure classification.
+
+### Expected merge conflict zones
+
+- `errors.ts`: `classifySdkError` and the start of `classifyErrorKind`.
+- `long-context-retry.ts`: the classifier call in `classifyForRequest`.
+
 ## 2026-10-22 - All-accounts refusals are pool verdicts, not auth failures (senpi#2081)
 
 ### What changed

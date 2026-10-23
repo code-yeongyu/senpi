@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- Claude subscription requests that asked for the legacy `[1m]` window now retry once at 200k when Claude returns `400 You're out of extra usage`, before any content is shown. Requests without `[1m]` keep the billing failure and do not retry ([#4065](https://github.com/code-yeongyu/senpi/issues/4065)).
 - `RpcClient.setSessionContext` called with no attached session and no `sessionId` now rejects with `RpcCommandError` and `errorCode: "session_not_attached"`, as its documentation says, instead of a plain `Error`; nothing is sent ([#3967](https://github.com/code-yeongyu/senpi/issues/3967)).
 - A project's skills can no longer follow a link out of the project to read files elsewhere on your machine. Links into skill folders you configured yourself still work; a refused skill shows why in the TUI and in RPC clients instead of disappearing silently ([#3796](https://github.com/code-yeongyu/senpi/issues/3796)).
 - MCP servers that come from a project's skills no longer receive your whole environment. They get a small safe base (paths, home, temp, locale, CA paths) plus the variables they declare; when one asks for a variable it didn't get, the TUI and RPC clients that support it offer **Grant and save permanently**, which remembers only the variable names for that exact server declaration. Skills you installed yourself keep today's environment ([#3796](https://github.com/code-yeongyu/senpi/issues/3796)).
