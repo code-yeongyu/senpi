@@ -47,11 +47,11 @@ export interface ResolvedRetryFallbackSettings {
  * `claude-opus-4-8` or `claude-opus-4-6` (senpi#3727).
  */
 export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
-	...(FABLE55_LAUNCH.released ? { [FABLE55_LAUNCH.modelId]: ["claude-opus-5-5:max", "claude-opus-5:max"] } : {}),
-	// Every rung is `:max`: Opus 5.5 is recommended at max.
-	"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
-	"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
-	"claude-opus-5-5": ["claude-opus-5:max"],
+	...(FABLE55_LAUNCH.released ? { [FABLE55_LAUNCH.modelId]: ["claude-opus-5-5", "claude-opus-5"] } : {}),
+	// Rungs carry no explicit level so fallback inherits the session's current thinking effort (senpi#4103).
+	"claude-fable-5-1": ["claude-opus-5-5", "claude-opus-5"],
+	"claude-fable-5": ["claude-opus-5-5", "claude-opus-5"],
+	"claude-opus-5-5": ["claude-opus-5"],
 };
 
 function cloneDefaultFallbackChains(): Record<string, readonly string[]> {

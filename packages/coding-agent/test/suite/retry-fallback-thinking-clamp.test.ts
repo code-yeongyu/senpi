@@ -4,6 +4,7 @@ import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { RetryFallbackController, type RetryFallbackControllerDeps } from "../../src/core/retry-fallback/controller.ts";
 import { SelectorCooldowns } from "../../src/core/retry-fallback/cooldown.ts";
+import { DEFAULT_FALLBACK_CHAINS } from "../../src/core/retry-fallback/settings.ts";
 import { getSupportedThinkingLevels } from "../../src/core/thinking-levels.ts";
 
 /**
@@ -304,5 +305,36 @@ describe("retry fallback thinking-level selection", () => {
 
 		expect(await controller.tryFallback("hard-error", {})).toBe(true);
 		expect(switches.map((record) => `${record.id}:${record.thinking}`)).toEqual(["primary:off"]);
+	});
+
+	it("preserves session medium thinking effort when falling back with shipped DEFAULT_FALLBACK_CHAINS (#4103)", async () => {
+		const fable = { ...getModel("anthropic", "claude-fable-5-1"), provider: "anthropic", id: "claude-fable-5-1" };
+		const opus55 = { ...getModel("anthropic", "claude-opus-5-5"), provider: "anthropic", id: "claude-opus-5-5" };
+		const opus5 = { ...getModel("anthropic", "claude-opus-5"), provider: "anthropic", id: "claude-opus-5" };
+		const { controller, switches } = createController({
+			models: [fable, opus55, opus5],
+			chains: DEFAULT_FALLBACK_CHAINS,
+			current: { model: fable, thinkingLevel: "medium" },
+		});
+
+		expect(await controller.tryFallback("hard-error", {})).toBe(true);
+		expect(switches).toEqual([
+			{ provider: "anthropic", id: "claude-opus-5-5", thinking: "medium", reason: "fallback" },
+		]);
+	});
+
+	it("honors user-configured :max on a fallback rung over inherited session effort (#4103)", async () => {
+		const fable = { ...getModel("anthropic", "claude-fable-5-1"), provider: "anthropic", id: "claude-fable-5-1" };
+		const opus5 = { ...getModel("anthropic", "claude-opus-5"), provider: "anthropic", id: "claude-opus-5" };
+		const { controller, switches } = createController({
+			models: [fable, opus5],
+			chains: { "anthropic/claude-fable-5-1": ["anthropic/claude-opus-5:max"] },
+			current: { model: fable, thinkingLevel: "medium" },
+		});
+
+		expect(await controller.tryFallback("hard-error", {})).toBe(true);
+		expect(switches).toEqual([
+			{ provider: "anthropic", id: "claude-opus-5", thinking: "max", reason: "fallback" },
+		]);
 	});
 });

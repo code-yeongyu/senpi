@@ -20,6 +20,7 @@
 ### Fixed
 
 - The RPC host's cleanup of leftover internal socket directories under `/tmp` now only removes the current user's directories, scans a `TMPDIR` that is `/tmp` once, and a socket path that fits nowhere names every location it tried ([#3487](https://github.com/code-yeongyu/senpi/issues/3487)).
+- Shipped model fallback chains no longer pin the `:max` thinking-level suffix on fallback rungs, so fallback requests inherit the session's current thinking effort (for example `medium`) instead of silently escalating reasoning effort and slowing subsequent turns. Explicit `:thinking-level` suffixes configured in `retry.fallbackChains` remain fully honored ([#4103](https://github.com/code-yeongyu/senpi/issues/4103)).
 - `RpcClient.setSessionContext` called with no attached session and no `sessionId` now rejects with `RpcCommandError` and `errorCode: "session_not_attached"`, as its documentation says, instead of a plain `Error`; nothing is sent ([#3967](https://github.com/code-yeongyu/senpi/issues/3967)).
 - Editing a prompt after compaction no longer brings messages the edit abandoned back into the model context ([#3864](https://github.com/code-yeongyu/senpi/issues/3864)).
 - A project's skills can no longer follow a link out of the project to read files elsewhere on your machine. Links into skill folders you configured yourself still work; a refused skill shows why in the TUI and in RPC clients instead of disappearing silently ([#3796](https://github.com/code-yeongyu/senpi/issues/3796)).
