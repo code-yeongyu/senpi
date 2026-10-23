@@ -28,6 +28,7 @@ export type AttemptFactoryInput = {
 	prompt: Parameters<SdkQuery>[0]["prompt"];
 	query: SdkQuery;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
+	onAttemptStart?: () => void;
 	createAttempt?: (
 		input: AuthenticatedAttemptInput,
 	) => RetainableAttempt<SDKMessage> | Promise<RetainableAttempt<SDKMessage>>;
@@ -56,6 +57,7 @@ export async function createAttemptMessages(
 	input: AttemptFactoryInput,
 	auth: AuthenticatedAttemptInput,
 ): Promise<AsyncIterable<SDKMessage>> {
+	input.onAttemptStart?.();
 	if (input.createAttempt)
 		return recordingLimitWindows(retainedAttemptMessages(await input.createAttempt(auth)), auth);
 	const query = input.query({ prompt: input.prompt, options: auth.options });

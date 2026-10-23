@@ -1,3 +1,23 @@
+## 2026-10-23 - Retry response identity belongs to the retained attempt (senpi#4058)
+
+### What changed
+
+- `auth-attempt.ts` notifies the stream when an authenticated attempt starts, including resident attempts; `auth-lane.ts` and `session-stream.ts` carry that callback.
+- `stream.ts` resets the response ID, usage, and streamed-shape flag at that boundary. The first response ID still wins within one attempt, but a discarded attempt no longer supplies the ID for a successful retry's usage. A result-only retry also starts with fresh stream-shape bookkeeping.
+- Regression coverage includes retained result-only replies without usage metadata on all three lanes: their context usage stays `null`, rather than retaining the discarded request's counts.
+
+### Why
+
+- A pre-content SDK retry could return the failed attempt's ID with the successful attempt's usage, so downstream Usage could not pair the response with its SDK transcript (desktop#4152).
+
+### Why an extension could not handle it
+
+- The bundled provider owns authenticated retries and the assistant output before session persistence.
+
+### Expected merge conflict zones
+
+- Authenticated attempt inputs, resident auth-lane wiring, and the stream's initial output state.
+
 ## 2026-10-22 - All-accounts refusals are pool verdicts, not auth failures (senpi#2081)
 
 ### What changed
