@@ -119,7 +119,7 @@ usage at completion. Use `contentIndex` and `delta` to assemble live text, think
 arguments if needed. A `toolcall_start` event also includes the constant-sized `id` and `toolName`
 fields. `toolcall_start` and `toolcall_end` records carry a top-level `resolvedToolName`: the tool
 the call will run. It differs from the requested name when senpi resolves a gateway-namespaced or
-recased name (`mcp__<id>__Edit` runs `edit`), and equals it otherwise, including when nothing resolves. `message_end` contains the final authoritative message.
+recased name (`mcp__<id>__Edit` runs `edit`), and equals it otherwise, including when nothing resolves. `message_end` contains the final authoritative message. An assistant `message_end` whose reply holds the agent's handoff block (`Ask: ... - wanted: ... For you: ... Now: ... Next: ...`, or `... You need: ... Now: ... Next: ...`) also carries `handoffs`: one object per block with `shape` (`claude` or `gpt`), the verbatim `block`, the slots `ask`, `wanted`, `forYou`, `outcome`, `youNeed`, `answer`, `now` and `next` (absent when empty), and the `contentIndex` of the text part that holds it. It is parsed from the message text, which stays unchanged, so a reply without a block has no `handoffs` field and history read through `get_messages` or `get_entries` can be parsed the same way with the exported `findHandoffBlocks` (senpi#4077).
 
 ## Example
 

@@ -84,6 +84,26 @@ describe("handoff blocks (senpi#2135)", () => {
 		expect(matches[2]?.rule).toBe(REPETITIVE_TURNS_RULE_NAME);
 	});
 
+	it("fires on the third turn that repeats the same parsed block (senpi#4077)", () => {
+		// given: a model re-emitting one handoff block, read through the shared parser
+		const state = createRepetitiveTurnsState();
+
+		// when
+		const matches = [1, 2, 3].map(() => recordTurnText(state, `Checked.\n\n${MID_TASK_HANDOFF}`));
+
+		// then
+		expect(matches[2]?.rule).toBe(REPETITIVE_TURNS_RULE_NAME);
+	});
+
+	it("drops the Ask only from a parsed block, not from prose that mentions the labels (senpi#4077)", () => {
+		// given: a paragraph that is not a handoff block, though it contains Ask: and Now:
+		const prose = "The gate says Ask: the owner before a merge. Now: I keep waiting for the build to finish.";
+
+		// when/then
+		expect(normalizeTurnText(prose)).toContain("the owner before a merge");
+		expect(normalizeTurnText(MID_TASK_HANDOFF)).not.toContain("slugify(title)");
+	});
+
 	it("still scores two blocks with the same status as near-duplicates", () => {
 		// given: a model re-emitting the same For you / Now / Next under the same Ask
 		const again = `${RESTATED_ASK} For you: source is a three-title loop with no helper yet. Now: Add slugify helper. Next: Wire slugify into index.`;

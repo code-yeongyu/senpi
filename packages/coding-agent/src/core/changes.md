@@ -1,3 +1,25 @@
+## 2026-10-23 - The handoff block is a typed part of the reply (senpi#4077)
+
+### What changed
+
+- `handoff-block.ts` (new): `splitHandoffBlocks` (moved from the TUI fold, now with typed slots `ask`, `wanted`, `forYou`, `outcome`, `youNeed`, `answer`, `now`, `next` and an `allowIncomplete` option for streams), `findHandoffBlocks(message)` and `withHandoffs(record)`. Derived from the text, never persisted.
+
+### Why
+
+- The handoff block reached RPC, JSON and desktop clients only as reply text, and each reader (the TUI fold, the ttsr repetitive-turns detector) found it its own way. Q's decision on senpi#4077: keep the block, show it collapsed by default and expandable, which needs a structure every client can read.
+
+### Why an extension could not handle it
+
+- None: new file.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/handoff-block.ts`
+
+### Paths
+
+undefined
+
 ## 2026-10-20 - Contain project skill links and retain security notices (senpi#3796)
 
 ### What changed

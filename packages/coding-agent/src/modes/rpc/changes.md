@@ -1,3 +1,27 @@
+## 2026-10-23 - Assistant message_end records carry the parsed handoff blocks (senpi#4077)
+
+### What changed
+
+- `session-record-stream.ts`: every session record passes through `withHandoffs` (`core/handoff-block.ts`), which adds `handoffs` to an assistant `message_end` that holds a handoff block and returns every other record as the same object.
+
+### Why
+
+- The handoff block reached RPC, JSON and desktop clients only as reply text, and each reader (the TUI fold, the ttsr repetitive-turns detector) found it its own way. Q's decision on senpi#4077: keep the block, show it collapsed by default and expandable, which needs a structure every client can read.
+
+### Why an extension could not handle it
+
+- LOW: the last `correlatedEvents.accept` call in `subscribeSessionRecords`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/session-record-stream.ts`
+
+### Paths
+
+undefined
+
+||||||| bde5e0b078
+
 ## 2026-10-23 - RpcClient.setSessionContext refuses a missing session with session_not_attached (senpi#3967)
 
 ### What changed
@@ -15,7 +39,6 @@
 ### Expected merge conflict zones
 
 - LOW: `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the guard at the top of `setSessionContext`, and the `rpc-types.ts` import line.
-
 ## 2026-10-20 - Bind security notices and MCP grant dialogs to actual connections (senpi#3796)
 
 ### What changed

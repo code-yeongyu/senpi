@@ -1,3 +1,27 @@
+## 2026-10-23 - JSON message_end records and the package exports carry the handoff blocks (senpi#4077)
+
+### What changed
+
+- `modes/json-event.ts`: `toJsonEvent` passes every non-`message_update` event through `withHandoffs`; `JsonMessageEndEvent` types the optional `handoffs` field. `modes/index.ts` and `index.ts` export it with `findHandoffBlocks`, `splitHandoffBlocks` and the block types.
+
+### Why
+
+- The handoff block reached RPC, JSON and desktop clients only as reply text, and each reader (the TUI fold, the ttsr repetitive-turns detector) found it its own way. Q's decision on senpi#4077: keep the block, show it collapsed by default and expandable, which needs a structure every client can read.
+
+### Why an extension could not handle it
+
+- LOW: the `JsonAgentSessionEvent` union and the first branch of `toJsonEvent`; the export lists in `index.ts`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/json-event.ts`
+- `packages/coding-agent/src/modes/index.ts`
+- `packages/coding-agent/src/index.ts`
+
+### Paths
+
+undefined
+
 ## 2026-10-22 - `--rebind` reads the session's recorded cwd asynchronously (senpi#3676)
 
 ### What changed

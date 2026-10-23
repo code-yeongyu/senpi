@@ -3,7 +3,7 @@
  */
 
 export { InteractiveMode, type InteractiveModeOptions } from "./interactive/interactive-mode.ts";
-export type { JsonAgentSessionEvent } from "./json-event.ts";
+export type { JsonAgentSessionEvent, JsonMessageEndEvent } from "./json-event.ts";
 export { type PrintModeOptions, runPrintMode } from "./print-mode.ts";
 // The shard naming contract every client computes identically; `senpi host shard-path` prints the same.
 export {

@@ -8,6 +8,7 @@
  */
 import type { AgentAbortSource } from "../../core/agent-abort-provenance.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
+import { withHandoffs } from "../../core/handoff-block.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { ClientMessageEvents } from "./client-message-events.ts";
@@ -63,6 +64,6 @@ export function subscribeSessionRecords(
 			correlatedEvents.accept(abortedBy === undefined ? event : { ...event, abortedBy });
 			return;
 		}
-		correlatedEvents.accept(event);
+		correlatedEvents.accept(withHandoffs(event));
 	});
 }

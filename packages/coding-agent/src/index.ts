@@ -269,6 +269,14 @@ export {
 export * from "./core/extensions/session-control-types.ts";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.ts";
+export {
+	type AssistantTextSegment,
+	findHandoffBlocks,
+	type HandoffBlock,
+	type HandoffShape,
+	type MessageHandoffBlock,
+	splitHandoffBlocks,
+} from "./core/handoff-block.ts";
 export { convertToLlm } from "./core/messages.ts";
 export { ModelRegistry } from "./core/model-registry.ts";
 export {
@@ -529,6 +537,7 @@ export {
 	type InteractiveModeOptions,
 	isTransportGoneError,
 	type JsonAgentSessionEvent,
+	type JsonMessageEndEvent,
 	listHostEndpoints,
 	loadHostLaunchSpec,
 	type ModelInfo,

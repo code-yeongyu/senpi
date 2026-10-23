@@ -1,3 +1,26 @@
+## 2026-10-23 - The handoff fold uses the core parser (senpi#4077)
+
+### What changed
+
+- `components/assistant-render-descriptors.ts` imports `splitHandoffBlocks` / `HandoffSegment` from `core/handoff-block.ts`; `components/handoff-fold.ts` is removed. The fold renders exactly as before.
+
+### Why
+
+- The handoff block reached RPC, JSON and desktop clients only as reply text, and each reader (the TUI fold, the ttsr repetitive-turns detector) found it its own way. Q's decision on senpi#4077: keep the block, show it collapsed by default and expandable, which needs a structure every client can read.
+
+### Why an extension could not handle it
+
+- LOW: the import block of `assistant-render-descriptors.ts`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-render-descriptors.ts`
+- `packages/coding-agent/src/modes/interactive/components/handoff-fold.ts` (removed)
+
+### Paths
+
+undefined
+
 ## 2026-10-20 - Present retained skill security reasons once (senpi#3796)
 
 ### What changed

@@ -1,3 +1,4 @@
+import { splitHandoffBlocks } from "../../../../handoff-block.ts";
 import type { DetectorMatch } from "../types.ts";
 
 export const REPETITIVE_TURNS_RULE_NAME = "repetitive-turns";
@@ -11,15 +12,27 @@ const WORD_PATTERN = /[\p{L}\p{N}#]+/gu;
 const DIGIT_RUN_PATTERN = /\d[\d.,:/-]*/g;
 const HEX_LIKE_PATTERN = /\b[0-9a-f]{7,}\b/gi;
 const SAMPLE_LENGTH = 80;
-// The handoff contract restates the user's request verbatim after `Ask:` in every block, so that clause is
-// identical by design across turns; it ends where the block's own status starts (`For you:` / `You need:` / `Now:`).
-// Only a clause that such a label closes is a handoff Ask; any other `Ask:` stays in the text, so a looping turn
+// The handoff contract restates the user's request verbatim in every block's `Ask:` / `wanted:` slots, so those
+// are identical by design across turns. The block is found by the shared parser (senpi#4077), the same one the
+// TUI fold and the RPC `handoffs` field use, and only its status slots are compared. A block still streaming
+// counts once it reaches `For you:` or `Now:`; an `Ask:` outside a block stays in the text, so a looping turn
 // that merely contains the word keeps its full repetition signal (senpi#2143).
-const HANDOFF_ASK_CLAUSE = /\bAsk:[\s\S]*?(?=\b(?:For you|You need|Now):)/g;
+function withoutRestatedAsk(text: string): string {
+	return splitHandoffBlocks(text, { allowIncomplete: true })
+		.map((segment) => {
+			if (segment.kind === "text") return segment.text;
+			if (segment.shape === "gpt") return segment.block;
+			return [
+				segment.forYou === undefined ? "For you:" : `For you: ${segment.forYou}`,
+				segment.now === undefined ? "" : `Now: ${segment.now}`,
+				segment.next === undefined ? "" : `Next: ${segment.next}`,
+			].join(" ");
+		})
+		.join("\n\n");
+}
 
 export function normalizeTurnText(text: string): string {
-	return text
-		.replace(HANDOFF_ASK_CLAUSE, " ")
+	return withoutRestatedAsk(text)
 		.toLowerCase()
 		.replace(HEX_LIKE_PATTERN, "#")
 		.replace(DIGIT_RUN_PATTERN, "#")

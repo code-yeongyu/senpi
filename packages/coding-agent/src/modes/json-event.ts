@@ -1,5 +1,6 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AgentSessionEvent } from "../core/agent-session.ts";
+import { type MessageHandoffBlock, withHandoffs } from "../core/handoff-block.ts";
 
 type WithoutPartial<T> = T extends { partial: unknown } ? Omit<T, "partial"> : T;
 
@@ -15,8 +16,16 @@ type JsonMessageUpdateEvent = {
 	resolvedToolName?: string;
 };
 
+/** An assistant `message_end` carries the reply's handoff blocks, parsed from its text, when it has any (senpi#4077). */
+export type JsonMessageEndEvent = Extract<AgentSessionEvent, { type: "message_end" }> & {
+	handoffs?: readonly MessageHandoffBlock[];
+};
+
 /** Session event shape emitted by the JSON and RPC stdout protocols. */
-export type JsonAgentSessionEvent = Exclude<AgentSessionEvent, { type: "message_update" }> | JsonMessageUpdateEvent;
+export type JsonAgentSessionEvent =
+	| Exclude<AgentSessionEvent, { type: "message_update" | "message_end" }>
+	| JsonMessageUpdateEvent
+	| JsonMessageEndEvent;
 
 function toJsonAssistantMessageEvent(
 	event: MessageUpdateEvent["assistantMessageEvent"],
@@ -48,7 +57,7 @@ export function toJsonEvent(event: MessageUpdateEvent): JsonMessageUpdateEvent;
 export function toJsonEvent(event: AgentSessionEvent): JsonAgentSessionEvent;
 export function toJsonEvent(event: AgentSessionEvent): JsonAgentSessionEvent {
 	if (event.type !== "message_update") {
-		return event;
+		return withHandoffs(event);
 	}
 	if (event.message.role !== "assistant") {
 		throw new Error("message_update message is not an assistant message");

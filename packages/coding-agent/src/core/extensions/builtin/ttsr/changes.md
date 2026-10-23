@@ -1,3 +1,25 @@
+## 2026-10-23 - Repetitive turns read the handoff block through the shared parser (senpi#4077)
+
+### What changed
+
+- `detectors/repetitive-turns.ts`: `normalizeTurnText` drops a handoff block's restated `Ask:` / `wanted:` slots using `splitHandoffBlocks` from `core/handoff-block.ts` (with `allowIncomplete`, so a block still streaming counts once it reaches `For you:` or `Now:`) instead of the `HANDOFF_ASK_CLAUSE` regex. Prose that only mentions `Ask:` keeps its text, so its repetition signal is unchanged.
+
+### Why
+
+- The handoff block reached RPC, JSON and desktop clients only as reply text, and each reader (the TUI fold, the ttsr repetitive-turns detector) found it its own way. Q's decision on senpi#4077: keep the block, show it collapsed by default and expandable, which needs a structure every client can read.
+
+### Why an extension could not handle it
+
+- LOW: the top of `detectors/repetitive-turns.ts` (the removed regex and `normalizeTurnText`).
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/repetitive-turns.ts`
+
+### Paths
+
+undefined
+
 ## 2026-10-22 — Markup that spells a special token is not a leak (senpi#3880)
 
 ### What changed

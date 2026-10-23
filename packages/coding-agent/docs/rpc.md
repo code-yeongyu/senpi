@@ -4639,6 +4639,8 @@ Emitted when a message begins and completes. The `message` field contains an `Ag
 {"type": "message_end", "message": {...}}
 ```
 
+An assistant `message_end` whose reply holds the agent's handoff block (`Ask: ... - wanted: ... For you: ... Now: ... Next: ...`, or `... You need: ... Now: ... Next: ...`) also carries `handoffs`: one object per block with `shape` (`claude` or `gpt`), the verbatim `block`, the slots `ask`, `wanted`, `forYou`, `outcome`, `youNeed`, `answer`, `now` and `next` (absent when empty), and the `contentIndex` of the text part that holds it. It is parsed from the message text, which stays unchanged, so a reply without a block has no `handoffs` field and history read through `get_messages` or `get_entries` can be parsed the same way with the exported `findHandoffBlocks` (senpi#4077).
+
 ### message_update (Streaming)
 
 Emitted during streaming of assistant messages. Contains a delta event without a cumulative message snapshot.
