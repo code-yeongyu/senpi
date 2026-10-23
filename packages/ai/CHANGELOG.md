@@ -8,6 +8,8 @@
 
 ### Changed
 
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`baseten`, `fireworks`, `github-copilot`, `huggingface`, `mistral`, `opengateway`, `openrouter`, `vercel-ai-gateway`).
+
 ### Fixed
 
 ### Removed
