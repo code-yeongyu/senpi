@@ -1306,6 +1306,8 @@ All handlers receive `ctx: ExtensionContext`.
 
 UI methods for user interaction. See [Custom UI](#custom-ui) for full details.
 
+`ctx.ui.onIdleEscape?.(handler)` registers an optional TUI-only handler for Escape at the idle main editor. Dialogs, focused questions, autocomplete, active turns and bash controls run first. Return `true` to consume the key; otherwise the ordinary double-Escape behavior remains available. The returned function unsubscribes the handler. Use this rather than raw terminal input for background waits that should not take Escape away from another surface.
+
 ### ctx.mode
 
 Current run mode: `"tui"`, `"rpc"`, `"json"`, or `"print"`. Use `ctx.mode === "tui"` to guard terminal-only features such as `custom()`, component factories, terminal input, and direct TUI rendering.

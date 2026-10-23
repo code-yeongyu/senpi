@@ -99,6 +99,7 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 			acquireMouseCapture: vi.fn(() => vi.fn()),
 		},
 		keybindings: new KeybindingsManager(),
+		extensionIdleEscapeHandlers: new Set<() => boolean>(),
 		getNormalTerminalTitle: () => "senpi",
 		runtimeHost: { session },
 		onInputCallback: vi.fn(),

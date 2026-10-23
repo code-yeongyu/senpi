@@ -1142,6 +1142,7 @@ export class InteractiveMode {
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
 		unsubscribe: () => void;
 	}>();
+	private extensionIdleEscapeHandlers = new Set<() => boolean>();
 
 	// Extension widgets (components rendered above/below the editor)
 	private extensionWidgetsAbove = new Map<string, Component & { dispose?(): void }>();
@@ -3676,6 +3677,7 @@ export class InteractiveMode {
 	private clearExtensionTerminalInputListeners(): void {
 		for (const subscription of this.extensionTerminalInputSubscriptions) subscription.unsubscribe();
 		this.extensionTerminalInputSubscriptions.clear();
+		this.extensionIdleEscapeHandlers.clear();
 	}
 
 	/**
@@ -3717,6 +3719,12 @@ export class InteractiveMode {
 				request.waitForAnswer ? this.showQuestionOverlay(request, opts) : this.showAsyncQuestion(request, opts),
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
+			onIdleEscape: (handler) => {
+				this.extensionIdleEscapeHandlers.add(handler);
+				return () => {
+					this.extensionIdleEscapeHandlers.delete(handler);
+				};
+			},
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
@@ -4607,6 +4615,8 @@ export class InteractiveMode {
 				this.editor.setText("");
 				this.isBashMode = false;
 				this.updateEditorBorderColor();
+			} else if ([...this.extensionIdleEscapeHandlers].some((handler) => handler())) {
+				this.lastEscapeTime = 0;
 			} else if (!this.editor.getText().trim()) {
 				// Double-escape with empty editor triggers /tree, /fork, or nothing based on setting
 				const action = this.settingsManager.getDoubleEscapeAction();

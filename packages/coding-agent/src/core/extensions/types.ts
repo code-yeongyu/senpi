@@ -256,6 +256,9 @@ export interface ExtensionUIContext {
 	/** Listen to raw terminal input (interactive mode only). Returns an unsubscribe function. */
 	onTerminalInput(handler: TerminalInputHandler): () => void;
 
+	/** Handle otherwise-unclaimed Escape at the idle TUI editor. Return true to consume it. */
+	onIdleEscape?(handler: () => boolean): () => void;
+
 	/** Set status text in the footer/status bar. Pass undefined to clear. */
 	setStatus(key: string, text: string | undefined): void;
 

@@ -1,3 +1,21 @@
+## 2026-10-23 - Preserve Escape priority for parked goal waits (senpi#4050)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: register and clear idle-Escape handlers through the extension UI context, and invoke them in the final idle-editor branch after streaming and bash controls. An unconsumed key retains double-Escape behavior.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: raw terminal listeners run before focused dialogs, questions and autocomplete, so they cannot safely own a parked goal's interrupt key.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the host owns the normal editor's Escape priority chain and its UI subscription lifecycle.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: extension UI creation/cleanup and the final idle branch of `setupKeyHandlers`.
+
 ## 2026-10-20 - Present retained skill security reasons once (senpi#3796)
 
 ### What changed

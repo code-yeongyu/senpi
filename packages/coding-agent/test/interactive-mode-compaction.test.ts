@@ -966,6 +966,7 @@ describe("InteractiveMode compaction events", () => {
 			// it, so this fixture exercises production plumbing; it no-ops here because
 			// the fake editor exposes no insertImageMarker.
 			pendingImages: new Map<number, unknown>(),
+			extensionIdleEscapeHandlers: new Set<() => boolean>(),
 			subscribeImageMarkers: Reflect.get(InteractiveMode.prototype, "subscribeImageMarkers"),
 			reconcilePendingImages: Reflect.get(InteractiveMode.prototype, "reconcilePendingImages"),
 			ui: {

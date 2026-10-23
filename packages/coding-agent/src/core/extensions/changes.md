@@ -1,3 +1,21 @@
+## 2026-10-23 - Idle-editor Escape capability (senpi#4050)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: add optional `ExtensionUIContext.onIdleEscape`, a synchronous consuming handler reached only after the TUI's existing focused-surface and running-work controls.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: a parked goal must not consume raw Escape before a dialog, question, autocomplete or bash control.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: only the host knows when its normal Escape priority chain has reached the idle editor.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the optional method beside `onTerminalInput`; non-TUI and hand-built contexts may omit it.
+
 ## 2026-10-22 - `pi.session.relocationTargets()` and `pi.session.requestRelocation()` (senpi#3959)
 
 ### What changed

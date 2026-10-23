@@ -91,7 +91,13 @@ function createGeneration(cwd: string, sessionId: string): Generation {
 		model: undefined,
 		isIdle: () => true,
 		hasPendingMessages: () => false,
-		ui: { notify: () => {}, select: async () => undefined, setStatus: () => {}, theme },
+		ui: {
+			notify: () => {},
+			select: async () => undefined,
+			setStatus: () => {},
+			onTerminalInput: () => () => {},
+			theme,
+		},
 		sessionManager: {
 			getSessionId: () => sessionId,
 			getSessionFile: () => join(cwd, "session.jsonl"),
