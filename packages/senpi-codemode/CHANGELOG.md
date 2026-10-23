@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- On Windows, a bare `bash` or `sh` started from an `eval` cell (`Bun.$`, `Bun.spawn`, Python `subprocess`, `%%bash`) now runs the same Git Bash the bash tool uses, instead of `System32\bash.exe`, which booted the WSL VM. The kernels get the same bash the bash tool uses (the `shellPath` setting, then `SENPI_GIT_BASH_PATH`, then Git for Windows). Its Git `bin` directory goes first on their PATH, but only when that directory holds `bash.exe` and `sh.exe` and no coreutils that would shadow Windows' own `find`/`sort`/`timeout`. Without a Git Bash nothing changes, and macOS and Linux are unaffected. Reported by @JunesuChoi. ([oh-my-openagent#10894](https://github.com/code-yeongyu/oh-my-openagent/issues/10894))
+
 ### Removed
 
 ## [2026.10.21-3] - 2026-10-22

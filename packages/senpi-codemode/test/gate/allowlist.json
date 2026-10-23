@@ -1697,6 +1697,24 @@
 				"legacyContracts/test/bench/workload-spill-sizes.test.ts/output-spill candidates (codemode-gate race on main 46d15a1c93) still fails when a final path cannot be stat'ed"
 			],
 			"reason": "senpi#3748 fixes the output-spill bench race (a kernel ledger written as <path>.<pid>.tmp and renamed could vanish between listing and stat) and adds contracts proving a temp file is never stat'ed or picked as the spill, and a stat error on a final path still rejects. The frozen baseline and every existing contract remain unchanged."
+		},
+		"senpi#3989": {
+			"additions": [
+				"imports/extension/packages/senpi-codemode/src/extension/kernel-path-env.ts",
+				"imports/firstKernel/packages/senpi-codemode/src/extension/kernel-path-env.ts",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelPathEntry (omo#10894) puts the Git Bash directory first on win32 so a bare bash resolves to Git Bash, not the WSL launcher",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelPathEntry (omo#10894) keeps the Git Bash directory once when PATH already lists it later",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelPathEntry (omo#10894) leaves PATH unchanged on win32 when no Git Bash is found",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelPathEntry (omo#10894) never prepends the WSL launcher the bash tool falls back to from PATH",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelPathEntry (omo#10894) puts the configured shellPath's Git bin first, over the default Git install, through getShellConfig",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelPathEntry (omo#10894) leaves PATH unchanged when the bash lives in a usr\\bin with coreutils that would shadow System32",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelPathEntry (omo#10894) leaves PATH unchanged when the bash directory has no sh.exe beside it",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelPathEntry (omo#10894) leaves PATH unchanged on darwin",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelPathEntry (omo#10894) leaves PATH unchanged on linux",
+				"legacyContracts/test/kernel-path-env.test.ts/kernelPathEntry (omo#10894) composes with the bundled bun PATH entry",
+				"legacyContracts/test/py-prelude-windows-bare-shell.test.ts/Python prelude bare bash/sh on Windows (omo#10894) resolves a bare bash to the PATH-first non-WSL match and leaves everything else alone"
+			],
+			"reason": "senpi#3989 (fixes oh-my-openagent#10894): reviewed additive changes. The new kernel-path-env module enters the extension and first-kernel import scopes; it builds the kernel PATH entry (the bundled bun directory, plus on win32 the Git Bash bin directory of the bash the bash tool uses, only when it holds bash.exe and sh.exe and no coreutils). New contracts prove a bare bash resolves to Git Bash before the System32 WSL launcher, a configured shellPath wins, PATH is unchanged without a qualifying Git bin directory and off Windows, and the Python prelude resolves a bare bash/sh to the PATH-first non-WSL match. The frozen baseline and every existing contract remain unchanged."
 		}
 	}
 }
