@@ -11842,3 +11842,22 @@ The summary-model resolver reads session-owned state (settings, model runtime, s
 ### Expected merge conflict zones
 
 - MEDIUM: the `agent_end` last-assistant block in `_processAgentEvent` (release placement, `releasedExemptionAllowsQueuedContinuation`, the exempt-continuation stop-reason gate, the continuation condition), `_consumePostCompactionUsageExemption`, `_flushPostCompactionDeferredMessages` / `_requeueAtOriginalPlace`, and `releaseStart` in `_prompt`.
+
+## 2026-10-24 - Remove :max suffix from shipped fallback rungs to preserve session thinking effort (senpi#4103)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/settings.ts`: `DEFAULT_FALLBACK_CHAINS` strips the `:max` thinking-level suffix from all shipped default rungs (`claude-fable-5-1`, `claude-fable-5`, and `claude-opus-5-5`), leaving bare model family identifiers (`["claude-opus-5-5", "claude-opus-5"]` and `["claude-opus-5"]`).
+- `packages/coding-agent/test/suite/retry-fallback-chains.test.ts`, `packages/coding-agent/test/suite/retry-fallback-thinking-clamp.test.ts`, `packages/coding-agent/test/suite/retry-fallback-expansion.test.ts`, `packages/coding-agent/test/settings-manager-retry-fallback.test.ts`: updated expectations for shipped default chains and added test cases verifying session thinking effort (e.g. `medium`) is preserved upon model fallback while user-configured `:max` on a fallback rung remains respected.
+
+### Why
+
+- When a primary model fails and the default fallback chain takes over, the hardcoded `:max` suffix caused `selectThinking()` to choose `"max"` reasoning effort over the session's inherited level (`selector.thinkingLevel ?? inherited ?? "off"`). Sessions operating at lower thinking efforts (such as `medium`) were silently escalated to max reasoning effort, significantly slowing down subsequent turns until the primary model was restored.
+
+### Why an extension could not handle it
+
+- Default fallback chains are baked into `DEFAULT_FALLBACK_CHAINS` in `packages/coding-agent/src/core/retry-fallback/settings.ts` and evaluated by `RetryFallbackController` in the agent core before extension hooks run.
+
+### Expected merge conflict zones
+
+- LOW: `DEFAULT_FALLBACK_CHAINS` in `packages/coding-agent/src/core/retry-fallback/settings.ts`.
