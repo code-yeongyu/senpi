@@ -2967,7 +2967,7 @@ image payloads are not counted toward this text limit.
 ```
 
 - While the barrier is armed, a tool whose definition is not `workspaceEffect: "read"` waits after its `tool_execution_start` and before it runs, and the session emits `tool_barrier_waiting` once per waiting call. The built-in read-only tools (`read`, `grep`, `find`, `glob`, `ls`, `todo`, `web_search`, `webfetch`, `tool_search`, and the ask-user question tools) run at once; everything else, MCP and extension tools included, waits.
-- `data.toolBarrier` is `"armed"` when the prompt started its own turn (the barrier is armed before the response is written) and `"ignored"` when the prompt was queued into a running turn as steering or follow-up content, or handled by a command. Nothing is armed in the ignored case.
+- `data.toolBarrier` is `"armed"` when the prompt started its own turn (the barrier is armed before the response is written) and `"ignored"` when the prompt was queued into a running turn as steering or follow-up content, handled by a command, or held while the session is paused for a run. Nothing is armed in the ignored case.
 - The barrier opens on `release_tool_barrier`, when its turn ends (the run's final `agent_end`, or a queued follow-up starting the next turn), or when `deadlineMs` passes, which emits `tool_barrier_expired`. A Stop (`abort`) ends the wait and settles the turn as aborted.
 - `steer` and `follow_up` never carry a barrier, and a prompt without `toolBarrier` behaves exactly as before.
 - A malformed `toolBarrier` is refused before the prompt is accepted.
