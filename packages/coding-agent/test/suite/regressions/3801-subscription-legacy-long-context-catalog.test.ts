@@ -18,14 +18,23 @@ describe("#3801: the legacy long-context ids follow the bundled Claude Code cata
 			.find((path): path is string => path !== undefined);
 		if (binary === undefined) throw new Error("the bundled Claude Code binary is not installed");
 		const bytes = readFileSync(binary);
+		const catalogStart = bytes.indexOf(Buffer.from('models:[{id:"claude-'));
+		const catalogEnd = bytes.indexOf(Buffer.from("}],aliases:"), catalogStart);
+		expect(catalogStart).toBeGreaterThanOrEqual(0);
+		expect(catalogEnd).toBeGreaterThan(catalogStart);
+		const catalog = bytes.subarray(catalogStart, catalogEnd + 1);
 		const optInOnly = new Set<string>();
 		const marker = Buffer.from('{id:"claude-');
-		for (let at = bytes.indexOf(marker); at !== -1; at = bytes.indexOf(marker, at + marker.length)) {
-			const row = bytes.subarray(at, at + 1_500).toString("latin1");
+		for (let at = catalog.indexOf(marker); at !== -1; ) {
+			const next = catalog.indexOf(marker, at + marker.length);
+			const row = catalog.subarray(at, next === -1 ? catalog.length : next).toString("latin1");
+			at = next;
 			const id = /^\{id:"(claude-[a-z0-9-]+)",family:/.exec(row)?.[1];
 			const context = /context:\{([^}]*)\}/.exec(row)?.[1];
-			if (id === undefined || context === undefined) continue;
-			if (context.includes("supports_1m_beta:!0") && !context.includes("native_1m:!0")) optInOnly.add(id);
+			if (id === undefined) throw new Error("unrecognized Claude Code catalog row");
+			const legacy = context?.includes("supports_1m_beta:!0") === true && !context.includes("native_1m:!0");
+			expect(LEGACY_LONG_CONTEXT_MODEL_IDS.has(id), id).toBe(legacy);
+			if (legacy) optInOnly.add(id);
 		}
 
 		expect([...optInOnly].sort()).toEqual([...LEGACY_LONG_CONTEXT_MODEL_IDS].sort());

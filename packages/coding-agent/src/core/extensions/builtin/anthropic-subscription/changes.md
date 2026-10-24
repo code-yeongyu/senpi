@@ -2245,3 +2245,24 @@ This is the builtin's own denial reason, which the deny hook hands to Claude Cod
 ### Expected merge conflict zones
 
 - LOW: provider settings parsing, the candidate list in `selectAccount`, and the attempt bound in `runFailover`, plus `AllAccountsBlockedError` construction and the `AllAccountsBlockedError` branch in `withAuthGuidance`.
+
+## 2026-10-20 - Review round 1 correction to native-1M legacy membership (senpi#3808, follow-up to senpi#3801)
+
+### What changed
+
+- `context-window.ts`: remove `claude-3-7-sonnet` from `LEGACY_LONG_CONTEXT_MODEL_IDS`. The earlier 2026-10-20 entry incorrectly included it: its Claude Code 2.1.296 catalog row has no context field. The catalog regression now bounds each row by the next row or the catalog array end, skips rows without their own context, and derives only `supports_1m_beta` rows without `native_1m`.
+- `session-sync.ts`: hash refusal state only for legacy model ids, including when SDK-owned compaction omits the window environment variable. Native resident sessions retain their fingerprint across unrelated legacy refusals; planned window changes remain hash-significant.
+- Refusal regression fixtures use a readable in-memory credential store and assert that a native-model refusal leaves the account unblocked.
+
+### Why
+
+The fixed byte slice borrowed the next row's context and accidentally classified Sonnet 3.7 as legacy. Unconditional refusal hashing also restarted native resident sessions unnecessarily.
+
+### Why an extension could not handle it
+
+This corrects the builtin's internal model classification and resident-session fingerprint.
+
+### Expected merge conflict zones
+
+- `context-window.ts`: `LEGACY_LONG_CONTEXT_MODEL_IDS`.
+- `session-sync.ts`: imports and `configFingerprint` toolset hash.
