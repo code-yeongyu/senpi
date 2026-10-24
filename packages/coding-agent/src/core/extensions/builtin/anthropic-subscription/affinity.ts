@@ -155,7 +155,7 @@ function unblockAt(account: AccountSlot, now: number, model: string | undefined)
 	return modelUntil === undefined ? accountUntil : Math.max(accountUntil, modelUntil);
 }
 
-function soonestUnblockAt(
+export function soonestUnblockAt(
 	accounts: readonly AccountSlot[],
 	now: number,
 	model: string | undefined,
