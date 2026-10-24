@@ -1,4 +1,5 @@
 import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
+import { logAnthropicCachePrefix } from "./anthropic-cache-prefix-log.ts";
 import type {
 	BetaInputTransformation,
 	BetaStopReason,
@@ -1476,6 +1477,23 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				// Logged before the call: the SDK throws on a non-2xx, and a rejected attempt is the one worth rebuilding.
 				const send = (body: MessageCreateParamsStreaming) => {
 					logAnthropicRequestShape(model, body);
+					logAnthropicCachePrefix(
+						model,
+						body,
+						[
+							{
+								"anthropic-beta":
+									(options?.interleavedThinking ?? true) && !supportsAdaptiveThinking(model)
+										? INTERLEAVED_THINKING_BETA
+										: undefined,
+							},
+							model.headers,
+							providerHeadersToRecord(options?.headers),
+							body.betas === undefined ? undefined : { "anthropic-beta": body.betas.join(",") },
+							payloadRequestMetadata.headers,
+						],
+						options?.env,
+					);
 					return awaitProviderTransport(
 						() => client.beta.messages.create({ ...body, stream: true }, requestOptions).asResponse(),
 						anthropicProviderDiagnosticFromError,
