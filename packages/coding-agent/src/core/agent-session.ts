@@ -11379,6 +11379,10 @@ export class AgentSession {
 			}
 
 			this._applyExtensionBindings(this._extensionRunner);
+			// Opening a session is not explicit Resume. Install the same hold used by Stop before
+			// session_start producers run, so automatic work waits quietly in notice custody.
+			if (this._lifecycleBinding.controller.requiresHumanContinuation)
+				this._engineTurnHold.addHold("session_hold", { key: "interrupted-run" });
 			this._engineTurnHold.start();
 			this.syncPromptCacheSafeWaitEnv();
 			await this._extensionRunner.emit({

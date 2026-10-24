@@ -2840,6 +2840,7 @@ export class InteractiveMode {
 				this.showExtensionError(error);
 			},
 		});
+		this.setExtensionStatus(PAUSE_STATUS_KEY, pauseFooterText(this.session));
 
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		this.setupAutocompleteProvider();
