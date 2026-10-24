@@ -516,6 +516,24 @@ Snapshot materialization precedes extension loading. An extension cannot reduce 
 
 - None upstream: `runtime-snapshot/` is fork-only. Part A's package selection moved from layout into package-files; preserve it when merging other snapshot changes.
 
+## 2026-10-11 - The isolated CLI re-launch replays runtime options, never the caller's entry mode (senpi#2952)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: `requiresIsolatedProcess()` decides on `runtimeExecArgv()` (`utils/runtime-exec-argv.ts`), and `spawnFullCli()` forwards that sanitized argv instead of the raw `process.execArgv`. Loaders, memory flags and inspector options still reach the child; an eval, print, input-type or interactive entry mode does not.
+
+### Why
+
+- An embedder that loads the CLI entry from `node -e` or `node -p` had its own eval code replayed in the re-launched child: the bundled entry ran the caller twice, and the unbundled entry kept spawning itself. #2950 fixed this class of bug at the launch sites #2599 named; this is the CLI entry's own re-launch.
+
+### Why an extension could not handle it
+
+- The re-launch happens in the CLI launcher before any extension loads.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli.ts`: the `runtimeExecArgv` import, `requiresIsolatedProcess()`, and the argv of the `spawnFullCli()` child.
+
 ## 2026-10-10 - The runtime snapshot copies the shipped package files only (#3083)
 
 ### What changed
