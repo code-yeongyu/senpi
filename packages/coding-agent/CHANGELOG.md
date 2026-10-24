@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- Retry compaction summaries rejected for image-format errors once without images, preserving the original transcript and normal multimodal requests.
+
 ### Removed
 
 ## [2026.10.24-2] - 2026-10-24
