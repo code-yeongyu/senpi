@@ -1,20 +1,24 @@
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { configureMcpElicitation, mcpClientCapabilities } from "../elicitation.ts";
 import { ConnectError } from "../errors.ts";
-import { loadMcpSdkClient } from "../sdk.lazy.ts";
 import {
 	type MaterializeMcpTransportOptions,
 	type McpMaterializedTransport,
 	materializeMcpTransport,
 } from "../transport-sdk.ts";
 import { type EraOutcome, probeHttpEra } from "./era.ts";
-import { modernHttpFetch } from "./http-fetch.ts";
+import { modernCredentialSnapshot, modernHttpFetch } from "./http-fetch.ts";
+import { createMcpRequestClient, type ModernProtocolState } from "./request.ts";
 import { ModernSdkBridge } from "./sdk-bridge.ts";
 import { probeStdioTransport } from "./stdio-probe.ts";
 import { ModernHttpTransport } from "./transport.ts";
 import { MODERN_PROTOCOL_VERSION } from "./wire.ts";
 
 const clientInfo = { name: "senpi-mcp-client", version: "0.0.0" };
+const probeOptions = {
+	clientInfo,
+	clientCapabilities: {},
+	supportedVersions: [MODERN_PROTOCOL_VERSION],
+};
 
 export async function materializeNegotiatedTransport(
 	options: MaterializeMcpTransportOptions,
@@ -23,9 +27,8 @@ export async function materializeNegotiatedTransport(
 	signal: AbortSignal,
 ): Promise<McpMaterializedTransport> {
 	signal.throwIfAborted();
-	const clientCapabilities = mcpClientCapabilities(options.elicitationEnabled);
-	const probeOptions = { clientInfo, clientCapabilities, supportedVersions: [MODERN_PROTOCOL_VERSION] };
 	const { spec, logger } = options;
+	const protocol: ModernProtocolState = {};
 	let outcome: EraOutcome = { kind: "legacy-fallback" };
 	if (spec.kind === "http") {
 		const fetch = modernHttpFetch(spec, signal);
@@ -40,15 +43,19 @@ export async function materializeNegotiatedTransport(
 					serverName,
 				});
 			}
-			const { Client } = await loadMcpSdkClient();
-			const client = new Client(clientInfo, { capabilities: clientCapabilities });
-			await configureMcpElicitation(client, options.elicitationUiProvider, undefined, options.elicitationEnabled);
+			protocol.version = outcome.version;
+			const client = await createMcpRequestClient(
+				protocol,
+				options.elicitationUiProvider,
+				() => modernCredentialSnapshot(spec.authProvider?.tokens()),
+				options.elicitationEnabled,
+			);
 			const transport = new ModernSdkBridge(
 				new ModernHttpTransport({
 					url: spec.url,
-					fetch,
+					fetch: modernHttpFetch(spec, signal, false),
 					clientInfo,
-					clientCapabilities,
+					clientCapabilities: {},
 					protocolVersion: outcome.version,
 				}),
 				outcome.discovery,
@@ -75,13 +82,29 @@ export async function materializeNegotiatedTransport(
 		}
 	}
 	// Unknown endpoints (including legacy session-required 404s and auth challenges) retain SDK diagnostics.
-	const legacy = await materializeMcpTransport(options);
+	if (spec.kind === "http") protocol.legacy = true;
+	const legacy = await materializeMcpTransport(options, protocol);
 	// A modern stdio child is detected when the SDK starts it, before its local initialize answer sets the version.
 	let stdioModernVersion: string | undefined;
 	if (spec.kind === "stdio") {
-		probeStdioTransport(legacy.transport, probeOptions, logger, timeoutMs, serverName, (version) => {
-			stdioModernVersion = version;
-		});
+		probeStdioTransport(
+			legacy.transport,
+			probeOptions,
+			logger,
+			timeoutMs,
+			serverName,
+			(version) => {
+				stdioModernVersion = version;
+				protocol.version = version;
+				protocol.activateRequests?.();
+				protocol.resolveStdioDiagnostics?.(true);
+			},
+			undefined,
+			() => {
+				protocol.legacy = true;
+				protocol.resolveStdioDiagnostics?.(false);
+			},
+		);
 	}
 	logVersion(legacy.transport, () => stdioModernVersion);
 	return legacy;

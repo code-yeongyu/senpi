@@ -1,4 +1,4 @@
-import type { ExtensionContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
+import type { ExtensionContext, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import type { ServerAuthPlan } from "./auth/context.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { ResolvedMcpServer } from "./config-schema.ts";
@@ -79,6 +79,7 @@ export type McpWireStatusSnapshot = {
 };
 
 export type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted"> & {
+	ui?: ExtensionUIContext;
 	mode?: ExtensionContext["mode"];
 	/**
 	 * Session history access, present on the real ExtensionContext. Only

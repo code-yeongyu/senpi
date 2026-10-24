@@ -6,10 +6,12 @@ import { collectAllPages } from "./expose/pagination.ts";
 import type { McpOutputArtifacts } from "./guard/output-guard.ts";
 import type { McpEnsureFreshAuth } from "./health.ts";
 import type { McpInvocationResolver } from "./invocation.ts";
+import type { McpRequestOrigin } from "./request-origin.ts";
 
 type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 
 export interface McpToolCatalogEntry {
+	requestOrigin?: () => McpRequestOrigin | undefined;
 	server: string;
 	tool: string;
 	schema: ListedTool["inputSchema"];
@@ -27,7 +29,7 @@ export interface McpToolCatalogEntry {
 
 type McpToolCatalogOptions = Pick<
 	McpToolCatalogEntry,
-	"agentDir" | "artifacts" | "ensureFresh" | "outputGuard" | "invocation"
+	"agentDir" | "artifacts" | "ensureFresh" | "outputGuard" | "invocation" | "requestOrigin"
 >;
 
 export async function collectToolCatalog(
@@ -40,6 +42,7 @@ export async function collectToolCatalog(
 		connection.client.listTools(cursor === undefined ? {} : { cursor }, { timeout: config.requestTimeoutMs }),
 	);
 	return result.items.map((tool) => ({
+		requestOrigin: options.requestOrigin,
 		annotations: tool.annotations,
 		agentDir: options.agentDir,
 		artifacts: options.artifacts,
@@ -77,6 +80,7 @@ export function cachedToolsToCatalogEntries(
 	options: McpToolCatalogOptions = {},
 ): McpToolCatalogEntry[] {
 	return catalog.tools.map((tool) => ({
+		requestOrigin: options.requestOrigin,
 		annotations: tool.annotations,
 		agentDir: options.agentDir,
 		artifacts: options.artifacts,

@@ -6,6 +6,8 @@ import { ensureMcpToolCallConnection, withMcpRetriableFailedSendRetry, withMcpSe
 import { runMcpConnectionLifecycleCall } from "../idle.ts";
 import type { McpInvocation, McpInvocationError } from "../invocation.ts";
 import type { McpToolDefinition } from "./register.ts";
+import { mcpRequestOptions } from "../request-origin.ts";
+import { McpMrtrError } from "../modern/errors.ts";
 
 export async function callMcpTool(
 	entry: McpToolCatalogEntry,
@@ -50,7 +52,7 @@ export async function callMcpTool(
 						const result = await current.connection.client.callTool(
 							{ name: current.tool, arguments: args },
 							undefined,
-							{
+							mcpRequestOptions(current.requestOrigin?.(), {
 								onprogress: (progress) => {
 									onUpdate?.(
 										redactResolvedReferenceData({
@@ -61,7 +63,7 @@ export async function callMcpTool(
 								},
 								signal,
 								timeout: current.requestTimeoutMs,
-							},
+							}),
 						);
 						return { kind: "called" as const, entry: current, result };
 					}
@@ -69,6 +71,7 @@ export async function callMcpTool(
 			}),
 		);
 	} catch (error) {
+		if (error instanceof McpMrtrError) throw error;
 		const label = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 		throw new ToolExecError(redactResolvedReferenceValues(`ToolExecError: ${label}`), {
 			cause: error,

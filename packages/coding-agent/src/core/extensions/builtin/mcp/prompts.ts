@@ -10,13 +10,18 @@
 // last-wins, and prompts removed server-side keep a stale command until the
 // next session — invoking one surfaces the server error as a notice.
 
-import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionUIContext } from "../../types.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { ServerConnection } from "./connection.ts";
 import { createMcpLogger } from "./log.ts";
 import type { McpService } from "./service.ts";
+import { type McpRequestOrigin, mcpRequestOptions } from "./request-origin.ts";
+import { ensureMcpToolCallConnection } from "./health.ts";
 
 export interface McpPromptServer {
+	readonly ensureFresh?: () => Promise<void>;
+	readonly requestOrigin?: () => McpRequestOrigin | undefined;
+	readonly bindPresentation?: (ui: ExtensionUIContext) => void;
 	readonly server: string;
 	readonly connection: ServerConnection;
 	readonly requestTimeoutMs?: number;
@@ -58,11 +63,13 @@ export function registerMcpPromptCommands(
 				description: prompt.description ?? `MCP prompt ${prompt.name} from ${server.server}`,
 				handler: async (_args, ctx) => {
 					try {
+						server.bindPresentation?.(ctx.ui);
 						const collected = await collectPromptArguments(prompt.arguments ?? [], ctx);
 						if (collected === undefined) return;
+						if (server.requestOrigin) await ensureMcpToolCallConnection(server.connection, server.ensureFresh);
 						const result = await server.connection.client.getPrompt(
 							{ arguments: collected, name: prompt.name },
-							{ timeout: server.requestTimeoutMs },
+							mcpRequestOptions(server.requestOrigin?.(), { timeout: server.requestTimeoutMs }),
 						);
 						ctx.ui.setEditorText(flattenPromptMessages(result.messages));
 					} catch (error) {

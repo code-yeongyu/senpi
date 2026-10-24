@@ -82,6 +82,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			if (targets.length > 0) service.activateSkillMcpTools(targets, pi);
 		};
 		pi.on("input", async (event, ctx) => {
+			service.bindMcpMrtrPresentation(pi, ctx.ui);
 			const match = /^\s*\/skill:([A-Za-z0-9._-]+)/.exec(event.text);
 			if (match) revealSkill(match[1]);
 			// @mcp:<server>/<uri> mention expansion (todo 39): recognized mentions are
@@ -145,6 +146,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 					// Elicitation (todo 41): point mid-call forms at this session's UI.
 					service.setMcpElicitationUiProvider(() => (ctx.hasUI ? ctx.ui : undefined));
 					await (attachPromise ?? attach({ type: "session_start", reason: "startup" }, ctx));
+					service.bindMcpMrtrPresentation(pi, ctx.ui);
 				}
 				const skills = preview ? [] : ((event.systemPromptOptions.skills ?? []) as readonly SkillLike[]);
 				if (skills.length > 0) {

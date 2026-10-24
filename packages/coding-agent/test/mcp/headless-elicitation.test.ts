@@ -98,74 +98,80 @@ describe("headless MCP elicitation (senpi#4185)", () => {
 		expect(ui.select).toHaveBeenCalledTimes(hasUI ? 1 : 0);
 	});
 
-	it.each(["legacy", "modern"] as const)("advertises UI support only in UI modes over %s HTTP", async (era) => {
-		for (const mode of ["print", "json", "tui", "rpc"] as const) {
-			const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
-			vi.stubGlobal(
-				"fetch",
-				vi.fn(async (_url: unknown, init?: RequestInit) => {
-					if (init?.method !== "POST") return new Response(null, { status: 405 });
-					const request = JSON.parse(String(init.body));
-					if (!request.method || request.id === undefined) return new Response(null, { status: 202 });
-					requests.push(request);
-					if (request.method === "server/discover") {
-						return Response.json(
-							era === "modern"
+	it.each(["legacy", "modern"] as const)(
+		"separates legacy mode and modern request capability over %s HTTP",
+		async (era) => {
+			for (const mode of ["print", "json", "tui", "rpc"] as const) {
+				const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+				vi.stubGlobal(
+					"fetch",
+					vi.fn(async (_url: unknown, init?: RequestInit) => {
+						if (init?.method !== "POST") return new Response(null, { status: 405 });
+						const request = JSON.parse(String(init.body));
+						if (!request.method || request.id === undefined) return new Response(null, { status: 202 });
+						requests.push(request);
+						if (request.method === "server/discover") {
+							return Response.json(
+								era === "modern"
+									? {
+											jsonrpc: "2.0",
+											id: request.id,
+											result: {
+												resultType: "complete",
+												supportedVersions: ["2026-07-28"],
+												capabilities: { tools: {} },
+												_meta: { "io.modelcontextprotocol/serverInfo": { name: "fixture", version: "1" } },
+											},
+										}
+									: { jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } },
+							);
+						}
+						const result =
+							request.method === "initialize"
 								? {
-										jsonrpc: "2.0",
-										id: request.id,
-										result: {
-											resultType: "complete",
-											supportedVersions: ["2026-07-28"],
-											capabilities: { tools: {} },
-											_meta: { "io.modelcontextprotocol/serverInfo": { name: "fixture", version: "1" } },
-										},
+										protocolVersion: "2025-11-25",
+										capabilities: { tools: {} },
+										serverInfo: { name: "fixture", version: "1" },
 									}
-								: { jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } },
-						);
+								: request.method === "tools/list"
+									? { tools: [] }
+									: {};
+						return Response.json({ jsonrpc: "2.0", id: request.id, result });
+					}),
+				);
+				const root = makeRoot(`elicitation-${era}-${mode}`, cleanup);
+				setConfig(root, {
+					fixture: { type: "http", url: "https://example.test/mcp", auth: false, lifecycle: "eager" },
+				});
+				const service = new McpService();
+				services.push(service);
+				await service.attachSession(
+					{ type: "session_start", reason: "startup" },
+					{ cwd: root.cwd, isProjectTrusted: () => true, mode },
+					fakePi(),
+					{ agentDir: root.agentDir },
+				);
+				expect(await service.whenAttachSettled(10_000)).toBe("settled");
+				expect(service.getConnection("fixture")?.state).toBe("connected");
+				// Modern discovery/catalog has no issuing human, regardless of a process mode label.
+				const expected = era === "modern" || mode === "print" || mode === "json" ? {} : { elicitation: {} };
+				if (era === "legacy") {
+					const initialize = requests.find((request) => request.method === "initialize");
+					expect(initialize?.params.capabilities).toEqual(expected);
+				} else {
+					expect(requests.some((request) => request.method === "server/discover")).toBe(true);
+					expect(requests.some((request) => request.method === "tools/list")).toBe(true);
+					for (const request of requests) {
+						expect(request.params._meta).toMatchObject({
+							"io.modelcontextprotocol/clientCapabilities": expected,
+						});
+						expect(
+							(request.params._meta as Record<string, unknown>)["io.modelcontextprotocol/clientCapabilities"],
+						).toEqual(expected);
 					}
-					const result =
-						request.method === "initialize"
-							? {
-									protocolVersion: "2025-11-25",
-									capabilities: { tools: {} },
-									serverInfo: { name: "fixture", version: "1" },
-								}
-							: request.method === "tools/list"
-								? { tools: [] }
-								: {};
-					return Response.json({ jsonrpc: "2.0", id: request.id, result });
-				}),
-			);
-			const root = makeRoot(`elicitation-${era}-${mode}`, cleanup);
-			setConfig(root, {
-				fixture: { type: "http", url: "https://example.test/mcp", auth: false, lifecycle: "eager" },
-			});
-			const service = new McpService();
-			services.push(service);
-			await service.attachSession(
-				{ type: "session_start", reason: "startup" },
-				{ cwd: root.cwd, isProjectTrusted: () => true, mode },
-				fakePi(),
-				{ agentDir: root.agentDir },
-			);
-			expect(await service.whenAttachSettled(10_000)).toBe("settled");
-			expect(service.getConnection("fixture")?.state).toBe("connected");
-			const expected = mode === "print" || mode === "json" ? {} : { elicitation: {} };
-			if (era === "legacy") {
-				const initialize = requests.find((request) => request.method === "initialize");
-				expect(initialize?.params.capabilities).toEqual(expected);
-			} else {
-				expect(requests.some((request) => request.method === "server/discover")).toBe(true);
-				expect(requests.some((request) => request.method === "tools/list")).toBe(true);
-				for (const request of requests) {
-					expect(request.params._meta).toMatchObject({ "io.modelcontextprotocol/clientCapabilities": expected });
-					expect(
-						(request.params._meta as Record<string, unknown>)["io.modelcontextprotocol/clientCapabilities"],
-					).toEqual(expected);
 				}
+				await service.dispose("quit");
 			}
-			await service.dispose("quit");
-		}
-	});
+		},
+	);
 });

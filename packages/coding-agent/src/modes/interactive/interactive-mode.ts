@@ -126,6 +126,7 @@ import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/htt
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { isManualContinueSubmission } from "../../core/manual-continue.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
+import { registerMcpMrtrPresentation } from "../../core/mcp-mrtr-presentations.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
 import {
@@ -2732,7 +2733,10 @@ export class InteractiveMode {
 	 */
 	private unsubscribeSecurityNotices?: () => void;
 	private detachMcpGrantPresentation?: () => void;
+	private mcpMrtrPresentationLifetime = new AbortController();
 	private async bindCurrentSessionExtensions(): Promise<void> {
+		this.mcpMrtrPresentationLifetime?.abort();
+		this.mcpMrtrPresentationLifetime = new AbortController();
 		await this.sessionControlHost?.disposeActive();
 		this.session.setControlEndpointHost?.(this.sessionControlHost);
 		const uiContext = this.createExtensionUIContext();
@@ -3059,7 +3063,14 @@ export class InteractiveMode {
 		};
 	}
 
-	private async withBlockedHostDialog<T>(id: string, label: string, show: () => Promise<T>): Promise<T> {
+	private async withBlockedHostDialog<T>(
+		id: string,
+		label: string,
+		show: () => Promise<T>,
+		opts?: ExtensionUIDialogOptions,
+	): Promise<T> {
+		if (opts?.signal?.aborted) return undefined as T;
+		if (opts?.ephemeral) return await show();
 		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id });
 		try {
 			return await show();
@@ -3693,18 +3704,28 @@ export class InteractiveMode {
 	}
 
 	private createExtensionUIContext(): ExtensionUIContext {
-		return {
+		this.mcpMrtrPresentationLifetime ??= new AbortController();
+		const context: ExtensionUIContext = {
 			select: (title, options, opts) =>
-				this.withBlockedHostDialog(crypto.randomUUID(), title, () =>
-					this.showExtensionSelector(title, options, opts),
+				this.withBlockedHostDialog(
+					crypto.randomUUID(),
+					title,
+					() => this.showExtensionSelector(title, options, opts),
+					opts,
 				),
-			confirm: (title, message, opts) =>
-				this.withBlockedHostDialog(crypto.randomUUID(), title, () =>
-					this.showExtensionConfirm(title, message, opts),
-				),
+			confirm: async (title, message, opts) =>
+				(await this.withBlockedHostDialog(
+					crypto.randomUUID(),
+					title,
+					() => this.showExtensionConfirm(title, message, opts),
+					opts,
+				)) ?? false,
 			input: (title, placeholder, opts) =>
-				this.withBlockedHostDialog(crypto.randomUUID(), title, () =>
-					this.showExtensionInput(title, placeholder, opts),
+				this.withBlockedHostDialog(
+					crypto.randomUUID(),
+					title,
+					() => this.showExtensionInput(title, placeholder, opts),
+					opts,
 				),
 			// Async answers are delivered by the ask-user extension, not here: the
 			// widget only resolves the question, so the model sees exactly one
@@ -3768,6 +3789,7 @@ export class InteractiveMode {
 			getToolsExpanded: () => this.toolOutputExpanded,
 			setToolsExpanded: (expanded) => this.setToolsExpanded(expanded),
 		};
+		return registerMcpMrtrPresentation(context, this.mcpMrtrPresentationLifetime.signal);
 	}
 
 	/**
@@ -6732,6 +6754,7 @@ export class InteractiveMode {
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
+		this.mcpMrtrPresentationLifetime?.abort();
 		// Keep signal handlers registered until terminal cleanup has completed.
 		// `signal-exit` checks the listener list during the same SIGTERM/SIGHUP
 		// dispatch and re-sends the signal if only its own listeners remain.

@@ -3507,6 +3507,11 @@ if (confirmed) {
 
 #### Manual Dismissal with AbortSignal
 
+Local terminal `select`, `confirm`, and `input` dialogs also accept
+`ephemeral: true`. Their visible contents remain local; they emit no generic
+blocked events, replacement labels, identifiers, or pending markers. This option is
+not an RPC field or permission to present MCP input on another session.
+
 For more control (e.g., to distinguish timeout from user cancel), use `AbortSignal`:
 
 ```typescript

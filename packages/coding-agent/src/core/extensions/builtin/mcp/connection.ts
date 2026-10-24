@@ -43,6 +43,10 @@ export class ServerConnection {
 	readonly #resolveConfig: ServerConnectionOptions["resolveConfig"];
 	readonly #projectPolicy: ServerConnectionOptions["projectPolicy"];
 	#policyAbort: AbortController | undefined;
+	#requestLifetime = new AbortController();
+	get requestLifetimeSignal(): AbortSignal {
+		return this.#requestLifetime.signal;
+	}
 	#startedGrantNames: readonly string[] = [];
 	#state: ServerConnectionState;
 	#generation = 0;
@@ -175,6 +179,8 @@ export class ServerConnection {
 			throw this.#connectError(`MCP server ${this.serverName} is disabled`, "renew");
 		}
 		this.#policyAbort?.abort();
+		this.#requestLifetime.abort();
+		this.#requestLifetime = new AbortController();
 		this.#generation++;
 		this.#pendingConnect = undefined;
 		this.#setState("idle");
@@ -183,6 +189,8 @@ export class ServerConnection {
 	}
 
 	bumpGeneration(): Promise<void> {
+		this.#requestLifetime.abort();
+		this.#requestLifetime = new AbortController();
 		this.#policyAbort?.abort();
 		this.#generation++;
 		this.#pendingConnect = undefined;
@@ -192,6 +200,7 @@ export class ServerConnection {
 	}
 
 	disable(): Promise<void> {
+		this.#requestLifetime.abort();
 		this.#policyAbort?.abort();
 		this.#generation++;
 		this.#pendingConnect = undefined;
@@ -201,6 +210,7 @@ export class ServerConnection {
 	}
 
 	async dispose(): Promise<void> {
+		this.#requestLifetime.abort();
 		this.#policyAbort?.abort();
 		this.#generation++;
 		this.#pendingConnect = undefined;

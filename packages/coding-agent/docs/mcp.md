@@ -393,9 +393,26 @@ above.
   notice.
 - Every server prompt registers as `/mcp:<server>:<prompt>`; invoking it
   collects the prompt's arguments and drops the rendered text into the editor.
-- Servers may ask questions mid-call (elicitation, form mode): senpi walks the
-  requested fields through input dialogs; in non-interactive runs the request
-  is declined cleanly.
+- Legacy servers may ask form questions mid-call through the existing terminal
+  or RPC dialog channel.
+- On MCP 2026-07-28 connections, `tools/call`, `resources/read`, and `prompts/get`
+  can return `input_required`. Senpi collects form input privately in the
+  originating terminal session, lets you review and edit it, and continues the
+  operation with a new request ID. Only the final result reaches the model or editor.
+  Continue does not submit a form: even empty forms require Submit. Decline is
+  an explicit human refusal; dismissal of a presented form is Cancel.
+- RPC, print, and other runs without an originating terminal presenter do not
+  advertise modern elicitation. An unsolicited input request terminates the
+  operation locally without fabricating an answer or retrying incomplete input.
+  State-only continuations need no human and remain supported.
+- Each operation allows eight input rounds and five minutes of total consent
+  time, including queueing. The overall deadline also includes network time
+  and cannot be extended by progress. Caller cancellation, session closure,
+  or observed authorization invalidation dismisses pending input without a retry.
+  Authorization uses the same observed-revocation boundary as ordinary MCP
+  requests. Unsupported client features terminate locally.
+- Continuation state and drafts are not persisted or resumed after restart.
+  MRTR does not enable the Tasks extension.
 
 ## Auth
 

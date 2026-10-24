@@ -58,9 +58,17 @@ export function modernizeRequest(
 	params?: Readonly<Record<string, unknown>> & { readonly _meta?: Readonly<Record<string, unknown>> },
 ): ModernRequest {
 	const built = buildModernRequest(id, method, clientInfo, clientCapabilities, params);
+	const capabilities = params?._meta?.["io.modelcontextprotocol/clientCapabilities"];
 	return {
 		...built,
-		params: { ...built.params, _meta: { ...built.params._meta, "io.modelcontextprotocol/protocolVersion": version } },
+		params: {
+			...built.params,
+			_meta: {
+				...built.params._meta,
+				"io.modelcontextprotocol/clientCapabilities": isRecord(capabilities) ? capabilities : clientCapabilities,
+				"io.modelcontextprotocol/protocolVersion": version,
+			},
+		},
 	};
 }
 

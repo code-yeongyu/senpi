@@ -12,10 +12,12 @@ import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
-import { configureMcpElicitation, type McpElicitationUiProvider, mcpClientCapabilities } from "./elicitation.ts";
+import type { McpElicitationUiProvider } from "./elicitation.ts";
 import type { McpLogger } from "./log.ts";
+import { modernCredentialSnapshot } from "./modern/http-fetch.ts";
+import { createMcpRequestClient, type ModernProtocolState } from "./modern/request.ts";
 import { ProjectStdioTransport } from "./project-stdio-transport.ts";
-import { loadMcpSdkClient, loadMcpSdkStdioTransport, loadMcpSdkStreamableHttpTransport } from "./sdk.lazy.ts";
+import { loadMcpSdkStdioTransport, loadMcpSdkStreamableHttpTransport } from "./sdk.lazy.ts";
 import { type McpAsyncErrorSink, safeOn } from "./wrap.ts";
 
 export type McpStdioTransportSpec = {
@@ -59,9 +61,15 @@ export interface MaterializeMcpTransportOptions {
 
 export async function materializeMcpTransport(
 	options: MaterializeMcpTransportOptions,
+	protocol: ModernProtocolState = {},
 ): Promise<McpMaterializedTransport> {
-	const client = await buildMcpClient(options.elicitationUiProvider, options.elicitationEnabled);
-	if (options.spec.kind === "stdio") return materializeStdio(options.spec, options, client);
+	const client = await createMcpRequestClient(
+		protocol,
+		options.elicitationUiProvider,
+		() => modernCredentialSnapshot(options.spec.authProvider?.tokens()),
+		options.elicitationEnabled,
+	);
+	if (options.spec.kind === "stdio") return materializeStdio(options.spec, options, client, protocol);
 	return materializeHttp(options.spec, client);
 }
 
@@ -69,6 +77,7 @@ async function materializeStdio(
 	spec: McpStdioTransportSpec,
 	options: MaterializeMcpTransportOptions,
 	client: Client,
+	protocol: ModernProtocolState,
 ): Promise<McpMaterializedTransport> {
 	const { getDefaultEnvironment, StdioClientTransport } = await loadMcpSdkStdioTransport();
 	const create = (current: McpStdioTransportSpec) =>
@@ -88,7 +97,7 @@ async function materializeStdio(
 			? new ProjectStdioTransport(spec.resolveBeforeStart, create)
 			: create(spec);
 	trackStdioStart(transport, options.onStart);
-	pipeStderr(transport, options.logger, options.sink);
+	pipeStderr(transport, options.logger, options.sink, protocol);
 	dropNullNextCursor(transport);
 	return {
 		client,
@@ -111,22 +120,6 @@ async function materializeHttp(spec: McpHttpTransportSpec, client: Client): Prom
 		readPid: () => null,
 		transport,
 	};
-}
-
-async function buildMcpClient(
-	elicitationUiProvider: McpElicitationUiProvider | undefined,
-	elicitationEnabled = true,
-): Promise<Client> {
-	// Elicitation capability is declared EMPTY on purpose (form mode only;
-	// Spring-AI servers reject richer shapes) and the create-handler is wired
-	// before any connect so mid-call requests never race registration.
-	const { Client: McpClient } = await loadMcpSdkClient();
-	const client = new McpClient(
-		{ name: "senpi-mcp-client", version: "0.0.0" },
-		{ capabilities: mcpClientCapabilities(elicitationEnabled) },
-	);
-	await configureMcpElicitation(client, elicitationUiProvider, undefined, elicitationEnabled);
-	return client;
 }
 
 // OMP pattern: hand stdio OAuth servers the current access token via env.
@@ -163,22 +156,52 @@ function trackStdioStart(transport: Pick<StdioClientTransport, "start">, onStart
 	};
 }
 
-function pipeStderr(transport: Pick<StdioClientTransport, "stderr">, logger: McpLogger, sink: McpAsyncErrorSink): void {
+function pipeStderr(
+	transport: Pick<StdioClientTransport, "stderr">,
+	logger: McpLogger,
+	sink: McpAsyncErrorSink,
+	protocol: ModernProtocolState,
+): void {
 	let pending = "";
+	let undecided = "";
+	let stderrEnded = false;
 	const stderr = transport.stderr;
 	if (stderr === undefined || stderr === null) return;
+	const append = (text: string) => {
+		pending += text;
+		const lines = pending.split(/\r?\n/);
+		pending = lines.pop() ?? "";
+		for (const line of lines) if (line.length > 0) logger.stderr(line);
+	};
+	protocol.resolveStdioDiagnostics = (modern) => {
+		if (!modern) {
+			append(undecided);
+			if (stderrEnded && pending.length > 0) {
+				logger.stderr(pending);
+				pending = "";
+			}
+		}
+		undecided = "";
+		if (modern) pending = "";
+	};
 	safeOn(
 		stderr,
 		"data",
 		"transport.stderr.data",
 		(chunk) => {
-			if (!Buffer.isBuffer(chunk) && typeof chunk !== "string") return;
-			pending += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
-			const lines = pending.split(/\r?\n/);
-			pending = lines.pop() ?? "";
-			for (const line of lines) {
-				if (line.length > 0) logger.stderr(line);
+			if (protocol.version !== undefined) {
+				pending = "";
+				undecided = "";
+				return;
 			}
+			if (!Buffer.isBuffer(chunk) && typeof chunk !== "string") return;
+			const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
+			if (!protocol.legacy) {
+				// Only legacy-positive negotiation may release startup diagnostics.
+				undecided += text.slice(0, Math.max(0, 512 * 1024 - undecided.length));
+				return;
+			}
+			append(text);
 		},
 		sink,
 	);
@@ -187,8 +210,11 @@ function pipeStderr(transport: Pick<StdioClientTransport, "stderr">, logger: Mcp
 		"end",
 		"transport.stderr.end",
 		() => {
-			if (pending.length > 0) logger.stderr(pending);
+			stderrEnded = true;
+			if (protocol.legacy && protocol.version === undefined && pending.length > 0) logger.stderr(pending);
 			pending = "";
+			// A crashed probe is classified after EOF; only that decision may release or discard its buffer.
+			if (protocol.legacy || protocol.version !== undefined) undecided = "";
 		},
 		sink,
 	);

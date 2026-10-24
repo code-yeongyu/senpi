@@ -5425,6 +5425,12 @@ A provider holds logins of one kind. If it had an OAuth login, the key replaces 
 
 ## Extension UI Protocol
 
+MCP 2026-07-28 multi-round-trip form answering is terminal-only in v1.
+RPC-originated modern requests advertise no elicitation and terminate locally
+if input is required; they never fabricate a decline or retry incomplete input.
+Client roles and capability declarations do not enable this form channel.
+Existing legacy MCP dialogs and their RPC request/response shapes remain unchanged.
+
 Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()`, etc. In RPC mode, these are translated into a request/response sub-protocol on top of the base command/event flow.
 
 There are two categories of extension UI methods:

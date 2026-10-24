@@ -2,6 +2,7 @@ import { ConfigReferenceError } from "@earendil-works/pi-ai/utils/config-referen
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { getAgentDir } from "../../../../config.ts";
 import { redactResolvedReferenceData } from "../../../config-reference-redaction.ts";
+import { getMcpMrtrPresentation, type McpMrtrPresentation } from "../../../mcp-mrtr-presentations.ts";
 import type { ExtensionAPI, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import {
 	getToolSearchService,
@@ -24,6 +25,8 @@ import { HostMcpRegistry } from "./host-registry.ts";
 import { refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
 import { prepareProjectSkillServer } from "./project-skill-policy.ts";
+import { createMcpRequestOrigin, type McpRequestOrigin } from "./request-origin.ts";
+import { McpMrtrError } from "./modern/errors.ts";
 import { reconnectMcpNow } from "./reconnect.ts";
 import type { McpResourceServer } from "./resources.ts";
 import { createMcpSessionConnection, disposeEntryConnection } from "./service-connection.ts";
@@ -73,6 +76,8 @@ type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" |
  * shared across bindings; only the binding is per session.
  */
 interface McpSessionBinding {
+	readonly lifetime: AbortController;
+	presentation?: McpMrtrPresentation;
 	readonly pi: McpToolRegistrar;
 	/** Only for a session whose extension load owns no tool-search service (SDK and test hosts). */
 	readonly fallbackToolSearch: ToolSearchService | undefined;
@@ -262,7 +267,11 @@ export class McpService {
 		};
 		const previous = this.#bindings.get(pi);
 		// A session-owned service serves exactly one session: a new attach takes over its binding.
-		if (!this.#servesManySessions) this.#bindings.clear();
+		previous?.lifetime.abort();
+		if (!this.#servesManySessions) {
+			for (const binding of this.#bindings.values()) binding.lifetime.abort();
+			this.#bindings.clear();
+		}
 		let fallbackToolSearch: ToolSearchService | undefined;
 		let holdsProcessFallback = false;
 		const sessionToolSearch = getToolSearchServiceForExtension(pi);
@@ -282,6 +291,8 @@ export class McpService {
 			}
 		}
 		const binding: McpSessionBinding = {
+			lifetime: new AbortController(),
+			presentation: owner.context.ui === undefined ? undefined : getMcpMrtrPresentation(owner.context.ui),
 			pi,
 			fallbackToolSearch,
 			holdsProcessFallback,
@@ -303,7 +314,10 @@ export class McpService {
 	#liveBindings(): McpSessionBinding[] {
 		for (const [pi, binding] of this.#bindings) {
 			// A disposed session retires its own tool-search service; its binding goes with it.
-			if (getToolSearchServiceForExtension(binding.pi)?.isDisposed === true) this.#bindings.delete(pi);
+			if (getToolSearchServiceForExtension(binding.pi)?.isDisposed === true) {
+				binding.lifetime.abort();
+				this.#bindings.delete(pi);
+			}
 		}
 		return [...this.#bindings.values()];
 	}
@@ -320,6 +334,7 @@ export class McpService {
 	 */
 	async releaseSession(pi: object, disposeReason?: McpDisposeReason): Promise<void> {
 		const released = this.#bindings.get(pi);
+		released?.lifetime.abort();
 		this.#bindings.delete(pi);
 		if (disposeReason !== undefined) this.#releasedSessions.add(pi);
 		const live = this.#liveBindings();
@@ -619,6 +634,7 @@ export class McpService {
 		this.#disposed = true;
 		this.#disposeCount += 1;
 		this.#lastDisposeReason = reason;
+		for (const binding of this.#bindings.values()) binding.lifetime.abort();
 		this.#bindings.clear();
 		this.#sessionContext = null;
 		this.#config = null;
@@ -932,6 +948,8 @@ export class McpService {
 				onRegistered: (entry, identity) => binding.registeredIdentities.set(entry.key, identity),
 				contextRequired: binding.context.mode !== undefined,
 				sessionManager: binding.context.sessionManager,
+				requestOrigin: (entry) => this.#requestOrigin(binding, entry),
+				bindPresentation: (ui) => this.bindMcpMrtrPresentation(binding.pi, ui),
 				// A new attach of this session replaces its binding (and with it its config); a peer's attach does not.
 				isCurrent: (entry) =>
 					!this.#disposed &&
@@ -1094,6 +1112,34 @@ export class McpService {
 
 	setMcpElicitationUiProvider(provider: (() => McpElicitationUi | undefined) | undefined): void {
 		this.#elicitationUiProvider = provider;
+	}
+
+	bindMcpMrtrPresentation(pi: object, ui: ExtensionUIContext): void {
+		const binding = this.#bindings.get(pi);
+		if (binding) binding.presentation = getMcpMrtrPresentation(ui);
+	}
+
+	#requestOrigin(binding: McpSessionBinding, entry: McpConnectionEntry): McpRequestOrigin {
+		return createMcpRequestOrigin({
+			binding,
+			connection: entry.connection,
+			signal: AbortSignal.any([binding.lifetime.signal, entry.connection.requestLifetimeSignal]),
+			presentation: binding.presentation,
+			serverLabel: entry.name,
+			isCurrent: () =>
+				!this.#disposed &&
+				!binding.lifetime.signal.aborted &&
+				this.#bindings.get(binding.pi) === binding &&
+				[...this.#connections.values()].includes(entry) &&
+				declares(binding.config, entry.name, entry.configHash) &&
+				entry.isCurrent?.() !== false &&
+				entry.credentialsCurrent?.() !== false,
+			resolveAuthority: async (signal) => {
+				if (await entry.generationChanged?.()) throw new McpMrtrError("MCP_MRTR_CONTEXT_CHANGED");
+				// Same observed-revocation boundary as ordinary MCP requests. Never prompts for a new grant.
+				return await entry.connection.projectPolicy?.resolve(signal, false);
+			},
+		});
 	}
 
 	getMcpElicitationUi(): McpElicitationUi | undefined {

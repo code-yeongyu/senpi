@@ -148,6 +148,8 @@ export type CompactionRejectionCause =
 
 /** Options for extension UI dialogs. */
 export interface ExtensionUIDialogOptions {
+	/** Private local dialog: emits no generic blocked event or pending marker. Not an RPC field. */
+	ephemeral?: boolean;
 	/** AbortSignal to programmatically dismiss the dialog. */
 	signal?: AbortSignal;
 	/** Timeout in milliseconds. Dialog auto-dismisses with live countdown display. */

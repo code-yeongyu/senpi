@@ -40,10 +40,13 @@ function memoizeLoader<T>(load: () => Promise<T>): () => Promise<T> {
 /** `Client` — the MCP client class, built once per transport connection. */
 export const loadMcpSdkClient = memoizeLoader(() => import("@modelcontextprotocol/sdk/client/index.js"));
 
+/** Compatibility parser for final caller schemas at the modern request boundary. */
+export const loadMcpSdkZodCompat = memoizeLoader(() => import("@modelcontextprotocol/sdk/server/zod-compat.js"));
+
 /** `StdioClientTransport` + `getDefaultEnvironment` — stdio servers and the stdio diagnostic rerun. */
 export const loadMcpSdkStdioTransport = memoizeLoader(() => import("@modelcontextprotocol/sdk/client/stdio.js"));
 
-/** Protocol schemas (currently only the elicitation request schema). */
+/** SDK-owned protocol schemas for elicitation and modern request results. */
 export const loadMcpSdkTypes = memoizeLoader(() => import("@modelcontextprotocol/sdk/types.js"));
 
 let authModule: SdkAuthModule | undefined;
