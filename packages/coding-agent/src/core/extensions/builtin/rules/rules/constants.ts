@@ -31,10 +31,16 @@ export const PROJECT_RULE_SUBDIRS: ReadonlyArray<readonly [string, string]> = [
  */
 export const PROJECT_SINGLE_FILES: readonly string[] = [
 	".github/copilot-instructions.md",
+	"AGENTS.override.md",
 	"AGENTS.md",
 	"CLAUDE.md",
 	"CONTEXT.md",
 ];
+
+/**
+ * Single files that a same-directory `AGENTS.override.md` replaces, matching the native context loader.
+ */
+export const OVERRIDDEN_SINGLE_FILES: ReadonlySet<string> = new Set(["AGENTS.md", "CLAUDE.md"]);
 
 /**
  * User-home rule directories.
@@ -66,9 +72,10 @@ export const SOURCE_PRIORITY: ReadonlyMap<RuleSource, number> = new Map([
 	[".cursor/rules", 3],
 	[".github/instructions", 4],
 	[".github/copilot-instructions.md", 5],
-	["AGENTS.md", 6],
-	["CLAUDE.md", 7],
-	["CONTEXT.md", 8],
+	["AGENTS.override.md", 6],
+	["AGENTS.md", 7],
+	["CLAUDE.md", 8],
+	["CONTEXT.md", 9],
 	["~/.pi/rules", 100],
 	["~/.omo/rules", 101],
 	["~/.opencode/rules", 102],

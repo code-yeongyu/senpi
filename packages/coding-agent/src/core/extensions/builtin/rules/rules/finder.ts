@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 
 import {
 	GLOBAL_DISTANCE,
+	OVERRIDDEN_SINGLE_FILES,
 	PROJECT_RULE_SUBDIRS,
 	PROJECT_SINGLE_FILES,
 	USER_HOME_RULE_SUBDIRS,
@@ -102,9 +103,10 @@ function findProjectCandidates(
 	}
 
 	for (const walkDirectory of walkDirectories) {
+		let overrideFound = false;
 		for (const ruleFile of PROJECT_SINGLE_FILES) {
 			const source = toProjectSingleFileSource(ruleFile);
-			if (disabledSources.has(source)) {
+			if (disabledSources.has(source) || (overrideFound && OVERRIDDEN_SINGLE_FILES.has(ruleFile))) {
 				continue;
 			}
 
@@ -114,6 +116,7 @@ function findProjectCandidates(
 				continue;
 			}
 
+			overrideFound ||= source === "AGENTS.override.md";
 			candidates.push({
 				path: fileInfo.path,
 				realPath: fileInfo.realPath,
@@ -303,6 +306,7 @@ function toProjectRuleSource(parentDirectory: string, subDirectory: string): Rul
 function toProjectSingleFileSource(ruleFile: string): RuleSource {
 	switch (ruleFile) {
 		case ".github/copilot-instructions.md":
+		case "AGENTS.override.md":
 		case "AGENTS.md":
 		case "CLAUDE.md":
 		case "CONTEXT.md":

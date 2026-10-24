@@ -2,6 +2,27 @@
 
 Vendored from [`code-yeongyu/pi-rules`](https://github.com/code-yeongyu/pi-rules) (see `external-versions.json`).
 
+## 2026-10-22 - AGENTS.override.md replaces same-directory AGENTS.md / CLAUDE.md (senpi#3948)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/rules/rules/constants.ts`: `AGENTS.override.md` is a project single file ahead of `AGENTS.md` (source priority 6; `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md` move to 7-9). New `OVERRIDDEN_SINGLE_FILES` names the files it replaces.
+- `packages/coding-agent/src/core/extensions/builtin/rules/rules/types.ts`: `RuleSource` gains `"AGENTS.override.md"`.
+- `packages/coding-agent/src/core/extensions/builtin/rules/rules/finder.ts`: when a walked directory has `AGENTS.override.md`, that directory's `AGENTS.md` and `CLAUDE.md` are not returned. Other directories, `CONTEXT.md`, `.github/copilot-instructions.md` and rule directories are unchanged.
+- `packages/coding-agent/test/suite/regressions/issue-3948-agents-override-read-injection.test.ts` covers the static block, the native-context dedup, nested reads and a directory without an override.
+
+### Why
+
+The native context loader already loads `AGENTS.override.md` instead of `AGENTS.md` / `CLAUDE.md` from the same directory. This builtin did not know the file: with a root override it still put the shadowed root `AGENTS.md` into the static block (the native dedup only skips paths the loader read), and nested reads injected a subdirectory's `AGENTS.md` / `CLAUDE.md` instead of its override.
+
+### Why an extension could not handle it
+
+Candidate discovery is private to this builtin; another extension cannot remove a file from its candidates or from the block it already appended.
+
+### Expected merge conflict zones
+
+- LOW in `rules/constants.ts` (`PROJECT_SINGLE_FILES`, `SOURCE_PRIORITY`), `rules/types.ts` (`RuleSource`), and the single-file loop plus `toProjectSingleFileSource` in `rules/finder.ts`. Propose upstream in `code-yeongyu/pi-rules`.
+
 ## 2026-09-24 - Sync with pi-rules 0.2.0 (senpi#2079)
 
 ### What changed

@@ -82,6 +82,7 @@ export type RuleSource =
 	| ".cursor/rules"
 	| ".github/instructions"
 	| ".github/copilot-instructions.md"
+	| "AGENTS.override.md"
 	| "AGENTS.md"
 	| "CLAUDE.md"
 	| "CONTEXT.md"
