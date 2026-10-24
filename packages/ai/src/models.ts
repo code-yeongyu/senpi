@@ -1,7 +1,14 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
 import { InMemoryCredentialStore } from "./auth/credential-store.ts";
-import { appendLoginSlot, assertLoginKeyPresent, removeSlot, withoutBlankKey } from "./auth/pool/slots.ts";
+import {
+	appendLoginSlot,
+	assertLoginKeyPresent,
+	listSlots,
+	type PooledCredential,
+	removeSlot,
+	withoutBlankKey,
+} from "./auth/pool/slots.ts";
 import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
 import {
 	type AuthResolutionOverrides,
@@ -798,6 +805,17 @@ class ModelsImpl implements MutableModels {
 			async (current) => {
 				mutationStarted = true;
 				markMutationStarted?.();
+				if (
+					providerId === "anthropic" &&
+					type === "api_key" &&
+					credential.type === "api_key" &&
+					credential.key !== undefined &&
+					current?.type === "api_key" &&
+					(current.key === credential.key ||
+						listSlots(current as PooledCredential).some((slot) => slot.key === credential.key))
+				) {
+					throw new ModelsError("auth", "Anthropic API key is already added.");
+				}
 				return appendLoginSlot(current, credential, (name, origin) => {
 					committedName = name;
 					committedOrigin = origin;
@@ -827,6 +845,7 @@ class ModelsImpl implements MutableModels {
 			await mutation;
 		} catch (error) {
 			signal.throwIfAborted();
+			if (error instanceof ModelsError) throw error;
 			throw new ModelsError("auth", `Credential store modify failed for ${providerId}`, { cause: error });
 		}
 		if (committedName !== undefined && committedOrigin !== undefined) {

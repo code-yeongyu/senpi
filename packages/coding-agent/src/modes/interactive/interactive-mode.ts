@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
+	type AccountLoginReceipt,
 	type AuthEvent,
 	type AuthPrompt,
 	contentText,
@@ -95,6 +96,7 @@ import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
+import { promptAccountDisplayName } from "../../core/extensions/builtin/account-display-name.ts";
 import {
 	askUserAnswerDisplayText,
 	formatUserMessage,
@@ -9348,9 +9350,19 @@ export class InteractiveMode {
 		};
 
 		try {
-			await this.loginProvider(dialog, providerId, "api_key");
+			const receipt = await this.loginProvider(dialog, providerId, "api_key");
 			restoreEditor();
 			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel);
+			if (providerId === "anthropic") {
+				await promptAccountDisplayName(
+					{
+						ui: this.createExtensionUIContext(),
+						modelRegistry: this.session.modelRegistry,
+						signal: dialog.signal,
+					},
+					receipt,
+				);
+			}
 		} catch (error: unknown) {
 			restoreEditor();
 			this.showLoginFailure(describeLoginFailure(error, providerName, "api_key"));
@@ -9431,7 +9443,8 @@ export class InteractiveMode {
 		dialog: LoginDialogComponent,
 		providerId: string,
 		method: "api_key" | "oauth",
-	): Promise<void> {
+	): Promise<AccountLoginReceipt | undefined> {
+		let receipt: AccountLoginReceipt | undefined;
 		// A replacement recorded by another login path must not be reported as this one's.
 		this.session.modelRegistry.authStorage.takeReplacement(providerId);
 		await this.session.modelRuntime.login(
@@ -9441,12 +9454,16 @@ export class InteractiveMode {
 				signal: dialog.signal,
 				prompt: (prompt) => this.showAuthPrompt(dialog, prompt),
 				notify: (event) => this.notifyAuthDialog(dialog, event),
+				onAccountCommitted: (committed) => {
+					receipt = committed;
+				},
 			},
 			{ getDeviceId: () => this.settingsManager.getOrCreateDeviceId() },
 		);
 		// A login of the other kind replaced the stored one: say where it went (senpi#3448).
 		const replacement = this.session.modelRegistry.authStorage.takeReplacement(providerId);
 		if (replacement) this.showWarning(describeCredentialReplacement(providerId, replacement));
+		return receipt;
 	}
 
 	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {

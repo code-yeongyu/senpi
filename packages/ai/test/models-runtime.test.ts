@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
-import type { ApiKeyAuth, CredentialStore, OAuthAuth, OAuthCredential, ProviderAuth } from "../src/auth/types.ts";
+import { listSlots, type PooledCredential } from "../src/auth/pool/slots.ts";
+import type {
+	ApiKeyAuth,
+	Credential,
+	CredentialStore,
+	OAuthAuth,
+	OAuthCredential,
+	ProviderAuth,
+} from "../src/auth/types.ts";
 import { calculateCost, createModels, createProvider, hasApi, type Provider } from "../src/models.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "../src/models-store.ts";
 import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions, StreamOptions, Usage } from "../src/types.ts";
@@ -901,6 +909,99 @@ describe("Models runtime", () => {
 
 		await models.logout("p1");
 		expect(await credentials.read("p1")).toBeUndefined();
+	});
+
+	it("rejects a duplicate Anthropic API key without changing its slot metadata", async () => {
+		const credentials = new InMemoryCredentialStore();
+		const current = {
+			type: "api_key",
+			key: "primary-key",
+			accounts: [
+				{ name: "default", key: "primary-key", source: "login" },
+				{
+					name: "work",
+					key: "duplicate-key",
+					source: "import",
+					displayName: "Work",
+					env: { ANTHROPIC_MODEL: "work-model" },
+				},
+			],
+			pinned: "work",
+		} as Credential;
+		await credentials.modify("anthropic", async () => current);
+
+		const apiKey = envKeyAuth(undefined);
+		apiKey.login = async () => ({ type: "api_key", key: "duplicate-key" });
+		const models = createModels({ credentials });
+		models.setProvider(testProvider({ id: "anthropic", auth: { apiKey } }));
+		const interaction = { prompt: async () => "unused", notify: () => {} };
+
+		const duplicateError = await models.login("anthropic", "api_key", interaction).catch((error: unknown) => error);
+		expect(duplicateError).toMatchObject({
+			code: "auth",
+			message: "Anthropic API key is already added.",
+		});
+
+		const stored = (await credentials.read("anthropic")) as PooledCredential;
+		expect(stored.accounts?.map((slot) => slot.name)).toEqual(["default", "work"]);
+		expect(stored.pinned).toBe("work");
+		expect(stored.accounts?.[1]).toMatchObject({
+			source: "import",
+			displayName: "Work",
+			env: { ANTHROPIC_MODEL: "work-model" },
+		});
+
+		apiKey.login = async () => ({ type: "api_key", key: "distinct-key" });
+		await models.login("anthropic", "api_key", interaction);
+		const updated = (await credentials.read("anthropic")) as PooledCredential;
+		expect(updated.accounts?.map((slot) => slot.name)).toEqual(["default", "work", "login-2"]);
+		expect(updated.pinned).toBe("work");
+		expect(updated.accounts?.[1]).toMatchObject({
+			source: "import",
+			displayName: "Work",
+			env: { ANTHROPIC_MODEL: "work-model" },
+		});
+	});
+
+	it("serializes concurrent duplicate Anthropic API-key logins", async () => {
+		const credentials = new InMemoryCredentialStore();
+		const apiKey = envKeyAuth(undefined);
+		let loginCount = 0;
+		let releaseLogins: (() => void) | undefined;
+		const loginGate = new Promise<void>((resolve) => {
+			releaseLogins = resolve;
+		});
+		let signalBothLogins: (() => void) | undefined;
+		const bothLoginsStarted = new Promise<void>((resolve) => {
+			signalBothLogins = resolve;
+		});
+		apiKey.login = async () => {
+			loginCount++;
+			if (loginCount === 2) signalBothLogins?.();
+			await loginGate;
+			return { type: "api_key", key: "concurrent-key" };
+		};
+
+		const models = createModels({ credentials });
+		models.setProvider(testProvider({ id: "anthropic", auth: { apiKey } }));
+		const interaction = { prompt: async () => "unused", notify: () => {} };
+		const first = models.login("anthropic", "api_key", interaction);
+		const second = models.login("anthropic", "api_key", interaction);
+		await bothLoginsStarted;
+		releaseLogins?.();
+
+		const results = await Promise.allSettled([first, second]);
+		expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+		const rejected = results.find((result) => result.status === "rejected");
+		expect(rejected?.status).toBe("rejected");
+		if (rejected?.status === "rejected") {
+			expect(rejected.reason).toMatchObject({
+				code: "auth",
+				message: "Anthropic API key is already added.",
+			});
+		}
+		const stored = (await credentials.read("anthropic")) as PooledCredential;
+		expect(listSlots(stored)).toHaveLength(1);
 	});
 
 	it("a stored credential without a matching handler blocks ambient fallback", async () => {
