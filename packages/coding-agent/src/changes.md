@@ -308,6 +308,24 @@ The host's startup configuration and its protocol answer are assembled in core b
 
 - `packages/coding-agent/src/main.ts`: the parse-diagnostics block in `main`, `CliRuntimeConfiguration`, and the `runMultiSessionHost` call.
 
+## 2026-10-17 - Print mode with an empty prompt exits non-zero (senpi#3521)
+
+### What changed
+
+- `main.ts`: print and JSON non-interactive modes check for an empty prompt (`!initialMessage && parsed.messages.length === 0`) and exit 1 with a usage message instead of completing an empty run.
+
+### Why
+
+A print-mode run with no prompt should fail with a clear usage error, not exit 0 silently (#3521).
+
+### Why an extension could not handle it
+
+CLI startup mode routing and usage exit handling are core responsibilities.
+
+### Expected merge conflict zones
+
+- `main.ts`: non-interactive startup validation before creating agent sessions.
+
 ## 2026-10-16 - Non-interactive startup reports context size warnings once (senpi#3460)
 
 ### What changed

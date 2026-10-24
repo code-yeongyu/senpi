@@ -1550,6 +1550,11 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
+	if (appMode !== "interactive" && appMode !== "rpc" && !initialMessage && parsed.messages.length === 0) {
+		console.error(chalk.red(`Error: Print mode requires a prompt. Use "${APP_NAME} --help" for usage.`));
+		process.exit(1);
+	}
+
 	const startupBenchmark = isTruthyEnvFlag(envValue("STARTUP_BENCHMARK"));
 	if (startupBenchmark && appMode !== "interactive") {
 		console.error(chalk.red("Error: PI_STARTUP_BENCHMARK only supports interactive mode"));
