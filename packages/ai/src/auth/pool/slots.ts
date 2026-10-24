@@ -506,7 +506,8 @@ export function mergeRefreshedSlot(current: PooledCredential, name: string, refr
 	if (!target) return current;
 	const rotated = { access: refreshed.access, refresh: refreshed.refresh, expires: refreshed.expires };
 	const accounts = current.accounts.map((slot) => (slot === target ? { ...slot, ...rotated } : slot));
-	const mirrorsFlat = target.access === current.access || target.refresh === current.refresh;
+	const mirrorsFlat =
+		target.access === current.access || target.refresh === current.refresh || target === current.accounts[0];
 	return mirrorsFlat ? { ...current, ...rotated, accounts } : { ...current, accounts };
 }
 
@@ -515,7 +516,9 @@ export function mergeRefreshed(current: PooledCredential, refreshed: Credential)
 		return refreshed;
 	}
 	if (refreshed.type !== "oauth" || current.type !== "oauth") return refreshed;
-	const target = current.accounts.find((slot) => slot.access === current.access || slot.refresh === current.refresh);
+	const target =
+		current.accounts.find((slot) => slot.access === current.access || slot.refresh === current.refresh) ??
+		current.accounts[0];
 	const rotated = {
 		access: refreshed.access,
 		refresh: refreshed.refresh,
