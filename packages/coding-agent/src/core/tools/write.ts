@@ -5,7 +5,7 @@ import { type Static, Type } from "typebox";
 import type { ExtensionContext, FilesystemPolicyChecker, ToolDefinition } from "../extensions/types.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { canonicalizeFilesystemPath } from "./filesystem-policy.ts";
-import { resolveToCwd } from "./path-utils.ts";
+import { assertNotSpecialFile, resolveToCwd } from "./path-utils.ts";
 import { writeRenderers } from "./renderers/write.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { createWriteDetails, readLocalWriteBaseline, type WriteToolDetails } from "./write-result.ts";
@@ -51,6 +51,7 @@ export function createWriteToolDefinition(
 ): ToolDefinition<typeof writeSchema, WriteToolDetails | undefined> {
 	const ops = options?.operations ?? defaultWriteOperations;
 	const readBaseline = options?.operations ? undefined : readLocalWriteBaseline;
+	const refuseSpecialFiles = !options?.operations;
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
 		...(options?.operations !== undefined || filesystemPolicy !== undefined ? { serverPinned: true } : {}),
@@ -88,6 +89,10 @@ export function createWriteToolDefinition(
 						toolName: "write",
 					});
 					if (!decision.allow) throw new Error(decision.reason);
+					throwIfAborted();
+				}
+				if (refuseSpecialFiles) {
+					await assertNotSpecialFile(absolutePath, path, "write");
 					throwIfAborted();
 				}
 				const baseline = readBaseline ? await readBaseline(absolutePath) : ({ kind: "unavailable" } as const);
