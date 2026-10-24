@@ -30,7 +30,7 @@ export async function accountDisplayNameCommand(
 
 /** Naming is a separate, optional operation after a successful login commit. */
 export async function promptAccountDisplayName(
-	ctx: ExtensionCommandContext,
+	ctx: Pick<ExtensionCommandContext, "ui" | "modelRegistry" | "signal">,
 	receipt: AccountLoginReceipt | undefined,
 ): Promise<void> {
 	if (receipt?.origin !== "generated" || ctx.signal?.aborted) return;
