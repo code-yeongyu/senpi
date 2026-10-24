@@ -502,6 +502,24 @@ describe("builtin providers", () => {
 		keyed.setProvider(googleVertexProvider());
 		expect((await keyed.getAuth(model.provider))?.auth.apiKey).toBe("vertex-key");
 	});
+
+	it("falls back to the environment when a stored Vertex project or location is empty (#2961)", async () => {
+		const auth = googleVertexProvider().auth.apiKey!;
+		const adc = "~/.config/gcloud/application_default_credentials.json";
+		const env = { GOOGLE_CLOUD_PROJECT: "env-project", GOOGLE_CLOUD_LOCATION: "global" };
+		for (const stored of [
+			{ GOOGLE_CLOUD_PROJECT: "project-id", GOOGLE_CLOUD_LOCATION: "" },
+			{ GOOGLE_CLOUD_PROJECT: "", GOOGLE_CLOUD_LOCATION: "us-central1" },
+		]) {
+			const credential = { type: "api_key" as const, env: stored };
+			expect(
+				await auth.resolve({ ctx: fakeAuthContext(env, [adc]), credential, signal: neverAbortedSignal }),
+			).toMatchObject({ auth: {}, source: "stored credential" });
+			expect(
+				await auth.resolve({ ctx: fakeAuthContext({}, [adc]), credential, signal: neverAbortedSignal }),
+			).toBeUndefined();
+		}
+	});
 });
 
 describe("envApiKeyAuth", () => {

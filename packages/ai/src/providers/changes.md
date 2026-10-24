@@ -72,6 +72,24 @@ The `onResponse` calls in the faux core and the options interface.
 
 - LOW: the `auth` block of `anthropicProvider()` and its two OAuth imports.
 
+## 2026-10-11 - Vertex treats an empty stored project or location as unset (senpi#2961)
+
+### What changed
+
+- `packages/ai/src/providers/google-vertex.ts`: `resolve` reads the stored `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION` with `||` instead of `??`, so an empty stored value falls back to the environment, as `getProviderEnvValue` already does.
+
+### Why
+
+- `/login` stores the project and location answers unvalidated, so an empty location answer is saved as `GOOGLE_CLOUD_LOCATION: ""`. `??` kept that empty string, `resolve` returned `undefined`, and the provider stayed not configured even with `GOOGLE_CLOUD_LOCATION` set in the environment.
+
+### Why an extension could not handle it
+
+- Credential resolution for a builtin provider is owned by its factory.
+
+### Expected merge conflict zones
+
+- The project and location reads in the Vertex `resolve`.
+
 ## 2026-10-11 - Keep unverified xAI search opt-in (senpi#3122 review)
 
 ### What changed
