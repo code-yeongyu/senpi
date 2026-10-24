@@ -25,6 +25,8 @@ export interface ActiveTurn {
 	resolve: (result: SessionTurnResult) => void;
 	reject: (error: Error) => void;
 	limits: PreReplayBufferLimits;
+	/** Settles (never rejects) once the turn resolved or rejected; a turn submitted behind it waits here. */
+	settled?: Promise<void>;
 }
 
 export interface PreReplayBufferLimits {
