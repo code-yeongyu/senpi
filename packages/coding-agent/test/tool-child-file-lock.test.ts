@@ -1,8 +1,8 @@
 // senpi#3566 todo 7: drain-before-release file locks across two sessions' tool children. A lock is the file's slot in
 // the session's mutation queue; it passes on only after the holder's write is done (or its child is gone), never on a
 // cancel.
-import { existsSync, watch } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -48,22 +48,19 @@ async function sessionChild(): Promise<{ client: ToolChildClient; pid: () => num
 	return { client, pid: () => pid };
 }
 
-/** Resolves once `path` exists, watching its directory (bounded). */
-function appears(path: string, timeoutMs: number): Promise<void> {
-	return new Promise((resolveFile, reject) => {
-		const timer = setTimeout(() => {
-			watcher.close();
-			reject(new Error(`${path} did not appear within ${timeoutMs} ms`));
-		}, timeoutMs);
-		const done = () => {
-			if (!existsSync(path)) return;
-			clearTimeout(timer);
-			watcher.close();
-			resolveFile();
-		};
-		const watcher = watch(resolve(path, ".."), done);
-		done();
-	});
+/**
+ * Resolves once the module writes the FIFO at `path` (bounded). A FIFO, not a watched file: macOS can deliver a
+ * directory-watch event seconds late or never on a busy host (#3836).
+ */
+async function signalled(path: string, timeoutMs: number): Promise<void> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	await Promise.race([
+		readFile(path),
+		new Promise<never>((_, reject) => {
+			timer = setTimeout(() => reject(new Error(`${path} was not signalled within ${timeoutMs} ms`)), timeoutMs);
+		}),
+	]);
+	clearTimeout(timer);
 }
 
 /** Whether `promise` settles within `ms` (a bounded negative check: it must NOT settle while the lock is held). */
@@ -90,19 +87,22 @@ describe.skipIf(process.platform === "win32")("tool child file locks", () => {
 		const file = join(work, "shared.txt");
 		await writeFile(file, "");
 		const held = join(work, "a-held");
+		execFileSync("mkfifo", [held]);
+		// A FIFO, not a watched file: macOS can deliver a directory-watch event after the cancel grace, or never (#3836).
 		const gate = join(work, "a-gate");
+		execFileSync("mkfifo", [gate]);
 		const cancelA = new AbortController();
 		const runA = a.client.run(
 			"module",
-			{ modulePath, export: "appendWhenGated", args: { file, line: "A", held, gate } },
+			{ modulePath, export: "appendWhenFifoOpens", args: { file, line: "A", held, gate } },
 			cancelA.signal,
 		);
 		void runA.catch(() => undefined);
-		await appears(held, 15_000);
+		await signalled(held, 15_000);
 		cancelA.abort();
 		const runB = b.client.run("module", { modulePath, export: "appendLocked", args: { file, line: "B" } });
 		expect(await settlesWithin(runB, 500)).toBe(false);
-		await writeFile(gate, "");
+		await writeFile(gate, "go");
 		expect(await runB).toBe("A\nB\n");
 	}, 60_000);
 
@@ -113,6 +113,7 @@ describe.skipIf(process.platform === "win32")("tool child file locks", () => {
 		const file = join(work, "shared.txt");
 		await writeFile(file, "");
 		const held = join(work, "a-held");
+		execFileSync("mkfifo", [held]);
 		void a.client
 			.run("module", {
 				modulePath,
@@ -120,7 +121,7 @@ describe.skipIf(process.platform === "win32")("tool child file locks", () => {
 				args: { file, line: "A", held, gate: join(work, "never") },
 			})
 			.catch(() => undefined);
-		await appears(held, 15_000);
+		await signalled(held, 15_000);
 		const runB = b.client.run("module", { modulePath, export: "appendLocked", args: { file, line: "B" } });
 		expect(await settlesWithin(runB, 500)).toBe(false);
 		const killedAt = Date.now();
