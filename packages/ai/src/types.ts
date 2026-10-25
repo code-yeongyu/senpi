@@ -102,6 +102,7 @@ export type KnownProvider =
 	| "opencode"
 	| "opencode-go"
 	| "kimi-coding"
+	| "commandcode"
 	| "meta"
 	| "cloudflare-workers-ai"
 	| "cloudflare-ai-gateway"

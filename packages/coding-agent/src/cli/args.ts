@@ -591,6 +591,7 @@ ${chalk.bold("Environment Variables:")}
   XIAOMI_TOKEN_PLAN_AMS_API_KEY    - Xiaomi MiMo Token Plan API key (Amsterdam region)
   XIAOMI_TOKEN_PLAN_SGP_API_KEY    - Xiaomi MiMo Token Plan API key (Singapore region)
   ALIBABA_TOKEN_PLAN_API_KEY       - Alibaba Cloud Model Studio Token Plan API key (ap-southeast-1)
+  CMD_API_KEY                      - Command Code API key (COMMANDCODE_API_KEY also accepted)
   AWS_PROFILE                      - AWS profile for Amazon Bedrock
   AWS_ACCESS_KEY_ID                - AWS access key for Amazon Bedrock
   AWS_SECRET_ACCESS_KEY            - AWS secret key for Amazon Bedrock

@@ -1975,6 +1975,59 @@ function processZaiModels(data: ModelsDevCatalog): Model<Api>[] {
 	return models;
 }
 
+const COMMANDCODE_BASE_URL = "https://api.commandcode.ai/provider";
+
+/**
+ * Command Code serves Claude models over the Anthropic wire and everything else
+ * over OpenAI chat completions. models.dev marks the wire with `provider.npm`
+ * (`@ai-sdk/anthropic` for the Claude slice); the live `/models` catalog
+ * publishes the same split as `supported_endpoints`, which the provider re-applies
+ * on refresh (`src/providers/commandcode-config.ts`).
+ */
+function processCommandCodeModels(data: ModelsDevCatalog): Model<Api>[] {
+	const provider = data.commandcode;
+	if (!provider?.models) return [];
+
+	const models: Model<Api>[] = [];
+	for (const [modelId, model] of Object.entries(provider.models)) {
+		const m = model as ModelsDevModel;
+		if (m.tool_call !== true) continue;
+		if (m.status === "deprecated" && !keepDeprecatedUpstream("commandcode", modelId)) continue;
+
+		const anthropicWire = m.provider?.npm === "@ai-sdk/anthropic";
+		const thinkingLevelMap = m.reasoning === true ? getEffortThinkingLevelMap(m.reasoning_options ?? []) : undefined;
+		const compat: OpenAICompletionsCompat | undefined = anthropicWire
+			? undefined
+			: {
+					supportsDeveloperRole: false,
+					maxTokensField: "max_tokens",
+					...(thinkingLevelMap ? { supportsReasoningEffort: true } : {}),
+				};
+		models.push({
+			id: modelId,
+			name: m.name || modelId,
+			api: anthropicWire ? "anthropic-messages" : "openai-completions",
+			provider: "commandcode",
+			// The Anthropic SDK appends /v1/messages to its base URL.
+			baseUrl: anthropicWire ? COMMANDCODE_BASE_URL : `${COMMANDCODE_BASE_URL}/v1`,
+			reasoning: m.reasoning === true,
+			...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+			input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+			cost: {
+				input: m.cost?.input || 0,
+				output: m.cost?.output || 0,
+				cacheRead: m.cost?.cache_read || 0,
+				cacheWrite: m.cost?.cache_write || 0,
+			},
+			...(compat ? { compat } : {}),
+			contextWindow: m.limit?.context || 4096,
+			maxTokens: m.limit?.output || 4096,
+		});
+		recordModelsDevReasoningOptions("commandcode", modelId, m);
+	}
+	return models;
+}
+
 function processBasetenModels(provider: ModelsDevProvider | undefined): Model<Api>[] {
 	if (!provider?.models) return [];
 
@@ -2759,6 +2812,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		}
 
 		models.push(...processBasetenModels(data.baseten));
+
+		models.push(...processCommandCodeModels(data));
 
 		// Process Venice AI models
 		if (data.venice?.models) {
