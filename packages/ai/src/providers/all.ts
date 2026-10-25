@@ -12,6 +12,7 @@ import { cerebrasProvider } from "./cerebras.ts";
 import { chatgptSubscriptionProvider } from "./chatgpt-subscription.ts";
 import { cloudflareAIGatewayProvider } from "./cloudflare-ai-gateway.ts";
 import { cloudflareWorkersAIProvider } from "./cloudflare-workers-ai.ts";
+import { commandCodeProvider } from "./commandcode.ts";
 import { cursorProvider } from "./cursor.ts";
 import modelDataManifest from "./data/.manifest.json" with { type: "json" };
 import { deepseekProvider } from "./deepseek.ts";
@@ -221,6 +222,7 @@ export function builtinProviders(): Provider[] {
 		cerebrasProvider(),
 		cloudflareAIGatewayProvider(),
 		cloudflareWorkersAIProvider(),
+		commandCodeProvider(),
 		cursorProvider(),
 		devinProvider(),
 		deepseekProvider(),

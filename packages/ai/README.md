@@ -98,6 +98,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **Xiaomi MiMo** (defaults to API billing endpoint, with separate Token Plan providers for `cn`/`ams`/`sgp` regions)
 - **Alibaba Token Plan** (Alibaba Cloud Model Studio prepaid Token Plan, OpenAI-compatible `ap-southeast-1` endpoint)
 - **Cursor** (Pro/Ultra/Teams subscription; native `cursor-agent` protocol with full chat + server-driven tool calling, per-account dynamic catalog, requires OAuth, see below)
+- **Command Code** (Claude models over the Anthropic Messages wire, the rest of the catalog over OpenAI Chat Completions; one `CMD_API_KEY`, dynamic `/models` catalog)
 - **Any other OpenAI-compatible API**: local Ollama, vLLM, LM Studio, etc.
 
 ## Installation
@@ -342,6 +343,13 @@ per model rather than treating it as a B.AI property: GPT and DeepSeek use OpenA
 Anthropic Messages, and the remaining chat families use OpenAI Chat Completions. Image-only IDs such as
 `gpt-image-2` are not exposed through the chat catalog.
 
+Command Code is dynamic in the same shape but splits on the model family: Claude models use Anthropic Messages,
+everything else uses OpenAI Chat Completions. `GET https://api.commandcode.ai/provider/v1/models` returns the
+models the key can reach and the wire each one publishes under `supported_endpoints`; the shipped catalog from
+models.dev supplies the reference pricing and reasoning levels the endpoint omits. `/models` prefixes ids with a
+plan namespace (`commandcode-goat-plan/…`), which is stripped so configuration stays plan-independent, and a
+model the shipped catalog does not know is listed unpriced rather than free.
+
 ## Auth
 
 Every provider owns its auth: how API keys resolve (stored credentials, environment variables, ambient sources like AWS profiles or gcloud ADC) and, where supported, OAuth login/refresh flows.
@@ -472,6 +480,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` |
 | Alibaba Token Plan | `ALIBABA_TOKEN_PLAN_API_KEY` |
+| Command Code | `CMD_API_KEY` or `COMMANDCODE_API_KEY` |
 | GitHub Copilot | `COPILOT_GITHUB_TOKEN` |
 
 `qwen-token-plan-individual` and `qwen-token-plan` share the international endpoint and
