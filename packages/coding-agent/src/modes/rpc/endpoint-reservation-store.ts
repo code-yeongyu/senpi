@@ -171,14 +171,17 @@ export async function openEndpointReservationStore(path: string): Promise<Endpoi
 		database.close();
 		throw error;
 	}
-	return new EndpointReservationStore(database);
+	return new EndpointReservationStore(database, path);
 }
 
 export class EndpointReservationStore {
 	readonly #database: Database;
+	/** The store's file, which a launch locator names. */
+	readonly path: string;
 
-	constructor(database: Database) {
+	constructor(database: Database, path: string) {
 		this.#database = database;
+		this.path = path;
 	}
 
 	close(): void {
@@ -342,6 +345,18 @@ export class EndpointReservationStore {
 	roleRow(locator: ReservationLocator): RoleRow | undefined {
 		const row = this.#role(locator.generation, locator.role);
 		return row && { role: locator.role, status: row.status, issuer: row.issuer, participant: row.participant };
+	}
+
+	/** The role granted to `participant`, with its commitment; `undefined` until that exact participant is granted. */
+	grantedRole(locator: ReservationLocator, participant: string): { readonly commitment: string } | undefined {
+		this.#locate(locator);
+		const row = this.#database
+			.prepare("SELECT status, participant, commitment FROM roles WHERE generation = ? AND role = ?")
+			.get(locator.generation, locator.role) as
+			| { status: RoleStatus; participant: string | null; commitment: string | null }
+			| undefined;
+		if (row?.status !== "granted" || row.participant !== participant || row.commitment === null) return undefined;
+		return { commitment: row.commitment };
 	}
 
 	#transaction<T>(run: () => T): T {

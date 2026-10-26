@@ -1,0 +1,202 @@
+/**
+ * The supervisor hop of the wrapper-safe launch (sisyphuslabs/omo-desktop-app#4199, design 4.2a "Wrapper-safe discovery
+ * and one-time claim"). The launcher reserves a generation and offers the supervisor role, then forwards only a
+ * non-secret locator in argv: the store path, endpoint, generation and role. Whatever process the selected runtime
+ * finally becomes opens the store itself, reads its role's nonce there and claims with its own identity. The issuer
+ * grants only when the claimed identity equals what it observed through the OS for the process it launched, bound to
+ * the credential commitment. Nothing in argv, environment or an inherited channel grants anything.
+ */
+import { setTimeout as delay } from "node:timers/promises";
+import {
+	EndpointReservationError,
+	type EndpointReservationStore,
+	openEndpointReservationStore,
+	type ReservationLocator,
+	type ReservationRole,
+} from "./endpoint-reservation-store.ts";
+
+/** A process as the OS identifies it: PID and its exact start discriminator. */
+export interface LaunchIdentity {
+	readonly pid: number;
+	readonly processStartTime: string | null;
+}
+
+export interface StoreLocator extends ReservationLocator {
+	readonly storePath: string;
+}
+
+export type LaunchReservationRejection =
+	| "locator_incomplete"
+	| "identity_unverified"
+	| "participant_mismatch"
+	| "generation_cancelled"
+	| "grant_deadline";
+
+export class LaunchReservationError extends Error {
+	readonly code = "launch-reservation-rejected";
+	readonly reason: LaunchReservationRejection;
+
+	constructor(reason: LaunchReservationRejection, detail: string) {
+		super(`launch reservation ${reason}: ${detail}`);
+		this.name = "LaunchReservationError";
+		this.reason = reason;
+	}
+}
+
+const LOCATOR_FLAGS = {
+	storePath: "--reservation-store",
+	endpoint: "--reservation-endpoint",
+	generation: "--reservation-generation",
+	role: "--reservation-role",
+} as const;
+
+/** Identities are stored as their canonical JSON, so equality is exact on PID and start discriminator. */
+function identityKey(identity: LaunchIdentity): string {
+	return JSON.stringify({ pid: identity.pid, processStartTime: identity.processStartTime });
+}
+
+/** Reserves a generation, offers the supervisor role and returns the argv that carries the locator. */
+export function offerSupervisorLaunch(
+	store: EndpointReservationStore,
+	endpoint: string,
+	owner: LaunchIdentity,
+): { generation: string; args: readonly string[] } {
+	const generation = store.reserve(endpoint, identityKey(owner));
+	store.offer(generation, "supervisor", identityKey(owner));
+	return {
+		generation,
+		args: [
+			LOCATOR_FLAGS.storePath,
+			store.path,
+			LOCATOR_FLAGS.endpoint,
+			endpoint,
+			LOCATOR_FLAGS.generation,
+			generation,
+			LOCATOR_FLAGS.role,
+			"supervisor",
+		],
+	};
+}
+
+/** `undefined` for a launch with no locator (a direct launch); a partial locator is refused, never ignored. */
+export function parseReservationLocatorArgs(argv: readonly string[]): StoreLocator | undefined {
+	const value = (flag: string) => {
+		const index = argv.indexOf(flag);
+		return index >= 0 ? argv[index + 1] : undefined;
+	};
+	const storePath = value(LOCATOR_FLAGS.storePath);
+	const endpoint = value(LOCATOR_FLAGS.endpoint);
+	const generation = value(LOCATOR_FLAGS.generation);
+	const role = value(LOCATOR_FLAGS.role);
+	if (storePath === undefined && endpoint === undefined && generation === undefined && role === undefined) {
+		return undefined;
+	}
+	if (!storePath || !endpoint || !generation || (role !== "supervisor" && role !== "host")) {
+		throw new LaunchReservationError("locator_incomplete", "every reservation flag is required together");
+	}
+	return { storePath, endpoint, generation, role };
+}
+
+/** The claimant opens the store named by the locator, reads its nonce there and claims with its own identity. */
+export async function claimLaunchRole(
+	locator: StoreLocator,
+	self: LaunchIdentity,
+): Promise<"claimed" | "already_claimed_by_caller"> {
+	const store = await openEndpointReservationStore(locator.storePath);
+	try {
+		return store.claim(locator, store.readOffer(locator), identityKey(self));
+	} finally {
+		store.close();
+	}
+}
+
+/**
+ * Grants `role` only to the participant whose recorded identity equals `observed`, the identity the issuer read through
+ * the OS for the process it launched. An observation without an exact start discriminator grants nothing.
+ */
+export function grantVerifiedParticipant(
+	store: EndpointReservationStore,
+	generation: string,
+	role: ReservationRole,
+	issuer: LaunchIdentity,
+	observed: LaunchIdentity,
+	commitment: Uint8Array,
+): void {
+	if (observed.processStartTime === null) {
+		throw new LaunchReservationError("identity_unverified", `pid ${observed.pid} has no readable start time`);
+	}
+	try {
+		store.grant(generation, role, identityKey(issuer), identityKey(observed), commitment);
+	} catch (error: unknown) {
+		if (error instanceof EndpointReservationError && error.reason === "participant_mismatch") {
+			throw new LaunchReservationError("participant_mismatch", `pid ${observed.pid} is not the claimant`);
+		}
+		throw error;
+	}
+}
+
+export type GrantWait =
+	| { readonly granted: true; readonly commitment: string }
+	| { readonly granted: false; readonly reason: "generation_cancelled" | "grant_deadline" };
+
+/**
+ * Waits, bounded by `deadlineMs`, until the claimant's role is granted. Each check is one authoritative read of the
+ * store; running out of time or a cancelled generation answers "not granted", never an inferred grant.
+ */
+export async function waitForGrant(
+	locator: StoreLocator,
+	self: LaunchIdentity,
+	options: { readonly deadlineMs: number; readonly intervalMs?: number },
+): Promise<GrantWait> {
+	const until = Date.now() + options.deadlineMs;
+	const store = await openEndpointReservationStore(locator.storePath);
+	try {
+		for (;;) {
+			const reservation = store.reservation(locator.generation);
+			if (reservation.state === "cancelling") return { granted: false, reason: "generation_cancelled" };
+			const role = store.grantedRole(locator, identityKey(self));
+			if (role) return { granted: true, commitment: role.commitment };
+			if (Date.now() >= until) return { granted: false, reason: "grant_deadline" };
+			await delay(Math.min(options.intervalMs ?? 25, Math.max(1, until - Date.now())));
+		}
+	} finally {
+		store.close();
+	}
+}
+
+export type ClaimWait =
+	| { readonly claimed: true; readonly participant: LaunchIdentity }
+	| { readonly claimed: false; readonly reason: "generation_cancelled" | "claim_deadline" };
+
+/**
+ * The issuer's bounded wait for the claim of `role`. It returns the identity the claimant recorded, which the issuer
+ * must then observe through the OS: the claimant may be a wrapper's descendant, never assumed to be the spawned PID.
+ */
+export async function waitForClaim(
+	store: EndpointReservationStore,
+	generation: string,
+	role: ReservationRole,
+	options: { readonly deadlineMs: number; readonly intervalMs?: number },
+): Promise<ClaimWait> {
+	const until = Date.now() + options.deadlineMs;
+	for (;;) {
+		const reservation = store.reservation(generation);
+		if (reservation.state === "cancelling") return { claimed: false, reason: "generation_cancelled" };
+		const row = store.roleRow({ endpoint: reservation.endpoint, generation, role });
+		if (row?.status === "claimed" && row.participant !== null) {
+			return { claimed: true, participant: parseIdentity(row.participant) };
+		}
+		if (Date.now() >= until) return { claimed: false, reason: "claim_deadline" };
+		await delay(Math.min(options.intervalMs ?? 25, Math.max(1, until - Date.now())));
+	}
+}
+
+function parseIdentity(text: string): LaunchIdentity {
+	const value: unknown = JSON.parse(text);
+	const pid = typeof value === "object" && value !== null ? Reflect.get(value, "pid") : undefined;
+	const start = typeof value === "object" && value !== null ? Reflect.get(value, "processStartTime") : undefined;
+	if (typeof pid !== "number" || !(typeof start === "string" || start === null)) {
+		throw new LaunchReservationError("identity_unverified", "the recorded participant identity is malformed");
+	}
+	return { pid, processStartTime: start };
+}
