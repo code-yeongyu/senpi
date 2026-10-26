@@ -8,6 +8,8 @@ import { normalizeContext } from "../src/utils/transcript.ts";
 // answer 400 "Function call is missing a thought_signature in functionCall parts". The
 // skip_thought_signature_validator escape hatch is rejected by Vertex (pi-mono #4032), so a
 // current-turn step whose first call carries no usable signature is replayed as text (call + paired result).
+// The replay also covers the request's final model turn, which Gemini 3+ validates even under a
+// trailing user message after the tool results (senpi#3633).
 // History recorded by a different provider, replayed after a mid-session model switch.
 
 function makeGemini3Model<TApi extends "google-generative-ai" | "google-vertex">(
@@ -277,10 +279,12 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 			id: "call_old",
 		});
 
-		// Turn 1 user tool response: should be structured functionResponse
+		// Turn 1 user tool response: structured functionResponse; the folded "turn 2 prompt"
+		// text precedes it because functionResponse parts trail in user turns (omo#9747).
 		const oldUserTurn = contents[2];
 		expect(oldUserTurn?.role).toBe("user");
-		expect(oldUserTurn?.parts?.[0]?.functionResponse).toEqual({
+		expect(oldUserTurn?.parts?.[0]).toEqual({ text: "turn 2 prompt" });
+		expect(oldUserTurn?.parts?.[1]?.functionResponse).toEqual({
 			name: "bash",
 			response: { output: "old output" },
 			id: "call_old",
@@ -299,6 +303,111 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 		expect(newUserTurn?.role).toBe("user");
 		expect(newUserTurn?.parts?.[0]?.functionResponse).toBeUndefined();
 		expect(newUserTurn?.parts?.[0]?.text).toBe("[Tool Result: bash (id: call_new)]\nnew output");
+	});
+
+	it("replays the final model turn as text when a user message follows the tool results (senpi#3633)", () => {
+		// A trailing user message (steering note, detached-tool <system-reminder>) moves the
+		// current-turn boundary past the last assistant step, but Vertex still validates the
+		// request's final model turn: its unsigned call must replay as text, not as an unsigned
+		// functionCall part (the live-measured 400 "Function call is missing a thought_signature").
+		const model = makeGemini3Model("google-vertex", "google-vertex", "gemini-4-argon");
+		const context: Context = {
+			messages: [
+				{ role: "user", content: "run commands", timestamp: Date.now() },
+				makeAssistantToolCall(FOREIGN_MODEL, [
+					{ type: "toolCall", id: "call_1", name: "eval", arguments: { code: "1+1" } },
+				]),
+				makeToolResult("call_1", "eval", [{ type: "text", text: "2" }]),
+				{
+					role: "user",
+					content: "<system-reminder>Detached eval cell call_1 (js) was cancelled</system-reminder>",
+					timestamp: Date.now(),
+				},
+			],
+		};
+
+		const contents = convertMessages(model, normalizeContext(context));
+
+		expect(contents.map((content) => content.role)).toEqual(["user", "model", "user"]);
+		const parts = contents.flatMap((content) => content.parts ?? []);
+		expect(parts.some((part) => part.functionCall !== undefined)).toBe(false);
+		expect(parts.some((part) => part.functionResponse !== undefined)).toBe(false);
+		expect(contents[1]?.parts?.[0]?.text).toContain("[Tool Call: eval (id: call_1)]");
+		const finalUserParts = contents[2]?.parts ?? [];
+		expect(finalUserParts.some((part) => part.text?.includes("[Tool Result: eval (id: call_1)]"))).toBe(true);
+		expect(finalUserParts.some((part) => part.text?.includes("<system-reminder>"))).toBe(true);
+	});
+
+	it("replays only the final model turn after a mid-session switch to Argon (senpi#3633)", () => {
+		// Long session recorded on another provider, switched to Gemini 4 Argon, with a steering
+		// note after the last tool results: earlier unsigned turns stay structured (accepted by
+		// the live endpoint per senpi#3633); the final model turn replays as text.
+		const model = makeGemini3Model("google-vertex", "google-vertex", "gemini-4-argon");
+		const context: Context = {
+			messages: [
+				{ role: "user", content: "start", timestamp: Date.now() },
+				makeAssistantToolCall(FOREIGN_MODEL, [
+					{ type: "toolCall", id: "call_r1", name: "bash", arguments: { command: "echo one" } },
+				]),
+				makeToolResult("call_r1", "bash", [{ type: "text", text: "one" }]),
+				makeAssistantToolCall(FOREIGN_MODEL, [
+					{ type: "toolCall", id: "call_r2", name: "bash", arguments: { command: "echo two" } },
+				]),
+				makeToolResult("call_r2", "bash", [{ type: "text", text: "two" }]),
+				{ role: "user", content: "continue", timestamp: Date.now() },
+			],
+		};
+
+		const contents = convertMessages(model, normalizeContext(context));
+
+		// Round 1 is an earlier model turn: structured unsigned functionCall stays.
+		expect(contents[1]?.parts?.[0]?.functionCall?.id).toBe("call_r1");
+		// Round 2 is the final model turn: its unsigned call replays as text.
+		expect(contents[3]?.parts?.[0]?.functionCall).toBeUndefined();
+		expect(contents[3]?.parts?.[0]?.text).toContain("[Tool Call: bash (id: call_r2)]");
+		// Only round 1 keeps a structured functionResponse; round 2 pairs as text.
+		const functionResponseIds = contents
+			.flatMap((content) => content.parts ?? [])
+			.flatMap((part) => (part.functionResponse?.id ? [part.functionResponse.id] : []));
+		expect(functionResponseIds).toEqual(["call_r1"]);
+	});
+
+	it("keeps the final model turn structured when only the first parallel call is signed", () => {
+		// Parallel calls legitimately carry the signature on the first part only; the
+		// final-model-turn replay must not widen into replaying such turns as text. The folded
+		// user turn ends with the two functionResponses after the trailing note (omo#9747).
+		const model = makeGemini3Model("google-vertex", "google-vertex", "gemini-4-argon");
+		const context: Context = {
+			messages: [
+				{ role: "user", content: "run", timestamp: Date.now() },
+				makeAssistantToolCall(model, [
+					{
+						type: "toolCall",
+						id: "call_p1",
+						name: "bash",
+						arguments: { command: "one" },
+						thoughtSignature: VALID_SIG,
+					},
+					{ type: "toolCall", id: "call_p2", name: "bash", arguments: { command: "two" } },
+				]),
+				makeToolResult("call_p1", "bash", [{ type: "text", text: "1" }]),
+				makeToolResult("call_p2", "bash", [{ type: "text", text: "2" }]),
+				{ role: "user", content: "and now?", timestamp: Date.now() },
+			],
+		};
+
+		const contents = convertMessages(model, normalizeContext(context));
+
+		const finalModelTurn = contents[contents.length - 2];
+		expect(finalModelTurn?.role).toBe("model");
+		const calls = finalModelTurn?.parts?.filter((part) => part.functionCall !== undefined) ?? [];
+		expect(calls.map((part) => part.functionCall?.id)).toEqual(["call_p1", "call_p2"]);
+		expect(calls[0]?.thoughtSignature).toBe(VALID_SIG);
+		expect(calls[1]?.thoughtSignature).toBeUndefined();
+		const lastPartKinds = (contents[contents.length - 1]?.parts ?? []).map((part) =>
+			part.functionResponse !== undefined ? "fr" : "text",
+		);
+		expect(lastPartKinds).toEqual(["text", "fr", "fr"]);
 	});
 
 	it("treats an image-only user message as the turn boundary", () => {

@@ -190,6 +190,19 @@ function requiresThoughtSignatureReplay(modelId: string): boolean {
 	return geminiMajorVersion !== undefined && geminiMajorVersion >= 3;
 }
 
+/**
+ * Vertex's Gemini 3+ parser rejects a user turn whose functionResponse parts are followed by any
+ * other part in the same turn, misreporting the request as "Requests ending with a model turn are
+ * not supported" even though it ends on a user turn (omo#9747, senpi#3633; measured against the
+ * live endpoint one variable per request: [functionResponse, text] 400s, while [text,
+ * functionResponse] and [functionResponse] return 200). Gemini 2 and earlier accept either order,
+ * so merged user turns are reordered only for the generations that reject the trailing-text shape.
+ */
+function requiresFunctionResponseTrailingOrder(modelId: string): boolean {
+	const geminiMajorVersion = getGeminiMajorVersion(modelId);
+	return geminiMajorVersion !== undefined && geminiMajorVersion >= 3;
+}
+
 function getGeminiMajorVersion(modelId: string): number | undefined {
 	const match = modelId.toLowerCase().match(/^gemini(?:-live)?-(\d+)/);
 	if (!match) return undefined;
@@ -237,6 +250,20 @@ function findLastUserContentMessageIndex(messages: Message[]): number {
 	return -1;
 }
 
+// The final model turn is the run of consecutive assistant steps immediately before the trailing
+// user/tool-result run: the last Content with role "model" the request will carry. Gemini 3+
+// strict signature validation applies to it even when a later user message (a steering note, a
+// detached-tool <system-reminder>) follows the tool results, so unsigned calls there must replay
+// as text too (senpi#3633: an unsigned functionCall in the final model turn 400s even when a user
+// message ends the request; the same part in an earlier model turn is accepted).
+function findFinalModelTurnStart(messages: Message[]): number {
+	let i = messages.length - 1;
+	while (i >= 0 && messages[i].role !== "assistant") i--;
+	if (i < 0) return messages.length;
+	while (i > 0 && messages[i - 1].role === "assistant") i--;
+	return i;
+}
+
 /**
  * Convert internal messages to Gemini Content[] format.
  */
@@ -261,6 +288,7 @@ export function convertMessages<T extends GoogleApiType>(
 	});
 
 	const lastUserContentIndex = findLastUserContentMessageIndex(transformedMessages);
+	const finalModelTurnStart = findFinalModelTurnStart(transformedMessages);
 
 	for (let msgIndex = 0; msgIndex < transformedMessages.length; msgIndex++) {
 		const msg = transformedMessages[msgIndex];
@@ -295,19 +323,22 @@ export function convertMessages<T extends GoogleApiType>(
 			const isSameProviderAndModel = msg.provider === model.provider && msg.model === model.id;
 
 			// Strict validation (requiring a thoughtSignature on the first functionCall part) applies
-			// to the current turn — assistant steps after the last user message carrying content.
-			// Earlier turns preserve structured function calls. In the current turn, if the first
-			// toolCall block lacks a valid signature, the whole step is replayed as text, because
-			// the documented skip_thought_signature_validator sentinel is rejected by Vertex (pi-mono #4032)
-			// and an unsigned functionCall part is a hard 400 on Gemini 3+.
+			// to the current turn — assistant steps after the last user message carrying content — and
+			// to the request's final model turn, which Gemini 3+ validates even when a user message
+			// (steering note, detached-tool notification) follows the tool results (senpi#3633).
+			// Earlier turns preserve structured function calls. In a replayed step, the whole step
+			// becomes text, because the documented skip_thought_signature_validator sentinel is
+			// rejected by Vertex (pi-mono #4032) and an unsigned functionCall part is a hard 400 on
+			// Gemini 3+.
 			const isCurrentTurn = msgIndex > lastUserContentIndex;
+			const isFinalModelTurn = msgIndex >= finalModelTurnStart;
 			const firstToolCall = msg.content.find((b): b is ToolCall => b.type === "toolCall");
 			const hasValidFirstSignature =
 				firstToolCall !== undefined &&
 				resolveThoughtSignature(isSameProviderAndModel, firstToolCall.thoughtSignature) !== undefined;
 
 			const replayUnsignedToolCallsAsText =
-				requiresThoughtSignatureReplay(model.id) && isCurrentTurn && !hasValidFirstSignature;
+				requiresThoughtSignatureReplay(model.id) && (isCurrentTurn || isFinalModelTurn) && !hasValidFirstSignature;
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
@@ -446,6 +477,27 @@ export function convertMessages<T extends GoogleApiType>(
 					parts: [{ text: "Tool result image:" }, ...imageParts],
 				});
 			}
+		}
+	}
+
+	// Gemini 3+ user turns keep every functionResponse part at the end of its turn: text merged
+	// after tool results (a follow-up prompt, a detached-tool <system-reminder>) is the shape Vertex
+	// rejects as "Requests ending with a model turn are not supported" (omo#9747, senpi#3633).
+	// Parts are reordered only inside one user turn this converter built; each part keeps its own
+	// thoughtSignature.
+	if (requiresFunctionResponseTrailingOrder(model.id)) {
+		for (const content of contents) {
+			if (content.role !== "user" || content.parts === undefined) continue;
+			const firstResponseIndex = content.parts.findIndex((part) => part.functionResponse !== undefined);
+			if (firstResponseIndex === -1) continue;
+			const hasTrailingOther = content.parts
+				.slice(firstResponseIndex + 1)
+				.some((part) => part.functionResponse === undefined);
+			if (!hasTrailingOther) continue;
+			content.parts = [
+				...content.parts.filter((part) => part.functionResponse === undefined),
+				...content.parts.filter((part) => part.functionResponse !== undefined),
+			];
 		}
 	}
 
