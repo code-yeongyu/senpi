@@ -1334,7 +1334,8 @@ which prints the bare socket path).
   `reason` is `socket_refused` or `socket_absent`. A sibling that is a directory is not unlinked: it stays and
   the removed entry lists it as `skipped: [{ path, type: "directory" }]`. Because the directory goes last, a
   removal that fails part-way leaves the endpoint listed for the next gc. Everything else is kept with its
-  reason: `live_generation`, `live_claim`, `reachable`, `locked` (an ensure held the lock for 2 s),
+  reason: `live_generation`, `live_claim`, `reachable`, `credential_unavailable` (Windows: the socket secret
+  is missing or invalid, so the pipe it names cannot be proven silent), `locked` (an ensure held the lock for 2 s),
   `legacy_layout` (a flat directory without `layout.json` - a legacy host's, never touched), `unknown_identity`
   (nothing names the socket, so its lock cannot be taken), or `failed` (reading the evidence or removing threw;
   the entry carries `error`) - and a `failed` endpoint never stops gc from going on to the others.
