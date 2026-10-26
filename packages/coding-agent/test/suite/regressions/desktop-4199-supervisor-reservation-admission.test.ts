@@ -7,6 +7,7 @@ import { openEndpointReservationStore } from "../../../src/modes/rpc/endpoint-re
 import { parseSupervisorArgs } from "../../../src/modes/rpc/host-lifecycle-launch.ts";
 import {
 	admitClaimedSupervisor,
+	grantClaimedSupervisor,
 	grantVerifiedParticipant,
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
@@ -87,5 +88,30 @@ describe("supervisor admission through a reservation", () => {
 		await expect(admitClaimedSupervisor(second.locator, SELF, SECRET, { deadlineMs: 5_000 })).rejects.toMatchObject({
 			reason: "generation_cancelled",
 		});
+	});
+
+	it("the issuer grants the claimant whose start time the OS confirms, bound to the secret's commitment", async () => {
+		const { store, generation, locator } = await offered();
+		const admitted = admitClaimedSupervisor(locator, SELF, SECRET, { deadlineMs: 5_000 });
+		const observe = async (pid: number) => (pid === SELF.pid ? SELF.processStartTime : undefined);
+		await grantClaimedSupervisor(store, generation, OWNER, SECRET, observe, { deadlineMs: 5_000 });
+		await expect(admitted).resolves.toBeUndefined();
+	});
+
+	it("the issuer refuses a claimant the OS no longer sees with the claimed start time", async () => {
+		const { store, generation, locator } = await offered();
+		void admitClaimedSupervisor(locator, SELF, SECRET, { deadlineMs: 100 }).catch(() => undefined);
+		const replaced = async () => "133000000000000099";
+		await expect(
+			grantClaimedSupervisor(store, generation, OWNER, SECRET, replaced, { deadlineMs: 5_000 }),
+		).rejects.toMatchObject({ reason: "participant_mismatch" });
+		expect(store.roleRow({ endpoint: ENDPOINT, generation, role: "supervisor" })?.status).toBe("claimed");
+	});
+
+	it("the issuer gives up, bounded, when nothing claims the role", async () => {
+		const { store, generation } = await offered();
+		await expect(
+			grantClaimedSupervisor(store, generation, OWNER, SECRET, async () => undefined, { deadlineMs: 0 }),
+		).rejects.toMatchObject({ reason: "claim_deadline" });
 	});
 });

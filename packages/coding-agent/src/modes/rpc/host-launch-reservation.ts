@@ -175,3 +175,30 @@ export async function admitClaimedSupervisor(
 		throw new LaunchReservationError("commitment_mismatch", "the established public secret is not the granted one");
 	}
 }
+
+/**
+ * The issuer's half of the supervisor hop: wait (bounded) for the claim, read the claimed PID's start time through the
+ * OS with `observe`, and grant only when it equals the claimed one, bound to the commitment of `secret`. The claimant
+ * may be a wrapper's descendant, so the spawned PID is never assumed to be it.
+ */
+export async function grantClaimedSupervisor(
+	store: EndpointReservationStore,
+	generation: string,
+	issuer: LaunchIdentity,
+	secret: Buffer,
+	observe: (pid: number) => Promise<string | undefined>,
+	options: { readonly deadlineMs: number },
+): Promise<LaunchIdentity> {
+	const claim = await waitForClaim(store, generation, "supervisor", options);
+	if (!claim.claimed) throw new LaunchReservationError(claim.reason, `supervisor in ${generation}`);
+	const observed = { pid: claim.participant.pid, processStartTime: (await observe(claim.participant.pid)) ?? null };
+	grantVerifiedParticipant(
+		store,
+		generation,
+		"supervisor",
+		issuer,
+		observed,
+		createHash("sha256").update(secret).digest(),
+	);
+	return observed;
+}
