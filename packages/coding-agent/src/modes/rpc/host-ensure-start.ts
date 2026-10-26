@@ -30,6 +30,9 @@ import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
 import { ensureSocketSecret, socketSecretPath } from "./socket-transport.ts";
 import { relayPresenterBootstrap } from "./mcp-presenter-bootstrap.ts";
+import { openEndpointReservationStore } from "./endpoint-reservation-store.ts";
+import { hostEnsureLockTarget } from "./host-ensure-lock.ts";
+import { grantClaimedSupervisor, offerSupervisorLaunch } from "./host-launch-reservation.ts";
 
 export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
 export { DEFAULT_STOP_TIMEOUT_MS };
@@ -60,7 +63,10 @@ export async function startHost(
 	// records the policy before the spawn instead of beside the pidfile. A valid public
 	// secret belongs to the endpoint, not to this start: clients that already read it
 	// derive the pipe name from it, so a start reuses it and never rotates it.
-	if (process.platform === "win32") await ensureSocketSecret(socketSecretPath(socket));
+	const publicSecret = process.platform === "win32" ? await ensureSocketSecret(socketSecretPath(socket)) : undefined;
+	// A Windows public endpoint launches its supervisor through a reservation (#4199 design 4.2a): the supervisor claims
+	// its role and starts only once this process, the issuer, has verified and granted it.
+	const reservation = publicSecret ? await reserveSupervisorLaunch(socket) : undefined;
 	await writeHostSettings(paths, {
 		socket,
 		capabilities: PINNED_HOST_CLIENT_CAPABILITIES,
@@ -85,6 +91,7 @@ export async function startHost(
 			...(options.presenterBootstrap ? ["--mcp-presenter-fd", "4"] : []),
 			...(options.mcpPresenterEnforcement ? ["--mcp-presenter-enforcement"] : []),
 			...(options.hostArgs ?? []),
+			...(reservation?.args ?? []),
 		];
 		const launch = testOptions?.spawn ?? testOptions?.launch?.(supervisorArgs) ?? defaultHostLaunch(supervisorArgs);
 		child = spawn(launch.command, [...launch.args], {
@@ -130,6 +137,19 @@ export async function startHost(
 		// registered WITHOUT an ownership guard instead of being torn down for a starved probe. A
 		// guard-less record never claims ownership and never authorizes a signal - every later caller
 		// reads it as unknown - so the worst case is a fresh host next time, not a killed healthy one.
+		if (reservation && publicSecret) {
+			await grantClaimedSupervisor(
+				reservation.store,
+				reservation.generation,
+				reservation.issuer,
+				publicSecret,
+				(pid) => probe(pid),
+				{ deadlineMs: SUPERVISOR_CLAIM_DEADLINE_MS },
+			).catch((error: unknown) => {
+				reservation.store.cancel(reservation.generation);
+				throw error;
+			});
+		}
 		pidFile = { pid: child.pid, processStartTime: processStartTime ?? null };
 		await testOptions?.beforePidFileWrite?.();
 		await writeHostRegistration(paths, {
@@ -169,6 +189,10 @@ export async function startHost(
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, isCompatible, childExit);
 	if (result.ready) {
+		if (reservation) {
+			reservation.store.markServing(reservation.generation);
+			reservation.store.close();
+		}
 		await presenterEnrollment;
 		return { pid: pidFile.pid, socket, reused: false, release: result.hold.release };
 	}
@@ -234,4 +258,19 @@ export async function appendStderr(paths: HostDaemonPaths, message: string): Pro
 		if (isNodeErrorCode(error, "ENOENT")) return message;
 		throw error;
 	}
+}
+
+/** How long the issuer waits for the launched supervisor to claim its role. */
+const SUPERVISOR_CLAIM_DEADLINE_MS = 10_000;
+
+/** Opens the endpoint's reservation store beside its lock, reserves a generation and offers the supervisor role. */
+async function reserveSupervisorLaunch(socket: string) {
+	const store = await openEndpointReservationStore(`${hostEnsureLockTarget(socket)}.reservation.db`);
+	// An unreadable own start time is recorded as unverified; it never decides a grant, which checks the claimant.
+	const issuer = {
+		pid: process.pid,
+		processStartTime: (await readProcessStartTime(process.pid).catch(() => undefined)) ?? null,
+	};
+	const { generation, args } = offerSupervisorLaunch(store, socket, issuer);
+	return { store, issuer, generation, args };
 }

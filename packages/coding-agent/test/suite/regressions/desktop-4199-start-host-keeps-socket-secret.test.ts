@@ -7,6 +7,15 @@ import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.
 import { startHost } from "../../../src/modes/rpc/host-ensure-start.ts";
 import { createSocketSecret, readSocketSecret, socketSecretPath } from "../../../src/modes/rpc/socket-transport.ts";
 
+const lockRoot = vi.hoisted(() => ({ dir: "" }));
+
+// The reservation store lives beside the endpoint lock, whose win32 name comes from the pipe-address formula; with the
+// platform stubbed on a POSIX runner it is pointed at this test's own directory instead.
+vi.mock("../../../src/modes/rpc/host-ensure-lock.ts", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../../../src/modes/rpc/host-ensure-lock.ts")>()),
+	hostEnsureLockTarget: () => join(lockRoot.dir, "endpoint"),
+}));
+
 vi.mock("node:child_process", async (importOriginal) => {
 	const actual = await importOriginal<typeof childProcess>();
 	return { ...actual, spawn: vi.fn(actual.spawn) };
@@ -30,6 +39,7 @@ describe("startHost and an existing valid public socket secret", () => {
 		const agentDir = join(root, "agent");
 		const socket = join(root, "rpc.sock");
 		const secretPath = socketSecretPath(socket);
+		lockRoot.dir = root;
 		const original = await createSocketSecret(secretPath);
 		const paths = await createHostDaemonPaths({ agentDir, socket });
 		const reachedSpawn = new Error("start reached the supervisor spawn");
