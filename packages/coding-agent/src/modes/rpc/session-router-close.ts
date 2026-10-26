@@ -77,7 +77,10 @@ export async function close(
 		if (owner !== undefined) releaseOwnerAttachment(host, owner, command.sessionId);
 		if (claim.finalizer) {
 			// An explicit close ends the session for good: drop any handover-parked record entry, or
-			// the session would come back on the next host start (MEDIUM-1, senpi#3282 review).
+			// the session would come back on the next host start (MEDIUM-1, senpi#3282 review). A transfer
+			// of it still writing its record withdraws it once its own claim fails (#10091).
+			const seal = host.transferSeals.get(command.sessionId);
+			if (seal !== undefined) seal.closed = true;
 			const entry = host.registry.peek(command.sessionId);
 			if (host.handoverParkedDir !== undefined && entry?.sessionPath !== undefined)
 				await clearHandoverParkedSession(host.handoverParkedDir, entry.sessionPath).catch(() => {});

@@ -4,7 +4,8 @@
  * read as `unknown` so every caller parses its own shape at the boundary.
  */
 import { randomUUID } from "node:crypto";
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 export async function writeJsonAtomic(path: string, content: unknown): Promise<void> {
 	const temporary = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
@@ -14,6 +15,39 @@ export async function writeJsonAtomic(path: string, content: unknown): Promise<v
 	} catch (cause) {
 		await rm(temporary, { force: true }).catch(() => undefined);
 		throw cause;
+	}
+}
+
+/**
+ * `writeJsonAtomic` for a record that must survive a machine crash once this resolves: the bytes are synced
+ * before the rename, and the directory after it, so the new entry is not lost with an unsynced directory.
+ */
+export async function writeFileDurably(path: string, text: string): Promise<void> {
+	const temporary = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+	try {
+		const file = await open(temporary, "wx", 0o600);
+		try {
+			await file.writeFile(text, "utf8");
+			await file.sync();
+		} finally {
+			await file.close();
+		}
+		await rename(temporary, path);
+	} catch (cause) {
+		await rm(temporary, { force: true }).catch(() => undefined);
+		throw cause;
+	}
+	await syncDirectory(dirname(path));
+}
+
+/** Persists a directory's entries (a rename, link or unlink in it). Windows cannot open a directory to sync it. */
+export async function syncDirectory(directory: string): Promise<void> {
+	if (process.platform === "win32") return;
+	const handle = await open(directory, "r");
+	try {
+		await handle.sync();
+	} finally {
+		await handle.close();
 	}
 }
 

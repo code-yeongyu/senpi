@@ -235,7 +235,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		await listen(server, bindSocket, publicSecret);
 		await publicEndpoint?.publish();
 		state.publicSocketOwned = true;
-		if (successor) await adoptPublicSocket(bindSocket, publicSocket, launch.replaceIdentity);
+		if (successor) await adoptPublicSocket(bindSocket, publicSocket, launch.replaceIdentity, launch.publishToken);
 		state.publicSocketIdentity = await statSocketIdentity(publicSocket);
 		// Publish the ownership token inside this supervisor's private scratch
 		// directory (which no replacement supervisor writes): the host child's

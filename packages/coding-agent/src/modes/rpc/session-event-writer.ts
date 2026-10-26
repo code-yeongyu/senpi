@@ -674,6 +674,9 @@ export class SessionEventWriter {
 					...(record.error === undefined ? {} : { error: record.error }),
 				};
 				break;
+			case "host_handover_overdue":
+				wire = { type: "host_handover_overdue", operation_id: record.operation_id, retained: record.retained };
+				break;
 			default: {
 				const exhaustive: never = record;
 				throw new Error(`unexpected host record ${exhaustive}`);

@@ -71,6 +71,11 @@ export interface HandoffHostOptions {
 	readonly expectedRuntimeBuildId?: string;
 	readonly policy?: HostLifecyclePolicyInput;
 	/**
+	 * The instant (on `Date.now`) the whole handoff gives up by (code-yeongyu/oh-my-openagent#10091): the lock
+	 * wait and the successor's readiness window shrink to fit. Absent: the handoff's own budgets.
+	 */
+	readonly deadline?: number;
+	/**
 	 * How the successor is launched from supervisor argv. Defaults to THIS process's runtime; a
 	 * running host performing an idle handover passes the runtime of the CLI that asked for it.
 	 */
@@ -117,6 +122,8 @@ export type HandoffResult =
 			readonly socket: string;
 			readonly generation: number;
 			readonly instanceId: string;
+			/** A step after publication that failed and was repaired forward (the successor kept serving). */
+			readonly repair?: string;
 	  }
 	| {
 			readonly action: "refuse";
@@ -131,7 +138,11 @@ export type HandoffResult =
  */
 export async function handoffHost(options: HandoffHostOptions): Promise<HandoffResult> {
 	if (handoffUnsupported(options)) return { action: "refuse", reason: "upgrade_unsupported", upgradeable: false };
-	const release = await acquireHostEnsureLock(options.socket, HANDOFF_LOCK_WAIT_MS);
+	const wait =
+		options.deadline === undefined
+			? HANDOFF_LOCK_WAIT_MS
+			: Math.max(0, Math.min(HANDOFF_LOCK_WAIT_MS, options.deadline - Date.now()));
+	const release = await acquireHostEnsureLock(options.socket, wait);
 	try {
 		return await handoffHostLocked(options);
 	} finally {

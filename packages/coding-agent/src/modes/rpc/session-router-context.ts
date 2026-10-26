@@ -17,6 +17,7 @@ import { routingIdOf } from "./session-router-errors.ts";
 import { sweepIdleSessions } from "./session-router-occupancy.ts";
 import type { RpcHostSessionDefaults, RpcSessionIdlePolicy } from "./session-router-types.ts";
 import { registryStatusSource } from "./session-status-source.ts";
+import type { TransferSeal } from "./session-transfer-seal.ts";
 export class RouterContext {
 	readonly bindings = new Map<string, RpcSessionBinding>();
 
@@ -77,6 +78,24 @@ export class RouterContext {
 	drainExitRequested = false;
 
 	readonly handoffClosed = new Set<string>();
+
+	/** Sessions sealed for a transfer to the next generation (`session-transfer-seal.ts`). */
+	readonly transferSeals = new Map<string, TransferSeal>();
+
+	/** What last held each session a drain keeps, so a pass logs a change once. */
+	readonly heldTransfers = new Map<string, string>();
+
+	/** Connections a fresh open could reuse: every one that routed anything but an observing read. */
+	readonly applicationConnections = new Set<string>();
+
+	/** The membership seal of a handover publication in flight (`session-router-handover.ts`). */
+	handoverSeal: { readonly settled: Promise<boolean>; readonly resolve: (published: boolean) => void } | undefined;
+
+	/** A handover published this generation's successor: clients that cannot follow it reconnect. */
+	handoverPublished = false;
+
+	/** When a retained session whose park record could not be written may be tried again, on `idleNow`. */
+	readonly parkRetryAt = new Map<string, { readonly at: number; readonly attempts: number }>();
 
 	readonly activeRequests = new Map<string | undefined, number>();
 

@@ -8,16 +8,19 @@ import { idleHandoverOutcome } from "../../../src/modes/rpc/host-handover-reques
 
 vi.mock("../../../src/modes/rpc/host-probe.ts", async (importOriginal) => {
 	const original = await importOriginal<typeof import("../../../src/modes/rpc/host-probe.ts")>();
+	// The CLI's handover reads observe (code-yeongyu/oh-my-openagent#10091); both probes answer alike.
+	const serving = vi.fn(async () => ({
+		protocolVersion: 1,
+		serverVersion: "test",
+		capabilities: ["runtime_identity_handover"],
+		instanceId: "instance-1",
+		generation: 4,
+		agentDir: "/agent-dir-of-the-host",
+	}));
 	return {
 		...original,
-		probeProtocolInfo: vi.fn(async () => ({
-			protocolVersion: 1,
-			serverVersion: "test",
-			capabilities: ["runtime_identity_handover"],
-			instanceId: "instance-1",
-			generation: 4,
-			agentDir: "/agent-dir-of-the-host",
-		})),
+		observeProtocolInfo: serving,
+		probeProtocolInfo: serving,
 		requestOnSocket: vi.fn(async () => {
 			throw new Error("begin_handover must not be sent");
 		}),

@@ -8,10 +8,12 @@
  * the host serving the socket is the named generation, and it advertises the handover - and then
  * hands the operation to the HOST (`begin_handover`), which owns it from there (`host-idle-handover.ts`).
  *
- * Answers, exit 0: `handover_completed` (the host was idle and the successor now serves, or the target
- * already serves the socket - a repeated request after completion), `handover_pending` (the host is
- * waiting for its running work; `host status` shows the operation). Exit 3: `stale_generation`,
- * `handover_blocked`, `handover_in_progress`, `target_build_mismatch`, `handover_unsupported`, `no_host`.
+ * Answers, exit 0: `handover_completed` (the successor now serves new sessions, or the target already serves
+ * the socket - a repeated request after completion); `handover_pending` only from a host that answers before its
+ * outcome. Exit 3: `migration_deferred` (the update may not overlap the running generation now, or the host is
+ * one whose handover would refuse new work until it is idle: then nothing is sent and the update waits for its
+ * cold start, code-yeongyu/oh-my-openagent#10091), `stale_generation`, `handover_blocked`,
+ * `handover_in_progress`, `target_build_mismatch`, `handover_unsupported`, `no_host`.
  * Exit 1 `handover_reply_lost`: the host did not answer and the socket does not serve the target, so
  * the operation's fate is unknown until `host status` is read again.
  */
@@ -19,8 +21,9 @@ import { daemonEnvironment, daemonEnvOverrides } from "./host-daemon-env.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { readHostRegistration } from "./host-daemon-registration.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
-import { HANDOFF_LOCK_HOLD_MS } from "./host-handoff.ts";
+import { STRICT_SESSION_TRANSFER_CAPABILITY } from "./custom-capability.ts";
 import { foreignAgentDirRefusal } from "./host-handoff-agent-dir.ts";
+import { HANDOVER_OUTCOME_BOUND_MS } from "./host-handover-operation.ts";
 import { BEGIN_HANDOVER_COMMAND } from "./host-handover-wire.ts";
 import { defaultHostLaunch } from "./host-launch.ts";
 import type { ResolvedHostLaunchSpec } from "./host-launch-spec.ts";
@@ -32,7 +35,7 @@ import {
 	identityPayload,
 	refusal,
 } from "./host-outcome.ts";
-import { probeProtocolInfo, requestOnSocket } from "./host-probe.ts";
+import { observeProtocolInfo, requestOnSocket } from "./host-probe.ts";
 import { RUNTIME_IDENTITY_HANDOVER_CAPABILITY } from "./runtime-build-id.ts";
 
 export interface IdleHandoverTerms {
@@ -44,8 +47,8 @@ export interface IdleHandoverTerms {
 
 const PROBE_TIMEOUT_MS = 10_000;
 
-/** A host idle at once hands over before answering: its ensure-lock wait plus the handoff itself. */
-const BEGIN_HANDOVER_TIMEOUT_MS = 2 * HANDOFF_LOCK_HOLD_MS + 20_000;
+/** The host answers with its admission outcome within the bound; the margin covers the reply's own transfer. */
+const BEGIN_HANDOVER_TIMEOUT_MS = HANDOVER_OUTCOME_BOUND_MS + 15_000;
 
 export async function idleHandoverOutcome(
 	target: { readonly socket: string; readonly agentDir: string },
@@ -57,7 +60,9 @@ export async function idleHandoverOutcome(
 	if (process.platform === "win32") {
 		return refusal("refuse", undefined, { reason: "upgrade_unsupported", socket, operationId: terms.operationId });
 	}
-	const before = await probeProtocolInfo(socket, PROBE_TIMEOUT_MS);
+	// Every read here observes: a probe connection the host still counts as a client would make an overlapping
+	// update look like it leaves that client behind (code-yeongyu/oh-my-openagent#10091).
+	const before = await observeProtocolInfo(socket, PROBE_TIMEOUT_MS);
 	const refuse = (reason: string, extra: Record<string, unknown> = {}) =>
 		refusal("refuse", before, { reason, socket, operationId: terms.operationId, ...extra });
 	const foreign = before === undefined ? undefined : await foreignAgentDirRefusal(socket, target.agentDir, before);
@@ -79,6 +84,12 @@ export async function idleHandoverOutcome(
 		});
 	}
 	if (!before.capabilities.includes(RUNTIME_IDENTITY_HANDOVER_CAPABILITY)) return refuse("handover_unsupported");
+	if (!before.capabilities.includes(STRICT_SESSION_TRANSFER_CAPABILITY)) {
+		return refuse("migration_deferred", {
+			detail:
+				"legacy_predecessor_transfer: this host's handover would refuse new work until it is idle; the update applies at its next cold start",
+		});
+	}
 	const reply = await requestOnSocket(
 		socket,
 		beginHandoverCommand(target, spec, terms, mcpPresenterEnforcement),
@@ -88,11 +99,14 @@ export async function idleHandoverOutcome(
 	if (typeof reply.refused === "string") {
 		return refuse(reply.refused, typeof reply.detail === "string" ? { detail: reply.detail } : {});
 	}
+	if (reply.phase === "migration_deferred") {
+		return refuse("migration_deferred", { detail: reply.reason ?? null, handover: reply });
+	}
 	if (reply.state === "handover_blocked") {
 		return refuse("handover_blocked", { detail: reply.reason ?? null, handover: reply });
 	}
 	if (reply.state === "handover_completed") {
-		return answered(target, "handover_completed", await probeProtocolInfo(socket, PROBE_TIMEOUT_MS), terms, reply);
+		return answered(target, "handover_completed", await observeProtocolInfo(socket, PROBE_TIMEOUT_MS), terms, reply);
 	}
 	return answered(target, "handover_pending", before, terms, reply);
 }
@@ -131,7 +145,7 @@ async function reconcileLostReply(
 	terms: IdleHandoverTerms,
 	before: HostProtocolInfo,
 ): Promise<HostOutcome> {
-	const now = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
+	const now = await observeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
 	if (now?.runtimeBuildId === terms.targetRuntimeBuildId) {
 		return answered(target, "handover_completed", now, terms, null);
 	}

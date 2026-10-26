@@ -14,8 +14,8 @@
  * session file is gone is dropped, never retried.
  */
 import { createHash } from "node:crypto";
-import { existsSync, renameSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
@@ -30,6 +30,7 @@ import {
 	sessionPromptSurfaceError,
 	sessionRetryFallbackError,
 } from "./rpc-input-validation.ts";
+import { syncDirectory, writeFileDurably } from "./host-state-json.ts";
 import { applyContextPatch, type SessionContextOverlay } from "./session-context-patch.ts";
 
 export interface HandoverParkedEntry {
@@ -64,6 +65,11 @@ export interface HandoverParkedEntry {
 	 * Absent on entries an older generation wrote, which every reader treats as a predecessor's park.
 	 */
 	readonly parkedBy?: string;
+	/**
+	 * The transfer this park is (code-yeongyu/oh-my-openagent#10091): a later park of the same path is another
+	 * transfer, and the cleanup of an earlier one removes only its own. Absent on entries older generations wrote.
+	 */
+	readonly transferId?: string;
 }
 
 const recordDir = (daemonDir: string): string => join(daemonDir, "handover-parked");
@@ -88,6 +94,7 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 		(record.durableSessionId === undefined || typeof record.durableSessionId === "string") &&
 		(record.cwd === undefined || typeof record.cwd === "string") &&
 		(record.parkedBy === undefined || typeof record.parkedBy === "string") &&
+		(record.transferId === undefined || typeof record.transferId === "string") &&
 		(record.thinkingLevel === undefined || typeof record.thinkingLevel === "string") &&
 		(record.permissionPreset === undefined ||
 			(typeof record.permissionPreset === "string" &&
@@ -109,12 +116,10 @@ function isEntry(value: unknown): value is HandoverParkedEntry {
 
 async function writeEntryFile(daemonDir: string, entry: HandoverParkedEntry): Promise<void> {
 	await mkdir(recordDir(daemonDir), { recursive: true, mode: 0o700 });
-	const file = entryFile(daemonDir, entry.sessionPath);
-	const tmp = `${file}.${process.pid}.${Math.random().toString(16).slice(2, 10)}.tmp`;
-	await writeFile(tmp, `${JSON.stringify(entry, null, 2)}\n`, { mode: 0o600 });
-	renameSync(tmp, file);
+	await writeFileDurably(entryFile(daemonDir, entry.sessionPath), `${JSON.stringify(entry, null, 2)}\n`);
 }
 
+/** Resolves once the entry is on disk to stay: a park whose record cannot be written must not tear its session down. */
 export function recordHandoverParkedSession(daemonDir: string, entry: HandoverParkedEntry): Promise<void> {
 	return enqueueMutation(() => writeEntryFile(daemonDir, entry));
 }
@@ -148,8 +153,28 @@ export async function readHandoverParkedSessions(daemonDir: string): Promise<rea
 	return entries;
 }
 
-export function clearHandoverParkedSession(daemonDir: string, sessionPath: string): Promise<void> {
-	return enqueueMutation(() => rm(entryFile(daemonDir, sessionPath), { force: true }));
+/**
+ * Removes the record of `sessionPath`; with `transferId`, only while it is still that transfer's. Reading and
+ * then removing is safe here: a path's record is written only by the generation that owns the session, and
+ * this process orders its own writes and removals on one mutation chain.
+ */
+export function clearHandoverParkedSession(daemonDir: string, sessionPath: string, transferId?: string): Promise<void> {
+	return enqueueMutation(async () => {
+		const file = entryFile(daemonDir, sessionPath);
+		if (transferId !== undefined && (await readTransferId(file)) !== transferId) return;
+		await rm(file, { force: true });
+		await syncDirectory(recordDir(daemonDir)).catch(() => undefined);
+	});
+}
+
+async function readTransferId(file: string): Promise<string | undefined> {
+	try {
+		const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+		return isEntry(parsed) ? parsed.transferId : undefined;
+	} catch {
+		// Absent or unreadable: it is not the transfer being cleaned up, so it stays.
+		return undefined;
+	}
 }
 
 export function dropHandoverParkedSessionIfFileGone(daemonDir: string, sessionPath: string): Promise<void> {

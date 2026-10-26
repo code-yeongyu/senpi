@@ -1,9 +1,11 @@
+import type { HandoverCoordinatorOptions } from "./host-handover-coordinator.ts";
 import type { HandoverParkedEntry } from "./host-handover-parked.ts";
 import type { RpcCommand, RpcHostKernelMemory, RpcResponse } from "./rpc-types.ts";
 import { releaseConnection } from "./session-router-attachments.ts";
 import { dispose, tearDownReleased } from "./session-router-close.ts";
 import { RouterContext } from "./session-router-context.ts";
 import { beginDrain, sweepIdleSessions } from "./session-router-occupancy.ts";
+import { beginHandoverSeal, endHandoverSeal, handoverClientView, retainedSessions } from "./session-router-handover.ts";
 import { reopenParked } from "./session-router-open.ts";
 import { handle } from "./session-router-routing.ts";
 
@@ -41,6 +43,17 @@ export class SessionCommandRouter {
 	}
 	releaseConnection(connectionId: string): Promise<string[]> {
 		return releaseConnection(this.context, connectionId);
+	}
+	/** What a runtime-identity handover reads and holds on this router. */
+	handoverPorts(): Pick<HandoverCoordinatorOptions, "clients" | "retained" | "seal"> {
+		return {
+			clients: () => handoverClientView(this.context),
+			retained: () => retainedSessions(this.context),
+			seal: {
+				begin: () => beginHandoverSeal(this.context),
+				end: (published) => endHandoverSeal(this.context, published),
+			},
+		};
 	}
 	setHostMemoryView(view: {
 		readonly mainHeapBytes: () => number;

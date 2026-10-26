@@ -313,6 +313,20 @@ export async function shieldSocketDuringClose(socketPath: string, close: () => P
 	}
 }
 
+/**
+ * Takes the one-shot publication token: true when this process consumed it, false when the handoff had already
+ * revoked it. Consume and revoke are each one rename of the same file, so exactly one of them wins.
+ */
+export async function consumePublishToken(token: string): Promise<boolean> {
+	try {
+		await rename(token, `${token}.consumed`);
+		return true;
+	} catch (cause) {
+		if (isNodeErrorCode(cause, "ENOENT")) return false;
+		throw cause;
+	}
+}
+
 function delayUnrefed(ms: number): Promise<void> {
 	return new Promise((resolve) => {
 		const timer = setTimeout(resolve, ms);
@@ -338,11 +352,17 @@ export async function adoptPublicSocket(
 	bindSocket: string,
 	publicSocket: string,
 	expected: SocketFileIdentity | undefined,
+	publishToken?: string,
 ): Promise<void> {
 	if (expected === undefined) throw new Error(`${publicSocket}: a generation launch must name the entry it replaces`);
 	const current = await statSocketIdentity(publicSocket);
 	if (current === undefined || current.dev !== expected.dev || current.ino !== expected.ino) {
 		throw new Error(`${publicSocket}: owned by another socket entry now; refusing to replace it`);
+	}
+	// The last step before the rename: a handoff that withdrew this publication (its readiness window closed)
+	// has renamed the token away, and from here on it follows this generation instead of stopping it.
+	if (publishToken !== undefined && !(await consumePublishToken(publishToken))) {
+		throw new Error(`${publicSocket}: the handoff that launched this generation withdrew its publication`);
 	}
 	// rename(2) is atomic for readers of the path: every connect either reaches the old entry or
 	// this one, never nothing. The inode this supervisor bound simply answers to a second name.

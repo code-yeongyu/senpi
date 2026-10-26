@@ -886,12 +886,6 @@
 			"count": 1
 		},
 		{
-			"file": "src/modes/rpc/host-handover-parked.ts",
-			"callee": "renameSync",
-			"symbol": "writeEntryFile",
-			"count": 1
-		},
-		{
 			"file": "src/modes/rpc/rpc-session-state.ts",
 			"callee": "existsSync",
 			"symbol": "buildRpcSessionState",

@@ -118,6 +118,8 @@ describe.skipIf(process.platform === "win32")("conditional idle handover refusal
 		expect(processAlive(host.firstPid)).toBe(true);
 	}, 180_000);
 
+	// code-yeongyu/oh-my-openagent#10091: a busy host whose endpoint did not opt in to overlapping updates defers the
+	// operation at once instead of holding it pending; a repeat of it answers the same operation, other terms conflict.
 	it("answers a repeated operation id with the operation that already exists", async () => {
 		const held = await HeldAnthropicModel.start();
 		models.push(held);
@@ -130,25 +132,21 @@ describe.skipIf(process.platform === "win32")("conditional idle handover refusal
 
 		const first = dataOf(await (await connect(host, peers)).request(beginHandoverCommand(host)));
 		const again = dataOf(await (await connect(host, peers)).request(beginHandoverCommand(host)));
-		const other = dataOf(
-			await (await connect(host, peers)).request(
-				beginHandoverCommand(host, { operation_id: "op-2", target_runtime_build_id: `sha256:${"0".repeat(64)}` }),
-			),
-		);
-
-		expect(first).toMatchObject({ operation_id: "op-1", state: "handover_pending" });
-		expect(again).toEqual(first);
 		const conflicting = dataOf(
 			await (await connect(host, peers)).request(beginHandoverCommand(host, { if_generation: host.generation + 1 })),
 		);
-		const joined = dataOf(
-			await (await connect(host, peers)).request(beginHandoverCommand(host, { operation_id: "op-3" })),
-		);
+
+		expect(first).toMatchObject({
+			operation_id: "op-1",
+			state: "handover_blocked",
+			phase: "migration_deferred",
+			reason: "rollout_disabled",
+		});
+		expect(again).toEqual(first);
 		expect(conflicting).toMatchObject({ refused: "operation_conflict" });
-		expect(joined).toMatchObject({ operation_id: "op-1", state: "handover_pending" });
-		expect(other).toMatchObject({ refused: "handover_in_progress", detail: "op-1" });
 		const status = await readHostStatus({ socket: host.qa.socket, agentDir: host.qa.agentDir });
 		expect(status.instanceId).toBe(host.instanceId);
+		expect(status.handover).toMatchObject({ operation_id: "op-1", phase: "migration_deferred" });
 		expect(status.generations.filter((row) => row.alive)).toHaveLength(1);
 	}, 180_000);
 

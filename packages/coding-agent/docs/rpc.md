@@ -925,6 +925,13 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    path still refers to the exact socket the handoff was decided against (`--replace <dev>:<ino>`). A path
    taken over by anything else aborts the handoff: nothing is renamed, nothing is unlinked, and the
    running host keeps serving.
+   The rename is also the handoff's COMMIT POINT (code-yeongyu/oh-my-openagent#10091). The handoff writes a
+   one-shot publication token into the successor's generation directory, and the successor consumes it
+   (`--publish-token <path>`) as the last step before the rename. A handoff whose readiness window closes
+   revokes the token before it stops the successor; a successor that consumed it first is followed for up
+   to 5 s instead of being stopped. Once the successor answers on the public socket nothing stops it: a
+   registration, presenter-enrollment or drain step that fails afterwards is reported as the result's
+   `repair` (and one stderr line), and the handoff still completes.
 3. `handoffHost` then registers the successor (its own `generations/<instanceId>/host.pid`, the pointer
    moved onto it, and `settings.json { socket, generation }`) and sends
    the predecessor SIGUSR1 = DRAIN: stop accepting, announce `host_superseded` to every connection,
@@ -932,6 +939,25 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    connection occupancy. Clients see `session_closed { reason: "handoff_parked", sessionPath }` before
    their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
    ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
+
+The drain parks a session only by a STRICT TRANSFER (code-yeongyu/oh-my-openagent#10091):
+
+- It parks a session only when it is proven quiet: no run, no prompt in preflight, no queued input still owed a
+  turn, no admitted delivery not yet written, no bash, compaction or barrier-held session work, and no request for
+  it in flight. That is the check `release_session` makes. A session whose activity cannot be read is not proven
+  quiet: it stays with this generation, where its work keeps running, and the drain logs what holds it
+  (`unknown` for unreadable activity) once per change. Every other session still parks.
+- The drain seals the session in the same synchronous step as that check. Until the transfer ends, a command
+  that would add work to it (a prompt, steer, follow-up, bash, compaction, edit, context patch, ...) is answered
+  `session_closing` with `errorData { reason: "handoff_transfer", transfer_id }` and is not admitted; reads,
+  aborts, answers to a pending question, `close_session`, `release_attachment`, `attach_session` and
+  `reclaim_session` still pass. An explicit `close_session` during the transfer wins: the session closes as
+  `client_close` and its park record is withdrawn, so nothing reopens it.
+- A retained session's park record (below, `handover-parked/`) carries the transfer's `transferId` and is synced
+  to disk, file and directory, BEFORE the session is torn down; the teardown claim follows one more quiet check
+  in the same synchronous step. A record that cannot be written leaves the session open, unsealed and owned by
+  this generation, and the park is tried again after a backoff (250 ms doubling to 30 s). The successor removes a
+  record only while it still names the transfer it reopened, so a later park of the same path is never lost.
 
 Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 
@@ -1047,33 +1073,58 @@ A POSIX socket host with an id advertises `runtime_identity_handover` and accept
 `clientRuntimeBuildId` (the successor runs the CLI's runtime), `stale_generation` unless the socket is served
 by the named generation, `handover_unsupported` when the host does not advertise the capability, and
 `foreign_agent_dir` when the host belongs to another agent dir (the same check as the generation handoff's,
-`detail` naming both). It then sends the host `begin_handover`, carrying its own `agent_dir`, and the HOST
-owns the operation:
+`detail` naming both).
+
+A handover never closes the host's admission (code-yeongyu/oh-my-openagent#10091). A host from before that
+change answered `begin_handover` by refusing every new prompt, steer, follow-up, bash, compaction, edit and wake
+with `handover_pending:` until the whole host was idle. Such a host advertises `runtime_identity_handover` but
+not `strict_session_transfer_v1`, and the CLI never asks it: it answers exit 3 `migration_deferred` with
+`detail` starting `legacy_predecessor_transfer`, sends nothing, and that host's update waits for its next cold
+start (an idle exit and a fresh ensure). A host that advertises `strict_session_transfer_v1` is sent
+`begin_handover`, carrying the CLI's own `agent_dir`, and owns the operation:
 
 1. a request naming another `agent_dir` than the host's own refuses `foreign_agent_dir` before anything else
    (a request without the field, from a CLI before it existed, is not checked); a request with an `operationId`
    it already holds answers with that operation when the terms match (and `operation_conflict` when they do
-   not); a new operation is checked first against the named generation (`stale_generation`);
-2. it stops admitting new work: `prompt`, `steer`, `follow_up`, `send_custom_message`, `append_user_message`,
-   `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
-   `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);
-3. it waits for its next safe idle point: no request in flight and no open session busy by the same activity
-   judgement a drain parks by. A retained session with no work is idle. The wait has no deadline; a long turn
-   delays the handover and is never aborted for it;
-4. it hands the socket over through the generation handoff above, launched from the CLI's runtime with the
-   CLI's daemon environment, and drains. The successor is told the target id and exits before it listens when
-   its own runtime digests to another one (its files changed since the request). A successor that never
-   answers is stopped, the host keeps serving and admits work again (`handover_blocked`).
+   not); an `operationId` that is not an identifier (letters, digits, `.`, `_`, `-`, at most 128) refuses
+   `invalid_request`; a new operation is checked first against the named generation (`stale_generation`);
+2. it records the operation durably (`<daemonDir>/handovers/<operationId>.json`, synced before the request is
+   accepted; the terms only as a digest, never the environment's values) and judges whether publishing a
+   successor now would OVERLAP this generation: it holds a session, or an application connection that a fresh
+   open could reuse. A connection that has only sent `get_protocol_info` (a probe, an ensure's attach hold) or
+   observing reads (`observe: true`) never counts. A host holding nothing
+   overlaps nothing and proceeds. An overlapping update proceeds only when the endpoint opted in
+   (`SENPI_RPC_HOST_OVERLAP_HANDOVER=1` in the host's environment) and every application connection declared
+   `generation_separated_admission_v1` and `session_transfer_reconciliation_v1` in its connection-level
+   `set_client_info.capabilities`; otherwise the operation ends `migration_deferred` with `reason`
+   `rollout_disabled` or `legacy_attached_client`. Deferral launches nothing and changes nothing: the host
+   keeps serving every session and admitting every command;
+3. otherwise it publishes a successor through the generation handoff above, launched from the CLI's runtime with
+   the CLI's daemon environment, within 45 s of the request: the successor is told the target id and exits
+   before it listens when its own runtime digests to another one. Meanwhile a client that did not declare both
+   capabilities and asks for a session handle (`open_session`, `attach_session`, `reclaim_session`) is held
+   until the outcome; once the successor serves it is answered `host_draining` with
+   `errorData { reason: "handover_published" }` and reconnects to the public socket. Every other command keeps
+   reaching its session;
+4. once the successor serves new sessions, this generation drains: each session stays here, with its running
+   turn, queue and control traffic, until it is quiet and transfers strictly (above). Ten minutes after the
+   publication, sessions still held are reported once (`host_handover_overdue { operation_id, retained }` to this
+   generation's connections, and `phase: "completed_with_retained_sessions"`); nothing is aborted or stopped.
+   A successor that is not published in time is stopped, and the host keeps serving (`rolled_back`).
 
-The answer is exit 0 `{ action: "handover_completed" | "handover_pending", operationId, handover, ... }`: a host
-idle at once hands over before answering, and a request whose target already serves the socket answers
-`handover_completed` without touching anything. A repeated `operationId` answers with the operation that
-already exists; another id for the same target joins the pending operation (the answer names its id), and
-one for another target while one is pending refuses `handover_in_progress`. A
-blocked operation refuses `handover_blocked` with the successor's failure in `detail`; a lost reply exits 1
-`handover_reply_lost` after checking whether the target now serves the socket. `host status` shows the
-operation as `handover: { operation_id, state, target_runtime_build_id, reason?, successor? }` with `state`
-`handover_pending`, `handover_switching`, `handover_completed` or `handover_blocked`.
+The answer arrives within that bound, as exit 0 `{ action: "handover_completed", operationId, handover, ... }`
+once the successor serves, or exit 3 `migration_deferred` (`detail` is the reason) or `handover_blocked` (the
+successor's failure, or `recovery_required` when the bound passed with the publication's fate unknown). A
+request whose target already serves the socket answers `handover_completed` without touching anything. A
+repeated `operationId` answers with the operation that already exists; another id for the same target joins
+the operation in progress (the answer names its id), and one for another target refuses `handover_in_progress`
+until that operation reached its outcome. A generation whose successor serves refuses a new operation
+`stale_generation`. A lost reply exits 1 `handover_reply_lost` after checking whether the target now serves the
+socket. `host status` shows the operation as `handover: { operation_id, state, phase, target_runtime_build_id,
+reason?, successor?, published_at?, drain_deadline_at?, retained? }`. `phase` is one of `checking_eligibility`,
+`migration_deferred`, `preparing`, `draining`, `completed`, `completed_with_retained_sessions`, `rolled_back` or
+`recovery_required`; `state` projects it for clients that predate the phases (`handover_pending` while checking
+or preparing, `handover_completed` from `draining` on, `handover_blocked` for a deferral, a rollback or recovery).
 
 #### Daemon state directory (layout 2)
 
@@ -1169,9 +1220,9 @@ ended.
 During a handoff two hosts are alive at once, so the in-process path reservation cannot keep them off one
 JSONL file. Every generation records each open session path in
 `<daemonDir>/reservations/<sha256(canonical path)[:16]>.json` as
-`{ instanceId, pid, processStartTime, sessionPath, attached }`, and removes it when the session closes or
-parks. `attached` is republished whenever that session gains its first client or loses its last one, so the
-claim says whether anybody is still driving the file.
+`{ instanceId, pid, processStartTime, sessionPath, attached, strict_transfer }`, and removes it when the session
+closes or parks. `attached` is republished whenever that session gains its first client or loses its last one, so
+the claim says whether anybody is still driving the file.
 
 A claim STANDS while one of two things is true: its owner is the generation the pointer names, or its owner
 still has a client attached to that session. Those are the cases where somebody is really writing the file.
@@ -1179,7 +1230,9 @@ A claim from a SUPERSEDED generation that published `attached: false` is reclaim
 been asked to drain and parks the session as it settles - so the current generation takes the path over
 instead of refusing it forever. A claim whose owner is gone (a killed host, a reboot, a recycled pid with a
 different start time) is ignored, and a claim written before the field existed is honored, so a running older
-build is never reclaimed from.
+build is never reclaimed from. A claim with `strict_transfer: true` stands for as long as its owner process runs,
+superseded and detached included: that owner hands the session over only by a strict transfer (above) and
+removes the claim itself after the teardown, while a detached session can still be running a turn there.
 
 An `open_session { sessionPath }` refused by a standing claim answers `session_path_in_use` with
 `errorData { owner, retry_after_ms: 2000 }`, where `owner` carries `{ instanceId, pid, processStartTime,
@@ -4851,6 +4904,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `host_memory_pressure` | Multi-session host: the memory footprint is above `SENPI_RPC_HOST_RSS_WARN_MB`, with RSS beside it and the live session count |
 | `subscription_limits` | A subscription account reported new limit windows: `{ provider, account, windows, reportedAt }`, the same shape as one `get_subscription_limits` account; every connection hears it once per report |
 | `host_trimmed` | Multi-session host: it collected (at zero sessions, or at 2 GB+ after a session-count drop), with the footprint before and after, the sessions still open and the pause |
+| `host_handover_overdue` | Multi-session host: its runtime-identity handover's successor has served new sessions for the drain's soft deadline and this generation still holds the sessions named, with what holds each; nothing is stopped |
 | `session_opened` | Multi-session host: a session was created on this host (`sessionId`, `durableSessionId`, `sessionPath`, `kind`, `cwd`); a worker's reaches only attached connections and `subscribe_sessions` subscribers with `include_workers` |
 | `session_status` | Multi-session host: a `subscribe_sessions` subscription's per-session status change; see [Session status stream](#session-status-stream-subscribe_sessions) |
 | `session_closed` | Multi-session host: a routing handle ended, with an optional `reason` (`handoff_parked` = a generation handoff put the session back on disk; reopen it by `sessionPath`) |
@@ -4859,7 +4913,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 
 Event types are additive: a client that does not recognise a type must ignore that record rather than fail. `model_changed`
 and `service_tier_changed` were added after the initial protocol and are safe to ignore. `session_parked`, `host_stalled`,
-`host_memory_pressure`, `host_trimmed` and `subscription_limits` are the same: ignore them if unknown. `session_closed.reason` is optional; ignore an unknown
+`host_memory_pressure`, `host_trimmed`, `host_handover_overdue` and `subscription_limits` are the same: ignore them if unknown. `session_closed.reason` is optional; ignore an unknown
 value the same way.
 
 ### session_closed.reason
@@ -4921,6 +4975,19 @@ the memory was returned. Hosts released before senpi#2261 send `rssMb` and `sess
 Informational, at most once a minute: the host's last session closed, or a 2 GB+ host's session count dropped
 (`sessions` above 0), and it ran one full collection that blocked the loop for `pauseMs`. `collected` is
 `false` where the runtime exposes none (Node without `--expose-gc`); the record is still sent, with the two readings.
+
+### host_handover_overdue
+
+```json
+{ "type": "host_handover_overdue", "operation_id": "op-1", "retained": [{ "session_id": "rpc-3", "blockers": "turn" }] }
+```
+
+Informational, once per handover (code-yeongyu/oh-my-openagent#10091): ten minutes after a runtime-identity handover
+published its successor, this generation still holds the sessions in `retained`, each with what keeps it here
+(`turn`, `prompt`, `queued`, `delivery`, `bash`, `compaction`, `session_work`, `activity`, `request` or `unknown`, joined by
+`,`; `transfer_pending` while its transfer is in flight or its park record is being retried).
+Nothing is aborted or stopped: each session still transfers once it is quiet, and the operation's `phase` reads
+`completed_with_retained_sessions` until it does.
 
 ### model_changed
 
@@ -5523,7 +5590,9 @@ not a presenter; fd 4 alone does not enable enforcement.
 An enforcing predecessor keeps enforcement in its successor, including when an older
 handoff caller omits the option. Conditional `handoff --when idle` carries the non-secret
 `mcp_presenter_enforcement` boolean in `begin_handover`, independently of the launch
-specification and environment. It uses only the existing authenticated owner's channel
+specification and environment. The value is one of the operation's terms: the same
+`operation_id` with another value is refused `operation_conflict`, and a request with another
+value does not join an operation in progress (`handover_in_progress`). It uses only the existing authenticated owner's channel
 for fresh successor enrollment; the CLI cannot enroll itself into the predecessor.
 Reuse and already-current handover answers report the serving host's actual capabilities.
 Neither a successful CLI exit nor an equal `runtimeBuildId` proves enforcement or

@@ -5,6 +5,11 @@ import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths } from "../../src/modes/rpc/host-daemon-paths.ts";
+import {
+	GENERATION_SEPARATED_ADMISSION_CAPABILITY,
+	SESSION_TRANSFER_RECONCILIATION_CAPABILITY,
+} from "../../src/modes/rpc/host-handover-eligibility.ts";
+import { OVERLAP_HANDOVER_ENV } from "../../src/modes/rpc/host-idle-handover.ts";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import { HeldAnthropicModel, openedSessionId } from "../helpers/rpc-generation-support.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "../helpers/rpc-hermetic.ts";
@@ -20,6 +25,9 @@ const enroll = {
 	backendGeneration: "backend-4247",
 };
 const enforcement = ["--mcp-presenter-enforcement", "--mcp-presenter-fd", "4"];
+// code-yeongyu/oh-my-openagent#10091: a handover over a busy host overlaps it; the endpoint opts in and the client follows.
+const OVERLAP = { [OVERLAP_HANDOVER_ENV]: "1" };
+const OVERLAP_CAPABILITIES = [GENERATION_SEPARATED_ADMISSION_CAPABILITY, SESSION_TRANSFER_RECONCILIATION_CAPABILITY];
 
 afterEach(async () => {
 	for (const socket of sockets.splice(0)) socket.destroy();
@@ -77,9 +85,14 @@ async function privateSocket(endpoint: unknown): Promise<Socket> {
 	return socket;
 }
 
-async function launched(qa: Awaited<ReturnType<typeof hostCliSandbox>>, args: string[], runtime = "bun") {
+async function launched(
+	qa: Awaited<ReturnType<typeof hostCliSandbox>>,
+	args: string[],
+	runtime = "bun",
+	env: Readonly<Record<string, string>> = {},
+) {
 	let enrolled: Wire | undefined;
-	const result = await runHostCli(qa, args, { SENPI_RUNTIME: runtime }, async (socket) => {
+	const result = await runHostCli(qa, args, { SENPI_RUNTIME: runtime, ...env }, async (socket) => {
 		enrolled = await bootstrap(socket);
 	});
 	expect(result.exitCode, result.stderr).toBe(0);
@@ -95,10 +108,12 @@ async function heldModel(qa: Awaited<ReturnType<typeof hostCliSandbox>>) {
 	return model;
 }
 
-async function busy(qa: Awaited<ReturnType<typeof hostCliSandbox>>) {
+async function busy(qa: Awaited<ReturnType<typeof hostCliSandbox>>, capabilities: readonly string[] = []) {
 	const peer = await Peer.connect(qa.socket, { deadlineMs: HOST_TEST_TIMEOUT_MS });
 	sockets.push(peer.socket);
 	await authenticate(peer, qa.agentDir);
+	if (capabilities.length > 0)
+		await peer.request({ id: "caps", type: "set_client_info", width: 80, capabilities: [...capabilities] });
 	const sessionId = openedSessionId(
 		await peer.request({
 			id: "open",
@@ -158,9 +173,9 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 			const qa = await hostCliSandbox("pd");
 			const model = await heldModel(qa);
 			const first = owned
-				? await launched(qa, ["ensure", ...enforcement])
-				: { payload: onlyJsonLine(await runHostCli(qa, ["ensure"])), enrolled: undefined };
-			const { peer, sessionId } = await busy(qa);
+				? await launched(qa, ["ensure", ...enforcement], "bun", OVERLAP)
+				: { payload: onlyJsonLine(await runHostCli(qa, ["ensure"], OVERLAP)), enrolled: undefined };
+			const { peer, sessionId } = await busy(qa, OVERLAP_CAPABILITIES);
 			let management: Socket | undefined;
 			if (first.enrolled) {
 				const context = await peer.request({ id: "context", type: "mcp_presenter_context", sessionId });
@@ -194,27 +209,30 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 			);
 			// An ensure reports THIS CLI's target build while reusing the busy generation, never enrolling it.
 			const target = onlyJsonLine(await runHostCli(qa, ["ensure", "--policy", "never", "--launch-spec", spec]));
-			const pending = await runHostCli(qa, [
-				"handoff",
-				"--when",
-				"idle",
-				"--operation",
-				"presenter-4247",
-				"--if-instance",
-				String(first.payload.instanceId),
-				"--if-generation",
-				"0",
-				"--target-build",
-				String(target.clientRuntimeBuildId),
-				"--launch-spec",
-				spec,
-				"--mcp-presenter-enforcement",
-			]);
-			expect(pending.exitCode, pending.stderr).toBe(0);
-			expect(onlyJsonLine(pending).action).toBe("handover_pending");
+			// The successor is published while the held turn keeps running here, so its enrollment is answered while the
+			// handoff runs: both listeners are registered before it starts.
 			const successorChallenge = management ? next(management, "mcp_presenter_successor_challenge") : undefined;
 			const superseded = next(peer.socket, "host_superseded");
-			model.release();
+			const handing = runHostCli(
+				qa,
+				[
+					"handoff",
+					"--when",
+					"idle",
+					"--operation",
+					"presenter-4247",
+					"--if-instance",
+					String(first.payload.instanceId),
+					"--if-generation",
+					"0",
+					"--target-build",
+					String(target.clientRuntimeBuildId),
+					"--launch-spec",
+					spec,
+					"--mcp-presenter-enforcement",
+				],
+				OVERLAP,
+			);
 			if (successorChallenge && management && first.enrolled) {
 				const request = await successorChallenge;
 				const fresh = request.challenge as Wire;
@@ -229,10 +247,14 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 				expect(enrollment.hostInstance).toBe(fresh.hostInstance);
 				expect(enrollment.principalId).not.toBe(first.enrolled.principalId);
 			}
+			const handed = await handing;
+			expect(handed.exitCode, handed.stderr).toBe(0);
+			expect(onlyJsonLine(handed).action).toBe("handover_completed");
 			await superseded;
 			const after = onlyJsonLine(await runHostCli(qa, ["status"]));
 			expect(after.capabilities).toContain("mcp_form_presenter_v1");
 			expect(after.runtimeBuildId).toBe(target.clientRuntimeBuildId);
+			model.release();
 		},
 		240_000,
 	);

@@ -4,7 +4,11 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readHandoverParkedSessions, recordHandoverParkedSession } from "../src/modes/rpc/host-handover-parked.ts";
+import {
+	clearHandoverParkedSession,
+	readHandoverParkedSessions,
+	recordHandoverParkedSession,
+} from "../src/modes/rpc/host-handover-parked.ts";
 
 const dirs: string[] = [];
 
@@ -90,6 +94,20 @@ describe("host-handover-parked record reads", () => {
 		);
 		expect(await readHandoverParkedSessions(dir)).toEqual([]);
 		await expect(stat(file)).resolves.toBeDefined();
+	});
+
+	// code-yeongyu/oh-my-openagent#10091: a later park of the same path is another transfer; cleaning up an
+	// earlier one must not delete it.
+	it("removes a park only for the transfer that wrote it", async () => {
+		const dir = scratch();
+		const sessionPath = join(dir, "moved-twice.jsonl");
+		await recordHandoverParkedSession(dir, { sessionPath, retainOnDisconnect: true, transferId: "second" });
+
+		await clearHandoverParkedSession(dir, sessionPath, "first");
+		expect(await readHandoverParkedSessions(dir)).toEqual([expect.objectContaining({ transferId: "second" })]);
+
+		await clearHandoverParkedSession(dir, sessionPath, "second");
+		expect(await readHandoverParkedSessions(dir)).toEqual([]);
 	});
 
 	it("keeps, but does not return, an entry whose permission preset this version does not know", async () => {

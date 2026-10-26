@@ -71,7 +71,10 @@ export async function releaseConnection(host: RouterContext, connectionId: strin
 		connectionLeft(host, sessionId, connectionId);
 	}
 	// The socket is gone (dropped, not `detach_connection`): nothing will ever open with its capabilities again.
-	if (!host.writer.hasConnection(connectionId)) host.pendingCapabilities.delete(connectionId);
+	if (!host.writer.hasConnection(connectionId)) {
+		host.pendingCapabilities.delete(connectionId);
+		host.applicationConnections.delete(connectionId);
+	}
 	const opens = host.opensByConnection.get(connectionId);
 	const owned = host.sessionsByConnection.get(connectionId);
 	host.sessionsByConnection.delete(connectionId);

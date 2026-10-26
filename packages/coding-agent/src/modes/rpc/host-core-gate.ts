@@ -1,28 +1,25 @@
 /**
- * What stands between a parsed command and the session router on a multi-session host: the
- * conditional idle handover's own request (`begin_handover`), the admission gate it closes on new
- * work, the per-session in-flight count the idle judgement reads, and the runtime identity
- * `get_protocol_info` reports. A host without hooks routes every command exactly as before.
+ * What stands between a parsed command and the session router on a multi-session host: the runtime-identity
+ * handover's own request (`begin_handover`) and the runtime identity `get_protocol_info` reports. A handover
+ * never gates a command (code-yeongyu/oh-my-openagent#10091): every command is routed exactly as on a host
+ * without one, whatever the operation's phase.
  */
 
 import { agentDirMismatch } from "./host-handoff-agent-dir.ts";
+import { HandoverCoordinator, type HandoverCoordinatorOptions } from "./host-handover-coordinator.ts";
 import {
 	BEGIN_HANDOVER_COMMAND,
 	beginHandoverResponse,
-	handoverRefusal,
-	isHostIdle,
 	parseBeginHandover,
 	withHostIdentity,
 } from "./host-handover-wire.ts";
-import { HostIdleHandover, type HostIdleHandoverOptions } from "./host-idle-handover.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
-import type { RpcSessionRegistry } from "./session-registry.ts";
 
 export interface HostCoreHooks {
 	/** The runtime this host loaded at startup, reported by `get_protocol_info`. */
 	readonly runtimeBuildId?: string;
-	/** Present on a host that can hand over at its next idle point (a POSIX socket host). */
-	readonly handover?: Omit<HostIdleHandoverOptions, "isIdle">;
+	/** Present on a host that can hand over (a supervised POSIX socket host); the router supplies the rest. */
+	readonly handover?: Omit<HandoverCoordinatorOptions, "clients" | "retained" | "seal">;
 	/** This host's agent dir and public socket: a `begin_handover` naming another agent dir is refused (#3560). */
 	readonly endpoint?: { readonly agentDir: string; readonly socket: string };
 	/** Called with the in-process registry's session count after every open and close. */
@@ -36,25 +33,24 @@ export interface HostCoreHooks {
 }
 
 export class HostCoreGate {
-	readonly handover: HostIdleHandover | undefined;
+	readonly handover: HandoverCoordinator | undefined;
 	private readonly runtimeBuildId: string | undefined;
 	private readonly endpoint: HostCoreHooks["endpoint"];
-	private readonly inFlight = new Map<string | undefined, number>();
 	private readonly answering = new Set<Promise<void>>();
 	private readonly route: (command: RpcCommand) => Promise<RpcResponse | undefined>;
 
 	constructor(
-		registry: Pick<RpcSessionRegistry, "list" | "peek">,
 		route: (command: RpcCommand) => Promise<RpcResponse | undefined>,
 		hooks: HostCoreHooks,
+		router?: Pick<HandoverCoordinatorOptions, "clients" | "retained" | "seal">,
 	) {
 		this.route = route;
 		this.runtimeBuildId = hooks.runtimeBuildId;
 		this.endpoint = hooks.endpoint;
 		this.handover =
-			hooks.handover === undefined
+			hooks.handover === undefined || router === undefined
 				? undefined
-				: new HostIdleHandover({ ...hooks.handover, isIdle: () => isHostIdle(registry, this.inFlight) });
+				: new HandoverCoordinator({ ...hooks.handover, ...router });
 	}
 
 	/** Answers a `begin_handover` record through `deliver` and returns true, or returns false for anything else. */
@@ -90,30 +86,16 @@ export class HostCoreGate {
 	}
 
 	/**
-	 * Settles once every `begin_handover` being answered has its answer. A host idle at once drains
-	 * the moment its successor takes the socket, and its shutdown waits here so the caller that asked
-	 * is told the outcome instead of reading a closed connection.
+	 * Settles once every `begin_handover` being answered has its answer. A host whose successor took the
+	 * socket drains, and its shutdown waits here so the caller that asked is told the outcome instead of
+	 * reading a closed connection.
 	 */
 	async answered(): Promise<void> {
 		while (this.answering.size > 0) await Promise.allSettled([...this.answering]);
 	}
 
 	async dispatch(command: RpcCommand): Promise<object | undefined> {
-		const pending = this.handover?.view();
-		if (pending !== undefined && this.handover?.admits(command.type) === false) {
-			return handoverRefusal(command, pending);
-		}
-		const key = "sessionId" in command ? command.sessionId : undefined;
-		this.inFlight.set(key, (this.inFlight.get(key) ?? 0) + 1);
-		let response: RpcResponse | undefined;
-		try {
-			response = await this.route(command);
-		} finally {
-			const remaining = (this.inFlight.get(key) ?? 1) - 1;
-			if (remaining > 0) this.inFlight.set(key, remaining);
-			else this.inFlight.delete(key);
-			this.handover?.observe();
-		}
+		const response = await this.route(command);
 		return response === undefined
 			? undefined
 			: withHostIdentity(response, this.runtimeBuildId, this.handover?.view());

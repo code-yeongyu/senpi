@@ -1,29 +1,32 @@
 /**
- * The host-side wire of the conditional idle handover: the `begin_handover` request a CLI sends,
- * the answers it gets, the refusal new work gets while a handover is pending, the identity fields
- * `get_protocol_info` gains, and the idle judgement over the session registry.
+ * The host-side wire of the runtime-identity handover: the `begin_handover` request a CLI sends, the answers it
+ * gets, and the identity fields `get_protocol_info` gains.
  *
  * `begin_handover` is answered with `success: true` whatever the verdict, so a client reads one
- * `data` shape: `{ state, operation_id, ... }` for an operation, `{ refused, detail }` for a refusal.
+ * `data` shape: `{ state, phase, operation_id, ... }` for an operation, `{ refused, detail }` for a refusal. `state`
+ * is the field clients from before code-yeongyu/oh-my-openagent#10091 read; `phase` names the operation's phase.
  */
 
+import type { Duplex } from "node:stream";
 import { writeDaemonEnvKeys } from "./host-daemon-env.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { handoffHost } from "./host-handoff.ts";
 import type { HandoverAnswer, HandoverOutcome, HandoverView, IdleHandoverRequest } from "./host-idle-handover.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
 import type { RpcResponse } from "./rpc-types.ts";
-import { selectDrainVerdicts } from "./session-drain.ts";
-import type { RpcSessionRegistry } from "./session-registry.ts";
-import type { Duplex } from "node:stream";
 
 export const BEGIN_HANDOVER_COMMAND = "begin_handover";
 
 const SUCCESSOR_PROBE_TIMEOUT_MS = 10_000;
 
+/** An operation id names a journal file: one plain identifier, never a path. */
+const OPERATION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
 export function parseBeginHandover(record: Readonly<Record<string, unknown>>): IdleHandoverRequest | string {
 	const { operation_id, if_instance_id, if_generation, target_runtime_build_id, launch, host_args, env } = record;
-	if (typeof operation_id !== "string" || operation_id === "") return "operation_id must be a non-empty string";
+	if (typeof operation_id !== "string" || !OPERATION_ID.test(operation_id)) {
+		return "operation_id must be an identifier: letters, digits, '.', '_' or '-', at most 128";
+	}
 	if (typeof if_instance_id !== "string") return "if_instance_id must be a string";
 	if (typeof if_generation !== "number" || !Number.isSafeInteger(if_generation))
 		return "if_generation must be an integer";
@@ -78,20 +81,17 @@ export function handoverWire(view: HandoverView): Record<string, unknown> {
 	return {
 		operation_id: view.operationId,
 		state: view.state,
+		phase: view.phase,
 		target_runtime_build_id: view.targetRuntimeBuildId,
 		...(view.reason !== undefined && { reason: view.reason }),
 		...(view.successor !== undefined && { successor: view.successor }),
-	};
-}
-
-/** What a command carrying new work gets while a handover holds it back. */
-export function handoverRefusal(command: { readonly id?: string; readonly type: string }, view: HandoverView): object {
-	return {
-		...(command.id !== undefined && { id: command.id }),
-		type: "response",
-		command: command.type,
-		success: false,
-		error: `handover_pending: this host is handing over to runtime ${view.targetRuntimeBuildId} (operation ${view.operationId}); new work is admitted by its successor`,
+		...(view.publishedAt !== undefined && { published_at: new Date(view.publishedAt).toISOString() }),
+		...(view.drainDeadlineAt !== undefined && {
+			drain_deadline_at: new Date(view.drainDeadlineAt).toISOString(),
+		}),
+		...(view.retained !== undefined && {
+			retained: view.retained.map(({ sessionId, blockers }) => ({ session_id: sessionId, blockers })),
+		}),
 	};
 }
 
@@ -112,36 +112,18 @@ export function withHostIdentity(
 }
 
 /**
- * The safe idle point: no session opening (an in-flight request without a session), and every
- * listed session open, without an in-flight request and not busy by its activity snapshot - the
- * same per-session judgement a drain parks by. A retained session with no work is idle.
- */
-export function isHostIdle(
-	registry: Pick<RpcSessionRegistry, "list" | "peek">,
-	inFlight: ReadonlyMap<string | undefined, number>,
-): boolean {
-	if ((inFlight.get(undefined) ?? 0) > 0) return false;
-	const sessions = registry.list();
-	const verdicts = selectDrainVerdicts(
-		registry,
-		(sessionId) => (inFlight.get(sessionId) ?? 0) > 0,
-		() => {},
-	);
-	return verdicts.park.length + verdicts.gone.length === sessions.length;
-}
-
-/**
- * Runs the handover the host decided on: the ordinary generation handoff, launched from the
- * runtime of the CLI that asked, with that CLI's daemon environment. The successor is told the
- * runtime it must report (`EXPECTED_RUNTIME_BUILD_ID_ENV`) and exits before it listens when it
- * computes another one, so a runtime changed since the request leaves this generation serving. The env is applied EXACTLY:
- * every name this host has and the CLI did not send is removed, so the successor does not inherit
- * the old runtime's view of the world.
+ * Runs the publication the coordinator decided on: the ordinary generation handoff, launched from the
+ * runtime of the CLI that asked, with that CLI's daemon environment, and given up before `deadline`. The
+ * successor is told the runtime it must report (`EXPECTED_RUNTIME_BUILD_ID_ENV`) and exits before it listens
+ * when it computes another one, so a runtime changed since the request leaves this generation serving. The env
+ * is applied EXACTLY: every name this host has and the CLI did not send is removed, so the successor does not
+ * inherit the old runtime's view of the world.
  */
 export async function performIdleHandover(context: {
 	readonly request: IdleHandoverRequest;
 	readonly socket: string;
 	readonly agentDir: string;
+	readonly deadline: number;
 	readonly presenterBootstrap?: Duplex;
 }): Promise<HandoverOutcome> {
 	const { request, socket, agentDir } = context;
@@ -156,6 +138,7 @@ export async function performIdleHandover(context: {
 		hostArgs: request.hostArgs,
 		env,
 		expectedRuntimeBuildId: request.targetRuntimeBuildId,
+		deadline: context.deadline,
 		...(request.policy !== undefined && { policy: request.policy }),
 		launch: (argv) => ({ command: request.launch.command, args: [...request.launch.args, ...argv] }),
 	});

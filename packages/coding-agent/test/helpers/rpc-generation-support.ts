@@ -221,6 +221,36 @@ export class HeldAnthropicModel {
 	}
 }
 
+/**
+ * A provider double that holds only the requests whose body carries `marker` until `release()`, and answers every
+ * other request at once. Old turns stay held while a new session completes a turn (#10091's availability check).
+ */
+export async function startSelectiveHoldModel(
+	marker: string,
+): Promise<{ readonly origin: string; release(): void; close(): Promise<void> }> {
+	let release: () => void = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const server = createServer((req, res) => {
+		const chunks: Buffer[] = [];
+		req.on("data", (chunk: Buffer) => chunks.push(chunk));
+		req.on("end", () => {
+			const answer = () => writeHeldAnswer(res);
+			if (Buffer.concat(chunks).toString("utf8").includes(marker)) void held.then(answer);
+			else answer();
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const address = server.address();
+	if (address === null || typeof address === "string") throw new Error("the model double did not bind a port");
+	return {
+		origin: `http://127.0.0.1:${address.port}`,
+		release: () => release(),
+		close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+	};
+}
+
 function writeHeldAnswer(res: ServerResponse): void {
 	res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
 	const send = (event: string, data: Record<string, unknown>): void => {

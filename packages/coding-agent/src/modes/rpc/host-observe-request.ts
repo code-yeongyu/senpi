@@ -49,10 +49,15 @@ export function isObservingRequest(line: string): boolean {
 	} catch {
 		return false;
 	}
+	return isObservingRecord(request);
+}
+
+/** `isObservingRequest` for a request already parsed: the host's own classification uses the same rule. */
+export function isObservingRecord(request: unknown): boolean {
 	if (typeof request !== "object" || request === null || Array.isArray(request)) return false;
-	const record = request as Readonly<Record<string, unknown>>;
-	if (record.type === "warm" || record.type === "authenticate") return true;
-	return record[OBSERVE_REQUEST_FIELD] === true && OBSERVING_COMMANDS.has(record.type);
+	const type: unknown = Reflect.get(request, "type");
+	if (type === "warm" || type === "authenticate") return true;
+	return Reflect.get(request, OBSERVE_REQUEST_FIELD) === true && OBSERVING_COMMANDS.has(type);
 }
 
 /** The host generation this process runs in, or undefined outside any host. */

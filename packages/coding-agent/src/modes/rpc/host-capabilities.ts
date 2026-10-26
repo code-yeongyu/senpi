@@ -33,6 +33,7 @@ import {
 	SESSION_KIND_CAPABILITY,
 	SESSION_RELOCATION_CAPABILITY,
 	SESSION_STATUS_CAPABILITY,
+	STRICT_SESSION_TRANSFER_CAPABILITY,
 	TOOL_BARRIER_CAPABILITY,
 	WARM_CAPABILITY,
 } from "./custom-capability.ts";
@@ -107,6 +108,8 @@ export function multiSessionHostCapabilities(options: {
 			MOVE_SESSION_REVOKE_CAPABILITY,
 			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
 			SESSION_RELOCATION_CAPABILITY,
+			// Only a multi-session host drains its sessions to a successor generation.
+			STRICT_SESSION_TRANSFER_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,
 			SESSION_KIND_CAPABILITY,
 			// Only a multi-session host sees every session, so only it can stream their status.

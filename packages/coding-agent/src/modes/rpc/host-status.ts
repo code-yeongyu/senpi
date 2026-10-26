@@ -57,7 +57,7 @@ export interface HostStatusReport {
 	readonly launchProfile: RpcLaunchProfile | null;
 	/** Content digest of the runtime the ANSWERING host loaded at startup; `null` when nothing answers or it predates the field. */
 	readonly runtimeBuildId: string | null;
-	/** The conditional idle handover the answering host holds (`handover_pending`, ...); `null` when it holds none. */
+	/** The runtime-identity handover the answering host holds (its `phase` and legacy `state`); `null` when it holds none. */
 	readonly handover: Readonly<Record<string, unknown>> | null;
 	readonly sessions: HostSessionCounts;
 	readonly zombies: number | null;

@@ -1,5 +1,10 @@
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+	GENERATION_SEPARATED_ADMISSION_CAPABILITY,
+	SESSION_TRANSFER_RECONCILIATION_CAPABILITY,
+} from "../src/modes/rpc/host-handover-eligibility.ts";
+import { OVERLAP_HANDOVER_ENV } from "../src/modes/rpc/host-idle-handover.ts";
 import { probeHost } from "../src/modes/rpc/host-probe.ts";
 import { readHostStatus } from "../src/modes/rpc/host-status.ts";
 import { signalGeneration } from "../src/modes/rpc/host-stop.ts";
@@ -12,11 +17,17 @@ import {
 	reapProcessesUnder,
 	waitForPidGone,
 } from "./helpers/rpc-generation-support.ts";
-import { beginHandoverCommand, connect, dataOf, startHandoverRig } from "./helpers/rpc-idle-handover-support.ts";
+import {
+	beginHandoverCommand,
+	connect,
+	dataOf,
+	startHandoverRig,
+	startSelectiveHoldModel,
+} from "./helpers/rpc-idle-handover-support.ts";
 
 const scratches: GenerationScratch[] = [];
 const peers: JsonlPeer[] = [];
-const models: HeldAnthropicModel[] = [];
+const models: Array<{ release(): void; close(): Promise<void> }> = [];
 const pids: number[] = [];
 
 afterEach(async () => {
@@ -32,7 +43,7 @@ afterEach(async () => {
 	}
 }, 120_000);
 
-describe.skipIf(process.platform === "win32")("conditional idle handover between runtimes", () => {
+describe.skipIf(process.platform === "win32")("runtime-identity handover between runtimes", () => {
 	it("reports the runtime it loaded and hands over at once when it holds no session", async () => {
 		const rig = await startHandoverRig("ih-empty");
 		scratches.push(rig.qa);
@@ -40,11 +51,12 @@ describe.skipIf(process.platform === "win32")("conditional idle handover between
 		const before = await readHostStatus({ socket: rig.qa.socket, agentDir: rig.qa.agentDir });
 		expect(before.runtimeBuildId).toBe(rig.buildA.runtimeBuildId);
 		expect(before.capabilities).toContain("runtime_identity_handover");
+		expect(before.capabilities).toContain("strict_session_transfer_v1");
 
 		const caller = await connect(rig, peers);
 		const answer = dataOf(await caller.request(beginHandoverCommand(rig), 120_000));
 
-		expect(answer).toMatchObject({ operation_id: "op-1", state: "handover_completed" });
+		expect(answer).toMatchObject({ operation_id: "op-1", state: "handover_completed", phase: "draining" });
 		const successor = answer.successor as { pid: number; runtimeBuildId: string };
 		pids.push(successor.pid);
 		expect(successor.runtimeBuildId).toBe(rig.buildB.runtimeBuildId);
@@ -54,7 +66,10 @@ describe.skipIf(process.platform === "win32")("conditional idle handover between
 		expect(await waitForPidGone(rig.firstPid, 45_000)).toBe(true);
 	}, 180_000);
 
-	it("waits for a running turn, admits no new one and hands over once the turn ends", async () => {
+	// code-yeongyu/oh-my-openagent#10091: the handover used to refuse every new prompt on this host until the
+	// running turn ended. An overlapping update the endpoint did not opt in to is deferred at once instead, and
+	// new work keeps reaching this host.
+	it("defers an overlapping update at once while a turn runs and keeps admitting new work", async () => {
 		const held = await HeldAnthropicModel.start();
 		models.push(held);
 		const rig = await startHandoverRig("ih-held", held.origin);
@@ -68,28 +83,70 @@ describe.skipIf(process.platform === "win32")("conditional idle handover between
 		const idle = openedSessionId(await worker.request({ id: "open-2", type: "open_session", cwd: rig.qa.cwd }));
 
 		const caller = await connect(rig, peers);
-		const answer = dataOf(await caller.request(beginHandoverCommand(rig)));
-		expect(answer).toMatchObject({ operation_id: "op-1", state: "handover_pending" });
+		const answer = dataOf(await caller.request(beginHandoverCommand(rig), 120_000));
 
-		const pending = await readHostStatus({ socket: rig.qa.socket, agentDir: rig.qa.agentDir });
-		expect(pending.instanceId).toBe(rig.instanceId);
-		expect(pending.handover).toMatchObject({ operation_id: "op-1", state: "handover_pending" });
-		const refused = await worker.request({ id: "new-turn", type: "prompt", sessionId: idle, message: "new work" });
-		expect(refused).toMatchObject({ success: false, error: expect.stringContaining("handover_pending") });
+		expect(answer).toMatchObject({
+			operation_id: "op-1",
+			phase: "migration_deferred",
+			state: "handover_blocked",
+			reason: "rollout_disabled",
+		});
+		const admitted = worker.waitFor((record) => record.type === "agent_start" && record.sessionId === idle);
+		expect(
+			await worker.request({ id: "new-turn", type: "prompt", sessionId: idle, message: "new work" }),
+		).toMatchObject({ success: true });
+		await admitted;
+		expect((await probeHost({ socket: rig.qa.socket }))?.instanceId).toBe(rig.instanceId);
 		expect(processAlive(rig.firstPid)).toBe(true);
-		expect((await probeHost({ socket: rig.qa.socket }))?.runtimeBuildId).toBe(rig.buildA.runtimeBuildId);
+	}, 240_000);
 
-		const turnEnded = worker.waitFor((record) => record.type === "agent_end" && record.sessionId === busy, 60_000);
-		const superseded = worker.waitFor((record) => record.type === "host_superseded", 120_000);
-		held.release();
-		expect(await turnEnded).toMatchObject({ type: "agent_end" });
-		await superseded;
-		const after = await probeHost({ socket: rig.qa.socket });
-		expect(after?.runtimeBuildId).toBe(rig.buildB.runtimeBuildId);
+	// code-yeongyu/oh-my-openagent#10091 (availability): with the endpoint opted in and every application client
+	// able to follow it, the successor serves new sessions at once while the old turns stay held on their owner.
+	it("publishes the successor for a new session while two old turns stay held on their owner", async () => {
+		const model = await startSelectiveHoldModel("hold-turn-10091");
+		models.push(model);
+		const rig = await startHandoverRig("ih-overlap", model.origin, { [OVERLAP_HANDOVER_ENV]: "1" });
+		scratches.push(rig.qa);
+		pids.push(rig.firstPid);
+		const worker = await connect(rig, peers);
+		await worker.request({
+			id: "caps",
+			type: "set_client_info",
+			width: 80,
+			capabilities: [GENERATION_SEPARATED_ADMISSION_CAPABILITY, SESSION_TRANSFER_RECONCILIATION_CAPABILITY],
+		});
+		const old: string[] = [];
+		for (const name of ["a", "b"]) {
+			const sessionId = openedSessionId(
+				await worker.request({ id: `open-${name}`, type: "open_session", cwd: rig.qa.cwd }),
+			);
+			const started = worker.waitFor((record) => record.type === "agent_start" && record.sessionId === sessionId);
+			await worker.request({ id: `prompt-${name}`, type: "prompt", sessionId, message: `hold-turn-10091 ${name}` });
+			await started;
+			old.push(sessionId);
+		}
+
+		const caller = await connect(rig, peers);
+		const answer = dataOf(await caller.request(beginHandoverCommand(rig), 120_000));
+
+		expect(answer).toMatchObject({ operation_id: "op-1", phase: "draining", state: "handover_completed" });
+		pids.push((answer.successor as { pid: number }).pid);
+		const fresh = await connect(rig, peers);
+		const freshSession = openedSessionId(
+			await fresh.request({ id: "open-c", type: "open_session", cwd: rig.qa.cwd }),
+		);
+		const ended = fresh.waitFor((record) => record.type === "agent_end" && record.sessionId === freshSession, 60_000);
+		await fresh.request({ id: "prompt-c", type: "prompt", sessionId: freshSession, message: "quick" });
+		await ended;
+		expect((await probeHost({ socket: rig.qa.socket }))?.instanceId).not.toBe(rig.instanceId);
+		const listed = await worker.request({ id: "list", type: "list_sessions" });
+		const owned = ((listed.data as { sessions?: Array<{ sessionId: string }> }).sessions ?? []).map(
+			(row) => row.sessionId,
+		);
+		expect(owned).toEqual(expect.arrayContaining(old));
+		expect(processAlive(rig.firstPid)).toBe(true);
+
+		model.release();
 		expect(await waitForPidGone(rig.firstPid, 60_000)).toBe(true);
-		const status = await readHostStatus({ socket: rig.qa.socket, agentDir: rig.qa.agentDir });
-		const current = status.generations.find((row) => row.current);
-		if (current !== undefined) pids.push(current.pid);
-		expect(status.runtimeBuildId).toBe(rig.buildB.runtimeBuildId);
 	}, 240_000);
 });

@@ -47,6 +47,12 @@ export const TOOL_BARRIER_CAPABILITY = "tool_barrier";
 export const SESSION_RELOCATION_CAPABILITY = "session_relocation";
 
 /**
+ * HOST capability: this host's runtime-identity handover never closes its admission, and its drain hands a session
+ * over only by a strict transfer (code-yeongyu/oh-my-openagent#10091). A CLI asks only such a host for a handover.
+ */
+export const STRICT_SESSION_TRANSFER_CAPABILITY = "strict_session_transfer_v1";
+
+/**
  * HOST capability (advertised in `get_protocol_info`, never sent by a client):
  * this host honors `open_session.retain_on_disconnect`, so a session opened with
  * that flag survives its last client's disconnect instead of being closed with it.

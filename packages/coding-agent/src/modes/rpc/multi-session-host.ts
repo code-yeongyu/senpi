@@ -24,8 +24,8 @@ import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { HandoffAnnouncement } from "./host-handoff-announcement.ts";
+import { socketHostHandover } from "./host-handover-hooks.ts";
 import { reopenHandoverParkedSessions } from "./host-handover-reopen.ts";
-import { performIdleHandover } from "./host-handover-wire.ts";
 import { EXPECTED_RUNTIME_BUILD_ID_ENV } from "./host-idle-handover.ts";
 import { type HostIdleOverrides, RPC_CLOSE_GRACE_MS_ENV, resolveHostIdlePolicy } from "./host-idle-policy.ts";
 import { hostWatchdogBinding, internalHostTransport } from "./host-internal-transport.ts";
@@ -201,7 +201,7 @@ export function createHostCore(
 		).catch((cause: unknown) => {
 			process.stderr.write(`senpi rpc successor reopen parked set failed: ${String(cause)}\n`);
 		});
-	const gate = new HostCoreGate(registry, (command) => router.handle(command), hooks);
+	const gate = new HostCoreGate((command) => router.handle(command), hooks, router.handoverPorts());
 	const handle = async (line: string): Promise<void> => {
 		let parsed: unknown;
 		try {
@@ -315,7 +315,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		// While DRAINING the opposite is true: the successor generation owns the socket, so a
 		// sessionless connection must not hold this host open.
 		{
-			onEmptyExit: () => void shutdown(0),
+			onEmptyExit: () => void exitWhenEmpty(),
 			canExitWhenEmpty: () => draining || (occupancy.attachedCount === 0 && occupancy.unclassifiedCount === 0),
 			onHandoffParked: async (ids) => {
 				await Promise.all(
@@ -333,29 +333,27 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			// them into its own registry (senpi#3282). Gate the reopen watch on not draining.
 			shouldReopenParked: () => !draining,
 			...(runtimeBuildId !== undefined && { runtimeBuildId }),
-			...(canHandOver && {
-				endpoint: {
+			...(canHandOver &&
+				runtimeBuildId !== undefined &&
+				socketHostHandover({
 					agentDir: options.agentDir,
 					socket: hostWatchdogBinding()?.publicSocket ?? socketPath,
-				},
-				handover: {
-					identity: () => ({
-						instanceId: hostInstanceId(),
-						generation: hostGeneration(process.env),
-						runtimeBuildId,
-					}),
-					perform: (request) =>
-						performIdleHandover({
-							presenterBootstrap: presenterControl?.successorBootstrap(),
-							request,
-							socket: hostWatchdogBinding()?.publicSocket ?? socketPath,
-							agentDir: options.agentDir,
-						}),
+					runtimeBuildId,
+					presenterBootstrap: () => presenterControl?.successorBootstrap(),
+					announce: (record) => writer.broadcastHostRecord(record),
 					log: hostLog,
-				},
-			}),
+				})),
 		},
 	);
+	// A drain that emptied this generation records the handover it served as completed before the exit, once the
+	// handover's own answer (which settles with its recorded outcome) has been given.
+	const exitWhenEmpty = async (): Promise<void> => {
+		if (draining) {
+			await handoverAnswered();
+			await handover?.drained();
+		}
+		await shutdown(0);
+	};
 	let presenterDir: string | undefined;
 	let presenterControl: McpPresenterControl | undefined;
 	if (options.presenterBootstrapFd !== undefined) {

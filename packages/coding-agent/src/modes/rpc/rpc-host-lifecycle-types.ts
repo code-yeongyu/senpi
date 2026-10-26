@@ -114,9 +114,21 @@ export interface RpcSubscriptionLimitsEvent {
 	readonly error?: string;
 }
 
+/**
+ * A runtime-identity handover's successor has served new sessions for the drain's soft deadline, and this generation
+ * still holds the sessions named here, with what holds each (code-yeongyu/oh-my-openagent#10091). Sent once; nothing
+ * is aborted or stopped, and each session still transfers once it is quiet.
+ */
+export interface RpcHostHandoverOverdueEvent {
+	readonly type: "host_handover_overdue";
+	readonly operation_id: string;
+	readonly retained: ReadonlyArray<{ readonly session_id: string; readonly blockers: string }>;
+}
+
 export type RpcHostLifecycleEvent =
 	| RpcSubscriptionLimitsEvent
 	| RpcHostSupersededEvent
 	| RpcHostStalledEvent
 	| RpcHostMemoryPressureEvent
-	| RpcHostTrimmedEvent;
+	| RpcHostTrimmedEvent
+	| RpcHostHandoverOverdueEvent;

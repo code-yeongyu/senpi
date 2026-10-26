@@ -12,6 +12,7 @@ import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
 import { probeHost } from "../../src/modes/rpc/host-probe.ts";
 import { socketHostLaunchProfile } from "../../src/modes/rpc/protocol-identity.ts";
 import { computeRuntimeBuildId } from "../../src/modes/rpc/runtime-build-id.ts";
+export { startSelectiveHoldModel } from "./rpc-generation-support.ts";
 import {
 	GENERATION_HOST_ARGS,
 	type GenerationScratch,
@@ -36,6 +37,8 @@ export interface HandoverRig {
 	readonly generation: number;
 	readonly buildA: HandoverBuild;
 	readonly buildB: HandoverBuild;
+	/** Added to the first generation's environment and to every `begin_handover`, so successors keep it. */
+	readonly hostEnv: Readonly<Record<string, string>>;
 }
 
 /** A plugin of one build: same behavior in both, different bytes. */
@@ -50,10 +53,15 @@ async function describeBuild(hostArgs: readonly string[]): Promise<HandoverBuild
 	return { hostArgs, runtimeBuildId: await computeRuntimeBuildId({ profile: profile.core }) };
 }
 
-export async function startHandoverRig(label: string, modelOrigin?: string): Promise<HandoverRig> {
+/** `hostEnv` is added to the first generation's environment (an endpoint's update opt-in, for one). */
+export async function startHandoverRig(
+	label: string,
+	modelOrigin?: string,
+	hostEnv: Readonly<Record<string, string>> = {},
+): Promise<HandoverRig> {
 	const qa = generationScratch(label);
 	try {
-		return await startRigIn(qa, modelOrigin);
+		return await startRigIn(qa, modelOrigin, hostEnv);
 	} catch (error) {
 		await reapProcessesUnder(qa.root);
 		await rm(qa.root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
@@ -61,7 +69,11 @@ export async function startHandoverRig(label: string, modelOrigin?: string): Pro
 	}
 }
 
-async function startRigIn(qa: GenerationScratch, modelOrigin: string | undefined): Promise<HandoverRig> {
+async function startRigIn(
+	qa: GenerationScratch,
+	modelOrigin: string | undefined,
+	hostEnv: Readonly<Record<string, string>>,
+): Promise<HandoverRig> {
 	writeRpcModelsJson(qa.agentDir, modelOrigin ?? "http://127.0.0.1:1");
 	const buildA = await describeBuild(pluginBuild(qa, "build-a"));
 	const buildB = await describeBuild(pluginBuild(qa, "build-b"));
@@ -70,18 +82,28 @@ async function startRigIn(qa: GenerationScratch, modelOrigin: string | undefined
 		agentDir: qa.agentDir,
 		policy: { idleExitMs: 600_000 },
 		hostArgs: [...buildA.hostArgs],
-		env: generationEnv(qa),
+		env: { ...generationEnv(qa), ...hostEnv },
 		_test: { readinessTimeoutMs: 60_000, launch: supervisorLaunch },
 	});
 	const host = await probeHost({ socket: qa.socket });
 	if (host?.instanceId === undefined || host.generation === undefined) throw new Error("build A did not answer");
-	return { qa, firstPid: ensured.pid, instanceId: host.instanceId, generation: host.generation, buildA, buildB };
+	return {
+		qa,
+		firstPid: ensured.pid,
+		instanceId: host.instanceId,
+		generation: host.generation,
+		buildA,
+		buildB,
+		hostEnv,
+	};
 }
 
 /** The request a CLI of build B sends; `overrides` replaces any field, `launch` the successor's command. */
 export function beginHandoverCommand(rig: HandoverRig, overrides: WireRecord = {}): WireRecord {
 	const env: Record<string, string> = {};
-	for (const [name, value] of Object.entries(daemonEnvironment(process.env, generationEnv(rig.qa)))) {
+	for (const [name, value] of Object.entries(
+		daemonEnvironment(process.env, { ...generationEnv(rig.qa), ...rig.hostEnv }),
+	)) {
 		if (value !== undefined) env[name] = value;
 	}
 	const launch = supervisorLaunch([]);
