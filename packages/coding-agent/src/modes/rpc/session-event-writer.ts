@@ -5,6 +5,7 @@ import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presen
 import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
+import { SessionStructuredLanes } from "./session-structured-lanes.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { type MediaPersister, omitNormalInlineMedia } from "./media-placeholders.ts";
 import type {
@@ -89,6 +90,7 @@ function toolUpdateKey(value: RpcRecord): string | undefined {
  * scheduling boundary and violate D9.
  */
 export class SessionEventWriter {
+	readonly structuredLanes = new SessionStructuredLanes();
 	private presenterAuthority?: McpPresenterAuthority;
 	private readonly presenterConnections = new Map<string, McpPresenterConnection>();
 	private readonly presenterBindings = new Map<string, McpFormBinding>();

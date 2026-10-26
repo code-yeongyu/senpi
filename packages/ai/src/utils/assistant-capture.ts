@@ -193,6 +193,7 @@ export function assistantEvents(
 	};
 }
 
+/** Internal readers address a block by `capture.contentIndex ?? event.contentIndex`; the public index can drift (Google/Vertex). */
 export function getAssistantCapture(event: object): AssistantCapture | undefined {
 	return captures.get(event);
 }

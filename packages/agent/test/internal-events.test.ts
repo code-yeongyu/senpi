@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { getAssistantCapture, pushAssistantProgress } from "../../ai/src/utils/assistant-capture.ts";
 import { AssistantMessageEventStream } from "../../ai/src/utils/event-stream.ts";
 import { Agent } from "../src/agent.ts";
-import { subscribeInternalAgent, type OrderedAgentRecord } from "../src/internal-events.ts";
+import { createInternalAgentChannel, type OrderedAgentRecord } from "../src/internal-events.ts";
 import type { AgentEvent } from "../src/types.ts";
 
 const model: Model<"anthropic-messages"> = {
@@ -45,8 +45,13 @@ describe("internal agent channel #4272", () => {
 		const partial = message();
 		const records: OrderedAgentRecord[] = [];
 		const publicEvents: AgentEvent[] = [];
-		const agent = new Agent({ initialState: { model }, streamFn: () => lazyStream(model, async () => source) });
-		const unsubscribe = subscribeInternalAgent(agent, (record) => {
+		const internalChannel = createInternalAgentChannel();
+		const agent = new Agent({
+			internalChannel,
+			initialState: { model },
+			streamFn: () => lazyStream(model, async () => source),
+		});
+		const unsubscribe = internalChannel.subscribe((record) => {
 			records.push(record);
 			if ("progress" in record && record.progress.type === "message_block_state" && record.progress.phase === "end")
 				seen.resolve();
@@ -91,11 +96,12 @@ describe("internal agent channel #4272", () => {
 		const source = new AssistantMessageEventStream();
 		const partial = message();
 		source.push({ type: "done", reason: "stop", message: partial });
-		const agent = new Agent({ initialState: { model }, streamFn: () => source });
+		const internalChannel = createInternalAgentChannel();
+		const agent = new Agent({ internalChannel, initialState: { model }, streamFn: () => source });
 		const removed = vi.fn();
 		const kept = vi.fn();
-		subscribeInternalAgent(agent, removed)();
-		const unsubscribe = subscribeInternalAgent(agent, kept);
+		internalChannel.subscribe(removed)();
+		const unsubscribe = internalChannel.subscribe(kept);
 		await agent.prompt("fixture");
 		unsubscribe();
 		expect(kept).toHaveBeenCalled();
@@ -104,9 +110,10 @@ describe("internal agent channel #4272", () => {
 
 	it("orders agent thinking timing after the event it amends", async () => {
 		const source = new AssistantMessageEventStream({ captureBlocks: true });
-		const agent = new Agent({ initialState: { model }, streamFn: () => source });
+		const internalChannel = createInternalAgentChannel();
+		const agent = new Agent({ internalChannel, initialState: { model }, streamFn: () => source });
 		const records: OrderedAgentRecord[] = [];
-		const unsubscribe = subscribeInternalAgent(agent, (record) => {
+		const unsubscribe = internalChannel.subscribe((record) => {
 			records.push(record);
 		});
 		const partial = message();
@@ -136,13 +143,14 @@ describe("internal agent channel #4272", () => {
 	it("does not let internal progress extend the provider idle bound", async () => {
 		vi.useFakeTimers();
 		const source = new AssistantMessageEventStream({ captureBlocks: true });
-		const agent = new Agent({ initialState: { model }, streamFn: () => source, timeoutMs: 100 });
+		const internalChannel = createInternalAgentChannel();
+		const agent = new Agent({ internalChannel, initialState: { model }, streamFn: () => source, timeoutMs: 100 });
 		const ends: AgentEvent[] = [];
 		agent.subscribe((event) => {
 			if (event.type === "message_end" && event.message.role === "assistant") ends.push(event);
 		});
 		const progress: OrderedAgentRecord[] = [];
-		const unsubscribe = subscribeInternalAgent(agent, (record) => {
+		const unsubscribe = internalChannel.subscribe((record) => {
 			if ("progress" in record) progress.push(record);
 		});
 		const running = agent.prompt("fixture");

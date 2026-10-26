@@ -29,6 +29,7 @@ import type {
 	AgentToolCallOutcome,
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	InternalAgentChannel,
 	PreparedAgentToolCall,
 	PrepareNextTurnContext,
 	ThinkingLevel,
@@ -410,6 +411,7 @@ import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
 import type { Skill } from "./skills.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
+import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
 	type ClampedThinkingSelection,
 	clampThinkingSelection,
@@ -789,6 +791,8 @@ function withoutDeletedHeaders(headers: ProviderHeaders | undefined): Record<str
 
 export interface AgentSessionConfig {
 	agent: Agent;
+	/** @internal Construction channel for senpi's session layer only; absent for externally supplied Agents. */
+	internalChannel?: InternalAgentChannel;
 	/** Explicit service tier for the initial model. */
 	serviceTier?: ServiceTier;
 	sessionManager: SessionManager;
@@ -1327,6 +1331,7 @@ export class AgentSession {
 	private _unsubscribeSettingsSource?: () => void;
 	private _unregisterMemoryReport: () => void = () => {};
 	private _eventListeners: AgentSessionEventListener[] = [];
+	private readonly _structuredLane: StructuredSessionLane;
 	private _agentEventQueue: Promise<void> = Promise.resolve();
 	/**
 	 * Exact message objects whose message_end persistence is still queued.
@@ -1699,6 +1704,10 @@ export class AgentSession {
 		this._promptSurface = config.promptSurface;
 		this._browserEngine = config.browserEngine;
 		this.agent = config.agent;
+		this._structuredLane = new StructuredSessionLane(config.internalChannel, (deliver) => {
+			if (!this._unsubscribeAgent) return;
+			this._agentEventQueue = this._agentEventQueue.then(deliver, deliver);
+		});
 		this.sessionManager = config.sessionManager;
 		this._sessionThinkingMemory = new SessionThinkingMemory(config.sessionManager);
 		this._thinkingLevelSource = config.initialThinkingLevelSource ?? "default";
@@ -2836,7 +2845,7 @@ export class AgentSession {
 		this._emitEntryAppended(entry.id);
 	}
 
-	private _emit(event: AgentSessionEvent): void {
+	private _emit(event: AgentSessionEvent, captureSource: object = event): void {
 		if (
 			event.type === "session_paused" ||
 			event.type === "session_resumed" ||
@@ -2885,6 +2894,7 @@ export class AgentSession {
 		for (const l of [...this._eventListeners]) {
 			l(event);
 		}
+		if (this._structuredLane.active) this._structuredLane.emitEvent(event, captureSource);
 	}
 
 	private async _emitSessionCompactFailed(event: Omit<SessionCompactFailedEvent, "type">): Promise<void> {
@@ -3883,7 +3893,7 @@ export class AgentSession {
 				: event.type === "message_update"
 					? withResolvedToolName(event, (name) => this.resolveToolCallName(name))
 					: event;
-		this._emit(sessionEvent);
+		this._emit(sessionEvent, event);
 		if (event.type === "agent_end") {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 		}
@@ -4579,6 +4589,15 @@ export class AgentSession {
 	}
 
 	/**
+	 * The internal structured lane (senpi#4272): every session event in `_emit` order with its provider capture, plus
+	 * block controls at their position. Attach before a turn's first provider push; a stream already pushing keeps
+	 * its decision and yields no capture.
+	 */
+	subscribeStructured(listener: (record: AgentSessionStructuredRecord) => void): () => void {
+		return this._structuredLane.subscribe(listener);
+	}
+
+	/**
 	 * Temporarily disconnect from agent events.
 	 * User listeners are preserved and will receive events again after resubscribe().
 	 * Used internally during operations that need to pause event processing.
@@ -4649,6 +4668,7 @@ export class AgentSession {
 		this._unsubscribeWakeSources = undefined;
 		this._lifecycleBinding.dispose();
 		this._eventListeners = [];
+		this._structuredLane.dispose();
 		cleanupSessionResources(this.sessionId);
 		// Nothing reads or writes this manager once its session is gone: it releases
 		// its writer grant and its disposable blob directory here.

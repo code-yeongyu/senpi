@@ -145,8 +145,23 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
 - `seq`, `epoch`, `epochOrigin` (`human` or `automatic`), `humanInputRevision`,
   `selfSettleEligible`, `restoring`, `persisted`, `runPaused`, and `since` (ISO time).
 - `role` (`root` or `child`), `rootSessionId`, and optional `parentSessionId` and `taskId`.
-- Optional `waitingOn`: `{ children, background, human }`. Background entries carry
-  `source`, `activeCount`, and optional `retryAtMs`. Human entries carry `kind`,
+- Optional `waitingOn`: `{ children, background, human, childSources?, childReports?, childReportsOmitted? }`.
+  `children` and each source's `activeCount` are the authoritative counts; every named list below is
+  supplemental and may be incomplete, so never derive a count from a list's length. `children` is the
+  larger of the nonterminal child reports and the summed `childSources` counts.
+  Background entries carry `source`, `activeCount`, optional `items`, optional `omittedItems`, and
+  optional `retryAtMs`. `childSources` entries carry `source`, `activeCount`, optional `items`, and
+  optional `omittedItems`. Each item is `{ id, label?, startedAt? }` (`startedAt` is ISO time), taken
+  from the producer's `wake_source_state` snapshot: its `items`, or the legacy `monitors` list when
+  `items` is missing or null. Terminal monitors are named by their stable `mon_` id. Each list is a
+  snapshot: entries whose `id` is not a non-blank string are dropped, duplicates collapse to one entry
+  per `id`, the list is sorted by `id`, and at most 32 entries are kept. `omittedItems` is the
+  producer's own omitted count plus any valid items cut at 32; it is not `activeCount` minus the list
+  length. Invalid detail drops only the detail, never the count.
+  `childReports` lists nonterminal reports from `reportChild` as
+  `{ taskId, childSessionId, runEpoch, state, label?, since? }`, excluding reports about the session
+  itself, sorted by `taskId` and capped at 32; `childReportsOmitted` counts the reports cut by that cap.
+  Human entries carry `kind`,
   `originSessionId`, `requestId`, `revision`, `since`, and optional child identity/label.
   Human kinds are `question`, `approval`, `goal_blocked`, `goal_paused`, `stalled`,
   and `interrupted_run`; attention remains visible even when a hold wins precedence.
