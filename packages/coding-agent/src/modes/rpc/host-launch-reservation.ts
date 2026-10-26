@@ -35,7 +35,7 @@ export function offerSupervisorLaunch(
 	endpoint: string,
 	owner: LaunchIdentity,
 ): { generation: string; args: readonly string[] } {
-	const generation = store.reserve(endpoint, identityKey(owner));
+	const generation = store.reserve(endpoint, identityKey(owner), ["supervisor", "host"]);
 	store.offer(generation, "supervisor", identityKey(owner));
 	return {
 		generation,

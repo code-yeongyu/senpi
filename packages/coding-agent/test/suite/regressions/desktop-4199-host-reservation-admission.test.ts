@@ -40,7 +40,7 @@ describe.skipIf(process.platform === "win32")("reserved host admission before li
 		const store = await openEndpointReservationStore(join(root, "reservation.db"));
 		stores.push(store);
 		const issuer = { pid: process.pid, processStartTime: (await readProcessStartTime(process.pid)) ?? null };
-		const generation = store.reserve(endpoint, JSON.stringify(issuer));
+		const generation = store.reserve(endpoint, JSON.stringify(issuer), ["supervisor", "host"]);
 		store.offer(generation, role, JSON.stringify(issuer));
 		const locator = { storePath: store.path, endpoint, generation, role };
 		const args = [
