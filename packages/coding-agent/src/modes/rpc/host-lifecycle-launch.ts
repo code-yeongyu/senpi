@@ -253,10 +253,22 @@ export function resolveHostChildLaunch(
 	internalSocket: string,
 	compiled: boolean = isBunBinary,
 ): { command: string; args: string[] } {
+	const reservationArgs = launch.reservation
+		? [
+				LOCATOR_FLAGS.storePath,
+				launch.reservation.storePath,
+				LOCATOR_FLAGS.endpoint,
+				launch.reservation.endpoint,
+				LOCATOR_FLAGS.generation,
+				launch.reservation.generation,
+				LOCATOR_FLAGS.role,
+				"host",
+			]
+		: [];
 	if (launch.childCommand) {
 		return {
 			command: launch.childCommand,
-			args: [...(launch.childArgs ?? []), "--listen", `unix://${internalSocket}`],
+			args: [...(launch.childArgs ?? []), "--listen", `unix://${internalSocket}`, ...reservationArgs],
 		};
 	}
 	return {
@@ -269,6 +281,7 @@ export function resolveHostChildLaunch(
 			"--listen",
 			`unix://${internalSocket}`,
 			...launch.hostArgs,
+			...reservationArgs,
 		],
 	};
 }

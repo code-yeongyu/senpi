@@ -898,6 +898,14 @@ are what this decision encodes; the other two are what a client must not undo el
   asked for worker sessions sees a daemon serving hundreds of them exactly as it saw an empty one, so a task runner
   fanning out children cannot flood a desktop's session list.
 
+Windows public-endpoint startup uses a reservation generation for both the supervisor and host. The launcher grants
+the supervisor only after checking its claimed PID and process start time through the OS. That supervisor then offers
+the host role in the same generation and forwards a non-secret store locator through the child argv, including through
+runtime wrappers. The host consumes the locator before public CLI parsing, claims with its own process identity and
+waits for the supervisor's verified grant before listening. Both grants carry the SHA-256 commitment of the established
+public secret, not the private hop credential. Cancellation, a claim or grant deadline, an unreadable or changed process
+identity, or a mismatched commitment fails startup; a failed host admission stops the spawned child.
+
 ### Generation handoff (`handoffHost`, `probeHost`, `stopHost`)
 
 An engine upgrade must not end the work the running daemon is doing: one machine-wide host holds every

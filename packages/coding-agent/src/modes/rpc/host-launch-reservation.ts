@@ -1,5 +1,5 @@
 /**
- * The supervisor hop of the wrapper-safe launch (sisyphuslabs/omo-desktop-app#4199, design 4.2a "Wrapper-safe discovery
+ * The supervisor and host hops of the wrapper-safe launch (sisyphuslabs/omo-desktop-app#4199, design 4.2a "Wrapper-safe discovery
  * and one-time claim"). The launcher reserves a generation and offers the supervisor role, then forwards only a
  * non-secret locator in argv: the store path, endpoint, generation and role. Whatever process the selected runtime
  * finally becomes opens the store itself, reads its role's nonce there and claims with its own identity. The issuer
@@ -157,11 +157,11 @@ function parseIdentity(text: string): LaunchIdentity {
 }
 
 /**
- * The parent-admitted supervisor's entry (design 4.2a steps 2 and 4): claim the offered role with this process's own
+ * A reserved participant's entry (design 4.2a steps 2-4): claim the offered role with this process's own
  * identity, wait (bounded) for the issuer's grant, then verify the parent's established public secret read-only against
  * the granted commitment. Any failure aborts the start: no provisioning, no repair, no fallback to a direct launch.
  */
-export async function admitClaimedSupervisor(
+export async function admitClaimedParticipant(
 	locator: StoreLocator,
 	self: LaunchIdentity,
 	credential: Buffer | undefined,
@@ -177,28 +177,22 @@ export async function admitClaimedSupervisor(
 }
 
 /**
- * The issuer's half of the supervisor hop: wait (bounded) for the claim, read the claimed PID's start time through the
+ * The issuer's half of either hop: wait (bounded) for the claim, read the claimed PID's start time through the
  * OS with `observe`, and grant only when it equals the claimed one, bound to the commitment of `secret`. The claimant
  * may be a wrapper's descendant, so the spawned PID is never assumed to be it.
  */
-export async function grantClaimedSupervisor(
+export async function grantClaimedParticipant(
 	store: EndpointReservationStore,
 	generation: string,
+	role: ReservationRole,
 	issuer: LaunchIdentity,
 	secret: Buffer,
 	observe: (pid: number) => Promise<string | undefined>,
 	options: { readonly deadlineMs: number },
 ): Promise<LaunchIdentity> {
-	const claim = await waitForClaim(store, generation, "supervisor", options);
-	if (!claim.claimed) throw new LaunchReservationError(claim.reason, `supervisor in ${generation}`);
+	const claim = await waitForClaim(store, generation, role, options);
+	if (!claim.claimed) throw new LaunchReservationError(claim.reason, `${role} in ${generation}`);
 	const observed = { pid: claim.participant.pid, processStartTime: (await observe(claim.participant.pid)) ?? null };
-	grantVerifiedParticipant(
-		store,
-		generation,
-		"supervisor",
-		issuer,
-		observed,
-		createHash("sha256").update(secret).digest(),
-	);
+	grantVerifiedParticipant(store, generation, role, issuer, observed, createHash("sha256").update(secret).digest());
 	return observed;
 }

@@ -122,7 +122,7 @@ import { runPrintMode } from "./modes/print-mode.ts";
 import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
 import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes/rpc/custom-capability.ts";
 import type { PreparableRuntimeFactory, PrepareRuntimeOptions } from "./modes/rpc/host-warm.ts";
-import { dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
+import { admitReservedHostArgs, dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { readPipedStdin } from "./utils/piped-stdin.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -1146,6 +1146,7 @@ export async function main(args: string[], options?: MainOptions) {
 	if (await dispatchInternalSupervisor(args)) {
 		return;
 	}
+	args = await admitReservedHostArgs(args);
 
 	if (process.platform === "win32") {
 		cleanupWindowsSelfUpdateQuarantine(getInstallPackageDir());

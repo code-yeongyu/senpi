@@ -40,3 +40,30 @@ export async function dispatchInternalSupervisor(args: readonly string[]): Promi
 	await runHostSupervisor(launch);
 	return true;
 }
+
+/**
+ * Reservation-only host entry (#4199): consume the private locator before the public CLI parser and before any listener.
+ * Like the supervisor route above, the ordinary CLI path loads none of the reservation/SQLite graph.
+ */
+export async function admitReservedHostArgs(args: string[]): Promise<string[]> {
+	if (!args.some((arg) => arg.startsWith("--reservation-"))) return args;
+	const { admitClaimedParticipant, parseReservationLocatorArgs, LaunchReservationError } =
+		await import("./host-launch-reservation.ts");
+	const { LOCATOR_FLAGS } = await import("./host-lifecycle-launch.ts");
+	const { readProcessStartTime } = await import("../../utils/process-identity.ts");
+	const { readSocketSecret, socketSecretPath } = await import("./socket-transport.ts");
+	const locator = parseReservationLocatorArgs(args);
+	if (!locator || locator.role !== "host") {
+		throw new LaunchReservationError("locator_incomplete", "the host entry requires a host reservation");
+	}
+	const self = { pid: process.pid, processStartTime: (await readProcessStartTime(process.pid)) ?? null };
+	const credential = await readSocketSecret(socketSecretPath(locator.endpoint)).catch(() => undefined);
+	await admitClaimedParticipant(locator, self, credential, { deadlineMs: 10_000 });
+	const flags = new Set<string>(Object.values(LOCATOR_FLAGS));
+	const remaining: string[] = [];
+	for (let index = 0; index < args.length; index++) {
+		if (flags.has(args[index])) index++;
+		else remaining.push(args[index]);
+	}
+	return remaining;
+}
