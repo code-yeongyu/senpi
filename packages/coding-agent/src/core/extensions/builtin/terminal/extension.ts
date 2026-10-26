@@ -22,6 +22,7 @@ import { buildTerminalPromptSection } from "./prompt.ts";
 import { createDigestSlot, registerRestoreDigestRenderer } from "./restore-digest.ts";
 import { detachPersistence, flushRestoreDigest, startPersistence, stopPersistence } from "./restore-session.ts";
 import { claimParkedBundle, parkBundle, teardownParkedBundle } from "./session-bundle.ts";
+import { registerSessionServiceTool } from "./service-extension.ts";
 import { loadTerminalSettings, TERMINAL_SETTINGS_DEFAULTS } from "./settings.ts";
 import { TERMINAL_BASH_TOOL, TERMINAL_COMPANION_TOOLS } from "./shared.ts";
 import { TerminalManifestWriter } from "./terminal-manifest.ts";
@@ -133,6 +134,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	pi.registerTool(onChild(createBashResizeTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.resize));
 	pi.registerTool(onChild(createKillBashTool(toolCtx), TERMINAL_CHILD_JOB_KINDS.kill));
 	pi.registerTool(createMonitorTool(toolCtx));
+	registerSessionServiceTool(pi);
 	registerRestoreDigestRenderer(pi);
 
 	pi.on("session_start", async (event, ctx) => {

@@ -10,6 +10,8 @@ export type MovedPathToolClass =
 	| { readonly kind: "patch" }
 	/** Shell text: path tokens in the command plus the call's working directory. */
 	| { readonly kind: "command"; readonly field: string }
+	/** Launches a program: every string argument (command, args, cwd, env, probe) is command text, plus the resolved launch cwd. */
+	| { readonly kind: "launch" }
 	/** Named input fields holding paths the tool writes or reads. */
 	| { readonly kind: "paths"; readonly write: readonly string[]; readonly read: readonly string[] }
 	/** Touches no path a model names. */
@@ -29,6 +31,7 @@ export const MOVED_PATH_TOOL_CLASSES: Readonly<Record<string, MovedPathToolClass
 	bash_input: { kind: "command", field: "input" },
 	monitor: { kind: "command", field: "command" },
 	powershell: { kind: "command", field: "command" },
+	session_service: { kind: "launch" },
 	generate_image: { kind: "paths", write: ["output_path"], read: ["reference_image_paths", "mask_image_path"] },
 	read_video: { kind: "paths", write: [], read: ["path"] },
 	look_at: { kind: "paths", write: [], read: ["file_path", "file_paths"] },

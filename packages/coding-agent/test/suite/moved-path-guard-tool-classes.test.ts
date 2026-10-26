@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Type } from "typebox";
@@ -68,6 +68,74 @@ describe("moved-path-guard tool classes (#2898)", () => {
 
 		expect(registered).toEqual(expect.arrayContaining(["eval", "tool_search", "write", "bash"]));
 		expect(unclassified).toEqual([]);
+	});
+
+	async function serviceHarness(cwd: string, launched: unknown[]): Promise<Harness> {
+		const guard = builtinExtensions.find((entry) => entry.id === "moved-path-guard");
+		if (!guard) throw new Error("moved-path-guard is not registered");
+		const harness = await createHarness({
+			cwd,
+			extensionFactories: [
+				guard.factory,
+				(pi) =>
+					pi.registerTool({
+						name: "session_service",
+						label: "service",
+						description: "Records the launch it would run.",
+						parameters: Type.Object({
+							command: Type.String(),
+							args: Type.Array(Type.String()),
+							cwd: Type.Optional(Type.String()),
+						}),
+						execute: async (_id, params) => {
+							launched.push(params);
+							return { content: [{ type: "text", text: "started" }], details: {} };
+						},
+					}),
+			],
+			initialActiveToolNames: ["session_service"],
+		});
+		cleanups.push(harness.cleanup);
+		await harness.session.bindExtensions({});
+		return harness;
+	}
+
+	it("refuses a session_service launch whose working directory or argument names a moved path", async () => {
+		const layout: MovedLayout = createMovedLayout();
+		cleanups.push(layout.cleanup);
+		const launched: unknown[] = [];
+		const harness = await serviceHarness(layout.home, launched);
+
+		const byCwd = await runTool(harness, "session_service", { command: "bsk", args: [], cwd: layout.oldWorktree });
+		const byArg = await runTool(harness, "session_service", {
+			command: "bsk",
+			args: ["--log", `${layout.oldWorktree}/bsk.log`],
+		});
+
+		expect([byCwd.outcome, byArg.outcome]).toEqual(["blocked", "blocked"]);
+		expect(launched).toEqual([]);
+	});
+
+	it("checks a session_service working directory as the launch directory, not only as argument text", async () => {
+		const layout: MovedLayout = createMovedLayout();
+		cleanups.push(layout.cleanup);
+		// The parent of the moved worktree: a bare word with no separator names the moved folder from here.
+		const parent = join(layout.oldRoot, "worktrees", "app");
+		mkdirSync(parent, { recursive: true });
+		const launched: unknown[] = [];
+		const fromParent = await serviceHarness(parent, launched);
+		const fromHome = await serviceHarness(layout.home, launched);
+
+		const bareWord = await runTool(fromParent, "session_service", { command: "bsk", args: [], cwd: "w1" });
+		// More argument strings than the text scan reads, with the working directory after them.
+		const pastScanCap = await runTool(fromHome, "session_service", {
+			command: "bsk",
+			args: Array.from({ length: 4100 }, () => "x"),
+			cwd: layout.oldWorktree,
+		});
+
+		expect([bareWord.outcome, pastScanCap.outcome]).toEqual(["blocked", "blocked"]);
+		expect(launched).toEqual([]);
 	});
 
 	it("refuses an unclassified tool whose string argument names a moved path", async () => {
