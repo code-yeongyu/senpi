@@ -1,3 +1,44 @@
+## 2026-10-25 - Private presenter bootstrap launch options (#4197)
+
+### What changed
+
+- `args.ts`, `host-command-args.ts`, and `host-command.ts`: accept the reserved presenter descriptor and carry its live stream through the host launch API.
+
+### Why
+
+- An inherited private channel, not an advertised UI capability or a serialized launch argument containing credentials, establishes the launch principal.
+
+### Key decisions
+
+- Descriptor 4 is reserved for presenter bootstrap. Descriptor 3 remains the owner-lifetime channel. No key, challenge, or grant is put in an environment variable or command-line argument.
+- An `ensure` call that reuses an existing host does not enroll its caller.
+
+### Why an extension could not handle it
+
+- Extensions run after launch and cannot establish an inherited launch-owner trust boundary.
+
+### Expected merge conflict zones
+
+- LOW: CLI option parsing and the host-command runner call.
+
+## 2026-10-24 - Parse standalone child ancestry before startup (oh-my-openagent#10782)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: parses `--spawned-by` as one JSON object using the shared ancestry validator, reports malformed inputs before runtime creation, and documents it in help.
+
+### Why
+
+- `packages/coding-agent/src/cli/args.ts`: process-mode children need the same structured ancestry accepted by hosted `open_session`.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli/args.ts`: core flags are parsed before extension loading.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: session flag parsing and help options.
+
 ## 2026-10-19 - A bare - forces the piped-stdin read (senpi#3715)
 
 ### What changed

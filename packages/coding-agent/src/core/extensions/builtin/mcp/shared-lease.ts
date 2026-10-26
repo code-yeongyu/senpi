@@ -3,6 +3,7 @@ import { ServerConnection } from "./connection.ts";
 import type { ServerConnectionOptions } from "./connection-types.ts";
 import { ConnectError } from "./errors.ts";
 import type { SharedMcpConnection } from "./shared-connection.ts";
+import { registerMcpClientAlias } from "./request-origin.ts";
 
 const requestMethods = new Set<PropertyKey>([
 	"request",
@@ -28,6 +29,10 @@ export class SharedMcpLease extends ServerConnection {
 	readonly #unsubscribeTools: () => void;
 	readonly #stateSubscriptions = new Set<() => void>();
 	#released = false;
+	#requestLifetime = new AbortController();
+	override get requestLifetimeSignal(): AbortSignal {
+		return this.#requestLifetime.signal;
+	}
 	#localGeneration = 0;
 	#client: Client | undefined;
 	#physicalClient: Client | undefined;
@@ -73,6 +78,7 @@ export class SharedMcpLease extends ServerConnection {
 					return typeof value === "function" ? value.bind(target) : value;
 				},
 			});
+			registerMcpClientAlias(this.#client, physical);
 		}
 		if (this.#client === undefined) throw new ConnectError("MCP client unavailable", { phase: "client" });
 		return this.#client;
@@ -88,6 +94,8 @@ export class SharedMcpLease extends ServerConnection {
 	}
 	override async bumpGeneration(): Promise<void> {
 		this.#assertAttached();
+		this.#requestLifetime.abort();
+		this.#requestLifetime = new AbortController();
 		this.#localGeneration++;
 		this.#refreshCatalog = true;
 		// Re-list only this owner's catalog; never interrupt another owner's call.
@@ -132,6 +140,7 @@ export class SharedMcpLease extends ServerConnection {
 	override async dispose(): Promise<void> {
 		if (this.#released) return;
 		this.#released = true;
+		this.#requestLifetime.abort();
 		this.#unsubscribeTools();
 		for (const off of this.#stateSubscriptions) off();
 		this.#stateSubscriptions.clear();

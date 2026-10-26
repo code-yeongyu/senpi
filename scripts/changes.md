@@ -1,3 +1,41 @@
+## 2026-10-22 - The pi-ai `./models` entry graph admits two reference leaves (senpi#3858)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 26 files (was 24 after senpi#3378). The added files are `auth/credential-read.ts`, the credential-store read that `auth/resolve.ts` wraps in `ModelsError`, and `utils/config-reference-error.ts`, the typebox-free error a slot read raises for an unresolved reference; the reasons are recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+- `scripts/check-entry-graphs.mjs`: a slot-scoped request must refuse a projected key that is still an unresolved reference with a typed error, and `./models` reaches `auth/resolve.ts`, so both leaves join its graph. Both stay inside the forbid rules: neither reaches `providers/`, `models.generated.ts` or the typebox helpers.
+
+### Why an extension could not handle it
+
+- `scripts/check-entry-graphs.mjs`: entry-graph budgets are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/check-entry-graphs.mjs`: the `./models` row, which senpi#3292 and senpi#3378 also raised.
+
+## 2026-10-20 - Per-PR change fragments replace direct changes.md and [Unreleased] edits (senpi#3610)
+
+### What changed
+
+- `scripts/release.mjs`: calls `compileFragments` (from `scripts/sync-changes-fragments.mjs`) only at the release cut, right before `stampChangelogs`, on the pinned tree when `--sha` is set; `stageChangedFiles` already stages their deletion (`git ls-files -d`).
+- `scripts/changes-fragments.mjs`, `scripts/changes-fragments-gate.mjs`, `scripts/sync-changes-fragments.mjs`, `scripts/check-pr-changelog-facts.mjs` (new, fork-only): fragment parsing and compile planning, gate facts, the `compile` / `from-diff` CLI, and the PR fact collection moved out of `check-pr-changelog.mjs`. `check-pr-changelog.mjs` counts a fragment's CHANGELOG block as that package's entry and its tracker blocks as coverage; once the base carries `changes/unreleased/README.md`, a PR that adds to an existing tracker or an `[Unreleased]` section fails. `audit-changes-md.mjs` counts entries still waiting in fragments. There is no standalone compile workflow; `from-diff` preserves added lines, including repeated headings and blanks.
+- `scripts/upstream-release-worthy.mjs`: evaluates a read-only compile preview so pending package fragments can trigger a release without first being written into `[Unreleased]`.
+
+### Why
+
+- Every PR wrote to the same top lines of the same trackers and `[Unreleased]` sections, so each merge into `main` made the other open PRs conflict there, and a release cut could strand a bullet in a released section (senpi#3123).
+
+### Why an extension could not handle it
+
+- The release script and the PR gate are repository tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `stampChangelogs` call site in `scripts/release.mjs`.
+
 ## 2026-10-23 - Windows signal forwarding does not block on CIM (senpi#4057)
 
 ### What changed

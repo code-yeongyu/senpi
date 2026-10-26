@@ -30,6 +30,7 @@ export class LifecycleLedger {
 	private goalCompleted: string | undefined;
 	private runCompleted: string | undefined;
 	private admissionWriteFailed = false;
+	private unwritten = false;
 	runId: string | undefined;
 	runActive = false;
 	interrupted = false;
@@ -96,15 +97,26 @@ export class LifecycleLedger {
 			humanInputRevision: current.humanInputRevision + 1,
 			since: preparingFirstTurn ? at : current.since,
 		};
-		if (!this.write(next, true)) this.admissionWriteFailed = true;
+		// Input that opens a new epoch is recorded by that epoch's opening record (senpi#3980). Input into an
+		// open epoch is written at once: it must supersede a standing settle request durably.
+		if (!this.runActive && (this.sealed || current.epoch === 0)) {
+			this.current = next;
+			this.unwritten = true;
+		} else if (!this.write(next, true)) this.admissionWriteFailed = true;
 	}
 
 	startRun(origin: "human" | "automatic"): void {
 		this.lastTurnEnd = undefined;
 		this.openEpoch(origin);
+		// The previous run's stop never describes this one (senpi#3864).
+		const { lastStop: _lastStop, ...current } = this.current;
+		this.current = current;
 		this.runId = crypto.randomUUID();
 		this.runActive = true;
 		this.admissionWriteFailed = false;
+		// A new run is unsaved state even inside an open epoch: recompute() treats records that differ only in runActive
+		// or runId as equal, so without this a later run in the same epoch would never be recorded (senpi#3980).
+		this.unwritten = true;
 	}
 
 	private openEpoch(origin: "human" | "automatic"): void {
@@ -126,6 +138,7 @@ export class LifecycleLedger {
 			epochOrigin: origin,
 			selfSettleEligible: !this.admissionWriteFailed,
 		};
+		this.unwritten = true;
 	}
 
 	markGoalCompleted(goalId: string): void {
@@ -158,6 +171,7 @@ export class LifecycleLedger {
 		readonly waits: LifecycleWaits;
 		readonly holds: readonly LifecycleHold[];
 		readonly failure?: SessionLifecycle["failure"];
+		readonly lastStop?: SessionLifecycle["lastStop"];
 	}): void {
 		if (input.holds.length > 0 || input.state === "failed") this.request = undefined;
 		const terminal = input.state === "done" || input.state === "failed";
@@ -166,6 +180,7 @@ export class LifecycleLedger {
 			completion: _completion,
 			failure: _failure,
 			settleDecision: _decision,
+			lastStop: _lastStop,
 			...base
 		} = this.current;
 		const now = new Date().toISOString();
@@ -199,6 +214,7 @@ export class LifecycleLedger {
 					}
 				: {}),
 			...(input.state === "failed" && input.failure ? { failure: input.failure } : {}),
+			...(input.lastStop ? { lastStop: input.lastStop } : {}),
 			...(input.state === "done" && standingRequest
 				? {
 						settleDecision: this.current.settleDecision ?? { decisionId: crypto.randomUUID() },
@@ -226,6 +242,11 @@ export class LifecycleLedger {
 		this.write(this.current, false);
 	}
 
+	/** Publishes a revision or epoch that no record carries yet, once. */
+	publishUnwritten(): void {
+		if (this.unwritten) this.write(this.current, true);
+	}
+
 	private write(snapshot: SessionLifecycle, emit: boolean): boolean {
 		const next = { ...snapshot, seq: this.current.seq + 1, persisted: true };
 		const record: LifecycleRecord = {
@@ -242,6 +263,7 @@ export class LifecycleLedger {
 			...(this.runId ? { runId: this.runId } : {}),
 			...(this.request ? { settleRequest: this.request } : {}),
 		};
+		this.unwritten = false;
 		try {
 			this.persistence.append(record);
 			this.current = next;
@@ -268,7 +290,8 @@ function equivalent(previous: SessionLifecycle, next: SessionLifecycle): boolean
 		previous.selfSettleEligible === next.selfSettleEligible &&
 		JSON.stringify(previous.waitingOn) === JSON.stringify(next.waitingOn) &&
 		JSON.stringify(previous.holds) === JSON.stringify(next.holds) &&
-		JSON.stringify(previous.failure) === JSON.stringify(next.failure)
+		JSON.stringify(previous.failure) === JSON.stringify(next.failure) &&
+		JSON.stringify(previous.lastStop) === JSON.stringify(next.lastStop)
 	);
 }
 

@@ -44,6 +44,16 @@ export type DeterministicFallbackRejectionReason =
 	| "atomic-tool-chain-cut"
 	| "context-reconstruction-failed";
 
+// A budget rejection reached a replay-safe, atomic candidate. Invalid cut points
+// must not outvote that actionable constraint just because a tool batch is wide.
+const REJECTION_REASON_PRIORITY = {
+	"missing-preparation-boundary": 0,
+	"context-reconstruction-failed": 1,
+	"atomic-tool-chain-cut": 2,
+	"unsafe-retained-content": 3,
+	"retained-token-budget-exceeded": 4,
+} satisfies Record<DeterministicFallbackRejectionReason, number>;
+
 interface DeterministicFallbackDetails {
 	schema: "senpi.compaction.deterministic-fallback.v1";
 	origin: "required-compaction-recovery";
@@ -84,8 +94,35 @@ export function formatRequiredCompactionFallbackRejection(
 	diagnostics: DeterministicFallbackDiagnostic,
 	automaticPaused = false,
 ): string {
-	const candidate = diagnostics.candidateRejections?.at(-1);
-	const reason = diagnostics.rejectionReason ?? "context-reconstruction-failed";
+	const candidates = diagnostics.candidateRejections ?? [];
+	const rejectionCounts = new Map<DeterministicFallbackRejectionReason, number>();
+	for (const candidate of candidates) {
+		rejectionCounts.set(candidate.rejectionReason, (rejectionCounts.get(candidate.rejectionReason) ?? 0) + 1);
+	}
+	const reason =
+		[...rejectionCounts].sort(
+			(left, right) => REJECTION_REASON_PRIORITY[right[0]] - REJECTION_REASON_PRIORITY[left[0]],
+		)[0]?.[0] ??
+		diagnostics.rejectionReason ??
+		"context-reconstruction-failed";
+	const bestCandidate = candidates
+		.filter((candidate) => candidate.estimatedTokens !== undefined && Number.isFinite(candidate.estimatedTokens))
+		.reduce<(typeof candidates)[number] | undefined>(
+			(best, candidate) =>
+				!best || (candidate.estimatedTokens ?? Infinity) < (best.estimatedTokens ?? Infinity) ? candidate : best,
+			undefined,
+		);
+	const formatCandidate = (candidate: (typeof candidates)[number] | undefined) =>
+		candidate
+			? {
+					...candidate,
+					firstKeptEntryId: capUtf8Bytes(candidate.firstKeptEntryId, 128),
+					...(candidate.unsafeEntryId ? { unsafeEntryId: capUtf8Bytes(candidate.unsafeEntryId, 128) } : {}),
+					...(candidate.unsafeMessageRole
+						? { unsafeMessageRole: capUtf8Bytes(candidate.unsafeMessageRole, 32) }
+						: {}),
+				}
+			: undefined;
 	const recovery: Record<DeterministicFallbackRejectionReason, string> = {
 		"retained-token-budget-exceeded":
 			"The retained turn exceeds the usable context. Use set_model to select a larger-context model, then compact (or /model and /compact).",
@@ -105,18 +142,10 @@ export function formatRequiredCompactionFallbackRejection(
 		budgetTokens: diagnostics.budgetTokens,
 		budgetExceeded: diagnostics.budgetExceeded ?? false,
 		candidatesChecked: diagnostics.candidatesChecked ?? 0,
-		...(candidate
-			? {
-					candidate: {
-						...candidate,
-						firstKeptEntryId: capUtf8Bytes(candidate.firstKeptEntryId, 128),
-						...(candidate.unsafeEntryId ? { unsafeEntryId: capUtf8Bytes(candidate.unsafeEntryId, 128) } : {}),
-						...(candidate.unsafeMessageRole
-							? { unsafeMessageRole: capUtf8Bytes(candidate.unsafeMessageRole, 32) }
-							: {}),
-					},
-				}
-			: {}),
+		rejectionCounts: Object.fromEntries(rejectionCounts),
+		firstCandidate: formatCandidate(candidates[0]),
+		bestCandidate: formatCandidate(bestCandidate),
+		candidate: formatCandidate(candidates.find((candidate) => candidate.rejectionReason === reason)),
 	};
 	const pause = automaticPaused
 		? " Automatic compaction is paused for this unchanged transcript and model/settings."
@@ -276,6 +305,8 @@ export function createRequiredCompactionFallback(
 	};
 	let candidateCount = 0;
 	let sawUnsafeRetainedContent = false;
+	let sawRetainedBudgetExceeded = false;
+	const checkedEntryIds = new Set<string>();
 
 	const syntheticCompaction: CompactionEntry = {
 		type: "compaction",
@@ -418,6 +449,8 @@ export function createRequiredCompactionFallback(
 		firstKeptEntryId: string,
 		retainedSuffix: NonNullable<DeterministicFallbackDetails["retainedSuffix"]>,
 	): CompactionResult<DeterministicFallbackDetails> | undefined => {
+		if (checkedEntryIds.has(firstKeptEntryId)) return undefined;
+		checkedEntryIds.add(firstKeptEntryId);
 		candidateCount++;
 		const details = { ...baseDetails, retainedSuffix };
 		const reject = (
@@ -428,7 +461,12 @@ export function createRequiredCompactionFallback(
 			> = {},
 		): undefined => {
 			if (diagnostics) {
-				diagnostics.rejectionReason = rejectionReason;
+				if (
+					!diagnostics.rejectionReason ||
+					REJECTION_REASON_PRIORITY[rejectionReason] > REJECTION_REASON_PRIORITY[diagnostics.rejectionReason]
+				) {
+					diagnostics.rejectionReason = rejectionReason;
+				}
 				diagnostics.contextWindow = contextWindow;
 				diagnostics.reserveTokens = reserveTokens;
 				diagnostics.budgetTokens = budget;
@@ -472,6 +510,7 @@ export function createRequiredCompactionFallback(
 					);
 		const retainedTokens = (tokenSuffix[retainedStart] ?? Number.POSITIVE_INFINITY) + summaryTokens;
 		if (retainedTokens > budget) {
+			sawRetainedBudgetExceeded = true;
 			if (diagnostics) diagnostics.budgetExceeded = true;
 			return reject("retained-token-budget-exceeded", { estimatedTokens: retainedTokens });
 		}
@@ -521,12 +560,12 @@ export function createRequiredCompactionFallback(
 		break;
 	}
 
-	// A split turn can contain an unsafe persisted tool payload after the
-	// prepared boundary and no later user message. Advance to the earliest safe
-	// suffix rather than retaining that payload forever. `projectCandidate`
+	// A split turn can contain an unsafe or over-budget persisted tool payload
+	// after the prepared boundary and no later user message. Advance to the
+	// earliest safe suffix rather than retaining that payload forever. `projectCandidate`
 	// still rejects orphaned tool results, incomplete call chains, unsafe
 	// content, and over-budget suffixes.
-	if (sawUnsafeRetainedContent) {
+	if (sawUnsafeRetainedContent || sawRetainedBudgetExceeded) {
 		for (let index = preparedBoundaryIndex + 1; index < branchEntries.length; index++) {
 			const entry = branchEntries[index];
 			if (entry.type === "compaction") continue;

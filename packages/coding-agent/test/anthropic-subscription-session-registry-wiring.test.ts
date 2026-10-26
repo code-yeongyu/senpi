@@ -41,6 +41,7 @@ function fakeQuery(onClose?: () => void): SdkQueryHandle {
 function fakeExtension(): FakeExtension {
 	const handlers = new Map<string, EventHandler[]>();
 	const api = {
+		cwd: process.cwd(),
 		on(event: string, handler: EventHandler): void {
 			const registered = handlers.get(event) ?? [];
 			registered.push(handler);

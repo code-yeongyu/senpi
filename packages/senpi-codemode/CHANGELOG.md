@@ -12,6 +12,116 @@
 
 ### Removed
 
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-3] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-2] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-1] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+- Removed the built-in llama.cpp provider's image-format exception along with the `/llama` integration ([#3202](https://github.com/code-yeongyu/senpi/issues/3202)).
+
 ## [2026.10.21-3] - 2026-10-22
 
 ### Breaking Changes

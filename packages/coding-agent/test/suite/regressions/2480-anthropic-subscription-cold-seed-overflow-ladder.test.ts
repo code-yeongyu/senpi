@@ -165,7 +165,7 @@ async function fakeLane(options: { keepRecentTokens: number; wording?: (count: n
 	harnesses.push(harness);
 	harness.agent.streamFunction = ((model, context, streamOptions) =>
 		wrapStreamWithModelRecovery(
-			streamAnthropicSubscription(model, context, streamOptions),
+			streamAnthropicSubscription(model, context, { cwd: process.cwd(), ...streamOptions }),
 			model,
 			getCurrentTools(context.messages),
 		)) satisfies StreamFn;

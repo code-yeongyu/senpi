@@ -1,3 +1,21 @@
+## 2026-10-23 - show_html_page points at the visualize skill again (senpi#2869)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the `show_html_page` description gains one sentence, "Load the visualize skill before building the page." The guidelines are unchanged, so the pointer appears once.
+
+### Why
+
+- The 2026-10-06 entry removed the pointer until the skill shipped. The `visualize` skill now ships in released omo (oh-my-openagent#9702), so the description names it without restating its content.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its description is defined here.
+
+### Expected merge conflict zones
+
+- LOW: the `description` string of `showHtmlPageTool` in `html-render/tool.ts`.
+
 ## 2026-10-21 - The TPS notice uses the shared generation-window rule (senpi#3879)
 
 ### What changed

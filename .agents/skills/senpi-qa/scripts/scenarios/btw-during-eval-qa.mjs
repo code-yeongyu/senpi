@@ -18,6 +18,7 @@ import {
 	repoRoot,
 	stripAnsi,
 	tsxEntry,
+	signalOwnedProcess,
 } from "../lib/common.mjs";
 import { startFakeModelServer } from "../lib/fake-model-server.mjs";
 import { API_PRESETS, hermeticEnv, writeMockModelsJson } from "../lib/mock-loop-support.mjs";
@@ -98,7 +99,8 @@ async function frameViolations(root, bytes, fromOffset, pinnedFrom) {
 
 // tsx runs the CLI in a child process that can outlive the PTY's own exit and write its debug log into the
 // removed sandbox; the whole process group is ended and awaited before the sandbox is removed.
-async function reapProcessGroup(pid) {
+async function reapProcessGroup(term) {
+	const pid = term.pid;
 	const alive = () => {
 		try {
 			process.kill(-pid, 0);
@@ -109,7 +111,7 @@ async function reapProcessGroup(pid) {
 	};
 	if (alive()) {
 		try {
-			process.kill(-pid, "SIGKILL");
+			signalOwnedProcess({ pid: term.pid, spawned: term, group: true, signal: "SIGKILL" });
 		} catch {}
 	}
 	const deadline = Date.now() + 5_000;
@@ -239,7 +241,7 @@ async function main() {
 				term.kill();
 			} catch {}
 			cleanup.ptyExited = await exited;
-			if (typeof term.pid === "number") cleanup.ptyExited &&= await reapProcessGroup(term.pid);
+			if (typeof term.pid === "number") cleanup.ptyExited &&= await reapProcessGroup(term);
 		} else cleanup.ptyExited = true;
 		if (server) {
 			await server.stop().catch(() => {});

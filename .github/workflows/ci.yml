@@ -78,7 +78,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -140,9 +140,9 @@ jobs:
           cache: npm
 
       - name: Install system dependencies
+        timeout-minutes: 5
         run: |
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
+          bash scripts/install-ci-system-deps.sh \
             libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
           sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
@@ -153,7 +153,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       - name: Check
         env:
@@ -193,17 +193,17 @@ jobs:
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # The coding-agent vitest suite dominates CI wall time (748+ files; measured
-  # 1364s single-fork, ~60% per-file import cost). Sharding it across three
+  # The coding-agent vitest suite dominates CI wall time (2467+ files; three
+  # shards reached 27-minute jobs). Sharding it across four
   # runners divides that wall while each shard keeps the CI fork-pool settings
   # from vitest.config.ts (forks pool, capped workers) that prevent the historical
   # subprocess-suite pool hang.
   test-coding-agent:
-    name: Test (coding-agent ${{ matrix.shard }}/3)
+    name: Test (coding-agent ${{ matrix.shard }}/4)
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -217,9 +217,9 @@ jobs:
           cache: npm
 
       - name: Install system dependencies
+        timeout-minutes: 5
         run: |
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
+          bash scripts/install-ci-system-deps.sh \
             libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
           sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
@@ -232,7 +232,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
@@ -241,7 +241,7 @@ jobs:
 
       - name: Test shard
         timeout-minutes: 25
-        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/3
+        run: node ../../scripts/run-tests.mjs vitest run --shard=${{ matrix.shard }}/4
         working-directory: packages/coding-agent
 
       - name: Workflow summary
@@ -249,7 +249,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## Test (coding-agent ${{ matrix.shard }}/3)"
+            echo "## Test (coding-agent ${{ matrix.shard }}/4)"
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Check OS temp after tests
@@ -274,12 +274,11 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       - name: Install system dependencies
-        run: |
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y ripgrep
+        timeout-minutes: 5
+        run: bash scripts/install-ci-system-deps.sh ripgrep
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -430,7 +429,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -538,7 +537,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -582,15 +581,15 @@ jobs:
         run: node ../../scripts/run-tests.mjs vitest run test/suite/rpc-endpoint-registry.test.ts --reporter=verbose
         working-directory: packages/coding-agent
 
-      # The session gateway is POSIX-only: an interactive TUI on win32 starts normally, its endpoint
-      # request answers unsupported_platform, and nothing is registered.
+      # An interactive TUI on win32 registers its control endpoint over a named pipe: host status --all
+      # lists it as a live tui endpoint, and a client attaches and drives it (senpi#4267).
       - name: Run interactive TUI control endpoint tests (win32)
         shell: bash
-        run: node ../../scripts/run-tests.mjs vitest run test/suite/interactive-session-control-win32.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tui-control-win32.json
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/interactive-session-control-win32.test.ts src/modes/rpc/tui-socket.observer.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tui-control-win32.json
         working-directory: packages/coding-agent
 
       # A skipped suite exits 0: fail unless the win32-only cases (the named-pipe wrong-secret test and
-      # the TUI no-registration suite) executed and every test in those files passed.
+      # the TUI pipe-endpoint suite) executed and every test in those files passed.
       - name: Require the win32 gateway parity tests to have executed
         shell: bash
         run: |
@@ -630,7 +629,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       - name: Install archive tool
         shell: pwsh
@@ -699,7 +698,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -761,7 +760,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -824,7 +823,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -909,7 +908,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -981,7 +980,7 @@ jobs:
           python-version: "3.12.10"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Snapshot OS temp before tests
@@ -1058,12 +1057,12 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       - name: Install system dependencies
+        timeout-minutes: 5
         run: |
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y \
+          bash scripts/install-ci-system-deps.sh \
             libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
           sudo ln -sf "$(which fdfind)" /usr/local/bin/fd
 
@@ -1289,7 +1288,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.3"
+          bun-version: "1.4.4"
 
       - name: Install dependencies and build workspace entries
         id: install

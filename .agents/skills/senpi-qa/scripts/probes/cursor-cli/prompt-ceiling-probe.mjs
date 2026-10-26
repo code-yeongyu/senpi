@@ -50,6 +50,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { signalOwnedProcess } from "../../lib/common.mjs";
 
 // ---------------------------------------------------------------------------
 // Tunables (all wall times are hard caps)
@@ -320,7 +321,7 @@ function runCli(args, opts = {}) {
 
 		const killGroup = () => {
 			try {
-				process.kill(-child.pid, "SIGKILL");
+				signalOwnedProcess({ pid: child.pid, spawned: child, group: true, signal: "SIGKILL" });
 			} catch {
 				try {
 					child.kill("SIGKILL");
@@ -837,7 +838,7 @@ function cleanup() {
 	CLEANED = true;
 	if (CURRENT_CHILD) {
 		try {
-			process.kill(-CURRENT_CHILD.pid, "SIGKILL");
+			signalOwnedProcess({ pid: CURRENT_CHILD.pid, spawned: CURRENT_CHILD, group: true, signal: "SIGKILL" });
 		} catch {}
 		CURRENT_CHILD = null;
 	}

@@ -7,6 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { DiscoveryResult } from "./era.ts";
 import { ModernTransportError } from "./transport.ts";
+import { ModernSubscriptions } from "./subscriptions.ts";
 
 /** The SDK's local `initialize` answer, built from validated discovery; discovery must support the real wire version. */
 export function modernInitializeResult(discovery: DiscoveryResult, wireVersion: string): InitializeResult {
@@ -34,18 +35,23 @@ export class ModernSdkBridge implements Transport {
 	onerror?: Transport["onerror"];
 	readonly #transport: Transport;
 	readonly #initializeResult;
+	readonly #subscriptions: ModernSubscriptions;
 	#initialized = false;
 
 	constructor(transport: Transport, discovery: DiscoveryResult, wireVersion: string) {
 		this.#initializeResult = modernInitializeResult(discovery, wireVersion);
 		this.#transport = transport;
+		this.#subscriptions = new ModernSubscriptions(transport.send.bind(transport), discovery.capabilities, true);
 	}
 
 	async start(): Promise<void> {
 		this.#transport.onmessage = (message, extra) => {
-			this.onmessage?.(normalizeModernResult(message), extra);
+			if (this.#subscriptions.incoming(message)) this.onmessage?.(normalizeModernResult(message), extra);
 		};
-		this.#transport.onclose = () => this.onclose?.();
+		this.#transport.onclose = () => {
+			this.#subscriptions.dispose();
+			this.onclose?.();
+		};
 		this.#transport.onerror = (error) => this.onerror?.(error);
 		await this.#transport.start();
 	}
@@ -60,10 +66,17 @@ export class ModernSdkBridge implements Transport {
 			return;
 		}
 		if ("method" in message && message.method === "notifications/initialized" && !("id" in message)) return;
-		await this.#transport.send(message, options);
+		this.#subscriptions.outgoing(message);
+		try {
+			await this.#transport.send(message, options);
+		} catch (error) {
+			this.#subscriptions.failedSend(message);
+			throw error;
+		}
 	}
 
 	close(): Promise<void> {
+		this.#subscriptions.dispose();
 		return this.#transport.close();
 	}
 }

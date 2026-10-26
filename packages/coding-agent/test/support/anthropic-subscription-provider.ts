@@ -16,11 +16,12 @@ function registeredProviderConfig(
 	const pi = new Proxy(
 		{},
 		{
-			get:
-				(_target, property) =>
-				(...args: unknown[]) => {
+			get: (_target, property) => {
+				if (property === "cwd") return process.cwd();
+				return (...args: unknown[]) => {
 					if (property === "registerProvider") captured = args[1] as ProviderConfigInput;
-				},
+				};
+			},
 		},
 	) as unknown as ExtensionAPI;
 	registerAnthropicSubscriptionExtension(pi, { readAmbientAuthStatus, readSettings: () => settings });

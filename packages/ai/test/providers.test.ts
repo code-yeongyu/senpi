@@ -308,6 +308,8 @@ describe("builtin providers", () => {
 			"kimi-for-coding": { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
 			k3: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3 },
 			"kimi-for-coding-highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
+			"k3.1-pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+			"k3.1-pro-highspeed": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 4 },
 		};
 
 		for (const [modelId, cost] of Object.entries(expectedCosts)) {

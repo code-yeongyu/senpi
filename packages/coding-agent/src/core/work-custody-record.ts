@@ -4,6 +4,8 @@ import type { ObligationKind } from "./session-lifecycle-types.ts";
 export interface CustodyPayload {
 	readonly message: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
 	readonly deliverAs?: "steer" | "followUp" | "nextTurn";
+	/** The item ids of the itemized batch this payload carries, so a restored carrier still knows them (senpi#4106). */
+	readonly itemIds?: readonly string[];
 }
 
 /** Mutable only by the registry; every replacement is appended before installation. */
@@ -76,6 +78,9 @@ function readPayload(value: unknown): CustodyPayload | undefined {
 		},
 		...(value.deliverAs === "steer" || value.deliverAs === "followUp" || value.deliverAs === "nextTurn"
 			? { deliverAs: value.deliverAs }
+			: {}),
+		...(Array.isArray(value.itemIds) && value.itemIds.every((id) => typeof id === "string")
+			? { itemIds: value.itemIds }
 			: {}),
 	};
 }

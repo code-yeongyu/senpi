@@ -158,7 +158,7 @@ describe("senpi#2281 refresh under a contended auth.json lock", () => {
 		const store = new ContendedStore();
 		const lane = await configure(store, store.inner, NOW + 2 * MINUTE);
 
-		const result = await streamAnthropicSubscription(model, context).result();
+		const result = await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		expect(result.errorMessage).toBeUndefined();
 		expect(lane.spawned.map((options) => options.env?.CLAUDE_CODE_OAUTH_TOKEN)).toEqual(["access-1"]);
@@ -170,7 +170,7 @@ describe("senpi#2281 refresh under a contended auth.json lock", () => {
 		store.siblingRotation = { access: "access-sibling", refresh: "refresh-sibling", expires: NOW + 480 * MINUTE };
 		const lane = await configure(store, store.inner, NOW + 2 * MINUTE);
 
-		await streamAnthropicSubscription(model, context).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		expect(lane.spawned.map((options) => options.env?.CLAUDE_CODE_OAUTH_TOKEN)).toEqual(["access-sibling"]);
 		expect((await storedSlot(store))?.blockReason).toBeUndefined();
@@ -180,7 +180,7 @@ describe("senpi#2281 refresh under a contended auth.json lock", () => {
 		const store = new ContendedStore();
 		const lane = await configure(store, store.inner, NOW - MINUTE);
 
-		const result = await streamAnthropicSubscription(model, context).result();
+		const result = await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		expect(result.errorMessage).toContain("Credential store is busy");
 		expect(result.errorMessage).not.toContain("authentication_failed");
@@ -195,7 +195,7 @@ describe("senpi#2281 token endpoint failures", () => {
 		await configure(store, store, NOW - MINUTE, async () => {
 			throw new Error(`Anthropic token refresh request failed. url=https://token.invalid; details=${detail}`);
 		});
-		await streamAnthropicSubscription(model, context).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 		return storedSlot(store);
 	}
 

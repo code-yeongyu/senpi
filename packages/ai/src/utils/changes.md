@@ -1,3 +1,40 @@
+## 2026-10-22 - Extract the configuration reference error without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/ai/src/utils/config-reference-error.ts`: holds the unchanged `ConfigReferenceError` and `ConfigReferenceReason`, moved from `config-reference.ts`.
+- `packages/ai/src/utils/config-reference.ts`: imports and re-exports them, so its public entry keeps the same API.
+
+### Why
+
+- Lets the auth resolution path raise the named error without loading the compiled reference schemas.
+
+### Why an extension could not handle it
+
+- The credential pool raises this error before extension processing.
+
+### Expected merge conflict zones
+
+- LOW: the import and re-export at the top of `packages/ai/src/utils/config-reference.ts`.
+
+## 2026-10-21 - Shared configuration reference object grammar (senpi#3858)
+
+### What changed
+
+- `packages/ai/src/utils/config-reference.ts`: exact single-key `$file`, `$env`, and flat `$concat` schemas and runtime unions; named `ConfigReferenceError` and a validator for explicitly declared string-value slots.
+
+### Why
+
+- Auth, model configuration, and MCP must agree on which objects are references without interpreting opaque JSON or changing legacy strings.
+
+### Why an extension could not handle it
+
+- The credential pool and configuration loaders validate these values before extension processing.
+
+### Expected merge conflict zones
+
+- LOW: new standalone shared contract.
+
 ## 2026-10-20 - Keep Claude's spent-window reset in provider diagnostics (senpi#3825)
 
 `provider-diagnostic-sources.ts` adds `resetsAt` to a classified quota/rate-limit error from Claude's unified 5h/7d response headers. Only spent windows with future numeric resets contribute, and the latest spent window wins so a goal cannot wake while another cap still blocks it. Authentication and unknown errors do not read reset headers. `anthropic-provider-diagnostic.test.ts` exercises the real adapter against HTTP fixtures.

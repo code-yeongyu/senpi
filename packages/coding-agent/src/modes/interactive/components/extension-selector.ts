@@ -28,6 +28,7 @@ export class ExtensionSelectorComponent extends Container {
 	private countdown: CountdownTimer | undefined;
 	private onToggleToolsExpanded: (() => void) | undefined;
 	private maxVisibleOptions: number;
+	private answerSettled = false;
 
 	constructor(
 		title: string,
@@ -114,6 +115,7 @@ export class ExtensionSelectorComponent extends Container {
 	}
 
 	handleInput(keyData: string): void {
+		if (this.answerSettled) return;
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "app.tools.expand")) {
 			this.onToggleToolsExpanded?.();
@@ -132,6 +134,7 @@ export class ExtensionSelectorComponent extends Container {
 	}
 
 	dispose(): void {
+		this.answerSettled = true;
 		this.countdown?.dispose();
 	}
 }

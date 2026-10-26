@@ -117,7 +117,7 @@ export async function refreshMcpToolsOnListChanged(
 			const refreshed = await collectServerCatalogForCache(
 				entry.connection,
 				server.config,
-				entry.configHash,
+				entry.generationHash ?? entry.configHash,
 				entry.credentialIdentity,
 			);
 			if (!ownsCatalog()) return;

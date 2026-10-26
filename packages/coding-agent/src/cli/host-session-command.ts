@@ -4,10 +4,11 @@ import { APP_NAME, getAgentDir } from "../config.ts";
 import { DEFAULT_HOST_LAUNCH_SPEC, HostLaunchSpecError, loadHostLaunchSpec } from "../modes/rpc/host-launch-spec.ts";
 import { HOST_EXIT_ERROR, HOST_EXIT_USAGE } from "../modes/rpc/host-outcome.ts";
 import { type HostSessionRequest, runHostSessionRequest } from "../modes/rpc/host-session-runner.ts";
+import { withRpcKeyRoot } from "../modes/rpc/rpc-auth-client.ts";
 import { resolveHostSocket } from "./host-command.ts";
 import { emit } from "./host-emit.ts";
 
-const USAGE = `usage: ${APP_NAME} host session <command> [--socket <path>] [--json]
+const USAGE = `usage: ${APP_NAME} host session <command> [--socket <path>] [--rpc-key-root <dir>] [--json]
 
   open --cwd <dir> [--model <provider/id>] [--name <text>] [--prompt <text|@file>] [--launch-spec <file>]
   close <ref>
@@ -29,6 +30,7 @@ export interface ParsedHostSessionArgs {
 	readonly command: CommandArgs<HostSessionRequest>;
 	readonly socket?: string;
 	readonly specPath?: string;
+	readonly keyRoot?: string;
 }
 
 export function parseHostSessionArgs(args: readonly string[]): ParsedHostSessionArgs | string {
@@ -61,6 +63,7 @@ export function parseHostSessionArgs(args: readonly string[]): ParsedHostSession
 		}
 		const allowed =
 			flag === "--socket" ||
+			flag === "--rpc-key-root" ||
 			(action === "open" && ["--cwd", "--model", "--name", "--prompt", "--launch-spec"].includes(flag)) ||
 			(action === "read" && ["--tail", "--since"].includes(flag)) ||
 			(action === "wait" && ["--until", "--timeout"].includes(flag)) ||
@@ -73,7 +76,7 @@ export function parseHostSessionArgs(args: readonly string[]): ParsedHostSession
 		action === "open" || action === "list" ? 0 : ["model", "prompt", "steer"].includes(action ?? "") ? 2 : 1;
 	if (positional.length !== count) return `${action} expects ${count} positional argument(s).`;
 	const ref = positional[0] ?? "";
-	const common = { socket: values["--socket"], specPath: values["--launch-spec"] };
+	const common = { socket: values["--socket"], specPath: values["--launch-spec"], keyRoot: values["--rpc-key-root"] };
 	switch (action) {
 		case "open": {
 			if (!values["--cwd"]) return "open requires --cwd <dir>.";
@@ -167,7 +170,10 @@ export async function runHostSessionCommand(args: readonly string[]): Promise<nu
 								: await loadHostLaunchSpec(parsed.specPath),
 					}
 				: { ...command, target };
-		const outcome = await runHostSessionRequest(request);
+		const outcome = await withRpcKeyRoot(
+			parsed.keyRoot === undefined ? (process.env.SENPI_RPC_KEY_ROOT ?? agentDir) : resolve(parsed.keyRoot),
+			() => runHostSessionRequest(request),
+		);
 		emit(outcome.payload);
 		return outcome.exitCode;
 	} catch (error) {

@@ -1234,10 +1234,10 @@ export default function(pi: ExtensionAPI) {
 						factory: (pi) => pi.registerCommand("mcp", { description: "built-in mcp", handler: async () => {} }),
 					},
 					{
-						name: "llama",
+						name: "example-ext",
 						replaceable: true,
 						factory: (pi) =>
-							pi.registerCommand("llama", { description: "built-in llama", handler: async () => {} }),
+							pi.registerCommand("example-ext", { description: "built-in example", handler: async () => {} }),
 					},
 				],
 			});
@@ -1246,7 +1246,7 @@ export default function(pi: ExtensionAPI) {
 			const extensionsResult = loader.getExtensions();
 			// Fork ordering: factory extensions load ahead of file extensions.
 			expect(nonBuiltinExtensions(extensionsResult.extensions).map((extension) => extension.path)).toEqual([
-				"<inline:llama>",
+				"<inline:example-ext>",
 				join(globalExtDir, "other-mcp.ts"),
 			]);
 			expect(extensionsResult.errors).toEqual([]);
@@ -1259,7 +1259,7 @@ export default function(pi: ExtensionAPI) {
 				await createModelRegistry(AuthStorage.create(join(tempDir, "auth-replaceable.json"))),
 			);
 			expect(runner.getCommand("mcp")?.description).toBe("other mcp");
-			expect(runner.getCommand("llama")?.description).toBe("built-in llama");
+			expect(runner.getCommand("example-ext")?.description).toBe("built-in example");
 		});
 
 		it("should skip built-in extensions disabled in settings", async () => {
@@ -1273,19 +1273,19 @@ export default function(pi: ExtensionAPI) {
 				agentDir,
 				extensionFactories: [
 					{ name: "mcp", builtin: true, factory: () => void loaded.push("mcp") },
-					{ name: "llama", builtin: true, factory: () => void loaded.push("llama") },
+					{ name: "example-ext", builtin: true, factory: () => void loaded.push("example-ext") },
 				],
 			});
 			await loader.reload();
 
 			const extensions = nonBuiltinExtensions(loader.getExtensions().extensions);
-			expect(extensions.map((extension) => extension.path)).toEqual(["builtin:llama"]);
+			expect(extensions.map((extension) => extension.path)).toEqual(["builtin:example-ext"]);
 			expect(extensions[0].sourceInfo).toMatchObject({
-				path: "builtin:llama",
+				path: "builtin:example-ext",
 				source: "builtin",
 			});
 			expect(extensions[0].hidden).toBe(true);
-			expect(loaded).toEqual(["llama"]);
+			expect(loaded).toEqual(["example-ext"]);
 		});
 
 		it("should load built-in extensions after file extensions with and without trust resolution", async () => {
@@ -1321,7 +1321,7 @@ export default function(pi: ExtensionAPI) {
 				additionalExtensionPaths: ["builtin:mcp", "builtin:missing"],
 				extensionFactories: [
 					{ name: "mcp", builtin: true, factory: () => void loaded.push("mcp") },
-					{ name: "llama", builtin: true, factory: () => void loaded.push("llama") },
+					{ name: "example-ext", builtin: true, factory: () => void loaded.push("example-ext") },
 				],
 			});
 			await loader.reload();
@@ -1343,7 +1343,7 @@ export default function(pi: ExtensionAPI) {
 			mkdirSync(join(cwd, CONFIG_DIR_NAME), { recursive: true });
 			writeFileSync(
 				join(cwd, CONFIG_DIR_NAME, "settings.json"),
-				JSON.stringify({ extensions: ["+builtin:mcp", "-builtin:llama"] }),
+				JSON.stringify({ extensions: ["+builtin:mcp", "-builtin:example-ext"] }),
 			);
 			const loaded: string[] = [];
 			const loader = new DefaultResourceLoader({
@@ -1352,7 +1352,7 @@ export default function(pi: ExtensionAPI) {
 				extensionFactories: [
 					{ name: "mcp", builtin: true, factory: () => void loaded.push("mcp") },
 					{ name: "plain", factory: () => void loaded.push("plain") },
-					{ name: "llama", builtin: true, factory: () => void loaded.push("llama") },
+					{ name: "example-ext", builtin: true, factory: () => void loaded.push("example-ext") },
 				],
 			});
 			await loader.reload({

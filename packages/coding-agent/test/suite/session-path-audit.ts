@@ -5,6 +5,13 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import ts from "@typescript/typescript6";
+import {
+	classify,
+	declarationsOf,
+	type FunctionLike,
+	isFunctionLike,
+	type SessionPathFindingKind,
+} from "./session-path-classify.ts";
 
 /**
  * Files whose functions seed the session-path call graph: everything a routed RPC
@@ -23,14 +30,14 @@ export const SESSION_PATH_ROOT_FILES = [
 /** Root directory expanded to all of its `.ts` sources. */
 export const SESSION_PATH_ROOT_DIRECTORY = "src/core/tools";
 
-/** Blocking primitives written as a bare or member call: `spawnSync(...)`, `cp.spawnSync(...)`. */
-const BLOCKING_CALLEES = new Set(["execSync", "execFileSync", "spawnSync"]);
-/** Blocking primitives that only exist in qualified form. */
-const QUALIFIED_BLOCKING_CALLEES = new Set(["Atomics.wait", "Bun.spawnSync", "Bun.sleepSync"]);
-/** Synchronous filesystem calls: reported against a ledger, never banned outright. */
-const SYNC_FS_CALLEES = new Set(["readFileSync", "writeFileSync", "appendFileSync"]);
+/**
+ * The move feature's own code: every module under `src/core/session-move`, the RPC `move_session` commands and the
+ * rebind an import commits through. Nothing in these files may call synchronous I/O, and no ledger entry may name one.
+ */
+export const MOVE_PATH_DIRECTORY = "src/core/session-move";
+export const MOVE_PATH_EXTRA_FILES = ["src/modes/rpc/session-move-commands.ts", "src/core/session-rebind.ts"] as const;
 
-export type SessionPathFindingKind = "blocking" | "sync-fs";
+export type { SessionPathFindingKind };
 
 /** One (file, api, enclosing function) call site group found on the session path. */
 export interface SessionPathFinding {
@@ -39,6 +46,8 @@ export interface SessionPathFinding {
 	readonly file: string;
 	/** The call as written (`spawnSync`, `Atomics.wait`, `fs.readFileSync`). */
 	readonly api: string;
+	/** The declared name behind it, through the alias forms the classifier follows (`copyInPlace` -> `copyFileSync`). */
+	readonly callee: string;
 	/** Enclosing function, method or `<module>` for top-level code. */
 	readonly symbol: string;
 	readonly count: number;
@@ -50,27 +59,8 @@ export interface SessionPathAuditOptions {
 	readonly packageRoot: string;
 	/** Extra call-graph roots. The audit's own can-fail proof seeds a fixture through this. */
 	readonly extraRoots?: readonly string[];
-}
-
-type FunctionLike =
-	| ts.FunctionDeclaration
-	| ts.MethodDeclaration
-	| ts.ArrowFunction
-	| ts.FunctionExpression
-	| ts.ConstructorDeclaration
-	| ts.GetAccessorDeclaration
-	| ts.SetAccessorDeclaration;
-
-function isFunctionLike(node: ts.Node): node is FunctionLike {
-	return (
-		ts.isFunctionDeclaration(node) ||
-		ts.isMethodDeclaration(node) ||
-		ts.isArrowFunction(node) ||
-		ts.isFunctionExpression(node) ||
-		ts.isConstructorDeclaration(node) ||
-		ts.isGetAccessorDeclaration(node) ||
-		ts.isSetAccessorDeclaration(node)
-	);
+	/** Replaces the session-path roots, so one sub-path (the move path) can be audited on its own. */
+	readonly roots?: readonly string[];
 }
 
 function collectTypeScriptSources(directory: string): string[] {
@@ -81,6 +71,17 @@ function collectTypeScriptSources(directory: string): string[] {
 		else if (entry.endsWith(".ts") && !entry.endsWith(".d.ts")) found.push(full);
 	}
 	return found;
+}
+
+/** Package-relative move-path files, POSIX separators. */
+export function movePathFiles(packageRoot: string): string[] {
+	const root = resolve(packageRoot);
+	return [
+		...collectTypeScriptSources(resolve(root, MOVE_PATH_DIRECTORY)).map((file) =>
+			relative(root, file).split("\\").join("/"),
+		),
+		...MOVE_PATH_EXTRA_FILES,
+	];
 }
 
 export function sessionPathRoots(packageRoot: string): string[] {
@@ -129,13 +130,6 @@ function callsIn(node: ts.Node): (ts.CallExpression | ts.NewExpression)[] {
 	}
 	visit(node);
 	return found;
-}
-
-function declarationsOf(checker: ts.TypeChecker, callee: ts.Expression): readonly ts.Declaration[] {
-	const symbol = checker.getSymbolAtLocation(callee);
-	if (!symbol) return [];
-	const target = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
-	return target.declarations ?? [];
 }
 
 /** Call targets that are themselves source functions, so the walk can follow them. */
@@ -197,42 +191,15 @@ function enclosingSymbol(node: ts.Node): string {
 }
 
 /**
- * Classify one call. A callee declared in this package's own sources is never a finding:
- * the walk follows it instead, so a helper named `readFileSync` is judged by what it does.
- * Aliased imports (`spawnSync as nodeSpawnSync`) are resolved back to their declared name.
- */
-function classify(
-	checker: ts.TypeChecker,
-	call: ts.CallExpression,
-	sources: ReadonlySet<string>,
-): { kind: SessionPathFindingKind; api: string } | undefined {
-	const callee = call.expression;
-	if (!ts.isIdentifier(callee) && !ts.isPropertyAccessExpression(callee)) return undefined;
-	const written = callee.getText();
-	if (QUALIFIED_BLOCKING_CALLEES.has(written)) return { kind: "blocking", api: written };
-	const declarations = declarationsOf(checker, callee);
-	if (declarations.some((declaration) => sources.has(resolve(declaration.getSourceFile().fileName)))) return undefined;
-	const name = symbolName(checker, callee) ?? (ts.isPropertyAccessExpression(callee) ? callee.name.text : written);
-	if (BLOCKING_CALLEES.has(name)) return { kind: "blocking", api: written };
-	if (SYNC_FS_CALLEES.has(name)) return { kind: "sync-fs", api: written };
-	return undefined;
-}
-
-/** Declared name behind an import alias (`spawnSync as nodeSpawnSync` -> `spawnSync`). */
-function symbolName(checker: ts.TypeChecker, callee: ts.Expression): string | undefined {
-	const symbol = checker.getSymbolAtLocation(callee);
-	if (!symbol) return undefined;
-	const target = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
-	return target.getName();
-}
-
-/**
  * Walk the transitive call graph rooted at the session path and report every blocking
  * primitive and synchronous filesystem call it can reach.
  */
 export function auditSessionPath(options: SessionPathAuditOptions): readonly SessionPathFinding[] {
 	const packageRoot = resolve(options.packageRoot);
-	const roots = [...sessionPathRoots(packageRoot), ...(options.extraRoots ?? []).map((root) => resolve(root))];
+	const roots = [
+		...(options.roots ?? sessionPathRoots(packageRoot)).map((root) => resolve(packageRoot, root)),
+		...(options.extraRoots ?? []).map((root) => resolve(root)),
+	];
 	const program = createProgram(packageRoot, roots);
 	const checker = program.getTypeChecker();
 	const sources = new Set(
@@ -241,7 +208,7 @@ export function auditSessionPath(options: SessionPathAuditOptions): readonly Ses
 			.filter((file) => !file.isDeclarationFile)
 			.map((file) => resolve(file.fileName)),
 	);
-	const grouped = new Map<string, { finding: SessionPathFinding; lines: number[] }>();
+	const grouped = new Map<string, { finding: SessionPathFinding; sites: Map<number, number> }>();
 	for (const node of reachableNodes(program, checker, new Set(roots))) {
 		for (const call of callsIn(node)) {
 			if (!ts.isCallExpression(call)) continue;
@@ -252,20 +219,27 @@ export function auditSessionPath(options: SessionPathAuditOptions): readonly Ses
 			const symbol = enclosingSymbol(call);
 			const key = `${classified.kind}|${file}|${classified.api}|${symbol}`;
 			const line = source.getLineAndCharacterOfPosition(call.getStart()).line + 1;
-			const existing = grouped.get(key);
-			if (existing) {
-				if (!existing.lines.includes(line)) existing.lines.push(line);
-				continue;
-			}
-			grouped.set(key, {
-				lines: [line],
-				finding: { kind: classified.kind, file, api: classified.api, symbol, count: 0, lines: [] },
-			});
+			// One count per call site: a closure is walked both as its own node and inside its parent.
+			const group = grouped.get(key) ?? {
+				finding: { ...classified, file, symbol, count: 0, lines: [] },
+				sites: new Map(),
+			};
+			group.sites.set(call.getStart(), line);
+			grouped.set(key, group);
 		}
 	}
 	return [...grouped.values()]
-		.map(({ finding, lines }) => ({ ...finding, count: lines.length, lines: [...lines].sort((a, b) => a - b) }))
-		.sort((left, right) => findingKey(left).localeCompare(findingKey(right)));
+		.map(({ finding, sites }) => ({
+			...finding,
+			count: sites.size,
+			lines: [...new Set(sites.values())].sort((a, b) => a - b),
+		}))
+		.sort((left, right) => compareCodepoints(findingKey(left), findingKey(right)));
+}
+
+/** Locale-independent order, so a regenerated baseline sorts the same on every machine. */
+export function compareCodepoints(left: string, right: string): number {
+	return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export function findingKey(finding: Pick<SessionPathFinding, "file" | "api" | "symbol">): string {

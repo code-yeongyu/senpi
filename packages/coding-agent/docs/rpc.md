@@ -1,5 +1,21 @@
 # RPC Mode
 
+### Recovery after shared output overflow
+
+The unattached shared output lane is bounded to 4096 records / 64 MiB. Overflow
+seals the routing handle; its retained runtime may still be open, but its lost
+output cannot be replayed. Reattaching with `open_session` is refused with
+`error: "session_output_overflow"`, `errorCode: "session_output_overflow"` and
+`errorData: { sessionId, sessionPath, action: "unload_and_reopen" }`. Session
+commands on that still-open handle return the same error code and action rather
+than silently dropping their replies.
+
+Recover using `unload_session { sessionId }`, then `open_session { sessionPath }`
+to obtain a fresh handle. Unload keeps its ordinary active-work, child-task and
+other-client protections: inspect a refused unload's reason/action rather than
+automatically forcing it. The overflow seal and capacity limits remain in force
+until the old runtime is disposed.
+
 RPC mode enables headless operation of the coding agent via a JSON protocol over stdin/stdout. This is useful for embedding the agent in other applications, IDEs, or custom UIs.
 
 **Note for Node.js/TypeScript users**: If you're building a Node.js application, consider using `AgentSession` directly from `@code-yeongyu/senpi` instead of spawning a subprocess. See [`src/core/agent-session.ts`](../src/core/agent-session.ts) for the API. For a subprocess-based TypeScript client, see [`src/modes/rpc/rpc-client.ts`](../src/modes/rpc/rpc-client.ts).
@@ -102,7 +118,7 @@ Other context keys remain opaque.
 Automatic turn admission is also bounded independently of the hold. On unattended resume,
 `engineTurns.maxPerResumeWindow` defaults to 8, counting engine starts in loaded
 history since the last real input. A real input ends that resume window. The
-normal `engineTurns.maxPerUserInput` default stays 150. Only admitted new engine
+normal `engineTurns.maxPerUserInput` defaults to 0 (off). Only admitted new engine
 turns count, not wakes steered into running work or pending compaction; a limit emits the existing engine-paused
 notice and record. Setting either cap to 0 disables that particular cap.
 
@@ -143,6 +159,17 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
   with reason `provider_error`, `tool_error`, `task_error`, `lost`, or `interrupted`.
 - A standing agent self-settle intent adds `settleDecision: { decisionId }` to the
   persisted `done` seal, independently of the completion label.
+- Optional `lastStop: { cause, runId, at, epoch, deadline?, guard?, todo?, abortSource?, persisted? }`
+  says why the run `runId` stopped. `cause` is `deadline`, `goal_guard`, `todo_guard`, `aborted`,
+  or `no_wake`; `deadline` is `inactivity` or `max_runtime`, `guard` is the goal guard reason as
+  recorded, `todo` is `cap`, and `abortSource` is `user`, `system`, or `provider`. `persisted: false`
+  appears only when the deadline-stop entry could not be written and is independent of the
+  snapshot's `persisted`. `lastStop` describes the last run's historical stop, so a `no_wake`
+  stop remains even if a wake source later appears. It is cleared when the next run starts
+  and never names a later run. A fact refresh with no bound turn end never sets `lastStop`;
+  between runs, a refresh while the last end is still bound may set or update that run's stop.
+  Goal guards are captured during their bound end's own processing, never inherited from
+  another run. Provider errors and policy rejections carry no `lastStop`, even if a deadline fired.
 
 Clients must not notify or settle while `restoring` is true or `persisted` is false.
 Use `completionId` to deduplicate root completion/failure, not `agent_settled` or
@@ -508,6 +535,111 @@ senpi --mode rpc --listen /tmp/senpi-rpc.sock [options]
 `unix://@name` where supported by the host platform. Socket mode accepts concurrent connections while retaining one
 process-global session registry.
 
+### Authentication
+
+Public POSIX endpoints advertise `socket_auth` and prove possession of a fresh per-launch key.
+This applies to ensured hosts, direct supervisors, and bare `--listen` hosts. Windows pipes keep
+their existing raw `.secret` handshake. Terminal control sockets and tool-child channels are unchanged.
+
+The host publishes `<agentDir>/rpc/keys/<launch_id>` before answering any connection. The agent
+directory and `rpc` must be user-owned, non-symlink directories without group/other write
+permission (0755 is supported). Only `rpc/keys` must be 0700. Before publication, the host
+tightens an existing user-owned, non-symlink `rpc/keys` directory to 0700; clients refuse
+unsafe modes rather than changing them.
+The record is exclusively created with `O_NOFOLLOW`, fsynced, and checked to be a user-owned
+regular file with mode 0600. Publication failure closes the endpoint with `key_publication_failed`.
+A group- or other-writable agent directory or `rpc` (for example one created under umask 002) is such a
+failure: the host exits, and its message names the directory and the fix, `chmod go-w <dir>`.
+Each launch generates a new UUID and a new 32-byte key in memory. Hosts delete only their own
+record; `senpi host gc` also collects records whose process is dead or whose PID has been reused.
+
+The JSON record is
+`{version:1, launch_id, key, pid, process_start, endpoint, created_at}`:
+`key` is 64 lowercase hexadecimal characters, `process_start` is the process start identity
+or `null`, and `created_at` is an ISO-8601 UTC timestamp. Never copy the record into logs.
+
+The client's key root defaults to its own agent directory. `SENPI_RPC_KEY_ROOT`,
+`senpi host ... --rpc-key-root <dir>`, and the `keyRoot` option on `RpcClient` and socket probes
+select the host's credential directory without changing the client's models, settings, skills,
+MCP environment, or other profile data. For example, a client using profile B can authenticate
+to an endpoint launched by profile A by selecting A as its key root while keeping B active.
+
+The exchange uses strict LF-delimited JSON:
+
+1. Preserve the caller's own first `get_protocol_info` frame, including `observe` and
+   `origin_host_instance`, and add top-level `auth: {client_nonce}`. A caller starting with
+   another command first sends an observing protocol probe. Both nonces are 32 fresh random
+   bytes encoded as 64 lowercase hex characters.
+2. The normal response's **`data.auth`** contains `{launch_id, server_nonce, server_proof}`.
+   Read and validate the named record, including `version === 1`, matching `launch_id`,
+   a 32-byte key, directory ownership/modes, and an `O_NOFOLLOW` file open.
+3. Verify the server proof, then send `{id, type:"authenticate", client_proof}`. Wait for
+   its successful correlated response before sending any other command. Proofs are lowercase
+   hex HMAC-SHA256 digests, compared as 32 raw bytes in constant time:
+
+   ```js
+   import { createHmac, timingSafeEqual } from "node:crypto";
+
+   const key = Buffer.from(record.key, "hex");
+   const serverProof = createHmac("sha256", key)
+     .update(["senpi-rpc-server", launchId, clientNonce, serverNonce].join("\n"), "utf8")
+     .digest();
+   // Validate that the received proof is exactly 64 lowercase hex characters first.
+   if (!timingSafeEqual(serverProof, Buffer.from(receivedServerProof, "hex")))
+     throw new Error("host_identity_unproven");
+   const clientProof = createHmac("sha256", key)
+     .update(["senpi-rpc-client", launchId, serverNonce, clientNonce].join("\n"), "utf8")
+     .digest("hex");
+   ```
+
+For third-party scripts, the shipped client implements the record checks and complete exchange:
+
+```js
+import { RpcClient } from "@code-yeongyu/senpi";
+
+const client = new RpcClient({ socketPath: endpoint, keyRoot: hostAgentDirectory });
+await client.start();
+try {
+  console.log(await client.listSessions());
+} finally {
+  await client.stop();
+}
+```
+
+The raw key never crosses the socket. A wrong server proof closes the client with
+`host_identity_unproven`; an unsafe record closes it with `unsafe_key_record`. Neither falls
+back. A host's `auth_failed` triggers one fresh connection and credential lookup, not an
+unauthenticated retry.
+
+This release serves clients that never prove the key, with one stderr deprecation line per
+connection and no limit beyond the normal JSONL ones, whatever the first frame (a long prompt or
+an image included) and whether or not the client first received a challenge it could not answer.
+A challenge in flight is not cut short: its `authenticate` may arrive after 2 seconds.
+`SENPI_RPC_REQUIRE_TOKEN=1` enforces now: the first frame must be a `get_protocol_info` carrying
+`auth.client_nonce`, and any other first frame, a keyless `get_protocol_info` included, receives
+`auth_required`; a wrong proof receives `auth_failed`; either way the connection closes before any
+later frame executes. Under enforcement, pre-authentication input is limited to 8 KiB and 2 seconds.
+
+The host never drops an unauthenticated connection silently. Each drop writes one stderr line,
+`senpi rpc host: dropped an unauthenticated connection on <endpoint>: <reason>`, where the reason
+is `auth_required`, `auth_failed`, `pre-auth budget exceeded`, `pre-auth deadline`,
+`first frame over the line limit` or `key publication failed`. The line carries no frame
+content, nonce or key material.
+
+A host is supervised only when it holds the internal key its supervisor hands it on stdin; the
+supervisor-watch environment (`SENPI_RPC_HOST_WATCH_*` and its companions) never switches public
+authentication off, and a host removes those variables once read, so nothing it starts
+inherits them.
+Clients accept pre-change hosts whose protocol answer has no `data.auth`. A missing record
+is the one grace exception: the client logs the key-root remedy and continues without sending
+`authenticate`; an enforcing host then refuses subsequent commands. Enforcement defaults and
+refusal of legacy hosts are separate follow-ups.
+
+Keep endpoints under the protected agent directory for the sandbox boundary. Choosing a `/tmp`
+path or Linux abstract name permits a process that can later bind that name to pose as a legacy
+host during the compatibility period. Challenge-response still prevents disclosure of the key
+to a listener that cannot prove it.
+
 ### Session runtime (`--session-runtime in-process|worker`)
 
 `--session-runtime` selects where a multi-session host runs its sessions:
@@ -606,7 +738,8 @@ parsing a version string:
   "launch_profile": {
     "profile_id": "ca7a4943…",
     "core": { "extensions": [], "multi_session": true, "session_runtime": "in-process" }
-  }
+  },
+  "agentDir": "/home/me/.senpi/agent"
 }
 ```
 
@@ -626,6 +759,9 @@ parsing a version string:
   `core.extensions` (absolute roots, deduplicated and sorted). `profile_id` is the sha256 of the canonical JSON
   of `core` with its keys in that sorted order (`extensions`, `multi_session`, `session_runtime`), so any client
   can recompute it and compare two hosts without comparing paths.
+- `agentDir` - the absolute agent directory the host reads and writes. A generation handoff is refused
+  `foreign_agent_dir` when it differs from the caller's own agent dir (see "Generation handoff"). Hosts
+  released before the field omit it.
 - `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
   above `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
   reports it per endpoint. Classic hosts and hosts released before the field omit it.
@@ -782,7 +918,7 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
    ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
 
-Two guards decide whether a handoff is attempted at all, and both fail closed:
+Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 
 - The running host must advertise `generation_handoff`. SIGUSR1 TERMINATES a process that installed no
   handler for it, so a host from before the drain existed is never signalled - `handoffHost` answers
@@ -791,6 +927,16 @@ Two guards decide whether a handoff is attempted at all, and both fail closed:
   must be this endpoint) before that process is signalled. Without such a registration a handoff never
   signals a stranger (I1): it refuses while that host holds a session, and replaces an idle one without
   a signal unless a flat pre-layout-2 record proves it (see "Daemon state directory (layout 2)").
+- The running host must belong to the caller's agent dir. A client reads registrations under its OWN agent
+  dir, so pointed at another agent dir's socket it would see no record there and read a live, registered host
+  as an unregistered idle one. `handoffHost` therefore compares the host's advertised `agentDir` with its own
+  (both canonicalized through `realpath`) and refuses `{ action: "refuse", reason: "foreign_agent_dir",
+  upgradeable: false }` when they differ; `detail` names both directories. A host from before the field is placed
+  by the layout: when the socket is `<dir>/rpc/rpc.sock` and a layout-2 registration under `<dir>` proves a live
+  owner, the host belongs to `<dir>`. With neither, the handoff proceeds as before. Nothing is signalled.
+- Transition window: a host from before the `agentDir` field, serving a socket that is not another agent
+  dir's default `<dir>/rpc/rpc.sock` (or whose layout-2 record there proves no live owner), cannot be
+  placed and stays replaceable through the idle path above. Every host built with the field avoids it.
 
 On win32 a named pipe cannot be renamed: `handoffHost` refuses with `upgrade_unsupported` and
 `decideHostAction` never yields `handoff` there. Upgrades apply after `stopHost({ drain: true })` - which
@@ -884,12 +1030,15 @@ A POSIX socket host with an id advertises `runtime_identity_handover` and accept
 `senpi host handoff --when idle --operation <id> --if-instance <instanceId> --if-generation <n>
 --target-build <runtimeBuildId>`. The CLI refuses `target_build_mismatch` unless the target is its own
 `clientRuntimeBuildId` (the successor runs the CLI's runtime), `stale_generation` unless the socket is served
-by the named generation, and `handover_unsupported` when the host does not advertise the capability. It then
-sends the host `begin_handover`, and the HOST owns the operation:
+by the named generation, `handover_unsupported` when the host does not advertise the capability, and
+`foreign_agent_dir` when the host belongs to another agent dir (the same check as the generation handoff's,
+`detail` naming both). It then sends the host `begin_handover`, carrying its own `agent_dir`, and the HOST
+owns the operation:
 
-1. a request with an `operationId` it already holds answers with that operation when the terms match (and
-   `operation_conflict` when they do not); a new operation is checked first against the named generation
-   (`stale_generation`);
+1. a request naming another `agent_dir` than the host's own refuses `foreign_agent_dir` before anything else
+   (a request without the field, from a CLI before it existed, is not checked); a request with an `operationId`
+   it already holds answers with that operation when the terms match (and `operation_conflict` when they do
+   not); a new operation is checked first against the named generation (`stale_generation`);
 2. it stops admitting new work: `prompt`, `steer`, `follow_up`, `send_custom_message`, `append_user_message`,
    `bash`, `compact`, `wake` and the two message edits answer `success: false` with an error starting
    `handover_pending:`. Running turns keep running and keep their control traffic (`abort` included);
@@ -1074,7 +1223,7 @@ which prints the bare socket path).
   `senpi host handoff` command.
 - `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
-  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, env_keys, generations, crashes, shard, session_rows,
+  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, env_keys, generations, pointer, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. The additive `lifecycle` field is
   `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
@@ -1097,6 +1246,16 @@ which prints the bare socket path).
   still claims in `reservations/` - the one occupancy number that is observable for a generation which no
   longer answers on the socket. Records of generations that ended are pruned by the read itself, so a status
   never lists a dead pid.
+
+  `pointer` (additive) says which generation the daemon directory names as the one serving the socket:
+  `{ state: "current", instanceId, candidates: [] }` normally. When the pruned pointer named a dead generation
+  (or none exists), the read gives it back to the ONE generation whose record proves it still serves this socket
+  (its own instance id and this public socket path, a live pid with the recorded start time, and no stop intent or
+  drain request), reported as `{ state: "elected", instanceId, candidates: [instanceId] }`. With zero or several
+  such generations nothing is elected: `{ state: "missing", instanceId: null, candidates }` lists the ones it saw,
+  and `host stop` / `host handoff` then refuse `unknown_owner`. `host stop` and `host handoff` run the same
+  election under the ensure lock; `status --all` only reports it. An election never replaces a pointer another
+  writer created meanwhile, and a prune never removes a pointer a registration replaced after the prune read it.
 
   The last five fields and `memory_pressure` are additive (a client that does not know them ignores them):
   - `memory_pressure`: whether the ANSWERING generation's memory sampler currently reads its footprint above
@@ -1411,10 +1570,11 @@ survive it, and every subcommand accepts any of the three (plus the session's `n
 on every call, resuming a parked session as described above. A session parked before its first message has no
 transcript yet and cannot be resumed; a reference to it is `unknown_session`.
 
-Ownership: reaching the socket is the trust boundary. Any client that can connect (the socket is `0600` in a
-`0700` directory, so only its owning user) may `prompt`, `steer`, `abort`, `model`, `read` or `wait` on any
-session the host lists, including one another client is driving. Only `close` is ownership-checked: it releases the
-caller's own attachment and closes the session only when no other client still holds one.
+Ownership: public endpoints first use [authentication](#authentication); socket clients then attach before mutating a session. The `senpi host session` commands already attach
+on the acting connection. Raw clients use `attach_session` for a live identity or `open_session` to open/resume
+a path. This release serves and logs legacy unattached mutations unless `SENPI_RPC_REQUIRE_ATTACH=1`;
+see [Attachment admission](#attachment-admission). Reads remain available without an attachment. `close`
+releases the caller's own attachment and closes the session only when no other client still holds one.
 
 Retention limits (what `open`'s `retain_on_disconnect: true` does NOT survive): an explicit `close`, the host's own
 idle-eviction window (`SENPI_RPC_SESSION_IDLE_EVICTION_MS`, default 30 minutes, after which the session is parked -
@@ -1484,6 +1644,7 @@ A multi-session host advertising the capability `session_status` pushes one `ses
 - `include_context`: carry each session's published `context` on its records; default `false`.
 - `mirror`: `"none"` (default), `"all"` or an array of record types (`["message_update", "tool_execution_start"]`). The matched sessions' records of those types are also delivered to this connection. Mirroring is an explicit opt-in open to every subscriber of the host (the socket is per user, mode 0600): it is not an attachment and does not keep a session alive. Worker content is mirrored only with `include_workers: true`.
 - `effects`: also deliver `effect_status` receipts of matched sessions; default `true` for `childrenOf`, `false` otherwise. Each `effect_status` is enqueued after the record that caused the transition and shares the subscription's `seq`.
+- `dialogs`: with capability `dialog_observer`, also deliver the `ui_request_pending` and `ui_request_settled` records of matched sessions; default `false`. It takes effect only together with a `mirror` selection, stays observing, and grants no answering authority (see "UI-answer receipts and dialog observation").
 
 Response:
 
@@ -1767,7 +1928,7 @@ The answer is always `success: true` with `data.outcome`: `unloaded` (with `sess
 | `work_pending` | bash, an admitted delivery not yet written, another request for the session | `interrupt: true` |
 | `extension_work` | extension-published work: background terminal jobs, non-persistent monitors, detached eval cells, a pending question; `detail` names the sources | `force: true` (that work is stopped; only persistent monitors come back on the reopen) |
 | `children_live` | child tasks still working, or worker sessions here whose `context` names this session as parent or root | `children: "detach"` leaves them running |
-| `attached` | other clients hold the session (the caller's own attachment does not count) | `force: true`; they receive the park |
+| `attached` | other clients hold the session (none of the caller's own holds count) | `force: true`; they receive the park |
 | `host_draining`, `session_closing`, `unsupported` | the host is draining, the session is already closing, or it has no file / a worker isolate owns it | none |
 
 With `effectId` the unload is a ledger effect (`kind: "unload"`): `done` with `disposition: "unloaded"`, or `failed` with `outcome.kind: "refused"` and the same reason; a same-id retry replays. Capability: `unload_session`. CLI: `senpi host session unload <ref> [--interrupt] [--force] [--clear-queue] [--children detach]` (exit 3 on a refusal).
@@ -1797,13 +1958,17 @@ Environment overrides beat the file, and invalid values fall through to the next
 
 The host exits only after the window elapses with NO attached client connections and NO active turns — continuously.
 Any attached connection or agent turn resets the window, so a busy host never exits. A connection attaches with its
-first request line, unless that line is an OBSERVING read: `get_protocol_info` or `list_sessions` carrying
-`"observe": true`, or a `warm` (marked or not - see "Warming a host"). A connection that only ever sends observing reads never counts and never resets the window, so a
+first request line, unless that line is an OBSERVING read: a side-effect-free read carrying `"observe": true` -
+`get_protocol_info`, `list_sessions`, `subscribe_sessions`, `unsubscribe_sessions`, `get_effect_status`,
+`get_pending_inputs`, `get_subscription_limits`, and the session reads `get_state` and `get_entries` (capability
+`observe_reads`) - or a `warm` (marked or not - see "Warming a host"). A connection that only ever sends observing reads never counts and never resets the window, so a
 poller (`senpi host status [--all]`, which marks both of its reads, a doctor loop, a runtime panel) can look at every
 endpoint as often as it likes without keeping any of them alive; the first request that is anything else attaches the
 connection from then on, and `observe` on any other command is ignored. While a connection has not sent its first
 line yet the host does not exit, and the window keeps running. Hosts that predate the field ignore it, so a marked read
-works against every generation.
+works against every generation. A watcher can therefore read a session's state and history (`get_state`,
+`get_entries` with `observe: true`) as often as it likes: the host's attached count stays at 0 and its idle window
+keeps running.
 
 A connection from one of the host's OWN sessions is DEPENDENT and never counts either. A host exports its generation
 id (`SENPI_RPC_HOST_INSTANCE_ID`) to the sessions it runs, and `RpcClient` sends that id as `"origin_host_instance"`
@@ -1833,12 +1998,41 @@ the host counts the calling process as an attached client, so a transient host w
 never starts its idle window: a long-lived caller that ensures and never releases keeps the host up for its whole
 lifetime. The hold never keeps the calling process alive, and the operating system ends it when that process exits.
 
-The RPC host can never outlive its supervisor. It is spawned with an extra inherited pipe on fd 3 whose write end the
-supervisor holds and never writes to; the kernel closes that end whenever the supervisor dies — including `SIGKILL`, an
-OOM kill, or a crash, where no signal handler runs — so the host reads EOF, shuts down cleanly and removes its private
-internal directory. The supervisor also exports `SENPI_RPC_HOST_WATCH_PPID` as a polling fallback. Both bindings are
-set only by the supervisor: a host started any other way (plain `senpi --mode rpc --listen …`, embedders, hand-started
-hosts) sees neither variable and is unaffected. A host whose supervisor is alive is never touched by this binding.
+On POSIX, the supervisor writes a fresh 32-byte internal key once to its child's stdin and keeps the write end
+open. Before the CLI touches `process.stdin`, the child reads exactly that key within a two-second startup budget,
+reopens `/dev/fd/0` as a close-on-exec lifetime descriptor, and restores fd 0 to `/dev/null`. Descendants that inherit
+stdin therefore receive immediate EOF. A missing or short key refuses startup with `internal_key_unavailable`.
+
+On Linux the supervisor also creates `lifetime.fifo` (mode 0600) in its private 0700 hop directory, holds its only
+writer (close-on-exec, opened before the child is spawned), and passes the path in `SENPI_RPC_HOST_LIFETIME_FIFO`. The
+host opens the read end non-blocking; EOF, when the kernel closes the last writer at the supervisor's death, ends it. This
+is the Linux event binding, because reopening stdin fails there. On macOS libuv reports no EOF for a FIFO, so the
+reopened stdin is the event binding. While either is armed, the recorded-identity check is one 30 s backstop.
+
+Where reopening succeeds, Node watches lifetime EOF with an unref'd `net.Socket`; Bun uses a `Bun.file(fd).stream()`
+reader that does not hold `process.exit()`. Any reopen failure, including Linux socketpair stdin's `ENXIO`, is logged
+and falls back to polling the recorded supervisor `SENPI_RPC_HOST_WATCH_PPID`: a free `kill(pid, 0)` every tick, and
+its start compared on one clock per platform, rarely. On Linux that is `SENPI_RPC_HOST_WATCH_PSTART_TICKS`, the
+supervisor's `/proc/<pid>/stat` start ticks (internal, not a secret; immune to wall-clock steps, read without spawning);
+elsewhere it is the `ps lstart` value in `SENPI_RPC_HOST_WATCH_PSTART`. Only `ESRCH` or an observed start change ends
+the host. Missing, unreadable, timed-out or permission-denied identity observations keep it
+running. The direct parent is never compared: spawning wrappers may legitimately be between supervisor and host.
+Slot 3 is still passed but is not armed for supervised POSIX children because wrappers can close or reuse it.
+Windows retains its inherited lifetime pipe. Bare hosts and embedders without supervisor configuration are unaffected.
+
+The POSIX internal hop stays in its per-launch temporary directory and publishes no key file. Proxy, readiness and
+activity-observer connections all prove the in-memory key with challenge-response before sending session traffic.
+The readiness probe (10 s) and the activity observer (5 s) bound their handshake, so a child that accepts the hop and
+never answers fails startup; the proxy forwarding a public connection has no deadline.
+The child announces `launch_id: "internal"` and `socket_auth`; neither side sends the key. After authentication,
+HKDF-SHA256 derives separate `senpi-rpc-internal c2s` and `senpi-rpc-internal s2c` keys using the two raw nonces as salt.
+Each record has a four-byte big-endian ciphertext length (17..65552), AES-256-GCM ciphertext and a 16-byte tag.
+The nonce is four zero bytes followed by a big-endian 64-bit direction counter, starting at zero; AAD is the
+UTF-8 direction label (`c2s` or `s2c`) followed by that eight-byte counter. A direction closes at 2^32 records.
+Plaintext (1..65536 bytes per record) is released only after tag verification. Tampering, replay, reordering,
+invalid lengths and incomplete records at EOF close the hop. Complete-record truncation is ordinary transport loss.
+JSONL lines span records with backpressure and retain the existing 16 Mi-character ceiling. Windows retains the
+secret-file/raw-handshake internal hop.
 
 ### Supersession lifecycle: `host_superseded`
 
@@ -1981,14 +2175,17 @@ one with `pi.session.registerControlEndpoint({ inboxDir, drain, isSessionReferen
 [pi.session](extensions.md#pisession)). OmO's thread component registers one at startup; a plain `senpi` with no
 registrant opens no socket and writes no registry directory.
 
-- **Platform.** POSIX terminals only. On win32 the registration answers
-  `{ status: "unsupported", reason: "unsupported_platform" }` and registers nothing. On a multi-session host the
+- **Platform.** Every platform. On win32 the socket path below is the endpoint's logical address: the secret is
+  written beside it, and the listener binds the named pipe the host transport derives from the path and the secret
+  (`\\.\pipe\senpi-rpc-<32hex>`), the address every client already connects to after reading the secret. It is
+  registered and listed like a POSIX terminal. On a multi-session host the
   same call binds nothing - the host's public socket is the endpoint - see "Waking a host session (`wake`)".
 - **Socket and auth.** The endpoint listens on `<agentDir>/rpc/tui/t-<16hex>.sock` (16 hex of the SHA-256 of a
   fresh instance id). When that path is longer than a Unix socket path allows, it moves to
   `/tmp/senpi-rpc-<8hex>/tui/`, which must be a private directory of this user. The directory is 0700 and the
   socket 0600. A 32-byte secret is written 0600 beside the socket, and every connection must send it first, the
-  handshake every RPC socket shares; a wrong secret is disconnected before a line is read. After that it is
+  TUI-specific handshake; public RPC hosts use [challenge-response](#authentication). A wrong TUI secret
+  is disconnected before a line is read. After that it is
   ordinary RPC framing: one LF-terminated JSON object per request, one response carrying its `id`.
 - **Registration order.** Registering first writes the session header (so the session id is durable), reaps dead
   `tui` endpoints (`senpi host gc` scoped to `kinds: ["tui"]`), binds the socket and only then writes the
@@ -2002,13 +2199,16 @@ registrant opens no socket and writes no registry directory.
 - **Commands.** Anything not listed below is answered `unsupported` as data. No command opens another session or
   runs a command; input goes through the terminal's admission (`steer`/`follow_up`/`prompt` below), so the
   user's draft still holds it.
-  - `get_protocol_info`: `mode: "tui"`, `endpoint_kind: "tui"`, `capabilities: ["tui_control", "session_status"]`, `generation: 0`, the endpoint's
+  - `get_protocol_info`: `mode: "tui"`, `endpoint_kind: "tui"`, `capabilities: ["tui_control", "session_status",
+    "tui_observer", "observe_reads", "entries_tail"]` (`tui_observer`: the observe-and-drive set below), `generation: 0`, the endpoint's
     `instanceId`, and `commands`: every command this endpoint accepts. A terminal from before the session
     controls below lists no `commands`.
   - `list_sessions`: exactly one row, `kind: "interactive"`, `surface: "tui"`, `attachments: 1`.
   - `get_state`: the RPC session state plus `turn_epoch`, `blocking_question`, `compacting`,
     `editor_has_draft` and `state_version`.
   - `get_messages`.
+  - `get_entries { since?, before?, limit?, tail?, maxBytes? }`: the host's answer, pages and tail pages included
+    (see `get_entries`).
   - `set_session_name { name }`: a blank name is refused.
   - `subscribe { cursor? }`: a feed of `session_control_event { seq, kind, data }` records, where `kind` is
     `state`, `report` (an assistant message's text), `question` (pending question ids) or `completion` (the
@@ -2030,10 +2230,25 @@ registrant opens no socket and writes no registry directory.
     `queued`; `held_draft` (the user is composing) and `turn_conflict` are refusals with a reason and an action.
     Unlike a host's input, the message lands as a remote delivery (a `session_control_delivery` entry the
     terminal renders as "remote message"), not a user message: there are no prompt templates, slash commands or
-    skills, no admission receipt, and a repeated `clientMessageId` answers `duplicate: true`. Frames carrying
+    skills. Input sent with a `clientMessageId` is answered with an admission receipt,
+    `admission { clientMessageId, durableSessionId, disposition }`; a retry with the same id and the same input is
+    answered from it, with `replayed: true` (and `duplicate: true`) and the original `disposition`, and delivers
+    nothing; the same id with different input is refused `client_message_id_conflict`. Frames carrying
     `images`, `thinkingLevel`, `expandPromptTemplates`, `unknownCommandAsText`, `sessionTitlePrompt` or
     `enqueueOrder` are refused `unsupported_field`, naming them.
   - `get_effect_status { effectId, sessionPath? }`: the same effect ledger as a host.
+  - `set_client_info { width, capabilities? }`: declares the connection's roles (`interactive_user`,
+    `task_parent`), fixed once declared (`connection_role_fixed`), as on a host.
+  - `attach_session { sessionId, durableSessionId, expectedHostInstance? }`: a live attachment, as on a host:
+    `sessionId` is the terminal's session id from `list_sessions`, `durableSessionId` the same id, and
+    `expectedHostInstance`, when sent, this endpoint's `instanceId`. Answers `{ sessionId, attached: true }` after the
+    replay of the in-flight snapshot, then the session's records follow; another session is `unknown_session`, an
+    identity that does not match is `session_identity_mismatch`.
+  - `release_attachment { sessionId }`: drops this connection's attachment, answered `{ deferred: false }`;
+    `session_not_attached` when it holds none.
+  - `abort { intent?, effectId?, awaitIdle?, clearQueue?, graceMs? }`: the host's `abort` and effect receipts.
+    `intent: "stop"` is refused `stop_requires_interactive_client: declare interactive_user with set_client_info first`
+    until the connection declared `interactive_user`.
   - `wake { delivery_ids? }`: one drain pass, answered `{ admitted: [{ delivery_id, kind }] }`.
   - `extension_ui_response`: answers only a question this session asked and still waits on
     (`unknown_request` / `question_incomplete` / `invalid_response` otherwise). `uiRequestId` names the
@@ -2056,7 +2271,6 @@ registrant opens no socket and writes no registry directory.
       settles before the answer. Answers `{ interrupted: true, turnId }` with the `turn_epoch` it stopped. An idle
       session answers `{ interrupted: false }`; a `turnId` that is not the running turn answers
       `{ interrupted: false, turnId }` with the running one and leaves it alone. The session stays open.
-  - `prompt`, `steer` and `follow_up` are `unsupported`.
 - **Admission.** A message from another session enters only through the registrant's drain, which calls
   `pi.session.admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id? })`. One synchronous call
   decides and acts:
@@ -2159,8 +2373,9 @@ no longer lists it and the handle answers `unknown_session`.
   running at the final check, which then answers `turn_active`. A header write that fails answers `release_failed`
   with `errorData.detail`, and the session stays hosted. A session whose file exists awaits nothing here.
 - It refuses while another client is attached (e.g. a second Desktop window): `attached` with
-  `errorData { attachments }`, the number of OTHER attached clients. The requesting connection does not count: a
-  client attached to the session it releases is drained with it and needs no `force`. With `force: true` the other clients receive
+  `errorData { attachments }`, counting only OTHER connections' holds. The caller's own holds, including repeated
+  attaches, do not require `force` (capability `release_caller_aware`): a client attached to the session it
+  releases is drained with it. With `force: true` the other clients receive
   `session_closed { sessionId, reason: "released", sessionPath }`, which tells them the file is now written
   elsewhere and must NOT be reopened on this host.
 - A draining host answers `host_draining`; a worker-isolate session or one with no file answers
@@ -2462,6 +2677,9 @@ names a valid preset.
 
 | Command | Params | Success data | Notes |
 | --- | --- | --- | --- |
+| `attach_session` | `sessionId`, `durableSessionId`, `expectedHostInstance?` | `{ sessionId, attached: true }` | Live-only, identity-fenced attachment; never opens/resumes or changes the launch profile. Capability `attach_session`. |
+| `release_attachment` | `sessionId` | `{ deferred: boolean }` | Releases exactly one caller hold with disconnect semantics; `deferred` is true only when settlement owns the final release, and false while draining. Capability `release_attachment`. |
+| `reclaim_session` | `sessionPath`, `durableSessionId`, `expectedHostInstance` | `{ reclaimed: true, sessionId }` | Atomic attach-and-claim of every caller hold; refuses other connections before aborting. Capability `reclaim_session`. |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `session_held` (the active foreign-holder admission guard, in both runtimes), `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `moved_path_guard` (senpi resolves and guards paths the OmO desktop moved with its data home), `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
 | `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?`, `retryFallback?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
@@ -2473,6 +2691,105 @@ names a valid preset.
 | `wake` | `sessionId`, `delivery_ids?` | `{ admitted: [{ delivery_id, kind }] }` | Runs the session's registered inbox drain once. See "Waking a host session (`wake`)" below. |
 | `warm` | `cwd?`, `kind?`, `context?` (as on `open_session`; `cwd` MUST be absolute) | `{ state: "warmed" \| "already_warm" \| "unsupported" }` | Loads what the next matching `open_session` needs without opening a session; never listed, never an attachment, idempotent per profile. See "Warming a host" above. Advertised as the `warm` capability by in-process hosts only. |
 | every existing command | + `sessionId` (REQUIRED in multi mode) | unchanged | Routed to that session. |
+
+### Live-only attachment and scoped release
+
+#### attach_session
+
+`attach_session { sessionId, durableSessionId, expectedHostInstance? }` attaches the current connection
+only to the live session selected by both routing and durable identity. A vanished or non-open target
+returns `unknown_session`; a recycled routing id or mismatching host instance returns
+`session_identity_mismatch`. A draining or shutting-down host refuses before admission with
+`session_busy_lifecycle` and `errorData: { reason: "host_draining" }`; a caller without a connection
+receives `session_not_attached` with `errorData: { reason: "no_connection" }`. It never creates or resumes a runtime, and never applies a permission preset,
+prompt surface, or browser engine. Each success adds one attachment, connects the event stream, and publishes
+`session_status` with `lastChange.cause: "attach"`. Intentional profile-changing attaches through
+`open_session { sessionPath, permissionPreset, ... }` retain their existing behavior.
+
+#### release_attachment
+
+`release_attachment { sessionId }` releases exactly one hold this connection owns on this session;
+other sessions and repeated remaining holds are untouched. It uses disconnect semantics, not close:
+when the final hold of a non-retained session leaves during a streaming turn, physical release waits
+for settlement. The turn survives even when its original owner disconnected before a temporary
+attacher released. The released hold immediately loses mutation and close authorization.
+A retained session remains live at zero attachments. `close_session` remains the destructive release.
+An unattached caller cannot release another connection's hold: a connection with no hold on that
+session receives `session_not_attached` with `errorData: { reason: "not_attached" }`. These
+attachment-command refusals carry `reason` only; only the gate refusal below adds `action`.
+
+### Atomic recovery (`reclaim_session`)
+
+#### reclaim_session
+
+Send `reclaim_session { sessionPath, durableSessionId, expectedHostInstance }` when recovering a known
+leftover on this host. Both identities are required; neither is inferred from the path.
+Before admission, a draining or shutting-down host refuses with `session_busy_lifecycle` and
+`errorData: { reason: "host_draining" }`. Otherwise, before any
+await, the host resolves the live path, checks lifecycle state before both identities, refuses
+other connections, records a visible attachment for the caller, then claims ALL that caller's holds
+(including the newly recorded one) and marks the entry closing. It then aborts and performs normal
+finalization. Zero-attachment retained sessions and leftovers with one or several caller holds are
+supported in both runtimes.
+
+Lifecycle precedes identity because an opening entry may not have published its runtime identity yet.
+An entry that is both busy and identity-mismatched therefore returns `session_busy_lifecycle`.
+
+Refusals change nothing: `session_busy_lifecycle` with `errorData.reason: "host_draining"` while
+draining or shutting down, `unknown_session` for an
+unheld path, `session_identity_mismatch` for missing or different identities,
+`session_busy_lifecycle` for opening/closing targets, `attached_elsewhere`
+with `errorData.attachments` counting other holds, and `session_not_attached` with
+`errorData.reason: "no_connection"` for a caller without a connection. An attach that wins the synchronous admission race
+causes `attached_elsewhere`; an attach after the claim cannot join the closing entry. Reclaim never opens
+or resumes an absent path.
+
+A disconnected owner's deferred physical hold still counts as `attached_elsewhere` until its active
+turn settles, even though that owner no longer has a live connection. Settlement releases that hold.
+
+### Attachment admission
+
+On a socket host, session-scoped commands require the current connection to be attached unless they are
+in the following effect-based read allow-list:
+
+`get_state`, `get_messages`, `get_entries`, `get_tree`, `get_fork_messages`,
+`get_last_assistant_text`, `get_media`, `get_commands`, `get_loaded_surfaces`,
+`get_available_models`, `get_available_thinking_levels`, `get_fast_mode`, `get_session_stats`,
+`get_pending_inputs`, `get_steering_messages`, `get_follow_up_messages`, `get_auth_providers`,
+`get_provider_accounts`, `resolve_path`, `memory_report`, `eval_cells.list`, `eval_cells.peek`,
+and `check_reload_veto`.
+
+`record_user_activity` is gated like any other session command (lead ruling 2026-10-22, senpi#3814). Its only
+known caller, the desktop app's prewarm path (omo-desktop-app `apps/server/src/provider/Layers/OmoAdapter.ts:7121`),
+sends it on the session's own opener connection: the handle it uses is created from that session's
+`open_session` reply (`OmoSessionHandle.ts:397-403`), so the connection is already attached.
+
+Host discovery/control remains available: `get_protocol_info`, `list_sessions`, `subscribe_sessions`,
+`unsubscribe_sessions`, `get_subscription_limits`, `warm`, `detach_connection`, `attach_session`,
+`reclaim_session`, and `set_client_info` without `sessionId`. `get_effect_status` is a read with
+either a routing id or a transcript path. `open_session` is exempt from this gate because its own
+admission creates the caller's attachment. Attachment lifecycle commands apply their own admission
+rules. `export_html` and `export_jsonl` write files and therefore require attachment.
+Every other session-scoped command is gated by default, including abort, wake, release/unload,
+message injection, settings/account changes, and extension UI responses/progress.
+`resume_session` is gated too: it releases the session's engine holds and starts the held turns.
+An `open_session { "attended": false }` is an attachment like any other open: it admits the
+connection to gated commands until its own `close_session` or disconnect gives the hold back.
+`senpi host session` therefore needs no extra `attach_session` after reopening a parked session.
+
+This release **serves** each new violation and writes exactly one stderr line per violation:
+
+```text
+senpi rpc host: <command> on <session> from a connection not attached to it (refused from the next release)
+```
+
+Set `SENPI_RPC_REQUIRE_ATTACH=1` to enforce now. Enforcement returns
+`errorCode: "session_not_attached"` with `errorData.reason` and
+`errorData.action: "attach first with attach_session { sessionId, durableSessionId } or open_session { sessionPath }"`.
+Already-refused commands are not relaxed by grace: unattached `close_session` still returns
+`unknown_session`, and `set_session_context` keeps its existing `session_not_attached` refusal.
+Stdio hosts and host-internal lifecycle calls have no current connection and retain existing behavior.
+Worker sessions pass through this same gate before worker dispatch.
 
 ### Identities (D6)
 
@@ -2547,7 +2864,10 @@ codes or code prefixes in `error`:
 - `host_draining` (`open_session` on a bare, unsupervised host, or `release_session` forwarded to a child whose generation is parking for a handoff; re-resolve the public path and open or release on the successor rather than retrying this connection)
 - `turn_active` (`release_session` while a turn runs or is about to start - a prompt in preflight, an admitted delivery not yet written - without `interrupt: true`; `errorData { attachments, busy }`)
 - `session_busy` (`release_session` while other session work runs - bash, compaction, barrier-held work, another request for the session - without `interrupt: true`; `errorData { attachments, busy }`)
-- `attached` (`release_session` while clients are attached, without `force: true`; `errorData { attachments }` names how many)
+- `attached` (`release_session` while OTHER connections are attached, without `force: true`; `errorData { attachments }` counts their holds)
+- `session_identity_mismatch` (`attach_session` or `reclaim_session` selected a different durable identity or host instance)
+- `session_busy_lifecycle` (`reclaim_session` found an opening or closing target, or `attach_session` / `reclaim_session` reached a draining or shutting-down host: then `errorData.reason` is `host_draining`)
+- `attached_elsewhere` (`reclaim_session` found another connection's holds; `errorData.attachments` counts them)
 - `invalid_release_reason` (`release_session` with a `reason` other than `takeover`)
 - `release_unsupported` (`release_session` for a session this host cannot hand over; `errorData.detail` is `worker_runtime` - a worker isolate owns the runtime - or `no_session_file`)
 - `release_failed` (`release_session` whose hand-over failed after it began - the release entry could not be written or the teardown threw; `errorData.detail` is the error message, plus `interrupted`/`dropped` after an interrupt)
@@ -3105,6 +3425,14 @@ If an extension cancelled:
 ```
 
 ### State
+
+#### get_snapshot
+
+Atomic snapshot cursor (capability `snapshot_cursor`). Subscribe with `mirror` before taking a snapshot to cut the live record stream at a source-issued cursor rather than at response arrival. Terminal control endpoints support the same command.
+
+`get_snapshot {sessionId, tail?, maxBytes?, observe?: true}` returns `{state, entries, next_before, history_truncated, markerId}`. `state` uses the existing `get_state` projection, including `pendingDialogs` and `pendingQuestions`. `entries` is the newest tail, in chronological order. `tail` defaults to 100 and accepts non-negative integers; `maxBytes` defaults to 8 MiB and accepts positive integers, capped at 48 MiB. The byte bound applies to serialized history entries. An entry that does not fit ends the tail; it is never silently skipped. `history_truncated` reports omitted history; `next_before` is the oldest returned entry's id when older history remains, otherwise null (also null when no entry fits).
+
+State capture, history capture, and enqueueing `{type: "snapshot_marker", sessionId, markerId}` are one synchronous operation. The marker goes only to the requesting connection, only when a matching subscription has `mirror` enabled (including a list of selected record types). Other subscribers never receive that marker. Apply the snapshot and then records after its marker; a post-marker record can arrive **before** the correlated response. A reader without a mirrored subscription receives the snapshot response but no marker record. `observe: true` does not attach or refresh activity.
 
 #### get_state
 
@@ -4161,6 +4489,15 @@ Response:
 
 An unpaged request (neither bound) answers exactly as before while the whole history fits in 48 MiB. A longer history is refused with `errorCode: "response_too_large"` instead of an answer that would close the connection; read it in pages.
 
+**Tail pages** (capability `entries_tail`). Pass `tail` (a positive integer) to read the NEWEST entries first: the answer holds the newest `tail` entries of the range, in append order, under the same `maxBytes` rule (8 MiB when only `tail` is given, capped at 48 MiB), and always at least the newest one. While older entries remain it carries `hasMore: true` and `next_before`, the id of the oldest entry it returned; ask again with `before: next_before` to walk back until `hasMore` is `false`. `before` (an entry id) limits any read to entries strictly before it; an id that names no entry is refused with `errorCode: "not_found"`. `since` is unchanged, and `since` and `before` may bound one range together. `tail` and `limit` cannot be combined (`invalid_argument`): `limit` pages forward from the range's start, `tail` backward from its end.
+
+```json
+{"type": "get_entries", "tail": 200, "observe": true}
+{"type": "get_entries", "tail": 200, "before": "<next_before>", "observe": true}
+```
+
+`get_entries` and `get_state` may carry `observe: true`: on a host such a read never counts as an attachment (see the idle-exit window).
+
 A single entry larger than 48 MiB cannot travel in any answer, so a read whose next entry is that large (paged or not) is refused with `response_too_large` naming the entry. While a walk has more pages, the host keeps the session's full history in memory for the next page; it lets it go 30 s after the last page request, so a client that stops mid-walk does not pin the history.
 
 #### get_tree
@@ -4232,7 +4569,7 @@ The current session name is available via `get_state` in the `sessionName` field
 
 #### record_user_activity
 
-Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument` and the fixed message `record_user_activity: kind must be "draft"` (the refusal never repeats the value the client sent). On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`.
+Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument` and the fixed message `record_user_activity: kind must be "draft"` (the refusal never repeats the value the client sent). On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`. It requires the connection to be attached to the session, as every session command does (see Attachment admission).
 
 ```json
 {"type": "record_user_activity", "sessionId": "rpc-1", "kind": "draft"}
@@ -4363,6 +4700,16 @@ Each command has:
 #### get_loaded_surfaces
 
 Get the extensions and MCP servers loaded by the active runtime. Skills remain available through `get_commands`, where each loaded skill is represented by one `source: "skill"` row.
+
+An MCP server with a failed configuration reference reports `status: "degraded"`
+and an optional `lastError` naming the field and failure reason, never the resolved
+value. Other connection diagnostics also use `lastError` when present.
+Every resolved reference value is treated as sensitive and redacted from outbound
+text, even non-secret values such as paths and values from earlier rotations.
+Values shorter than four characters are not redacted. Structured snapshots retain
+their keys, numbers, booleans, nulls and array/object shape; redaction changes only
+string values. For MCP secrets use `env.*` or `headers`, not `args[]`, whose
+resolved values are visible in the server's process list.
 
 ```json
 {"type": "get_loaded_surfaces"}
@@ -5130,6 +5477,122 @@ A provider holds logins of one kind. If it had an OAuth login, the key replaces 
 
 ## Extension UI Protocol
 
+Without presenter enforcement, MCP 2026-07-28 multi-round-trip form answering is terminal-only in v1.
+RPC-originated modern requests advertise no elicitation and terminate locally
+if input is required; they never fabricate a decline or retry incomplete input.
+Client roles and capability declarations do not enable this form channel.
+Existing legacy MCP dialogs and their RPC request/response shapes remain unchanged.
+
+### Opt-in private MCP forms
+
+A multi-session RPC host or interactive terminal can opt in with `--mcp-presenter-enforcement`. This is a
+deployment option, not a project setting. It defaults to off; existing desktop and
+gateway clients keep their current behavior until they implement the private
+presenter protocol. Without this option, terminal forms retain their existing queue,
+legacy origin rules, and legacy stderr diagnostics. Enforced terminal forms also
+queue, and a collector failure ends only its own form, not the terminal's grant.
+All UI contexts in one terminal session binding share its presenter authority.
+Without enforcement, each real select/input answer retains its existing human
+admission timing; the form collector does not add a second final admission.
+Ephemeral selects also keep the scheduled `requestRender()` path without enforcement.
+With enforcement, only the authority's winning whole-form action admits once.
+The host advertises `mcp_form_presenter_v1` only when enforcement is enabled;
+the capability reports protocol support, not authority to present or answer a form.
+
+The public `host ensure` and `host handoff` commands accept the same deployment option,
+separately from `--launch-spec`. Add `--mcp-presenter-fd 4` with a live inherited duplex
+channel to enroll the launch owner of a new host. The runtime-selecting CLI re-exec,
+supervisor and host child preserve that channel. The option alone enables enforcement,
+not a presenter; fd 4 alone does not enable enforcement.
+
+An enforcing predecessor keeps enforcement in its successor, including when an older
+handoff caller omits the option. Conditional `handoff --when idle` carries the non-secret
+`mcp_presenter_enforcement` boolean in `begin_handover`, independently of the launch
+specification and environment. It uses only the existing authenticated owner's channel
+for fresh successor enrollment; the CLI cannot enroll itself into the predecessor.
+Reuse and already-current handover answers report the serving host's actual capabilities.
+Neither a successful CLI exit nor an equal `runtimeBuildId` proves enforcement or
+enrollment. A deployment requesting enforcement against an unenforced existing host must
+coordinate a replacement, not force-restart another owner's busy host.
+
+The native launch owner enrolls an Ed25519 public key through an inherited private
+bootstrap channel. Descriptor 4 is reserved for this channel; descriptor 3 remains
+the separate owner-lifetime channel. Enrollment and management proofs sign the
+host's exact returned transcript. No secret is passed in an argument, environment
+variable, launch specification, or session state. Reusing a host does not enroll the
+caller, and a successor requires fresh enrollment and fresh grants.
+An invalid or lost bootstrap channel leaves the host without a presenter; it does
+not terminate the shared daemon or its lifetime channel. The helper remains lazy
+to preserve the supervisor's startup import budget, with import and relay failures
+contained at that boundary. Conditional idle handover
+is owned by the running host after the CLI returns: that host relays the successor's
+fresh challenge over the existing authenticated launch-owner channel. The CLI's
+bootstrap stream is never serialized into `begin_handover`.
+
+`mcp_presenter_context` returns the caller's current connection nonce and attachment
+context. These identifiers confer no authority. Acquisition and revocation use the
+separate authenticated management endpoint, with a fresh challenge for each
+`mcp_presenter_assign`, `mcp_presenter_acquire`, or `mcp_presenter_revoke` command.
+Enrollment alone assigns no sessions. Before acquisition, the trusted native
+supervisor signs `mcp_presenter_assign` with `sessionId`, the current `bindingEpoch`,
+and `purpose: "mcp_form"` for a session it opened, or one the user explicitly adopted
+through the trusted host-owner UI. Ordinary RPC attachment cannot assign a session.
+Assignment belongs only to that enrolled principal and live binding; re-enrollment
+or binding replacement requires a new assignment. It is not persisted.
+An acquisition also requires the connection's `interactive_user` and
+`mcp_form_presenter_v1` capabilities, and binds the
+current host, session, binding epoch, connection nonce, attachment ID and epoch, and
+`purpose: "mcp_form"`. Only one holder is active for a session binding.
+Concurrent forms, including worker-origin forms, wait in the host's abort-aware
+FIFO for that holder. Waiting consumes the original deadline; timeout, cancellation,
+or revocation before display never fabricates a human response.
+Enforced legacy connections observe presenter readiness and reconnect when their
+negotiated form capability becomes stale, including a grant issued after connect.
+Revoking the last ready holder removes the capability on the new connection.
+A shared physical connection advertises forms when at least one attached owner is
+ready; each request still requires its own origin's grant. An ungranted owner cannot
+borrow another owner's presenter. Readiness changes during initialization are
+rechecked before the connection is published. Modern MRTR connections do not
+reconnect for this purpose because their capability metadata is per request.
+
+Legacy elicitation has no reliable parent tool-call identifier in the received SDK
+handler metadata. With multiple `tools/call` operations in flight on one physical
+legacy client, enforced elicitation fails closed with the same fixed JSON-RPC
+processing error as an unavailable presenter: code `-32603`, message
+`Elicitation processing unavailable`, and no `data`.
+No form is displayed and no human answer is admitted. Without enforcement, legacy
+clients keep the SDK request method, origin handling, and concurrent-call behavior.
+
+Worker binding waits at most five seconds for the host's acknowledgement; expiry
+fails with `private_form_unavailable`, removes the pending waiter, and releases any
+late host binding. Worker readiness events feed the same legacy renegotiation path.
+Under enforcement, server stderr remains available as redacted diagnostic records
+with allowlisted system error codes. Arbitrary text is omitted because a server can
+echo private messages, schema labels, or answers; ordinary legacy stderr is unchanged.
+
+The granted connection receives `mcp_form_request` privately. Its envelope contains
+`sessionId`, `bindingEpoch`, `attachmentEpoch`, `grantId`, `dialogId`, `dialogToken`,
+and `formRevision`; the request also carries `server` (`label` and `source`),
+`message`, `schema`, and `deadlineAtMs`. The presenter returns that exact envelope
+with `mcp_form_presented` only after rendering, then `mcp_form_response` with
+`action: "accept" | "decline" | "cancel"` and accepted `content` when applicable.
+`mcp_form_sync` uses the current session, binding epoch, attachment epoch, and grant
+to recover the holder's still-live form. It is not a public replay API.
+
+Unknown and stolen-dialog submissions from a non-holder both return
+`presenter_not_authorized` before private dialog lookup. The host validates a whole
+form before admitting a human answer, and a synchronous terminal latch accepts only
+one outcome. `mcp_form_resolved` carries the session, grant, dialog, and a reason:
+`answered`, `declined`, `cancelled`, `processing_failed`, or `operation_aborted`.
+
+No presenter, or loss before actual presentation, is a processing failure. Only
+explicit human refusal produces decline. Dismissal after presentation is cancel;
+host timeout or presentation loss after presentation also cancels, without human
+admission. Operation abort terminates the operation. Private records, schemas,
+tokens, drafts, and answers never enter general extension UI events, session
+snapshots, replay, or ordinary output queues. Native desktop registration, WSL
+relay, and a gateway form page require separate client implementation.
+
 Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()`, etc. In RPC mode, these are translated into a request/response sub-protocol on top of the base command/event flow.
 
 There are two categories of extension UI methods:
@@ -5462,6 +5925,25 @@ Dismiss any dialog method. The extension receives `undefined` (for select/input/
 ```json
 {"type": "extension_ui_response", "id": "uuid-3", "cancelled": true}
 ```
+
+### UI-answer receipts and dialog observation
+
+With capability `ui_answer_ledger`, `extension_ui_response` accepts an optional `answerId` string of 1-256 characters. The response preserves the frame's correlation `id` and adds `disposition`:
+
+- `applied`: success; the pending request was settled once.
+- `replay`: success; this `(uiRequestId, answerId)` pair was already applied, with no repeated delivery.
+- `already_answered`: failure; the request was already settled with a different answer id.
+- `unknown`: failure; no pending request or receipt exists (`unknown_extension_ui_request`).
+
+A malformed answer (for example `invalid_answer_id` or `question_incomplete`) is refused without a `disposition` and leaves its request pending. A single-session stdio connection still ignores an unnamed response that matches no request; a named response always gets a reply.
+
+`get_state.answeredUiRequests` contains the latest 64 receipts, oldest first, as `{uiRequestId, answerId?}`. Receipts are session-local and memory-only, retained for that session's life in the host generation. The ledger evicts FIFO beyond 1,024 requests; replay does not extend retention. Omitting `answerId` keeps the short-form answer contract but provides no named replay identity. A restart, unloaded session, or evicted receipt is not proof of non-execution.
+
+With capability `dialog_observer`, `subscribe_sessions` accepts `dialogs?: boolean` (default false). A matching `dialogs: true` subscription must also enable `mirror`. It receives these new records on its connection FIFO:
+
+`{type: "ui_request_pending", sessionId, uiRequestId, method, request}` when a dialog or question is registered, with its original request frame; `{type: "ui_request_settled", sessionId, uiRequestId, disposition: "answered" | "cancelled"}` when it settles. Timeout and lifecycle teardown count as cancellation. The feed survives the command connection's departure while the session remains loaded. A dialog already present in the snapshot is not emitted again.
+
+The subscription remains observing: it creates no attachment and carries no correlated `response` records. The original select, confirm, input, and editor `extension_ui_request` records remain targeted, not mirrored. Use a separate attached command connection for answers; dialog observation grants no answering authority.
 
 ## Error Handling
 

@@ -173,6 +173,20 @@ The `apiKey` and `headers` fields support command execution, environment interpo
   ```json
   "apiKey": "sk-..."
   ```
+- **Reference object:** an object instead of a string reads the value from a file or variable on every request, so no second plaintext copy of the secret exists:
+  ```json
+  "apiKey": { "$file": "~/.creds/provider-key" }
+  "headers": { "X-Org": { "$env": "ORG_ID" }, "Authorization": { "$concat": ["Bearer ", { "$file": "./token" }] } }
+  ```
+  `$file` takes an absolute path, a `~/` path in your home directory, or a path relative to this `models.json`; `$env` takes a valid environment variable name; `$concat` joins strings with `$file` and `$env` objects, one level deep. References work in a provider's `apiKey` and `headers`, each model's `headers`, `modelOverrides.*.headers`, and `credentials.slots.*.value`; `baseUrl` and other URL fields refuse them. The file must be a regular file owned by you or root, not writable by group or others, with no directory above it writable by another user, and at most 64 KiB of UTF-8 text. A missing or unreadable file, or an unset or empty variable, fails the request with a named error such as `providers.my-provider.apiKey: configuration reference missing`, and no request is sent. The resolved text is used as is: it never runs as a command and never expands `$VAR`.
+
+  The same objects work in `auth.json` for an API key's `key` and for each pooled account's `key`; a request for one account resolves only that account. Provider values supplied by an extension cannot use references. Setup tools check for `"senpiCapabilities": { "configReferenceObjects": 1 }` in the engine's `package.json` before writing these objects.
+
+  A broken reference in `credentials.slots.*.value` skips only that slot with a diagnostic naming its field and failure reason, never its value. Healthy slots remain usable; if every slot is broken, the request fails with a named reference error.
+
+  Every resolved value is treated as sensitive for the process lifetime and redacted from outbound text, including non-secret values such as paths and values from earlier rotations. Values shorter than four characters are not redacted. If you also use references for MCP servers, put secrets in `env.*` or `headers`, not `args[]`, because resolved arguments are visible in the process list.
+
+  Differences from OpenCode: references are JSON objects rather than `{file:...}`/`{env:...}` text, a variable's value is never re-scanned for another reference, and `baseUrl` takes no reference.
 
 Legacy uppercase env-var-like values such as `MY_API_KEY` are migrated to `$MY_API_KEY` on startup.
 
@@ -472,8 +486,6 @@ Classifier models do not chat. They answer typed questions about JSON state: pic
 | `cloudflare-workers-ai` | `typesafe/jev` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` |
 | `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
 | `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
-
-Chat models on a [llama.cpp router](llama-cpp.md#classification) are also listed as classifier models.
 
 Classifier models do not appear in `/model`. Extensions call them through `ctx.modelRegistry.classify()`, and [virtual models](virtual-models.md#route-requests) can use them to route requests; see the `jev-router.ts` example. When the service reports token counts, `result.usage` carries them with their cost at the model's catalog price.
 

@@ -85,7 +85,7 @@ const echoTool = {
 /** The exact composition model-runtime applies to every provider stream. */
 const residentStreamFn: StreamFn = (model, context, options) =>
 	wrapStreamWithModelRecovery(
-		streamAnthropicSubscription(model, context, options),
+		streamAnthropicSubscription(model, context, { cwd: process.cwd(), ...options }),
 		model,
 		getCurrentTools(context.messages),
 	);
@@ -176,16 +176,19 @@ describe("oh-my-openagent#7925 resident commit boundary", () => {
 		const committed = { ...streamed, content: [thinking, text, toolCall] };
 		const boundary = new AssistantCommitBoundary();
 		boundary.captureProviderFinal("metadata", streamed);
-		expect(boundary.commit("metadata", committed, MODEL_ID)).toBe("clean");
+		expect(boundary.commit("metadata", committed, MODEL_ID)).toStrictEqual({ outcome: "clean" });
 
 		const rewrites = {
-			text: [thinking, { ...text, text: "other" }, toolCall],
-			thinking: [{ ...thinking, thinking: "else" }, text, toolCall],
-			arguments: [thinking, text, { ...toolCall, arguments: { text: "bye" } }],
+			"content[1].text": [thinking, { ...text, text: "other" }, toolCall],
+			"content[0].thinking": [{ ...thinking, thinking: "else" }, text, toolCall],
+			"content[2].arguments.text": [thinking, text, { ...toolCall, arguments: { text: "bye" } }],
 		};
-		for (const [label, content] of Object.entries(rewrites)) {
-			boundary.captureProviderFinal(label, streamed);
-			expect(boundary.commit(label, { ...committed, content }, MODEL_ID), label).toBe("rewritten");
+		for (const [divergedPath, content] of Object.entries(rewrites)) {
+			boundary.captureProviderFinal(divergedPath, streamed);
+			expect(boundary.commit(divergedPath, { ...committed, content }, MODEL_ID), divergedPath).toEqual({
+				outcome: "rewritten",
+				divergedPath,
+			});
 		}
 	});
 });

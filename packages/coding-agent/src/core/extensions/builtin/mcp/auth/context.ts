@@ -1,4 +1,4 @@
-import type { McpServerConfig } from "../config-schema.ts";
+import type { McpServerDeclaredConfig } from "../config-schema.ts";
 import type { McpLogger } from "../log.ts";
 import { fingerprintSecret } from "../log.ts";
 import { McpOAuthProvider } from "./oauth-provider.ts";
@@ -13,7 +13,7 @@ const BACKGROUND_REDIRECT = "http://127.0.0.1:0/callback";
 
 export interface ServerAuthDeps {
 	serverName: string;
-	config: McpServerConfig;
+	config: McpServerDeclaredConfig;
 	agentDir?: string;
 	env?: Record<string, string | undefined>;
 	logger?: McpLogger;
@@ -29,7 +29,7 @@ export interface ServerAuthPlan {
 
 // OAuth autodetect (#158): headers or an explicit non-oauth `auth` disable it so
 // API-key servers never trigger DCR/discovery.
-export function resolveAuthMode(config: McpServerConfig): ServerAuthMode {
+export function resolveAuthMode(config: McpServerDeclaredConfig): ServerAuthMode {
 	if (config.auth === "oauth") return "oauth";
 	if (config.auth === false) return "none";
 	if (config.auth === "bearer" || config.bearerTokenEnv !== undefined) return "bearer";
@@ -64,10 +64,10 @@ const LITERAL_SECRET = /(?:bearer\s+\S|sk-[a-z0-9]|[a-z0-9]{24,})/i;
 
 // Warn (never block) when a plaintext token is embedded in headers instead of a
 // ${VAR} reference. Emits fingerprints only, never the raw value.
-export function detectLiteralBearerWarnings(serverName: string, config: McpServerConfig): string[] {
+export function detectLiteralBearerWarnings(serverName: string, config: McpServerDeclaredConfig): string[] {
 	const warnings: string[] = [];
 	for (const [header, value] of Object.entries(config.headers ?? {})) {
-		if (value.includes("${")) continue;
+		if (typeof value !== "string" || value.includes("${")) continue;
 		if (LITERAL_SECRET.test(value)) {
 			warnings.push(
 				`MCP server ${serverName} header '${header}' appears to contain a literal secret (fp ${fingerprintSecret(value)}); use \${ENV_VAR} so the token stays out of the config file.`,

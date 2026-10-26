@@ -4,12 +4,26 @@ import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import {
 	decideHostAction,
 	HOST_PROTOCOL_VERSION,
+	type HostDecision,
 	type HostDecisionClient,
 	type HostProtocolInfo,
 	REQUIRED_HOST_CAPABILITIES,
 } from "./host-decision.ts";
 import type { EnsureHostOptions } from "./host-ensure-types.ts";
+import { isHostGenerationProcess } from "./host-process-role.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
+
+/** An ensure must produce a host; an unavailable upgrade falls back to a compatible attachment. */
+export function decideEnsureAction(
+	options: EnsureHostOptions,
+	startedByUs: boolean,
+	protocol: HostProtocolInfo | undefined,
+): Exclude<HostDecision, { action: "fallback" }> {
+	if (options.upgrade !== "if-engine-differs" || isHostGenerationProcess())
+		return decideHostAction(ensureClient(options, startedByUs), protocol, "never");
+	const decision = decideHostAction(ensureClient(options, startedByUs), protocol, "upgrade");
+	return decision.action === "fallback" ? { action: "reuse", reason: "compatible", upgradeable: false } : decision;
+}
 
 /** This build as a client: which protocol it speaks, what it needs from a host, and which build it is. */
 export function ensureClient(options: EnsureHostOptions, startedByUs: boolean): HostDecisionClient {

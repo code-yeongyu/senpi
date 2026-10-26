@@ -1,3 +1,4 @@
+import { redactResolvedReferenceValues } from "../../../config-reference-redaction.ts";
 import { noticeEntryRenderer } from "../../notice/index.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { handleMcpAuthCommand } from "./auth/commands-auth-dispatch.ts";
@@ -48,7 +49,10 @@ export function registerMcpCommands(
 				await pendingAttach();
 				await handleMcpCommand(splitCommandArgs(rawArgs), ctx, pi, service);
 			} catch (error) {
-				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+				ctx.ui.notify(
+					redactResolvedReferenceValues(error instanceof Error ? error.message : String(error)),
+					"error",
+				);
 			}
 		},
 	});
@@ -177,7 +181,7 @@ async function testServer(
 		const elapsedMs = Date.now() - started;
 		service.recordCall(name, elapsedMs, true);
 		const message = error instanceof Error ? error.message : String(error);
-		notify(`MCP test ${name} failed (${elapsedMs}ms): ${message}`, "error");
+		notify(redactResolvedReferenceValues(`MCP test ${name} failed (${elapsedMs}ms): ${message}`), "error");
 	}
 }
 
@@ -201,7 +205,7 @@ async function reconnectServer(
 		notify(`MCP reconnect ${name} connected`);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		notify(`MCP reconnect ${name} failed: ${message}`, "error");
+		notify(redactResolvedReferenceValues(`MCP reconnect ${name} failed: ${message}`), "error");
 	}
 }
 

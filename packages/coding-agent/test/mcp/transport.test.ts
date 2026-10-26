@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import type { McpServerConfig } from "../../src/core/extensions/builtin/mcp/config-schema.ts";
 import type { TimeoutError } from "../../src/core/extensions/builtin/mcp/errors.ts";
+import { privateMcpForms } from "../../src/core/mcp-form-types.ts";
 import { createMcpLogger } from "../../src/core/extensions/builtin/mcp/log.ts";
 import {
 	connectMcpTransport,
@@ -15,6 +16,7 @@ import {
 	shutdownMcpTransport,
 } from "../../src/core/extensions/builtin/mcp/transport.ts";
 import { assertProcessDead, spawnHttpFixture, stdioFixtureCommand } from "./fixtures/spawn-fixture.ts";
+import { mrtrTui } from "./fixtures/mrtr-presentation.ts";
 
 const execFileAsync = promisify(execFile);
 const connections: McpTransportConnection[] = [];
@@ -30,6 +32,68 @@ afterEach(async () => {
 });
 
 describe("MCP transport factory", () => {
+	it.each([false, true])(
+		"retains redacted stderr diagnostics with private presenter enforcement (failure %s)",
+		async (failure) => {
+			const root = await mkdtemp(join(tmpdir(), "senpi-mcp-transport-"));
+			cleanupTasks.push(() => rm(root, { recursive: true, force: true }));
+			const logger = createMcpLogger("stdio-fixture", { logDir: root });
+			const tui = mrtrTui(undefined, undefined, true);
+			cleanupTasks.push(async () => tui.lose());
+			const fixture = stdioFixtureCommand();
+			const connection = createMcpTransport({
+				config: serverConfig({
+					args: [
+						...fixture.args,
+						"--tools",
+						"2",
+						...(failure ? ["--fatal-missing-token", "EACCES PRIVATE_FORM_CANARY"] : []),
+					],
+					command: fixture.command,
+				}),
+				logger,
+				serverName: "stdio-fixture",
+				elicitationUiProvider: Object.assign(() => tui.ui, { enforced: () => true }),
+			});
+			connections.push(connection);
+			if (failure) await expect(connectMcpTransport(connection)).rejects.toBeDefined();
+			else {
+				await connectMcpTransport(connection);
+				await connection.client.listTools({}, { timeout: 2000 });
+			}
+			await shutdownMcpTransport(connection);
+			connections.pop();
+			const persisted = readFileSync(logger.filePath, "utf8");
+			expect(persisted).toContain('"channel":"stderr"');
+			expect(persisted).toContain("[private MCP stderr redacted]");
+			expect(persisted).not.toContain("stdio fixture ready");
+			expect(persisted).not.toContain("PRIVATE_FORM_CANARY");
+			if (failure) expect(persisted).toContain("EACCES");
+		},
+	);
+	it("keeps legacy stdio stderr for the default terminal presenter", async () => {
+		const root = await mkdtemp(join(tmpdir(), "senpi-mcp-transport-"));
+		cleanupTasks.push(() => rm(root, { recursive: true, force: true }));
+		const logger = createMcpLogger("stdio-fixture", { logDir: root });
+		const tui = mrtrTui();
+		cleanupTasks.push(async () => tui.lose());
+		const fixture = stdioFixtureCommand();
+		const connection = createMcpTransport({
+			config: serverConfig({ args: [...fixture.args, "--tools", "2"], command: fixture.command }),
+			logger,
+			serverName: "stdio-fixture",
+			elicitationUiProvider: Object.assign(() => tui.ui, {
+				enforced: () => privateMcpForms(tui.ui) !== undefined,
+			}),
+		});
+		connections.push(connection);
+		await connectMcpTransport(connection);
+		await connection.client.listTools({}, { timeout: 2000 });
+		await shutdownMcpTransport(connection);
+		connections.pop();
+		expect(logger.getRingBuffer().join("\n")).toContain("stdio fixture ready");
+		expect(readFileSync(logger.filePath, "utf8")).toContain('"channel":"stderr"');
+	});
 	it("connects to a stdio server, lists tools, and routes stderr into the MCP logger", async () => {
 		const root = await mkdtemp(join(tmpdir(), "senpi-mcp-transport-"));
 		cleanupTasks.push(() => rm(root, { recursive: true, force: true }));

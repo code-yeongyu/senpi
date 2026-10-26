@@ -5,6 +5,7 @@
  * `get_protocol_info` reports. A host without hooks routes every command exactly as before.
  */
 
+import { agentDirMismatch } from "./host-handoff-agent-dir.ts";
 import {
 	BEGIN_HANDOVER_COMMAND,
 	beginHandoverResponse,
@@ -22,6 +23,8 @@ export interface HostCoreHooks {
 	readonly runtimeBuildId?: string;
 	/** Present on a host that can hand over at its next idle point (a POSIX socket host). */
 	readonly handover?: Omit<HostIdleHandoverOptions, "isIdle">;
+	/** This host's agent dir and public socket: a `begin_handover` naming another agent dir is refused (#3560). */
+	readonly endpoint?: { readonly agentDir: string; readonly socket: string };
 	/** Called with the in-process registry's session count after every open and close. */
 	readonly onSessionCountChange?: (size: number) => void;
 	/**
@@ -35,6 +38,7 @@ export interface HostCoreHooks {
 export class HostCoreGate {
 	readonly handover: HostIdleHandover | undefined;
 	private readonly runtimeBuildId: string | undefined;
+	private readonly endpoint: HostCoreHooks["endpoint"];
 	private readonly inFlight = new Map<string | undefined, number>();
 	private readonly answering = new Set<Promise<void>>();
 	private readonly route: (command: RpcCommand) => Promise<RpcResponse | undefined>;
@@ -46,6 +50,7 @@ export class HostCoreGate {
 	) {
 		this.route = route;
 		this.runtimeBuildId = hooks.runtimeBuildId;
+		this.endpoint = hooks.endpoint;
 		this.handover =
 			hooks.handover === undefined
 				? undefined
@@ -70,9 +75,17 @@ export class HostCoreGate {
 			return beginHandoverResponse(parsed.id, { kind: "refused", reason: "handover_unsupported" });
 		}
 		const request = parseBeginHandover(parsed);
+		if (typeof request === "string") return beginHandoverResponse(parsed.id, request);
+		// Settled before `begin` so its claim on the operation stays free of awaits.
+		const detail =
+			request.agentDir === undefined || this.endpoint === undefined
+				? undefined
+				: await agentDirMismatch(this.endpoint.socket, request.agentDir, this.endpoint.agentDir);
 		return beginHandoverResponse(
 			parsed.id,
-			typeof request === "string" ? request : await this.handover.begin(request),
+			detail === undefined
+				? await this.handover.begin(request)
+				: { kind: "refused", reason: "foreign_agent_dir", detail },
 		);
 	}
 

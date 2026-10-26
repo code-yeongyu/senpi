@@ -34,6 +34,8 @@ export interface SkillWalkOptions {
 	readonly allowedSet?: SkillAllowedSet;
 	readonly ancestry?: ReadonlySet<string>;
 	readonly onDirectory?: (path: string) => void;
+	/** Optional cache owned by a single discovery pass, never retained on a Skill. */
+	readonly realpath?: (path: string) => string;
 }
 
 function toPosixPath(p: string): string {
@@ -154,7 +156,7 @@ export function collectSkillEntries(
 	let canonical: string;
 	try {
 		authorizeSkillPath(dir, options.provenance, options.allowedSet, true);
-		canonical = realpathSync.native(dir);
+		canonical = (options.realpath ?? realpathSync.native)(dir);
 	} catch (error) {
 		// Leave a blocked root as a candidate so the resource loader retains its
 		// provenance and produces the visible diagnostic without descending here.

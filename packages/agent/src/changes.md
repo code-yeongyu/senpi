@@ -1,3 +1,23 @@
+## 2026-10-24 - Settle response stop reasons before message_end (senpi#3029)
+
+### What changed
+
+- `packages/agent/src/assistant-terminal-state.ts`: `settleStopReason` promotes stops with pending tool calls and demotes tool use without tool calls.
+- `packages/agent/src/agent-loop.ts`: settle the stop reason before storing the terminal response and emitting `message_end` on normal, stream-end, and idle-finalization paths. Preserve response timing stamps and pass the same object to `finishTurn` and `turn_end`.
+
+### Why
+
+- Normalizing after `message_end` created an unpersisted copy. Identity-based entry lookup then failed and skipped every `turn_end` extension handler for that turn.
+
+### Why an extension could not handle it
+
+- The copy was made inside the loop between persistence and turn completion, with no extension hook between them.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts`, the response handling in `runLoop` and terminal branches in `streamAssistantResponse`.
+- LOW: `packages/agent/src/assistant-terminal-state.ts`, stop-reason normalization helpers.
+
 ## 2026-10-23 - Product copy punctuation (senpi#4040)
 
 ### What changed

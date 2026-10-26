@@ -22,7 +22,6 @@ import {
 	type OAuthLoginCallbacks,
 	type Provider,
 	type ProviderClassifier,
-	type ProviderHeaders,
 	type ProviderImages,
 	type RefreshModelsContext,
 	type SimpleStreamOptions,
@@ -34,15 +33,9 @@ import {
 import { classifierErrorResult, imageErrorResult } from "@earendil-works/pi-ai/utils/model-operations";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
-import { composeApiKeyAuth, configuredApiKey, configuredHeaders, withConfiguredAuth } from "./provider-api-key-auth.ts";
-import { configuredHeaderAuthStatus, type HeaderAuthStatusSource } from "./provider-header-auth.ts";
-import {
-	clearConfigValueCache,
-	getConfigValueEnvVarNames,
-	isCommandConfigValue,
-	isConfigValueConfigured,
-	resolveHeadersOrThrow,
-} from "./resolve-config-value.ts";
+import { composeApiKeyAuth, configuredHeaders, withConfiguredAuth } from "./provider-api-key-auth.ts";
+import type { HeaderAuthStatusSource } from "./provider-header-auth.ts";
+import { clearConfigValueCache, resolveHeadersOrThrow } from "./resolve-config-value.ts";
 
 export interface ExtensionOAuthConfig {
 	name: string;
@@ -180,6 +173,12 @@ export type AuthStatus = {
 	/** Environment auth that came only from a shared cloud credential chain (`AuthCheck.ambient`). */
 	ambient?: true;
 };
+
+export {
+	configuredRequestAuthStatus,
+	resolveCompatibilityRequestHeaders,
+	resolveConfiguredModelHeaders,
+} from "./provider-request-auth.ts";
 
 export const clearApiKeyCache = clearConfigValueCache;
 
@@ -533,27 +532,6 @@ function composeOAuthAuth(
 	};
 }
 
-function rawModelHeaders(
-	model: AnyModel,
-	config: ModelsJsonProvider | undefined,
-	extension: ProviderConfigInput | undefined,
-): Record<string, string> | undefined {
-	// models.json definitions and overrides are chat-only. Extension definitions
-	// are matched by operation and id so colliding models cannot share headers.
-	const chatDefinition = isModelType(model, "chat")
-		? config?.models?.find((entry) => entry.id === model.id)
-		: undefined;
-	const extensionModel = extension?.models?.find(
-		(entry) => (entry.type ?? "chat") === (model.type ?? "chat") && entry.id === model.id,
-	);
-	const headers = {
-		...(isModelType(model, "chat") ? config?.modelOverrides?.[model.id]?.headers : undefined),
-		...chatDefinition?.headers,
-		...extensionModel?.headers,
-	};
-	return Object.keys(headers).length > 0 ? headers : undefined;
-}
-
 function rawModelExtraBody(
 	model: Model<Api>,
 	config: ModelsJsonProvider | undefined,
@@ -753,19 +731,6 @@ export function composeModelProvider(
 	return provider;
 }
 
-export function resolveConfiguredModelHeaders(
-	model: AnyModel,
-	config: ModelsJsonProvider | undefined,
-	extension: ProviderConfigInput | undefined,
-	env?: Record<string, string>,
-): Promise<Record<string, string> | undefined> {
-	return resolveHeadersOrThrow(
-		rawModelHeaders(model, config, extension),
-		`model "${model.provider}/${model.id}"`,
-		env,
-	);
-}
-
 /**
  * Request shape a compatibility provider needs beside its credential. Headers are NOT
  * part of it: a configured header value can be a `!command`, and resolving one requires
@@ -776,21 +741,6 @@ export interface CompatibilityRequestConfig {
 	upstreamModelId?: string;
 	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	authHeader: boolean;
-}
-
-/** Configured provider and model headers, resolved off the event loop. */
-export async function resolveCompatibilityRequestHeaders(
-	model: Model<Api>,
-	config: ModelsJsonProvider | undefined,
-	extension: ProviderConfigInput | undefined,
-	env?: Record<string, string>,
-): Promise<ProviderHeaders | undefined> {
-	const configured = await resolveHeadersOrThrow(
-		{ ...configuredHeaders(config, extension), ...rawModelHeaders(model, config, extension) },
-		`model "${model.provider}/${model.id}"`,
-		env,
-	);
-	return model.headers || configured ? { ...model.headers, ...configured } : undefined;
 }
 
 export function resolveCompatibilityRequestConfig(
@@ -811,22 +761,4 @@ export function resolveCompatibilityRequestConfig(
 		serviceTier: extensionModel?.serviceTier ?? modelDefinition?.serviceTier ?? model.serviceTier,
 		authHeader: extension?.authHeader ?? config?.authHeader ?? false,
 	};
-}
-
-export function configuredRequestAuthStatus(
-	config: ModelsJsonProvider | undefined,
-	extension: ProviderConfigInput | undefined,
-): AuthStatus | undefined {
-	const value = configuredApiKey(config, extension);
-	if (value === undefined) {
-		return configuredHeaderAuthStatus(config?.headers, extension?.headers);
-	}
-	if (isCommandConfigValue(value)) return { configured: true, source: "models_json_command" };
-	const names = getConfigValueEnvVarNames(value);
-	if (names.length > 0) {
-		return isConfigValueConfigured(value)
-			? { configured: true, source: "environment", label: names.join(", ") }
-			: { configured: false };
-	}
-	return { configured: true, source: extension?.apiKey !== undefined ? "fallback" : "models_json_key" };
 }

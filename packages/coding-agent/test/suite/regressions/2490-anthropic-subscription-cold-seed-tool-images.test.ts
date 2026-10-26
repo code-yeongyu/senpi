@@ -118,6 +118,7 @@ describe("senpi#2490: cold seeds through the Claude subscription stream", () => 
 			const sessionId = `cold-seed-images-${rereads}`;
 			sessionIds.push(sessionId);
 			await streamAnthropicSubscription(model, sessionWithRereads(rereads), {
+				cwd: process.cwd(),
 				sessionId,
 				streamKind: "main",
 			}).result();

@@ -35,6 +35,8 @@ export interface HostProtocolInfo {
 	readonly memory_pressure?: boolean;
 	/** Content digest of the runtime the host loaded at startup (`sha256:<64 hex>`); absent on older hosts. */
 	readonly runtimeBuildId?: string;
+	/** The agent directory the host reads and writes; absent on older hosts. Only a client of the same dir may replace it. */
+	readonly agentDir?: string;
 	/** The conditional idle handover this host holds, as it reported it. */
 	readonly handover?: Readonly<Record<string, unknown>>;
 }
@@ -62,6 +64,7 @@ export function parseHostProtocolInfo(data: unknown): HostProtocolInfo | undefin
 		...(launchProfile && { launch_profile: launchProfile }),
 		...(typeof data.memory_pressure === "boolean" && { memory_pressure: data.memory_pressure }),
 		...(runtimeBuildId !== undefined && { runtimeBuildId }),
+		...(typeof data.agentDir === "string" && data.agentDir !== "" && { agentDir: data.agentDir }),
 		...(isRecord(data.handover) && { handover: data.handover }),
 	};
 }

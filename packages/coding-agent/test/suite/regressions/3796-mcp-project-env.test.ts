@@ -1,5 +1,4 @@
 // #3796: exercise the service's real stdio transport, not an env-builder mock.
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: literal ${VAR} references are the MCP declaration inputs under test, not templates.
 /* oxlint-disable eslint/no-template-curly-in-string -- these tests feed literal MCP config text such as "${TOKEN}" to the interpolation under test. */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -121,4 +120,80 @@ it("passes finite project base and explicit env while withholding ungranted refe
 	});
 	expect(warnings.join("\n")).toContain("ODD_DSN");
 	expect(warnings.join("\n")).not.toContain("synthetic-dsn");
+});
+
+// #3858 x #3796: the project environment policy materializes plain strings only, so a project skill server that
+// declares a reference object is refused with the named error before any read, even in a trusted project.
+it("skips a trusted project skill server that declares a reference object", async () => {
+	const pi = fakePi();
+	await service.attachSession(
+		{ type: "session_start", reason: "startup" },
+		{ cwd: root, isProjectTrusted: () => true },
+		pi,
+		{ agentDir: join(root, "agent") },
+	);
+	const sourcePath = join(root, "SKILL.md");
+	writeFileSync(sourcePath, "---\nname: carrier\ndescription: test\n---\n");
+	const warnings = await service.attachSkillMcpServers(
+		new Map([
+			[
+				"probe",
+				{
+					raw: { command: process.execPath, env: { TOKEN: { $file: join(root, "unread-secret") } } },
+					scope: "project" as const,
+					skillName: "carrier",
+					sourcePath,
+				},
+			],
+		]),
+		pi,
+	);
+	expect(service.getConnection("probe")).toBeUndefined();
+	expect(warnings.join("\n")).toContain("Skill 'carrier' MCP server 'probe' skipped");
+	expect(warnings.join("\n")).toContain("forbidden");
+});
+
+// #3858 merge delta review: the connection identity keeps the project declaration's hash, so an env-only edit of a
+// project skill server re-keys it and the next connect runs the new declaration.
+it("reconnects a project skill server with its edited env", async () => {
+	const receipt = join(root, "edit-receipt.json");
+	const fixture = fileURLToPath(new URL("../../mcp/fixtures/stdio-server.ts", import.meta.url));
+	const script = [
+		`import {writeFileSync} from "node:fs";`,
+		`writeFileSync(${JSON.stringify(receipt)},JSON.stringify({ref:process.env.REF}));`,
+		`await import(${JSON.stringify(fixture)});`,
+	].join("");
+	const pi = fakePi();
+	await service.attachSession(
+		{ type: "session_start", reason: "startup" },
+		{ cwd: root, isProjectTrusted: () => true },
+		pi,
+		{ agentDir: join(root, "agent") },
+	);
+	const sourcePath = join(root, "SKILL.md");
+	writeFileSync(sourcePath, "---\nname: carrier\ndescription: test\n---\n");
+	const declare = (ref: string) =>
+		new Map([
+			[
+				"probe",
+				{
+					raw: { command: process.execPath, args: ["-e", script], env: { REF: ref } },
+					scope: "project" as const,
+					skillName: "carrier",
+					sourcePath,
+				},
+			],
+		]);
+	await service.attachSkillMcpServers(declare("lit1"), pi);
+	const first = service.getConnection("probe");
+	if (!first) throw new Error("missing project connection");
+	await first.connect();
+	expect(JSON.parse(readFileSync(receipt, "utf8"))).toEqual({ ref: "lit1" });
+	await service.attachSkillMcpServers(declare("lit2"), pi);
+	await service.reconnectServer("probe");
+	const second = service.getConnection("probe");
+	if (!second) throw new Error("missing re-keyed connection");
+	expect(second).not.toBe(first);
+	await second.connect();
+	expect(JSON.parse(readFileSync(receipt, "utf8"))).toEqual({ ref: "lit2" });
 });

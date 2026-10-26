@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Api, type Context, InMemoryCredentialStore, type Model } from "@earendil-works/pi-ai";
@@ -85,6 +85,41 @@ afterEach(() => {
 });
 
 describe("claude-sdk-oauth request environment", () => {
+	it.each(["main", "auxiliary"] as const)(
+		"uses session cwd and project settings for %s requests",
+		async (streamKind) => {
+			const cwd = mkdtempSync(join(tmpdir(), "senpi-sdk-cwd-"));
+			mkdirSync(join(cwd, ".senpi"));
+			writeFileSync(
+				join(cwd, ".senpi", "settings.json"),
+				JSON.stringify({ anthropicSubscriptionProvider: { compactionOwner: "sdk", tokenInjection: "ambient" } }),
+			);
+			const captured: Options[] = [];
+			overrideAuthLaneBoundary({
+				createStore: () => new InMemoryCredentialStore(),
+				env: () => ({ PATH: "/usr/bin" }),
+			});
+			overrideSdkBoundary({ query: queryCapturing(captured) });
+			try {
+				expect(cwd).not.toBe(process.cwd());
+
+				await streamAnthropicSubscription(model, context, {
+					cwd,
+					sessionId: residentSessionId,
+					streamKind,
+				}).result();
+
+				expect(captured).toHaveLength(1);
+				expect(captured[0]?.cwd).toBe(cwd);
+				expect(captured[0]?.settings).toEqual({ autoCompactEnabled: true, autoMemoryEnabled: false });
+				expect(captured[0]?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
+			} finally {
+				closeSession(residentSessionId, "test_cleanup");
+				rmSync(cwd, { recursive: true, force: true });
+			}
+		},
+	);
+
 	it("forwards request OAuth tokens without subprocess-control variables", async () => {
 		const environment = await captureRequestEnvironment(
 			{ PATH: "/usr/bin" },
@@ -125,6 +160,7 @@ describe("claude-sdk-oauth request environment", () => {
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
 		await streamAnthropicSubscription(model, context, {
+			cwd: process.cwd(),
 			env: { CLAUDE_CODE_OAUTH_TOKEN: "request-token" },
 			sessionId: residentSessionId,
 			streamKind: "main",

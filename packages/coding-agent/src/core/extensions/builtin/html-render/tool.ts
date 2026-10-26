@@ -66,6 +66,7 @@ export const showHtmlPageTool = defineTool<typeof Params, ShowHtmlPageDetails>({
 	label: "Show HTML Page",
 	description:
 		"Show a finished self-contained HTML page (chart, table, diagram, mockup) to the reader. " +
+		"Load the visualize skill before building the page. " +
 		"No network: inline every script, style and image (data: URIs). A <script src>, stylesheet link, font, image " +
 		"or fetch that points at a URL (a CDN included) is refused, and the page comes out blank or broken. " +
 		"Local images written as absolute file paths " +

@@ -11,7 +11,7 @@ import {
 	BlockedSkillLinkError,
 	buildSkillAllowedSet,
 	insideSkillRoot,
-	readSkillFileChecked,
+	readSkillFileCheckedSync,
 	type SkillAllowedSet,
 	type SkillProvenance,
 	skillProjectRoot,
@@ -336,7 +336,7 @@ function loadSkillFromFile(
 		rawContent =
 			provenance === undefined || provenance.kind === "user"
 				? readSkillMarkdownSource(filePath)
-				: readSkillFileChecked(filePath, provenance, allowedSet);
+				: readSkillFileCheckedSync(filePath, provenance, allowedSet);
 	} catch (error) {
 		if (error instanceof BlockedSkillLinkError) return { skill: null, diagnostics: [error.diagnostic] };
 		const message = error instanceof Error ? error.message : "failed to read skill file";

@@ -7,8 +7,13 @@
  *
  * The terminal itself is one attachment; each attached client adds one. A client that only subscribed
  * (mirror included) is not an attachment.
+ *
+ * It also keeps what a host keeps per connection and per session for the drive set (senpi#4267): the roles each
+ * connection declared with `set_client_info`, and the admission receipt of every input sent with a `clientMessageId`,
+ * so a retry is answered from its receipt instead of being delivered twice.
  */
 import type { AgentSession } from "../../core/agent-session.ts";
+import { ConnectionRoles } from "../rpc/connection-roles.ts";
 import { SessionEventWriter } from "../rpc/session-event-writer.ts";
 import { subscribeSessionRecords } from "../rpc/session-record-stream.ts";
 import type { SessionStatusEntryView } from "../rpc/session-status.ts";
@@ -17,6 +22,8 @@ import type { ControlConnection } from "./session-control-server.ts";
 
 export class ControlAttachments {
 	readonly writer = new SessionEventWriter(() => {});
+	readonly roles = new ConnectionRoles();
+	readonly receipts = new Map<string, TerminalInputReceipt>();
 	private readonly attached = new Set<string>();
 	private readonly stopRecords: () => void;
 	private readonly session: AgentSession;
@@ -49,7 +56,17 @@ export class ControlAttachments {
 	closed(connection: ControlConnection): void {
 		const key = keyOf(connection);
 		if (this.attached.delete(key)) this.writer.status.publish(this.handle, "detach", "client");
+		this.roles.release(key);
 		this.writer.unregisterConnection(key);
+	}
+
+	/** Drops this connection's attachment (`release_attachment`); false when it was not attached. */
+	detach(connection: ControlConnection): boolean {
+		const key = keyOf(connection);
+		if (!this.attached.delete(key)) return false;
+		this.writer.detachConnectionFromSession(key, this.handle);
+		this.writer.status.publish(this.handle, "detach", "client");
+		return true;
 	}
 
 	/** Attaches the connection: it is replayed the in-flight snapshot, then receives the session's records. */
@@ -97,6 +114,18 @@ export class ControlAttachments {
 }
 
 const NULL_CONNECTION = "tui-null";
+
+/** The receipt a terminal answers an input sent with a `clientMessageId` with, and answers again on a retry. */
+export interface TerminalInputReceipt {
+	/** What was sent: a retry with the same id and different content is a conflict, as on a host. */
+	readonly fingerprint: string;
+	readonly disposition: "started" | "queued";
+	readonly admission: {
+		readonly clientMessageId: string;
+		readonly durableSessionId: string;
+		readonly disposition: "started" | "queued";
+	};
+}
 
 /** The writer's id for one control connection. */
 export function keyOf(connection: ControlConnection): string {

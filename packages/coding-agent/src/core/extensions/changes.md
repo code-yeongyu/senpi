@@ -1,3 +1,62 @@
+## 2026-10-25 - Ephemeral terminal dialogs for private MCP forms (#4207)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: add an optional ephemeral-dialog flag forwarded to the real in-process terminal dialog adapter; private forms produce no generic blocked event or pending marker.
+- `packages/coding-agent/src/core/extensions/runner.ts`: carry an existing host-issued MCP presenter onto the session UI wrapper while retaining its raw UI and lifetime signal.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: form labels, drafts, identifiers, and interaction state must stay outside generic host-status and persistence surfaces.
+- `packages/coding-agent/src/core/extensions/runner.ts`: extensions see a wrapped UI object, so presenter identity must survive that wrapper without sending private forms through titled prompt events.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the terminal host owns dialog publication and presentation lifetime, so an extension cannot independently suppress those side effects.
+- `packages/coding-agent/src/core/extensions/runner.ts`: the runner creates the UI wrapper and owns ordinary prompt-event publication; the binding cannot recover raw host identity from a serialized or arbitrary UI object.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `ExtensionUIDialogOptions` and terminal-only option forwarding; legacy RPC forms keep their existing channel.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `wrapUIPromptContext` and host presenter inheritance.
+
+## 2026-10-24 - Before-prompt custom message placement (senpi#4166)
+
+### What changed
+
+- `types.ts`: an optional `message.placement: "before-prompt"` requests persisted
+  delivery before the current prompt. `docs/extensions.md` documents its ordering.
+
+### Why
+
+Hidden user-role notices must not become the final user request.
+
+### Why an extension could not handle it
+
+The shared extension result contract must carry placement to session ingestion.
+
+### Expected merge conflict zones
+
+- `types.ts`: `BeforeAgentStartEventResult`.
+
+## 2026-10-22 - Extensions cannot open engine custody keys (senpi#3986)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: `pi.lifecycle.obligations.open` and a token's `transfer` refuse keys under `delivery:` or `wake-source:` with a typed `ReservedCustodyKey` error; the engine's own calls are unaffected.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: the engine identifies its delivery tickets and wake sources by those prefixes, so an extension ticket under them would be cancelled on a queue clear or retired as a stale wake source.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: the guard sits on the extension API itself; an extension cannot restrict what other extensions pass to `pi.lifecycle.obligations`.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/lifecycle-api.ts`: `createLifecycleApi` now wraps `obligations`; upstream changes to that factory need the wrapper kept.
+
 ## 2026-10-22 - `pi.session.relocationTargets()` and `pi.session.requestRelocation()` (senpi#3959)
 
 ### What changed

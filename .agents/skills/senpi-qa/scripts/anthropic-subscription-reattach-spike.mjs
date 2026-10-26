@@ -49,6 +49,7 @@ import {
 } from "./lib/anthropic-subscription-spike-support.mjs";
 import { runTurns, TOKEN_PROMPT } from "./lib/anthropic-subscription-reattach-worker.mjs";
 import { windowsTreeKillArgs } from "../../../../scripts/windows-process-tree.mjs";
+import { signalOwnedProcess } from "./lib/common.mjs";
 
 const WORKER_FLAG = "--reattach-worker";
 const SELF = fileURLToPath(import.meta.url);
@@ -171,7 +172,7 @@ function terminateChild(child) {
 			// Group-kill even when the worker already exited: a grandchild in the
 			// detached group can outlive the worker, and an exited group leader
 			// leaves the group addressable until the last member dies.
-			process.kill(-child.pid, "SIGKILL");
+			signalOwnedProcess({ pid: child.pid, spawned: child, group: true, signal: "SIGKILL" });
 		}
 	} catch {
 		try {

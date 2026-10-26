@@ -71,6 +71,14 @@ export interface CredentialStore {
 	read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined>;
 
 	/**
+	 * Read one pooled slot already projected onto the flat credential shape, as
+	 * `projectSlot(await read(...), slotName)` would. Optional: a store that keeps
+	 * configuration references in pooled keys implements it so a slot-scoped request
+	 * resolves only the selected slot, never the flat key or a sibling.
+	 */
+	readSlot?(providerId: string, slotName: string, options?: AuthOperationOptions): Promise<Credential | undefined>;
+
+	/**
 	 * List stored credential metadata without resolving or exposing secrets.
 	 * Implementations must not execute configured API-key commands while listing.
 	 */

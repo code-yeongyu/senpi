@@ -126,6 +126,9 @@ import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/htt
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { isManualContinueSubmission } from "../../core/manual-continue.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
+import { registerMcpMrtrPresentation } from "../../core/mcp-mrtr-presentations.ts";
+import { markMcpFormPresented, type McpFormBinding } from "../../core/mcp-form-types.ts";
+import { registerLocalMcpPresenter } from "./mcp-local-presenter.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
 import {
@@ -347,12 +350,6 @@ export { createInteractiveTui, createInteractiveTuiReference } from "./tui-rende
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
 	setExpanded(expanded: boolean): void;
-}
-
-function llamaCppPostLoginGuidance(actionLabel: string, loadedModelCount: number): string {
-	return loadedModelCount === 0
-		? `${actionLabel}. No llama.cpp models are loaded. Use /llama to load a model, then /model to select it.`
-		: `${actionLabel}. Use /model to select a loaded llama.cpp model, or /llama to manage models.`;
 }
 
 interface ActiveEditor extends EditorComponent {
@@ -873,6 +870,8 @@ async function attachClipboardImage(
  * Options for InteractiveMode initialization.
  */
 export interface InteractiveModeOptions {
+	/** Opt in to host-issued MCP form authority; ordinary terminal forms remain the default. */
+	mcpPresenterEnforcement?: boolean;
 	/** Renderer mode for the interactive terminal. */
 	uiMode?: TuiMode;
 	/** Providers that were migrated to auth.json (shows warning) */
@@ -2738,7 +2737,12 @@ export class InteractiveMode {
 	 */
 	private unsubscribeSecurityNotices?: () => void;
 	private detachMcpGrantPresentation?: () => void;
+	private mcpMrtrPresentationLifetime = new AbortController();
+	private mcpLocalPresenter?: McpFormBinding;
 	private async bindCurrentSessionExtensions(): Promise<void> {
+		this.mcpMrtrPresentationLifetime?.abort();
+		this.mcpMrtrPresentationLifetime = new AbortController();
+		this.mcpLocalPresenter = undefined;
 		await this.sessionControlHost?.disposeActive();
 		this.session.setControlEndpointHost?.(this.sessionControlHost);
 		const uiContext = this.createExtensionUIContext();
@@ -2846,6 +2850,7 @@ export class InteractiveMode {
 				this.showExtensionError(error);
 			},
 		});
+		this.setExtensionStatus(PAUSE_STATUS_KEY, pauseFooterText(this.session));
 
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		this.setupAutocompleteProvider();
@@ -3065,7 +3070,16 @@ export class InteractiveMode {
 		};
 	}
 
-	private async withBlockedHostDialog<T>(id: string, label: string, show: () => Promise<T>): Promise<T> {
+	private async withBlockedHostDialog<T>(
+		id: string,
+		label: string,
+		show: () => Promise<T>,
+		opts?: ExtensionUIDialogOptions,
+	): Promise<T> {
+		if (opts?.ephemeral) {
+			if (opts.signal?.aborted) return undefined as T;
+			return await show();
+		}
 		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id });
 		try {
 			return await show();
@@ -3699,18 +3713,28 @@ export class InteractiveMode {
 	}
 
 	private createExtensionUIContext(): ExtensionUIContext {
-		return {
+		this.mcpMrtrPresentationLifetime ??= new AbortController();
+		const context: ExtensionUIContext = {
 			select: (title, options, opts) =>
-				this.withBlockedHostDialog(crypto.randomUUID(), title, () =>
-					this.showExtensionSelector(title, options, opts),
+				this.withBlockedHostDialog(
+					crypto.randomUUID(),
+					title,
+					() => this.showExtensionSelector(title, options, opts),
+					opts,
 				),
-			confirm: (title, message, opts) =>
-				this.withBlockedHostDialog(crypto.randomUUID(), title, () =>
-					this.showExtensionConfirm(title, message, opts),
-				),
+			confirm: async (title, message, opts) =>
+				(await this.withBlockedHostDialog(
+					crypto.randomUUID(),
+					title,
+					() => this.showExtensionConfirm(title, message, opts),
+					opts,
+				)) ?? false,
 			input: (title, placeholder, opts) =>
-				this.withBlockedHostDialog(crypto.randomUUID(), title, () =>
-					this.showExtensionInput(title, placeholder, opts),
+				this.withBlockedHostDialog(
+					crypto.randomUUID(),
+					title,
+					() => this.showExtensionInput(title, placeholder, opts),
+					opts,
 				),
 			// Async answers are delivered by the ask-user extension, not here: the
 			// widget only resolves the question, so the model sees exactly one
@@ -3774,6 +3798,17 @@ export class InteractiveMode {
 			getToolsExpanded: () => this.toolOutputExpanded,
 			setToolsExpanded: (expanded) => this.setToolsExpanded(expanded),
 		};
+		const presenterSession = this.session;
+		const privateForms =
+			this.options?.mcpPresenterEnforcement === true
+				? (this.mcpLocalPresenter ??= registerLocalMcpPresenter(
+						context,
+						presenterSession.sessionId,
+						this.mcpMrtrPresentationLifetime.signal,
+						() => presenterSession.admitHumanAnswer(),
+					))
+				: undefined;
+		return registerMcpMrtrPresentation(context, this.mcpMrtrPresentationLifetime.signal, undefined, privateForms);
 	}
 
 	/**
@@ -3800,7 +3835,7 @@ export class InteractiveMode {
 				title,
 				options,
 				(option) => {
-					this.session.admitHumanAnswer();
+					if (!opts?.ephemeral || !this.options?.mcpPresenterEnforcement) this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionSelector();
 					resolve(option);
@@ -3821,7 +3856,10 @@ export class InteractiveMode {
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.extensionSelector);
 			this.ui.setFocus(this.extensionSelector);
-			this.ui.requestRender();
+			if (opts?.ephemeral && this.options?.mcpPresenterEnforcement) {
+				this.ui.renderNow();
+				markMcpFormPresented(opts);
+			} else this.ui.requestRender();
 		});
 	}
 
@@ -3881,7 +3919,7 @@ export class InteractiveMode {
 				title,
 				placeholder,
 				(value) => {
-					this.session.admitHumanAnswer();
+					if (!opts?.ephemeral || !this.options?.mcpPresenterEnforcement) this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionInput();
 					resolve(value);
@@ -6738,6 +6776,7 @@ export class InteractiveMode {
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
+		this.mcpMrtrPresentationLifetime?.abort();
 		// Keep signal handlers registered until terminal cleanup has completed.
 		// `signal-exit` checks the listener list during the same SIGTERM/SIGHUP
 		// dispatch and re-sends the signal if only its own listeners remain.
@@ -9212,10 +9251,7 @@ export class InteractiveMode {
 			if (isUnknownModel(previousModel)) {
 				const availableModels = this.session.modelRuntime.getAvailableSnapshot();
 				const providerModels = availableModels.filter((model) => model.provider === providerId);
-				// Matches LLAMA_PROVIDER_ID from extensions/llama/provider.ts; kept inline to avoid coupling interactive mode to the built-in extension.
-				if (providerId === "llama.cpp") {
-					selectionError = llamaCppPostLoginGuidance(actionLabel, providerModels.length);
-				} else if (!hasDefaultModelProvider(providerId)) {
+				if (!hasDefaultModelProvider(providerId)) {
 					selectionError = `${actionLabel}, but no default model is configured for provider "${providerId}". Use /model to select a model.`;
 				} else if (providerModels.length === 0) {
 					selectionError = `${actionLabel}, but no models are available for that provider. Use /model to select a model.`;

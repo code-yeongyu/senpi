@@ -297,9 +297,6 @@
     "typescript/no-explicit-any": 1,
     "typescript/no-non-null-assertion": 1
   },
-  "packages/ai/src/api/llama-cpp-classify.ts": {
-    "typescript/no-non-null-assertion": 7
-  },
   "packages/ai/src/api/mistral-conversations.ts": {
     "typescript/no-non-null-assertion": 1
   },
@@ -417,9 +414,6 @@
   },
   "packages/ai/test/images-models.test.ts": {
     "typescript/no-non-null-assertion": 8
-  },
-  "packages/ai/test/llama-cpp-classify.test.ts": {
-    "typescript/no-non-null-assertion": 3
   },
   "packages/ai/test/max-thinking.test.ts": {
     "typescript/no-non-null-assertion": 3
@@ -850,12 +844,6 @@
   "packages/coding-agent/src/experimental/session-worker.ts": {
     "typescript/no-non-null-assertion": 4
   },
-  "packages/coding-agent/src/extensions/llama/client.ts": {
-    "typescript/no-non-null-assertion": 2
-  },
-  "packages/coding-agent/src/extensions/llama/huggingface.ts": {
-    "typescript/no-non-null-assertion": 1
-  },
   "packages/coding-agent/src/main.ts": {
     "typescript/no-non-null-assertion": 2
   },
@@ -918,8 +906,17 @@
   "packages/coding-agent/src/modes/rpc/rpc-client.ts": {
     "typescript/no-non-null-assertion": 2
   },
-  "packages/coding-agent/src/modes/rpc/rpc-types.ts": {
-    "typescript/no-explicit-any": 6
+  "packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/modes/rpc/rpc-read-response-types.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/modes/rpc/rpc-session-event-types.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts": {
+    "typescript/no-explicit-any": 2
   },
   "packages/coding-agent/src/modes/rpc/session-event-writer.ts": {
     "typescript/no-non-null-assertion": 1
@@ -1136,9 +1133,6 @@
   },
   "packages/coding-agent/test/jev-router-example.test.ts": {
     "typescript/no-non-null-assertion": 1
-  },
-  "packages/coding-agent/test/llama-extension.test.ts": {
-    "typescript/no-non-null-assertion": 5
   },
   "packages/coding-agent/test/manual-qa/auto-compaction-input-surface.mts": {
     "typescript/no-non-null-assertion": 1

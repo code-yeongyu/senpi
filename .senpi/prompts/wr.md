@@ -15,7 +15,7 @@ Rules for context detection:
 
 Unless I explicitly override something in this request, do the following in order:
 
-1. Add or update the relevant package changelog entry under `## [Unreleased]` using the repo changelog rules.
+1. Add or update the relevant package `CHANGELOG.md` block in `changes/unreleased/<pr>.md` using the repo changelog rules.
 2. If this task is tied to a GitHub issue or PR and a final issue or PR comment has not already been posted in this session, draft it in my tone, preview it, and post exactly one final comment. The comment must end with this exact standalone disclaimer line, with no variations:
 
    ```text

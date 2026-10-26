@@ -9,6 +9,7 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import {
@@ -229,7 +230,7 @@ async function takeMoveLock(sessionFile: string, lock: string, waitMs: number): 
 		} catch (error) {
 			const code = errorCode(error);
 			if (code === "ENOENT") {
-				mkdirSync(dirname(lock), { recursive: true });
+				await mkdir(dirname(lock), { recursive: true });
 				continue;
 			}
 			if (code !== "EEXIST") throw error;

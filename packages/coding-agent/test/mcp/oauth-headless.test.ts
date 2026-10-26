@@ -44,7 +44,7 @@ async function agentDir(): Promise<string> {
 }
 
 interface Harness {
-	deps: AuthCommandDeps;
+	deps: AuthCommandDeps<McpServerConfig>;
 	notes: { message: string; type: string }[];
 	browsered: URL[];
 	store: McpTokenStore;
@@ -71,7 +71,7 @@ function makeHarness(
 		logLevel: "info",
 		...overrides,
 	};
-	const deps: AuthCommandDeps = {
+	const deps: AuthCommandDeps<McpServerConfig> = {
 		serverName: "fix",
 		config,
 		agentDir: dir,

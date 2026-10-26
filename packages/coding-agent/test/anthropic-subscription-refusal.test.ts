@@ -63,7 +63,7 @@ describe("Claude SDK OAuth refusals", () => {
 		});
 
 		// When: the ambient lane consumes the refusal.
-		const result = await streamAnthropicSubscription(model, { messages: [] }).result();
+		const result = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
 
 		// Then: refusal itself terminates the stream; no watchdog is needed.
 		expect(result).toMatchObject({
@@ -99,7 +99,7 @@ describe("Claude SDK OAuth refusals", () => {
 		});
 
 		// When: the lane consumes the assistant refusal frame.
-		const result = await streamAnthropicSubscription(model, { messages: [] }).result();
+		const result = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
 
 		// Then: the legacy shape produces the same terminal refusal outcome.
 		expect(result).toMatchObject({
@@ -142,7 +142,7 @@ describe("Claude SDK OAuth refusals", () => {
 		const result = await streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "security-sensitive request", timestamp: 1 }] },
-			{ sessionId, streamKind: "main" },
+			{ cwd: process.cwd(), sessionId, streamKind: "main" },
 		).result();
 
 		// Then: refusal itself terminates the stream; the pump never asks for another message.

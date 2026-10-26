@@ -1,10 +1,13 @@
 import type { AgentEndEvent } from "../../types.ts";
+import type { TodoOwedOutcome } from "./todo-owed-backstop.ts";
 import type { TurnEndLivenessInput } from "./turn-end-liveness.ts";
 import type { Goal } from "./types.ts";
 
 export interface GoalLifecycleFacts {
 	readonly goal: Goal | null;
 	readonly input?: TurnEndLivenessInput;
+	/** What the todo backstop returned at the last turn end; a repeated `cap` emits no event. */
+	readonly todoOutcome?: TodoOwedOutcome;
 }
 
 type Collector = (restoredEnd?: AgentEndEvent, goal?: Goal | null) => Promise<GoalLifecycleFacts>;

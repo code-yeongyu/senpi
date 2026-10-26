@@ -12,6 +12,7 @@ import { type HostAttachHold, holdAttachment } from "./host-attach-hold.ts";
 import { type HostProtocolInfo, parseHostProtocolInfo } from "./host-decision.ts";
 import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
 import { connectAndAsk, isRecord, PROBE_REQUEST_ID, readAnswer, requestOnSocket } from "./host-socket-request.ts";
+import type { RpcKeyOptions } from "./rpc-auth-client.ts";
 
 export { requestOnSocket };
 
@@ -21,15 +22,20 @@ export const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
 export interface ProbeHostOptions {
 	readonly socket: string;
 	readonly timeoutMs?: number;
+	readonly keyRoot?: string;
 }
 
 /** The running host's identity, or `undefined` when nothing is serving the endpoint. */
 export function probeHost(options: ProbeHostOptions): Promise<HostProtocolInfo | undefined> {
-	return probeProtocolInfo(options.socket, options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS);
+	return probeProtocolInfo(options.socket, options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS, options);
 }
 
-export async function probeProtocolInfo(socketPath: string, timeoutMs: number): Promise<HostProtocolInfo | undefined> {
-	const reply = await requestOnSocket(socketPath, { type: "get_protocol_info" }, timeoutMs);
+export async function probeProtocolInfo(
+	socketPath: string,
+	timeoutMs: number,
+	options: RpcKeyOptions = {},
+): Promise<HostProtocolInfo | undefined> {
+	const reply = await requestOnSocket(socketPath, { type: "get_protocol_info" }, timeoutMs, options);
 	return reply === undefined ? undefined : parseHostProtocolInfo(reply);
 }
 
@@ -37,11 +43,13 @@ export async function probeProtocolInfo(socketPath: string, timeoutMs: number): 
 export async function observeProtocolInfo(
 	socketPath: string,
 	timeoutMs: number,
+	options: RpcKeyOptions = {},
 ): Promise<HostProtocolInfo | undefined> {
 	const reply = await requestOnSocket(
 		socketPath,
 		{ type: "get_protocol_info", [OBSERVE_REQUEST_FIELD]: true },
 		timeoutMs,
+		options,
 	);
 	return reply === undefined ? undefined : parseHostProtocolInfo(reply);
 }
@@ -54,12 +62,14 @@ export async function observeProtocolInfo(
 export async function holdProtocolInfo(
 	socketPath: string,
 	timeoutMs: number,
+	options: RpcKeyOptions = {},
 ): Promise<{ readonly info: HostProtocolInfo; readonly hold: HostAttachHold } | undefined> {
 	const outcome = await connectAndAsk(
 		socketPath,
 		{ id: PROBE_REQUEST_ID, type: "get_protocol_info" },
 		timeoutMs,
 		true,
+		options,
 	);
 	const info = outcome.answer === undefined ? undefined : parseHostProtocolInfo(outcome.answer);
 	if (outcome.kept === undefined) return undefined;
@@ -75,17 +85,27 @@ export async function holdProtocolInfo(
  * difference decides whether an ensure may end it: a silent-but-connectable socket has an owner
  * serving sessions behind it, and killing that owner destroys every one of them.
  */
-export async function probeSocketReachable(socketPath: string, timeoutMs: number): Promise<boolean> {
-	return (await connectAndAsk(socketPath, { id: PROBE_REQUEST_ID, type: "get_protocol_info" }, timeoutMs)).connected;
+export async function probeSocketReachable(
+	socketPath: string,
+	timeoutMs: number,
+	options: RpcKeyOptions = {},
+): Promise<boolean> {
+	return (
+		await connectAndAsk(socketPath, { id: PROBE_REQUEST_ID, type: "get_protocol_info" }, timeoutMs, false, options)
+	).connected;
 }
 
 /**
  * How many sessions the host holds right now, worker sessions included, or `undefined` when it
  * does not answer. A stop decision needs the number the host reports, not the one a client remembers.
  */
-export async function probeSessionCount(socketPath: string, timeoutMs: number): Promise<number | undefined> {
+export async function probeSessionCount(
+	socketPath: string,
+	timeoutMs: number,
+	options: RpcKeyOptions = {},
+): Promise<number | undefined> {
 	return sessionCountOf(
-		await requestOnSocket(socketPath, { type: "list_sessions", include_workers: true }, timeoutMs),
+		await requestOnSocket(socketPath, { type: "list_sessions", include_workers: true }, timeoutMs, options),
 	);
 }
 
@@ -101,12 +121,17 @@ export interface HeldSessionCount {
 	close(): void;
 }
 
-export async function holdSessionCount(socketPath: string, timeoutMs: number): Promise<HeldSessionCount | undefined> {
+export async function holdSessionCount(
+	socketPath: string,
+	timeoutMs: number,
+	options: RpcKeyOptions = {},
+): Promise<HeldSessionCount | undefined> {
 	const outcome = await connectAndAsk(
 		socketPath,
 		{ id: PROBE_REQUEST_ID, type: "list_sessions", include_workers: true },
 		timeoutMs,
 		true,
+		options,
 	);
 	const kept = outcome.kept;
 	if (kept === undefined) return undefined;

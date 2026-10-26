@@ -47,6 +47,7 @@ import {
 	loadEntriesFromFile,
 	loadEntriesFromFileAsync,
 	parseSessionEntryLine,
+	readForkSource,
 	terminateFinalSessionLine,
 } from "./session-entry-file.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
@@ -3052,15 +3053,16 @@ export class SessionManager {
 	): SessionManager {
 		const resolvedSourcePath = resolvePath(sourcePath);
 		const resolvedTargetCwd = resolvePath(targetCwd);
-		const sourceEntries = loadEntriesFromFile(resolvedSourcePath);
-		if (sourceEntries.length === 0) {
-			throw new Error(`Cannot fork: source session file is empty or invalid: ${resolvedSourcePath}`);
+		const source = readForkSource(resolvedSourcePath);
+		if (source.kind === "empty") {
+			throw new Error(`Cannot fork: source session file is empty or has no readable entries: ${resolvedSourcePath}`);
 		}
-
-		const sourceHeader = sourceEntries.find((e) => e.type === "session") as SessionHeader | undefined;
-		if (!sourceHeader) {
-			throw new Error(`Cannot fork: source session has no header: ${resolvedSourcePath}`);
+		if (source.kind === "not-a-session") {
+			throw new Error(
+				`Cannot fork: source file is not a session file (no entry has a session header or a session entry shape): ${resolvedSourcePath}`,
+			);
 		}
+		const sourceEntries = source.entries;
 
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(resolvedTargetCwd);
 		if (!existsSync(dir)) {

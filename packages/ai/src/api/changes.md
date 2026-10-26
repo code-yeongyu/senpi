@@ -228,6 +228,28 @@ The diagnostic rides the provider's thrown error inside the adapter, before any 
 
 - LOW: one more `Set` beside `toolReferenceReplayFallbacks` and its cleanup loop, one demotion call in `createRequest`, and one retry branch in the fork-only retry block; `anthropic-web-search-expiry.ts` is fork-only.
 
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: deleted. This classifier API existed only to back the removed `/llama` extension; it had no consumers outside it.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: deleted alongside its eager twin.
+
+### Why
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: Q ordered removal of the `/llama` feature; this backend had no other consumers.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: the lazy entry point exists only for that deleted backend.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: an extension cannot remove a shipped API implementation.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: an extension cannot remove its shipped lazy entry point.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/llama-cpp-classify.ts`: deleted; upstream edits will conflict.
+- `packages/ai/src/api/llama-cpp-classify.lazy.ts`: deleted alongside.
+
 ## 2026-10-11 - Replay opted-in GLM server-result pairs (senpi#3125 delta)
 
 ### What changed

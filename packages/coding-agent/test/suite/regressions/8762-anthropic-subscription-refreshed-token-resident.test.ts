@@ -201,7 +201,11 @@ describe("anthropic-subscription resident session after a token refresh", () => 
 		overrideContinuityObservabilityBoundary({ emit: (observation) => observations.push(observation) });
 		const spawned = tokenBoundBoundary();
 		const runTurn = (messages: Parameters<typeof streamAnthropicSubscription>[1]["messages"]) =>
-			streamAnthropicSubscription(model, { messages }, { sessionId: SESSION_ID, streamKind: "main" }).result();
+			streamAnthropicSubscription(
+				model,
+				{ messages },
+				{ cwd: process.cwd(), sessionId: SESSION_ID, streamKind: "main" },
+			).result();
 
 		const user1 = { role: "user" as const, content: "first", timestamp: 1 };
 		const user2 = { role: "user" as const, content: "second", timestamp: 3 };

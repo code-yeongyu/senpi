@@ -1,3 +1,21 @@
+## 2026-10-22 - The package manifest declares reference-object support (senpi#3858)
+
+### What changed
+
+- `packages/coding-agent/package.json`: a top-level `senpiCapabilities` object with `configReferenceObjects: 1`, present in every engine that resolves `$file`, `$env` and `$concat` reference objects.
+
+### Why
+
+- Setup tools must write reference objects only for an engine that reads them, because an older engine can pass an object through without validating it. They already read the installed engine's `package.json` for its version; a declared capability opens their gate exactly for engines that contain the resolver, without guessing a release number before it exists.
+
+### Why an extension could not handle it
+
+- The signal must be readable from the installed package without starting the engine or loading any extension.
+
+### Expected merge conflict zones
+
+- LOW: the top-level keys after `piConfig` in `packages/coding-agent/package.json`.
+
 ## 2026-10-20 - Share the MCP environment grants store (senpi#3796)
 
 ### What changed

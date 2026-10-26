@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { redactResolvedReferenceValues } from "../../../config-reference-redaction.ts";
 import type { McpServerConfig } from "./config-schema.ts";
 import { ConnectError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
@@ -45,7 +46,7 @@ function connectErrorFromDiagnostic(
 		diagnostic === null || diagnostic.length === 0
 			? `MCP server ${options.serverName} failed during connect: ${options.cause.message}`
 			: `MCP server ${options.serverName} failed during connect: ${options.cause.message}\n${diagnostic}`;
-	return new ConnectError(message, {
+	return new ConnectError(redactResolvedReferenceValues(message), {
 		cause: options.cause,
 		phase: "connect",
 		retriable: true,

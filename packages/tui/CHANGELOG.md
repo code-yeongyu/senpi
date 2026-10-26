@@ -12,6 +12,116 @@
 
 ### Removed
 
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-3] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-2] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-1] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A Kitty key release no longer turns main-screen mouse capture back on after the wheel handed the mouse to the terminal; only a key press or paste does ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
+
+### Removed
+
 ## [2026.10.21-3] - 2026-10-22
 
 ### Breaking Changes

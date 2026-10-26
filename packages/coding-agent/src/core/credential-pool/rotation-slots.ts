@@ -1,7 +1,8 @@
 import type { Credential } from "@earendil-works/pi-ai";
 import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
-import { resolveConfigValue } from "../resolve-config-value.ts";
+import { ConfigReferenceError, type ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
+import { getConfigValueEnvVarNames, resolveConfigValue } from "../resolve-config-value.ts";
 import { discoverEnvSlots } from "./env-slots.ts";
 import type { RunSlot } from "./failover.ts";
 import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
@@ -73,7 +74,7 @@ export type RotationSources = {
 		affinity?: boolean;
 		cooldownBaseMs?: number;
 		cooldownCapMs?: number;
-		slots?: Record<string, { env?: string; value?: string }>;
+		slots?: Record<string, { env?: string; value?: ConfigValue }>;
 	};
 	now?: () => number;
 };
@@ -95,8 +96,15 @@ function overlayState(slot: RotationSlot, state: CredentialSlotState | undefined
  */
 function overlayModelBlock(slot: RotationSlot, until: number | undefined): RotationSlot {
 	if (until === undefined || (slot.blockedUntil !== undefined && slot.blockedUntil >= until)) return slot;
-	return { ...slot, blockedUntil: until, blockReason: slot.blockReason ?? "rate_limit" };
+	return {
+		...slot,
+		blockedUntil: until,
+		blockReason: slot.blockReason ?? "rate_limit",
+	};
 }
+
+/** Skipped-slot notices already printed in this process (field + reason; never a value). */
+const warnedSlotReferences = new Set<string>();
 
 /**
  * Lists the provider's rotation slots with sidecar health overlaid. Stored
@@ -113,15 +121,44 @@ export async function listRotationSlots(
 	const modelId = options.modelId;
 	const now = sources.now ?? Date.now;
 	const { providerId, credential, env, repository } = sources;
-	const policySlots: { name: string; envVarName: string; key: string; source: "env" }[] = [];
+	const policySlots: {
+		name: string;
+		envVarName: string;
+		key: string;
+		source: "env";
+	}[] = [];
+	let referenceError: ConfigReferenceError | undefined;
 	for (const [name, ref] of Object.entries(sources.policy?.slots ?? {})) {
 		const envVarName = ref.env ?? `models.json:${name}`;
-		const key =
-			ref.env !== undefined
-				? env(ref.env)
-				: ref.value !== undefined
-					? await resolveConfigValue(ref.value, {})
-					: undefined;
+		let key: string | undefined;
+		try {
+			key =
+				ref.env !== undefined
+					? env(ref.env)
+					: ref.value !== undefined
+						? await resolveConfigValue(
+								ref.value,
+								typeof ref.value === "string"
+									? {}
+									: Object.fromEntries(
+											getConfigValueEnvVarNames(ref.value).flatMap((variable) => {
+												const value = env(variable);
+												return value === undefined ? [] : [[variable, value]];
+											}),
+										),
+							)
+						: undefined;
+		} catch (error) {
+			if (!(error instanceof ConfigReferenceError)) throw error;
+			const notice = `${error.field}: configuration reference ${error.reason}; skipping credential slot`;
+			// Slots are listed on every request; a broken unused slot warns once per process, not once per turn.
+			if (!warnedSlotReferences.has(notice)) {
+				warnedSlotReferences.add(notice);
+				console.warn(notice);
+			}
+			referenceError ??= error;
+			continue;
+		}
 		if (!key) continue;
 		policySlots.push({ name, envVarName, key, source: "env" });
 	}
@@ -196,7 +233,10 @@ export async function listRotationSlots(
 				),
 			);
 		}
-		if (policySlots.length === 0) return slots;
+		if (policySlots.length === 0) {
+			if (slots.length === 0 && referenceError !== undefined) throw referenceError;
+			return slots;
+		}
 		const namedSources: RotationSources = {
 			...sources,
 			credential: undefined,
@@ -206,6 +246,7 @@ export async function listRotationSlots(
 		return [...slots, ...namedSlots];
 	}
 	const envSlots = [...discoverEnvSlots(providerId, env), ...policySlots];
+	if (envSlots.length === 0 && referenceError !== undefined) throw referenceError;
 	return listEnvRotationSlots(sources, envSlots, acquireLeases, modelId);
 }
 

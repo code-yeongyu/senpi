@@ -8,6 +8,8 @@ import {
 	type Provider,
 	type ProviderHeaders,
 } from "@earendil-works/pi-ai";
+import type { ConfigValue } from "@earendil-works/pi-ai/utils/config-reference";
+import { assertConfigReferenceAuthority } from "./config-reference-resolver.ts";
 import type { ModelsJsonProvider } from "./model-config.ts";
 import { checkConfiguredHeaderAuth, headerAuthResolutionSource } from "./provider-header-auth.ts";
 import {
@@ -25,6 +27,7 @@ interface AmbientAuthExtensionInput {
 interface ProviderAuthExtensionInput {
 	apiKey?: string;
 	headers?: Record<string, string>;
+	models?: Array<{ id: string; headers?: Record<string, string> }>;
 	authHeader?: boolean;
 	oauth?: unknown;
 	ambientAuth?: AmbientAuthExtensionInput;
@@ -74,6 +77,7 @@ export function composeApiKeyAuth(
 				return { type: "api_key", source: "stored credential" };
 			}
 			if (rawKey !== undefined) {
+				if (typeof rawKey !== "string") return { type: "api_key", source: "configured API key" };
 				if (isCommandConfigValue(rawKey)) return { type: "api_key", source: "configured API key" };
 				for (const name of getConfigValueEnvVarNames(rawKey)) {
 					if ((await input.ctx.env(name)) === undefined) return undefined;
@@ -116,7 +120,7 @@ function ambientResolverOf(oauth: unknown): AmbientResolver | undefined {
 function ambientOnlyAuth(
 	providerId: string,
 	oauth: unknown,
-	rawHeaders: Record<string, string> | undefined,
+	rawHeaders: Record<string, ConfigValue> | undefined,
 	headerSource: string | undefined,
 	authHeader: boolean,
 ): ApiKeyAuth | undefined {
@@ -161,7 +165,7 @@ function ambientOnlyAuth(
 function ambientApiKeyAuth(
 	providerId: string,
 	ambient: AmbientAuthExtensionInput,
-	rawHeaders: Record<string, string> | undefined,
+	rawHeaders: Record<string, ConfigValue> | undefined,
 	headerSource: string | undefined,
 	authHeader: boolean,
 ): ApiKeyAuth {
@@ -187,14 +191,39 @@ function ambientApiKeyAuth(
 export function configuredApiKey(
 	config: ModelsJsonProvider | undefined,
 	extension: ProviderAuthExtensionInput | undefined,
-): string | undefined {
+): ConfigValue | undefined {
+	if (extension?.apiKey !== undefined) {
+		assertConfigReferenceAuthority(extension.apiKey, {
+			origin: "provider extension",
+			field: "extension.apiKey",
+			authority: "extension",
+		});
+	}
+	if (config?.apiKey !== undefined) assertConfigReferenceAuthority(config.apiKey);
 	return extension?.apiKey ?? config?.apiKey;
 }
 
 export function configuredHeaders(
 	config: ModelsJsonProvider | undefined,
 	extension: ProviderAuthExtensionInput | undefined,
-): Record<string, string> | undefined {
+): Record<string, ConfigValue> | undefined {
+	for (const model of extension?.models ?? []) {
+		for (const [name, value] of Object.entries(model.headers ?? {})) {
+			assertConfigReferenceAuthority(value, {
+				origin: "provider extension",
+				field: `extension.models.${model.id}.headers.${name}`,
+				authority: "extension",
+			});
+		}
+	}
+	for (const [name, value] of Object.entries(extension?.headers ?? {})) {
+		assertConfigReferenceAuthority(value, {
+			origin: "provider extension",
+			field: `extension.headers.${name}`,
+			authority: "extension",
+		});
+	}
+	for (const value of Object.values(config?.headers ?? {})) assertConfigReferenceAuthority(value);
 	if (!config?.headers && !extension?.headers) return undefined;
 	return { ...config?.headers, ...extension?.headers };
 }
@@ -216,7 +245,7 @@ export function withConfiguredAuth(
 async function resolveBaseAuth(
 	providerId: string,
 	inherited: ApiKeyAuth | undefined,
-	rawKey: string | undefined,
+	rawKey: ConfigValue | undefined,
 	input: Parameters<ApiKeyAuth["resolve"]>[0],
 ): Promise<AuthResult | undefined> {
 	if (input.credential?.key) {
@@ -233,7 +262,7 @@ async function resolveBaseAuth(
 }
 
 async function configContextEnv(
-	values: readonly string[],
+	values: readonly ConfigValue[],
 	ctx: AuthContext,
 	explicit?: Record<string, string>,
 ): Promise<Record<string, string> | undefined> {
@@ -243,5 +272,5 @@ async function configContextEnv(
 		const value = await ctx.env(name);
 		if (value !== undefined) env[name] = value;
 	}
-	return Object.keys(env).length > 0 ? env : undefined;
+	return Object.keys(env).length > 0 || values.some((value) => typeof value !== "string") ? env : undefined;
 }

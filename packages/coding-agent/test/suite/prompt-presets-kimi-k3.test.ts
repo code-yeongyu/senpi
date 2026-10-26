@@ -24,7 +24,8 @@ function createModel(id: string, provider: string, api: Api = "openai-responses"
 
 function hasKimiK3CatalogSignal(model: Model<Api>): boolean {
 	const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
-	return /(?:^|[/@._-])kimi-k3(?:$|[/@._:-])/.test(searchable);
+	const isK31 = /(?:^|[/@._-])(?:kimi-)?k3(?:[._-]|p)1(?:$|[/@._:-])/.test(searchable);
+	return !isK31 && /(?:^|[/@._-])kimi-k3(?:$|[/@._:-])/.test(searchable);
 }
 
 function getKimiK3CatalogModels(): Model<Api>[] {

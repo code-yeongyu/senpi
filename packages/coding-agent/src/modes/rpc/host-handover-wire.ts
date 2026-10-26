@@ -15,6 +15,7 @@ import { probeProtocolInfo } from "./host-probe.ts";
 import type { RpcResponse } from "./rpc-types.ts";
 import { selectDrainVerdicts } from "./session-drain.ts";
 import type { RpcSessionRegistry } from "./session-registry.ts";
+import type { Duplex } from "node:stream";
 
 export const BEGIN_HANDOVER_COMMAND = "begin_handover";
 
@@ -35,6 +36,14 @@ export function parseBeginHandover(record: Readonly<Record<string, unknown>>): I
 		return "env must map names to strings";
 	}
 	const policy = isRecord(record.policy) ? record.policy : undefined;
+	const { agent_dir } = record;
+	const mcpPresenterEnforcement = record.mcp_presenter_enforcement;
+	if (mcpPresenterEnforcement !== undefined && typeof mcpPresenterEnforcement !== "boolean") {
+		return "mcp_presenter_enforcement must be a boolean";
+	}
+	if (agent_dir !== undefined && (typeof agent_dir !== "string" || agent_dir === "")) {
+		return "agent_dir must be a non-empty string";
+	}
 	return {
 		operationId: operation_id,
 		ifInstanceId: if_instance_id,
@@ -43,7 +52,9 @@ export function parseBeginHandover(record: Readonly<Record<string, unknown>>): I
 		launch: { command: launch.command, args: launch.args },
 		hostArgs: host_args,
 		env: env as Readonly<Record<string, string>>,
+		...(mcpPresenterEnforcement !== undefined && { mcpPresenterEnforcement }),
 		...(policy !== undefined && { policy }),
+		...(agent_dir !== undefined && { agentDir: agent_dir }),
 	};
 }
 
@@ -131,12 +142,15 @@ export async function performIdleHandover(context: {
 	readonly request: IdleHandoverRequest;
 	readonly socket: string;
 	readonly agentDir: string;
+	readonly presenterBootstrap?: Duplex;
 }): Promise<HandoverOutcome> {
 	const { request, socket, agentDir } = context;
 	const env: Record<string, string | null> = {};
 	for (const name of Object.keys(process.env)) env[name] = null;
 	Object.assign(env, request.env);
 	const result = await handoffHost({
+		presenterBootstrap: context.presenterBootstrap,
+		mcpPresenterEnforcement: request.mcpPresenterEnforcement,
 		socket,
 		agentDir,
 		hostArgs: request.hostArgs,

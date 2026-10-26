@@ -166,6 +166,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 				const end = lastAgentEnd ?? restoredEnd;
 				return {
 					goal,
+					...(lastTodoOutcome === undefined ? {} : { todoOutcome: lastTodoOutcome }),
 					...(end
 						? {
 								input: collectTurnEndLivenessInput(ctx, end, {

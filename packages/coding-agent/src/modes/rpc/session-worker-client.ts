@@ -18,8 +18,11 @@ import type {
 	SessionWriteGrant,
 	WorkerSnapshot,
 } from "./session-worker-protocol.ts";
+import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
+import { randomUUID } from "node:crypto";
+import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 
 /** Lifecycle hooks the owning registry installs on every worker it allocates. */
 export interface SessionWorkerCallbacks {
@@ -38,6 +41,12 @@ const compiledWorkerEntry =
 		: "./src/modes/rpc/session-worker.ts";
 
 export class SessionWorkerClient {
+	private privateBinding?: McpFormBinding;
+	private stopPrivateBinding?: () => void;
+	private readonly privateOperations = new Map<
+		string,
+		{ operation: AbortController; presentation: AbortController; epoch: string }
+	>();
 	/** The worker's own route to the main-thread Bun.WebView service; released when the worker exits. */
 	private readonly webviewBroker = createWebViewBroker();
 	readonly worker = new Worker(
@@ -69,6 +78,7 @@ export class SessionWorkerClient {
 	private readonly listeners = new Set<() => void>();
 	private cancelUiPending = false;
 	private terminalFailure?: string;
+	private stopLimitMirror: () => void = () => {};
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
@@ -76,11 +86,16 @@ export class SessionWorkerClient {
 		this.callbacks = callbacks;
 		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
+				this.stopPrivateBinding?.();
+				this.privateBinding?.dispose();
+				for (const operation of this.privateOperations.values()) operation.operation.abort();
+				this.privateOperations.clear();
 				if (!this.stopped && !this.closeTimer) this.fail("session_worker_exited");
 				this.stopped = true;
 				if (this.closeTimer) clearTimeout(this.closeTimer);
 				this.requests.close(new Error("session_worker_exited"));
 				void this.webviewBroker?.dispose();
+				this.stopLimitMirror();
 				this.listeners.clear();
 				const released = callbacks.exit();
 				if (released)
@@ -99,7 +114,19 @@ export class SessionWorkerClient {
 	}
 
 	async prepare(configuration: CliRuntimeConfiguration, profile: RpcSessionLaunchProfile): Promise<string> {
-		const result = await this.request({ type: "prepare", configuration, profile });
+		// The host's poller feeds only the host's store and the isolate reads its own copy, so the isolate starts
+		// from the host's records and then receives each change (senpi#3695). Subscribing before the request is
+		// posted keeps a change that lands in between ordered after the snapshot.
+		this.stopLimitMirror();
+		this.stopLimitMirror = subscriptionLimits.subscribeMirror((limits) =>
+			this.post({ type: "subscription_limits", accounts: [limits] }),
+		);
+		const result = await this.request({
+			type: "prepare",
+			configuration,
+			profile,
+			subscriptionLimits: subscriptionLimits.mirrorSnapshot(),
+		});
 		if (result.type !== "prepared") throw new Error("Invalid worker prepare response");
 		return result.sessionPath;
 	}
@@ -145,9 +172,11 @@ export class SessionWorkerClient {
 			capabilities: options.capabilities ?? [],
 			connection: writer.currentConnection(),
 			roles: options.connectionRoles?.rolesOf(roleConnection(writer.currentConnection())),
+			mcpFormsEnforced: writer.mcpPresenters !== undefined,
 		});
 		return {
 			handle: async (command) => {
+				if (writer.handleMcpForm(command)) return;
 				const connection = writer.currentConnection();
 				if (
 					"type" in command &&
@@ -217,6 +246,86 @@ export class SessionWorkerClient {
 			return;
 		}
 		switch (message.type) {
+			case "mcp_form_bind": {
+				this.stopPrivateBinding?.();
+				this.privateBinding?.dispose();
+				const writer = this.writer;
+				const sessionId = this.sessionId;
+				if (!writer?.mcpPresenters || !sessionId) {
+					this.fail("private_form_unavailable");
+					return;
+				}
+				const bound = writer.bindMcpForms(sessionId, message.durableId, {}, () => {});
+				if (bound instanceof Promise) {
+					this.fail("private_form_unavailable");
+					return;
+				}
+				this.privateBinding = writer.getMcpFormBinding(sessionId);
+				const binding = this.privateBinding;
+				if (!binding) {
+					this.fail("private_form_unavailable");
+					return;
+				}
+				const unsubscribe = binding.subscribe?.(() =>
+					this.post({
+						type: "mcp_form_availability",
+						epoch: binding.epoch,
+						version: binding.version?.(),
+					}),
+				);
+				this.stopPrivateBinding = () => {
+					unsubscribe?.();
+					bound?.();
+				};
+				this.post({ type: "mcp_form_bound", id: message.id, epoch: binding.epoch, version: binding.version?.() });
+				return;
+			}
+			case "mcp_form_ready": {
+				const binding = this.privateBinding;
+				this.post({
+					type: "mcp_form_availability",
+					id: message.id,
+					epoch: message.epoch,
+					version: binding?.epoch === message.epoch ? binding.version?.() : undefined,
+				});
+				return;
+			}
+			case "mcp_form_release":
+				if (this.privateBinding?.epoch === message.epoch) this.stopPrivateBinding?.();
+				return;
+			case "mcp_form_cancel": {
+				const operation = this.privateOperations.get(message.id);
+				if (operation?.epoch === message.epoch) operation[message.lifetime].abort();
+				return;
+			}
+			case "mcp_form_create": {
+				const binding = this.privateBinding;
+				const presenter =
+					binding?.epoch === message.epoch && binding.version?.() === message.version
+						? binding.capture()
+						: undefined;
+				const operation = new AbortController();
+				const presentation = new AbortController();
+				this.privateOperations.set(message.id, { operation, presentation, epoch: message.epoch });
+				const fence = new Int32Array(message.operationFence);
+				const result = presenter?.present({
+					...message.input,
+					operationSignal: operation.signal,
+					presentationSignal: presentation.signal,
+					operationCurrent: () => Atomics.load(fence, 0) === 0,
+				});
+				void Promise.resolve(result).then((outcome) => {
+					this.privateOperations.delete(message.id);
+					this.post({
+						type: "mcp_form_settlement",
+						id: message.id,
+						epoch: message.epoch,
+						settlementId: randomUUID(),
+						outcome: outcome ?? { kind: "processing_failure", source: "host_termination", humanAdmission: false },
+					});
+				});
+				return;
+			}
 			case "prepared":
 			case "ready":
 			case "result": {
@@ -360,6 +469,9 @@ export class SessionWorkerClient {
 			}
 			case "request_close":
 				this.requestClose?.();
+				return;
+			case "subscription_limits":
+				subscriptionLimits.adopt(message.limits);
 				return;
 			case "failure":
 				this.fail(message.error);

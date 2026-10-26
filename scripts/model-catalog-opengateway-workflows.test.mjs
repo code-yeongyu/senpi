@@ -19,6 +19,16 @@ function runCommands(workflowFile) {
 }
 
 describe("OpenGateway outage handling in the model catalog workflows", () => {
+	it("publishes both refreshes with the existing CI-triggering automation token", () => {
+		for (const file of ["model-catalog-refresh.yml", "opengateway-catalog-refresh.yml"]) {
+			const workflow = parse(readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), "utf8"));
+			const publisher = Object.values(workflow.jobs).flatMap((job) => job.steps ?? [])
+				.find((step) => step.run?.includes("node scripts/publish-catalog-refresh.mjs"));
+			assert.ok(publisher, file);
+			assert.equal(publisher.env.GH_TOKEN, "${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}");
+		}
+	});
+
 	it("keeps the last good OpenGateway catalog in the whole-catalog refresh", () => {
 		const generate = runCommands("model-catalog-refresh.yml").filter((run) => run.includes("generate-models.ts"));
 

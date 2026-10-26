@@ -2,14 +2,22 @@ import type { DeliveryTicketId, ObligationKind, ObligationToken, WorkObligations
 import type { SessionEntry } from "./session-manager.ts";
 import { type CustodyPayload, custodyIsOpen, readWorkCustody, type WorkCustodyRecord } from "./work-custody-record.ts";
 
+/** Custody keys the engine opens itself (senpi#3986): queued deliveries and published wake sources. */
+export const ENGINE_DELIVERY_KEY_PREFIX = "delivery:";
+export const WAKE_SOURCE_KEY_PREFIX = "wake-source:";
+export const ENGINE_CUSTODY_KEY_PREFIXES = [ENGINE_DELIVERY_KEY_PREFIX, WAKE_SOURCE_KEY_PREFIX] as const;
+
 /** Why a delivery ticket may not take a new delivery now (senpi#3864); "admitted" when it may. */
 export type TicketAdmission = "admitted" | "unknown" | "closed" | "consumed" | "delivering";
+
+/** Why a send's ticket was refused: its admission, or a re-send whose items differ from the queued message's. */
+export type DeliveryTicketRefusal = Exclude<TicketAdmission, "admitted"> | "different_items";
 
 /** A send whose delivery ticket was refused before anything was written. */
 export class DeliveryTicketRefused extends Error {
 	readonly ticketId: string;
-	readonly reason: Exclude<TicketAdmission, "admitted">;
-	constructor(ticketId: string, reason: Exclude<TicketAdmission, "admitted">) {
+	readonly reason: DeliveryTicketRefusal;
+	constructor(ticketId: string, reason: DeliveryTicketRefusal) {
 		super(`Delivery ticket ${ticketId} was refused: ${reason}`);
 		this.name = "DeliveryTicketRefused";
 		this.ticketId = ticketId;
@@ -76,7 +84,7 @@ export class SessionWorkObligations implements WorkObligations {
 	}
 
 	syncSource(source: string, kind: ObligationKind, activeCount: number): void {
-		const key = `wake-source:${source}`;
+		const key = `${WAKE_SOURCE_KEY_PREFIX}${source}`;
 		this.publishedSources.add(key);
 		const current = this.active.find((record) => record.key === key);
 		if (activeCount <= 0) {
@@ -99,7 +107,7 @@ export class SessionWorkObligations implements WorkObligations {
 	/** After a restart, a restored wake source stays open only if its producer published again. */
 	retireRestoredSources(): void {
 		for (const record of this.active) {
-			if (record.key.startsWith("wake-source:") && !this.publishedSources.has(record.key))
+			if (record.key.startsWith(WAKE_SOURCE_KEY_PREFIX) && !this.publishedSources.has(record.key))
 				this.close(record.id, "passive");
 		}
 	}
@@ -121,10 +129,23 @@ export class SessionWorkObligations implements WorkObligations {
 		if (admission === "unknown") throw new CustodyViolation(ticketId);
 		if (admission !== "admitted") return false;
 		const record = this.ticketRecord(ticketId);
-		this.install({ ...record, state: "queued", payload, delivery: undefined });
+		// A restored queued ticket is re-sent plain; it keeps the item ids its batch was recorded with (senpi#4106).
+		const itemIds = payload.itemIds ?? (record.state === "queued" ? record.payload?.itemIds : undefined);
+		this.install({
+			...record,
+			state: "queued",
+			payload: { ...payload, ...(itemIds ? { itemIds } : {}) },
+			delivery: undefined,
+		});
 		this.delivering.add(ticketId);
 		this.store.changed();
 		return true;
+	}
+
+	/** The item ids a queued ticket's batch was recorded with, if any. */
+	queuedItemIds(ticketId: DeliveryTicketId): readonly string[] | undefined {
+		const record = [...this.records.values()].find((value) => value.ticketId === ticketId);
+		return record?.state === "queued" ? record.payload?.itemIds : undefined;
 	}
 
 	endDelivery(ticketId: DeliveryTicketId): void {

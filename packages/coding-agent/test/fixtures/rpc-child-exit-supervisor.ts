@@ -9,12 +9,35 @@ const [mode, socket, agentDir] = process.argv.slice(2);
 if (mode === "host" || mode === "host-term") {
 	const address = process.argv.find((arg) => arg.startsWith("unix://"))?.slice(7);
 	if (!address) throw new Error("missing internal socket");
+	// The supervisor hands a POSIX host its internal key on stdin and proves readiness over the sealed hop
+	// (senpi#3795), so this stand-in host answers every sealed JSONL request the way a ready host does.
+	const { getInternalHostBootstrap } = await import("../../src/modes/rpc/internal-bootstrap.ts");
+	const { acceptInternalConnection } = await import("../../src/modes/rpc/internal-channel.ts");
+	const bootstrap = getInternalHostBootstrap();
 	const peers = new Set<net.Socket>();
 	const server = net
 		.createServer((peer) => {
 			peers.add(peer);
 			peer.once("close", () => peers.delete(peer));
-			peer.resume();
+			if (!bootstrap) {
+				peer.resume();
+				return;
+			}
+			void acceptInternalConnection(peer, bootstrap.key, { protocolVersion: 1 })
+				.then((stream) => {
+					let buffered = "";
+					stream.on("data", (chunk: Buffer) => {
+						buffered += chunk.toString();
+						for (let end = buffered.indexOf("\n"); end >= 0; end = buffered.indexOf("\n")) {
+							const request = JSON.parse(buffered.slice(0, end)) as { id?: unknown; type?: unknown };
+							buffered = buffered.slice(end + 1);
+							stream.write(
+								`${JSON.stringify({ id: request.id, type: "response", command: request.type, success: true })}\n`,
+							);
+						}
+					});
+				})
+				.catch(() => peer.destroy());
 		})
 		.listen(address);
 	process.on("SIGTERM", () => {

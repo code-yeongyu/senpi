@@ -6,7 +6,7 @@
  * leave one - libuv unlinks the path it bound - so `refusingSocket` moves the entry aside for the
  * close and back afterwards, exactly as `shieldSocketDuringClose` does in production.
  */
-import { execFile } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { watch } from "node:fs";
 import { mkdir, rename, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
@@ -49,6 +49,58 @@ export async function exitedPid(): Promise<number> {
 			else resolvePid(child.pid);
 		});
 	});
+}
+
+/**
+ * A process that has exited but is not reaped yet (a zombie), held by a parent that never waits on it -
+ * what a SIGKILLed supervisor or host child is until its parent's loop (or init) reaps it (senpi#4119).
+ * The parent learns of the exit from the child's end of a pipe closing, then `ps` must report state Z.
+ */
+export async function heldZombie(
+	timeoutMs = 10_000,
+): Promise<{ pid: number; processStartTime: string; release: () => void }> {
+	const script =
+		'pipe(R,W); my $p = fork(); if (!$p) { close R; exit 0 } close W; my $x = <R>; $| = 1; print "$p\\n"; sleep 600';
+	const parent = spawn("perl", ["-e", script], { stdio: ["ignore", "pipe", "inherit"] });
+	const release = (): void => {
+		parent.kill("SIGKILL");
+	};
+	try {
+		const pid = await new Promise<number>((resolvePid, reject) => {
+			let out = "";
+			parent.stdout.on("data", (chunk: Buffer) => {
+				out += chunk.toString();
+				if (out.includes("\n")) resolvePid(Number(out.trim()));
+			});
+			parent.once("error", reject);
+			parent.once("exit", () => reject(new Error("zombie parent exited early")));
+		});
+		const deadline = Date.now() + timeoutMs;
+		while (processState(pid) !== "Z") {
+			if (Date.now() > deadline) throw new Error(`child ${pid} never reached state Z`);
+			await new Promise((resolveTick) => setTimeout(resolveTick, 25));
+		}
+		// What its pidfile recorded while it ran: a zombie keeps its start time.
+		const processStartTime = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+			encoding: "utf8",
+			env: { ...process.env, LC_ALL: "C", LANG: "C" },
+		}).trim();
+		if (!processStartTime) throw new Error(`no start time readable for zombie ${pid}`);
+		return { pid, processStartTime, release };
+	} catch (error) {
+		release();
+		throw error;
+	}
+}
+
+function processState(pid: number): string {
+	try {
+		return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" })
+			.trim()
+			.charAt(0);
+	} catch {
+		return "";
+	}
 }
 
 export function gate(outcome: "resolve" | "reject" = "resolve") {

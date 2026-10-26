@@ -15,6 +15,7 @@ import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { InputOrigin } from "../input-origin.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
+import { inheritMcpMrtrPresentation } from "../mcp-mrtr-presentations.ts";
 import type { NamedMemoryReporter } from "../memory-report/memory-report-registry.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
@@ -884,7 +885,7 @@ export class ExtensionRunner {
 
 	private wrapUIPromptContext(ui: ExtensionUIContext): ExtensionUIContext {
 		const questionFn = ui.question;
-		return {
+		return inheritMcpMrtrPresentation(ui, {
 			...ui,
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
 			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
@@ -903,7 +904,7 @@ export class ExtensionRunner {
 							),
 					}
 				: {}),
-		};
+		});
 	}
 
 	private withUIPrompt<T>(

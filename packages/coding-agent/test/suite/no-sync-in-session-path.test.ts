@@ -12,8 +12,12 @@ import { auditSessionPath, findingKey, type SessionPathFinding } from "./session
  * - blocking primitives (`execSync`, `execFileSync`, `spawnSync`, `Bun.spawnSync`,
  *   `Bun.sleepSync`, `Atomics.wait`) FAIL unless the ledger already records that exact
  *   call site with the reason it is still there;
- * - synchronous filesystem calls are REPORTED against the ledger: a new call site or an
- *   extra call in a ledgered function fails, removing one never does.
+ * - the whole-file sync calls the ledger records keep their (file, call, function) entries
+ *   there: an extra call in a ledgered function fails, removing one never does;
+ * - every other synchronous fs, crypto or zlib call is held to the frozen, shrink-only
+ *   baseline (`no-sync-in-session-path.baseline.json`, senpi#3993): a site it does not list
+ *   fails, and so does an entry that no longer occurs. The move files allow none at all
+ *   (`no-sync-on-move-path.test.ts`).
  *
  * Until the credential and footer probes go async, the unledgered blocking set is
  * `src/core/resolve-config-value.ts` and `src/core/footer-data-provider.ts`, so this
@@ -38,10 +42,55 @@ type LedgerEntry = z.infer<typeof ledgerEntry>;
 
 const ledger = ledgerSchema.parse(JSON.parse(readFileSync(ledgerPath, "utf-8")));
 
+const baselinePath = resolve(import.meta.dirname, "no-sync-in-session-path.baseline.json");
+const baselineSchema = z.object({
+	documentation: z.string().min(1),
+	entries: z.array(
+		z.object({
+			file: z.string().min(1),
+			callee: z.string().min(1),
+			symbol: z.string().min(1),
+			count: z.number().int().positive(),
+			/** Why a site that cannot simply become asynchronous stays, until senpi#3993 converts it. */
+			reason: z.string().min(1).optional(),
+		}),
+	),
+});
+const syncBaseline = baselineSchema.parse(JSON.parse(readFileSync(baselinePath, "utf-8")));
+
+const baselineKey = (site: { file: string; callee: string; symbol: string }): string =>
+	`${site.file} ${site.callee} in ${site.symbol}`;
+
+/** Both directions of the shrink-only ratchet: sites the baseline does not cover, and entries that no longer occur. */
+function baselineDrift(findings: readonly SessionPathFinding[]): {
+	readonly addingIsForbidden: string[];
+	readonly removeFromBaseline: string[];
+} {
+	const live = new Map<string, number>();
+	for (const finding of findings) {
+		if (finding.kind !== "sync-fs" || ledgerKeys.has(findingKey(finding))) continue;
+		live.set(baselineKey(finding), (live.get(baselineKey(finding)) ?? 0) + finding.count);
+	}
+	const frozen = new Map(syncBaseline.entries.map((entry) => [baselineKey(entry), entry.count]));
+	const addingIsForbidden = [...live]
+		.filter(([key, count]) => count > (frozen.get(key) ?? 0))
+		.map(([key, count]) => `${key} (x${count}, baseline x${frozen.get(key) ?? 0}): make the new call asynchronous`);
+	const removeFromBaseline = [...frozen]
+		.filter(([key, count]) => (live.get(key) ?? 0) < count)
+		.map(([key, count]) => `${key} (baseline x${count}, now x${live.get(key) ?? 0}): lower or remove this entry`);
+	return { addingIsForbidden, removeFromBaseline };
+}
+
 /** Human-readable call site: what a failure must name for the fix to be obvious. */
 function describeFinding(finding: SessionPathFinding): string {
 	return `${finding.file}:${finding.lines.join(",")} ${finding.api} in ${finding.symbol} (x${finding.count})`;
 }
+
+/** The ledger keeps exactly the call sites it records; every other sync call is held by the baseline. */
+const ledgerKeys = new Set(ledger.syncFs.map((entry) => findingKey(entry)));
+
+const ledgeredKind = (finding: SessionPathFinding): boolean =>
+	finding.kind === "blocking" || ledgerKeys.has(findingKey(finding));
 
 /** Call sites the ledger does not already cover, by count. */
 function unledgered(
@@ -51,7 +100,10 @@ function unledgered(
 ): string[] {
 	const allowed = new Map(baseline.map((entry) => [findingKey(entry), entry.count]));
 	return findings
-		.filter((finding) => finding.kind === kind && finding.count > (allowed.get(findingKey(finding)) ?? 0))
+		.filter(
+			(finding) =>
+				finding.kind === kind && ledgeredKind(finding) && finding.count > (allowed.get(findingKey(finding)) ?? 0),
+		)
 		.map(describeFinding);
 }
 
@@ -85,6 +137,17 @@ describe("no blocking work on the RPC session path", () => {
 		const introduced = unledgered(findings, "sync-fs", ledger.syncFs);
 		// Then no new sync read or write appeared on the session path
 		expect(introduced).toEqual([]);
+	});
+
+	it("holds every other synchronous fs, crypto or zlib call to the frozen, shrink-only baseline", () => {
+		// Given the checked-in baseline of the remaining shared-module sync sites
+		// When today's class findings are compared with it in both directions
+		const drift = baselineDrift(findings);
+		// Then no site was added, and every site that went away was removed from the baseline in the same change
+		expect(
+			drift,
+			"no-sync baseline drift: entries under addingIsForbidden must become asynchronous (the baseline never grows); entries under removeFromBaseline must be lowered or deleted in no-sync-in-session-path.baseline.json",
+		).toEqual({ addingIsForbidden: [], removeFromBaseline: [] });
 	});
 
 	it("keeps the ledger free of entries the session path no longer reaches", () => {

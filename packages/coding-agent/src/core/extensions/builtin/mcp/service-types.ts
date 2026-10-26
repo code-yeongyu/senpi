@@ -1,4 +1,4 @@
-import type { ExtensionContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
+import type { ExtensionContext, ExtensionUIContext, SessionShutdownEvent, SessionStartEvent } from "../../types.ts";
 import type { ServerAuthPlan } from "./auth/context.ts";
 import type { McpCachedServerCatalog } from "./catalog-cache.ts";
 import type { ResolvedMcpServer } from "./config-schema.ts";
@@ -71,6 +71,7 @@ export type McpWireStatusServer = {
 	readonly resourceTemplates: readonly McpWireResourceTemplate[];
 	readonly authStatus: McpWireAuthStatus;
 	readonly status?: McpWireServerStatus;
+	readonly lastError?: string;
 };
 
 export type McpWireStatusSnapshot = {
@@ -78,6 +79,7 @@ export type McpWireStatusSnapshot = {
 };
 
 export type McpSessionContext = Pick<ExtensionContext, "cwd" | "isProjectTrusted"> & {
+	ui?: ExtensionUIContext;
 	mode?: ExtensionContext["mode"];
 	/**
 	 * Session history access, present on the real ExtensionContext. Only
@@ -154,6 +156,10 @@ export interface McpConnectionEntry {
 	readonly key: string;
 	readonly name: string;
 	readonly configHash: string;
+	/** The admitted generation's identity; equals `configHash` for a server that declares no reference (senpi#3858). */
+	readonly generationHash?: string;
+	/** Present when the server declares references: whether a fresh snapshot no longer matches the admitted one. */
+	readonly generationChanged?: () => Promise<boolean>;
 	readonly connection: ServerConnection;
 	readonly logger: McpLogger;
 	readonly createdAtMs: number;

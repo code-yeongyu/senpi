@@ -327,3 +327,24 @@ function errorMessage(cause: unknown): string {
 function isNodeErrorCode(cause: unknown, code: string): boolean {
 	return cause instanceof Error && "code" in cause && cause.code === code;
 }
+
+/**
+ * Takes the public name over with a rename, once - and only while - that name still refers to the
+ * entry this handoff was decided against. A socket that changed underneath belongs to another
+ * process now: replacing it would unlink an endpoint this generation cannot prove it owns, so the
+ * successor aborts instead and leaves both the intruder's socket and its own bind entry alone.
+ */
+export async function adoptPublicSocket(
+	bindSocket: string,
+	publicSocket: string,
+	expected: SocketFileIdentity | undefined,
+): Promise<void> {
+	if (expected === undefined) throw new Error(`${publicSocket}: a generation launch must name the entry it replaces`);
+	const current = await statSocketIdentity(publicSocket);
+	if (current === undefined || current.dev !== expected.dev || current.ino !== expected.ino) {
+		throw new Error(`${publicSocket}: owned by another socket entry now; refusing to replace it`);
+	}
+	// rename(2) is atomic for readers of the path: every connect either reaches the old entry or
+	// this one, never nothing. The inode this supervisor bound simply answers to a second name.
+	await rename(bindSocket, publicSocket);
+}

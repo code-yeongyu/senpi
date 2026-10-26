@@ -1,3 +1,4 @@
+import { ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as cache from "../../src/core/extensions/builtin/mcp/catalog-cache.ts";
 import type { ServerConnection } from "../../src/core/extensions/builtin/mcp/connection.ts";
@@ -109,12 +110,12 @@ describe("shared MCP ownership boundaries", () => {
 		expect(fixture.connects).toBe(1);
 	});
 
-	it("declines server-initiated elicitation without an in-flight owner", async () => {
+	it("rejects server-initiated elicitation without an in-flight owner", async () => {
 		const { a, b, fixture } = await pair();
 		const input = vi.fn(async () => "must not reach UI");
 		for (const s of [a, b])
 			s.setMcpElicitationUiProvider(() => ({ input, select: async () => undefined, confirm: async () => true }));
-		expect(await fixture.elicit()).toEqual({ action: "decline" });
+		await expect(fixture.elicit()).rejects.toMatchObject({ code: ErrorCode.InternalError, data: undefined });
 		expect(input).not.toHaveBeenCalled();
 	});
 
@@ -164,19 +165,22 @@ describe("shared MCP ownership boundaries", () => {
 		expect(registry.size()).toBe(0);
 	});
 
-	it("declines elicitation with two concurrent owners rather than choosing a UI", async () => {
+	it("rejects elicitation with two concurrent owners rather than choosing a UI", async () => {
 		const { a, b, ac, bc, fixture } = await pair();
 		const input = vi.fn(async () => "must not reach UI");
 		for (const s of [a, b])
 			s.setMcpElicitationUiProvider(() => ({ input, select: async () => undefined, confirm: async () => true }));
 		const entered = fixture.holdCalls(2);
-		const calls = [ac.client.callTool({ name: "elicit" }), bc.client.callTool({ name: "elicit" })];
+		const calls = Promise.allSettled([
+			ac.client.callTool({ name: "elicit" }),
+			bc.client.callTool({ name: "elicit" }),
+		]);
 		await entered;
 		fixture.releaseCalls();
-		const results = await Promise.all(calls);
+		const results = await calls;
 		expect(results).toEqual(
 			expect.arrayContaining([
-				expect.objectContaining({ content: [{ type: "text", text: '{"action":"decline"}' }] }),
+				{ status: "rejected", reason: expect.objectContaining({ code: ErrorCode.InternalError, data: undefined }) },
 			]),
 		);
 		expect(input).not.toHaveBeenCalled();

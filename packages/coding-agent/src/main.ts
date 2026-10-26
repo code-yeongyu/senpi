@@ -526,8 +526,11 @@ export async function createSessionManager(
 	settingsManager: SettingsManager,
 	appMode: AppMode,
 ): Promise<SessionManager> {
+	if (parsed.spawnedBy && (parsed.session || parsed.resume || parsed.continue || parsed.fork || parsed.rebind)) {
+		console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming or forking a session."));
+	}
 	if (parsed.noSession || parsed.help || parsed.listModels !== undefined || parsed.listTips) {
-		return SessionManager.inMemory(cwd, parsed.sessionId !== undefined ? { id: parsed.sessionId } : undefined);
+		return SessionManager.inMemory(cwd, { id: parsed.sessionId, spawnedBy: parsed.spawnedBy });
 	}
 
 	if (parsed.fork) {
@@ -671,6 +674,8 @@ export async function createSessionManager(
 	if (parsed.sessionId) {
 		const existingSession = await findLocalSessionByExactId(parsed.sessionId, cwd, sessionDir);
 		if (existingSession) {
+			if (parsed.spawnedBy)
+				console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming an existing session."));
 			return SessionManager.open(existingSession.path, sessionDir);
 		}
 		console.error(
@@ -680,7 +685,7 @@ export async function createSessionManager(
 		);
 	}
 
-	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId });
+	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId, spawnedBy: parsed.spawnedBy });
 }
 
 function buildSessionOptions(
@@ -1335,7 +1340,8 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc" && parsed.multiSession) {
 		if (options?.extensionFactories?.length)
 			throw new Error("Shared RPC workers require file-backed extensions; inline factories cannot cross isolates");
-		const runtimeConfiguration = { parsed, cwd, agentDir, appMode, toolRuntime };
+		const { presenterBootstrapFd, mcpPresenterEnforcement, ...sessionArgs } = parsed;
+		const runtimeConfiguration = { parsed: sessionArgs, cwd, agentDir, appMode, toolRuntime };
 		// Socket hosts (the machine-wide daemon) run every session IN this process:
 		// createHostCore selects the worker registry only when a workerConfiguration
 		// is passed, so withholding it is what selects the uncapped in-process registry.
@@ -1367,6 +1373,8 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 		printTimings();
 		await runMultiSessionHost({
+			presenterBootstrapFd,
+			mcpPresenterEnforcement,
 			agentDir,
 			createRuntime: createCliRuntimeFactory(runtimeConfiguration, {
 				...(hostModelRuntime === undefined ? {} : { modelRuntime: hostModelRuntime }),
@@ -1591,6 +1599,7 @@ export async function main(args: string[], options?: MainOptions) {
 		// mode seam: interactive startup still loads the same module before first use.
 		const { InteractiveMode } = await import("./modes/interactive/interactive-mode.ts");
 		const interactiveMode = new InteractiveMode(runtime, {
+			mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
 			migratedProviders,
 			authNotices: interactiveAuthNotices(services.authStorage),
 			legacyPiEditNotice: legacyPiEditStartupNotice(),

@@ -507,6 +507,41 @@ async function twoHttpSessions(): Promise<{ alphaPi: CapturingPi; bravoPi: Captu
 }
 
 describe("senpi#2514: the shared service keeps sessions apart under concurrency and failure", () => {
+	// senpi#4210: default readiness checks must not read the released declarer's extension context.
+	it("keeps a peer's in-flight call and subsequent tools live after the original declarer quits", async () => {
+		const fixture = await httpServer();
+		const alpha = await openSession();
+		const bravo = await openSession();
+		const tool = "mcp_fx_echo";
+		await untilToolRegistered(bravo, tool);
+		const service = getMcpService();
+		const connection = service.getConnection("fx");
+		if (connection === undefined) throw new Error("Missing shared connection");
+		const generation = connection.generation;
+		const lifetime = connection.requestLifetimeSignal;
+		const entered = fixture.holdCalls(1);
+		const inFlight = bravo.session.executeTool(tool, { value: "in-flight" });
+		const completed = expect(inFlight).resolves.toMatchObject({
+			content: [{ type: "text", text: JSON.stringify({ value: "in-flight" }) }],
+		});
+		try {
+			await entered;
+			await shutDown(alpha, "quit");
+			expect(service.getConnection("fx")).toBe(connection);
+			expect(connection.generation).toBe(generation);
+			expect(lifetime.aborted).toBe(false);
+		} finally {
+			fixture.releaseCalls();
+			await completed;
+		}
+		expect(getMessageText(await bravo.session.executeTool(tool, { value: "after-release" }))).toBe(
+			JSON.stringify({ value: "after-release" }),
+		);
+		expect(connection.state).toBe("connected");
+		expect(connection.generation).toBe(generation);
+		expect(fixture.connects).toBe(1);
+	});
+
 	it("gives each session without its own tool-search service a separate fallback service", async () => {
 		// Given: two sessions whose extension loads own no tool-search service attach to the shared service.
 		configureServer();

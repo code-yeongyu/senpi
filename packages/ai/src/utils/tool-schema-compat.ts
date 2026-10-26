@@ -4,6 +4,11 @@
  * subset that rejects a sibling `type` keyword on schemas that also declare
  * `anyOf` / `oneOf` / `allOf`. This helper removes that redundancy while
  * preserving the schema's semantics.
+ *
+ * This is provider wire adaptation, not an MCP schema conversion or argument
+ * validator. MCP supplies its full schema (boolean roots use the equivalent
+ * allOf container); the original schema and model arguments are never rewritten.
+ * Root-union conversion below is explicitly lossy for object-only providers.
  */
 
 export type ToolSchemaFlavor = "moonshot-mfjs";

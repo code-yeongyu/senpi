@@ -22,6 +22,7 @@
 import { createHostDaemonPaths, generationPaths, sameEndpoint } from "./host-daemon-paths.ts";
 import { provenOwner, readHostRegistration, releaseGeneration } from "./host-daemon-registration.ts";
 import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
+import { electPointer } from "./host-pointer-election.ts";
 import { probeProtocolInfo, probeSessionCount } from "./host-probe.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import { type DrainHostResult, drainHost } from "./host-stop-drain.ts";
@@ -80,6 +81,8 @@ async function stopHostLocked(options: StopHostOptions): Promise<StopHostResult>
 		socket: options.socket,
 		...(options.agentDir ? { agentDir: options.agentDir } : {}),
 	});
+	// A pointer an earlier prune dropped is given back to the one proven live generation (senpi#1911).
+	await electPointer(paths);
 	const expected = options.expectedGeneration;
 	if (expected !== undefined) {
 		const refusal = generationRefusal(compareStopGeneration(await readHostRegistration(paths), expected));

@@ -31,6 +31,7 @@ import {
 	readHostGcPassMarker,
 	writeHostGcPassMarker,
 } from "./host-gc-pass-marker.ts";
+import { gcRpcPublicKeys } from "./rpc-public-key.ts";
 
 export const OPPORTUNISTIC_GC_BUDGET = { budgetMs: 1_500, maxEndpoints: 32, minIntervalMs: 300_000 } as const;
 
@@ -60,6 +61,8 @@ export async function gcHostEndpointsOpportunistically(
 	const previous = await readHostGcPassMarker(options.agentDir);
 	const startedAt = now();
 	if (previous !== undefined && startedAt - previous.completedAt < minIntervalMs) return { ran: false };
+	if (process.platform !== "win32")
+		await gcRpcPublicKeys(options.agentDir, { deadline: startedAt + budgetMs, maxRecords: maxEndpoints });
 	const candidates = await gcCandidates(options);
 	const present = new Set(candidates.map((endpoint) => endpoint.name));
 	const skip: Record<string, HostGcSkipEntry> = {};

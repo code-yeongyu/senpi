@@ -1,6 +1,7 @@
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "../../../../../config.ts";
+import { redactResolvedReferenceData } from "../../../../config-reference-redaction.ts";
 import type { McpSettings } from "../config-schema.ts";
 import type { McpMappedContentBlock } from "../expose/schema-compat.ts";
 
@@ -49,14 +50,16 @@ export async function applyMcpOutputGuard(
 	options: McpOutputGuardOptions,
 ): Promise<readonly McpMappedContentBlock[]> {
 	const limits = outputGuardLimits(options.outputGuard);
-	const payload = contentToPayload(content);
-	if (payload.bytes.byteLength <= limits.maxBytes && payload.lineCount <= limits.maxLines) return content;
+	// This projection feeds providers, RPC, display and spill files; never change the wire reply.
+	const redacted = redactResolvedReferenceData(content);
+	const payload = contentToPayload(redacted);
+	if (payload.bytes.byteLength <= limits.maxBytes && payload.lineCount <= limits.maxLines) return redacted;
 	const preview = buildPreview(payload, limits);
 	try {
 		const path = await writePayload(payload, options);
-		return [{ type: "text", text: spillMessage(payload, preview, path) }];
+		return redactResolvedReferenceData([{ type: "text", text: spillMessage(payload, preview, path) }]);
 	} catch (error) {
-		return [{ type: "text", text: fallbackMessage(payload, preview, error) }];
+		return redactResolvedReferenceData([{ type: "text", text: fallbackMessage(payload, preview, error) }]);
 	}
 }
 

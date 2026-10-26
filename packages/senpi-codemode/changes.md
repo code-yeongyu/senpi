@@ -28,6 +28,24 @@
 
 # senpi-codemode fork changes
 
+## 2026-10-20 - Remove the built-in llama.cpp image exception (senpi#3202)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/image-resize.ts`: remove the deleted built-in llama.cpp provider from WebP exclusions.
+
+### Why
+
+- `packages/senpi-codemode/src/tool/image-resize.ts`: the `/llama` integration no longer registers that provider; generic local-server exclusions remain supported.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/src/tool/image-resize.ts`: the exclusion is implemented in the eval tool's image conversion path.
+
+### Expected merge conflict zones
+
+- `packages/senpi-codemode/src/tool/image-resize.ts`: the provider predicate in `webpExclusionForModel`.
+
 ## 2026-10-23 - The gate records its baseline on Linux only
 
 ### What changed

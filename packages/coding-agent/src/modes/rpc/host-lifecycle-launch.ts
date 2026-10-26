@@ -16,12 +16,16 @@ import {
 	HOST_PUBLIC_SOCKET_ENV,
 	HOST_SCRATCH_DIR_ENV,
 	HOST_WATCH_FD_ENV,
+	HOST_WATCH_LIFETIME_FIFO_ENV,
 	HOST_WATCH_PPID_ENV,
+	HOST_WATCH_PSTART_ENV,
+	HOST_WATCH_PSTART_TICKS_ENV,
 } from "./host-watchdog.ts";
 import type { SocketFileIdentity } from "./socket-ownership.ts";
 import { SOCKET_SECRET_FILE_ENV } from "./socket-transport.ts";
 
 export interface SupervisorLaunch {
+	readonly presenterBootstrapFd?: number;
 	readonly socket: string;
 	readonly hostArgs: readonly string[];
 	/** Optional runtime command used by rebranded/bundled callers. */
@@ -90,10 +94,16 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 	let childArgs: readonly string[] | undefined;
 	let agentDir: string | undefined;
 	let ownerFd: number | undefined;
+	let presenterBootstrapFd: number | undefined;
 	let bindSocket: string | undefined;
 	let replaceIdentity: SocketFileIdentity | undefined;
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index];
+		if (arg === "--mcp-presenter-fd" && argv[index + 1] === "4") {
+			presenterBootstrapFd = 4;
+			index++;
+			continue;
+		}
 		if (arg === "--owner-fd" && index + 1 < argv.length) {
 			ownerFd = Number(argv[++index]);
 			if (!Number.isSafeInteger(ownerFd) || ownerFd < 3) return undefined;
@@ -132,7 +142,19 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 	}
 	return socket === undefined
 		? undefined
-		: { socket, hostArgs, childCommand, childArgs, agentDir, ownerFd, bindSocket, replaceIdentity };
+		: ownerFd === presenterBootstrapFd && ownerFd !== undefined
+			? undefined
+			: {
+					socket,
+					hostArgs,
+					childCommand,
+					childArgs,
+					agentDir,
+					ownerFd,
+					bindSocket,
+					replaceIdentity,
+					presenterBootstrapFd,
+				};
 }
 
 export const OWNER_WATCH_FD = 3;
@@ -235,6 +257,9 @@ export function spawnHostChild(options: {
 	readonly internalSocket: string;
 	readonly internal: { readonly dir?: string; readonly secretPath: string };
 	readonly internalSecret?: Buffer;
+	readonly internalKey?: Buffer;
+	readonly supervisorStart?: { readonly time?: string; readonly ticks?: string };
+	readonly lifetimeFifo?: string;
 	readonly daemonDir: string;
 	readonly instanceId: string;
 	readonly cleanupPaths: readonly string[];
@@ -242,7 +267,10 @@ export function spawnHostChild(options: {
 }): ChildProcess {
 	const { launch, internalSocket, internal, internalSecret, publicSocket } = options;
 	const childLaunch = spawnableChildLaunch(resolveHostChildLaunch(launch, internalSocket));
-	return spawn(childLaunch.command, childLaunch.args, {
+	// A shell wrapper cannot prove preservation of the private inherited handle.
+	const bootstrap = launch.presenterBootstrapFd !== undefined && !childLaunch.shell;
+	if (bootstrap) childLaunch.args.push("--mcp-presenter-fd", "4");
+	const child = spawn(childLaunch.command, childLaunch.args, {
 		env: {
 			...process.env,
 			...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),
@@ -252,19 +280,47 @@ export function spawnHostChild(options: {
 			[HOST_INSTANCE_ID_ENV]: options.instanceId,
 			[HOST_WATCH_FD_ENV]: String(HOST_CHILD_WATCH_FD),
 			[HOST_WATCH_PPID_ENV]: String(process.pid),
+			[HOST_WATCH_PSTART_ENV]: options.supervisorStart?.time,
+			[HOST_WATCH_PSTART_TICKS_ENV]: options.supervisorStart?.ticks,
+			[HOST_WATCH_LIFETIME_FIFO_ENV]: options.lifetimeFifo,
 			...(internal.dir ? { [HOST_SCRATCH_DIR_ENV]: internal.dir } : {}),
-			...(internalSecret ? { [SOCKET_SECRET_FILE_ENV]: internal.secretPath } : {}),
+			[SOCKET_SECRET_FILE_ENV]: process.platform === "win32" && internalSecret ? internal.secretPath : undefined,
+			SENPI_RPC_INTERNAL_KEY_STDIN: options.internalKey ? "1" : undefined,
 			[HOST_CLEANUP_PATHS_ENV]: options.cleanupPaths.join("\n"),
 			...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
 		},
 		// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
 		// wait on and keeps the write end owned by this process alone.
 		shell: childLaunch.shell,
-		stdio: ["ignore", "ignore", "inherit", "pipe"],
+		stdio: [
+			process.platform === "win32" ? "ignore" : "pipe",
+			"ignore",
+			"inherit",
+			"pipe",
+			...(bootstrap ? ["pipe" as const] : []),
+		],
 		// The supervisor is spawned detached, so on win32 it owns no console. A
 		// console-subsystem child started from it would allocate a fresh one,
 		// which Windows Terminal renders as an empty window that takes focus.
 		// CREATE_NO_WINDOW gives the child a console with no window instead.
 		windowsHide: true,
 	});
+	if (launch.presenterBootstrapFd !== undefined) {
+		const fd = launch.presenterBootstrapFd;
+		// The opt-in helper stays outside the supervisor's fixed startup import budget.
+		void import("./mcp-presenter-bootstrap.ts")
+			.then(({ presenterBootstrapStream, relayPresenterBootstrap }) => {
+				const upstream = presenterBootstrapStream(fd);
+				if (upstream && bootstrap) return relayPresenterBootstrap(upstream, child);
+				upstream?.destroy();
+				child.stdio[4]?.destroy();
+			})
+			.catch(() => child.stdio[4]?.destroy());
+	}
+	if (options.internalKey) {
+		child.stdin?.on("error", () => {});
+		// One write only. Keep its write end alive until this supervisor exits.
+		child.stdin?.write(options.internalKey);
+	}
+	return child;
 }

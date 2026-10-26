@@ -1,3 +1,4 @@
+import { isKeyRelease } from "./keys.ts";
 import {
 	isMouseSequence,
 	MOUSE_TRACKING,
@@ -136,7 +137,7 @@ export class TuiMainScreen extends TuiBase {
 
 	private handleMouseInput(data: string): { consume: boolean } {
 		if (!isMouseSequence(data)) {
-			if (this.yielded && !isTerminalReport(data)) this.rearmAfterYield();
+			if (this.yielded && !isTerminalReport(data) && !isKeyRelease(data)) this.rearmAfterYield();
 			return { consume: false };
 		}
 		const raw = parseSgrMouseEvent(data);

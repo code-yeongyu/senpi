@@ -23,6 +23,7 @@ export type PromptPresetName =
 	| "grok-4.5"
 	| "grok-4.6"
 	| "grok-4.7"
+	| "kimi-k3-1"
 	| "kimi-k3"
 	| "kimi-k2-8"
 	| "kimi-k2-7"
@@ -64,6 +65,7 @@ export const VALID_PRESETS: ReadonlySet<string> = new Set<PromptPresetName>([
 	"grok-4.5",
 	"grok-4.6",
 	"grok-4.7",
+	"kimi-k3-1",
 	"kimi-k3",
 	"kimi-k2-8",
 	"kimi-k2-7",

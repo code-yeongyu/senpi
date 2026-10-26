@@ -257,6 +257,7 @@ export {
 	type KernelToolInvokeScope,
 	kernelToolsStorage,
 } from "./core/extensions/kernel-tools-context.ts";
+export { ReservedCustodyKey } from "./core/extensions/lifecycle-api.ts";
 // Notice primitives
 export {
 	buildNoticeBox,

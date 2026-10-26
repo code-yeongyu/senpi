@@ -125,7 +125,11 @@ afterEach(() => resetSdkBoundary());
 describe("regression #2401: senpi is the single authority for subscription-lane write/edit", () => {
 	it("never offers Claude Code's pre-hook-validated file built-ins to the SDK", async () => {
 		const query = captureQuery(editTurn());
-		await streamAnthropicSubscription(model, { messages: [], tools: hostFileTools() }).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [], tools: hostFileTools() },
+			{ cwd: process.cwd() },
+		).result();
 
 		const offered = query.options().tools;
 		expect(Array.isArray(offered)).toBe(true);
@@ -138,7 +142,11 @@ describe("regression #2401: senpi is the single authority for subscription-lane 
 
 	it("serves senpi write and edit through the custom-tools MCP server that the host deny hook answers", async () => {
 		const query = captureQuery(editTurn());
-		await streamAnthropicSubscription(model, { messages: [], tools: hostFileTools() }).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [], tools: hostFileTools() },
+			{ cwd: process.cwd() },
+		).result();
 
 		expect(Object.keys(query.options().mcpServers ?? {})).toEqual(["custom-tools"]);
 		const matcher = new RegExp(`^(?:${HOST_TOOL_DENIAL_HOOKS.PreToolUse?.[0]?.matcher ?? "(?!)"})$`);
@@ -148,7 +156,11 @@ describe("regression #2401: senpi is the single authority for subscription-lane 
 
 	it("turns one SDK edit tool_use into exactly one host edit call with senpi's arguments intact", async () => {
 		captureQuery(editTurn());
-		const message = await streamAnthropicSubscription(model, { messages: [], tools: hostFileTools() }).result();
+		const message = await streamAnthropicSubscription(
+			model,
+			{ messages: [], tools: hostFileTools() },
+			{ cwd: process.cwd() },
+		).result();
 
 		const calls = message.content.filter((block) => block.type === "toolCall");
 		expect(calls).toEqual([{ type: "toolCall", id: "toolu_edit", name: "edit", arguments: editInput }]);

@@ -35,6 +35,21 @@ export interface LifecycleHold {
 	readonly since: string;
 }
 
+/** Why the last run stopped, for that run only (`runId`); cleared when the next lifecycle run starts. */
+export interface LifecycleStop {
+	readonly cause: "deadline" | "goal_guard" | "todo_guard" | "aborted" | "no_wake";
+	readonly runId: string;
+	readonly at: string;
+	readonly epoch: number;
+	readonly deadline?: "inactivity" | "max_runtime";
+	/** The goal guard reason exactly as `goal-continuation-stopped` recorded it. */
+	readonly guard?: string;
+	readonly todo?: "cap";
+	readonly abortSource?: "user" | "system" | "provider";
+	/** Present only when the deadline-stop entry write failed; distinct from the snapshot-level `persisted`. */
+	readonly persisted?: false;
+}
+
 export interface SpawnedBy {
 	readonly parentSessionId: string;
 	readonly rootSessionId: string;
@@ -60,6 +75,7 @@ export interface SessionLifecycle {
 	readonly taskId?: string;
 	readonly waitingOn?: LifecycleWaits;
 	readonly holds?: readonly LifecycleHold[];
+	readonly lastStop?: LifecycleStop;
 	readonly completion?: {
 		readonly kind: "goal" | "run" | "agent" | "reply";
 		readonly at: string;

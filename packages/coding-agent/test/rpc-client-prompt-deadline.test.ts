@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { RpcClient, RpcTransportGoneError } from "../src/modes/rpc/rpc-client.ts";
 import { PROMPT_AFTER_QUEUED_DEADLINE_MS, REQUEST_DEADLINE_MS } from "../src/modes/rpc/rpc-request-deadline.ts";
+import { answerProtocolInfo } from "./helpers/rpc-legacy-protocol.ts";
 
 interface FakeHost {
 	readonly client: RpcClient;
@@ -27,8 +28,11 @@ async function fakeHost(): Promise<FakeHost> {
 		let received = "";
 		socket.on("data", (chunk) => {
 			received += chunk.toString();
-			const newline = received.indexOf("\n");
-			if (newline !== -1) resolveRequest(JSON.parse(received.slice(0, newline)));
+			for (let newline = received.indexOf("\n"); newline !== -1; newline = received.indexOf("\n")) {
+				const record = JSON.parse(received.slice(0, newline));
+				received = received.slice(newline + 1);
+				if (!answerProtocolInfo(socket, record)) resolveRequest(record);
+			}
 		});
 	});
 	await new Promise<void>((resolve) => server.listen(socketPath, resolve));

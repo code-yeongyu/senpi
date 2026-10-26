@@ -464,7 +464,7 @@ describe("Claude SDK OAuth stream events", () => {
 				sdkMessage({ type: "result", subtype: "success", result: "hello", stop_reason: "end_turn" }),
 			]),
 		});
-		const events = await collect(streamAnthropicSubscription(model, { messages: [] }));
+		const events = await collect(streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }));
 		expect(events[0]).toMatchObject({ type: "start" });
 		expect(events.findIndex((event) => event.type === "start")).toBeLessThan(
 			events.findIndex((event) => event.type === "text_delta"),
@@ -484,7 +484,7 @@ describe("Claude SDK OAuth stream events", () => {
 		const first = await streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "seed", timestamp: 1 }] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		);
 		await first.result();
 		const stream = streamAnthropicSubscription(
@@ -496,7 +496,7 @@ describe("Claude SDK OAuth stream events", () => {
 					{ role: "user", content: "next", timestamp: 3 },
 				],
 			},
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		);
 		const iterator = stream[Symbol.asyncIterator]();
 		try {
@@ -522,7 +522,7 @@ describe("Claude SDK OAuth stream events", () => {
 				},
 			}),
 		});
-		const stream = streamAnthropicSubscription(model, { messages: [] });
+		const stream = streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() });
 		const events = await collect(stream);
 		const result = await stream.result();
 		expect(events.filter((event) => event.type === "text_delta").map((event) => event.delta)).toEqual(["Hello"]);
@@ -558,7 +558,7 @@ describe("Claude SDK OAuth stream events", () => {
 				}),
 			]),
 		});
-		const stream = streamAnthropicSubscription(model, { messages: [] });
+		const stream = streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() });
 		const result = await stream.result();
 		expect(result.content).toEqual([{ type: "text", text: "fallback" }]);
 	});
@@ -595,7 +595,11 @@ describe("Claude SDK OAuth stream events", () => {
 			}),
 		});
 		const controller = new AbortController();
-		const stream = streamAnthropicSubscription(model, { messages: [] }, { signal: controller.signal });
+		const stream = streamAnthropicSubscription(
+			model,
+			{ messages: [] },
+			{ cwd: process.cwd(), signal: controller.signal },
+		);
 		await queryStarted;
 		controller.abort();
 		const result = await stream.result();
@@ -615,7 +619,7 @@ describe("Claude SDK OAuth stream events", () => {
 			close() {},
 		});
 		overrideSdkBoundary({ query: throwingQuery });
-		const stream = streamAnthropicSubscription(model, { messages: [] });
+		const stream = streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() });
 		const events = await collect(stream);
 		const failure = events.at(-1);
 		expect(failure).toMatchObject({
@@ -675,7 +679,7 @@ describe("Claude SDK OAuth stream events", () => {
 		const stream = streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "stream now", timestamp: 1 }] },
-			mainOptions("resident-live-delivery"),
+			{ cwd: process.cwd(), ...mainOptions("resident-live-delivery") },
 		);
 		const iterator = stream[Symbol.asyncIterator]();
 		await deltaProduced;
@@ -707,7 +711,7 @@ describe("Claude SDK OAuth stream events", () => {
 		const stream = streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "end early", timestamp: 1 }] },
-			mainOptions("resident-missing-result"),
+			{ cwd: process.cwd(), ...mainOptions("resident-missing-result") },
 		);
 		const events = await collect(stream);
 
@@ -807,16 +811,20 @@ describe("Claude SDK OAuth stream events", () => {
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
 		const user2 = { role: "user" as const, content: "two", timestamp: 3 };
 		const user3 = { role: "user" as const, content: "three", timestamp: 5 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2, assistant("a2", 4), user3] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		recordBranchInfo(sessionId, { oldLeafId: "old", newLeafId: "new" });
 
@@ -824,7 +832,7 @@ describe("Claude SDK OAuth stream events", () => {
 		const stream = streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			{ ...mainOptions(sessionId), signal: abort.signal },
+			{ cwd: process.cwd(), ...mainOptions(sessionId), signal: abort.signal },
 		);
 		const initializing = await initializingQuery;
 		await initializing.initializationStarted;
@@ -841,7 +849,7 @@ describe("Claude SDK OAuth stream events", () => {
 		const queries = residentBoundary();
 		const sessionId = "resident-reuse";
 		const first: Context = { messages: [{ role: "user", content: "first", timestamp: 1 }] };
-		await streamAnthropicSubscription(model, first, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(model, first, { cwd: process.cwd(), ...mainOptions(sessionId) }).result();
 		const second: Context = {
 			messages: [
 				first.messages[0]!,
@@ -849,7 +857,7 @@ describe("Claude SDK OAuth stream events", () => {
 				{ role: "user", content: "second", timestamp: 3 },
 			],
 		};
-		await streamAnthropicSubscription(model, second, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(model, second, { cwd: process.cwd(), ...mainOptions(sessionId) }).result();
 
 		expect(queries).toHaveLength(1);
 		expect(queries[0]?.submitted).toHaveLength(2);
@@ -865,23 +873,27 @@ describe("Claude SDK OAuth stream events", () => {
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
 		const user2 = { role: "user" as const, content: "two", timestamp: 3 };
 		const user3 = { role: "user" as const, content: "three", timestamp: 5 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2, assistant("a2", 4), user3] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		recordBranchInfo(sessionId, { oldLeafId: "old", newLeafId: "new" });
 
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(queries).toHaveLength(2);
@@ -899,18 +911,22 @@ describe("Claude SDK OAuth stream events", () => {
 		const sessionId = "resident-diverged-branch";
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
 		const user2 = { role: "user" as const, content: "two", timestamp: 3 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		recordBranchInfo(sessionId, { oldLeafId: "old", newLeafId: "new" });
 
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), { role: "user", content: "other", timestamp: 4 }] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(queries).toHaveLength(2);
@@ -923,12 +939,16 @@ describe("Claude SDK OAuth stream events", () => {
 		const queries = residentBoundary();
 		const sessionId = "resident-compaction";
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		markTainted(sessionId, "compaction");
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), { role: "user", content: "two", timestamp: 3 }] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(queries).toHaveLength(2);
@@ -943,23 +963,27 @@ describe("Claude SDK OAuth stream events", () => {
 		const user1 = { role: "user" as const, content: "one", timestamp: 1 };
 		const user2 = { role: "user" as const, content: "two", timestamp: 3 };
 		const user3 = { role: "user" as const, content: "three", timestamp: 5 };
-		await streamAnthropicSubscription(model, { messages: [user1] }, mainOptions(sessionId)).result();
+		await streamAnthropicSubscription(
+			model,
+			{ messages: [user1] },
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
+		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2, assistant("a2", 4), user3] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 		recordBranchInfo(sessionId, { oldLeafId: "old", newLeafId: "new" });
 
 		const result = await streamAnthropicSubscription(
 			model,
 			{ messages: [user1, assistant("a1", 2), user2] },
-			mainOptions(sessionId),
+			{ cwd: process.cwd(), ...mainOptions(sessionId) },
 		).result();
 
 		expect(queries).toHaveLength(3);
@@ -989,7 +1013,7 @@ describe("Claude SDK OAuth stream events", () => {
 		});
 		const sessionId = "auxiliary-registry-gate";
 		sessionIds.add(sessionId);
-		await streamAnthropicSubscription(model, { messages: [] }, { sessionId }).result();
+		await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd(), sessionId }).result();
 
 		expect(queries).toBe(1);
 		expect(getSession(sessionId)).toBeUndefined();

@@ -17,9 +17,11 @@ import { readHostRegistration } from "./host-daemon-registration.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
 import { type HostGenerationRow, pruneDeadGenerations, readGenerationRows } from "./host-generations.ts";
 import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
+import { electPointer, type HostPointerState } from "./host-pointer-election.ts";
 import { observeProtocolInfo, requestOnSocket } from "./host-probe.ts";
 import { type HostProcessMetrics, readHostProcessMetrics } from "./host-process-metrics.ts";
 import { type HostPathClaimRow, type HostSessionRow, parseSessionRows, readClaimRows } from "./host-status-rows.ts";
+import { rpcKeyRoot, withRpcKeyRoot } from "./rpc-auth-client.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
 
 const STATUS_PROBE_TIMEOUT_MS = 10_000;
@@ -72,6 +74,11 @@ export interface HostStatusReport {
 	/** Environment NAMES the daemon was granted, never values. */
 	readonly env_keys: readonly string[];
 	readonly generations: readonly HostGenerationRow[];
+	/**
+	 * Which generation the pointer names: `current`, `elected` when this read gave a lost pointer back to
+	 * the one proven live generation (senpi#1911), or `missing` with the `candidates` it saw.
+	 */
+	readonly pointer: HostPointerState;
 	/** Records in this endpoint's `crashes.jsonl`: supervised host children that DIED, not stopped. */
 	readonly crashes: number;
 	/** The owner-keyed shard the socket names (`<kind>-<16hex>.sock`), `null` for any other endpoint. */
@@ -118,11 +125,21 @@ export async function readHostStatus(
 export async function probeHostStatus(
 	options: HostStatusOptions,
 	read: HostStatusReadOptions = {},
-): Promise<{
+): Promise<HostStatusProbe> {
+	// The host's key record lives under its own agent dir; a looker that names it proves the key from there.
+	return withRpcKeyRoot(rpcKeyRoot({}, options.agentDir), () => probeHostStatusInKeyRoot(options, read));
+}
+
+interface HostStatusProbe {
 	readonly report: HostStatusReport;
 	readonly answered: HostProtocolInfo | undefined;
 	readonly listing: readonly HostSessionRow[];
-}> {
+}
+
+async function probeHostStatusInKeyRoot(
+	options: HostStatusOptions,
+	read: HostStatusReadOptions,
+): Promise<HostStatusProbe> {
 	const paths = createHostDaemonPaths({
 		socket: options.socket,
 		...(options.agentDir ? { agentDir: options.agentDir } : {}),
@@ -135,6 +152,7 @@ export async function probeHostStatus(
 	// Reading the directory is also when it is cleaned: an operator asking what runs here must not
 	// be shown generations that ended, and the next reader must get the same answer.
 	if (prune) await pruneDeadGenerations(paths);
+	const pointer = await electPointer(paths, { write: prune });
 	const generations = await readGenerationRows(paths, { includeDead: !prune });
 	const current = generations.find((row) => row.current && row.alive);
 	const registered = await readHostRegistration(paths);
@@ -171,6 +189,7 @@ export async function probeHostStatus(
 		memory_pressure: host?.memory_pressure ?? null,
 		env_keys: await readDaemonEnvKeys(paths),
 		generations,
+		pointer,
 		crashes: readHostCrashRecords(paths.dir).filter(isHostCrash).length,
 		shard: parseShardSocket(options.socket),
 		session_rows: includeWorkers ? listing : [],

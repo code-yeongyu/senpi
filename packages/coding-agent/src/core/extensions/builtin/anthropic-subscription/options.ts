@@ -11,6 +11,7 @@ import {
 } from "../rules/rules/constants.ts";
 import { plannedContextWindow, sdkModelId } from "./context-window.ts";
 import { presetAppendDeprecationGuidance } from "./guidance.ts";
+import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 import type { EffortLevel, Options, SettingSource, ThinkingConfig } from "./sdk-boundary.ts";
 import {
 	type AnthropicSubscriptionProviderSettings,
@@ -219,7 +220,7 @@ function resolveSettingSources(
 }
 
 export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscriptionQueryOptionsInput): Options {
-	const cwd = input.cwd ?? process.cwd();
+	const cwd = requireAnthropicSubscriptionCwd(input.cwd);
 	const providerSettings = input.providerSettings ?? loadAnthropicSubscriptionProviderSettingsFromDisk(cwd);
 	const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
 	const resolvedMode = resolveSystemPromptMode(providerSettings);

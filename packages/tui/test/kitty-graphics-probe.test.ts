@@ -33,6 +33,8 @@ const ENV_KEYS = [
 	"WEZTERM_PANE",
 	"ITERM_SESSION_ID",
 	"WT_SESSION",
+	"VSCODE_IPC_HOOK_CLI",
+	"VSCODE_GIT_IPC_HANDLE",
 	"CMUX_WORKSPACE_ID",
 	"WARP_SESSION_ID",
 	"WARP_TERMINAL_SESSION_UUID",
@@ -88,6 +90,25 @@ describe("herdr detection (#3698)", () => {
 			assert.strictEqual(caps.trueColor, true);
 			assert.strictEqual(caps.hyperlinks, false);
 		});
+	});
+
+	it("keeps the herdr probe for a herdr pane started from a VS Code terminal (#2826)", () => {
+		withEnv({ ...herdrEnv, VSCODE_IPC_HOOK_CLI: "/run/user/1000/vscode-ipc-1.sock" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.imageProbe, "kitty");
+			assert.strictEqual(caps.hyperlinks, false);
+		});
+	});
+
+	it("keeps the herdr probe when only HERDR_ENV and the inherited VS Code marker are set (#2826)", () => {
+		withEnv(
+			{ HERDR_ENV: "1", TERM: "xterm-256color", VSCODE_IPC_HOOK_CLI: "/run/user/1000/vscode-ipc-1.sock" },
+			() => {
+				const caps = detectCapabilities();
+				assert.strictEqual(caps.imageProbe, "kitty");
+				assert.strictEqual(caps.hyperlinks, false);
+			},
+		);
 	});
 
 	it("recognizes herdr via HERDR_ENV alone", () => {

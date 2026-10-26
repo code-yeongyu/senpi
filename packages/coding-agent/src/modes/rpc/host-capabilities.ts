@@ -17,9 +17,11 @@ import {
 	CONTINUE_FROM_LEAF_CAPABILITY,
 	DETACH_CONNECTION_CAPABILITY,
 	DURABLE_SESSION_ID_CAPABILITY,
+	ENTRIES_TAIL_CAPABILITY,
 	EVAL_CELLS_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
 	MOVED_PATH_GUARD_CAPABILITY,
+	OBSERVE_READS_CAPABILITY,
 	PROMPT_SURFACE_CAPABILITY,
 	PROMPT_SURFACE_CHAT_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
@@ -56,12 +58,21 @@ export function multiSessionHostCapabilities(options: {
 	readonly warm: boolean;
 	readonly toolRuntime: ToolRuntimeKind;
 	readonly negotiated: readonly string[];
+	readonly mcpPresenters?: boolean;
 }): string[] {
 	return [
 		...new Set([
 			"multi_session",
+			"snapshot_cursor",
+			"ui_answer_ledger",
+			"dialog_observer",
+			...(options.mcpPresenters ? ["mcp_form_presenter_v1"] : []),
 			"session_lifecycle",
 			"expected_host_instance",
+			"attach_session",
+			"release_attachment",
+			"release_caller_aware",
+			"reclaim_session",
 			AUTO_TITLE_SESSIONS_CAPABILITY,
 			MEDIA_PLACEHOLDERS_CAPABILITY,
 			DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
@@ -79,6 +90,9 @@ export function multiSessionHostCapabilities(options: {
 			SESSION_HELD_CAPABILITY,
 			RESUME_SESSION_CAPABILITY,
 			ATTENDED_CAPABILITY,
+			// `get_state`/`get_entries` marked `observe` never attach, and history reads page backward too (senpi#4267).
+			OBSERVE_READS_CAPABILITY,
+			ENTRIES_TAIL_CAPABILITY,
 			// Host capabilities, not client opt-ins: only a multi-session host owns the
 			// attachment refcount `open_session.retain_on_disconnect` detaches from, the
 			// per-session launch profile `context`/`auto_title` travel on, and the session
@@ -116,7 +130,9 @@ export function multiSessionHostCapabilities(options: {
 			...(options.warm ? [WARM_CAPABILITY] : []),
 			...toolRuntimeCapabilities(options.toolRuntime),
 			// The host alone says where tool work runs; a negotiated copy would make two answers.
-			...options.negotiated.filter((capability) => !isHostOwnedToolRuntimeCapability(capability)),
+			...options.negotiated.filter(
+				(capability) => capability !== "mcp_form_presenter_v1" && !isHostOwnedToolRuntimeCapability(capability),
+			),
 		]),
 	];
 }

@@ -129,7 +129,7 @@ describe("issue #6784: stored Claude SDK OAuth account is used by default", () =
 		configureAuth(store, ambientEnvironment);
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
-		await streamAnthropicSubscription(model, context).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		expect(captured).toHaveLength(1);
 		expect(captured[0]?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("slot-access");
@@ -143,7 +143,7 @@ describe("issue #6784: stored Claude SDK OAuth account is used by default", () =
 		configureAuth(new InMemoryCredentialStore(), ambientEnvironment);
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
-		await streamAnthropicSubscription(model, context).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		expect(captured).toHaveLength(1);
 		expect(captured[0]?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
@@ -157,7 +157,7 @@ describe("issue #6784: stored Claude SDK OAuth account is used by default", () =
 		configureAuth(store, ambientEnvironment, undefined, "ambient");
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
-		await streamAnthropicSubscription(model, context).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		expect(captured).toHaveLength(1);
 		expect(captured[0]?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();

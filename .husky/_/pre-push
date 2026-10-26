@@ -1,2 +1,0 @@
-#!/bin/bash
-exec "/Users/yeongyu/.omo/omocat/hooks/pre-push-conflict-markers.sh" "$@"

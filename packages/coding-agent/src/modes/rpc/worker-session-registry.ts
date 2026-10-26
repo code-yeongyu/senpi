@@ -1,18 +1,9 @@
-import { isAbsolute } from "node:path";
-import { ProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
-import { assertValidSessionId } from "../../core/session-manager.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
-import {
-	type SessionPathReservations as DaemonPathReservations,
-	SESSION_PATH_RETRY_AFTER_MS,
-} from "./host-reservations.ts";
+import type { SessionPathReservations as DaemonPathReservations } from "./host-reservations.ts";
 import { refreshesSessionActivity } from "./session-command-activity.ts";
 import { publishedSessionContext } from "./session-context-patch.ts";
-import {
-	type LiveWorkerPaths,
-	RESERVATION_DENIAL_CODES,
-	SessionPathReservations,
-} from "./session-path-reservations.ts";
+import { attachLiveSession } from "./session-live-attachment.ts";
+import { type LiveWorkerPaths, SessionPathReservations } from "./session-path-reservations.ts";
 import {
 	frozenProfile,
 	type OpenRpcSession,
@@ -21,17 +12,11 @@ import {
 	type RpcSessionOpenOptions,
 	RpcSessionRegistryError,
 	type RpcSessionRow,
-	sessionIdentity,
 } from "./session-registry.ts";
-import { releaseWithinGrace } from "./session-teardown.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
-import {
-	closedByWorkerDeath,
-	SESSION_WORKER_LIMITS,
-	type SessionWriteGrant,
-	typedWorkerRefusal,
-} from "./session-worker-protocol.ts";
-import { WorkerSessionClaims } from "./worker-session-claims.ts";
+import type { SessionWriteGrant } from "./session-worker-protocol.ts";
+import type { WorkerSessionClaims } from "./worker-session-claims.ts";
+import { openWorkerSession } from "./worker-session-open.ts";
 
 type SessionWorkerCallbacks = ConstructorParameters<typeof SessionWorkerClient>[0];
 
@@ -71,135 +56,35 @@ export class WorkerSessionRegistry {
 		return this.options.pathReservations?.holderPids?.(observedStarts) ?? Promise.resolve([]);
 	}
 
-	async openSession(profile: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
-		if (!isAbsolute(profile.cwd) || (profile.sessionPath !== undefined && !isAbsolute(profile.sessionPath)))
-			throw new RpcSessionRegistryError("invalid_path");
-		// Same contract as RpcSessionRegistry.openSession (#1951), on the registry the multi-session
-		// host actually instantiates (#2010). Both checks run SYNCHRONOUSLY before the first await:
-		// the format check so a bad id is refused with its own code instead of surfacing as the
-		// worker's death (`session_closing`), and the collision scan so a concurrent open naming the
-		// same durable id finds this one already recorded. Re-opening the SAME path is an attach,
-		// not a collision: the id is the file's own.
-		const requestedDurableId = profile.durableSessionId;
-		if (requestedDurableId !== undefined) {
-			try {
-				assertValidSessionId(requestedDurableId);
-			} catch (cause) {
-				throw new RpcSessionRegistryError("invalid_session_id", String(cause));
-			}
-			const requestedKey = profile.sessionPath ? this.knownReservationKey(profile.sessionPath) : undefined;
-			for (const entry of this.entries.values()) {
-				if (entry.state === "closed") continue;
-				if (entry.durableSessionId !== requestedDurableId) continue;
-				if (requestedKey !== undefined && entry.reservationKey === requestedKey) continue;
-				throw new RpcSessionRegistryError("session_id_in_use");
-			}
-		}
-		if (profile.sessionPath) {
-			const key = this.knownReservationKey(profile.sessionPath);
-			const owner = key ? this.reservations.owner(key) : undefined;
-			if (key && owner) return this.attach(owner, key, options, profile);
-		}
-		if (options?.attachOnly)
-			throw new RpcSessionRegistryError("session_not_held", undefined, {
-				reason: "session_not_held",
-				action: "rediscover_holder",
-			});
-		if (this.size >= SESSION_WORKER_LIMITS.workers) throw new Error("too_many_sessions");
-		const handle = `rpc-${++this.serial}`;
-		const claims = new WorkerSessionClaims(this.options.pathReservations);
-		this.claims.set(handle, claims);
-		const storedProfile = frozenProfile(profile);
-		const entry: RpcSessionEntry = {
-			state: "opening",
-			scope: new ProviderScope(),
-			profile: storedProfile,
-			...sessionIdentity(storedProfile),
-			cwd: profile.cwd,
-			attachments: 1,
-			retainOnDisconnect: options?.retainOnDisconnect === true,
-			lastCommandAt: this.now(),
-			lifecycleMutex: Promise.resolve(),
-			// Recorded before the first await so the collision scan above sees an open still being
-			// built; `snapshot.state.sessionId` overwrites it with the authoritative value after
-			// commit, which on a resume is the header's id rather than the requested one.
-			...(requestedDurableId !== undefined ? { durableSessionId: requestedDurableId } : {}),
-		};
-		let workerFailure: string | undefined;
-		const worker = this.createWorker({
-			reserve: (path) => this.reserve(handle, path),
-			reconcile: (livePaths) => this.reconcile(handle, livePaths),
-			exit: () => {
-				if (this.entries.get(handle) !== entry) return;
-				const finish = (): void => {
-					if (this.entries.get(handle) !== entry) return;
-					entry.state = "closed";
-					this.entries.delete(handle);
-					this.claims.delete(handle);
-					this.reservations.releaseAll(handle);
-					entry.closeResolve?.();
-				};
-				return releaseWithinGrace(
-					{ closeGraceMs: this.closeGraceMs, releaseReservation: () => claims.close() },
-					handle,
-					entry.reservationKey ?? handle,
-				).then(finish);
+	openSession(profile: RpcSessionLaunchProfile, options?: RpcSessionOpenOptions): Promise<OpenRpcSession> {
+		return openWorkerSession(
+			{
+				entries: this.entries,
+				reservations: this.reservations,
+				claims: this.claims,
+				options: this.options,
+				closeGraceMs: this.closeGraceMs,
+				size: this.size,
+				now: this.now,
+				nextHandle: () => `rpc-${++this.serial}`,
+				knownReservationKey: (path) => this.knownReservationKey(path),
+				attach: (owner, path, options, requested) => this.attach(owner, path, options, requested),
+				reserve: (handle, path) => this.reserve(handle, path),
+				reconcile: (handle, paths) => this.reconcile(handle, paths),
+				openResult: (handle, entry) => this.openResult(handle, entry),
+				createWorker: this.createWorker,
 			},
-			failure: (error) => {
-				// The open below only learns that its entry left `opening`, never why. Without this the
-				// caller is told `session_closing` - a path whose owner is tearing down - for a worker
-				// that died, and the actual reason reaches stderr alone (#1953).
-				workerFailure = error;
-				entry.state = "quarantined";
-				process.stderr.write(`senpi rpc session ${handle} quarantined: ${error}\n`);
-			},
-		});
-		entry.worker = worker;
-		this.entries.set(handle, entry);
-		try {
-			const path = await worker.prepare(this.options.configuration, profile).catch(typedWorkerRefusal);
-			const owner = this.reservations.owner(path);
-			if (owner) {
-				const attached = await this.attach(owner, path, options, profile);
-				entry.state = "quarantined";
-				worker.quarantine();
-				return attached;
-			}
-			const predecessor = await claims.claim(path);
-			if (predecessor)
-				throw new RpcSessionRegistryError("session_path_in_use", undefined, {
-					owner: predecessor,
-					retry_after_ms: SESSION_PATH_RETRY_AFTER_MS,
-				});
-			const grant = await this.reserve(handle, path);
-			if (grant !== "granted") throw new RpcSessionRegistryError(RESERVATION_DENIAL_CODES[grant]);
-			entry.reservationKey = path;
-			entry.requestedPathKey = profile.sessionPath ? path : undefined;
-			entry.sessionPath = path;
-			const snapshot = await worker.commit();
-			if (entry.state !== "opening")
-				throw workerFailure === undefined
-					? new RpcSessionRegistryError("session_closing")
-					: new RpcSessionRegistryError("open_failed", workerFailure.replace(/^open_failed: /, ""));
-			entry.durableSessionId = snapshot.state.sessionId;
-			entry.cwd = snapshot.state.cwd;
-			entry.state = "open";
-			return this.openResult(handle, entry);
-		} catch (cause) {
-			entry.state = "quarantined";
-			worker.quarantine();
-			// A worker that dies before commit (for example one that cannot load its modules) closes what the open
-			// is still waiting on: its own request channel rejects the pending prepare with a plain
-			// `session_closing` / `session_worker_exited`, and the claims and grants report `session_closing`.
-			// Name why the worker died instead, as the commit check above does (#4037, #1953).
-			if (workerFailure !== undefined && closedByWorkerDeath(cause))
-				throw new RpcSessionRegistryError("open_failed", workerFailure.replace(/^open_failed: /, ""));
-			throw cause;
-		}
+			profile,
+			options,
+		);
 	}
 
 	peek(handle: string): RpcSessionEntry | undefined {
 		return this.entries.get(handle);
+	}
+
+	attachSession(handle: string): RpcSessionEntry {
+		return attachLiveSession(this.entries.get(handle), this.now(), () => this.claims.get(handle)?.setAttached(true));
 	}
 
 	getForCommand(handle: string, command: string): RpcSessionEntry {

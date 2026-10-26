@@ -102,7 +102,7 @@ and canonical tests, and strict CLI/RPC/TUI manual QA. Merge only after those lo
 
 > Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
 
-This still applies. The release script will surface `[Unreleased]` entries; maintainers curate them before cutting a release.
+Maintainers curate package `CHANGELOG.md` blocks in `changes/unreleased/<pr>.md`; the release script compiles them into the changelogs at the release cut.
 
 ## Quality Bar for Issues
 

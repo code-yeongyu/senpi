@@ -57,7 +57,7 @@ export type KnownImageApi = "openrouter-images" | "openai-images";
 
 export type ImageApi = KnownImageApi | (string & {});
 
-export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one" | "llama-cpp-classify";
+export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one";
 
 export type ClassifierApi = KnownClassifierApi | (string & {});
 
@@ -186,6 +186,8 @@ export interface ProviderResponse {
 /** Authentication, HTTP transport, and lifecycle callbacks shared by provider requests. */
 export interface ProviderRequestOptions<TModel = Model<Api>> {
 	signal?: AbortSignal;
+	/** Originating session working directory for subprocess-backed providers. */
+	cwd?: string;
 	/**
 	 * Abort the request when the provider reports that a safety classifier
 	 * declined the requested model and a substitute model served the turn

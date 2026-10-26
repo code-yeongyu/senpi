@@ -27,6 +27,7 @@ import type { SessionEntry } from "../../../session-manager.ts";
 import type { CompactionReason } from "../../types.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../anthropic-subscription/account-management.ts";
 import { isColdSeedOverflowMessage } from "../anthropic-subscription/cold-seed-budget.ts";
+import { requireAnthropicSubscriptionCwd } from "../anthropic-subscription/session-cwd.ts";
 import type { AnthropicSubscriptionProviderSettings } from "../anthropic-subscription/settings.ts";
 import {
 	loadAnthropicSubscriptionProviderSettingsFromDisk,
@@ -137,8 +138,9 @@ export function createCompactionLanePolicy(
 	// undefined when the settings cannot be read, so callers fail closed to
 	// senpi's full behavior.
 	const readProviderSettings = (cwd: string): AnthropicSubscriptionProviderSettings | undefined => {
+		const sessionCwd = requireAnthropicSubscriptionCwd(cwd);
 		try {
-			return load(cwd);
+			return load(sessionCwd);
 		} catch {
 			return undefined;
 		}

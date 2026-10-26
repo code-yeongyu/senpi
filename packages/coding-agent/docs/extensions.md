@@ -809,6 +809,8 @@ pi.on("before_agent_start", async (event, ctx) => {
 });
 ```
 
+Messages append after the triggering prompt by default. Set `message.placement` to `"before-prompt"` to persist the message immediately before that prompt instead. This also applies to extension-triggered turns; it does not modify earlier history or the system prompt.
+
 The `systemPromptOptions` field gives extensions access to the same structured data senpi uses to build the system prompt. This lets you inspect what senpi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
@@ -1822,7 +1824,7 @@ runtime's steering or follow-up queue like the user's queued input. The protocol
 
 | Method | Returns | Behaviour |
 |---|---|---|
-| `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. |
+| `registerControlEndpoint({ inboxDir, drain, isSessionReferenced? })` | `Promise<SessionControlRegistration>` | POSIX interactive session: binds the `tui` control endpoint and answers `{ status: "registered", socket, dispose }`. On a multi-session host with a public socket it binds nothing and `socket` is the host's. Otherwise `{ status: "unsupported", reason: "unsupported_platform" \| "unsupported_mode" }`, or `{ status: "failed", reason }` when a registration step failed. `drain(event)` runs on every [`session_control_wake`](#session_control_wake) edge and answers `{ admitted: [{ delivery_id, kind }] }`. `inboxDir` is created 0700 and its entry creations and deletions wake the drain. At clean exit a header-only session file is removed unless `isSessionReferenced()` answers `true`. An endpoint lives for one extension generation: a reload disposes the endpoints the retiring generation registered (also one whose registration finishes after the reload began, which answers `failed`), so register again from `session_start` with reason `reload`. Repeated failures of `drain` show one notice until a pass succeeds. |
 | `admissionGate()` | `{ can_admit, hold_reason?, editor_revision, turn_epoch }` | Read-only pre-check; `hold_reason` is `draft` while the user composes or their submission is still on its way into the runtime. |
 | `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
 | `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
@@ -2115,7 +2117,10 @@ pi.sendMessage({
   closed, consumed or in-delivery ticket rejects the promise with `DeliveryTicketRefused` and no item is
   kept, so a retry never duplicates notices. A held batch hands the ticket to its notices; a batch a user
   abort (Esc or Stop) drops during admission keeps it when it is decided again; a re-send while the
-  ticket's message is still queued answers that message's receipts.
+  ticket's message is still queued answers that message's receipts when it carries the same items, and is
+  rejected with `DeliveryTicketRefused` (`reason: "different_items"`) when it carries other items; the queued
+  message is written as first sent. When `clearQueue` removes the queued message before it is written, the
+  original send and every joined re-send reject with `QueuedDeliveryCleared` (its `itemIds` name the batch).
 - `items` - Make the message an itemized batch: one `{ itemId, producer, runRef?, content?, details? }` per wake it
   carries. The call then returns a promise of one receipt per item, `{ itemId, entryId, disposition, noticeId? }`.
   Admission is atomic: if a pause applies to the batch or to any item (a Stop, a parent's run pause, an unattended
@@ -2147,7 +2152,9 @@ const receipts = await pi.sendMessage(
 
 Use `pi.lifecycle.obligations.open(key, kind, detail?)` to retain unfinished work
 before it can leave a producer. `kind` is `"children"` or `"background"`; opening
-the same live key is idempotent. The returned token supports:
+the same live key is idempotent. Keys starting with `delivery:` or `wake-source:` are
+reserved for the engine: `open` and `transfer` refuse them with a `ReservedCustodyKey`
+error. The returned token supports:
 
 - `transfer(nextKey, kind?)`: moves custody synchronously, opening the next owner
   before closing the current one. Transferring a closed token is an error.
@@ -2625,7 +2632,7 @@ Register or override a model provider dynamically. Useful for proxies, custom en
 
 Calls made during the extension factory function are queued and applied once the runner initialises. Calls made after that — for example from a command handler following a user setup flow — take effect immediately without requiring a `/reload`.
 
-Dynamic providers can implement `refreshModels`. Senpi calls it during model refresh, publishes the returned list synchronously through the provider, and passes the canonical credential/stored-catalog/network/signal context. The extension decides whether to persist catalog metadata through generation-checked `context.publish({ persist: entry })`; live servers such as llama.cpp can return models without persisting them.
+Dynamic providers can implement `refreshModels`. Senpi calls it during model refresh, publishes the returned list synchronously through the provider, and passes the canonical credential/stored-catalog/network/signal context. The extension decides whether to persist catalog metadata through generation-checked `context.publish({ persist: entry })`; live servers can return models without persisting them.
 
 `context.signal` is always a concrete signal and provider callbacks must pass it to blocking I/O. Public `ModelRuntime.refresh()` and `ModelRegistry.refresh()` calls accept an optional signal and are unbounded when it is omitted; extensions and applications choose their own deadlines. Cancellation stops the caller waiting even if a provider ignores the signal, but cooperation is still required to stop the underlying work.
 
@@ -2679,8 +2686,8 @@ pi.registerProvider("my-proxy", {
   ]
 });
 
-// Register a live llama.cpp catalog without persisting discovered models
-pi.registerProvider("llama.cpp", {
+// Register a live local catalog without persisting discovered models
+pi.registerProvider("local-server", {
   baseUrl: "http://localhost:8080/v1",
   apiKey: "local",
   api: "openai-completions",
@@ -3499,6 +3506,11 @@ if (confirmed) {
 - `input()` returns `undefined`
 
 #### Manual Dismissal with AbortSignal
+
+Local terminal `select`, `confirm`, and `input` dialogs also accept
+`ephemeral: true`. Their visible contents remain local; they emit no generic
+blocked events, replacement labels, identifiers, or pending markers. This option is
+not an RPC field or permission to present MCP input on another session.
 
 For more control (e.g., to distinguish timeout from user cancel), use `AbortSignal`:
 

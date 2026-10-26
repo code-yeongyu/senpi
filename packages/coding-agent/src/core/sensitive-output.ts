@@ -1,3 +1,5 @@
+import { redactResolvedReferenceValues } from "./config-reference-redaction.ts";
+
 export function redactSensitiveOutput(text: string): string {
 	return redactSensitiveTokenValues(
 		text
@@ -8,7 +10,7 @@ export function redactSensitiveOutput(text: string): string {
 }
 
 export function redactSensitiveTokenValues(text: string, replacement = "[REDACTED]"): string {
-	return text
+	return redactResolvedReferenceValues(text, replacement)
 		.replace(/\bghp_[A-Za-z0-9]{20,}\b/g, replacement)
 		.replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, replacement);
 }

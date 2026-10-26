@@ -8,6 +8,8 @@ import { legacyProviderIdRejection } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
+import type { SpawnedBy } from "../core/session-lifecycle-types.ts";
+import { isSpawnedBy } from "../core/session-spawned-by.ts";
 import type { TuiMode } from "../core/settings-manager.ts";
 import { isGrokNeoEnabled } from "./grok-neo-gate.ts";
 import { isToolRuntimeKind, type ToolRuntimeKind } from "./tool-runtime.ts";
@@ -30,6 +32,7 @@ export interface Args {
 	noSession?: boolean;
 	session?: string;
 	sessionId?: string;
+	spawnedBy?: SpawnedBy;
 	fork?: string;
 	rebind?: string;
 	sessionDir?: string;
@@ -61,6 +64,8 @@ export interface Args {
 	grokNeo?: boolean;
 	/** Serve independently routed plain-RPC sessions over one host. */
 	multiSession?: boolean;
+	presenterBootstrapFd?: number;
+	mcpPresenterEnforcement?: boolean;
 	/**
 	 * Opt non-interactive app modes (notably RPC) into engine-side session auto-titling.
 	 * Deprecated for shared hosts: prefer per-session `open_session.auto_title`.
@@ -195,6 +200,25 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.session = args[++i];
 		} else if (arg === "--session-id" && i + 1 < args.length) {
 			result.sessionId = args[++i];
+		} else if (arg === "--spawned-by") {
+			const value = args[i + 1];
+			if (value === undefined || value.startsWith("-")) {
+				result.diagnostics.push({ type: "error", message: "--spawned-by requires a JSON object" });
+			} else {
+				i++;
+				try {
+					const ancestry: unknown = JSON.parse(value);
+					if (isSpawnedBy(ancestry)) result.spawnedBy = ancestry;
+					else
+						result.diagnostics.push({
+							type: "error",
+							message: "--spawned-by requires non-empty parentSessionId, rootSessionId, and taskId strings",
+						});
+				} catch (error: unknown) {
+					if (!(error instanceof SyntaxError)) throw error;
+					result.diagnostics.push({ type: "error", message: "--spawned-by must be valid JSON" });
+				}
+			}
 		} else if (arg === "--fork" && i + 1 < args.length) {
 			result.fork = args[++i];
 		} else if (arg === "--rebind" && i + 1 < args.length) {
@@ -303,6 +327,11 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 			result.grokNeo = true;
 		} else if (arg === "--multi-session") {
 			result.multiSession = true;
+		} else if (arg === "--mcp-presenter-fd") {
+			if (args[++i] === "4") result.presenterBootstrapFd = 4;
+			else result.diagnostics.push({ type: "error", message: "Invalid presenter bootstrap descriptor" });
+		} else if (arg === "--mcp-presenter-enforcement") {
+			result.mcpPresenterEnforcement = true;
 		} else if (arg === "--auto-title-sessions") {
 			result.autoTitleSessions = true;
 		} else if (arg === "--session-runtime") {
@@ -411,6 +440,8 @@ ${chalk.bold("Options:")}
   --resume, -r                   Select a session to resume
   --session <path|id>            Use specific session file or partial UUID
   --session-id <id>              Use exact project session ID, creating it if missing
+  --spawned-by <json>            Fresh session ancestry: parentSessionId, rootSessionId, taskId
+                                 Ignored with a warning when resuming or forking
   --fork <path|id>               Fork specific session file or partial UUID into a new session
   --rebind <path|id>             Move a session from a moved or re-cloned repository into this directory and continue it
   --session-dir <dir>            Directory for session storage and lookup

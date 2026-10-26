@@ -14,6 +14,10 @@ import {
 } from "./era.ts";
 import { modernInitializeResult, normalizeModernResult } from "./sdk-bridge.ts";
 import { ModernTransportError } from "./transport.ts";
+import { ModernSubscriptions } from "./subscriptions.ts";
+import { sanitizeModernMessage } from "./diagnostics.ts";
+import { McpMrtrError } from "./errors.ts";
+import { getModernDispatchGuard } from "./request.ts";
 import { MODERN_PROTOCOL_VERSION, modernizeRequest } from "./wire.ts";
 
 /** How long a stdio child gets to answer discovery (at most a quarter of the connect timeout) before it is treated as legacy. */
@@ -34,6 +38,7 @@ export function probeStdioTransport(
 	serverName: string,
 	onModern?: (version: string) => void,
 	probeMs = STDIO_PROBE_MS,
+	onLegacy?: () => void,
 ): void {
 	const start = transport.start.bind(transport);
 	const close = transport.close.bind(transport);
@@ -50,6 +55,7 @@ export function probeStdioTransport(
 		if (outcome.kind === "legacy-fallback") {
 			if (outcome.restart) await restart();
 			else if (outcome.silent) awaitLateDiscovery();
+			if (!outcome.silent) onLegacy?.();
 			return;
 		}
 		if (outcome.kind === "indeterminate" || !outcome.discovery) {
@@ -178,7 +184,10 @@ export function probeStdioTransport(
 				);
 				return;
 			}
-			if (isInitializeReply) settle();
+			if (isInitializeReply) {
+				settle();
+				onLegacy?.();
+			}
 			deliver?.(message, extra);
 		};
 		transport.send = async (message, sendOptions) => {
@@ -194,8 +203,53 @@ export function probeStdioTransport(
 	function speakModern(discovery: DiscoveryResult, version: string): void {
 		const initializeResult = modernInitializeResult(discovery, version);
 		const deliver = transport.onmessage;
+		const live = new Set<string | number>();
+		const subscriptions = new ModernSubscriptions(
+			(message, options) => transport.send(message, options),
+			discovery.capabilities,
+		);
+		const end = transport.close.bind(transport);
+		transport.close = async () => {
+			subscriptions.dispose();
+			await end();
+		};
+		const onclose = transport.onclose;
+		transport.onclose = () => {
+			subscriptions.dispose();
+			onclose?.();
+		};
 		let initialized = false;
-		transport.onmessage = (message, extra) => deliver?.(normalizeModernResult(message), extra);
+		transport.onerror = () => {
+			// A parser error may quote a wire body; never forward it.
+			const failure = new McpMrtrError("MCP_MRTR_TRANSPORT_FAILED");
+			logger.warn(failure.message);
+			void transport.close();
+		};
+		transport.onmessage = (message, extra) => {
+			if ("id" in message && "method" in message) {
+				void send({
+					jsonrpc: "2.0",
+					id: message.id,
+					error: { code: -32601, message: "Unsupported MCP method." },
+				}).catch(() => {});
+				return;
+			}
+			if ("id" in message && message.id !== undefined && !live.delete(message.id)) return;
+			if (!subscriptions.incoming(message)) {
+				const id =
+					"method" in message && message.method === "notifications/cancelled"
+						? message.params?.requestId
+						: undefined;
+				if (typeof id === "string" || typeof id === "number") live.delete(id);
+				return;
+			}
+			if ("method" in message && message.method === "notifications/progress") {
+				const token = message.params?.progressToken;
+				if ((typeof token !== "string" && typeof token !== "number") || !live.has(token)) return;
+			}
+			const safe = sanitizeModernMessage(message);
+			if (safe) deliver?.(normalizeModernResult(safe), extra);
+		};
 		transport.send = async (message, sendOptions) => {
 			if (!("method" in message)) return send(message, sendOptions);
 			if (message.method === "initialize") {
@@ -203,10 +257,21 @@ export function probeStdioTransport(
 					throw new ModernTransportError("Modern MCP stdio has already initialized");
 				}
 				initialized = true;
-				transport.onmessage?.({ jsonrpc: "2.0", id: message.id, result: initializeResult });
+				deliver?.({ jsonrpc: "2.0", id: message.id, result: initializeResult });
 				return;
 			}
 			if (message.method === "notifications/initialized" && !("id" in message)) return;
+			if (message.method === "notifications/cancelled" && !("id" in message)) {
+				subscriptions.outgoing(message);
+				const id = message.params?.requestId;
+				if ((typeof id !== "string" && typeof id !== "number") || !live.delete(id)) return;
+				return send(
+					{ jsonrpc: "2.0", method: message.method, params: { requestId: id, reason: "MCP request canceled" } },
+					sendOptions,
+				);
+			}
+			getModernDispatchGuard(message.params)?.();
+			subscriptions.outgoing(message);
 			const request = modernizeRequest(
 				"id" in message ? message.id : 0,
 				message.method,
@@ -215,7 +280,16 @@ export function probeStdioTransport(
 				version,
 				message.params,
 			);
-			if ("id" in message) return send(request, sendOptions);
+			if ("id" in message) {
+				live.add(message.id);
+				try {
+					return await send(request, sendOptions);
+				} catch {
+					live.delete(message.id);
+					subscriptions.failedSend(message);
+					throw new McpMrtrError("MCP_MRTR_TRANSPORT_FAILED");
+				}
+			}
 			const { id: _id, ...notification } = request;
 			return send(notification, sendOptions);
 		};

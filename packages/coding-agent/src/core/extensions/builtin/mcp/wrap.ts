@@ -9,6 +9,19 @@ import type { EventEmitter } from "node:events";
 import type { EventBus } from "../../../event-bus.ts";
 import { redactMcpLogText } from "./log.ts";
 
+export interface McpClock {
+	now(): number;
+	schedule(callback: () => void, ms: number): ReturnType<typeof setTimeout>;
+	cancel(timer: ReturnType<typeof setTimeout>): void;
+}
+
+/** The modern operation uses one injectable monotonic clock and scheduler. */
+export const mcpElapsedClock: McpClock = {
+	now: () => performance.now(),
+	schedule: (callback, ms) => setTimeout(callback, ms),
+	cancel: (timer) => clearTimeout(timer),
+};
+
 type MaybePromise<T> = T | Promise<T>;
 
 export interface McpErrorLogger {

@@ -14,6 +14,7 @@ import {
 	type ModelsJsonModelOverride as SchemaModelsJsonModelOverride,
 	validateModelsConfig,
 } from "./model-config-schema.ts";
+import { rememberModelReferenceOrigins } from "./model-reference-origins.ts";
 import { migrateModelsJsonProviderIds } from "./models-json-migration.ts";
 
 export type ModelsJsonModel = SchemaModelsJsonModel & { samplingParams?: Record<string, unknown> };
@@ -568,7 +569,9 @@ export class ModelConfig {
 			const canonical = normalizeProviderId(providerId);
 			// An explicit canonical entry wins over a legacy one that normalizes onto it.
 			if (canonical !== providerId && providers.has(canonical)) continue;
-			providers.set(canonical, deepFreeze(structuredClone(provider)));
+			const retained = structuredClone(provider);
+			rememberModelReferenceOrigins(retained, path, providerId);
+			providers.set(canonical, deepFreeze(retained));
 		}
 		const disabled = new Set((config.disabledProviders ?? []).map((id) => normalizeProviderId(id)));
 		return new ModelConfig(providers, disabled);

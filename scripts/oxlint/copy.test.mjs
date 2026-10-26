@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -11,16 +12,25 @@ const code = "senpi-copy(no-em-dash-copy)";
 const message = "No em dashes in product copy. Use a period, comma, colon, or parentheses instead.";
 
 // Exercise the shipped config, not a test-only visitor: losing its source scope must fail too (#4040).
+// The fixture tree is a copy of the config beside the real plugins under the OS temp root: a directory
+// inside packages/*/src would race every scripts test that scans the source tree (#4145).
+const fixtureRoot = () => {
+	const dir = realpathSync(mkdtempSync(join(tmpdir(), "senpi-copy-rule-")));
+	copyFileSync(join(root, ".oxlintrc.json"), join(dir, ".oxlintrc.json"));
+	symlinkSync(join(root, "scripts"), join(dir, "scripts"), "dir");
+	return dir;
+};
+
 const lint = (filename, source) => {
-	const dir = mkdtempSync(join(root, "packages", "coding-agent", "src", "copy-rule-"));
+	const dir = fixtureRoot();
 	try {
-		const file = join(dir, filename);
+		const file = join(dir, "packages", "coding-agent", "src", filename);
 		mkdirSync(join(file, ".."), { recursive: true });
 		writeFileSync(file, source);
 		const result = spawnSync(
 			process.execPath,
 			[join(root, "node_modules", "oxlint", "bin", "oxlint"), "-c", ".oxlintrc.json", "-f", "json", file],
-			{ cwd: root, encoding: "utf8" },
+			{ cwd: dir, encoding: "utf8" },
 		);
 		assert.ok(result.status === 0 || result.status === 1, result.stderr);
 		return JSON.parse(result.stdout).diagnostics;
@@ -28,6 +38,17 @@ const lint = (filename, source) => {
 		rmSync(dir, { recursive: true, force: true });
 	}
 };
+
+describe("the copy-rule fixture tree", () => {
+	it("lives outside the repository, so no source scan can meet it", () => {
+		const dir = fixtureRoot();
+		try {
+			assert.ok(relative(realpathSync(root), dir).startsWith(".."), dir);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
 
 describe("no-em-dash-copy through the product lint configuration", () => {
 	for (const [name, source] of [

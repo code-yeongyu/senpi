@@ -138,6 +138,8 @@ async function unaddressableStatus(dir: string): Promise<Omit<HostStatusReport, 
 	const paths = hostDaemonDirectoryPaths(dir);
 	const generations = await readGenerationRows(paths, { includeDead: true });
 	const claims = await readClaimRows(paths, generations);
+	// Without the socket no generation can be proven to serve it, so nothing is elected or offered as a candidate.
+	const current = generations.find((generation) => generation.current);
 	return {
 		reachable: false,
 		lifecycle: null,
@@ -159,6 +161,9 @@ async function unaddressableStatus(dir: string): Promise<Omit<HostStatusReport, 
 		memory_pressure: null,
 		env_keys: [],
 		generations,
+		pointer: current
+			? { state: "current", instanceId: current.instanceId, candidates: [] }
+			: { state: "missing", instanceId: null, candidates: [] },
 		crashes: readHostCrashRecords(dir).filter(isHostCrash).length,
 		shard: null,
 		session_rows: [],

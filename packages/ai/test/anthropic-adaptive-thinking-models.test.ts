@@ -23,6 +23,8 @@ const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"github-copilot/claude-sonnet-5",
 	"kimi-coding/k3",
 	"kimi-coding/k3-256k",
+	"kimi-coding/k3.1-pro",
+	"kimi-coding/k3.1-pro-highspeed",
 	"kimi-coding/kimi-for-coding",
 	"kimi-coding/kimi-for-coding-highspeed",
 	"kimi-coding/kimi-k2-thinking",

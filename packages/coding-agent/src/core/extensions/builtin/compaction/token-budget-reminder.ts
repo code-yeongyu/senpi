@@ -1,3 +1,5 @@
+import type { ExtensionContext } from "../../types.ts";
+
 export interface TokenBudgetReminderLease {
 	compactionEpoch: number;
 	message: string;
@@ -24,6 +26,27 @@ export interface TokenBudgetReminderResult {
 
 export function createInitialReminderState(): TokenBudgetReminderState {
 	return { lastFiredEpoch: null };
+}
+
+export function getPersistedReminderEpoch(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>): {
+	epoch: string;
+	delivered: boolean;
+} {
+	const boundary = branch.findLastIndex((entry) => entry.type === "compaction");
+	const epoch = branch[boundary]?.id ?? "initial";
+	return {
+		epoch,
+		delivered: branch
+			.slice(boundary + 1)
+			.some(
+				(entry) =>
+					entry.type === "custom_message" &&
+					typeof entry.details === "object" &&
+					entry.details !== null &&
+					"tokenBudgetReminderEpoch" in entry.details &&
+					entry.details.tokenBudgetReminderEpoch === epoch,
+			),
+	};
 }
 
 function formatReminderMessage(remaining: number): string {

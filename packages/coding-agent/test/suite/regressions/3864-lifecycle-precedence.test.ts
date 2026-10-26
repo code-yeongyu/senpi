@@ -65,7 +65,8 @@ it("retains a human question even when an unattended hold wins precedence", asyn
 		sessionStartEvent: { type: "session_start", reason: "resume", attended: false },
 	});
 	harnesses.push(h);
-	const bridge = new ConnectionQuestionBridge(() => {});
+	// Wired like connection-handler.ts: a registry change is the lifecycle's change edge.
+	const bridge = new ConnectionQuestionBridge(() => h.session.refreshLifecycle());
 	sessionQuestionBridges.set(h.session, bridge);
 
 	// When its own human question is registered.

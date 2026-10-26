@@ -1,3 +1,21 @@
+## 2026-10-24 - Keep interrupted loop work held without user Stop attribution (senpi#4204)
+
+### What changed
+
+- `session-hold.ts` keeps interrupted sessions held while excluding the interrupted-run gate from user Stop detection.
+
+### Why
+
+- A host restart is not a user Stop and must not be attributed as one.
+
+### Why an extension could not handle it
+
+- This builtin owns loop hold and Stop detection.
+
+### Expected merge conflict zones
+
+- `session-hold.ts`: Stop hold detection.
+
 ## 2026-10-21 - A user Stop holds loop ticks without pausing or charging the loop (senpi#3811)
 
 ### What changed

@@ -59,20 +59,23 @@ HTTP(S) endpoint for `type:"http"` servers (Streamable HTTP with SSE fallback).
 Executable for `type:"stdio"` servers. Never passed through a shell.
 
 ### `args`
-Argument array for `command`. Default `[]`.
+Argument array for `command`. Default `[]`. An entry may be a
+[reference object](#reference-objects).
 
 ### `env`
 Extra environment variables for the child process. Values support `${VAR}`
 expansion from the trusted parent environment. The child does not inherit your
 whole environment: it sees only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`
 and `USER` (on Windows, the system path and profile variables) plus `env`,
-so pass every variable the server reads through `env`.
+so pass every variable the server reads through `env`. A value may also be a
+[reference object](#reference-objects).
 
 ### `cwd`
 Working directory for the child process. Default: the session cwd.
 
 ### `headers`
-Extra HTTP headers for `type:"http"` servers.
+Extra HTTP headers for `type:"http"` servers. A value may be a
+[reference object](#reference-objects).
 
 ### `auth`
 `"bearer" | "oauth" | false`. Default: autodetected — `bearerTokenEnv` or an
@@ -131,6 +134,69 @@ that stay active while the rest goes behind `tool_search`. Default: none.
 ### `logLevel`
 Minimum RFC-5424 level (`debug`…`emergency`) for the server's
 `notifications/message` log stream. Default: record everything (rate-capped).
+
+### Reference objects
+
+A `headers`, `env` or `args` value can point at a secret instead of holding
+it. A reference object takes the place of the whole string:
+
+```jsonc
+{ "$file": "~/.creds/token" }                              // absolute, ~/ (home), or relative to this mcp.json
+{ "$env": "TOKEN" }                                        // a valid variable name
+{ "$concat": ["Bearer ", { "$file": "~/.creds/token" }] }  // strings plus $file/$env, one level only
+```
+
+- **Where.** Only `headers.*`, `env.*` and `args[]`. `url`, `command`, `cwd`
+  and `oauth` refuse them, and text such as `"Bearer {file:~/k}"` inside a
+  string stays literal. Put secrets in `env.*` or `headers`, not `args[]`:
+  resolved arguments are visible in the server's process list.
+- **Redaction.** Every resolved value is treated as sensitive for the process
+  lifetime, including rotated values and non-secret values such as paths.
+  These values are redacted from outbound text, including tool results,
+  logs and status. Values shorter than four characters are not redacted.
+  In structured data, only string values are redacted; keys, numbers,
+  booleans, null and array/object shape stay intact. A protocol field keeps
+  its value only when the value exactly matches a fixed list: a content-block
+  or schema `type`, a common media type in `mimeType` (for example
+  `image/png`), a schema `format`, `jsonrpc: "2.0"`, a `role` of `user` or
+  `assistant`, or a published JSON Schema draft URL in `$schema`. Anything
+  else in those fields, including an unlisted media type, is redacted like
+  any other string.
+- **Who.** A reference is read exactly where `${VAR}` would expand: your own
+  `mcp.json`, a trusted project's `mcp.json` and imported `.mcp.json`, and
+  stdio servers of skills you own. A remote skill server, a skill of an
+  untrusted project and a server an extension declares refuse it before
+  anything is read: the server is skipped with a message naming the field.
+  An untrusted project's own `mcp.json` stays inert until you trust the
+  project, as it does today.
+- **When.** Each connection, reconnects included, reads the current value, so
+  a rotated file is picked up without restarting senpi. Contents are never
+  cached.
+- **Files.** A regular file owned by you or root, at most 64 KiB of UTF-8 text
+  (surrounding whitespace is trimmed), not writable by group or others, with
+  no directory above it writable by another user (a sticky directory passes
+  only for an entry you or root own). A file other users can read still works,
+  with a one-time warning. On Windows the owner, mode and ancestor checks are
+  skipped (ACLs are not inspected); the type, size and UTF-8 checks still run.
+- **Variables.** `$env` reads the session environment. The value is used as
+  plain text and never re-scanned: a variable whose value looks like
+  `{file:...}` is not followed, and senpi warns once, naming the variable but
+  never its value.
+- **Failures.** A missing, empty, unreadable, non-regular, oversized or
+  non-UTF-8 file, or an unset or empty variable, is a named error such as
+  `mcpServers.docs.headers.Authorization: configuration reference missing`.
+  Only that server stops; the others keep working, and no partial value is
+  ever sent.
+
+Differences from OpenCode: references are JSON objects rather than
+`{file:...}`/`{env:...}` text, an environment variable's value is never
+re-scanned for another reference, and URL fields take no references.
+
+Tools that write these objects for you, such as `omo setup`, should first
+check that the installed engine reads them: its `package.json` declares
+`"senpiCapabilities": { "configReferenceObjects": 1 }` (or a higher number).
+An older engine lacks the field and may pass an object through without
+validating it.
 
 ### Settings fields (`settings`)
 
@@ -311,7 +377,34 @@ counter rollback, uncertain replacement and skipped generations conservatively
 invalidate live project connections; subsequent materialization reads current
 grants again. The store keeps no change history.
 
+[Reference objects](#reference-objects) follow the same line: the stdio
+servers of skills you own may use them. A project skill's server (trusted or
+not) and every remote skill server are skipped when they declare one, because
+the project environment policy below expands only plain `${VAR}` strings. The refusal follows the
+skill's recorded provenance; a skill loaded without one keeps the trust rules
+above.
+
 ## Resources and prompts
+
+MCP 2026-07-28 tool schemas use JSON Schema 2020-12 by default. Explicit
+2020-12 declarations are supported; other dialect declarations produce
+`MCP_SCHEMA_UNSUPPORTED_DIALECT`. Tool discovery, the disk cache, and MCP
+exposure retain the full schema, including `$defs`, `$ref` siblings, and
+`additionalProperties`. Boolean roots use an equivalent `allOf` container
+at the object-shaped model-tool API boundary.
+
+Modern structured results may be any JSON value, including `null`, `false`,
+and `0`. Successful results with an `outputSchema` must contain conforming
+`structuredContent`; execution-error results are exempt. Validation never
+coerces values, inserts defaults, removes properties, or fetches references
+from the network. Unresolved references are rejected. Schemas are bounded
+to 64 nesting levels and 16,384 JSON nodes; `format` is an annotation.
+
+Object-only model providers may require a lossy schema adaptation in the AI
+provider layer. That wire adaptation does not change MCP's source schema
+or the arguments sent to the server: modern calls validate the model's
+arguments without coercion. Legacy connections retain the SDK's existing
+schema validation and compatibility conversion.
 
 - `mcp_list_resources` / `mcp_read_resource` register automatically when a
   connected server lists resources.
@@ -320,9 +413,26 @@ grants again. The store keeps no change history.
   notice.
 - Every server prompt registers as `/mcp:<server>:<prompt>`; invoking it
   collects the prompt's arguments and drops the rendered text into the editor.
-- Servers may ask questions mid-call (elicitation, form mode): senpi walks the
-  requested fields through input dialogs; in non-interactive runs the request
-  is declined cleanly.
+- Legacy servers may ask form questions mid-call through the existing terminal
+  or RPC dialog channel.
+- On MCP 2026-07-28 connections, `tools/call`, `resources/read`, and `prompts/get`
+  can return `input_required`. Senpi collects form input privately in the
+  originating terminal session, lets you review and edit it, and continues the
+  operation with a new request ID. Only the final result reaches the model or editor.
+  Continue does not submit a form: even empty forms require Submit. Decline is
+  an explicit human refusal; dismissal of a presented form is Cancel.
+- RPC, print, and other runs without an originating terminal presenter do not
+  advertise modern elicitation. An unsolicited input request terminates the
+  operation locally without fabricating an answer or retrying incomplete input.
+  State-only continuations need no human and remain supported.
+- Each operation allows eight input rounds and five minutes of total consent
+  time, including queueing. The overall deadline also includes network time
+  and cannot be extended by progress. Caller cancellation, session closure,
+  or observed authorization invalidation dismisses pending input without a retry.
+  Authorization uses the same observed-revocation boundary as ordinary MCP
+  requests. Unsupported client features terminate locally.
+- Continuation state and drafts are not persisted or resumed after restart.
+  MRTR does not enable the Tasks extension.
 
 ## Auth
 
@@ -362,6 +472,17 @@ grants again. The store keeps no change history.
 - Tokens are stored `0600` and never logged; server log streams and tool
   output are redacted by the same secret scrubber as the rest of senpi and
   capped by `outputGuard`.
+- Every value a [reference object](#reference-objects) resolves to, rotated
+  ones included, is removed (raw and URL-encoded) from MCP logs, the catalog
+  cache, server status, RPC snapshots, diagnostics and `/mcp` errors, as well
+  as tool and resource results, progress and spill files. Model-facing results
+  are sanitized too: provider requests leave the process. Values
+  sent back to a server, such as a resource URI it listed, keep their exact
+  bytes.
+- Config and catalog identities are HMAC-SHA-256 under a private
+  per-installation key, `config-identity.key` in the agent directory, created
+  once with mode `0600` and never replaced. Without a valid key, nothing keyed
+  is persisted.
 
 ## Disabling MCP entirely
 

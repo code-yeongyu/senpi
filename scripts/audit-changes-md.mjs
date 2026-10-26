@@ -1,12 +1,7 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import {
-	auditChangesMdCoverage,
-	isProductionPath,
-	parseTrackerEntries,
-	UPSTREAM_PIN_PATH,
-} from "./changes-md-policy.mjs";
+import { FRAGMENT_DIR, FRAGMENT_README, isChangelogTarget, parseFragment } from "./changes-fragments.mjs";
 import {
 	ensureCommitExists,
 	filesInCommit,
@@ -15,6 +10,12 @@ import {
 	readUpstreamPin,
 	runGit,
 } from "./changes-md-git.mjs";
+import {
+	auditChangesMdCoverage,
+	isProductionPath,
+	parseTrackerEntries,
+	UPSTREAM_PIN_PATH,
+} from "./changes-md-policy.mjs";
 
 /** Direct tree comparison (pin vs HEAD) with rename-aware change kinds. */
 function resolveRangeNameStatus(from, to) {
@@ -42,6 +43,17 @@ function buildAuditReport(upstreamPath) {
 		const entries = parseTrackerEntries(readFileSync(tracker, "utf8"), tracker);
 		if (entries.length > 0) {
 			trackerDiffs[tracker] = entries;
+		}
+	}
+	// Entries still waiting in changes/unreleased/<pr>.md count as written: the release cut moves them
+	// into the trackers later, and the tree is covered either way (senpi#3610).
+	const fragmentNames = existsSync(FRAGMENT_DIR) ? readdirSync(FRAGMENT_DIR) : [];
+	for (const name of fragmentNames) {
+		const path = `${FRAGMENT_DIR}/${name}`;
+		if (path === FRAGMENT_README) continue;
+		for (const { log, body } of parseFragment(readFileSync(path, "utf8")).blocks) {
+			if (isChangelogTarget(log)) continue;
+			trackerDiffs[log] = [...(trackerDiffs[log] ?? []), ...parseTrackerEntries(body, log)];
 		}
 	}
 	const divergentFiles = changedFiles.filter(isProductionPath);

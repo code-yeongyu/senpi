@@ -23,6 +23,7 @@ import {
 	type CredentialSlot,
 	listSlots,
 	type PooledCredential,
+	projectSlot,
 	removeSlot,
 	repairManagedSentinelSlots,
 	upsertSlot,
@@ -36,6 +37,12 @@ import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { migrateAnthropicOAuthToSubscription } from "./anthropic-oauth-migration.ts";
+import {
+	resolveReadOnlyCredential,
+	resolveStoredCredential,
+	resolveStoredSlot,
+	validateReadOnlyAuthData,
+} from "./auth-credential-values.ts";
 import { migrateLegacyProviderKeys } from "./auth-provider-key-migration.ts";
 import { lockWithLossHandling } from "./file-lock.ts";
 import {
@@ -47,7 +54,6 @@ import {
 	FILE_STORAGE_SYNC_LOCK_BUDGET_MS,
 	isLockError,
 } from "./lockfile-policy.ts";
-import { isCommandConfigValue, resolveConfigValue } from "./resolve-config-value.ts";
 
 type AuthStorageData = Record<string, Credential>;
 
@@ -361,34 +367,7 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 			throw new Error(`Failed to read auth.json: ${error instanceof Error ? error.message : String(error)}`);
 		}
 
-		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-			throw new Error("Invalid auth.json: expected an object");
-		}
-		for (const [providerId, credential] of Object.entries(parsed)) {
-			if (typeof credential !== "object" || credential === null || Array.isArray(credential)) {
-				throw new Error(`Invalid auth.json credential for provider "${providerId}"`);
-			}
-			const value = credential as Record<string, unknown>;
-			if (value.type === "api_key") {
-				const validKey = value.key === undefined || typeof value.key === "string";
-				const validEnv =
-					value.env === undefined ||
-					(typeof value.env === "object" &&
-						value.env !== null &&
-						!Array.isArray(value.env) &&
-						Object.values(value.env).every((entry) => typeof entry === "string"));
-				if (validKey && validEnv) continue;
-			} else if (
-				value.type === "oauth" &&
-				typeof value.access === "string" &&
-				typeof value.refresh === "string" &&
-				typeof value.expires === "number" &&
-				Number.isFinite(value.expires)
-			) {
-				continue;
-			}
-			throw new Error(`Invalid auth.json credential for provider "${providerId}"`);
-		}
+		validateReadOnlyAuthData(parsed);
 
 		this.data = repairPoisonedPoolSlots(parsed as AuthStorageData).data;
 		return this.data;
@@ -402,11 +381,20 @@ export class ReadOnlyAuthStorage implements CredentialStore {
 		// rename. Nothing is rewritten here.
 		const credential = readByProviderId(this.load(), providerId);
 		options?.signal?.throwIfAborted();
-		if (!credential) return undefined;
-		if (credential.type !== "api_key" || !credential.key || isCommandConfigValue(credential.key)) {
-			return structuredClone(credential);
-		}
-		return { ...credential, key: await resolveConfigValue(credential.key, credential.env) };
+		return resolveReadOnlyCredential(credential, providerId, this.authPath);
+	}
+
+	async readSlot(
+		providerId: string,
+		slotName: string,
+		options?: AuthOperationOptions,
+	): Promise<Credential | undefined> {
+		options?.signal?.throwIfAborted();
+		const credential = readByProviderId(this.load(), providerId);
+		options?.signal?.throwIfAborted();
+		return resolveStoredSlot(credential, { providerId, slotName, authPath: this.authPath }, (flat) =>
+			resolveReadOnlyCredential(flat, providerId, this.authPath),
+		);
 	}
 
 	async list(options?: AuthOperationOptions): Promise<readonly CredentialInfo[]> {
@@ -899,9 +887,18 @@ export class AuthStorage implements CredentialStore {
 		if (runtimeKey) return { type: "api_key", key: runtimeKey };
 		const credential = (await this.readLatestData(options))[provider];
 		options?.signal?.throwIfAborted();
-		if (credential?.type !== "api_key") return credential;
-		if (credential.key === undefined) return credential;
-		return { ...credential, key: await resolveConfigValue(credential.key, credential.env) };
+		return resolveStoredCredential(credential, provider, this.authPath);
+	}
+
+	async readSlot(provider: string, slotName: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
+		options?.signal?.throwIfAborted();
+		const runtimeKey = this.runtimeOverrides.get(provider);
+		if (runtimeKey) return projectSlot({ type: "api_key", key: runtimeKey }, slotName);
+		const credential = (await this.readLatestData(options))[provider];
+		options?.signal?.throwIfAborted();
+		return resolveStoredSlot(credential, { providerId: provider, slotName, authPath: this.authPath }, (flat) =>
+			resolveStoredCredential(flat, provider, this.authPath),
+		);
 	}
 
 	async modify(

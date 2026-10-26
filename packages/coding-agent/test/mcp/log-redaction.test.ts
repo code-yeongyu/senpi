@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,8 +12,10 @@ import {
 
 const ORIGINAL_AGENT_DIR = process.env.SENPI_CODING_AGENT_DIR;
 
+// #3858: redaction fingerprints are keyed by the per-installation key, never a plain SHA-256 prefix.
 function expectedRedaction(secret: string): string {
-	return `<redacted:${createHash("sha256").update(secret).digest("hex").slice(0, 8)}>`;
+	const key = readFileSync(join(process.env.SENPI_CODING_AGENT_DIR ?? "", "config-identity.key"));
+	return `<redacted:${createHmac("sha256", key).update(secret).digest("hex").slice(0, 8)}>`;
 }
 
 describe("mcp log redaction", () => {

@@ -426,7 +426,11 @@ describe("host watchdog configuration", () => {
 				[HOST_WATCH_PPID_ENV]: "4242",
 				[HOST_SCRATCH_DIR_ENV]: "/tmp/senpi-rpc-host-internal-abc",
 			}),
-		).toEqual({ fd: 3, ppid: 4242, scratchDir: "/tmp/senpi-rpc-host-internal-abc" });
+		).toEqual({
+			fd: process.platform === "win32" ? 3 : undefined,
+			ppid: 4242,
+			scratchDir: "/tmp/senpi-rpc-host-internal-abc",
+		});
 	});
 
 	it("ignores an unavailable watchdog fd when the supervisor is still alive", async () => {

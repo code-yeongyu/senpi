@@ -194,7 +194,7 @@ function mightHoldCredentialPool(
 	providerId: string,
 	credential: Credential | undefined,
 	env: (name: string) => string | undefined,
-	policySlots?: Record<string, { env?: string; value?: string }>,
+	policySlots?: NonNullable<RotationSources["policy"]>["slots"],
 ): boolean {
 	if (credential) {
 		const accounts = Object.entries(credential).find(([key]) => key === "accounts")?.[1];

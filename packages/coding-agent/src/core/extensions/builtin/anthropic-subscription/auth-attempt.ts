@@ -56,6 +56,11 @@ export async function createAttemptMessages(
 	input: AttemptFactoryInput,
 	auth: AuthenticatedAttemptInput,
 ): Promise<AsyncIterable<SDKMessage>> {
+	// Claude Code loads auto memory independently of settingSources. Keep its private
+	// notes out of every subscription session, after all auth and caller overrides.
+	auth.options.env = { ...auth.options.env, CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" };
+	if (typeof auth.options.settings !== "string")
+		auth.options.settings = { ...auth.options.settings, autoMemoryEnabled: false };
 	if (input.createAttempt)
 		return recordingLimitWindows(retainedAttemptMessages(await input.createAttempt(auth)), auth);
 	const query = input.query({ prompt: input.prompt, options: auth.options });

@@ -65,6 +65,12 @@ export const DETACH_CONNECTION_CAPABILITY = "detach_connection";
  * client's own `set_client_info` and fixed at that first declaration (see `connection-roles.ts`).
  */
 export const INTERACTIVE_USER_CAPABILITY = "interactive_user";
+/** `get_state` and `get_entries` accept `observe: true` and then never count as an attachment (senpi#4267). */
+export const OBSERVE_READS_CAPABILITY = "observe_reads";
+/** `get_entries` accepts `before` and `tail` and answers `next_before` (senpi#4267). */
+export const ENTRIES_TAIL_CAPABILITY = "entries_tail";
+/** A terminal control endpoint serves the host's observe-and-drive command set (senpi#4267). */
+export const TUI_OBSERVER_CAPABILITY = "tui_observer";
 /** The connection owns this session as a task child; only it may pause or resume the session for its run (senpi#3811). */
 export const TASK_PARENT_CAPABILITY = "task_parent";
 

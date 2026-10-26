@@ -1,10 +1,10 @@
 // Summarizes a regenerated OpenGateway catalog against the committed one for the
 // scheduled refresh workflow (.github/workflows/opengateway-catalog-refresh.yml):
-// a Markdown PR body, a CHANGELOG [Unreleased] entry, and `changed=true|false`
+// a Markdown PR body, an AI changelog fragment, and `changed=true|false`
 // on stdout for $GITHUB_OUTPUT.
 //
 //   tsx scripts/opengateway-catalog-diff.ts --base <old.json> --head <new.json> \
-//     [--markdown <out.md>] [--changelog <CHANGELOG.md>]
+//     [--markdown <out.md>] [--fragment <out.md>]
 
 import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
@@ -97,16 +97,8 @@ export function catalogChangelogEntry(diff: OpenGatewayCatalogDiff): string {
 	return `- The OpenGateway model catalog now matches the gateway: it ${parts.join("; ")}.`;
 }
 
-export function insertUnreleasedChangedEntry(changelog: string, entry: string): string {
-	const unreleased = changelog.indexOf("## [Unreleased]");
-	const nextRelease = changelog.indexOf("\n## [", unreleased + 1);
-	const changedHeading = changelog.indexOf("### Changed\n", unreleased);
-	if (unreleased < 0 || changedHeading < 0 || (nextRelease >= 0 && changedHeading > nextRelease)) {
-		throw new Error("CHANGELOG.md has no ### Changed section under ## [Unreleased]");
-	}
-	const insertAt = changedHeading + "### Changed\n\n".length;
-	const sectionHasEntries = changelog.startsWith("- ", insertAt);
-	return `${changelog.slice(0, insertAt)}${entry}\n${sectionHasEntries ? "" : "\n"}${changelog.slice(insertAt)}`;
+export function catalogChangelogFragment(diff: OpenGatewayCatalogDiff): string {
+	return `<!-- changes-log: packages/ai/CHANGELOG.md -->\n### Changed\n${catalogChangelogEntry(diff)}\n`;
 }
 
 function readOption(args: string[], name: string): string | undefined {
@@ -124,13 +116,8 @@ function main(args: string[]): void {
 	);
 	const markdownPath = readOption(args, "--markdown");
 	if (markdownPath) writeFileSync(markdownPath, renderCatalogDiffMarkdown(diff));
-	const changelogPath = readOption(args, "--changelog");
-	if (changelogPath && hasCatalogChanges(diff)) {
-		writeFileSync(
-			changelogPath,
-			insertUnreleasedChangedEntry(readFileSync(changelogPath, "utf8"), catalogChangelogEntry(diff)),
-		);
-	}
+	const fragmentFile = readOption(args, "--fragment");
+	if (fragmentFile && hasCatalogChanges(diff)) writeFileSync(fragmentFile, catalogChangelogFragment(diff));
 	console.log(`changed=${hasCatalogChanges(diff)}`);
 }
 

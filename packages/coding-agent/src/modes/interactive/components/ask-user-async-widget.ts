@@ -127,19 +127,21 @@ export function renderAnswerHint(): string {
 }
 
 /**
- * The modifier that makes a drag select text while the app owns the mouse: Option on iTerm2 and
- * Terminal.app, Option on macOS VS Code only with `terminal.integrated.macOptionClickForcesSelection`,
- * Shift elsewhere (Windows Terminal, Ghostty, WezTerm, kitty, VS Code on Windows/Linux). Inside tmux
- * the outer terminal decides and cannot be detected.
+ * How to select text while the app owns the mouse: Option on iTerm2, Option on macOS VS Code only with
+ * `terminal.integrated.macOptionClickForcesSelection`, Shift elsewhere (Windows Terminal, Ghostty,
+ * WezTerm, kitty, VS Code on Windows/Linux). Terminal.app documents no drag bypass (Option-drag is its
+ * rectangular selection); its documented way out is Command-R, which toggles Allow Mouse Reporting.
+ * Inside tmux the outer terminal decides and cannot be detected.
  */
 export function selectionBypassHint(
 	termProgram = process.env.TERM_PROGRAM ?? "",
 	platform: NodeJS.Platform = process.platform,
 ): string {
-	if (termProgram === "iTerm.app" || termProgram === "Apple_Terminal") return "option+drag";
+	if (termProgram === "iTerm.app") return "option+drag";
+	if (termProgram === "Apple_Terminal") return "cmd+r (toggle mouse reporting)";
 	if (termProgram === "vscode" && platform === "darwin")
 		return "option+drag (with terminal.integrated.macOptionClickForcesSelection)";
-	if (termProgram === "tmux") return "shift+drag (option+drag on iTerm2/Terminal.app)";
+	if (termProgram === "tmux") return "shift+drag (option+drag on iTerm2)";
 	return "shift+drag";
 }
 

@@ -291,6 +291,8 @@ export function guardRealAuth() {
 	};
 }
 
+export { inspectProcess, OwnedSignalRefusedError, signalOwnedProcess } from "./owned-signal.mjs";
+
 // ---------------------------------------------------------------------------
 // Evidence
 // ---------------------------------------------------------------------------

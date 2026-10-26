@@ -1,3 +1,24 @@
+## 2026-10-24 - Kimi K3.1 prompt preset, copied from K3 (senpi#4184)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/kimi-k3-1.ts` (new): a copy of `kimi-k3.ts`; only the identity line ("running on Kimi K3.1") and the function names differ.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/matchers.ts`: `hasKimiK31Signal` / `isKimiK31Model` (`k3.1-pro`, `kimi-k3.1-pro`, `kimi-k3-1-pro`, `k3p1`, "Kimi K3.1", Highspeed variants).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: K3.1 resolves to `kimi-k3-1` before the K3 check; new model case and auto-resolved name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/settings.ts`, `presets.ts`: the `kimi-k3-1` name and its builder.
+
+### Why
+
+- Q asked for K3.1 support with the K3 template cloned, as its own copy so later K3 edits do not change K3.1. Before this, `kimi-k3.1-pro` shared the K3 preset and Kimi Code's `k3.1-pro` matched no preset at all.
+
+### Why an extension could not handle it
+
+- Preset routing and the preset name union live in this builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the Kimi branch at the top of `resolvePresetName` in `contract.ts`, the preset name lists in `settings.ts` and `contract.ts`, the Kimi cases in `presets.ts`.
+
 ## 2026-10-23 - Record product-copy punctuation (senpi#4040)
 
 ### What changed

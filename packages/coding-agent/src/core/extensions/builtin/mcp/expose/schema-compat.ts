@@ -1,5 +1,6 @@
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+import { type ImageContent, type TextContent, registerToolArgumentValidator } from "@earendil-works/pi-ai";
 import { type TSchema, Type } from "typebox";
+import { compileModernSchema } from "../modern/tool-schema.ts";
 import { buildMcpToolNames, type McpToolNameEntry } from "./naming.ts";
 import { collectAllPages, type McpListPage, type McpPaginationResult } from "./pagination.ts";
 
@@ -43,7 +44,17 @@ export type McpMappedToolResult =
 
 const PERMISSIVE_OBJECT_SCHEMA = { type: "object", properties: {} } as const;
 
-export function convertJsonSchemaToTypeBox(schema: unknown): SchemaConversionResult {
+export function convertJsonSchemaToTypeBox(schema: unknown, modern = false): SchemaConversionResult {
+	if (modern && (typeof schema === "boolean" || isRecord(schema))) {
+		const validate = compileModernSchema(schema);
+		// TypeBox/tool APIs require an object container. allOf preserves the exact
+		// boolean constraint; provider-specific object adaptation happens in pi-ai.
+		const parameters = Type.Unsafe<unknown>(
+			typeof schema === "boolean" ? { allOf: [schema] } : structuredClone(schema),
+		);
+		registerToolArgumentValidator(parameters, validate);
+		return { schema: parameters, warnings: [] };
+	}
 	const warnings: string[] = [];
 	const resolved = resolveRefs(stripTopLevelSchemaKeys(schema), schema, new Set<string>(), warnings);
 	if (warnings.length > 0) {

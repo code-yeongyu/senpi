@@ -72,6 +72,23 @@ describe("slot-scoped auth resolution", () => {
 		expect(resolved?.auth.apiKey).toBe("work-key");
 	});
 
+	// #3858 security contract: a store without readSlot never hands a provider an unresolved reference.
+	test("a pooled key the store left as an object is refused instead of reaching the provider", async () => {
+		const store = new InMemoryCredentialStore();
+		const raw: PooledCredential = JSON.parse(
+			JSON.stringify({
+				type: "api_key",
+				key: "primary-key",
+				accounts: [{ name: "work", key: { $file: "/unread" } }],
+			}),
+		);
+		await store.modify("slottest", async () => raw);
+
+		const resolved = resolveProviderAuth(apiKeyProvider, store, authContext, { slotName: "work" });
+
+		await expect(resolved).rejects.toMatchObject({ cause: { name: "ConfigReferenceError", reason: "forbidden" } });
+	});
+
 	test("an unknown slotName resolves to undefined instead of another account", async () => {
 		const store = new InMemoryCredentialStore();
 		await store.modify("slottest", async () => pooledApiKeyEntry());

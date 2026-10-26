@@ -1,3 +1,48 @@
+## 2026-10-24 - The VS Code terminal is recognised when TERM_PROGRAM is missing (senpi#2826)
+
+### What changed
+
+- `packages/tui/src/terminal-capabilities.ts`: new exported `isVsCodeTerminal(env)`. It is true for `TERM_PROGRAM=vscode`, or when `TERM_PROGRAM` is empty and `VSCODE_IPC_HOOK_CLI` is set, which VS Code sets in every integrated terminal, local or remote. Terminals started from VS Code inherit the variable, so a terminal that sets its own `TERM_PROGRAM` wins. `detectTerminalCapabilities` uses it after every other terminal check, and now checks screen before it.
+- `packages/tui/src/terminal-image.ts`: `detectCapabilitiesFromEnvironment` uses it as well, after every other terminal check including herdr and JetBrains, so the runtime detector agrees. tmux and screen are still checked first, and `PI_HYPERLINKS` still overrides.
+- `packages/tui/test/terminal-image.test.ts`, new cases:
+  - a VS Code terminal over WSL with no `TERM_PROGRAM` (the reported environment) gets hyperlinks;
+  - the Git extension's handle alone does not;
+  - a plain `xterm-256color` stays off;
+  - `PI_HYPERLINKS=0` wins;
+  - inside tmux in VS Code the tmux probe still decides;
+  - another `TERM_PROGRAM`, screen and the JetBrains terminal each win over the inherited marker, in both detectors.
+- `packages/tui/test/kitty-graphics-probe.test.ts`: a herdr pane started from a VS Code terminal keeps the Kitty graphics probe (senpi #3698), and the file's environment reset now clears the VS Code variables.
+
+### Why
+
+In a VS Code terminal connected to WSL, `TERM_PROGRAM` was empty, so detection fell to the default `hyperlinks: false`. senpi printed tool-output paths as plain text, and Ctrl+click opened nothing.
+
+### Why an extension could not handle it
+
+Terminal capabilities are detected inside the TUI package before any extension runs.
+
+### Expected merge conflict zones
+
+- LOW: `packages/tui/src/terminal-capabilities.ts` and `packages/tui/src/terminal-image.ts`: the VS Code branch of each detector.
+
+## 2026-10-18 - A key release alone does not re-arm a yielded main-screen mouse (senpi#3604 follow-up)
+
+### What changed
+
+- `packages/tui/src/tui-main-screen.ts`: while the mouse is yielded to the terminal, input re-arms tracking only when it is neither a terminal report nor a Kitty key release (`isKeyRelease`).
+
+### Why
+
+- With the Kitty keyboard protocol, a key held while the first wheel notch arrives sends its release afterwards, which re-armed tracking at once and cost another notch. Regression: `packages/tui/test/tui-main-screen-mouse.test.ts` ("a Kitty key release alone does not re-arm after a yield").
+
+### Why an extension could not handle it
+
+- Mouse tracking and input routing belong to the renderer.
+
+### Expected merge conflict zones
+
+- LOW: the re-arm condition in `TuiMainScreen.handleMouseInput`.
+
 ## 2026-10-23 - Product copy punctuation (senpi#4040)
 
 ### What changed

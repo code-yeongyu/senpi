@@ -1,3 +1,51 @@
+## 2026-10-24 - Persist budget notices after the cached system prefix (senpi#4166)
+
+### What changed
+
+- `orchestration.ts`: budget notices use a hidden custom message with explicit
+  before-prompt placement, including when attached to a new restoration payload.
+- `index.ts`: returns that message through before_agent_start's persisted message delivery,
+  never a systemPrompt rewrite. Existing restoration payloads receive the notice only when
+  their new message is created; sent messages remain unchanged.
+- `token-budget-reminder.ts`: persisted notice metadata is scoped to the latest accepted
+  compaction entry on the active branch. Reload and resume inside that epoch do not
+  append another notice; a new compaction permits a new estimate.
+
+### Why
+
+Changing or removing a numeric budget notice in the system text invalidated the cached prefix.
+The notice and its stale numeric estimate intentionally remain in conversation history
+until compaction. This differs from the standalone reminder rolled back on 2026-08-30:
+the notice precedes the user's prompt instead of following it, preserving the final user
+message for fallback dispatch without rewriting the system or earlier checkpoints.
+
+### Why an extension could not handle it
+
+The compaction builtin itself owns budget calculation and delivery.
+
+### Expected merge conflict zones
+
+- `index.ts`: before_agent_start return; `orchestration.ts`: reminder delivery.
+
+## 2026-10-24 - Budget-only fallback searches shorter safe suffixes (senpi#4161)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: an over-budget candidate enables the later-boundary search, retaining the existing replay, tool-chain, reconstruction and budget checks. Rejection diagnostics prioritize budget failures at structurally valid boundaries over invalid-cut noise, retaining per-reason counts, the first candidate and the smallest measured candidate. Each boundary is checked once across search passes.
+- The selected suffix can start after the latest user turn, as the unsafe-content recovery already allowed; only checkpoint `taskIntent`, when available, carries that request into the reduced context.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: default retention could reject every earlier boundary while never considering a smaller safe suffix. Budget failures also received reconstruction/reload advice. Reported by 승기 in the OmO KakaoTalk room (#4161). This does not change #4148's envelope estimator or #2942's broader recovery ladder.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: this is the builtin compaction extension's existing fallback selector and diagnostic formatter.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: candidate rejection accounting, the later-safe-boundary guard, and rejection formatting.
+
 ## 2026-10-22 - Frontier steps keep the reduced prefix cacheable (senpi#3242)
 
 ### What changed

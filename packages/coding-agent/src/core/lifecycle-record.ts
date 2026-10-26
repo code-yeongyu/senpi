@@ -1,6 +1,7 @@
 import type { TurnEndLivenessInput } from "./extensions/builtin/goal/turn-end-liveness.ts";
 import { readHumanWait, type SyntheticAttention } from "./lifecycle-attention.ts";
 import { readLifecycleState } from "./lifecycle-children.ts";
+import { readLastStop } from "./lifecycle-stop.ts";
 import type { LifecycleHold, LifecycleWaits, SessionLifecycle } from "./session-lifecycle-types.ts";
 import { isRecord } from "./work-custody-record.ts";
 
@@ -54,6 +55,7 @@ export function readLifecycleRecord(value: unknown): LifecycleRecord | undefined
 	const completion = readCompletion(value.completion);
 	const failure = readFailure(value.failure);
 	const lastTurnEnd = readTurnEnd(value.lastTurnEnd);
+	const lastStop = readLastStop(value.lastStop, value.runId);
 	return {
 		sessionId: value.sessionId,
 		state,
@@ -84,6 +86,7 @@ export function readLifecycleRecord(value: unknown): LifecycleRecord | undefined
 		...(completion ? { completion } : {}),
 		...(failure ? { failure } : {}),
 		...(lastTurnEnd ? { lastTurnEnd } : {}),
+		...(lastStop ? { lastStop } : {}),
 		...(isRecord(value.settleDecision) && typeof value.settleDecision.decisionId === "string"
 			? { settleDecision: { decisionId: value.settleDecision.decisionId } }
 			: {}),

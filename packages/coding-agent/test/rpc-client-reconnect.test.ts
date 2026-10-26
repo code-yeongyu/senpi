@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { RpcClient, RpcClientOpenInFlightError, RpcTransportGoneError } from "../src/modes/rpc/rpc-client.ts";
+import { answerProtocolInfo, serveProtocolInfo } from "./helpers/rpc-legacy-protocol.ts";
 
 describe("RpcClient disconnect lifecycle", () => {
 	test("fails sends with a classified transport error before start", async () => {
@@ -19,6 +20,7 @@ describe("RpcClient disconnect lifecycle", () => {
 		let peer: import("node:net").Socket | undefined;
 		const server = createServer((socket) => {
 			peer = socket;
+			serveProtocolInfo(socket);
 		});
 		try {
 			await new Promise<void>((resolve) => server.listen(socketPath, resolve));
@@ -76,8 +78,9 @@ describe("RpcClient disconnect lifecycle", () => {
 					received += chunk.toString();
 					const newline = received.indexOf("\n");
 					if (newline === -1) return;
-					const request = JSON.parse(received.slice(0, newline)) as { id: string };
+					const request = JSON.parse(received.slice(0, newline)) as { id: string; type: string };
 					received = received.slice(newline + 1);
+					if (answerProtocolInfo(socket, request)) return;
 					firstRequestId = request.id;
 					resolveFirstRequest?.();
 				});

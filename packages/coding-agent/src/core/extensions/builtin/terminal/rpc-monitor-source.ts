@@ -8,6 +8,13 @@ import { allocateMonitorId, type MonitorRecordBase, type MonitorSourceHost } fro
 import type { RpcEvents, RpcTarget } from "./rpc-monitor-targets.ts";
 import { type RpcMonitorCheckpoint, RpcMonitorWatch } from "./rpc-monitor-watch.ts";
 
+/**
+ * The summary an RPC watch settles with when its own deadline fires. An RPC watch observes
+ * other sessions and kills nothing, so this must not claim a kill; the same constant feeds
+ * the ended-reason classifier so the two can never drift.
+ */
+const RPC_WATCHER_TIMED_OUT_SUMMARY = "watcher timed_out";
+
 export interface RegisterRpcMonitorOptions {
 	readonly description: string;
 	readonly target: RpcTarget;
@@ -93,7 +100,7 @@ export class RpcMonitorSource {
 			deadline:
 				options.persistent || options.timeoutMs === undefined
 					? undefined
-					: setTimeout(() => this.settle(id, "watcher timed_out"), options.timeoutMs),
+					: setTimeout(() => this.settle(id, RPC_WATCHER_TIMED_OUT_SUMMARY), options.timeoutMs),
 		};
 		this.#records.set(id, record);
 		this.#host.changed();
@@ -116,7 +123,7 @@ export class RpcMonitorSource {
 			this.#host.emit(record, { type: "summary", id, description: record.description, summary });
 		this.#host.ended(
 			record,
-			summary === "watcher timed_out" ? "timeout" : summary === "watcher disposed" ? "disposed" : "killed",
+			summary === RPC_WATCHER_TIMED_OUT_SUMMARY ? "timeout" : summary === "watcher disposed" ? "disposed" : "killed",
 			null,
 		);
 		return true;

@@ -199,6 +199,8 @@ async function createResidentAttempt(
 		? flattenResult.blocks
 		: buildDeltaPromptBlocks(messages.slice(from), input.customToolNameToSdk);
 	const payloadBytes = flattenResult ? serializedPayloadBytes(flattenResult.blocks) : undefined;
+	const divergedPath =
+		observedReason === "assistant_rewritten" ? (existing?.pendingForkDivergedPath ?? undefined) : undefined;
 	const staged = stageContinuityDecision(
 		{
 			...observeSessionSyncDecision({
@@ -211,6 +213,7 @@ async function createResidentAttempt(
 				...(flattenResult?.collapsedDirectives !== undefined
 					? { collapsedDirectives: flattenResult.collapsedDirectives }
 					: {}),
+				...(divergedPath === undefined ? {} : { divergedPath }),
 			}),
 			...seat,
 		},

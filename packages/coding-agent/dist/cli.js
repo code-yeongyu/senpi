@@ -10,7 +10,7 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
 import "./valid-cwd.js";
 import "./internal-role.js";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, fstatSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.js";
@@ -20,6 +20,24 @@ import { APP_NAME, DISPLAY_VERSION, findNodePackageDir, getAgentDir, getInstallP
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.js";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.js";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
+/** Only a presenter-enabled launch may carry its reserved private channel through CLI re-execution. */
+function reexecStdio() {
+    const argv = process.argv.slice(2);
+    const presenter = argv.indexOf("--mcp-presenter-fd");
+    if (presenter < 0 || argv[presenter + 1] !== "4")
+        return "inherit";
+    try {
+        const stat = fstatSync(4);
+        if (!stat.isSocket() && !stat.isFIFO())
+            return "inherit";
+    }
+    catch {
+        return "inherit";
+    }
+    const owner = argv.indexOf("--owner-fd");
+    const lifetime = (owner >= 0 && argv[owner + 1] === "3") || process.env.SENPI_RPC_HOST_WATCH_FD === "3";
+    return ["inherit", "inherit", "inherit", lifetime ? 3 : "ignore", 4];
+}
 // Upstream's `cli/setup.ts` helper is deliberately not used here: this launcher only decides the
 // runtime and process structure, and `cli-main.ts` performs the equivalent process/title/env/http
 // setup for both entry paths (Node launcher and the Bun binary).
@@ -52,7 +70,7 @@ function reexecUnderBunIfNeeded() {
         return false;
     }
     const result = spawnSync(decision.bunPath, [scriptRealPath, ...process.argv.slice(2)], {
-        stdio: "inherit",
+        stdio: reexecStdio(),
         windowsHide: true,
     });
     if (result.signal) {
@@ -125,7 +143,7 @@ async function spawnFullCli() {
     return await new Promise((resolve, reject) => {
         const child = spawn(process.execPath, [...process.execArgv, fullCliPath, ...args], {
             env: childEnvironment,
-            stdio: "inherit",
+            stdio: reexecStdio(),
         });
         child.on("error", (error) => {
             reject(error);

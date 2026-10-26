@@ -1,5 +1,5 @@
 import type { McpToolCatalogEntry } from "../catalog.ts";
-import type { McpServerConfig, McpSettings } from "../config-schema.ts";
+import type { McpServerDeclaredConfig, McpSettings } from "../config-schema.ts";
 import type { ServerConnection } from "../connection.ts";
 import { computeMcpExposurePolicy } from "./policy.ts";
 
@@ -11,7 +11,7 @@ export interface McpServerExposureStatus {
 
 export function getMcpCatalogExposureStatus(
 	catalog: readonly McpToolCatalogEntry[],
-	serverConfig: McpServerConfig,
+	serverConfig: McpServerDeclaredConfig,
 	settings: McpSettings,
 ): McpServerExposureStatus {
 	const policy = computeMcpExposurePolicy(catalog, serverConfig, settings);
@@ -29,7 +29,7 @@ export function getMcpCatalogExposureStatus(
 export async function getMcpServerExposureStatus(
 	name: string,
 	connection: ServerConnection,
-	serverConfig: McpServerConfig,
+	serverConfig: McpServerDeclaredConfig,
 	settings: McpSettings,
 ): Promise<McpServerExposureStatus> {
 	try {

@@ -461,6 +461,8 @@ const KIMI_CODING_STABLE_MODELS = {
 // equivalent Moonshot API rates to estimate the value of subscription usage.
 const KIMI_CODING_IMPLIED_COSTS: Record<string, Model<Api>["cost"]> = {
 	k3: KIMI_K3_COST,
+	"k3.1-pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+	"k3.1-pro-highspeed": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 4 },
 	"kimi-for-coding": { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
 	"kimi-for-coding-highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
 	"kimi-k2-thinking": { input: 0.6, output: 2.5, cacheRead: 0.15, cacheWrite: 0 },

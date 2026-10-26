@@ -7,6 +7,7 @@ import type { ProviderConfigInput } from "../../src/core/provider-composer.ts";
 function registeredEligibility(readSettings: () => AnthropicSubscriptionProviderSettings): boolean | undefined {
 	let captured: ProviderConfigInput | undefined;
 	const pi = {
+		cwd: process.cwd(),
 		registerProvider: (_name: string, config: ProviderConfigInput) => {
 			captured = config;
 		},

@@ -50,6 +50,45 @@ const SUPERVISOR_CORE_ALLOWLIST = new Set(["brand.js", "process-crash-record.js"
  * every forbidden-import assertion below remain unchanged; this is no allowance for further graph growth.
  */
 const SUPERVISOR_MODULE_CEILING = 55;
+// senpi#3795: the approved sealed hop adds only these transport/lifetime leaves. Count
+// the leaves actually loaded, not slots of generic headroom: the pre-existing
+// graph still has its original ceiling even if a leaf is later removed.
+// `host-lifecycle-internal-key` holds the supervisor's hop key and credentials, split out of host-lifecycle.ts
+// (senpi#3816 review); its own imports were already in the graph. Measured: 60 modules with it (4 hop leaves
+// before it), 1,970 source / 2,065 built bytes, 29 code lines.
+const INTERNAL_HOP_LEAVES = new Set(
+	[
+		"internal-channel",
+		"internal-record-cipher",
+		"internal-record-stream",
+		"host-lifetime-reader",
+		"host-lifecycle-internal-key",
+		// The one lifetime binding interface (senpi#3816 round 7: FIFO on Linux, reopened stdin on macOS). Measured:
+		// 62 modules with it (6 hop leaves before it), 3,404 source / 3,198 built bytes, 44 code lines; it imports only
+		// Node builtins and host-lifetime-reader, already a leaf.
+		"host-lifetime-binding",
+		// The recorded-supervisor poll, split out of host-watchdog.ts for its size (senpi#3816 review M2): moved code,
+		// no new dependency. Measured: 63 modules with it (7 hop leaves before it), 5,369 source / 5,081 built bytes,
+		// 89 code lines; it imports only process-identity and process-start-identity, both already in the graph.
+		"host-supervisor-poll",
+	]
+		.map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`)
+		// One clock domain per platform for the recorded supervisor start (senpi#3816 delta review): /proc start ticks
+		// on Linux, ps lstart elsewhere. Measured: 61 modules with it (5 hop leaves before it), 2,512 source /
+		// 2,184 built bytes, 40 code lines; its only repo import, process-identity, was already in the graph.
+		.concat("packages/coding-agent/dist/utils/process-start-identity.js"),
+);
+
+// senpi#3815: the public endpoint's challenge-response (wire contract v1.1) adds exactly these three leaves, each
+// importing only Node builtins and modules already in the graph (jsonl, socket-transport, process-identity). Measured
+// at 66 modules (8 hop leaves): rpc-auth-proof 1,406 source / 1,079 built bytes, 35 code lines (the one HMAC and
+// constant-time comparison, shared with the hop); rpc-public-auth 8,054 / 9,064, 214 (the pre-admission filter);
+// rpc-public-key 7,349 / 8,190, 185 (the per-launch key record). Nothing else entered the graph.
+const PUBLIC_AUTH_LEAVES = new Set(
+	["rpc-auth-proof", "rpc-public-auth", "rpc-public-key"].map(
+		(name) => `packages/coding-agent/dist/modes/rpc/${name}.js`,
+	),
+);
 
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {
 	const repo = `file://${repoRoot}`;
@@ -65,7 +104,11 @@ describe("RPC host supervisor import graph", () => {
 		const modules = loadedModules(
 			probeImportGraph(repoRoot, `${repoRoot}/packages/coding-agent/dist/modes/rpc/host-lifecycle.js`).entries,
 		);
-		console.info(`supervisor graph: ${modules.length} modules (ceiling ${SUPERVISOR_MODULE_CEILING})`);
+		const internalHopLeaves = modules.filter((url) => INTERNAL_HOP_LEAVES.has(url)).length;
+		const publicAuthLeaves = modules.filter((url) => PUBLIC_AUTH_LEAVES.has(url)).length;
+		console.info(
+			`supervisor graph: ${modules.length} modules (base ceiling ${SUPERVISOR_MODULE_CEILING}, internal hop ${internalHopLeaves}, public auth ${publicAuthLeaves})`,
+		);
 
 		const core = modules.filter((url) => url.startsWith("packages/coding-agent/dist/core/"));
 		expect(
@@ -73,7 +116,7 @@ describe("RPC host supervisor import graph", () => {
 		).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/interactive/"))).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/app-server/"))).toEqual([]);
-		expect(modules.length).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
+		expect(modules.length - internalHopLeaves - publicAuthLeaves).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
 	});
 
 	// senpi#3743: a bundled install starts its supervisor through `dist/bundle/host-supervisor.js`. Before it

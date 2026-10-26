@@ -57,6 +57,42 @@ function acceptSessionEntries(entries: FileEntry[]): FileEntry[] {
 
 /** Exported for testing */
 export function loadEntriesFromFile(filePath: string): FileEntry[] {
+	return acceptSessionEntries(readRawEntriesFromFile(filePath));
+}
+
+/** What `forkFrom` found in its source: the entries, whether the file had a header, and why it cannot be forked. */
+export type ForkSource =
+	| { readonly kind: "session"; readonly entries: FileEntry[] }
+	| { readonly kind: "headerless"; readonly entries: FileEntry[] }
+	| { readonly kind: "empty" }
+	| { readonly kind: "not-a-session" };
+
+const isSessionShapedEntry = (entry: FileEntry): boolean => {
+	const candidate = entry as { type?: unknown; id?: unknown; parentId?: unknown };
+	return (
+		typeof candidate.type === "string" &&
+		candidate.type !== "session" &&
+		typeof candidate.id === "string" &&
+		(candidate.parentId === null || typeof candidate.parentId === "string")
+	);
+};
+
+/**
+ * Read the source of a fork. A file whose line-1 header was lost but whose every other line is a session
+ * entry (`type`, `id`, `parentId`) is still a whole conversation, and a fork writes its own new header anyway,
+ * so it is forked rather than refused (omo#10375). Anything else that is not a headed session is reported as
+ * what it is: no parsable line at all is empty, parsable lines of another shape are not a session.
+ */
+export function readForkSource(filePath: string): ForkSource {
+	const raw = readRawEntriesFromFile(filePath);
+	if (raw.length === 0) return { kind: "empty" };
+	const accepted = acceptSessionEntries(raw);
+	if (accepted.length > 0) return { kind: "session", entries: accepted };
+	if (raw.every(isSessionShapedEntry)) return { kind: "headerless", entries: raw };
+	return { kind: "not-a-session" };
+}
+
+function readRawEntriesFromFile(filePath: string): FileEntry[] {
 	const resolvedFilePath = normalizePath(filePath);
 	if (!existsSync(resolvedFilePath)) return [];
 
@@ -78,7 +114,7 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 	} finally {
 		closeSync(fd);
 	}
-	return acceptSessionEntries(entries);
+	return entries;
 }
 
 /**

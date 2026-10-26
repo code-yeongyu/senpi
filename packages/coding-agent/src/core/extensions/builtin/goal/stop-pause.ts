@@ -7,7 +7,10 @@ export const GOAL_STOP_RESUMED_ENTRY = "goal-stop-resumed";
 type Marker = { goalId: string };
 
 export function stopHoldLive(ctx: ExtensionContext): boolean {
-	return ctx.getPauseState?.().holds.some((hold) => hold.kind === "session_hold") === true;
+	return (
+		ctx.getPauseState?.().holds.some((hold) => hold.kind === "session_hold" && hold.key !== "interrupted-run") ===
+		true
+	);
 }
 
 export function markStopPaused(pi: Pick<ExtensionAPI, "appendEntry">, goalId: string): void {

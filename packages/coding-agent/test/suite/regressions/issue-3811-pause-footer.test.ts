@@ -20,4 +20,15 @@ describe("senpi#3811 TUI pause footer and /resume", () => {
 		);
 		expect(resumeCommandTarget({ paused: false, pausedNoticeCount: 0, runPaused: true })).toBe("resume_session");
 	});
+
+	it("shows interrupted recovery controls without claiming zero held updates", () => {
+		expect(
+			pauseFooterText({
+				paused: true,
+				pausedNoticeCount: 0,
+				runPaused: false,
+				pauseView: { records: [{ key: "interrupted-run" }] },
+			}),
+		).toBe("Interrupted · type to continue, /resume to resume");
+	});
 });

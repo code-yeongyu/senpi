@@ -2,10 +2,11 @@
 
 Any senpi session can schedule a prompt to run later: a reminder, a follow-up check, or a recurring task. Scheduled prompts are stored on disk, so they work from `--print` and other headless runs and still fire after the process that scheduled them has exited.
 
-There are two parts:
+There are three parts:
 
 - The model schedules a prompt with the `schedule_prompt` tool. The tool only writes a job file under `<agent dir>/schedule/` and returns.
-- A separate `senpi schedule run` process fires due prompts. Run it once (for example from cron), or keep it running with `--watch` (for example under launchd or systemd).
+- While the session is open in an interactive (TUI) or RPC process, that process delivers the session's own due prompts itself. A prompt that comes due while the agent is working is steered into the running turn, so the agent reads it at its next step; when the agent is idle it starts a turn. No runner is needed for this.
+- A separate `senpi schedule run` process fires due prompts of sessions that are not open. Run it once (for example from cron), or keep it running with `--watch` (for example under launchd or systemd).
 
 `/loop` is different: it repeats a prompt inside one interactive session with in-process timers, and it stops when that process exits.
 

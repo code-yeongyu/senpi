@@ -9,6 +9,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Base64ImageSource, ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { loadClaudeAgentSdk, loadedClaudeAgentSdk } from "./sdk-boundary.lazy.ts";
+import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 
 export { loadClaudeAgentSdk } from "./sdk-boundary.lazy.ts";
 export type {
@@ -61,10 +62,15 @@ function requireLoadedSdk(member: keyof SdkBoundary): SdkModule {
 }
 
 const defaultSdkBoundary: SdkBoundary = {
-	query: (input) => requireLoadedSdk("query").query(input),
+	query: (input) => {
+		const cwd = requireAnthropicSubscriptionCwd(input.options?.cwd);
+		return requireLoadedSdk("query").query({ ...input, options: { ...input.options, cwd } });
+	},
 	createSdkMcpServer: (options) => requireLoadedSdk("createSdkMcpServer").createSdkMcpServer(options),
-	getSessionMessages: async (sessionId, options) =>
-		(await loadClaudeAgentSdk()).getSessionMessages(sessionId, options),
+	getSessionMessages: async (sessionId, options) => {
+		const dir = requireAnthropicSubscriptionCwd(options?.dir);
+		return (await loadClaudeAgentSdk()).getSessionMessages(sessionId, { ...options, dir });
+	},
 };
 let activeSdkBoundary = defaultSdkBoundary;
 

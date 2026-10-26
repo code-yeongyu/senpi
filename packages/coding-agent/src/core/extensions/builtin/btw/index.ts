@@ -120,7 +120,10 @@ export default function btwExtension(pi: ExtensionAPI) {
 						sessionId,
 						thinkingLevel: thinkingLevel === "off" ? undefined : thinkingLevel,
 						streamFn: (streamModel, streamContext, options) =>
-							ctx.modelRegistry.modelRuntime.streamSimple(streamModel, streamContext, options),
+							ctx.modelRegistry.modelRuntime.streamSimple(streamModel, streamContext, {
+								...options,
+								cwd: ctx.cwd,
+							}),
 					},
 					context,
 					{

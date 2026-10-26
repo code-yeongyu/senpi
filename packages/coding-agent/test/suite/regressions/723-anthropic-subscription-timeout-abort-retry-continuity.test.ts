@@ -218,6 +218,7 @@ function continuityDetails(diagnostics: AssistantMessage["diagnostics"]): unknow
 
 async function runTurn(context: Context, signal?: AbortSignal): Promise<AssistantMessage> {
 	return await streamAnthropicSubscription(model, context, {
+		cwd: process.cwd(),
 		sessionId: SESSION_ID,
 		streamKind: "main",
 		...(signal ? { signal } : {}),

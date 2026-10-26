@@ -71,7 +71,7 @@ describe("anthropic-subscription responseId (oh-my-openagent#10547)", () => {
 		overrideSdkBoundary({
 			query: scriptedQuery(textTurn({ id: "msg_01OmoTurn", usage: { input_tokens: 10, output_tokens: 0 } })),
 		});
-		const stream = streamAnthropicSubscription(model, { messages: [] });
+		const stream = streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() });
 		for await (const _event of stream) {
 		}
 		expect((await stream.result()).responseId).toBe("msg_01OmoTurn");
@@ -90,7 +90,7 @@ describe("anthropic-subscription responseId (oh-my-openagent#10547)", () => {
 				result,
 			]),
 		});
-		const stream = streamAnthropicSubscription(model, { messages: [] });
+		const stream = streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() });
 		for await (const _event of stream) {
 		}
 		const message = await stream.result();
@@ -114,7 +114,7 @@ describe("anthropic-subscription responseId (oh-my-openagent#10547)", () => {
 				...rest,
 			]),
 		});
-		const stream = streamAnthropicSubscription(model, { messages: [] });
+		const stream = streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() });
 		for await (const _event of stream) {
 		}
 		expect((await stream.result()).responseId).toBe("msg_01First");
@@ -122,7 +122,7 @@ describe("anthropic-subscription responseId (oh-my-openagent#10547)", () => {
 
 	it("leaves responseId unset when message_start carries no id", async () => {
 		overrideSdkBoundary({ query: scriptedQuery(textTurn({ usage: { input_tokens: 10, output_tokens: 0 } })) });
-		const stream = streamAnthropicSubscription(model, { messages: [] });
+		const stream = streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() });
 		for await (const _event of stream) {
 		}
 		expect((await stream.result()).responseId).toBeUndefined();

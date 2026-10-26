@@ -513,6 +513,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			);
 			return modelRuntime.streamSimple(model, context, {
 				...options,
+				cwd,
 				serviceTier,
 				timeoutMs,
 				websocketConnectTimeoutMs,

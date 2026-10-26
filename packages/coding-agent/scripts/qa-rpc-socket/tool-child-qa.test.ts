@@ -5,7 +5,7 @@
  * and real processes.
  */
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -146,8 +146,12 @@ describe("driver exit codes and gates", () => {
 		expect(host.protocolInfo.capabilities).toEqual(["tool_runtime:in-process"]);
 	});
 
-	test("the RPC helper uses only commands present in rpc-types.ts", () => {
-		const source = readFileSync(new URL("../../src/modes/rpc/rpc-types.ts", import.meta.url), "utf8");
+	test("the RPC helper uses only commands present in the RPC type modules", () => {
+		const rpcTypes = new URL("../../src/modes/rpc/", import.meta.url);
+		const source = readdirSync(rpcTypes)
+			.filter((name) => name.endsWith("-types.ts"))
+			.map((name) => readFileSync(new URL(name, rpcTypes), "utf8"))
+			.join("\n");
 		for (const command of HARNESS_RPC_COMMANDS) expect(source).toContain(`type: "${command}"`);
 	});
 });

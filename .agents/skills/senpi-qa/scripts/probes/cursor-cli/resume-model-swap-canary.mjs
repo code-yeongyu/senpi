@@ -38,6 +38,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { signalOwnedProcess } from "../../lib/common.mjs";
 
 const VERSION_FLOOR = "2026.08.11";
 const DEFAULT_MODELS = ["composer-2.5-fast", "gpt-5.6-luna-high", "claude-opus-4-8-thinking-high"];
@@ -119,7 +120,7 @@ function installSignalCleanup() {
 function killGroup(child) {
 	if (!child || child.exitCode !== null || child.signalCode !== null) return;
 	try {
-		process.kill(-child.pid, "SIGTERM");
+		signalOwnedProcess({ pid: child.pid, spawned: child, group: true, signal: "SIGTERM" });
 	} catch {
 		/* process group already gone */
 	}
@@ -189,7 +190,7 @@ function runAttempt({ executable, cwd, model, prompt, resumeId, timeoutMs }) {
 			killGroup(child);
 			setTimeout(() => {
 				try {
-					process.kill(-child.pid, "SIGKILL");
+					signalOwnedProcess({ pid: child.pid, spawned: child, group: true, signal: "SIGKILL" });
 				} catch {
 					/* already dead */
 				}

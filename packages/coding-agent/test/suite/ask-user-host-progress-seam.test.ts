@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RpcClient } from "../../src/modes/rpc/rpc-client.ts";
+import { answerProtocolInfo } from "../helpers/rpc-legacy-protocol.ts";
 
 type LineSink = { lines: string[]; nextLine(): Promise<string> };
 
@@ -23,10 +24,11 @@ async function listen(socketPath: string): Promise<{ server: Server; sink: LineS
 			while (index >= 0) {
 				const line = buffer.slice(0, index);
 				buffer = buffer.slice(index + 1);
+				index = buffer.indexOf("\n");
+				if (answerProtocolInfo(socket, JSON.parse(line))) continue;
 				const waiter = waiters.shift();
 				if (waiter) waiter(line);
 				else lines.push(line);
-				index = buffer.indexOf("\n");
 			}
 		});
 	});

@@ -171,7 +171,7 @@ async function refreshConnectedMcpCatalog(
 		const catalog = await collectServerCatalogForCache(
 			entry.connection,
 			serverConfig,
-			entry.configHash,
+			entry.generationHash ?? entry.configHash,
 			entry.credentialIdentity,
 		);
 		if (!ownsCatalog()) {

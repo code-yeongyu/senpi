@@ -46,6 +46,7 @@ import { acquireHostEnsureLock } from "./host-ensure-lock.ts";
 import { type EndpointInUse, endpointInUse, type SocketSilence, socketSiblings } from "./host-gc-evidence.ts";
 import { judgeStaleEngine, type StaleEngineKeep, type StaleEngineOptions } from "./host-stale-engine.ts";
 import { stopHost } from "./host-stop.ts";
+import { gcRpcPublicKeys } from "./rpc-public-key.ts";
 
 export type HostGcKeptReason =
 	| EndpointInUse
@@ -93,6 +94,7 @@ export interface HostGcOptions {
 const GC_LOCK_WAIT_MS = 2_000;
 
 export async function gcHostEndpoints(agentDir: string, options: HostGcOptions = {}): Promise<HostGcResult> {
+	if (process.platform !== "win32") await gcRpcPublicKeys(agentDir);
 	const removed: HostGcEntry<SocketSilence>[] = [];
 	const stopped: (HostGcEntry<"stale_old_engine"> & { readonly pid: number })[] = [];
 	const kept: HostGcEntry<HostGcKeptReason>[] = [];

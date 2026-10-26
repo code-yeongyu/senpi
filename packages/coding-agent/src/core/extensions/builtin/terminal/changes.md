@@ -1,3 +1,44 @@
+## 2026-10-24 - RPC monitors authenticate public POSIX hosts before subscribing (senpi#3815)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-observer.ts`: the public POSIX dial runs the challenge-response before `subscribe_sessions` (still marked observing) and accepts a `keyRoot`. Raw-secret TUI and Windows endpoints keep their handshake.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-observer.ts`: an observing connection must also prove the endpoint key once the host enforces authentication, without counting as an attachment.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-observer.ts`: this is the terminal extension's own transport bootstrap.
+
+### Expected merge conflict zones
+
+- LOW: imports and the connect/subscribe setup in `packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-observer.ts`.
+
+## 2026-10-18 - Monitor deadline docs, accurate & / nohup guidance, and a killed-at-deadline summary (senpi#3611)
+
+### What changed
+
+- `tools/bash.ts` (`run_in_background` description), `prompt.ts`, and the bun-1-4 skill: state what the code does — a plain `&` job dies with the call's PTY hangup (native backend; the pipe fallback never hangups); `nohup` racily escapes that hangup (a child can still die when the call returns before nohup takes effect) and survives as an untracked orphan (no `bash_id`, no captured log) that the call's timeout group-kill still removes, while `setsid` leaves the process group entirely and survives even that kill (reviewer probe: after `kill(-pgid, SIGKILL)` the setsid child stayed alive, the nohup child died); a non-persistent command watch's `timeout_ms` kills the watched command on both backends (native `session_threads.rs` group kill, pipe `terminateChildTree`).
+- `tools/monitor.ts`: the guidelines list gains the watcher-with-a-deadline line — `timeout_ms` KILLS the watched command of a non-persistent watch, so long jobs belong in `run_in_background` and are only watched from there.
+- `command-monitor-source.ts` `#settle`: a timed-out command watch now summarizes as `watcher killed at deadline (timed_out)`; the exit code is deliberately omitted in this branch (a killed child's code is noise).
+- `rpc-monitor-source.ts`: the deadline summary stays `watcher timed_out` (an RPC watch kills nothing) and both its sites share `RPC_WATCHER_TIMED_OUT_SUMMARY`, so the ended-reason classifier can never drift from the settle string.
+- `test/suite/terminal-monitor.test.ts`: the timed-watch test asserts the machine-read ended reason `timeout` through `MonitorRegistry`'s `onEnded` instead of pinning summary prose, plus the structural no-exit-code-suffix guard.
+- `test/suite/terminal-bash-foreground-exit.test.ts` (new): proves the other side of the contract — a readiness-gated `nohup` job SURVIVES a normal foreground return (nothing signals the group on a normal exit; only the deadline path ever kills), with finally-block cleanup.
+
+### Why
+
+Both behaviors strand or destroy long jobs agents believed they had started, and the old `watcher timed_out` read as an observation rather than the kill it is on the command branch (senpi#3611, reported via KakaoTalk). Verified by real runs under the bash tool: with the child ready before the shell exits, a `nohup sleep` survives a normal foreground return (reparented to init) while the plain `&` sleep dies at PTY hangup — though an IMMEDIATE return can kill the nohup child too, the hangup racing nohup's SIGHUP-ignore (5/5 dead in the reviewer's probe); inside a call that hits its timeout the nohup job dies with the group kill on both backends.
+
+### Why an extension could not handle it
+
+- The tool descriptions, the prompt section, the monitor summaries and the ended-reason classifier are this builtin's own registered contract; an external extension cannot re-describe another extension's tools or re-word its emitted summaries.
+
+### Expected merge conflict zones
+
+- LOW: this tracker's top, the `tools/monitor.ts` guidelines list, the first bullet of the prompt section, and `rpc-monitor-source.ts` around the deadline settle.
+
 ## 2026-10-21 - Persistent command monitors are paced instead of muted after 200 lines (senpi#3889)
 
 ### What changed

@@ -1,5 +1,6 @@
+import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
-import { VERSION } from "../../src/config.ts";
+import { getAgentDir, VERSION } from "../../src/config.ts";
 import { engineBuildIdentityFrom } from "../../src/core/engine-build-identity.ts";
 import { SessionCommandRouter } from "../../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
@@ -23,8 +24,15 @@ describe("multi-session RPC protocol info", () => {
 				serverVersion: VERSION,
 				capabilities: [
 					"multi_session",
+					"snapshot_cursor",
+					"ui_answer_ledger",
+					"dialog_observer",
 					"session_lifecycle",
 					"expected_host_instance",
+					"attach_session",
+					"release_attachment",
+					"release_caller_aware",
+					"reclaim_session",
 					"auto_title_sessions",
 					"media_placeholders",
 					"durable_client_message_id",
@@ -41,6 +49,8 @@ describe("multi-session RPC protocol info", () => {
 					"session_held",
 					"resume_session",
 					"attended",
+					"observe_reads",
+					"entries_tail",
 					"retain_on_disconnect",
 					"detach_connection",
 					"unload_session",
@@ -73,6 +83,7 @@ describe("multi-session RPC protocol info", () => {
 				engineVersion: VERSION,
 				engineOrdinal: engineBuildIdentityFrom({ version: VERSION }).ordinal,
 				launch_profile: { profile_id: expect.stringMatching(/^[0-9a-f]{64}$/), core: expect.anything() },
+				agentDir: resolve(getAgentDir()),
 				memory_pressure: false,
 			},
 		});
