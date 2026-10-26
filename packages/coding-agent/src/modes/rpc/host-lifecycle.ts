@@ -9,6 +9,7 @@ import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { isCliModuleEntry } from "./host-cli-entry.ts";
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import type { LaunchIdentity } from "./host-launch-reservation.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
 import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
@@ -97,8 +98,9 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// A parent-admitted supervisor claims its reservation and starts only once granted, verifying the parent's secret
 	// read-only; it never provisions it (#4199 design 4.2a). The reservation module loads only on that path, so a direct
 	// launch keeps its startup import graph (test/supervisor-import-graph.test.ts).
-	const publicSecret = launch.reservation
-		? await admitReservedLaunch(launch.reservation, publicSocket)
+	const admittedLaunch = launch.reservation ? await admitReservedLaunch(launch.reservation, publicSocket) : undefined;
+	const publicSecret = admittedLaunch
+		? admittedLaunch.credential
 		: process.platform === "win32"
 			? await ensurePublicSocketSecret(publicSocket)
 			: undefined;
@@ -123,6 +125,11 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	});
 	const watchers: Array<() => void> = [];
 
+	// The granted supervisor offers the host role before spawning, in the same reservation generation.
+	const grantHost =
+		launch.reservation && admittedLaunch && publicSecret
+			? await offerReservedHost(launch.reservation, publicSecret, admittedLaunch.self)
+			: undefined;
 	const child = spawnHostChild({
 		launch,
 		internalSocket,
@@ -234,6 +241,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// default kill, which would leave that directory behind.
 	registerSupervisorSignals(shutdown, () => drain.drain());
 	try {
+		await grantHost?.();
 		// Direct supervisor launches predate owner records and may have no generation directory.
 		// Ensured starts create it before spawning and always carry an explicit owner/null record.
 		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
@@ -294,13 +302,42 @@ if (!isBundledNode && isCliModuleEntry(import.meta.url)) {
 /** How long a parent-admitted supervisor waits for its grant before giving up its start. */
 const SUPERVISOR_GRANT_DEADLINE_MS = 10_000;
 
-async function admitReservedLaunch(reservation: StoreLocator, publicSocket: string): Promise<Buffer | undefined> {
-	const { admitClaimedSupervisor } = await import("./host-launch-reservation.ts");
-	const credential =
-		process.platform === "win32"
-			? await readSocketSecret(socketSecretPath(publicSocket)).catch(() => undefined)
-			: undefined;
+async function admitReservedLaunch(
+	reservation: StoreLocator,
+	publicSocket: string,
+): Promise<{ credential: Buffer | undefined; self: LaunchIdentity }> {
+	const { admitClaimedParticipant, LaunchReservationError } = await import("./host-launch-reservation.ts");
+	if (reservation.role !== "supervisor") {
+		throw new LaunchReservationError("locator_incomplete", "the supervisor entry requires a supervisor reservation");
+	}
+	const credential = await readSocketSecret(socketSecretPath(publicSocket)).catch(() => undefined);
 	const self = { pid: process.pid, processStartTime: (await readProcessStartTime(process.pid)) ?? null };
-	await admitClaimedSupervisor(reservation, self, credential, { deadlineMs: SUPERVISOR_GRANT_DEADLINE_MS });
-	return credential;
+	await admitClaimedParticipant(reservation, self, credential, { deadlineMs: SUPERVISOR_GRANT_DEADLINE_MS });
+	return { credential, self };
+}
+
+/** Reservation-only lazy boundary: direct supervisors never load SQLite or the reservation helpers. */
+async function offerReservedHost(
+	reservation: StoreLocator,
+	secret: Buffer,
+	issuer: LaunchIdentity,
+): Promise<() => Promise<void>> {
+	const { openEndpointReservationStore } = await import("./endpoint-reservation-store.ts");
+	const { grantClaimedParticipant } = await import("./host-launch-reservation.ts");
+	const store = await openEndpointReservationStore(reservation.storePath);
+	try {
+		store.offer(reservation.generation, "host", JSON.stringify(issuer));
+	} finally {
+		store.close();
+	}
+	return async () => {
+		const store = await openEndpointReservationStore(reservation.storePath);
+		try {
+			await grantClaimedParticipant(store, reservation.generation, "host", issuer, secret, readProcessStartTime, {
+				deadlineMs: SUPERVISOR_GRANT_DEADLINE_MS,
+			});
+		} finally {
+			store.close();
+		}
+	};
 }

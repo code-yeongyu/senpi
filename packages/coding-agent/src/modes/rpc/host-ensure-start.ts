@@ -32,7 +32,7 @@ import { ensureSocketSecret, socketSecretPath } from "./socket-transport.ts";
 import { relayPresenterBootstrap } from "./mcp-presenter-bootstrap.ts";
 import { openEndpointReservationStore } from "./endpoint-reservation-store.ts";
 import { hostEnsureLockTarget } from "./host-ensure-lock.ts";
-import { grantClaimedSupervisor, offerSupervisorLaunch } from "./host-launch-reservation.ts";
+import { grantClaimedParticipant, offerSupervisorLaunch } from "./host-launch-reservation.ts";
 
 export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
 export { DEFAULT_STOP_TIMEOUT_MS };
@@ -138,9 +138,10 @@ export async function startHost(
 		// guard-less record never claims ownership and never authorizes a signal - every later caller
 		// reads it as unknown - so the worst case is a fresh host next time, not a killed healthy one.
 		if (reservation && publicSecret) {
-			await grantClaimedSupervisor(
+			await grantClaimedParticipant(
 				reservation.store,
 				reservation.generation,
+				"supervisor",
 				reservation.issuer,
 				publicSecret,
 				(pid) => probe(pid),
