@@ -12,7 +12,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 
-export const ENDPOINT_RESERVATION_SCHEMA = 1;
+export const ENDPOINT_RESERVATION_SCHEMA = 2;
 
 export type ReservationRole = "supervisor" | "host";
 export type ReservationState = "pending" | "cancelling" | "serving";
@@ -28,6 +28,7 @@ export type ReservationRejection =
 	| "endpoint_mismatch"
 	| "role_not_offered"
 	| "role_already_offered"
+	| "role_not_expected"
 	| "role_already_claimed"
 	| "role_not_claimed"
 	| "role_not_granted"
@@ -138,7 +139,8 @@ CREATE TABLE IF NOT EXISTS reservations (
 	endpoint TEXT NOT NULL,
 	state TEXT NOT NULL,
 	revision INTEGER NOT NULL,
-	owner TEXT NOT NULL
+	owner TEXT NOT NULL,
+	expected_roles TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS roles (
 	generation TEXT NOT NULL REFERENCES reservations(generation),
@@ -185,15 +187,21 @@ export class EndpointReservationStore {
 		this.#database.close();
 	}
 
-	/** Creates a pending generation. The caller holds the endpoint lock. */
-	reserve(endpoint: string, owner: string): string {
+	/**
+	 * Creates a pending generation that expects exactly `expectedRoles` (design 4.2a: a launcher that admits a supervisor
+	 * expects both hops; a self-reserving direct supervisor or standalone host expects only its child's role). The caller
+	 * holds the endpoint lock.
+	 */
+	reserve(endpoint: string, owner: string, expectedRoles: readonly ReservationRole[]): string {
+		const roles = [...new Set(expectedRoles)].sort();
+		if (roles.length === 0) throw new EndpointReservationError("role_not_expected", "a reservation expects no role");
 		const generation = randomBytes(16).toString("hex");
 		this.#transaction(() => {
 			this.#database
 				.prepare(
-					"INSERT INTO reservations (generation, endpoint, state, revision, owner) VALUES (?, ?, 'pending', 1, ?)",
+					"INSERT INTO reservations (generation, endpoint, state, revision, owner, expected_roles) VALUES (?, ?, 'pending', 1, ?, ?)",
 				)
-				.run(generation, endpoint, owner);
+				.run(generation, endpoint, owner, roles.join(","));
 		});
 		return generation;
 	}
@@ -202,6 +210,9 @@ export class EndpointReservationStore {
 	offer(generation: string, role: ReservationRole, issuer: string): void {
 		this.#transaction(() => {
 			this.#pending(generation);
+			if (!this.#expectedRoles(generation).includes(role)) {
+				throw new EndpointReservationError("role_not_expected", `${role} in ${generation}`);
+			}
 			if (this.#role(generation, role)) {
 				throw new EndpointReservationError("role_already_offered", `${role} in ${generation}`);
 			}
@@ -312,9 +323,11 @@ export class EndpointReservationStore {
 				role: ReservationRole;
 				status: RoleStatus;
 			}[];
-			// Serving needs BOTH hops granted: a generation whose host role was never offered has no admitted listener.
+			// Serving needs every EXPECTED role granted: a generation whose expected host was never offered has no admitted
+			// listener, while a self-reserving launcher that expects only its child's role commits once that one is granted.
 			const granted = new Set(rows.filter(({ status }) => status === "granted").map(({ role }) => role));
-			if (rows.some(({ status }) => status !== "granted") || !granted.has("supervisor") || !granted.has("host")) {
+			const expected = this.#expectedRoles(generation);
+			if (rows.some(({ status }) => status !== "granted") || expected.some((role) => !granted.has(role))) {
 				throw new EndpointReservationError("roles_not_granted", generation);
 			}
 			this.#database.prepare("UPDATE reservations SET state = 'serving' WHERE generation = ?").run(generation);
@@ -342,6 +355,15 @@ export class EndpointReservationStore {
 	roleRow(locator: ReservationLocator): RoleRow | undefined {
 		const row = this.#role(locator.generation, locator.role);
 		return row && { role: locator.role, status: row.status, issuer: row.issuer, participant: row.participant };
+	}
+
+	#expectedRoles(generation: string): ReservationRole[] {
+		const row = this.#database
+			.prepare("SELECT expected_roles FROM reservations WHERE generation = ?")
+			.get(generation) as { expected_roles: string } | undefined;
+		return (row?.expected_roles.split(",") ?? []).filter(
+			(role): role is ReservationRole => role === "supervisor" || role === "host",
+		);
 	}
 
 	#transaction<T>(run: () => T): T {

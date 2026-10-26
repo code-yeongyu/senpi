@@ -28,7 +28,7 @@ describe("reservation claim across processes", () => {
 		roots.push(root);
 		const storePath = join(root, "endpoint.reservation.db");
 		const store = await openEndpointReservationStore(storePath);
-		const generation = store.reserve(ENDPOINT, "owner");
+		const generation = store.reserve(ENDPOINT, "owner", ["supervisor", "host"]);
 		store.offer(generation, "supervisor", "owner");
 		store.close();
 

@@ -38,7 +38,7 @@ describe("endpoint reservation store", () => {
 
 	async function offered() {
 		const opened = await store();
-		const generation = opened.store.reserve(ENDPOINT, OWNER);
+		const generation = opened.store.reserve(ENDPOINT, OWNER, ["supervisor", "host"]);
 		opened.store.offer(generation, "supervisor", OWNER);
 		const locator = { endpoint: ENDPOINT, generation, role: "supervisor" as const };
 		return { ...opened, generation, locator, nonce: opened.store.readOffer(locator) };
@@ -177,6 +177,25 @@ describe("endpoint reservation store", () => {
 		expect(s.reservation(generation)).not.toMatchObject({ state: "serving" });
 	});
 
+	// Design 4.2a: the record names its expected roles; serving needs exactly those granted. A self-reserving direct
+	// supervisor or standalone public host expects only the role of the child it admits.
+	it("commits serving for a generation that expects only the host role once the host is granted", async () => {
+		const { store: s } = await store();
+		const generation = s.reserve(ENDPOINT, OWNER, ["host"]);
+		s.offer(generation, "host", OWNER);
+		const hostLocator = { endpoint: ENDPOINT, generation, role: "host" as const };
+		s.claim(hostLocator, s.readOffer(hostLocator), SUPERVISOR);
+		s.grant(generation, "host", OWNER, SUPERVISOR, COMMITMENT);
+		s.markServing(generation);
+		expect(s.reservation(generation)).toMatchObject({ state: "serving" });
+	});
+
+	it("refuses to offer a role the generation does not expect", async () => {
+		const { store: s } = await store();
+		const generation = s.reserve(ENDPOINT, OWNER, ["host"]);
+		expect(rejection(() => s.offer(generation, "supervisor", OWNER))).toBe("role_not_expected");
+	});
+
 	it("bumps the revision on every transition", async () => {
 		const { store: s, generation, locator, nonce } = await offered();
 		const before = s.reservation(generation).revision;
@@ -212,7 +231,7 @@ describe("endpoint reservation store", () => {
 
 	it("answers a commit blocked by another connection's read as store_busy and writes nothing", async () => {
 		const { path, store: s } = await store();
-		const generation = s.reserve(ENDPOINT, OWNER);
+		const generation = s.reserve(ENDPOINT, OWNER, ["supervisor", "host"]);
 		const reader = new DatabaseSync(path);
 		reader.exec("BEGIN; SELECT * FROM roles;");
 		expect(rejection(() => s.offer(generation, "supervisor", OWNER))).toBe("store_busy");
