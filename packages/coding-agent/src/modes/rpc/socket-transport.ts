@@ -80,6 +80,16 @@ async function readSecretEntry(path: string): Promise<Buffer | undefined> {
  * path, or published by a concurrent creator, is returned unchanged; an invalid one is refused, never replaced.
  * Windows keeps the in-place writer until the native no-replace bridge (senpi#4310, loaded by #4312) is wired.
  */
+/**
+ * Read-only classification of the secret at `path` for lifecycle admission (design 4.2a). IO and security errors and
+ * non-regular entries throw: they are neither absence nor a repairable file.
+ */
+export async function classifySocketSecret(path: string): Promise<"valid" | "absent" | "invalid"> {
+	const existing = await readSecretEntry(path);
+	if (existing === undefined) return "absent";
+	return existing.length === SOCKET_SECRET_BYTES ? "valid" : "invalid";
+}
+
 export async function createSocketSecret(path: string): Promise<Buffer> {
 	if (process.platform === "win32") return writeSocketSecretInPlace(path);
 	await mkdir(dirname(path), { recursive: true, mode: 0o700 });

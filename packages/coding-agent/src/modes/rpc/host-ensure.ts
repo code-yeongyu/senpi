@@ -18,6 +18,7 @@ import {
 } from "./host-daemon-registration.ts";
 import { claimHostOwner } from "./host-daemon-state.ts";
 import { HostEnsureRefusedError } from "./host-decision.ts";
+import { admitPublicSecretMutation } from "./host-ensure-admission.ts";
 import { decideEnsureAction as decide } from "./host-ensure-client.ts";
 import { refuseIfForeignHeld, refuseIfStalled, unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
@@ -117,6 +118,16 @@ async function ensureHostLocked(
 	// makes that structural, and the field stays as the second guard for a directory that was
 	// somehow reused: a second socket must never read the first socket's daemon as its own.
 	const registeredHere = registersSocket(registered, socket);
+	// Admission before mutation (#4199 design 4.2a): on a Windows public endpoint an unusable secret makes every probe of a
+	// live owner fail, so nothing below may read that failure as absence and stop, clear or re-provision.
+	if ((testOptions?.platform ?? process.platform) === "win32") {
+		await admitPublicSecretMutation(
+			paths,
+			socket,
+			registeredHere ? registered : undefined,
+			testOptions?.readProcessStartTime,
+		);
+	}
 	if (
 		registeredHere &&
 		registered &&
