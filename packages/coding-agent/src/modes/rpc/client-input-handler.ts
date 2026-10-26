@@ -1,6 +1,7 @@
 import { AgentBusyError } from "../../core/agent-busy-error.ts";
 import type { AgentSession, PromptDisposition, PromptOptions } from "../../core/agent-session.ts";
 import { clientMessageIdentity } from "../../core/client-message-identity.ts";
+import { SessionDiskFullError } from "../../core/session-disk-full.ts";
 import { UNKNOWN_COMMAND_CONFIRM_HINT, UnknownCommandError } from "../../core/unknown-command.ts";
 import {
 	type ClientMessageAdmission,
@@ -148,6 +149,7 @@ export async function handleClientInput(
 			...(error instanceof ClientMessageIdConflict || error instanceof AgentBusyError
 				? { errorCode: error.code }
 				: {}),
+			...(error instanceof SessionDiskFullError ? { errorCode: error.errorCause, errorData: error.details } : {}),
 			...(unknownCommand
 				? {
 						errorCode: RPC_ERROR_UNKNOWN_COMMAND,

@@ -4836,7 +4836,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `summarization_retry_attempt_start` | Retried summarization request starts |
 | `summarization_retry_finished` | Summarization retry loop completes |
 | `extension_error` | Extension threw an error |
-| `transcript_write_failed` | The session file refused a message of the running turn (`role`, `errorMessage`) |
+| `transcript_write_failed` | The session file refused a message of the running turn (`role`, `errorMessage`; a full disk adds `errorCause: "disk_full"` and `diskFull`) |
 | `extension_event` | Capability-gated extension-owned event (`extension_events` clients only) |
 | `commands_changed` | Ordered command/skill candidate snapshot changed |
 | `command_invocation` | Accepted extension-command or prompt-template invocation metadata |
@@ -5416,6 +5416,20 @@ through this event.
   "type": "transcript_write_failed",
   "role": "assistant",
   "errorMessage": "EACCES: permission denied, open '/path/to/session.jsonl'"
+}
+```
+
+A full disk (`ENOSPC`) or a spent quota (`EDQUOT`) is reported as `errorCause: "disk_full"`, with `diskFull` naming the
+session file (`path`) and the bytes the failed write needed (`neededBytes`). `errorMessage` is then the actionable text to show the person. A prompt rejected before it was
+accepted carries the same information as `errorCode: "disk_full"` and `errorData`.
+
+```json
+{
+  "type": "transcript_write_failed",
+  "role": "assistant",
+  "errorMessage": "Disk full: the session could not be saved because the disk is full (/path/to/session.jsonl needed 1.2 KB). Free disk space, then continue this session.",
+  "errorCause": "disk_full",
+  "diskFull": { "path": "/path/to/session.jsonl", "neededBytes": 1229 }
 }
 ```
 

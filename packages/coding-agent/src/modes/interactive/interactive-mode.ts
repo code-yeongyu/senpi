@@ -5624,6 +5624,10 @@ export class InteractiveMode {
 			case "transcript_write_failed": {
 				if (this.transcriptWriteNoticeShown) break;
 				this.transcriptWriteNoticeShown = true;
+				if (event.errorCause === "disk_full") {
+					this.showError(sanitizeTerminalLabel(event.errorMessage));
+					break;
+				}
 				const reason =
 					/^[A-Z][A-Z0-9_]+(?=:)/.exec(event.errorMessage)?.[0] ?? sanitizeTerminalLabel(event.errorMessage);
 				this.showWarning(

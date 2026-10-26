@@ -57,6 +57,7 @@ import type { SpawnedBy } from "./session-lifecycle-types.ts";
 import { planLoadedTail } from "./session-loaded-tail.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
+import { sessionWriteError } from "./session-disk-full.ts";
 import { SessionWriteFence } from "./session-write-fence.ts";
 import {
 	discardFailedFirstFlush,
@@ -1732,11 +1733,12 @@ export class SessionManager {
 				truncateToLastCompleteLine(this.sessionFile);
 				this.tailMayBeTorn = false;
 			}
+			const line = `${JSON.stringify(persistedEntry)}\n`;
 			try {
-				appendFileSync(this.sessionFile, `${JSON.stringify(persistedEntry)}\n`);
+				appendFileSync(this.sessionFile, line);
 			} catch (error) {
 				this.tailMayBeTorn = true;
-				throw error;
+				throw sessionWriteError(error, this.sessionFile, Buffer.byteLength(line));
 			}
 			return;
 		}
@@ -1752,12 +1754,12 @@ export class SessionManager {
 			return;
 		}
 		const fd = openSync(this.sessionFile, "wx");
+		const lines = [...this.fileEntries, entry].map((e) => `${JSON.stringify(this.residentStore.materialize(e))}\n`);
 		try {
-			for (const e of [...this.fileEntries, entry]) {
-				writeFileSync(fd, `${JSON.stringify(this.residentStore.materialize(e))}\n`);
-			}
+			for (const line of lines) writeFileSync(fd, line);
 		} catch (error) {
-			discardFailedFirstFlush(this.sessionFile, fd, error);
+			const neededBytes = lines.reduce((total, line) => total + Buffer.byteLength(line), 0);
+			discardFailedFirstFlush(this.sessionFile, fd, sessionWriteError(error, this.sessionFile, neededBytes));
 		}
 		closeSync(fd);
 		this.flushed = true;

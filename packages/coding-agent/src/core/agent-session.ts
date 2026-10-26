@@ -386,6 +386,7 @@ import {
 	type SessionHeader,
 	SessionManager,
 } from "./session-manager.ts";
+import { type DiskFullDetails, SessionDiskFullError } from "./session-disk-full.ts";
 import { SessionThinkingMemory, type ThinkingLevelSource } from "./session-thinking-memory.ts";
 import { restoreMovedState } from "./session-move/extension-state.ts";
 import type { SessionRelocationHost } from "./session-relocation.ts";
@@ -578,8 +579,17 @@ export type AgentSessionEvent =
 	 * prompt gets, instead of an extension error.
 	 */
 	| { type: "provider_required"; notice: string }
-	/** The session file refused a message of the running turn; the message is not in the transcript. */
-	| { type: "transcript_write_failed"; role: AgentMessage["role"]; errorMessage: string }
+	/**
+	 * The session file refused a message of the running turn; the message is not in the transcript. A full disk is
+	 * reported as `errorCause: "disk_full"` with the file, the bytes the write needed and the space left (senpi#4295).
+	 */
+	| {
+			type: "transcript_write_failed";
+			role: AgentMessage["role"];
+			errorMessage: string;
+			errorCause?: "disk_full";
+			diskFull?: DiskFullDetails;
+	  }
 	/**
 	 * An in-process `ctx.offload` module ran past its deadline and grace and cannot be stopped: it keeps its file locks,
 	 * every write waiting on them fails fast, and they are released when it finishes or the session is closed.
@@ -3945,7 +3955,12 @@ export class AgentSession {
 				this._takePersistWatcher(event.message)?.failed(error);
 				this._sessionLogger.warn("transcript_write_failed", { role: event.message.role, error: errorMessage });
 				this._transcriptWriteFailures.record(event.message, error);
-				this._emit({ type: "transcript_write_failed", role: event.message.role, errorMessage });
+				this._emit({
+					type: "transcript_write_failed",
+					role: event.message.role,
+					errorMessage,
+					...(error instanceof SessionDiskFullError ? { errorCause: error.errorCause, diskFull: error.details } : {}),
+				});
 				if (!this._promptOwnsRun) this._reportContinuationTranscriptFailure();
 			}
 			if (entryId) this._entryIdsByMessage.set(event.message, entryId);
