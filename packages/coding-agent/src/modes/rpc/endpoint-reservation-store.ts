@@ -191,14 +191,17 @@ export async function openEndpointReservationStore(path: string): Promise<Endpoi
 		}
 		throw error;
 	}
-	return new EndpointReservationStore(database);
+	return new EndpointReservationStore(database, path);
 }
 
 export class EndpointReservationStore {
 	readonly #database: Database;
+	/** The store's file, which a launch locator names. */
+	readonly path: string;
 
-	constructor(database: Database) {
+	constructor(database: Database, path: string) {
 		this.#database = database;
+		this.path = path;
 	}
 
 	close(): void {
@@ -392,6 +395,20 @@ export class EndpointReservationStore {
 		const tokens = row?.expected_roles.split(",") ?? [];
 		const roles = tokens.filter((role): role is ReservationRole => role === "supervisor" || role === "host");
 		return roles.length > 0 && roles.length === tokens.length ? roles : undefined;
+	}
+
+	/** The role granted to `participant`, with its commitment; `undefined` until that exact participant is granted. */
+	grantedRole(locator: ReservationLocator, participant: string): { readonly commitment: string } | undefined {
+		return this.#read(() => {
+			this.#locate(locator);
+			const row = this.#database
+				.prepare("SELECT status, participant, commitment FROM roles WHERE generation = ? AND role = ?")
+				.get(locator.generation, locator.role) as
+				| { status: RoleStatus; participant: string | null; commitment: string | null }
+				| undefined;
+			if (row?.status !== "granted" || row.participant !== participant || row.commitment === null) return undefined;
+			return { commitment: row.commitment };
+		});
 	}
 
 	#transaction<T>(run: () => T): T {
