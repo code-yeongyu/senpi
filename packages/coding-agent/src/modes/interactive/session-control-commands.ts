@@ -25,6 +25,7 @@ import {
 import { answerGetEntries } from "../rpc/get-entries-command.ts";
 import { answeredUiRequestId, settledQuestionStatus, unansweredQuestionIds } from "../rpc/extension-ui-response.ts";
 import { buildRpcSessionState } from "../rpc/rpc-session-state.ts";
+import { sessionUiAnswerLedger } from "../rpc/ui-answer-ledger.ts";
 import type { ControlAttachments } from "./session-control-attach.ts";
 import type { ControlFeed } from "./session-control-feed.ts";
 import { runTuiRpcCommand, TUI_RPC_COMMANDS } from "./session-control-rpc-commands.ts";
@@ -88,6 +89,8 @@ export async function runControlCommand(
 					TUI_OBSERVER_CAPABILITY,
 					OBSERVE_READS_CAPABILITY,
 					ENTRIES_TAIL_CAPABILITY,
+					"snapshot_cursor",
+					"ui_answer_ledger",
 				],
 				mode: "tui",
 				endpoint_kind: "tui",
@@ -131,7 +134,7 @@ export async function runControlCommand(
 			return success(id, type, { admitted: result.admitted ?? [] });
 		}
 		case "extension_ui_response":
-			return answerQuestion(context.surface, command);
+			return answerQuestion(context, command);
 		default: {
 			const rpc = await runTuiRpcCommand(context, connection, command);
 			if (rpc !== undefined) return rpc;
@@ -164,19 +167,36 @@ function sessionRow(session: AgentSession): Readonly<Record<string, unknown>> {
  * settles by the host's rule (`settledQuestionStatus`), so the same frame reaches the model as the same
  * message on either surface.
  */
-function answerQuestion(surface: TuiControlSurface, command: ControlCommand): object {
+function answerQuestion(context: ControlCommandContext, command: ControlCommand): object {
+	const { surface, session } = context;
+	const ledger = sessionUiAnswerLedger(session);
+	const answerId = command.answerId;
+	if (answerId !== undefined && (typeof answerId !== "string" || answerId.length < 1 || answerId.length > 256))
+		return failure(command.id, "extension_ui_response", "invalid_answer_id");
 	const frameId = command.id;
 	const requestId = answeredUiRequestId(command);
+	const receipt = requestId === undefined || answerId === undefined ? undefined : ledger.lookup(requestId, answerId);
+	if (receipt === "replay") return { ...success(frameId, "extension_ui_response"), disposition: receipt };
+	if (receipt === "already_answered")
+		return { ...failure(frameId, "extension_ui_response", "already_answered"), disposition: receipt };
 	const request = requestId === undefined ? undefined : surface.pendingQuestion(requestId);
 	if (requestId === undefined || request === undefined) {
-		return failure(frameId, "extension_ui_response", "unknown_request");
+		return {
+			...failure(
+				frameId,
+				"extension_ui_response",
+				answerId === undefined ? "unknown_request" : "unknown_extension_ui_request",
+			),
+			disposition: "unknown",
+		};
 	}
 	const response = questionResponse(command, request.questions);
 	if (response === "question_incomplete") return failure(frameId, "extension_ui_response", response);
 	if (response === undefined || !surface.answerQuestion(requestId, response)) {
 		return failure(frameId, "extension_ui_response", "invalid_response");
 	}
-	return success(frameId, "extension_ui_response");
+	ledger.record(requestId, answerId);
+	return { ...success(frameId, "extension_ui_response"), disposition: "applied" };
 }
 
 function questionResponse(

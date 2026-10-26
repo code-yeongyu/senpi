@@ -198,6 +198,8 @@ export type RpcCommand =
 			 * caused the transition (default: true for `childrenOf`, false otherwise).
 			 */
 			effects?: boolean;
+			/** Observe dialog registration and settlement without receiving command replies. */
+			dialogs?: boolean;
 			/** Also deliver these content record types of matched sessions (default `"none"`); opt-in, never an attachment. */
 			mirror?: "none" | "all" | string[];
 			/** Mark the request activity-neutral for the supervisor's idle exit, as on `list_sessions`. */

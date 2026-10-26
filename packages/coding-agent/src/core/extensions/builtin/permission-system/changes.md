@@ -1,5 +1,27 @@
 # Permission System Builtin Extension
 
+## 2026-10-26 - bash permission: evaluate every command segment (senpi#4317)
+
+### What changed
+
+- `bash-command-segments.ts` (new): `analyzeBashCommand(command)` lexes a command the way bash splits it. It returns each simple command the command would run as normalized words, or `unparsed`. It covers `;`, `&&`, `||`, `|`, `|&`, `&` and line breaks; subshells and brace groups; the bodies of `$( … )`, backticks, `<( … )` / `>( … )`, `${ … }` and `$(( … ))`; unquoted here-document bodies; `if`/`while`/`for` bodies; and `[[ … ]]`. Redirections and their targets are dropped. A command name is normalized: leading assignments and reserved words are skipped, and a path becomes its basename. A wrapper (`env`, `command`, `exec`, `builtin`, `nohup`, `time`, `nice`, `timeout`, `stdbuf`, `caffeinate`, `xargs`, `sudo`, `doas`, `eval`, `trap`, `su -c`, `bash`/`sh`/`zsh`/`dash`/`ksh -c`, `find -exec`) yields its own name and the command it runs, recursively. The command becomes `unparsed` on an unterminated quote, `case`, a function definition, a command name built by an expansion, a glob or brace expansion, or an option a wrapper table does not list.
+- `parsers.ts`: the `bash` request carries one pattern per command, its `BashArity` prefix. The same request serves `bash_input`, command `monitor` calls and nested `tool.bash`. The service already requires every pattern to be allowed and refuses on any deny, so the call is as strict as its strictest command. "Allow always" stores exactly those prefixes (`<prefix>` and `<prefix> *` for each). An unparsed command becomes one target, `(unparsed) <command>`, that only a `*` rule (a preset or a blanket setting) can decide, so no single-command grant allows it. Before that target, a deny-only request (`autoApproveAsk`) checks the command's plain words against deny rules.
+- A simple command keeps the single pattern it had before.
+- Limits fail closed: a command longer than 64 KiB, nesting deeper than 12 levels, a lexer step budget overrun, or any error inside the lexer makes the command `unparsed`. Best-effort deny candidates use at most three words each, so their work grows linearly with the command.
+- "Allow always" never stores a target that holds its own `*` or `?` (stored rules are matched as globs, so such a target would widen into a wildcard). That call is allowed once. Request patterns stay raw, so existing allow and deny rules match exactly as before.
+
+### Why
+
+- The decision used only the first command's prefix. The rest of a compound or wrapped command was never judged against the user's rules or grants.
+
+### Why an extension could not handle it
+
+- This builtin's parser registry produces the patterns a call is decided on. Another extension cannot change the requests the permission service evaluates.
+
+### Expected merge conflict zones
+
+- `parsers.ts` (`parseBashLikePermission`, `bashCommandRequests`).
+
 ## 2026-10-16 - A wider "Allow always" for tools without a parser (senpi#3403)
 
 ### What changed

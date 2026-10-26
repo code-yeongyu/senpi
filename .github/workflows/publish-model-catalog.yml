@@ -37,7 +37,9 @@ permissions:
 
 jobs:
   generate:
-    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
+    # A workflow_run checks out workflow_run.head_sha, so it must come from this repository's own push to
+    # main: the branch name alone does not say which repository the triggering run belongs to (senpi#4342).
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event == 'push') }}
     runs-on: ubuntu-latest
     env:
       SOURCE_REF: ${{ github.event.workflow_run.head_sha || inputs.source_ref || github.sha }}
@@ -77,7 +79,7 @@ jobs:
   publish:
     # The upload targets the upstream pi-artifacts R2 bucket, whose credentials only the upstream
     # repository holds. Forks generate and validate the catalog but never publish it (senpi#1522).
-    if: ${{ github.repository == 'badlogic/pi-mono' && (github.event_name == 'schedule' || github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.publish)) }}
+    if: ${{ github.repository == 'badlogic/pi-mono' && (github.event_name == 'schedule' || (github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event == 'push') || (github.event_name == 'workflow_dispatch' && inputs.publish)) }}
     needs: generate
     runs-on: ubuntu-latest
     environment: pi-model-upload

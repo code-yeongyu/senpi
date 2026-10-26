@@ -114,6 +114,10 @@ export async function startSuccessor(context: {
 			`${replaced.dev}:${replaced.ino}`,
 			...(inheritOwnerPipe ? ["--owner-fd", String(OWNER_WATCH_FD)] : []),
 			...(options.presenterBootstrap ? ["--mcp-presenter-fd", "4"] : []),
+			// Preserve the running host's policy even when an older caller omits the deployment option.
+			...(options.mcpPresenterEnforcement || host.capabilities.includes("mcp_form_presenter_v1")
+				? ["--mcp-presenter-enforcement"]
+				: []),
 			...(options.hostArgs ?? []),
 		];
 		const launch = (options._test?.launch ?? options.launch)?.(argv) ?? defaultHostLaunch(argv);

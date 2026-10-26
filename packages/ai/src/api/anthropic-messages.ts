@@ -46,6 +46,7 @@ import type {
 } from "../types.ts";
 import { isVideoMimeType } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
+import { pushAssistantProgress } from "../utils/assistant-capture.ts";
 import {
 	claudeCodeVersionTooOldHint,
 	getClaudeCodeVersion,
@@ -1319,7 +1320,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	context: TranscriptContext,
 	options?: AnthropicOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const normalizedContext = resolveTranscript(context, supportsMidConvoSystemMessages(model));
 	const currentTools = getCurrentTools(normalizedContext.messages);
 
@@ -1676,7 +1677,12 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							index: event.index,
 						};
 						output.content.push(block);
-						// Native blocks are represented in output.content but have no dedicated stream event variant.
+						pushAssistantProgress(stream, {
+							type: "message_block_state",
+							contentIndex: output.content.length - 1,
+							phase: "insert",
+							block,
+						});
 					}
 				} else if (event.type === "content_block_delta") {
 					if (event.delta.type === "text_delta") {
@@ -1727,6 +1733,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						if (block && block.type === "thinking") {
 							block.thinkingSignature = block.thinkingSignature || "";
 							block.thinkingSignature += event.delta.signature;
+							pushAssistantProgress(stream, {
+								type: "message_block_metadata",
+								contentIndex: index,
+								thinkingSignatureDelta: event.delta.signature,
+							});
 						}
 					}
 				} else if (event.type === "content_block_stop") {
@@ -1765,6 +1776,12 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							if (partialJson !== undefined && isRecord(block.raw)) {
 								block.raw = { ...block.raw, input: parseStreamingJson(partialJson) };
 							}
+							pushAssistantProgress(stream, {
+								type: "message_block_state",
+								contentIndex: index,
+								phase: "end",
+								block,
+							});
 						}
 					}
 				} else if (event.type === "message_delta") {

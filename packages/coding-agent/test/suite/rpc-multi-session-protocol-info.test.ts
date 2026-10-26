@@ -24,6 +24,9 @@ describe("multi-session RPC protocol info", () => {
 				serverVersion: VERSION,
 				capabilities: [
 					"multi_session",
+					"snapshot_cursor",
+					"ui_answer_ledger",
+					"dialog_observer",
 					"session_lifecycle",
 					"expected_host_instance",
 					"attach_session",

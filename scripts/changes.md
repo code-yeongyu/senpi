@@ -1,3 +1,23 @@
+## 2026-10-25 - The ./models entry budget admits the capture leaf (senpi#4277, part of #4272)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `packages/ai` `./models` budget rises from 26 to 27 files for
+  `utils/assistant-capture.ts`, reached through `api/lazy.ts` -> `utils/event-stream.ts`.
+
+### Why
+
+- `utils/event-stream.ts` must import the capture module to freeze carriers at `push`; the module itself has only
+  type imports, so the graph grows by exactly that one leaf.
+
+### Why an extension could not handle it
+
+- The budget is a repository gate that runs in `bun run check`, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` entry in `BUDGETS` (one comment line and `maxFiles`).
+
 ## 2026-10-22 - The pi-ai `./models` entry graph admits two reference leaves (senpi#3858)
 
 ### What changed

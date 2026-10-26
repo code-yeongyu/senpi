@@ -5,8 +5,12 @@
 
 import {
 	type AssistantMessage,
-	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
+	type AssistantProgress,
+	type AssistantRecord,
+	assistantRecords,
+	carryAssistantCapture,
+	getAssistantCapture,
 	type Context,
 	type CursorExecResolvedCarrier,
 	createInitialSystemMessage,
@@ -14,6 +18,7 @@ import {
 	getCurrentTools,
 	getToolStateChanges,
 	isCursorExecResolved,
+	isAssistantProgress,
 	normalizeContext,
 	type SystemMessage,
 	supportsAllowedToolChoice,
@@ -32,6 +37,7 @@ import {
 	shouldTerminateAssistantTurn,
 } from "./assistant-terminal-state.ts";
 import { createResponseTimingRecorder } from "./response-timing.ts";
+import { type InternalLoopConfig, internalProgressSink } from "./internal-events.ts";
 import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
 import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
 import { resolveCallTool, withToolNameCorrection } from "./tool-name-alias.ts";
@@ -600,7 +606,7 @@ export async function buildProviderContext(
  */
 async function streamAssistantResponse(
 	context: AgentContext,
-	config: AgentLoopConfig,
+	config: InternalLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
 	streamFunction: StreamFn,
@@ -691,7 +697,10 @@ async function streamAssistantResponse(
 		// Record the requested level, whichever stream function answered.
 		const result = async () => Object.assign(await response.result(), { thinkingLevel: config.reasoning ?? "off" });
 
-		const iterator = response[Symbol.asyncIterator]();
+		// Without an internal listener the loop reads the public stream exactly as before: no records, no carriers.
+		const sink = config[internalProgressSink];
+		const records: AsyncIterable<AssistantRecord> = sink ? assistantRecords(response) : response;
+		const iterator = records[Symbol.asyncIterator]();
 		const eventReader = createAssistantEventReader(
 			iterator,
 			streamIdleTimeoutMs,
@@ -706,16 +715,22 @@ async function streamAssistantResponse(
 				const next = await eventReader.next();
 				if (next.done) break;
 				const event = next.value;
+				if (isAssistantProgress(event)) {
+					await sink?.(event);
+					continue;
+				}
 				switch (event.type) {
 					case "start":
 						responseTiming.started();
 						partialMessage = event.partial;
 						context.messages.push(partialMessage);
 						addedPartial = true;
-						await emit({
-							type: "message_start",
-							message: { ...partialMessage },
-						});
+						await emit(
+							carryAssistantCapture(event, {
+								type: "message_start",
+								message: { ...partialMessage },
+							}),
+						);
 						break;
 
 					case "text_start":
@@ -730,6 +745,7 @@ async function streamAssistantResponse(
 						if (partialMessage) {
 							partialMessage = event.partial;
 							responseTiming.observe(event);
+							let timingProgress: AssistantProgress | undefined;
 							if (
 								event.type === "thinking_start" ||
 								event.type === "thinking_delta" ||
@@ -745,14 +761,24 @@ async function streamAssistantResponse(
 								if (block?.type === "thinking" && timing !== undefined) {
 									block.startedAt = timing.startedAt;
 									if (timing.endedAt !== undefined) block.endedAt = timing.endedAt;
+									// Stamped after provider capture: it amends this event's seed or end block, so it follows it.
+									if (getAssistantCapture(event) && event.type !== "thinking_delta")
+										timingProgress = Object.freeze({
+											type: "message_block_metadata",
+											contentIndex: event.contentIndex,
+											...timing,
+										});
 								}
 							}
 							context.messages[context.messages.length - 1] = partialMessage;
-							await emit({
-								type: "message_update",
-								assistantMessageEvent: event,
-								message: { ...partialMessage },
-							});
+							await emit(
+								carryAssistantCapture(event, {
+									type: "message_update",
+									assistantMessageEvent: event,
+									message: { ...partialMessage },
+								}),
+							);
+							if (timingProgress) await sink?.(timingProgress);
 						}
 						break;
 
@@ -766,12 +792,20 @@ async function streamAssistantResponse(
 							context.messages.push(finalMessage);
 						}
 						if (!addedPartial) {
-							await emit({
-								type: "message_start",
-								message: { ...finalMessage },
-							});
+							await emit(
+								carryAssistantCapture(
+									event,
+									{
+										type: "message_start",
+										message: { ...finalMessage },
+									},
+									finalMessage,
+								),
+							);
 						}
-						await emit({ type: "message_end", message: finalMessage });
+						await emit(
+							carryAssistantCapture(event, { type: "message_end", message: finalMessage }, finalMessage),
+						);
 						return { message: finalMessage, providerToolResults };
 					}
 				}
@@ -853,7 +887,7 @@ async function streamAssistantResponse(
 const ABORTED = Symbol("aborted");
 
 type AssistantEventReader = {
-	next(): Promise<IteratorResult<AssistantMessageEvent>>;
+	next(): Promise<IteratorResult<AssistantRecord>>;
 	dispose(): void;
 };
 
@@ -880,7 +914,7 @@ function abortReasonText(reason: unknown): string | undefined {
 	return text !== undefined && text.trim() !== "" ? text : undefined;
 }
 
-function closeAssistantIterator(iterator: AsyncIterator<AssistantMessageEvent>): void {
+function closeAssistantIterator(iterator: AsyncIterator<AssistantRecord>): void {
 	void Promise.resolve(iterator.return?.()).catch(() => undefined);
 }
 
@@ -954,7 +988,7 @@ function normalizeTimeoutMs(timeoutMs: number | undefined): number | undefined {
 }
 
 function createAssistantEventReader(
-	iterator: AsyncIterator<AssistantMessageEvent>,
+	iterator: AsyncIterator<AssistantRecord>,
 	timeoutMs: number | undefined,
 	signal: AbortSignal | undefined,
 	onIdleTimeout?: (error: Error) => void,
@@ -968,6 +1002,8 @@ function createAssistantEventReader(
 	const startTimeoutMs = normalizeTimeoutMs(streamStartTimeoutMs);
 	const reportedStartTimeoutMs = configuredStartTimeoutMs ?? startTimeoutMs;
 	let sawFirstEvent = false;
+	// Provider silence since the last public event: internal progress records re-arm neither bound.
+	let silentMs = 0;
 	let removeAbortListener: (() => void) | undefined;
 	let abortPromise: Promise<typeof ABORTED> | undefined;
 
@@ -995,17 +1031,22 @@ function createAssistantEventReader(
 			const readTimeoutMs = useStartBound ? startTimeoutMs : idleTimeoutMs;
 			const makeTimeoutError = useStartBound
 				? (ms: number) => new StreamStartTimeoutError(reportedStartTimeoutMs ?? ms)
-				: (ms: number) => new StreamIdleTimeoutError(ms);
+				: (ms: number) => new StreamIdleTimeoutError(idleTimeoutMs ?? ms);
+			const readStartedAt = Date.now();
 			const result = await readNextAssistantEvent(
 				iterator,
-				readTimeoutMs,
+				readTimeoutMs === undefined ? undefined : Math.max(1, readTimeoutMs - silentMs),
 				makeTimeoutError,
 				abortPromise,
 				onIdleTimeout,
 				stream,
 				signal,
 			);
-			if (!result.done) sawFirstEvent = true;
+			if (!result.done && isAssistantProgress(result.value)) silentMs += Date.now() - readStartedAt;
+			else {
+				silentMs = 0;
+				if (!result.done) sawFirstEvent = true;
+			}
 			return result;
 		},
 		dispose: () => removeAbortListener?.(),
@@ -1013,14 +1054,14 @@ function createAssistantEventReader(
 }
 
 async function readNextAssistantEvent(
-	iterator: AsyncIterator<AssistantMessageEvent>,
+	iterator: AsyncIterator<AssistantRecord>,
 	idleTimeoutMs: number | undefined,
 	makeTimeoutError: (timeoutMs: number) => Error,
 	abortPromise: Promise<typeof ABORTED> | undefined,
 	onIdleTimeout?: (error: Error) => void,
 	stream?: Pick<AssistantMessageEventStream, "hasPendingLocalWork">,
 	signal?: AbortSignal,
-): Promise<IteratorResult<AssistantMessageEvent>> {
+): Promise<IteratorResult<AssistantRecord>> {
 	if (idleTimeoutMs === undefined && abortPromise === undefined) {
 		return iterator.next();
 	}
@@ -1028,7 +1069,7 @@ async function readNextAssistantEvent(
 	let timeout: ReturnType<typeof setTimeout> | undefined;
 	let settled = false;
 
-	return new Promise<IteratorResult<AssistantMessageEvent>>((resolve, reject) => {
+	return new Promise<IteratorResult<AssistantRecord>>((resolve, reject) => {
 		const settle = (complete: () => void): void => {
 			if (settled) return;
 			settled = true;

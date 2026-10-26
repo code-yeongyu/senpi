@@ -9,6 +9,11 @@ import type {
 import type { McpLogger } from "../log.ts";
 import { fingerprintSecret } from "../log.ts";
 import { OAuthFlowError } from "./oauth-errors.ts";
+import {
+	canonicalAuthorizationServerIssuer,
+	credentialsMatchIssuer,
+	validatedAuthorizationServerIssuer,
+} from "./oauth-issuer.ts";
 import type { McpStoredAuth, McpTokenStore } from "./token-store.ts";
 
 // Buffer before absolute token expiry at which a refresh is considered due.
@@ -29,19 +34,6 @@ export interface McpOAuthProviderOptions {
 export function tokenExpiresAt(tokens: OAuthTokens, now = Date.now()): number | undefined {
 	if (tokens.expires_in === undefined) return undefined;
 	return now + tokens.expires_in * 1000;
-}
-
-/** Compares authorization server identifiers the way the SDK does: parsed, tolerating one trailing `/`. */
-export function sameAuthorizationServer(a: string, b: string): boolean {
-	const normalize = (value: string): string => {
-		try {
-			return new URL(value).href.replace(/\/$/, "");
-		} catch (error) {
-			if (error instanceof TypeError) return value.replace(/\/$/, "");
-			throw error;
-		}
-	};
-	return normalize(a) === normalize(b);
 }
 
 /**
@@ -127,9 +119,18 @@ export class McpOAuthProvider implements OAuthClientProvider {
 		return this.#options.clientMetadataUrl;
 	}
 
-	get clientMetadata(): OAuthClientMetadata {
+	get clientMetadata(): OAuthClientMetadata & { application_type?: "native" | "web" } {
 		const redirect = this.#options.redirectUrl;
 		return {
+			...(redirect === undefined
+				? {}
+				: {
+						application_type:
+							!["http:", "https:"].includes(new URL(redirect).protocol) ||
+							["127.0.0.1", "localhost", "[::1]"].includes(new URL(redirect).hostname)
+								? "native"
+								: "web",
+					}),
 			redirect_uris: redirect === undefined ? [] : [String(redirect)],
 			grant_types: ["authorization_code", "refresh_token"],
 			response_types: ["code"],
@@ -158,16 +159,46 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 
 	async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
-		// The SDK stamps `info.issuer`; it is persisted with the rest so the binding survives a restart.
-		await this.#store.update((current) => ({ ...(current ?? {}), clientInfo: info }));
+		const discovery = this.discoveryState();
+		const issuer =
+			discovery === undefined
+				? info.issuer && canonicalAuthorizationServerIssuer(info.issuer)
+				: validatedAuthorizationServerIssuer(discovery, this.serverName);
+		await this.#store.update((current) => ({ ...(current ?? {}), clientInfo: { ...info, issuer } }));
 	}
 
 	async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
-		await this.#store.update((current) => ({ ...freezeGrantAttribution(current), discoveryState: state }));
+		const issuer = validatedAuthorizationServerIssuer(state, this.serverName);
+		const discoveryState = { ...state, authorizationServerUrl: issuer };
+		await this.#store.update((current) => {
+			const attributed = freezeGrantAttribution(current);
+			if (!credentialsMatchIssuer(attributed, issuer)) return { discoveryState };
+			const clientIssuer = attributed.clientInfo?.issuer ?? storedGrantIssuer(attributed);
+			return {
+				...attributed,
+				// Unattributed legacy registrations cannot be sent to the server discovered now.
+				clientInfo:
+					clientIssuer === undefined || attributed.clientInfo === undefined
+						? undefined
+						: { ...attributed.clientInfo, issuer },
+				discoveryState,
+			};
+		});
 	}
 
 	discoveryState(): OAuthDiscoveryState | undefined {
-		return this.#store.read()?.discoveryState;
+		const current = this.#store.read();
+		const state = current?.discoveryState;
+		if (state !== undefined) {
+			try {
+				const issuer = validatedAuthorizationServerIssuer(state, this.serverName);
+				if (!credentialsMatchIssuer(current, issuer)) return undefined;
+			} catch (error) {
+				if (error instanceof OAuthFlowError) return undefined;
+				throw error;
+			}
+		}
+		return state;
 	}
 
 	tokens(): OAuthTokens | undefined {
@@ -175,7 +206,12 @@ export class McpOAuthProvider implements OAuthClientProvider {
 	}
 
 	async saveTokens(tokens: OAuthTokens): Promise<void> {
-		await this.#store.update((current) => mergeTokensIntoStoredAuth(current, tokens, this.serverUrl));
+		const discovery = this.discoveryState();
+		const issuer =
+			discovery === undefined
+				? tokens.issuer && canonicalAuthorizationServerIssuer(tokens.issuer)
+				: validatedAuthorizationServerIssuer(discovery, this.serverName);
+		await this.#store.update((current) => mergeTokensIntoStoredAuth(current, { ...tokens, issuer }, this.serverUrl));
 		this.#logFingerprint("saveTokens", tokens.access_token);
 	}
 

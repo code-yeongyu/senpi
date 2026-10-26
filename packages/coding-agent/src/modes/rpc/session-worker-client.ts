@@ -9,7 +9,9 @@ import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
 import { roleConnection } from "./connection-roles.ts";
+import { answeredUiRequestId } from "./extension-ui-response.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
+import type { RpcExtensionUIResponse } from "./rpc-types.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
 import type {
@@ -178,12 +180,13 @@ export class SessionWorkerClient {
 			handle: async (command) => {
 				if (writer.handleMcpForm(command)) return;
 				const connection = writer.currentConnection();
+				const grantAnswer =
+					"type" in command && command.type === "extension_ui_response"
+						? answeredUiRequestId(command as RpcExtensionUIResponse)
+						: undefined;
 				if (
-					"type" in command &&
-					command.type === "extension_ui_response" &&
-					"id" in command &&
-					typeof command.id === "string" &&
-					writer.acceptWorkerGrantResponse(sessionId, command.id, connection) === false
+					grantAnswer !== undefined &&
+					writer.acceptWorkerGrantResponse(sessionId, grantAnswer, connection) === false
 				)
 					return;
 				await this.request({

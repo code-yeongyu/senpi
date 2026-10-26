@@ -5,11 +5,11 @@ import { loadMcpSdkAuth } from "../sdk.lazy.ts";
 import { safeDelay } from "../wrap.ts";
 import { isInvalidGrant, isTransientTokenError, OAuthFlowError } from "./oauth-errors.ts";
 import { oauthFetch } from "./oauth-fetch.ts";
+import { credentialsMatchIssuer, validatedAuthorizationServerIssuer } from "./oauth-issuer.ts";
 import {
 	type McpOAuthProvider,
 	mergeTokensIntoStoredAuth,
 	REFRESH_LEEWAY_MS,
-	sameAuthorizationServer,
 	storedAuthToTokens,
 	storedGrantIssuer,
 } from "./oauth-provider.ts";
@@ -91,8 +91,8 @@ export class McpRefreshManager {
 		// elsewhere, or one that cannot be attributed at all, is a continuity break: drop it and require a fresh
 		// sign-in rather than refreshing silently against whatever server discovery now names.
 		const issuer = storedGrantIssuer(current);
-		const authorizationServer = String(info.authorizationServerUrl);
-		if (issuer === undefined || !sameAuthorizationServer(issuer, authorizationServer)) {
+		const authorizationServer = validatedAuthorizationServerIssuer(info, this.#provider.serverName);
+		if (issuer === undefined || !credentialsMatchIssuer(current, authorizationServer)) {
 			this.#provider.store.writeUnlocked(undefined);
 			throw new OAuthFlowError(
 				"needs_auth",

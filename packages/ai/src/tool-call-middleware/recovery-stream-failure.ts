@@ -1,4 +1,5 @@
 import type { AssistantMessage, AssistantMessageEventStream } from "../types.ts";
+import { removeToolCalls, rewriteHint } from "./recovery-stream-terminal.ts";
 import type { StreamMessageProjection } from "./stream-wrapper-shared.ts";
 import type { ToolCallFormat } from "./types.ts";
 
@@ -36,7 +37,7 @@ export function terminateRecoveryStreamForFailure(
 	const details = failureDetails[failure];
 	projection.sync(source);
 	const message = projection.finalize(source, false);
-	message.content = message.content.filter((block) => block.type !== "toolCall");
+	const rewrittenFrom = removeToolCalls(message);
 	message.stopReason = "error";
 	message.errorMessage = details.errorMessage;
 	message.diagnostics = [
@@ -47,6 +48,6 @@ export function terminateRecoveryStreamForFailure(
 			details: { protocol, status: details.status },
 		},
 	];
-	stream.push({ type: "error", reason: "error", error: message });
+	stream.push({ type: "error", reason: "error", error: message }, rewriteHint(rewrittenFrom));
 	stream.end(message);
 }

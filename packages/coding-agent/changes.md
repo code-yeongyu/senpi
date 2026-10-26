@@ -1,3 +1,21 @@
+## 2026-10-25 - Validate modern MCP schemas with the declared dialect (senpi#4191)
+
+### What changed
+
+- `packages/coding-agent/package.json`: declares the existing pinned AJV 8.20.0 dependency directly for its draft 2020-12 entry point.
+
+### Why
+
+- `packages/coding-agent/package.json`: the SDK's draft-07 validator cannot validate modern MCP output schemas.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/package.json`: the builtin MCP implementation needs this validator in the installed runtime.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/package.json` dependency declarations and generated lock metadata.
+
 ## 2026-10-22 - The package manifest declares reference-object support (senpi#3858)
 
 ### What changed

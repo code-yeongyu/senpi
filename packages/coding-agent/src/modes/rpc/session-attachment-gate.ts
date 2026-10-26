@@ -16,6 +16,7 @@ export const ATTACH_GATE_EXEMPT: ReadonlySet<RpcCommand["type"]> = new Set<RpcCo
 	"reclaim_session",
 	"get_effect_status",
 	"get_state",
+	"get_snapshot",
 	"get_messages",
 	"get_entries",
 	"get_tree",

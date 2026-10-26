@@ -3,6 +3,9 @@ import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
 	type AssistantMessageEventStream,
+	type AssistantProgress,
+	assistantEvents,
+	carryAssistantCapture,
 	createAssistantMessageEventStream,
 	EMPTY_RESPONSE_ERROR,
 	EMPTY_TOOL_USE_ERROR,
@@ -14,11 +17,13 @@ import {
 	hasVisibleText,
 	type JsonObject,
 	type Model,
+	pushAssistantProgress,
 	shouldRecoverTextToolCalls,
 } from "@earendil-works/pi-ai";
 import type { StreamFn } from "./types.ts";
 
 type StreamFactory = () => AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
+type BufferedRecord = { event: AssistantMessageEvent } | { progress: AssistantProgress };
 
 function isEmptyStop(message: AssistantMessage): boolean {
 	return message.stopReason === "stop" && !hasVisibleAssistantContent(message);
@@ -104,25 +109,32 @@ function createRetryingStream(
 	policy: CommitPolicy,
 ) {
 	const outerStream = createAssistantMessageEventStream();
+	const forward = (entry: BufferedRecord): void => {
+		if ("event" in entry) outerStream.push(entry.event);
+		else pushAssistantProgress(outerStream, entry.progress);
+	};
+	const replaced = (source: AssistantMessageEvent, error: AssistantMessage): AssistantMessageEvent =>
+		carryAssistantCapture(source, { type: "error", reason: "error", error }, error);
 
 	void (async (): Promise<void> => {
 		try {
 			let stream = firstStream;
 			let retrying = false;
 			for (;;) {
-				const buffered: AssistantMessageEvent[] = [];
+				// Controls are held beside the events they follow, so a discarded attempt discards both.
+				const buffered: BufferedRecord[] = [];
 				let forwarding = false;
 				let retry = false;
-				for await (const event of stream) {
+				const events = assistantEvents(stream, (progress) => {
+					if (forwarding) pushAssistantProgress(outerStream, progress);
+					else buffered.push({ progress });
+				});
+				for await (const event of events) {
 					if (event.type === "done") {
 						const emptyToolUse = isEmptyToolUse(event.message);
 						if (isEmptyStop(event.message) || emptyToolUse) {
 							if (forwarding) {
-								outerStream.push({
-									type: "error",
-									reason: "error",
-									error: createForwardedEmptyFailure(event.message, emptyToolUse),
-								});
+								outerStream.push(replaced(event, createForwardedEmptyFailure(event.message, emptyToolUse)));
 								outerStream.end();
 								return;
 							}
@@ -130,22 +142,16 @@ function createRetryingStream(
 								retry = true;
 								break;
 							}
-							const error = createEmptyResponseFailure(event.message, emptyToolUse);
-							outerStream.push({ type: "error", reason: "error", error });
+							outerStream.push(replaced(event, createEmptyResponseFailure(event.message, emptyToolUse)));
 							outerStream.end();
 							return;
 						}
-						const terminal = retrying
-							? {
-									...event,
-									message: appendRetryDiagnostic(
-										event.message,
-										recoveryDiagnosticType(isEmptyToolUse(event.message)),
-									),
-								}
-							: event;
+						const message = retrying
+							? appendRetryDiagnostic(event.message, recoveryDiagnosticType(isEmptyToolUse(event.message)))
+							: event.message;
+						const terminal = retrying ? carryAssistantCapture(event, { ...event, message }, message) : event;
 						if (!forwarding) {
-							for (const pending of buffered) outerStream.push(pending);
+							for (const pending of buffered) forward(pending);
 						}
 						outerStream.push(terminal);
 						outerStream.end();
@@ -153,7 +159,7 @@ function createRetryingStream(
 					}
 					if (event.type === "error") {
 						if (!forwarding) {
-							for (const pending of buffered) outerStream.push(pending);
+							for (const pending of buffered) forward(pending);
 						}
 						outerStream.push(event);
 						outerStream.end();
@@ -163,9 +169,9 @@ function createRetryingStream(
 						outerStream.push(event);
 						continue;
 					}
-					buffered.push(event);
+					buffered.push({ event });
 					if (isMeaningfulContentEvent(event, policy)) {
-						for (const pending of buffered) outerStream.push(pending);
+						for (const pending of buffered) forward(pending);
 						forwarding = true;
 					}
 				}

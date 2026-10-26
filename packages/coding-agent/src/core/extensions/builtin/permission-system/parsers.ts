@@ -3,6 +3,7 @@ import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import type { ToolInfo } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
+import { analyzeBashCommand, bestEffortCommandLines } from "../permission-system/bash-command-segments.ts";
 import {
 	type AlwaysScope,
 	extractExternalPaths,
@@ -104,6 +105,53 @@ function withExternalDirectoryRequests(
 	];
 }
 
+const uniq = (values: readonly string[]): string[] => [...new Set(values)];
+
+/**
+ * The targets an "Allow always" answer may store. Stored rules are matched as globs, so a target holding
+ * its own `*` or `?` would be remembered as a wildcard that matches other commands; such a target is
+ * allowed once and never stored. Request patterns stay raw, so existing rules match exactly as before.
+ */
+const rememberable = (targets: readonly string[]): string[] => targets.filter((target) => !/[*?]/.test(target));
+
+/** Marks a bash request target that no command-specific rule can match: only a `*` rule decides it. */
+export const UNPARSED_BASH_PREFIX = "(unparsed) ";
+
+/**
+ * The `bash` requests for one command. Every simple command it runs is decided, so the call is as
+ * strict as its strictest command: one pattern per command (its arity prefix), all of which must be
+ * allowed, and "Allow always" stores exactly those prefixes. A command the lexer cannot parse is one
+ * target only a `*` rule (a preset, a blanket setting) can decide, so no grant for one command can
+ * allow it; its plain words are still checked against deny rules.
+ */
+function bashCommandRequests(command: string): PermissionRequest[] {
+	const analysis = analyzeBashCommand(command);
+	if (analysis.kind === "unparsed") {
+		const target = `${UNPARSED_BASH_PREFIX}${command}`;
+		const candidates = uniq(
+			bestEffortCommandLines(command)
+				.map((words) => BashArity.prefix(words).join(" "))
+				.filter(Boolean),
+		);
+		// The deny-only check runs first, so a denied call is refused before anyone is asked.
+		return [
+			...(candidates.length === 0
+				? []
+				: [{ permission: "bash", patterns: candidates, always: [], autoApproveAsk: true as const }]),
+			{ permission: "bash", patterns: [target], always: rememberable([target]) },
+		];
+	}
+	const prefixes = uniq(analysis.segments.map((words) => BashArity.prefix([...words]).join(" ")).filter(Boolean));
+	if (prefixes.length === 0) return [{ permission: "bash", patterns: [command], always: rememberable([command]) }];
+	return [
+		{
+			permission: "bash",
+			patterns: prefixes,
+			always: rememberable(prefixes).flatMap((prefix) => [prefix, `${prefix} *`]),
+		},
+	];
+}
+
 /** The `eval` class a cell carries on its own, used when its tool-owned parser names anything narrower. */
 export function fallbackEvalPermissionRequest(): PermissionRequest {
 	return { permission: "eval", patterns: ["*"], always: ["*"] };
@@ -186,17 +234,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 				return [fallbackPermissionRequest("bash")];
 			}
 
-			const tokens = command.split(/\s+/).filter(Boolean);
-			const prefix = BashArity.prefix(tokens).join(" ");
-			const always = prefix ? [prefix, `${prefix} *`] : ["*"];
-			const requests: PermissionRequest[] = [
-				{
-					permission: "bash",
-					patterns: [prefix || command],
-					always,
-				},
-			];
-
+			const requests = bashCommandRequests(command);
 			const externalPaths = extractExternalPaths(command, cwd);
 			if (externalPaths.length > 0) {
 				requests.push({

@@ -8,6 +8,7 @@
  */
 
 import type { AssistantMessage, ToolCall } from "../../types.ts";
+import { pushAssistantProgress, pushAssistantSignature } from "../../utils/assistant-capture.ts";
 import type { AssistantMessageEventStream } from "../../utils/event-stream.ts";
 import { parseStreamingJson } from "../../utils/json-parse.ts";
 import { type GetChatMessageResponse, StopReason } from "./gen/cascade_pb.ts";
@@ -63,6 +64,7 @@ function appendThinking(
 	const block = output.content[state.thinkingIndex];
 	if (block?.type !== "thinking") return;
 	block.thinking += message.deltaThinking;
+	pushAssistantSignature(events, state.thinkingIndex, block, message.deltaSignature);
 	if (message.deltaSignature) block.thinkingSignature = message.deltaSignature;
 	events.push({
 		type: "thinking_delta",
@@ -111,6 +113,12 @@ function appendToolCall(
 	}
 	const block = output.content[entry.contentIndex];
 	if (block?.type !== "toolCall") return;
+	if (call.name && call.name !== block.name)
+		pushAssistantProgress(events, {
+			type: "message_block_metadata",
+			contentIndex: entry.contentIndex,
+			name: call.name,
+		});
 	if (call.name) block.name = call.name;
 	if (!call.argumentsJson) return;
 	// A chunk either repeats everything so far plus new bytes, or carries only the new bytes.

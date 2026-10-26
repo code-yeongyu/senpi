@@ -13,6 +13,7 @@ const POLICIES = ["upgrade", "fallback", "never"] as const;
 
 export interface ParsedHostArgs {
 	readonly presenterBootstrapFd?: number;
+	readonly mcpPresenterEnforcement?: boolean;
 	readonly subcommand: HostSubcommand;
 	readonly specPath?: string;
 	readonly policy: HostDecisionPolicy;
@@ -59,6 +60,7 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 	let agentDir: string | undefined;
 	let keyRoot: string | undefined;
 	let presenterBootstrapFd: number | undefined;
+	let mcpPresenterEnforcement: boolean | undefined;
 	const handover: Record<string, string> = {};
 	for (let index = 0; index < rest.length; index++) {
 		const flag = rest[index];
@@ -66,6 +68,8 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 		if (flag === "--mcp-presenter-fd" && value === "4" && (subcommand === "ensure" || subcommand === "handoff")) {
 			presenterBootstrapFd = 4;
 			index++;
+		} else if (flag === "--mcp-presenter-enforcement" && (subcommand === "ensure" || subcommand === "handoff")) {
+			mcpPresenterEnforcement = true;
 		} else if (flag === "--rpc-key-root" && value !== undefined && !value.startsWith("--")) {
 			keyRoot = resolve(value);
 			index++;
@@ -134,6 +138,7 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 	if (typeof terms === "string") return terms;
 	return {
 		...(presenterBootstrapFd === undefined ? {} : { presenterBootstrapFd }),
+		...(mcpPresenterEnforcement === undefined ? {} : { mcpPresenterEnforcement }),
 		subcommand,
 		...(specPath !== undefined && { specPath }),
 		policy,
