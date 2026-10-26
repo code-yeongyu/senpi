@@ -118,7 +118,8 @@ export type HostRefusalReason =
 	| "host_busy"
 	| "host_stopping"
 	| "host_stalled"
-	| "endpoint_occupied";
+	| "endpoint_occupied"
+	| "public_secret_recovery_required";
 
 /**
  * An ensure that found an unusable host and refused to act on it. A refusal is FINAL by design:
@@ -172,6 +173,8 @@ function refusalDetail(reason: HostRefusalReason, host: HostProtocolInfo | undef
 			return "another process accepts connections on this socket but does not answer as a host, and no host registration names it; it is never removed while it listens, so quit the process holding it and ensure again";
 		case "host_stalled":
 			return "nothing reaches its socket, but its process is alive and its own loop-lag watchdog measured a recent stall: a stalled host is still serving its sessions, so it is neither stopped nor replaced";
+		case "public_secret_recovery_required":
+			return "the endpoint's public socket secret is missing or invalid while a host that may still be serving with it is recorded; no new secret is written and nothing is stopped, so stop that host (host stop on its owner) or let it idle-exit, then ensure again";
 		default:
 			return assertNever(reason);
 	}

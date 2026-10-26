@@ -51,6 +51,8 @@ export interface EnsureHostOptions {
 		readonly beforeReadinessTeardown?: () => Promise<void>;
 		/** Overrides the process-identity probe so a test can force its failure. */
 		readonly readProcessStartTime?: (pid: number) => Promise<string | undefined>;
+		/** The platform whose public-secret rules admission applies; production uses `process.platform`. */
+		readonly platform?: NodeJS.Platform;
 	};
 }
 
