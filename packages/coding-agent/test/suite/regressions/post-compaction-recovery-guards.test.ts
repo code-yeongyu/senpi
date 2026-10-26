@@ -2,7 +2,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import { REQUIRED_COMPACTION_ERROR_MESSAGE as REQUIRED_COMPACTION_ERROR } from "../../../src/core/agent-session.ts";
+import { REQUIRED_COMPACTION_ERROR_MESSAGE as REQUIRED_COMPACTION_ERROR } from "../../../src/core/required-compaction-error.ts";
 import { createHarness, getAssistantTexts, getUserTexts, type Harness } from "../harness.ts";
 
 function largeResultTool(): AgentTool {

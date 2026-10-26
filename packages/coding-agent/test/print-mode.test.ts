@@ -1,6 +1,6 @@
 import type { AssistantMessage, ImageContent, Message, ToolResultMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { REQUIRED_COMPACTION_ERROR_MESSAGE } from "../src/core/agent-session.ts";
+import { REQUIRED_COMPACTION_ERROR_MESSAGE, RequiredCompactionError } from "../src/core/required-compaction-error.ts";
 import type { SessionShutdownEvent } from "../src/index.ts";
 import { runPrintMode } from "../src/modes/print-mode.ts";
 
@@ -181,6 +181,29 @@ describe("runPrintMode", () => {
 
 		expect(exitCode).toBe(1);
 	});
+
+	// senpi#4212: print mode has no slash commands, so the failed-compaction error must not name any.
+	it.each(["turn stop", "rejected prompt"] as const)(
+		"reports a failed compaction without slash commands in text mode (%s)",
+		async (route) => {
+			const runtimeHost = createRuntimeHost(
+				route === "turn stop"
+					? createAssistantMessage({ stopReason: "error", errorMessage: REQUIRED_COMPACTION_ERROR_MESSAGE })
+					: [],
+			);
+			if (route === "rejected prompt") runtimeHost.session.prompt.mockRejectedValue(new RequiredCompactionError());
+			const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+			const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+				mode: "text",
+				initialMessage: "Survey the pages",
+			});
+
+			expect(exitCode).toBe(1);
+			expect(errorSpy).toHaveBeenCalledWith(REQUIRED_COMPACTION_ERROR_MESSAGE);
+			expect(REQUIRED_COMPACTION_ERROR_MESSAGE).not.toMatch(/\/\w/);
+		},
+	);
 
 	it.each(["text", "json"] as const)("returns zero after an error recovers during settlement (%s)", async (mode) => {
 		const runtimeHost = createRuntimeHost(

@@ -7,6 +7,7 @@ import {
 import { usageLimitScope } from "../../../core/retry-fallback/usage-limit.ts";
 import { formatDuration } from "../../../utils/duration.ts";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "../../provider-native-rendering.ts";
+import { interactiveErrorText } from "../required-compaction-wording.ts";
 import { theme } from "../theme/theme.ts";
 import { type HandoffSegment, splitHandoffBlocks } from "./handoff-fold.ts";
 
@@ -222,7 +223,8 @@ export function createAssistantRenderDescriptors(
 							usageLimit: usageLimitScope(message),
 						});
 			addError(
-				described ?? `Error: ${stripTurnRetrySuppressionPrefix(message.errorMessage ?? "") || "Unknown error"}`,
+				described ??
+					`Error: ${interactiveErrorText(stripTurnRetrySuppressionPrefix(message.errorMessage ?? "")) || "Unknown error"}`,
 			);
 			break;
 		}
