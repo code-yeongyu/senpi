@@ -239,16 +239,22 @@ describe("endpoint reservation store", () => {
 		raw.close();
 		await expect(openEndpointReservationStore(path)).rejects.toMatchObject({ reason: "schema_unsupported" });
 	});
-	it.each(["reservation", "roleRow", "readOffer"] as const)(
+	it.each(["reservation", "roleRow", "readOffer", "grantedRole"] as const)(
 		"answers %s blocked by an exclusive writer as store_busy",
 		async (method) => {
 			const { path, store: s, generation, locator } = await offered();
 			const writer = new DatabaseSync(path);
 			try {
 				writer.exec("BEGIN EXCLUSIVE; UPDATE reservations SET revision = revision + 1;");
-				expect(rejection(() => (method === "reservation" ? s.reservation(generation) : s[method](locator)))).toBe(
-					"store_busy",
-				);
+				expect(
+					rejection(() =>
+						method === "reservation"
+							? s.reservation(generation)
+							: method === "grantedRole"
+								? s.grantedRole(locator, SUPERVISOR)
+								: s[method](locator),
+					),
+				).toBe("store_busy");
 			} finally {
 				writer.exec("ROLLBACK;");
 				writer.close();

@@ -107,10 +107,14 @@ export async function waitForGrant(
 	const store = await openEndpointReservationStore(locator.storePath);
 	try {
 		for (;;) {
-			const reservation = store.reservation(locator.generation);
-			if (reservation.state === "cancelling") return { granted: false, reason: "generation_cancelled" };
-			const role = store.grantedRole(locator, identityKey(self));
-			if (role) return { granted: true, commitment: role.commitment };
+			try {
+				const reservation = store.reservation(locator.generation);
+				if (reservation.state === "cancelling") return { granted: false, reason: "generation_cancelled" };
+				const role = store.grantedRole(locator, identityKey(self));
+				if (role) return { granted: true, commitment: role.commitment };
+			} catch (error: unknown) {
+				if (!(error instanceof EndpointReservationError && error.reason === "store_busy")) throw error;
+			}
 			if (Date.now() >= until) return { granted: false, reason: "grant_deadline" };
 			await delay(Math.min(options.intervalMs ?? 25, Math.max(1, until - Date.now())));
 		}
@@ -135,11 +139,15 @@ export async function waitForClaim(
 ): Promise<ClaimWait> {
 	const until = Date.now() + options.deadlineMs;
 	for (;;) {
-		const reservation = store.reservation(generation);
-		if (reservation.state === "cancelling") return { claimed: false, reason: "generation_cancelled" };
-		const row = store.roleRow({ endpoint: reservation.endpoint, generation, role });
-		if (row?.status === "claimed" && row.participant !== null) {
-			return { claimed: true, participant: parseIdentity(row.participant) };
+		try {
+			const reservation = store.reservation(generation);
+			if (reservation.state === "cancelling") return { claimed: false, reason: "generation_cancelled" };
+			const row = store.roleRow({ endpoint: reservation.endpoint, generation, role });
+			if (row?.status === "claimed" && row.participant !== null) {
+				return { claimed: true, participant: parseIdentity(row.participant) };
+			}
+		} catch (error: unknown) {
+			if (!(error instanceof EndpointReservationError && error.reason === "store_busy")) throw error;
 		}
 		if (Date.now() >= until) return { claimed: false, reason: "claim_deadline" };
 		await delay(Math.min(options.intervalMs ?? 25, Math.max(1, until - Date.now())));

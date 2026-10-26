@@ -82,9 +82,10 @@ describe.skipIf(process.platform === "win32")("reserved host admission before li
 		child.stderr?.on("data", (chunk: Buffer) => {
 			stderr += chunk.toString();
 		});
-		const exit = once(child, "exit", { signal: AbortSignal.timeout(30_000) });
+		const exit = once(child, "exit", { signal: AbortSignal.timeout(45_000) });
 		const claimed = await Promise.race([
-			waitForClaim(context.store, context.generation, "host", { deadlineMs: 20_000 }),
+			// The host claims only after its CLI has loaded: wait as long as the supervisor does (HOST_STARTUP_BUDGET_MS).
+			waitForClaim(context.store, context.generation, "host", { deadlineMs: 30_000 }),
 			exit.then(() => {
 				throw new Error(`host exited before claiming its reservation: ${stderr}`);
 			}),

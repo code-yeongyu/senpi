@@ -2,8 +2,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { openEndpointReservationStore } from "../../../src/modes/rpc/endpoint-reservation-store.ts";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	EndpointReservationStore,
+	openEndpointReservationStore,
+} from "../../../src/modes/rpc/endpoint-reservation-store.ts";
 import {
 	claimLaunchRole,
 	grantVerifiedParticipant,
@@ -74,6 +78,56 @@ describe("supervisor launch reservation", () => {
 		);
 		expect(store.roleRow({ endpoint: ENDPOINT, generation, role: "supervisor" })?.status).toBe("claimed");
 	});
+
+	it.each(["claim", "grant"] as const)(
+		"keeps waiting for a %s after an exclusive writer blocks a read",
+		async (kind) => {
+			const { storePath, store, args, generation } = await launched();
+			const locator = locatorOf(args);
+			if (kind === "grant") await claimLaunchRole(locator, SUPERVISOR);
+			const writer = new DatabaseSync(storePath);
+			const blocked = Promise.withResolvers<void>();
+			const reservation = EndpointReservationStore.prototype.reservation;
+			const read = vi.spyOn(EndpointReservationStore.prototype, "reservation").mockImplementationOnce(function (
+				this: EndpointReservationStore,
+				id,
+			) {
+				writer.exec("BEGIN EXCLUSIVE; UPDATE reservations SET revision = revision + 1;");
+				try {
+					return reservation.call(this, id);
+				} finally {
+					blocked.resolve();
+				}
+			});
+			const release = (async () => {
+				await blocked.promise;
+				writer.exec("ROLLBACK;");
+				if (kind === "grant") {
+					grantVerifiedParticipant(store, generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
+				} else {
+					store.claim(locator, store.readOffer(locator), JSON.stringify(SUPERVISOR));
+				}
+			})();
+			try {
+				const result =
+					kind === "grant"
+						? waitForGrant(locator, SUPERVISOR, { deadlineMs: 2_000 })
+						: waitForClaim(store, generation, "supervisor", { deadlineMs: 2_000 });
+				await Promise.all([
+					expect(result).resolves.toEqual(
+						kind === "grant"
+							? { granted: true, commitment: COMMITMENT.toString("hex") }
+							: { claimed: true, participant: SUPERVISOR },
+					),
+					release,
+				]);
+			} finally {
+				read.mockRestore();
+				writer.close();
+				store.close();
+			}
+		},
+	);
 
 	it("refuses to grant from an observed identity with no exact start time", async () => {
 		const { store, args, generation } = await launched();

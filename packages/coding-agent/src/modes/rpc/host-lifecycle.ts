@@ -247,7 +247,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
 			await owner.start(launch.ownerFd);
 		}
-		await waitForListener(internalSocket, 30_000, internalSecret, internalKey);
+		await waitForListener(internalSocket, HOST_STARTUP_BUDGET_MS, internalSecret, internalKey);
 		await activity.openObserver();
 		await prepareSocketPath(bindSocket);
 		await listen(server, bindSocket, publicSecret);
@@ -302,6 +302,13 @@ if (!isBundledNode && isCliModuleEntry(import.meta.url)) {
 /** How long a parent-admitted supervisor waits for its grant before giving up its start. */
 const SUPERVISOR_GRANT_DEADLINE_MS = 10_000;
 
+/**
+ * The host child's whole startup budget. Its reservation claim comes only after the CLI has loaded, so the supervisor
+ * waits for that claim as long as it waits for the listener: a shorter claim deadline would fail starts that succeed
+ * without a reservation (measured: a tsx-started host missed a 10 s claim deadline at load average ~210).
+ */
+const HOST_STARTUP_BUDGET_MS = 30_000;
+
 async function admitReservedLaunch(
 	reservation: StoreLocator,
 	publicSocket: string,
@@ -334,7 +341,7 @@ async function offerReservedHost(
 		const store = await openEndpointReservationStore(reservation.storePath);
 		try {
 			await grantClaimedParticipant(store, reservation.generation, "host", issuer, secret, readProcessStartTime, {
-				deadlineMs: SUPERVISOR_GRANT_DEADLINE_MS,
+				deadlineMs: HOST_STARTUP_BUDGET_MS,
 			});
 		} finally {
 			store.close();

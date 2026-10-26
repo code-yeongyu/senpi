@@ -905,6 +905,9 @@ runtime wrappers. The host consumes the locator before public CLI parsing, claim
 waits for the supervisor's verified grant before listening. Both grants carry the SHA-256 commitment of the established
 public secret, not the private hop credential. Cancellation, a claim or grant deadline, an unreadable or changed process
 identity, or a mismatched commitment fails startup; a failed host admission stops the spawned child.
+The supervisor allows the host claim the same 30-second startup budget as its listener. A reservation read blocked by
+another writer reports `store_busy`; claim and grant waits retry that read within their original deadline rather than
+aborting startup. Other reservation errors still propagate.
 
 ### Generation handoff (`handoffHost`, `probeHost`, `stopHost`)
 
