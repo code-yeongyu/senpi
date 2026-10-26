@@ -133,6 +133,20 @@ async function precreatePrivate(path: string): Promise<{ dev: number; ino: numbe
 	}
 }
 
+/**
+ * SQLite contention: the primary result code SQLITE_BUSY (5) or SQLITE_LOCKED (6), read from node:sqlite's `errcode`
+ * or a runtime's `SQLITE_BUSY*`/`SQLITE_LOCKED*` code; the message is consulted only when the error carries neither.
+ */
+function isBusy(error: unknown): boolean {
+	const errcode = typeof error === "object" && error !== null ? Reflect.get(error, "errcode") : undefined;
+	if (typeof errcode === "number") return (errcode & 0xff) === 5 || (errcode & 0xff) === 6;
+	const code = typeof error === "object" && error !== null ? Reflect.get(error, "code") : undefined;
+	if (typeof code === "string" && code.startsWith("SQLITE_")) return /^SQLITE_(BUSY|LOCKED)/.test(code);
+	return /database is (locked|busy)|database table is locked/i.test(
+		error instanceof Error ? error.message : String(error),
+	);
+}
+
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS reservations (
 	generation TEXT PRIMARY KEY,
@@ -171,6 +185,10 @@ export async function openEndpointReservationStore(path: string): Promise<Endpoi
 		}
 	} catch (error: unknown) {
 		database.close();
+		// The open-time pragmas and the schema read take SQLite locks too: another writer is store_busy, never a raw error.
+		if (!(error instanceof EndpointReservationError) && isBusy(error)) {
+			throw new EndpointReservationError("store_busy", "another process holds the reservation store");
+		}
 		throw error;
 	}
 	return new EndpointReservationStore(database);
@@ -387,7 +405,7 @@ export class EndpointReservationStore {
 			return run();
 		} catch (error: unknown) {
 			if (error instanceof EndpointReservationError) throw error;
-			if (/busy|locked/i.test(error instanceof Error ? error.message : String(error)))
+			if (isBusy(error))
 				throw new EndpointReservationError("store_busy", "another process holds the reservation store");
 			throw error;
 		}
