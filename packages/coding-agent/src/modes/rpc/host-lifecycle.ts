@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
+import { readProcessStartTime } from "../../utils/process-identity.ts";
 import { HostAdmission } from "./host-admission.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
@@ -14,6 +15,7 @@ import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
 import {
 	HOST_CHILD_WATCH_FD,
 	parseSupervisorArgs,
+	type StoreLocator,
 	type SupervisorLaunch,
 	spawnHostChild,
 } from "./host-lifecycle-launch.ts";
@@ -38,6 +40,7 @@ import { startSupervisorTicker } from "./host-lifecycle-ticker.ts";
 import { errorMessage, writeHostReady, writeStderrLine } from "./host-supervisor-log.ts";
 import { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import { PUBLIC_SOCKET_IDENTITY_FILE, statSocketIdentity, writeSocketIdentityFile } from "./socket-ownership.ts";
+import { readSocketSecret, socketSecretPath } from "./socket-transport.ts";
 
 // The exit verdict, the launch surface and the cold-start/idle-exit policy live in their own modules
 // (host-child-exit.ts, host-lifecycle-launch.ts, host-lifecycle-policy.ts); they stay exported from
@@ -91,7 +94,14 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// has no such caller, so a fresh profile would otherwise die reading it (#1370).
 	// It is provisioned BEFORE the internal hop and the child so a provisioning
 	// failure leaves no scratch directory and no host process behind.
-	const publicSecret = process.platform === "win32" ? await ensurePublicSocketSecret(publicSocket) : undefined;
+	// A parent-admitted supervisor claims its reservation and starts only once granted, verifying the parent's secret
+	// read-only; it never provisions it (#4199 design 4.2a). The reservation module loads only on that path, so a direct
+	// launch keeps its startup import graph (test/supervisor-import-graph.test.ts).
+	const publicSecret = launch.reservation
+		? await admitReservedLaunch(launch.reservation, publicSocket)
+		: process.platform === "win32"
+			? await ensurePublicSocketSecret(publicSocket)
+			: undefined;
 	const hop = await prepareInternalHop(paths.dir);
 	const { internal, internalSocket, internalSecret, internalKey } = hop;
 	const state: SupervisorState = {
@@ -279,4 +289,18 @@ if (!isBundledNode && isCliModuleEntry(import.meta.url)) {
 		process.exit(2);
 	}
 	void runHostSupervisor(launch);
+}
+
+/** How long a parent-admitted supervisor waits for its grant before giving up its start. */
+const SUPERVISOR_GRANT_DEADLINE_MS = 10_000;
+
+async function admitReservedLaunch(reservation: StoreLocator, publicSocket: string): Promise<Buffer | undefined> {
+	const { admitClaimedSupervisor } = await import("./host-launch-reservation.ts");
+	const credential =
+		process.platform === "win32"
+			? await readSocketSecret(socketSecretPath(publicSocket)).catch(() => undefined)
+			: undefined;
+	const self = { pid: process.pid, processStartTime: (await readProcessStartTime(process.pid)) ?? null };
+	await admitClaimedSupervisor(reservation, self, credential, { deadlineMs: SUPERVISOR_GRANT_DEADLINE_MS });
+	return credential;
 }

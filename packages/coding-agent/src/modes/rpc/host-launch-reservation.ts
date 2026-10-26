@@ -6,49 +6,23 @@
  * grants only when the claimed identity equals what it observed through the OS for the process it launched, bound to
  * the credential commitment. Nothing in argv, environment or an inherited channel grants anything.
  */
+import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { LaunchReservationError, LOCATOR_FLAGS, type StoreLocator } from "./host-lifecycle-launch.ts";
 import {
 	EndpointReservationError,
 	type EndpointReservationStore,
 	openEndpointReservationStore,
-	type ReservationLocator,
 	type ReservationRole,
 } from "./endpoint-reservation-store.ts";
+
+export { LaunchReservationError, parseReservationLocatorArgs, type StoreLocator } from "./host-lifecycle-launch.ts";
 
 /** A process as the OS identifies it: PID and its exact start discriminator. */
 export interface LaunchIdentity {
 	readonly pid: number;
 	readonly processStartTime: string | null;
 }
-
-export interface StoreLocator extends ReservationLocator {
-	readonly storePath: string;
-}
-
-export type LaunchReservationRejection =
-	| "locator_incomplete"
-	| "identity_unverified"
-	| "participant_mismatch"
-	| "generation_cancelled"
-	| "grant_deadline";
-
-export class LaunchReservationError extends Error {
-	readonly code = "launch-reservation-rejected";
-	readonly reason: LaunchReservationRejection;
-
-	constructor(reason: LaunchReservationRejection, detail: string) {
-		super(`launch reservation ${reason}: ${detail}`);
-		this.name = "LaunchReservationError";
-		this.reason = reason;
-	}
-}
-
-const LOCATOR_FLAGS = {
-	storePath: "--reservation-store",
-	endpoint: "--reservation-endpoint",
-	generation: "--reservation-generation",
-	role: "--reservation-role",
-} as const;
 
 /** Identities are stored as their canonical JSON, so equality is exact on PID and start discriminator. */
 function identityKey(identity: LaunchIdentity): string {
@@ -76,25 +50,6 @@ export function offerSupervisorLaunch(
 			"supervisor",
 		],
 	};
-}
-
-/** `undefined` for a launch with no locator (a direct launch); a partial locator is refused, never ignored. */
-export function parseReservationLocatorArgs(argv: readonly string[]): StoreLocator | undefined {
-	const value = (flag: string) => {
-		const index = argv.indexOf(flag);
-		return index >= 0 ? argv[index + 1] : undefined;
-	};
-	const storePath = value(LOCATOR_FLAGS.storePath);
-	const endpoint = value(LOCATOR_FLAGS.endpoint);
-	const generation = value(LOCATOR_FLAGS.generation);
-	const role = value(LOCATOR_FLAGS.role);
-	if (storePath === undefined && endpoint === undefined && generation === undefined && role === undefined) {
-		return undefined;
-	}
-	if (!storePath || !endpoint || !generation || (role !== "supervisor" && role !== "host")) {
-		throw new LaunchReservationError("locator_incomplete", "every reservation flag is required together");
-	}
-	return { storePath, endpoint, generation, role };
 }
 
 /** The claimant opens the store named by the locator, reads its nonce there and claims with its own identity. */
@@ -199,4 +154,24 @@ function parseIdentity(text: string): LaunchIdentity {
 		throw new LaunchReservationError("identity_unverified", "the recorded participant identity is malformed");
 	}
 	return { pid, processStartTime: start };
+}
+
+/**
+ * The parent-admitted supervisor's entry (design 4.2a steps 2 and 4): claim the offered role with this process's own
+ * identity, wait (bounded) for the issuer's grant, then verify the parent's established public secret read-only against
+ * the granted commitment. Any failure aborts the start: no provisioning, no repair, no fallback to a direct launch.
+ */
+export async function admitClaimedSupervisor(
+	locator: StoreLocator,
+	self: LaunchIdentity,
+	credential: Buffer | undefined,
+	options: { readonly deadlineMs: number },
+): Promise<void> {
+	await claimLaunchRole(locator, self);
+	const grant = await waitForGrant(locator, self, options);
+	if (!grant.granted) throw new LaunchReservationError(grant.reason, `${locator.role} in ${locator.generation}`);
+	const established = credential ? createHash("sha256").update(credential).digest("hex") : undefined;
+	if (established !== grant.commitment) {
+		throw new LaunchReservationError("commitment_mismatch", "the established public secret is not the granted one");
+	}
 }

@@ -24,6 +24,12 @@ const OWNER = { pid: 100, processStartTime: "133000000000000001" };
 const SUPERVISOR = { pid: 200, processStartTime: "133000000000000002" };
 const COMMITMENT = createHash("sha256").update(randomBytes(32)).digest();
 
+function locatorOf(args: readonly string[]) {
+	const locator = parseReservationLocatorArgs(args);
+	if (locator === undefined) throw new Error("the launch args carry no reservation locator");
+	return locator;
+}
+
 describe("supervisor launch reservation", () => {
 	const roots: string[] = [];
 
@@ -42,15 +48,15 @@ describe("supervisor launch reservation", () => {
 
 	it("forwards only a non-secret locator that names the store, endpoint, generation and role", async () => {
 		const { storePath, args, generation } = await launched();
-		const locator = parseReservationLocatorArgs(args);
+		const locator = locatorOf(args);
 		expect(locator).toEqual({ storePath, endpoint: ENDPOINT, generation, role: "supervisor" });
-		const nonce = (await openEndpointReservationStore(storePath)).readOffer(locator!);
+		const nonce = (await openEndpointReservationStore(storePath)).readOffer(locator);
 		expect(args.join(" ")).not.toContain(nonce.toString("hex"));
 	});
 
 	it("grants the claimant whose identity the issuer observed, bound to the commitment", async () => {
 		const { store, args, generation } = await launched();
-		const locator = parseReservationLocatorArgs(args)!;
+		const locator = locatorOf(args);
 		expect(await claimLaunchRole(locator, SUPERVISOR)).toBe("claimed");
 		grantVerifiedParticipant(store, generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
 		expect(await waitForGrant(locator, SUPERVISOR, { deadlineMs: 1_000 })).toEqual({
@@ -61,7 +67,7 @@ describe("supervisor launch reservation", () => {
 
 	it("refuses to grant when the observed process is not the claimant", async () => {
 		const { store, args, generation } = await launched();
-		await claimLaunchRole(parseReservationLocatorArgs(args)!, SUPERVISOR);
+		await claimLaunchRole(locatorOf(args), SUPERVISOR);
 		const replacement = { pid: SUPERVISOR.pid, processStartTime: "133000000000000099" };
 		expect(() => grantVerifiedParticipant(store, generation, "supervisor", OWNER, replacement, COMMITMENT)).toThrow(
 			LaunchReservationError,
@@ -71,7 +77,7 @@ describe("supervisor launch reservation", () => {
 
 	it("refuses to grant from an observed identity with no exact start time", async () => {
 		const { store, args, generation } = await launched();
-		await claimLaunchRole(parseReservationLocatorArgs(args)!, SUPERVISOR);
+		await claimLaunchRole(locatorOf(args), SUPERVISOR);
 		const unreadable = { pid: SUPERVISOR.pid, processStartTime: null };
 		expect(() => grantVerifiedParticipant(store, generation, "supervisor", OWNER, unreadable, COMMITMENT)).toThrow(
 			expect.objectContaining({ reason: "identity_unverified" }),
@@ -80,7 +86,7 @@ describe("supervisor launch reservation", () => {
 
 	it("a claimant whose generation is cancelled learns it is not granted", async () => {
 		const { store, args, generation } = await launched();
-		const locator = parseReservationLocatorArgs(args)!;
+		const locator = locatorOf(args);
 		await claimLaunchRole(locator, SUPERVISOR);
 		store.cancel(generation);
 		expect(await waitForGrant(locator, SUPERVISOR, { deadlineMs: 1_000 })).toEqual({
@@ -91,7 +97,7 @@ describe("supervisor launch reservation", () => {
 
 	it("a claimant that is never granted gets a bounded refusal, never an inferred grant", async () => {
 		const { args } = await launched();
-		const locator = parseReservationLocatorArgs(args)!;
+		const locator = locatorOf(args);
 		await claimLaunchRole(locator, SUPERVISOR);
 		expect(await waitForGrant(locator, SUPERVISOR, { deadlineMs: 0 })).toEqual({
 			granted: false,
@@ -101,7 +107,7 @@ describe("supervisor launch reservation", () => {
 
 	it("a copied locator in another process's hands cannot claim the role already claimed", async () => {
 		const { args } = await launched();
-		const locator = parseReservationLocatorArgs(args)!;
+		const locator = locatorOf(args);
 		await claimLaunchRole(locator, SUPERVISOR);
 		const intruder = { pid: 300, processStartTime: "133000000000000003" };
 		await expect(claimLaunchRole(locator, intruder)).rejects.toMatchObject({ reason: "role_not_offered" });
@@ -114,7 +120,7 @@ describe("supervisor launch reservation", () => {
 
 	it("the issuer learns the claimed identity, bounded, and verifies that process rather than the one it spawned", async () => {
 		const { store, args, generation } = await launched();
-		const locator = parseReservationLocatorArgs(args)!;
+		const locator = locatorOf(args);
 		expect(await waitForClaim(store, generation, "supervisor", { deadlineMs: 0 })).toEqual({
 			claimed: false,
 			reason: "claim_deadline",
