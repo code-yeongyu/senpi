@@ -1,3 +1,21 @@
+## 2026-10-26 - Terminal summarizer failures degrade on every compaction kind (senpi#4340)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: a generator failure classified `summarization-provider-failure` authorizes the deterministic fallback on any compaction kind (like `unsafe-retained-content`), not only required compaction; timeouts, truncation, overflow-exhaustion, empty-summary, refusals, aborts, transient failures and ordinary bugs keep their existing authorization.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: a soft-threshold `pre_prompt` compaction whose summarizer model 404'd cancelled, the session rejected it, and the pending prompt failed with RequiredCompactionError — "Compaction rejected: compaction generator failed" while the deterministic recovery sat gated off.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: the recovery authorization lives in the builtin generator's catch; no extension hook can widen it.
+
+### Expected merge conflict zones
+
+- LOW: the generator catch condition in `compaction/index.ts`.
+
 ## 2026-10-24 - Persist budget notices after the cached system prefix (senpi#4166)
 
 ### What changed

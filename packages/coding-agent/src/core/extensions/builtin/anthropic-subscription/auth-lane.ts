@@ -1,8 +1,5 @@
 import { createHash } from "node:crypto";
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
-import { loadAnthropicOAuth } from "@earendil-works/pi-ai/oauth";
-import { getAgentDir } from "../../../../config.ts";
-import { AuthStorage } from "../../../auth-storage.ts";
 import { CredentialStoreBusyError } from "../../../lockfile-policy.ts";
 import { emitProviderAccountFailover, emitProviderAccountsChanged } from "./account-events.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
@@ -13,11 +10,11 @@ import {
 	envSlotToken,
 	listAccounts,
 	refreshSlot,
-	type SlotRefresher,
 } from "./accounts.ts";
 import { isBlockedFor, type PinSource, selectAccount } from "./affinity.ts";
 import { type AuthenticatedAttemptInput, createAttemptMessages, type RetainableAttempt } from "./auth-attempt.ts";
 import { recoverAuthBlockedSlots } from "./auth-block-recovery.ts";
+import { activeBoundary } from "./auth-lane-boundary.ts";
 import { hasRequestOauthToken, mergeRequestAuthEnvironment, stripManagedAuthEnvironment } from "./auth-environment.ts";
 import { writeConfigDirCredential } from "./config-dir-credentials.ts";
 import { asksLegacyLongContext } from "./context-window.ts";
@@ -29,6 +26,7 @@ import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { AnthropicSubscriptionProviderSettings, AnthropicSubscriptionTokenInjection } from "./settings.ts";
 
 export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
+export { authLaneRefresher, overrideAuthLaneBoundary, resetAuthLaneBoundary } from "./auth-lane-boundary.ts";
 
 export const EXPIRING_WITHIN_MS = 5 * 60_000;
 
@@ -36,42 +34,6 @@ export const EXPIRING_WITHIN_MS = 5 * 60_000;
 const NO_MANAGED_ACCOUNTS_ERROR =
 	"authentication_failed: No Anthropic Subscription accounts configured for the managed lane; " +
 	"run /login anthropic-subscription or set CLAUDE_CODE_OAUTH_TOKEN";
-
-type AuthLaneBoundary = {
-	createStore: () => CredentialStore;
-	env: () => NodeJS.ProcessEnv;
-	getAgentDir: () => string;
-	now: () => number;
-	refresher: SlotRefresher;
-};
-
-async function refreshWithAnthropicOAuth(refresh: string, signal: AbortSignal) {
-	const oauth = await loadAnthropicOAuth();
-	const credential = await oauth.refresh({ type: "oauth", access: "", refresh, expires: 0 }, signal);
-	return { access: credential.access, refresh: credential.refresh, expires: credential.expires };
-}
-
-const defaultBoundary: AuthLaneBoundary = {
-	createStore: () => AuthStorage.create(),
-	env: () => process.env,
-	getAgentDir,
-	now: () => Date.now(),
-	refresher: refreshWithAnthropicOAuth,
-};
-let activeBoundary = defaultBoundary;
-
-export function overrideAuthLaneBoundary(override: Partial<AuthLaneBoundary>): void {
-	activeBoundary = { ...activeBoundary, ...override };
-}
-
-export function resetAuthLaneBoundary(): void {
-	activeBoundary = defaultBoundary;
-}
-
-/** The refresher turns use, so the usage poller renews an expiring account the same way (senpi#3684). */
-export function authLaneRefresher(): SlotRefresher {
-	return activeBoundary.refresher;
-}
 
 export type { AuthenticatedAttemptInput } from "./auth-attempt.ts";
 
@@ -278,6 +240,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 				accountName: slot.name,
 				accounts,
 				authLane: pool.lane,
+				pinSource: input.pinnedAccount !== undefined ? "cli" : pool.pinSource,
 				options,
 				credentialDigest: prepared.credentialDigest,
 			});

@@ -1,3 +1,48 @@
+## 2026-10-25 - Parameter-header validation diagnostics (senpi#4246)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/parameter-headers.ts`: return fixed rejection reasons, warn once per rejected tool, traverse unknown keyword objects and arrays while skipping instance-data keywords, and reject present values that do not match annotated primitive types.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/transport.ts`: send rejection warnings to the connection logger and preserve local validation errors without treating them as transport failures.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/dispatch.ts`: pass the existing connection logger into the modern HTTP transport.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: preserve the typed local validation error across the request adapter's diagnostic boundary.
+
+### Why
+
+- SEP-2243 requires properties-only annotation paths and recommends warnings naming rejected tools and their reasons. Silently omitting a present, mistyped argument's header sends a misleading request to the server.
+- Regression coverage now asserts a projected header before catalog refresh, so removing parameter projection cannot pass an absence-only assertion.
+
+### Why an extension could not handle it
+
+- The builtin owns catalog filtering, per-connection annotation paths, HTTP header projection, and transport error classification.
+
+### Expected merge conflict zones
+
+- Annotation traversal and value extraction in `modern/parameter-headers.ts`, catalog delivery and local errors in `modern/transport.ts`, transport construction in `modern/dispatch.ts`, and error classification in `modern/request.ts`.
+
+## 2026-10-24 - Validate OAuth discovery issuers before credential use (senpi#4194)
+
+### What changed
+
+- `auth/oauth-issuer.ts` validates metadata against the discovered authorization server, preserving exact PRM identifiers and the SDK's origin fallback for path-served resources without PRM.
+- `auth/oauth-provider.ts` validates both cached and new discovery, deletes credentials bound to another issuer before re-registration, stamps newly stored credentials with the validated issuer, and declares native registration for loopback redirects.
+- `auth/oauth.ts` checks the issuer of pasted error responses before exposing their contents and persists injected discovery through the same validation boundary.
+- `auth/oauth-refresh.ts` checks the client registration's issuer as well as the token's issuer before sending a refresh request.
+- Credential stamps use one canonical form that removes only an origin-only URL's final slash. Existing root-fallback sign-ins refresh without registering again, and grants without AS metadata are stamped from the validated discovery issuer.
+- Invalid cached metadata is rediscovered rather than requiring logout. A callback without trusted discovery is rejected before exchange, and redirect-less clients omit `application_type`.
+
+### Why
+
+- SDK discovery parsed metadata without comparing its issuer. Direct client-credentials grants and refresh could retain or use registrations belonging to a different issuer.
+
+### Why an extension could not handle it
+
+- Discovery persistence and credential use are owned by the builtin's SDK OAuth provider.
+
+### Expected merge conflict zones
+
+- LOW: discovery persistence in `auth/oauth-provider.ts`, pasted redirect parsing in `auth/oauth.ts`, and grant validation in `auth/oauth-refresh.ts`.
+
 ## 2026-10-25 - Listen for modern MCP catalog and resource changes (#4234)
 
 ### What changed

@@ -9,6 +9,7 @@ import {
 import { createToolAttributionSpans } from "./session-attribution.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
+import { structuredLaneEnabled } from "./structured-session-records.ts";
 
 /** A session-owned adapter around the classic command and extension-UI wiring. */
 export interface RpcSessionBinding {
@@ -77,8 +78,18 @@ export async function createRpcSessionBinding(
 			if (entry.scope.state === "closed") return dropAfterClose();
 			writeInScope(record);
 		};
+		const writeStructuredInScope = bindToProviderScope((record: object) =>
+			writer.structuredLanes.accept(sessionId, record),
+		);
 		const taggedSink: RpcConnectionSink = {
 			writeRecord,
+			...(structuredLaneEnabled()
+				? {
+						writeStructured: (record: object) => {
+							if (entry.scope.state !== "closed") writeStructuredInScope(record);
+						},
+					}
+				: {}),
 			// A late raw reply after the scope closed is dropped like any record (senpi#2871); while the scope is
 			// open, records arrive only through writeRecord, so a raw write is a wiring bug.
 			writeRaw: () => {

@@ -782,6 +782,11 @@ export interface AssistantMessage {
 	 * No model produced the failure, so retry and model fallback must not act on it.
 	 */
 	failureSource?: "local";
+	/**
+	 * Set by the model runtime on a failed response when the same credential (provider, endpoint and key) served a
+	 * response moments before: an `auth` failure then means the provider refused this request, not the key.
+	 */
+	credentialServedRecently?: true;
 	rawStopReason?: string;
 	/**
 	 * Provider indication of whether the model explicitly ended its turn.

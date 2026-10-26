@@ -1,3 +1,84 @@
+## 2026-10-26 - AgentSession structured lane (senpi#4349, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `subscribeStructured(listener)` exposes the internal structured
+  lane. `_emit` forwards each published session event, with the capture of the agent event it came from, after the
+  ordinary listeners; block controls from the agent's internal channel are queued on `_agentEventQueue`, so they keep
+  their position among the session's events. Nothing is attached by default.
+- `packages/coding-agent/src/core/structured-session-lane.ts` (new): owns the internal-channel subscription for one
+  session; it holds the capture subscription only while a structured listener exists. It subscribes through the
+  construction capability, with no internal-events subpath import.
+- `packages/coding-agent/src/core/sdk.ts`: creates one channel and passes it to both the Agent constructor and
+  AgentSession. `packages/coding-agent/src/core/agent-session.ts` passes it directly to the lane. An externally
+  constructed Agent without that capability has no structured lane; subscribing reports unavailability explicitly.
+
+### Why
+
+- R3.C6.2 placement ruling: S02b owns the bridge from the ordered internal-only agent channel to the S01 structured
+  sink, attached before a turn's first provider push; controls never reach extension listeners or `session.subscribe`.
+- `packages/coding-agent/src/core/sdk.ts` and `packages/coding-agent/src/core/agent-session.ts`: possession of an
+  already-created Agent must not permit enabling capture after construction.
+
+### Why an extension could not handle it
+
+- Extensions see the public event stream only; the internal channel and capture carriers are deliberately not part of it.
+- `packages/coding-agent/src/core/sdk.ts` and `packages/coding-agent/src/core/agent-session.ts` own Agent construction
+  and session wiring before extensions receive the Agent.
+
+### Expected merge conflict zones
+
+- LOW: `_emit` (one trailing line and its `captureSource` parameter), the `_emitSessionEvent` call in
+  `_processAgentEvent`, the constructor's lane construction, `dispose`.
+- `packages/coding-agent/src/core/sdk.ts`: Agent and AgentSession constructor options;
+  `packages/coding-agent/src/core/agent-session.ts`: configuration type and lane construction.
+
+## 2026-10-26 - Ambient providers can read a sibling provider's stored env (senpi#4339)
+
+### What changed
+
+- `packages/coding-agent/src/core/provider-composer.ts`: `ProviderAmbientAuth.resolve` input gains optional `storedProviderEnv(providerId)`; `composeModelProvider` accepts and threads a deferred ambient-reads option (composition itself stays credential-free).
+- `packages/coding-agent/src/core/model-runtime.ts`: `composeProvider` wires `storedProviderEnv` as a read-only, env-only copy from the credential store, invoked only inside ambient auth resolution.
+- `packages/coding-agent/src/core/provider-api-key-auth.ts`: `ambientApiKeyAuth` forwards `storedProviderEnv` to the ambient resolver and merges the provider's own stored credential env into the ambient result env (stored-then-env, matching the non-ambient path).
+
+### Why
+
+- `packages/coding-agent/src/core/model-runtime.ts`: the vertex-garden lane shares the google-vertex ADC chain but had no channel to the project the user already stored there, so its first request failed with "Vertex AI requires a project ID".
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/provider-composer.ts`: `AuthContext` exposes only `env()`/`fileExists()`; reaching another provider's stored credential env requires a core-owned read-only accessor through the ambient auth composition the runner executes.
+
+### Expected merge conflict zones
+
+- LOW: the `ProviderAmbientAuth` interface and `composeApiKeyAuth`/`ambientApiKeyAuth` signatures; the `composeProvider` call site.
+
+## 2026-10-25 - Preserve named waits on the session lifecycle (senpi#3864)
+
+### What changed
+
+- `session-lifecycle-types.ts` adds supplemental `waitingOn.childSources`, background items, and bounded `childReports`, including optional producer labels and state-entry times.
+- `lifecycle-wait-items.ts` normalizes producer snapshots by id, sorts and caps each source at 32, counts omitted valid items, and maps descriptions and millisecond timestamps to wire labels and ISO timestamps.
+- `session-activity.ts` and `lifecycle-session-binding.ts` retain producer items and normalize monitor detail without removing legacy emissions; both choose `items` or the legacy `monitors` through the one `wakeSourceItems` rule in `lifecycle-wait-items.ts`.
+- `work-obligations.ts` compares normalized item ids and labels, publishing same-count replacements while ignoring order, progress, and timestamp churn.
+- `work-custody-record.ts` and `lifecycle-record.ts` preserve optional item and report detail across restoration without invalidating valid legacy custody; `lifecycle-record.ts` reads `waitingOn` through `readWaits` in `lifecycle-children.ts`, the same reader child reports use.
+- `lifecycle-children.ts` retains optional producer-authored labels and state-entry times and keeps a child's own named waits (items, `omittedItems`, `childSources`, `childReports`) through the shared `readWaits`; `session-lifecycle.ts` projects eligible nonterminal child reports, preserving own-session exclusion and generation/terminal fences.
+
+### Why
+
+- Aggregate child and background counts could not identify the work a session was waiting on. Existing producer details were dropped before projection and durable restoration.
+
+### Why an extension could not handle it
+
+- The authoritative custody registry, lifecycle projection, durable readers, and child-generation fences are owned by the session core.
+
+### Expected merge conflict zones
+
+- `lifecycle-session-binding.ts`: wake-source observation.
+- `work-obligations.ts` and `work-custody-record.ts`: source synchronization and custody restoration.
+- `session-lifecycle.ts`, `session-lifecycle-types.ts`, `lifecycle-record.ts`, and `lifecycle-children.ts`: wait projection, shared wire types, and optional-detail readers.
+- `session-activity.ts` and new `lifecycle-wait-items.ts`: shared source detail normalization.
+
 ## 2026-10-25 - Persist why the last run stopped on the session lifecycle (senpi#3864)
 
 ### What changed

@@ -9,13 +9,14 @@ import {
 	takeMcpRequestOrigin,
 } from "../request-origin.ts";
 import { AuthError } from "../errors.ts";
-import { loadMcpSdkTypes, loadMcpSdkZodCompat } from "../sdk.lazy.ts";
+import { loadMcpSdkProtocol, loadMcpSdkTypes, loadMcpSdkZodCompat } from "../sdk.lazy.ts";
 import { type McpClock, mcpElapsedClock } from "../wrap.ts";
 import { collectMrtrForm, type MrtrInputResponse } from "./elicitation.ts";
 import { isRecord, validateMrtrForm } from "./form-schema.ts";
 import { McpMrtrError } from "./errors.ts";
 import { queuedForm } from "./consent-queue.ts";
 import { parseInputs } from "./inputs.ts";
+import { ParameterHeaderValidationError } from "./parameter-headers.ts";
 
 export const MAX_MCP_MRTR_ROUNDS = 8;
 const capableMethods = new Set(["tools/call", "resources/read", "prompts/get"]);
@@ -73,8 +74,9 @@ export function installModernRequestAdapter(
 		if (own(request.params ?? {}, "requestState") || own(request.params ?? {}, "inputResponses") || options?.task)
 			throw new McpMrtrError("MCP_MRTR_INVALID_INPUT");
 		const params = structuredClone(request.params ?? {});
+		const { DEFAULT_REQUEST_TIMEOUT_MSEC } = await loadMcpSdkProtocol();
 		const start = clock.now();
-		const timeout = sdkOptions.timeout ?? 60_000;
+		const timeout = sdkOptions.timeout ?? DEFAULT_REQUEST_TIMEOUT_MSEC;
 		const duration = Math.min(sdkOptions.maxTotalTimeout ?? Infinity, 9 * timeout + 300_000);
 		const deadline = start + duration;
 		const operation = new AbortController();
@@ -282,6 +284,7 @@ export function installModernRequestAdapter(
 			check();
 			if (error instanceof McpMrtrError) throw error;
 			if (error instanceof AuthError) throw error;
+			if (error instanceof ParameterHeaderValidationError) throw error;
 			const remoteCode = isRecord(error) && typeof error.code === "number" ? error.code : undefined;
 			throw new McpMrtrError("MCP_MRTR_TRANSPORT_FAILED", remoteCode);
 		} finally {

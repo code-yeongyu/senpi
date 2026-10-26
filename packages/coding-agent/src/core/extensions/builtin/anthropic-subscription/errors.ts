@@ -1,5 +1,6 @@
 import type { SDKAssistantMessageError } from "@anthropic-ai/claude-agent-sdk";
 import { rateLimitModelFamily } from "../../../credential-pool/model-scope.ts";
+import { inheritAccountContext } from "./account-context.ts";
 import type { SDKMessage } from "./sdk-boundary.ts";
 
 export type SdkErrorKind =
@@ -86,7 +87,10 @@ export function sdkResultFailure(message: Extract<SDKMessage, { type: "result" }
 	const reason =
 		"terminal_reason" in message && typeof message.terminal_reason === "string" ? message.terminal_reason : "";
 	const suffix = [status, reason].filter(Boolean).join(", ");
-	return new SdkResultFailure(suffix ? `${detail} (${suffix})` : detail, message.usage);
+	return inheritAccountContext(
+		message,
+		new SdkResultFailure(suffix ? `${detail} (${suffix})` : detail, message.usage),
+	);
 }
 
 export function sdkAssistantFailure(message: Extract<SDKMessage, { type: "assistant" }>): Error | undefined {
@@ -100,7 +104,10 @@ export function sdkAssistantFailure(message: Extract<SDKMessage, { type: "assist
 					.map((block) => ("text" in block && typeof block.text === "string" ? block.text : ""))
 					.join(" ")
 	).trim();
-	return new Error(text ? (message.error === "unknown" ? text : `${text} (${message.error})`) : message.error);
+	return inheritAccountContext(
+		message,
+		new Error(text ? (message.error === "unknown" ? text : `${text} (${message.error})`) : message.error),
+	);
 }
 
 /** Classifies Anthropic Subscription error codes and HTTP-shaped fallback text in one place. */

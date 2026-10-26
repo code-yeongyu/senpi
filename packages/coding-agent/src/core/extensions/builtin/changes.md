@@ -1,3 +1,21 @@
+## 2026-10-26 - vertex-garden ambient auth carries a resolved project (senpi#4339)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts`: the ambient resolver resolves the target project (process env, then the sibling google-vertex stored profile env) and returns it in the ambient `AuthResult.env`; availability still tracks the ADC chain alone (no return of the reverted env-only gate, 9a497be00).
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts`: with a plain ADC login, no env vars and no quota project, the first garden request threw "Vertex AI requires a project ID" while google-vertex worked off the same login.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts`: needs the new `storedProviderEnv` input plus `AuthResult.env` flow through `ambientApiKeyAuth` — both core-owned.
+
+### Expected merge conflict zones
+
+- LOW: `resolveVertexModelGardenAmbient` body.
+
 ## 2026-10-23 - show_html_page points at the visualize skill again (senpi#2869)
 
 ### What changed

@@ -12,6 +12,7 @@ import { StringDecoder } from "node:string_decoder";
 import { normalizePath } from "../utils/paths.ts";
 import { EventLoopSlicer } from "./event-loop-slicer.ts";
 import type { FileEntry } from "./session-manager.ts";
+import { backupTornBytes, type SessionRecovery, type SessionRecoveryCause } from "./session-write-recovery.ts";
 
 export const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
 
@@ -150,25 +151,47 @@ export async function loadEntriesFromFileAsync(
 	return acceptSessionEntries(entries);
 }
 
+/** A torn final line was set aside, or could not be (the copy was refused) and must be set aside before the next append. */
+export type FinalLineRepair =
+	| { readonly kind: "set_aside"; readonly recovery: SessionRecovery }
+	| { readonly kind: "deferred" };
+
 /**
  * Make this process's appends start on a new line. A final line with no newline is either a whole entry written
  * without one (it parses: it is terminated and kept) or a line a crash tore part-way (it does not parse: it was
- * never committed, so the file is cut back to its last complete line, senpi#3549). Terminating a torn line instead
- * would turn it into a complete, corrupt line that no reader can tell from real corruption. Only the final
- * segment is read, never the whole transcript; anything but a regular file is left to the loader, as before.
+ * never committed, so it is copied to `<file>.torn-<time>` and the file is cut back to its last complete line,
+ * senpi#3549, senpi#4295). Terminating a torn line instead would turn it into a complete, corrupt line that no reader
+ * can tell from real corruption. Only the final segment is read, never the whole transcript; anything but a regular
+ * file is left to the loader, as before.
  */
-export function terminateFinalSessionLine(filePath: string): void {
-	if (!existsSync(filePath) || !statSync(filePath).isFile()) return;
+export function terminateFinalSessionLine(
+	filePath: string,
+	cause: SessionRecoveryCause = "unknown",
+): FinalLineRepair | undefined {
+	if (!existsSync(filePath) || !statSync(filePath).isFile()) return undefined;
 	const fd = openSync(filePath, "r+");
 	try {
 		const size = fstatSync(fd).size;
 		const segmentStart = finalSegmentStart(fd, size);
-		if (segmentStart === size) return;
+		if (segmentStart === size) return undefined;
 		const segment = Buffer.alloc(size - segmentStart);
 		readSync(fd, segment, 0, segment.length, segmentStart);
+		if (parseSessionEntryLine(segment.toString("utf8")) !== null) {
+			writeSync(fd, "\n", size);
+			return undefined;
+		}
+		let recovery: SessionRecovery;
+		try {
+			recovery = backupTornBytes(filePath, segment, cause);
+		} catch (error) {
+			// Deferred, not dropped: a full disk can refuse the copy, so the file is left as it is and the writer
+			// sets the tail aside before its first append, which fails with this error if the disk is still full.
+			if (error instanceof Error) return { kind: "deferred" };
+			throw error;
+		}
 		// Not synced on purpose: a lost truncate only brings back an uncommitted tail, and the next append syncs.
-		if (parseSessionEntryLine(segment.toString("utf8")) === null) ftruncateSync(fd, segmentStart);
-		else writeSync(fd, "\n", size);
+		ftruncateSync(fd, segmentStart);
+		return { kind: "set_aside", recovery };
 	} finally {
 		closeSync(fd);
 	}

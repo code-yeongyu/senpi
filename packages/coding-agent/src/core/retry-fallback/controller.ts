@@ -37,6 +37,9 @@ export class RetryFallbackController {
 	// Entries this session itself saw fail out of a chain: only these (or an entry spent for everyone)
 	// may move the session off its model at a turn boundary (senpi#3467).
 	private readonly ownFailures = new Set<string>();
+	// Conservatively skip the refused provider for this turn: this synchronous scan cannot resolve
+	// asynchronously prepared request credentials, including per-model endpoints or keys (senpi#2491).
+	private readonly refusedProviders = new Set<string>();
 	private readonly unusable: UnusableEntries;
 	readonly probes: CircuitProbes;
 	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
@@ -72,6 +75,7 @@ export class RetryFallbackController {
 
 	resetTurn(): void {
 		this.triedSelectors.clear();
+		this.refusedProviders.clear();
 		this.lastExhaustedChainKey = undefined;
 	}
 
@@ -91,8 +95,9 @@ export class RetryFallbackController {
 		return canonical;
 	}
 
-	canTryFallback(): boolean {
-		return this.nextCandidate(false) !== undefined;
+	/** `refusedProvider`: the provider whose request-level refusal is being decided, before the walk records it. */
+	canTryFallback(refusedProvider?: string): boolean {
+		return this.nextCandidate(false, false, refusedProvider) !== undefined;
 	}
 
 	/**
@@ -259,9 +264,10 @@ export class RetryFallbackController {
 
 	async tryFallback(
 		reason: FallbackReason,
-		failure: { errorMessage?: string; retryAfterMs?: number },
+		failure: { errorMessage?: string; retryAfterMs?: number; refusedProvider?: string },
 		failureObserved = true,
 	): Promise<boolean> {
+		if (failure.refusedProvider !== undefined) this.refusedProviders.add(failure.refusedProvider);
 		const current = this.deps.getCurrentSelector();
 		const blip = reason === "transient" && isPureNetworkTransient(failure.errorMessage);
 		this.blipModel = blip && current ? formatSelector(current.model) : undefined;
@@ -367,7 +373,11 @@ export class RetryFallbackController {
 		return chainKey && chains[chainKey] ? chainKey : undefined;
 	}
 
-	private nextCandidate(reserve = true, logDecision = reserve): ({ chainKey: string } & UsableCandidate) | undefined {
+	private nextCandidate(
+		reserve = true,
+		logDecision = reserve,
+		refusedProvider?: string,
+	): ({ chainKey: string } & UsableCandidate) | undefined {
 		const current = this.deps.getCurrentSelector();
 		if (!this.deps.getSettings().modelFallback || !current) return undefined;
 		// Models without an explicitly configured chain do not enter an implicit fallback lane.
@@ -384,6 +394,7 @@ export class RetryFallbackController {
 			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
 			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
 			isProviderSpent: (provider) => this.unusable.isProviderSpent(provider),
+			isProviderRefused: (provider) => provider === refusedProvider || this.refusedProviders.has(provider),
 			isModelSkipped: (base) => base === this.blipModel,
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});

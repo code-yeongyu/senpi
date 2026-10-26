@@ -1,3 +1,20 @@
+## 2026-10-26 - Relay hints and consistent replaced terminals (senpi#4307, part of #4272)
+
+### What changed
+
+- `assistant-capture.ts` (fork-only): `CaptureHint.carried` makes a push relay a source capture's block facts, with
+  usage and metadata from the relaying stream; `null` records nothing. A start whose block is not appended yet records
+  nothing. `carryAssistantCapture` with a replaced terminal takes the new terminal's usage and message and adds every
+  scalar that differs from the source terminal to its metadata. `AssistantCapture.rewrittenFrom` (set through
+  `CaptureHint.rewrittenFrom` on a terminal and kept when the terminal is re-carried) names the first index from which
+  earlier block records no longer name the terminal's blocks (block index/identity only). The terminal message always
+  wins for content: readers replace each block's content from the terminal (or the block's end event), never
+  append-only from live records.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
 ## 2026-10-26 - Capture vocabulary for replaced signatures, redaction and late names (senpi#4285, part of #4272)
 
 ### What changed

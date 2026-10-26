@@ -1,3 +1,44 @@
+## 2026-10-26 - Hand the internal channel to Agent at construction (senpi#4349, part of #4272)
+
+### What changed
+
+- `packages/agent/src/index.ts`: exposes only the internal channel factory and types for the session layer, never
+  `subscribeInternalAgent` or `dispatchInternalAgent`. `createInternalAgentChannel`, `InternalAgentChannel`,
+  `OrderedAgentRecord` and the `AgentOptions.internalChannel` constructor option DO ship in the published `.d.ts`
+  (marked `@internal`; no `stripInternal`): they are published surface, but construction-only. Passing a channel
+  when an Agent is built is the only way to receive its records; an existing Agent has no attach path.
+- `packages/agent/src/agent.ts`: consumes the internal channel option at construction and stores it in a private
+  field, with no getter or attach method. Only that channel receives this Agent's ordered records.
+- `packages/agent/src/internal-events.ts`: owns channel-local sequencing and listeners, acquiring capture on the
+  first listener and releasing it on the last. A run started without a listener still gets no progress sink.
+
+### Why
+
+- `packages/agent/src/index.ts`, `packages/agent/src/agent.ts`, and `packages/agent/src/internal-events.ts`: an
+  extension holding an existing Agent cannot attach a channel; a package subpath is public npm API, not privacy.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/index.ts`, `packages/agent/src/agent.ts`, and `packages/agent/src/internal-events.ts`: this
+  construction-time capability belongs below extension delivery, inside the session-owned agent pipeline.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/index.ts` export list; `packages/agent/src/agent.ts` constructor options and internal
+  dispatch wiring; `packages/agent/src/internal-events.ts` channel implementation.
+
+## 2026-10-26 - Empty-assistant recovery forwards the kept attempt's records (senpi#4307, part of #4272)
+
+### What changed
+
+- `empty-assistant-recovery.ts` (fork-only): reads attempts with `assistantEvents`, holds controls beside the events
+  they follow, forwards both when the attempt commits and discards both with a discarded attempt; replaced terminals
+  relay their capture.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
 ## 2026-10-25 - Internal-only ordered agent channel for capture records (senpi#4277, part of #4272)
 
 ### What changed

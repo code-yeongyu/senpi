@@ -83,8 +83,9 @@ export function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): Te
 			pi.events?.emit(WAKE_SOURCE_STATE_EVENT, {
 				source: "terminal-monitors",
 				activeCount: snapshot.length,
+				// The stable "mon_" id: runtime ids churn on restore, and item ids feed the custody signature.
 				monitors: snapshot.map((entry) => ({
-					id: entry.id,
+					id: entry.monitorId ?? entry.id,
 					description: entry.description,
 					startedAtMs: entry.startedAtMs,
 				})),

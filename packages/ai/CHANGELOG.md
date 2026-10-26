@@ -12,6 +12,20 @@
 
 ### Removed
 
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Recovery stream wrappers carry captured block records with remapped indices instead of dropping them; public events and bytes are unchanged ([#4307](https://github.com/code-yeongyu/senpi/pull/4307))
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.26-1] - 2026-10-26
 
 ### Breaking Changes

@@ -12,6 +12,30 @@
 
 ### Removed
 
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Session lifecycle waits include bounded named child sources, background items, and child reports, preserving producer labels and timestamps through restoration while aggregate counts remain authoritative ([#4228](https://github.com/code-yeongyu/senpi/pull/4228)).
+
+### Changed
+
+### Fixed
+
+- MCP OAuth validates metadata and response issuers before using credentials, discards registrations and tokens bound to another issuer, and declares native loopback registration. Metadata and callback issuers remain exact identifiers; credential stamps tolerate only the final slash of an origin-only URL, preserving existing root-fallback sign-ins and grants without AS metadata. Configured client IDs remain reusable configuration ([#4211](https://github.com/code-yeongyu/senpi/pull/4211)).
+- Warn when rejecting MCP tools with invalid parameter-header annotations, reject mismatched argument types before HTTP dispatch, and detect annotations under unknown schema keywords ([#4246](https://github.com/code-yeongyu/senpi/issues/4246)).
+- Supervised RPC lifecycle tests subscribe to generation-file events before startup and wait for the drain channel before stopping or freezing the host, without missing files published before the first read (senpi#4260).
+- A Windows RPC host start no longer replaces an existing valid socket secret, so clients that already read it keep reaching the host ([#4292](https://github.com/code-yeongyu/senpi/pull/4292))
+- vertex-garden requests resolve the target project from process env or the stored google-vertex profile before falling back to ADC quota project discovery, instead of failing with "Vertex AI requires a project ID" ([#4339](https://github.com/code-yeongyu/senpi/pull/4339))
+- compaction with a dead summarizer model degrades through the deterministic fallback instead of rejecting the compaction and failing the prompt ([#4340](https://github.com/code-yeongyu/senpi/pull/4340))
+- websearch Google grounding defaults to `gemini-flash-latest` instead of the retired `gemini-2.5-flash` ([#4340](https://github.com/code-yeongyu/senpi/pull/4340))
+- Grant answers are now matched by the request they answer ([#4359](https://github.com/code-yeongyu/senpi/pull/4359))
+- A worker-session grant now stays guarded until the session settles it ([#4366](https://github.com/code-yeongyu/senpi/pull/4366))
+
+### Removed
+
 ## [2026.10.26-1] - 2026-10-26
 
 ### Breaking Changes

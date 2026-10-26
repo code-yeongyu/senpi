@@ -10,7 +10,7 @@ import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AssistantMessageEventStream } from "../../ai/src/utils/event-stream.ts";
 import { Agent } from "../src/agent.ts";
-import { type OrderedAgentRecord, subscribeInternalAgent } from "../src/internal-events.ts";
+import { type OrderedAgentRecord, createInternalAgentChannel } from "../src/internal-events.ts";
 import type { AgentTool } from "../src/types.ts";
 
 const claude: Model<"anthropic-messages"> = {
@@ -85,12 +85,14 @@ function nativeCallThenText(ending: "aborted" | "stop") {
 }
 
 async function assistantEnd(ending: "aborted" | "stop") {
+	const internalChannel = createInternalAgentChannel();
 	const agent = new Agent({
+		internalChannel,
 		initialState: { model: claude, tools: [bash] },
 		streamFn: () => wrapStreamWithModelRecovery(nativeCallThenText(ending), claude, [bashSchema]),
 	});
 	const records: OrderedAgentRecord[] = [];
-	const unsubscribe = subscribeInternalAgent(agent, (record) => {
+	const unsubscribe = internalChannel.subscribe((record) => {
 		records.push(record);
 	});
 	try {

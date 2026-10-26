@@ -2170,7 +2170,13 @@ session-notice identity. Restart redelivers unconsumed queued messages once, but
 never replays a consumed result or reruns an interrupted tool.
 
 `pi.lifecycle.reportChild({ taskId, childSessionId, runEpoch, generation, state,
-waitingOn?, terminal? })` persists runner-owned child state. Stale epoch/generation
+label?, since?, waitingOn?, terminal? })` persists runner-owned child state. `label`
+is a producer-authored name and `since` is the child's own state-entry time (ISO);
+an unparseable `since` is dropped. `waitingOn` takes the `SessionLifecycle.waitingOn`
+shape described in [RPC session lifecycle](rpc.md#session-lifecycle), named lists
+included; its counts stay authoritative and the child's human waits are not kept.
+A nonterminal report appears in the parent's `waitingOn.childReports` as
+`{ taskId, childSessionId, runEpoch, state, label?, since? }`. Stale epoch/generation
 pairs are ignored; a higher `runEpoch` clears the old terminal status. Terminal
 values are `completed`, `error`, `lost`, `interrupted`, and `cancelled`. Child UI
 requests remain automatically answered by their runners, not routed to a person.

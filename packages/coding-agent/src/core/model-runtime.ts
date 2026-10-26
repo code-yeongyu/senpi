@@ -97,6 +97,7 @@ import {
 import { createProviderSemaphores } from "./provider-concurrency.ts";
 import { remoteCatalogServesProvider, withRemoteCatalog } from "./remote-catalog-provider.ts";
 import { RuntimeCredentials } from "./runtime-credentials.ts";
+import { ServedCredentials } from "./served-credentials.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { limitAccountOf, withLimitCapture } from "./subscription-limits/limit-store.ts";
 import {
@@ -304,6 +305,7 @@ export class ModelRuntime implements Models {
 	private busyAvailabilityRetryTimer: ReturnType<typeof setTimeout> | undefined;
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
+	private readonly servedCredentials = new ServedCredentials();
 	/**
 	 * The credential pool is loaded lazily and only for a provider that actually
 	 * has more than one slot. Importing it eagerly would pull the pool's schema
@@ -1163,8 +1165,14 @@ export class ModelRuntime implements Models {
 			const inner = await this.providerSemaphores.bracket(prepared.model.provider, prepared.options.signal, () =>
 				send(capturing),
 			);
+			const stream = wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages));
+			this.servedCredentials.observe(stream.result(), {
+				provider: prepared.model.provider,
+				baseUrl: prepared.model.baseUrl,
+				apiKey: prepared.options.apiKey,
+			});
 			return {
-				stream: wrapStreamWithModelRecovery(inner, model, getCurrentTools(transcript.messages)),
+				stream,
 				...(prepared.rejectableAccess === undefined ? {} : { rejectableAccess: prepared.rejectableAccess }),
 				...(prepared.rejectedTokenStatuses === undefined
 					? {}

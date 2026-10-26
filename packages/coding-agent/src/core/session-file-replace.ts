@@ -49,7 +49,7 @@ function openTemp(tempPath: string): number | undefined {
 }
 
 /** The pre-atomic rewrite, kept for a writable file in a directory that takes no new entries. */
-function rewriteInPlace(path: string, chunks: Iterable<string>): void {
+function rewriteInPlace(path: string, chunks: Iterable<string | Uint8Array>): void {
 	const fd = openSync(path, "w");
 	try {
 		for (const chunk of chunks) {
@@ -60,7 +60,7 @@ function rewriteInPlace(path: string, chunks: Iterable<string>): void {
 	}
 }
 
-function writeDurably(fd: number, chunks: Iterable<string>, mode: number | undefined): void {
+function writeDurably(fd: number, chunks: Iterable<string | Uint8Array>, mode: number | undefined): void {
 	try {
 		if (mode !== undefined) fchmodSync(fd, mode);
 		for (const chunk of chunks) {
@@ -95,7 +95,7 @@ function syncDirectory(directory: string): void {
  * When the directory refuses the temp file (EACCES/EPERM/EROFS) the file is rewritten
  * in place as before, so a writable file in a read-only directory still migrates.
  */
-export function replaceFileAtomically(filePath: string, chunks: Iterable<string>): void {
+export function replaceFileAtomically(filePath: string, chunks: Iterable<string | Uint8Array>): void {
 	const target = resolveTarget(filePath);
 	const tempPath = join(dirname(target.path), `.${basename(target.path)}.${randomUUID()}.tmp`);
 	const tempFd = openTemp(tempPath);

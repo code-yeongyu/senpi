@@ -1,17 +1,25 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
+	type AssistantMessage,
 	type ProviderDiagnostic,
 	type ProviderDiagnosticCategory,
 	sanitizeProviderDiagnostic,
 } from "@earendil-works/pi-ai";
 
 /**
+ * `request_refused`: an `auth` failure on a credential that served a response moments before, so the
+ * provider refused this request rather than the key (senpi#2491).
+ */
+export type ProviderFailureCategory = ProviderDiagnosticCategory | "request_refused";
+
+/**
  * Structured failure of a turn that ended with a provider error, attached to `agent_end`.
- * Built only from the adapter-minted `ProviderDiagnostic`; message text is never read.
+ * Built only from the adapter-minted `ProviderDiagnostic` and the runtime's typed served-credential
+ * mark; message text is never read.
  * Every category, `unknown` included, carries a reason and an action.
  */
 export interface ProviderFailure {
-	readonly category: ProviderDiagnosticCategory;
+	readonly category: ProviderFailureCategory;
 	readonly provider: string;
 	readonly httpStatus?: number;
 	readonly code?: string;
@@ -21,8 +29,12 @@ export interface ProviderFailure {
 	readonly action: string;
 }
 
-const ACTIONS: Record<Exclude<ProviderDiagnosticCategory, "unknown">, { reason: string; action: string }> = {
+const ACTIONS: Record<Exclude<ProviderFailureCategory, "unknown">, { reason: string; action: string }> = {
 	auth: { reason: "the provider rejected the credentials", action: "re-authenticate the provider" },
+	request_refused: {
+		reason: "the provider refused this request, but the same key worked moments ago, so it may still be valid",
+		action: "send the message again or choose another model; if it keeps failing, re-authenticate",
+	},
 	rate_limit: { reason: "the provider is rate limiting requests", action: "retry later or set a fallback model" },
 	quota: { reason: "the provider account is out of quota", action: "check the plan or credits" },
 	context_limit: {
@@ -40,8 +52,20 @@ function identifier(diagnostic: ProviderDiagnostic | undefined): string {
 	return "no code";
 }
 
-export function describeProviderFailure(diagnostic: ProviderDiagnostic | undefined, provider: string): ProviderFailure {
-	const category = diagnostic?.category ?? "unknown";
+/** An `auth` failure on a credential that served a response moments before: the request was refused, not the key. */
+export function isRequestLevelRefusal(message: AssistantMessage): boolean {
+	return (
+		message.credentialServedRecently === true &&
+		sanitizeProviderDiagnostic(message.providerDiagnostic)?.category === "auth"
+	);
+}
+
+export function describeProviderFailure(
+	diagnostic: ProviderDiagnostic | undefined,
+	provider: string,
+	requestRefused = false,
+): ProviderFailure {
+	const category: ProviderFailureCategory = requestRefused ? "request_refused" : (diagnostic?.category ?? "unknown");
 	const detail =
 		category === "unknown"
 			? {
@@ -57,6 +81,7 @@ export function describeProviderFailure(diagnostic: ProviderDiagnostic | undefin
 		...(diagnostic?.code === undefined ? {} : { code: diagnostic.code }),
 		...(resetsAt === undefined ? {} : { resetsAt }),
 		...detail,
+		...(category === "request_refused" ? { action: `${detail.action} ${provider}` } : {}),
 		...(resetsAt === undefined ? {} : { reason: `${detail.reason} until ${new Date(resetsAt).toISOString()}` }),
 	};
 }
@@ -68,7 +93,11 @@ export function describeProviderFailure(diagnostic: ProviderDiagnostic | undefin
 export function providerFailureOf(messages: readonly AgentMessage[]): ProviderFailure | undefined {
 	const last = messages.findLast((message) => message.role === "assistant");
 	if (last === undefined || last.role !== "assistant" || last.stopReason !== "error") return undefined;
-	return describeProviderFailure(sanitizeProviderDiagnostic(last.providerDiagnostic), last.provider);
+	return describeProviderFailure(
+		sanitizeProviderDiagnostic(last.providerDiagnostic),
+		last.provider,
+		isRequestLevelRefusal(last),
+	);
 }
 
 export function formatProviderFailure(failure: ProviderFailure): string {

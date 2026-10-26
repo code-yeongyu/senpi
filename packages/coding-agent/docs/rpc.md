@@ -145,8 +145,23 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
 - `seq`, `epoch`, `epochOrigin` (`human` or `automatic`), `humanInputRevision`,
   `selfSettleEligible`, `restoring`, `persisted`, `runPaused`, and `since` (ISO time).
 - `role` (`root` or `child`), `rootSessionId`, and optional `parentSessionId` and `taskId`.
-- Optional `waitingOn`: `{ children, background, human }`. Background entries carry
-  `source`, `activeCount`, and optional `retryAtMs`. Human entries carry `kind`,
+- Optional `waitingOn`: `{ children, background, human, childSources?, childReports?, childReportsOmitted? }`.
+  `children` and each source's `activeCount` are the authoritative counts; every named list below is
+  supplemental and may be incomplete, so never derive a count from a list's length. `children` is the
+  larger of the nonterminal child reports and the summed `childSources` counts.
+  Background entries carry `source`, `activeCount`, optional `items`, optional `omittedItems`, and
+  optional `retryAtMs`. `childSources` entries carry `source`, `activeCount`, optional `items`, and
+  optional `omittedItems`. Each item is `{ id, label?, startedAt? }` (`startedAt` is ISO time), taken
+  from the producer's `wake_source_state` snapshot: its `items`, or the legacy `monitors` list when
+  `items` is missing or null. Terminal monitors are named by their stable `mon_` id. Each list is a
+  snapshot: entries whose `id` is not a non-blank string are dropped, duplicates collapse to one entry
+  per `id`, the list is sorted by `id`, and at most 32 entries are kept. `omittedItems` is the
+  producer's own omitted count plus any valid items cut at 32; it is not `activeCount` minus the list
+  length. Invalid detail drops only the detail, never the count.
+  `childReports` lists nonterminal reports from `reportChild` as
+  `{ taskId, childSessionId, runEpoch, state, label?, since? }`, excluding reports about the session
+  itself, sorted by `taskId` and capped at 32; `childReportsOmitted` counts the reports cut by that cap.
+  Human entries carry `kind`,
   `originSessionId`, `requestId`, `revision`, `since`, and optional child identity/label.
   Human kinds are `question`, `approval`, `goal_blocked`, `goal_paused`, `stalled`,
   and `interrupted_run`; attention remains visible even when a hold wins precedence.
@@ -4824,6 +4839,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `transcript_write_failed` | The session file refused a message of the running turn (`role`, `errorMessage`) |
 | `extension_event` | Capability-gated extension-owned event (`extension_events` clients only) |
 | `commands_changed` | Ordered command/skill candidate snapshot changed |
+| `session_recovered` | An interrupted write (a full disk) left the session file's last record incomplete; it was set aside (`cause`, `backupPath`, `droppedBytes`, `notice`) |
 | `command_invocation` | Accepted extension-command or prompt-template invocation metadata |
 | `skill_invocation` | Ordered explicit skill metadata after prompt expansion |
 | `loaded_surfaces_changed` | Loaded skills, extensions, or MCP inventory changed; re-read `get_commands` and `get_loaded_surfaces` |
@@ -5025,6 +5041,7 @@ When the run ended with a provider error (the last assistant message has `stopRe
 | `category` | `action` |
 | --- | --- |
 | `auth` | re-authenticate the provider |
+| `request_refused` | send the message again or choose another model; if it keeps failing, re-authenticate `<provider>` |
 | `rate_limit` | retry later or set a fallback model |
 | `quota` | check the plan or credits |
 | `context_limit` | compact or shorten the conversation |
@@ -5034,6 +5051,10 @@ When the run ended with a provider error (the last assistant message has `stopRe
 | `unknown` | retry once; if it repeats, switch the model or report the code |
 
 `unknown` is used when the error carries no diagnostic or its metadata matches no row; its `reason` names the provider and the code or status, for example `the provider returned an error that could not be classified (openai, status 429)`. A bare 429 stays `unknown` because status alone cannot tell a rate limit from exhausted quota. Retry and fallback decisions do not read `failure`.
+
+`request_refused` is an `auth` failure whose credential (same provider, endpoint and key) served a response within the last 10 minutes: the provider refused this one request, and the key may still be valid. If failures persist, re-authenticate the named provider: a recently working key may have been revoked. The failed assistant message carries `credentialServedRecently: true` and keeps the provider's own `errorMessage`. The in-memory record drops expired entries on each record/check and retains at most 1,024 credentials, evicting the least recently served first. Header-based, ADC and SigV4 authentication do not supply an `apiKey`, so their fingerprint reduces to provider + baseUrl; different credentials on that endpoint share the record.
+
+The fallback chain conservatively skips every other model on that provider for the rest of the turn, including models with a different endpoint or key; models on other providers are still tried. This skip is provider-wide, not fingerprint-matched: the synchronous candidate scan cannot resolve the request's asynchronously prepared credentials. An `auth` failure with no recent success on the credential stays `auth`. A `request_refused` failure follows normal goal provider recovery rather than blocking the goal with login guidance.
 
 ### agent_settled
 
@@ -5482,6 +5503,27 @@ RPC-originated modern requests advertise no elicitation and terminate locally
 if input is required; they never fabricate a decline or retry incomplete input.
 Client roles and capability declarations do not enable this form channel.
 Existing legacy MCP dialogs and their RPC request/response shapes remain unchanged.
+
+### session_recovered
+
+Emitted when an interrupted write (usually a full disk) left the session file's last record incomplete. The incomplete
+bytes were copied to `backupPath` (`<session file>.torn-<time>-<id>`, never deleted) and cut, and every complete record is
+kept. `cause` is `disk_full` when this process saw the write fail with `ENOSPC`/`EDQUOT`, `write_failed` for another
+failed write, and `unknown` when the damage was found while opening the session without a known failed write.
+`notice` is the text to show the person: paths under the home directory use `~/...`; backups outside it use a neutral
+label instead of an absolute path. The machine-readable `backupPath` remains absolute.
+A repair found while opening is replayed to each client that attaches before the next prompt; one made during a run is
+emitted live. It is sent once per repair.
+
+```json
+{
+  "type": "session_recovered",
+  "cause": "unknown",
+  "backupPath": "/home/example/.senpi/sessions/session.jsonl.torn-1761436800000-1a2b3c4d",
+  "droppedBytes": 74,
+  "notice": "The last message of this session wasn't saved completely (an earlier save was interrupted, for example by a full disk). Everything before it was loaded; the incomplete record was kept in ~/.senpi/sessions/session.jsonl.torn-1761436800000-1a2b3c4d."
+}
+```
 
 ### Opt-in private MCP forms
 

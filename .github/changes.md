@@ -1,3 +1,40 @@
+## 2026-10-26 - publish-model-catalog requires a same-repository push for workflow_run runs (senpi#4344)
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml`: for the `workflow_run` trigger, the `generate` job now also requires `github.event.workflow_run.head_repository.full_name == github.repository` and `github.event.workflow_run.event == 'push'`, on top of `conclusion == 'success'` and `head_branch == 'main'`; the `publish` job's `workflow_run` path requires the same two checks.
+
+### Why
+
+- `generate` checks out `workflow_run.head_sha`, and the branch name alone does not say which repository the triggering run belongs to (senpi#4342).
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `if:` lines of the `generate` and `publish` jobs in `publish-model-catalog.yml`.
+
+## 2026-10-25 - Build Binaries outwaits a queued publish-only run and keeps a draft npm already shipped (senpi#4244)
+
+### What changed
+
+- `.github/workflows/build-binaries.yml`: the `publish-npm` job waits for the dispatched `publish-npm.yml` run through `scripts/await-dispatched-run.sh` instead of `timeout 3600 gh run watch`. The job gets `timeout-minutes: 360`, `AWAIT_MAX_SECONDS: "19800"`, `contents: read` and a sparse checkout of `scripts/`. The wait keeps going while the child is queued or in progress, prints its status each poll, and fails only when the child completes with a non-success conclusion or the ceiling passes.
+- `.github/workflows/build-binaries.yml`: `publish-npm` finds the dispatched run in its own step and exposes its id as the job output `run_id`. `cleanup-draft-github-release` gets `actions: read`, checks out `scripts/` and runs `scripts/release-draft-cleanup.sh` with that run id and the `publish-npm` job result. The script asks npm for `@code-yeongyu/senpi@<version>` and keeps the draft, prints the recovery commands and exits non-zero when npm has the version or cannot be asked. When npm does not have it (E404 or an empty `npm view` result), the script still keeps the draft while the dispatched publish run is queued or in progress, succeeded, or cannot be read; without a run id it keeps the draft while any `publish-npm.yml` dispatch run has not completed or the runs cannot be listed. It deletes the draft only when no publish run was dispatched or the publish run completed without success.
+
+### Why
+
+On 2026.10.24-1 the dispatched publish-only run sat queued for hosted runners past the 60 minute wait, then succeeded and put all seven packages on npm. The parent had already failed, so the release publish was skipped and the cleanup deleted the staged draft. The version was on npm with no GitHub release, and recovery needed a full rebuild (senpi#4173). A parent that gives up or is cancelled while the child is still queued must not delete the draft either, because the child can still publish.
+
+### Why an extension could not handle it
+
+Release orchestration is repository workflow configuration, not runtime behavior an extension can reach.
+
+### Expected merge conflict zones
+
+- LOW: the `publish-npm` and `cleanup-draft-github-release` jobs in `build-binaries.yml`, if upstream changes how its release workflow waits on npm publishing or cleans up drafts.
+
 ## 2026-10-25 - The Windows RPC job drives a terminal control endpoint over a pipe (senpi#4267)
 
 ### What changed

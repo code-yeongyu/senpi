@@ -57,7 +57,7 @@ const ENABLE_ACCOUNT_FALLBACK =
  * How to move off a pinned account. `/claude-account pin` only writes the stored pin, which a CLI or a
  * settings pin outranks (`resolveClaudeAccountPin`), so for those it would change nothing (senpi#3672).
  */
-function switchAccountLine(pinnedBy: PinSource | undefined): string {
+export function switchAccountLine(pinnedBy: PinSource | undefined): string {
 	switch (pinnedBy) {
 		case "cli":
 			return "  This session was started with --claude-account; start a new session with another --claude-account to switch.";

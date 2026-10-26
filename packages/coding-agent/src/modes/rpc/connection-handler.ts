@@ -146,6 +146,7 @@ import { runPauseForRun, runResumeForRun } from "./run-hold-commands.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
+import { subscribeStructuredSessionRecords } from "./structured-session-records.ts";
 import { RpcSessionRelocation } from "./session-relocation.ts";
 import {
 	answerHostResponse,
@@ -209,6 +210,8 @@ export interface RpcConnectionSink {
 	writeRaw(chunk: string): void;
 	/** Shared bindings accept correlated records synchronously, before JSONL buffering. */
 	writeRecord?(record: object): void;
+	/** The internal structured lane (senpi#4272): seeded records and block controls, never a legacy destination. */
+	writeStructured?(record: object): void;
 	waitForBackpressure(): Promise<void>;
 	/** Tears the transport down once its event queue can no longer deliver (overflow, write failure). */
 	close?(): void;
@@ -374,6 +377,7 @@ export function createRpcConnectionHandler(
 	// Set by the first command that asks this session for a turn; `set_retry_fallback` is refused after it.
 	let turnRequested = false;
 	let unsubscribe: (() => void) | undefined;
+	let unsubscribeStructured: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
 	let unsubscribeLoadedSurfaces: (() => void) | undefined;
 	let unsubscribeExtensionEvents: (() => void) | undefined;
@@ -1031,6 +1035,10 @@ export function createRpcConnectionHandler(
 			unsubscribe = subscribeSessionRecords(session, outputEvent, (abortSource) => {
 				lastAbortSource = abortSource;
 			});
+			unsubscribeStructured?.();
+			unsubscribeStructured = sink.writeStructured
+				? subscribeStructuredSessionRecords(session, (record) => sink.writeStructured?.(tagSessionRecord(record)))
+				: undefined;
 			unsubscribeBackpressure = session.agent.subscribe(async () => {
 				await waitForRpcBackpressure();
 			});
@@ -2217,10 +2225,12 @@ export function createRpcConnectionHandler(
 		pendingExtensionRequests.close();
 		unsubscribeProviderAccountEvents();
 		unsubscribe?.();
+		unsubscribeStructured?.();
 		unsubscribeBackpressure?.();
 		unsubscribeLoadedSurfaces?.();
 		unsubscribeExtensionEvents?.();
 		unsubscribe = undefined;
+		unsubscribeStructured = undefined;
 		unsubscribeBackpressure = undefined;
 		unsubscribeLoadedSurfaces = undefined;
 		unsubscribeExtensionEvents = undefined;
