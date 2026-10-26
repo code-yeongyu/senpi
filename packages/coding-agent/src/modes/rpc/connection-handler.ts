@@ -101,7 +101,7 @@ import {
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
-import { settleExtensionUiResponse } from "./extension-ui-response.ts";
+import { answeredUiRequestId, settleExtensionUiResponse } from "./extension-ui-response.ts";
 import { answerGetEntries } from "./get-entries-command.ts";
 import { runHoldInput } from "./held-input-commands.ts";
 import { HostSessionControl } from "./host-session-control.ts";
@@ -2146,18 +2146,14 @@ export function createRpcConnectionHandler(
 			"type" in parsed &&
 			parsed.type === "extension_ui_response"
 		) {
-			if (
-				!options.workerSecurityBridge &&
-				"id" in parsed &&
-				typeof parsed.id === "string" &&
-				grantRequests.has(parsed.id)
-			) {
+			const requestId = answeredUiRequestId(parsed as RpcExtensionUIResponse);
+			if (!options.workerSecurityBridge && requestId !== undefined && grantRequests.has(requestId)) {
 				const sender = options.clientInfo?.connectionId();
 				const capable =
 					sender === undefined
 						? clientCapabilities?.includes("grant_select") === true
 						: options.clientInfo?.hasCapability?.(sender, "grant_select") === true;
-				if (grantRequests.get(parsed.id) !== sender || !capable) return;
+				if (grantRequests.get(requestId) !== sender || !capable) return;
 			}
 			const reply = settleExtensionUiResponse(parsed as RpcExtensionUIResponse, {
 				questions,
