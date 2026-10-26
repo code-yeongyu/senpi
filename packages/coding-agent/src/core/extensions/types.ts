@@ -2996,7 +2996,12 @@ export interface ProviderConfig {
 		 * supplies no credential, so the provider stays unavailable. A returned
 		 * result should carry `ambient: true`.
 		 */
-		resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
+		resolve(input: {
+			ctx: AuthContext;
+			signal: AbortSignal;
+			/** Read-only env of another provider's stored credential; routing metadata only, never keys. */
+			storedProviderEnv?(providerId: string): Promise<Record<string, string> | undefined>;
+		}): Promise<AuthResult | undefined>;
 	};
 	/** OAuth provider for /login support. The `id` is set automatically from the provider name. */
 	oauth?: {

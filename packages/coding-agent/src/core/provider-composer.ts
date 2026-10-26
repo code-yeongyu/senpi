@@ -33,7 +33,12 @@ import {
 import { classifierErrorResult, imageErrorResult } from "@earendil-works/pi-ai/utils/model-operations";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
-import { composeApiKeyAuth, configuredHeaders, withConfiguredAuth } from "./provider-api-key-auth.ts";
+import {
+	composeApiKeyAuth,
+	configuredHeaders,
+	type StoredProviderEnvReader,
+	withConfiguredAuth,
+} from "./provider-api-key-auth.ts";
 import type { HeaderAuthStatusSource } from "./provider-header-auth.ts";
 import { clearConfigValueCache, resolveHeadersOrThrow } from "./resolve-config-value.ts";
 
@@ -156,7 +161,12 @@ export interface ProviderAmbientAuth {
 	 * supplies no credential, so the provider stays unavailable. A returned
 	 * result should carry `ambient: true`.
 	 */
-	resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
+	resolve(input: {
+		ctx: AuthContext;
+		signal: AbortSignal;
+		/** Read-only env of another provider's stored credential; routing metadata only, never keys. */
+		storedProviderEnv?(providerId: string): Promise<Record<string, string> | undefined>;
+	}): Promise<AuthResult | undefined>;
 }
 
 export type AuthStatus = {
@@ -570,6 +580,8 @@ export function composeModelProvider(
 	base: Provider | undefined,
 	modelConfig: ModelConfig,
 	extension: ProviderConfigInput | undefined,
+	/** Deferred ambient reads; the reader runs during auth resolution, never at composition. */
+	options?: { storedProviderEnv?: StoredProviderEnvReader },
 ): Provider {
 	const config = modelConfig.getProvider(providerId);
 	let extensionOAuthCredential: OAuthCredentials | undefined;
@@ -602,7 +614,9 @@ export function composeModelProvider(
 	};
 	// Validate eagerly so registration/reload reports structural errors immediately.
 	getAllModels();
-	const apiKey = composeApiKeyAuth(providerId, base, config, extension);
+	const apiKey = composeApiKeyAuth(providerId, base, config, extension, {
+		storedProviderEnv: options?.storedProviderEnv,
+	});
 	const oauth = composeOAuthAuth(providerId, base, config, extension);
 	if (!apiKey && !oauth) throw new Error(`Provider ${providerId}: no authentication method configured.`);
 	// The documented local `ollama` models.json catalog must not invoke the Cloud builtin's refresh with its

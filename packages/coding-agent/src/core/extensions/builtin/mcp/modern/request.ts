@@ -16,6 +16,7 @@ import { isRecord, validateMrtrForm } from "./form-schema.ts";
 import { McpMrtrError } from "./errors.ts";
 import { queuedForm } from "./consent-queue.ts";
 import { parseInputs } from "./inputs.ts";
+import { ParameterHeaderValidationError } from "./parameter-headers.ts";
 
 export const MAX_MCP_MRTR_ROUNDS = 8;
 const capableMethods = new Set(["tools/call", "resources/read", "prompts/get"]);
@@ -282,6 +283,7 @@ export function installModernRequestAdapter(
 			check();
 			if (error instanceof McpMrtrError) throw error;
 			if (error instanceof AuthError) throw error;
+			if (error instanceof ParameterHeaderValidationError) throw error;
 			const remoteCode = isRecord(error) && typeof error.code === "number" ? error.code : undefined;
 			throw new McpMrtrError("MCP_MRTR_TRANSPORT_FAILED", remoteCode);
 		} finally {

@@ -3,7 +3,7 @@ import { stream as streamDevin } from "../../ai/src/api/devin-agent.ts";
 import { getAssistantCapture } from "../../ai/src/utils/assistant-capture.ts";
 import { closeStubServers, frame, MODEL, serveEdge, trailer } from "../../ai/test/devin-agent-stream-harness.ts";
 import { Agent } from "../src/agent.ts";
-import { type OrderedAgentRecord, subscribeInternalAgent } from "../src/internal-events.ts";
+import { type OrderedAgentRecord, createInternalAgentChannel } from "../src/internal-events.ts";
 
 afterEach(closeStubServers);
 
@@ -18,12 +18,14 @@ async function channel(modelId: string): Promise<OrderedAgentRecord[]> {
 		},
 	});
 	const model = { ...MODEL, id: modelId, baseUrl };
+	const internalChannel = createInternalAgentChannel();
 	const agent = new Agent({
+		internalChannel,
 		initialState: { model },
 		streamFn: (_model, context, options) => streamDevin(model, context, { ...options, apiKey: "session-abc" }),
 	});
 	const records: OrderedAgentRecord[] = [];
-	const unsubscribe = subscribeInternalAgent(agent, (record) => {
+	const unsubscribe = internalChannel.subscribe((record) => {
 		records.push(record);
 	});
 	await agent.prompt("fixture");
@@ -31,24 +33,31 @@ async function channel(modelId: string): Promise<OrderedAgentRecord[]> {
 	return records;
 }
 
-function carried(records: OrderedAgentRecord[]) {
-	return {
-		progress: records.flatMap((record) => ("progress" in record ? [record.progress] : [])),
-		carriers: records.filter((record) => "event" in record && getAssistantCapture(record.event) !== undefined).length,
-	};
+function recordShapes(records: OrderedAgentRecord[]): string[] {
+	return records.map((record) => {
+		if ("progress" in record) {
+			const { startedAt, endedAt, ...rest } = record.progress as { startedAt?: number; endedAt?: number };
+			const timing = [startedAt === undefined ? "" : "startedAt", endedAt === undefined ? "" : "endedAt"].join("");
+			return `progress ${JSON.stringify(rest)} ${timing}`;
+		}
+		const event = record.event;
+		const kind = event.type === "message_update" ? `${event.type}:${event.assistantMessageEvent.type}` : event.type;
+		return `${kind} carrier=${getAssistantCapture(event) !== undefined}`;
+	});
 }
 
-// #4272 S02a-3 makes the recovery wrappers carrier-aware; until then a wrapped stream must carry nothing.
-describe("recovery wrappers and a real S02a-2 family", () => {
-	it("drops a Devin stream's controls and carriers behind the empty-assistant recovery wrapper", async () => {
-		const unwrapped = carried(await channel("swe-1-6"));
-		// The agent's own thinking-timing records ride beside the provider's; only the provider record is asserted.
-		expect(unwrapped.progress).toContainEqual({
-			type: "message_block_metadata",
-			contentIndex: 0,
-			thinkingSignature: "s1",
-		});
-		expect(unwrapped.carriers).toBeGreaterThan(0);
-		expect(carried(await channel("claude-sonnet-4-5"))).toEqual({ progress: [], carriers: 0 });
+describe("empty-assistant recovery and a real S02a-2 family #4272", () => {
+	it("delivers a Claude id's Devin records exactly as an unwrapped id's", async () => {
+		const unwrapped = recordShapes(await channel("swe-1-6"));
+		expect(unwrapped).toContain(
+			`progress ${JSON.stringify({ type: "message_block_metadata", contentIndex: 0, thinkingSignature: "s1" })} `,
+		);
+		expect(unwrapped).toContain("message_update:thinking_start carrier=true");
+		const wrapped = recordShapes(await channel("claude-sonnet-4-5"));
+		// The Devin fixture's first frame opens the thinking block, so its signature names block 0 behind the wrapper too.
+		expect(wrapped).toContain(
+			`progress ${JSON.stringify({ type: "message_block_metadata", contentIndex: 0, thinkingSignature: "s1" })} `,
+		);
+		expect(wrapped).toEqual(unwrapped);
 	});
 });

@@ -2,6 +2,7 @@ import { effectiveWakes, type TurnEndLivenessInput } from "./extensions/builtin/
 import type { Goal } from "./extensions/builtin/goal/types.ts";
 import { LifecycleChildren } from "./lifecycle-children.ts";
 import { LifecycleLedger, type LifecyclePersistence } from "./lifecycle-ledger.ts";
+import { projectWaitItems } from "./lifecycle-wait-items.ts";
 import { type DeadlineStopCapture, type RunStopFacts, sameStop, stopDetail } from "./lifecycle-stop.ts";
 import type { SessionActivitySnapshot } from "./session-activity.ts";
 import { lifecycleState, lifecycleTerminal } from "./session-lifecycle-reducer.ts";
@@ -236,14 +237,35 @@ export class SessionLifecycleController {
 	private evaluate(): void {
 		const runtime = this.options.readRuntime();
 		const active = this.obligations.active;
-		const childRecords = this.children.reports.filter(
-			(report) => report.childSessionId !== this.options.sessionId && report.terminal === undefined,
-		).length;
+		const childRecords = this.children.reports
+			.filter((report) => report.childSessionId !== this.options.sessionId && report.terminal === undefined)
+			.sort((a, b) => (a.taskId < b.taskId ? -1 : a.taskId > b.taskId ? 1 : 0));
+		const childReports = childRecords
+			.slice(0, 32)
+			.map(({ taskId, childSessionId, runEpoch, state, label, since }) => ({
+				taskId,
+				childSessionId,
+				runEpoch,
+				state,
+				...(label === undefined ? {} : { label }),
+				...(since === undefined ? {} : { since }),
+			}));
+		const childSources = active
+			.filter((record) => record.kind === "children")
+			.map((record) => ({
+				source: record.source ?? record.key,
+				activeCount: record.activeCount ?? 1,
+				...projectWaitItems(record),
+			}));
 		const background: LifecycleWaits["background"][number][] = active
 			.filter((record) => record.kind === "background")
-			.map((record) => ({ source: record.source ?? record.key, activeCount: record.activeCount ?? 1 }));
+			.map((record) => ({
+				source: record.source ?? record.key,
+				activeCount: record.activeCount ?? 1,
+				...projectWaitItems(record),
+			}));
 		const children = Math.max(
-			childRecords,
+			childRecords.length,
 			active
 				.filter((record) => record.kind === "children")
 				.reduce((sum, record) => sum + (record.activeCount ?? 1), 0),
@@ -353,7 +375,14 @@ export class SessionLifecycleController {
 							runEpoch: this.ownTask.runEpoch,
 						}
 					: undefined;
-		const waits: LifecycleWaits = { children, background, human };
+		const waits: LifecycleWaits = {
+			children,
+			background,
+			human,
+			...(childSources.length ? { childSources } : {}),
+			...(childReports.length ? { childReports } : {}),
+			...(childRecords.length > 32 ? { childReportsOmitted: childRecords.length - 32 } : {}),
+		};
 		const lastStop = this.lastStop(
 			input,
 			synthetic.some((wait) => wait.kind === "stalled"),

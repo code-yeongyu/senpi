@@ -38,6 +38,13 @@ export interface AssistantCapture {
 	readonly parsedThrough?: number;
 	/** The block's own index where the event's public `contentIndex` names another block; internal readers prefer it. */
 	readonly contentIndex?: number;
+	/**
+	 * First block index whose earlier records no longer name the terminal's blocks (block index/identity only); readers
+	 * MUST drop every block record at or above it for that message; absent = no rewrite. The terminal message always
+	 * wins for CONTENT: readers replace each block's content from the terminal (or the block's end event), never
+	 * append-only from live records.
+	 */
+	readonly rewrittenFrom?: number;
 }
 interface CaptureState {
 	positions: Map<number, CapturePosition>;
@@ -186,6 +193,7 @@ export function assistantEvents(
 	};
 }
 
+/** Internal readers address a block by `capture.contentIndex ?? event.contentIndex`; the public index can drift (Google/Vertex). */
 export function getAssistantCapture(event: object): AssistantCapture | undefined {
 	return captures.get(event);
 }
@@ -205,6 +213,14 @@ export interface CaptureHint {
 	readonly offset?: number;
 	/** The open block's own index when the adapter's public `contentIndex` has drifted from it. */
 	readonly contentIndex?: number;
+	/**
+	 * Set by a wrapper that re-emits a source event 1:1 at its own index while reading the source later than it was
+	 * emitted: block facts come from this source capture, usage and metadata from the relaying stream. `null` records
+	 * nothing, because the source captured nothing.
+	 */
+	readonly carried?: AssistantCapture | null;
+	/** A terminal's `AssistantCapture.rewrittenFrom`. */
+	readonly rewrittenFrom?: number;
 }
 export interface CapturePosition {
 	offset: number;
@@ -260,35 +276,50 @@ export function carryAssistantCapture<T extends object>(source: object, target: 
 	const capture = captures.get(source);
 	if (!capture) return target;
 	try {
-		captures.set(
-			target,
-			terminal
-				? Object.freeze({
-						...capture,
-						message: freezeCapture({ ...terminal, content: terminal.content.map(publicBlock) }),
-					})
-				: capture,
-		);
+		captures.set(target, terminal ? terminalCapture(capture, terminal) : capture);
 	} catch (error) {
 		dropCapture(source, error);
 	}
 	return target;
 }
 
+/** A terminal replaced downstream: its usage and message, plus every scalar that differs from the source terminal. */
+function terminalCapture(capture: AssistantCapture, terminal: AssistantMessage): AssistantCapture {
+	const metadata: Record<string, unknown> = { ...capture.metadata };
+	const previous: object = capture.message ?? {};
+	for (const key of new Set([...Object.keys(previous), ...Object.keys(terminal)])) {
+		if (key === "content" || key === "usage") continue;
+		const value: unknown = Reflect.get(terminal, key);
+		if (!sameValue(value, Reflect.get(previous, key))) metadata[key] = key in terminal ? value : null;
+	}
+	return Object.freeze({
+		usage: frozenUsage(terminal.usage),
+		metadata: freezeCapture(metadata),
+		message: freezeCapture({ ...terminal, content: terminal.content.map(publicBlock) }),
+		...(capture.rewrittenFrom === undefined ? {} : { rewrittenFrom: capture.rewrittenFrom }),
+	});
+}
+
 /** Never parses or traverses a block on a delta, including a no-growth delta. */
 export function captureAssistantEvent(owner: object, event: AssistantMessageEvent, hint: CaptureHint = {}): void {
 	const state = activeState(owner);
-	if (!state || captures.has(event)) return;
+	// A relay of a source that captured nothing, or captured a drifted index, gets no record: lack, never wrong.
+	if (!state || captures.has(event) || hint.carried === null || hint.carried?.contentIndex !== undefined) return;
 	const contentIndex = "contentIndex" in event ? (hint.contentIndex ?? event.contentIndex) : undefined;
 	if (contentIndex !== undefined && state.failedBlocks.has(contentIndex)) return;
 	try {
-		captures.set(event, buildCapture(state, event, hint));
+		const capture = buildCapture(state, event, hint);
+		if (capture) captures.set(event, capture);
 	} catch (error) {
 		dropCapture(owner, error, state, contentIndex);
 	}
 }
 
-function buildCapture(state: CaptureState, event: AssistantMessageEvent, hint: CaptureHint): AssistantCapture {
+function buildCapture(
+	state: CaptureState,
+	event: AssistantMessageEvent,
+	hint: CaptureHint,
+): AssistantCapture | undefined {
 	const message = event.type === "done" ? event.message : event.type === "error" ? event.error : event.partial;
 	const usage = usageCopy(state, message.usage);
 	if (!("contentIndex" in event)) {
@@ -296,11 +327,21 @@ function buildCapture(state: CaptureState, event: AssistantMessageEvent, hint: C
 			usage,
 			metadata: changedMetadata(state, message),
 			message: freezeCapture({ ...message, content: message.content.map(publicBlock) }),
+			...(hint.rewrittenFrom === undefined ? {} : { rewrittenFrom: hint.rewrittenFrom }),
 		});
 	}
 	const index = hint.contentIndex ?? event.contentIndex;
 	const own = index === event.contentIndex ? {} : { contentIndex: index };
+	const carried = hint.carried;
 	if ("delta" in event) {
+		if (carried) {
+			const { parsedThrough } = carried;
+			return Object.freeze({
+				usage,
+				offset: carried.offset,
+				...(parsedThrough === undefined ? {} : { parsedThrough }),
+			});
+		}
 		const position = state.positions.get(index) ?? { offset: 0, parsedThrough: 0 };
 		const offset = hint.offset ?? position.offset;
 		position.offset = offset + event.delta.length;
@@ -316,10 +357,16 @@ function buildCapture(state: CaptureState, event: AssistantMessageEvent, hint: C
 		});
 	}
 	const metadata = changedMetadata(state, message);
-	const block = freezeCapture(publicBlock(event.type === "toolcall_end" ? event.toolCall : message.content[index]));
-	if (event.type !== "text_start" && event.type !== "thinking_start" && event.type !== "toolcall_start") {
-		return Object.freeze({ usage, metadata, block, ...own });
+	if (carried) {
+		const { usage: _usage, metadata: _metadata, message: _message, offset: _offset, ...facts } = carried;
+		return Object.freeze({ ...facts, usage, metadata });
 	}
+	const starts = event.type === "text_start" || event.type === "thinking_start" || event.type === "toolcall_start";
+	const source: PublicBlock | undefined = event.type === "toolcall_end" ? event.toolCall : message.content[index];
+	// A start announced before its block is appended has no seed to freeze yet.
+	if (starts && source === undefined) return undefined;
+	const block = freezeCapture(publicBlock(source));
+	if (!starts) return Object.freeze({ usage, metadata, block, ...own });
 	const rawArgumentPrefix = hint.rawArgumentPrefix ?? "";
 	const coveredCodeUnits =
 		block.type === "text"
@@ -341,13 +388,16 @@ function buildCapture(state: CaptureState, event: AssistantMessageEvent, hint: C
 
 function usageCopy(state: CaptureState, usage: Usage): Usage {
 	if (state.usage !== undefined && sameValue(usage, state.usage)) return state.usage;
-	const copy = Object.freeze({
+	state.usage = frozenUsage(usage);
+	return state.usage;
+}
+
+function frozenUsage(usage: Usage): Usage {
+	return Object.freeze({
 		...usage,
 		cost: Object.freeze({ ...usage.cost }),
 		...(usage.contextUsage ? { contextUsage: Object.freeze({ ...usage.contextUsage }) } : {}),
 	});
-	state.usage = copy;
-	return copy;
 }
 
 /** Scalar message fields changed since the last non-delta capture; the baseline moves only once its copy exists. */

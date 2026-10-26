@@ -82,6 +82,7 @@ import { retryOnceOnRejectedToken } from "./credential-pool/rejected-token-retry
 import type { RotationSources } from "./credential-pool/rotation-stream.ts";
 import { ModelConfig } from "./model-config.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
+import type { StoredProviderEnvReader } from "./provider-api-key-auth.ts";
 import {
 	type AuthStatus,
 	type CompatibilityRequestConfig,
@@ -481,7 +482,12 @@ export class ModelRuntime implements Models {
 			return base;
 		}
 		try {
-			const provider = composeModelProvider(providerId, base, this.config, extension);
+			// The reader runs only inside ambient auth resolution; composition itself stays credential-free.
+			const storedProviderEnv: StoredProviderEnvReader = async (sourceId) => {
+				const credential = await this.credentials.read(sourceId);
+				return credential?.type === "api_key" && credential.env ? { ...credential.env } : undefined;
+			};
+			const provider = composeModelProvider(providerId, base, this.config, extension, { storedProviderEnv });
 			this.compositionErrors.delete(providerId);
 			return provider;
 		} catch (error) {

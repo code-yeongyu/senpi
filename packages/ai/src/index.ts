@@ -38,10 +38,12 @@ export * from "./api/lazy.ts";
 export {
 	type AssistantProgress,
 	type AssistantRecord,
+	assistantEvents,
 	assistantRecords,
 	carryAssistantCapture,
 	getAssistantCapture,
 	isAssistantProgress,
+	pushAssistantProgress,
 	subscribeAssistantCapture,
 } from "./utils/assistant-capture.ts";
 export type { MistralOptions } from "./api/mistral-conversations.ts";
