@@ -105,17 +105,26 @@ export interface HeldPresence {
 	 * "Failure or a cancelled/retired offer releases only its own unused handle"). Holds nothing to close without presence.
 	 */
 	release(): void;
+	/**
+	 * The Revision 7 pre-action check on the holding handle (design 4.2a "Descriptor-loss detection"), run before each
+	 * authorized bind, spawn or credential mutation: the bridge compares the handle's physical identity with the recorded
+	 * one, reads through it and reclassifies the volume. A failed check is terminal for the actor and throws
+	 * `presence_pre_action_failed`; the registry stays fenced, so the actor never re-acquires and continues. A row
+	 * without presence has nothing to check.
+	 */
+	preActionCheck(): void;
 }
 
 /**
  * Opens and acquires a predeclared presence object with one nonblocking attempt. The bridge keeps the guard only when the
  * opened object's content tag, physical identity and locality match the record (admissibility rules 1 and 2), so an
  * acquired object is the predeclared one. Rule 3, the kernel-session match of a relocated object, is recovery evidence:
- * a start never uses that identity (Revision 8 clause (ii)), so an unverified session never blocks one. Busy is
- * `presence_occupied` and proves only occupied authority, never who holds it; every other result is `presence_unknown`.
+ * the design's kernel-session identity bullet says grants, starts and observations through a retained handle never use
+ * the identity, so an unverified session never blocks a start. Busy is `presence_occupied` and proves only occupied
+ * authority, never who holds it; every other result is `presence_unknown`.
  */
 export function acquirePresence(object: PresenceObjectRecord, native: PresencePlacementLoad): HeldPresence {
-	if (object.status !== "predeclared") return { object, release: () => {} };
+	if (object.status !== "predeclared") return { object, release: () => {}, preActionCheck: () => {} };
 	if (native.status !== "available") {
 		throw new LaunchReservationError("presence_unknown", `${object.presenceId}: ${native.reason}`);
 	}
@@ -139,6 +148,15 @@ export function acquirePresence(object: PresenceObjectRecord, native: PresencePl
 		object,
 		release: () => {
 			bridge.presenceReleaseAfterQuiescence({ presenceId: object.presenceId, state: "released" });
+		},
+		preActionCheck: () => {
+			const check = bridge.presencePreActionCheck(object.presenceId);
+			if (check.status === "valid") return;
+			const reason = "reason" in check ? ` ${check.reason}` : "";
+			throw new LaunchReservationError(
+				"presence_pre_action_failed",
+				`${object.presenceId}: ${check.status}${reason}`,
+			);
 		},
 	};
 }
@@ -432,6 +450,8 @@ function parseIdentity(text: string): LaunchIdentity {
 export interface ParticipantRelease {
 	/** Commits the role's `released`, then closes the guard. Call only after the participant's work is done. */
 	releaseAfterQuiescence(): Promise<void>;
+	/** The pre-action check of the held guard before each authorized spawn or bind; see `HeldPresence.preActionCheck`. */
+	preActionCheck(): void;
 }
 
 /**
@@ -488,9 +508,20 @@ export async function admitClaimedParticipant(
 	options: { readonly deadlineMs: number; readonly presence?: PresencePlacementLoad },
 ): Promise<ParticipantRelease | undefined> {
 	const { presence } = await claimLaunchRole(locator, self, options.presence);
+	const releaseAfterQuiescence = async () => {
+		const store = await openEndpointReservationStore(locator.storePath);
+		try {
+			store.release(locator.generation, locator.role, identityKey(self));
+		} finally {
+			store.close();
+		}
+		presence.release();
+	};
+	let granted = false;
 	try {
 		const grant = await waitForGrant(locator, self, options);
 		if (!grant.granted) throw new LaunchReservationError(grant.reason, `${locator.role} in ${locator.generation}`);
+		granted = true;
 		const established = credential
 			? endpointCommitment(credential, locator.role, locator.endpoint).toString("hex")
 			: undefined;
@@ -501,21 +532,18 @@ export async function admitClaimedParticipant(
 			);
 		}
 	} catch (error: unknown) {
+		if (granted && presence.object.status === "predeclared") {
+			// Granted, then refused before any spawn or listen: the handle is no longer unused, so the role's authority
+			// ends with its own `released` commit before the guard closes. A commit that fails keeps the guard held; the
+			// process exits without spawn or listen and the kernel releases it.
+			await releaseAfterQuiescence().catch(() => {});
+			throw error;
+		}
 		presence.release();
 		throw error;
 	}
 	if (presence.object.status !== "predeclared") return undefined;
-	return {
-		async releaseAfterQuiescence() {
-			const store = await openEndpointReservationStore(locator.storePath);
-			try {
-				store.release(locator.generation, locator.role, identityKey(self));
-			} finally {
-				store.close();
-			}
-			presence.release();
-		},
-	};
+	return { releaseAfterQuiescence, preActionCheck: () => presence.preActionCheck() };
 }
 
 /**

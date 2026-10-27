@@ -131,6 +131,15 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		launch.reservation && admittedLaunch && publicSecret
 			? await offerReservedHost(launch.reservation, publicSecret, admittedLaunch.self)
 			: undefined;
+	// The Revision 7 pre-action check before the spawn (design 4.2a "Descriptor-loss detection"): a failed check is
+	// terminal. The fenced state this supervisor can commit is the cancellation of the generation it offered the host
+	// in; it then performs no further action and exits, leaving its guard to the kernel.
+	try {
+		admittedLaunch?.presence?.preActionCheck();
+	} catch (cause: unknown) {
+		await grantHost?.cancel().catch(() => {});
+		throw cause;
+	}
 	const child = spawnHostChild({
 		launch,
 		internalSocket,
@@ -258,6 +267,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		// immediately before the public bind, so a cancellation recorded since the grant ends the start here.
 		await admittedLaunch?.commitListenIntent();
 		await prepareSocketPath(bindSocket);
+		// The pre-action check before the public bind; a failure lands in the catch below, which fences the generation.
+		admittedLaunch?.presence?.preActionCheck();
 		await listen(server, bindSocket, publicSecret);
 		await publicEndpoint?.publish();
 		state.publicSocketOwned = true;

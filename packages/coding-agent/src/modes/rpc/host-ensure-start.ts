@@ -36,7 +36,9 @@ import { hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import {
 	acquireOwnerPresence,
 	grantClaimedParticipant,
+	type HeldPresence,
 	IDENTITY_OBSERVATION_PROBE_MS,
+	type LaunchIdentity,
 	offerSupervisorLaunch,
 	releaseReservingOwner,
 	reservationStorePath,
@@ -79,6 +81,9 @@ export async function startHost(
 	// derive the pipe name from it, so a start reuses it and never rotates it.
 	let publicSecret: Buffer | undefined;
 	try {
+		// The Revision 7 pre-action check before the credential mutation ("Descriptor-loss detection"): a failed check ends
+		// the start before anything is published or repaired.
+		owner?.presence.preActionCheck();
 		publicSecret = owner ? await ensureSocketSecret(socketSecretPath(socket)) : undefined;
 	} catch (error: unknown) {
 		// No reservation names the owner's object yet: its handle is unused.
@@ -117,6 +122,9 @@ export async function startHost(
 			...(reservation?.args ?? []),
 		];
 		const launch = testOptions?.spawn ?? testOptions?.launch?.(supervisorArgs) ?? defaultHostLaunch(supervisorArgs);
+		// The pre-action check before the spawn: a failed check lands in the catch below, which fences the generation and
+		// commits the owner's `released` before this process performs any further action.
+		owner?.presence.preActionCheck();
 		child = spawn(launch.command, [...launch.args], {
 			detached: true,
 			windowsHide: true,
@@ -223,7 +231,21 @@ export async function startHost(
 			try {
 				reservation.store.markServing(reservation.generation);
 				// Serving is the owner's last action in this generation: it commits its `released`, then closes its guard.
-				releaseReservingOwner(reservation.store, reservation.generation, reservation.issuer, reservation.presence);
+				// A `released` commit that fails (a busy store) does not fail the serving start: the guard stays held until
+				// this process exits, and a later recovery's admissible acquisition of it is its release evidence.
+				try {
+					releaseReservingOwner(
+						reservation.store,
+						reservation.generation,
+						reservation.issuer,
+						reservation.presence,
+					);
+				} catch (error: unknown) {
+					await appendStderr(
+						paths,
+						`reserving owner's released commit failed after serving; its presence guard stays held until this process exits: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
 			} finally {
 				reservation.store.close();
 			}
@@ -303,21 +325,32 @@ export async function appendStderr(paths: HostDaemonPaths, message: string): Pro
 const SUPERVISOR_CLAIM_DEADLINE_MS = 10_000;
 
 /**
- * Cancels the generation of a failed start and closes its store. Returns the fence's own failure as text, for the
- * caller to report beside the start's diagnostic; it never throws, so no fence failure replaces the original error.
+ * Cancels the generation of a failed start, commits the owner's `released` (its terminal state is the fence, and it
+ * performs no further action in this generation), closes its guard and closes its store. Returns the fence's or the
+ * release's own failure as text, for the caller to report beside the start's diagnostic; it never throws, so no such
+ * failure replaces the original error. A `released` commit that fails keeps the guard held until this process exits.
  */
 async function fenceFailedStart(reservation: {
 	readonly store: EndpointReservationStore;
 	readonly generation: string;
+	readonly issuer: LaunchIdentity;
+	readonly presence: HeldPresence;
 }): Promise<string | undefined> {
+	const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 	try {
 		reservation.store.cancel(reservation.generation);
-		return undefined;
 	} catch (error: unknown) {
-		return `reservation fence also failed: ${error instanceof Error ? error.message : String(error)}`;
+		return `reservation fence also failed: ${message(error)}`;
 	} finally {
+		try {
+			releaseReservingOwner(reservation.store, reservation.generation, reservation.issuer, reservation.presence);
+		} catch (error: unknown) {
+			reservation.store.close();
+			return `reserving owner's released commit also failed (its guard stays held): ${message(error)}`;
+		}
 		reservation.store.close();
 	}
+	return undefined;
 }
 
 /** The original error, with a failed fence noted on its message; the error object itself is what callers compare. */
