@@ -56,6 +56,12 @@ export interface SupervisorShutdown {
 	readonly publicEndpoint?: RpcPublicEndpoint;
 	/** Stops the idle ticker, the supersession watch and the win32 identity watchdog. */
 	readonly stopWatchers: () => void;
+	/**
+	 * Ends this supervisor's reserved authority (#4199 design 4.2a "release after quiescence"): commits its `released`
+	 * and closes its presence guard. Runs only once the child's exit is observed and the listener is closed; a shutdown
+	 * that cannot prove that leaves the guard to the kernel at process exit.
+	 */
+	readonly afterQuiescence?: () => Promise<void>;
 }
 
 export function supervisorSender(instanceId: string): HostStopSender {
@@ -102,6 +108,10 @@ export async function performShutdown(context: SupervisorShutdown, reason: strin
 			instanceId: context.instanceId,
 			pid: process.pid,
 			superseded: state.endpointReplaced,
+		});
+		// A failed `released` commit is not a failed shutdown: the guard stays held and process exit releases it.
+		await context.afterQuiescence?.().catch((cause: unknown) => {
+			supervisorLog(`presence release after quiescence failed: ${errorMessage(cause)}`);
 		});
 	} catch (cause) {
 		// In particular, an unobserved child exit leaves its generation, pointer and settings intact.

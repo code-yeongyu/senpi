@@ -46,7 +46,7 @@ describe("endpoint reservation store", () => {
 
 	async function offered() {
 		const opened = await store();
-		const generation = opened.store.reserve(ENDPOINT, OWNER, ["supervisor", "host"], NO_PRESENCE);
+		const generation = opened.store.reserve(ENDPOINT, OWNER, ["supervisor", "host"], NO_PRESENCE, NO_OBJECT);
 		opened.store.offer(generation, "supervisor", OWNER, NO_OBJECT);
 		const locator = { endpoint: ENDPOINT, generation, role: "supervisor" as const };
 		return { ...opened, generation, locator, nonce: opened.store.readOffer(locator) };
@@ -189,7 +189,7 @@ describe("endpoint reservation store", () => {
 	// supervisor or standalone public host expects only the role of the child it admits.
 	it("commits serving for a generation that expects only the host role once the host is granted", async () => {
 		const { store: s } = await store();
-		const generation = s.reserve(ENDPOINT, OWNER, ["host"], NO_PRESENCE);
+		const generation = s.reserve(ENDPOINT, OWNER, ["host"], NO_PRESENCE, NO_OBJECT);
 		s.offer(generation, "host", OWNER, NO_OBJECT);
 		const hostLocator = { endpoint: ENDPOINT, generation, role: "host" as const };
 		s.claim(hostLocator, s.readOffer(hostLocator), SUPERVISOR);
@@ -200,7 +200,7 @@ describe("endpoint reservation store", () => {
 
 	it("refuses to offer a role the generation does not expect", async () => {
 		const { store: s } = await store();
-		const generation = s.reserve(ENDPOINT, OWNER, ["host"], NO_PRESENCE);
+		const generation = s.reserve(ENDPOINT, OWNER, ["host"], NO_PRESENCE, NO_OBJECT);
 		expect(rejection(() => s.offer(generation, "supervisor", OWNER, NO_OBJECT))).toBe("role_not_expected");
 	});
 
@@ -220,12 +220,12 @@ describe("endpoint reservation store", () => {
 	it("refuses a reservation that names a role it does not know", async () => {
 		const { store: s } = await store();
 		const bogus = ["bogus"] as unknown as ("supervisor" | "host")[];
-		expect(rejection(() => s.reserve(ENDPOINT, OWNER, bogus, NO_PRESENCE))).toBe("role_not_expected");
+		expect(rejection(() => s.reserve(ENDPOINT, OWNER, bogus, NO_PRESENCE, NO_OBJECT))).toBe("role_not_expected");
 	});
 
 	it("never commits serving from an expected set it cannot read", async () => {
 		const { path, store: s } = await store();
-		const generation = s.reserve(ENDPOINT, OWNER, ["host"], NO_PRESENCE);
+		const generation = s.reserve(ENDPOINT, OWNER, ["host"], NO_PRESENCE, NO_OBJECT);
 		const raw = new DatabaseSync(path);
 		raw.prepare("UPDATE reservations SET expected_roles = 'bogus' WHERE generation = ?").run(generation);
 		raw.close();
@@ -273,7 +273,7 @@ describe("endpoint reservation store", () => {
 
 	it("answers a commit blocked by another connection's read as store_busy and writes nothing", async () => {
 		const { path, store: s } = await store();
-		const generation = s.reserve(ENDPOINT, OWNER, ["supervisor", "host"], NO_PRESENCE);
+		const generation = s.reserve(ENDPOINT, OWNER, ["supervisor", "host"], NO_PRESENCE, NO_OBJECT);
 		const reader = new DatabaseSync(path);
 		reader.exec("BEGIN; SELECT * FROM roles;");
 		expect(rejection(() => s.offer(generation, "supervisor", OWNER, NO_OBJECT))).toBe("store_busy");

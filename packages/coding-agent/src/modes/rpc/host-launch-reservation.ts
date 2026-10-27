@@ -9,6 +9,12 @@
  * Every offer predeclares its role's presence object in the root the reserving owner recorded, before the offer commits
  * and so before any spawn; a claimant first checks that root is the recorded, still-local physical directory (design
  * 4.2a "Placement.").
+ *
+ * Acquire before authority; release after quiescence (design 4.2a, Revision 6): the reserving owner holds its own
+ * presence object before it persists the reservation, and each participant acquires its predeclared object before the
+ * nonce-claim transaction, which revalidates the revision and records the binding. A participant keeps that lock through
+ * the grant and everything it then does, and closes it only after its `released` commit; a handle that no committed
+ * authority ever used is the only one released early. A row without a local root holds no lock at all.
  */
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -17,6 +23,7 @@ import {
 	EndpointReservationError,
 	type EndpointReservationStore,
 	openEndpointReservationStore,
+	type PresenceObjectRecord,
 	type ReservationPresence,
 	type ReservationRole,
 } from "./endpoint-reservation-store.ts";
@@ -37,17 +44,101 @@ function identityKey(identity: LaunchIdentity): string {
 }
 
 /**
- * Reserves a generation with the presence root the owner resolved, predeclares the supervisor's presence object in it,
- * offers the supervisor role and returns the argv that carries the locator. A predeclaration that fails fences the
- * generation it left without an offer.
+ * A presence lock this process holds for one actor, or, for a row without a local root, the record that there is none.
+ * The native registry keeps the guard; nothing here closes it implicitly.
+ */
+export interface HeldPresence {
+	readonly object: PresenceObjectRecord;
+	/**
+	 * Closes the guard: only after the actor's `released` commit, or for a handle no authority ever used (design 4.2a:
+	 * "Failure or a cancelled/retired offer releases only its own unused handle"). Holds nothing to close without presence.
+	 */
+	release(): void;
+}
+
+/**
+ * Opens and acquires a predeclared presence object with one nonblocking attempt. The bridge keeps the guard only when the
+ * opened object's content tag, physical identity and locality match the record (admissibility rules 1 and 2), so an
+ * acquired object is the predeclared one. Rule 3, the kernel-session match of a relocated object, is recovery evidence:
+ * a start never uses that identity (Revision 8 clause (ii)), so an unverified session never blocks one. Busy is
+ * `presence_occupied` and proves only occupied authority, never who holds it; every other result is `presence_unknown`.
+ */
+export function acquirePresence(object: PresenceObjectRecord, native: PresencePlacementLoad): HeldPresence {
+	if (object.status !== "predeclared") return { object, release: () => {} };
+	if (native.status !== "available") {
+		throw new LaunchReservationError("presence_unknown", `${object.presenceId}: ${native.reason}`);
+	}
+	const bridge = native.native;
+	const result = bridge.presenceProbe({
+		presenceId: object.presenceId,
+		path: object.path,
+		tag: Buffer.from(object.header, "hex"),
+		volumeSerial: object.volumeSerial,
+		fileId: object.fileId,
+		createdLocal: object.classification === "local",
+		relocated: false,
+		kernelSession: null,
+	});
+	if (result.status === "occupied") throw new LaunchReservationError("presence_occupied", object.presenceId);
+	if (result.status !== "acquired") {
+		const reason = "reason" in result ? ` ${result.reason}` : "";
+		throw new LaunchReservationError("presence_unknown", `${object.presenceId}: ${result.status}${reason}`);
+	}
+	return {
+		object,
+		release: () => {
+			bridge.presenceReleaseAfterQuiescence({ presenceId: object.presenceId, state: "released" });
+		},
+	};
+}
+
+/** The reserving owner's own presence object, predeclared in the root it resolved and held before anything is persisted. */
+export function acquireOwnerPresence(reservation: ReservationPresence, native: PresencePlacementLoad): HeldPresence {
+	return acquirePresence(predeclarePresenceObject(reservation.root, native), native);
+}
+
+/**
+ * The reserving owner's own `released` commit once the generation is terminal for it, then the close of its guard.
+ */
+export function releaseReservingOwner(
+	store: EndpointReservationStore,
+	generation: string,
+	owner: LaunchIdentity,
+	presence: HeldPresence,
+): void {
+	store.releaseOwner(generation, identityKey(owner));
+	presence.release();
+}
+
+/**
+ * Reserves a generation with the presence root the owner resolved and the owner's held presence object, predeclares the
+ * supervisor's presence object in that root, offers the supervisor role and returns the argv that carries the locator.
+ * It takes over `ownerPresence`: a reservation that is not persisted releases that unused handle, and a predeclaration
+ * that fails fences the generation, commits the owner's `released` and only then releases it.
  */
 export function offerSupervisorLaunch(
 	store: EndpointReservationStore,
 	endpoint: string,
 	owner: LaunchIdentity,
-	presence: { readonly reservation: ReservationPresence; readonly native: PresencePlacementLoad },
+	presence: {
+		readonly reservation: ReservationPresence;
+		readonly native: PresencePlacementLoad;
+		readonly ownerPresence: HeldPresence;
+	},
 ): { generation: string; args: readonly string[] } {
-	const generation = store.reserve(endpoint, identityKey(owner), ["supervisor", "host"], presence.reservation);
+	let generation: string;
+	try {
+		generation = store.reserve(
+			endpoint,
+			identityKey(owner),
+			["supervisor", "host"],
+			presence.reservation,
+			presence.ownerPresence.object,
+		);
+	} catch (error: unknown) {
+		presence.ownerPresence.release();
+		throw error;
+	}
 	try {
 		store.offer(
 			generation,
@@ -57,6 +148,7 @@ export function offerSupervisorLaunch(
 		);
 	} catch (error: unknown) {
 		store.cancel(generation);
+		releaseReservingOwner(store, generation, owner, presence.ownerPresence);
 		throw error;
 	}
 	return {
@@ -90,18 +182,34 @@ export function offerHostRole(
 
 /**
  * The claimant opens the store named by the locator, checks that the recorded presence root is the same still-local
- * physical directory from where it runs, reads its nonce there and claims with its own identity. A different physical
- * directory (another profile, packaged-app virtualization) fails the claim typed and consumes nothing.
+ * physical directory from where it runs, reads its nonce there, acquires its role's predeclared presence object BEFORE
+ * the nonce-claim transaction, and claims with its own identity bound to that object at the revision it read first. A
+ * different physical directory (another profile, packaged-app virtualization) or a busy or unknown acquisition fails
+ * typed and consumes nothing; a claim refused after the acquisition releases that unused handle.
  */
 export async function claimLaunchRole(
 	locator: StoreLocator,
 	self: LaunchIdentity,
 	native: PresencePlacementLoad = loadPresencePlacement(),
-): Promise<"claimed" | "already_claimed_by_caller"> {
+): Promise<{ readonly outcome: "claimed" | "already_claimed_by_caller"; readonly presence: HeldPresence }> {
 	const store = await openEndpointReservationStore(locator.storePath);
 	try {
-		verifyRecordedPresenceRoot(store.reservation(locator.generation).presence.root, native);
-		return store.claim(locator, store.readOffer(locator), identityKey(self));
+		const reservation = store.reservation(locator.generation);
+		verifyRecordedPresenceRoot(reservation.presence.root, native);
+		const nonce = store.readOffer(locator);
+		const row = store.roleRow(locator);
+		if (!row) throw new EndpointReservationError("role_not_offered", `${locator.role} in ${locator.generation}`);
+		const presence = acquirePresence(row.presence, native);
+		try {
+			const binding =
+				row.presence.status === "predeclared"
+					? { revision: reservation.revision, presenceId: row.presence.presenceId }
+					: undefined;
+			return { outcome: store.claim(locator, nonce, identityKey(self), binding), presence };
+		} catch (error: unknown) {
+			presence.release();
+			throw error;
+		}
 	} finally {
 		store.close();
 	}
@@ -206,24 +314,52 @@ function parseIdentity(text: string): LaunchIdentity {
 	return { pid, processStartTime: start };
 }
 
+/** How an admitted participant that holds a presence lock ends its authority, once it is quiescent. */
+export interface ParticipantRelease {
+	/** Commits the role's `released`, then closes the guard. Call only after the participant's work is done. */
+	releaseAfterQuiescence(): Promise<void>;
+}
+
 /**
  * A reserved participant's entry (design 4.2a steps 2-4): claim the offered role with this process's own
  * identity, wait (bounded) for the issuer's grant, then verify the parent's established public secret read-only against
- * the granted commitment. Any failure aborts the start: no provisioning, no repair, no fallback to a direct launch.
+ * the granted commitment. Any failure aborts the start: no provisioning, no repair, no fallback to a direct launch, and
+ * the presence handle, which then never authorized a spawn or a listener, is released. An admitted participant keeps
+ * holding its lock; the returned release ends it after quiescence. A row without presence returns nothing to release.
  */
 export async function admitClaimedParticipant(
 	locator: StoreLocator,
 	self: LaunchIdentity,
 	credential: Buffer | undefined,
 	options: { readonly deadlineMs: number; readonly presence?: PresencePlacementLoad },
-): Promise<void> {
-	await claimLaunchRole(locator, self, options.presence);
-	const grant = await waitForGrant(locator, self, options);
-	if (!grant.granted) throw new LaunchReservationError(grant.reason, `${locator.role} in ${locator.generation}`);
-	const established = credential ? createHash("sha256").update(credential).digest("hex") : undefined;
-	if (established !== grant.commitment) {
-		throw new LaunchReservationError("commitment_mismatch", "the established public secret is not the granted one");
+): Promise<ParticipantRelease | undefined> {
+	const { presence } = await claimLaunchRole(locator, self, options.presence);
+	try {
+		const grant = await waitForGrant(locator, self, options);
+		if (!grant.granted) throw new LaunchReservationError(grant.reason, `${locator.role} in ${locator.generation}`);
+		const established = credential ? createHash("sha256").update(credential).digest("hex") : undefined;
+		if (established !== grant.commitment) {
+			throw new LaunchReservationError(
+				"commitment_mismatch",
+				"the established public secret is not the granted one",
+			);
+		}
+	} catch (error: unknown) {
+		presence.release();
+		throw error;
 	}
+	if (presence.object.status !== "predeclared") return undefined;
+	return {
+		async releaseAfterQuiescence() {
+			const store = await openEndpointReservationStore(locator.storePath);
+			try {
+				store.release(locator.generation, locator.role, identityKey(self));
+			} finally {
+				store.close();
+			}
+			presence.release();
+		},
+	};
 }
 
 /**

@@ -58,6 +58,8 @@ export async function admitReservedHostArgs(args: string[]): Promise<string[]> {
 	}
 	const self = { pid: process.pid, processStartTime: (await readProcessStartTime(process.pid)) ?? null };
 	const credential = await readSocketSecret(socketSecretPath(locator.endpoint)).catch(() => undefined);
+	// The host holds its presence lock from before its claim for the life of this process: its shutdown does not yet
+	// prove quiescence, so it commits no `released` and the kernel releases the guard when the process exits.
 	await admitClaimedParticipant(locator, self, credential, { deadlineMs: 10_000 });
 	const flags = new Set<string>(Object.values(LOCATOR_FLAGS));
 	const remaining: string[] = [];

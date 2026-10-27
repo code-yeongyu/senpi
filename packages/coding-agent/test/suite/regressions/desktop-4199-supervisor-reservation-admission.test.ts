@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openEndpointReservationStore } from "../../../src/modes/rpc/endpoint-reservation-store.ts";
 import { parseSupervisorArgs } from "../../../src/modes/rpc/host-lifecycle-launch.ts";
 import {
+	acquireOwnerPresence,
 	admitClaimedParticipant,
 	grantClaimedParticipant,
 	grantVerifiedParticipant,
@@ -47,7 +48,11 @@ describe("supervisor admission through a reservation", () => {
 		// Off Windows the presence root is typed unavailable; placement has its own suite.
 		const native = loadPresencePlacement({ platform: "linux" });
 		const reservation = resolvePresenceRoot({ coordinationTarget: store.path, endpointKey: "endpoint", native });
-		const { generation, args } = offerSupervisorLaunch(store, ENDPOINT, OWNER, { reservation, native });
+		const { generation, args } = offerSupervisorLaunch(store, ENDPOINT, OWNER, {
+			reservation,
+			native,
+			ownerPresence: acquireOwnerPresence(reservation, native),
+		});
 		return { store, generation, args, locator: locatorOf(args) };
 	}
 

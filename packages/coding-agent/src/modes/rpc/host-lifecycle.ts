@@ -9,7 +9,7 @@ import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { isCliModuleEntry } from "./host-cli-entry.ts";
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
-import type { LaunchIdentity } from "./host-launch-reservation.ts";
+import type { LaunchIdentity, ParticipantRelease } from "./host-launch-reservation.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
 import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
@@ -211,6 +211,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		}),
 	);
 
+	const reservedPresence = admittedLaunch?.presence;
 	const teardown: SupervisorShutdown = {
 		paths,
 		generation,
@@ -227,6 +228,9 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		stopWatchers: () => {
 			for (const stop of watchers.splice(0)) stop();
 		},
+		// The supervisor holds its presence lock from before its claim through every spawn and bind it makes, and gives
+		// it up only once the shutdown has observed its child's exit and closed its listener.
+		...(reservedPresence ? { afterQuiescence: () => reservedPresence.releaseAfterQuiescence() } : {}),
 	};
 	let shutdownPromise: Promise<never> | undefined;
 	// Single-flight: concurrent triggers (listener error, child exit, signals) must not process.exit
@@ -312,15 +316,17 @@ const HOST_STARTUP_BUDGET_MS = 30_000;
 async function admitReservedLaunch(
 	reservation: StoreLocator,
 	publicSocket: string,
-): Promise<{ credential: Buffer | undefined; self: LaunchIdentity }> {
+): Promise<{ credential: Buffer | undefined; self: LaunchIdentity; presence: ParticipantRelease | undefined }> {
 	const { admitClaimedParticipant, LaunchReservationError } = await import("./host-launch-reservation.ts");
 	if (reservation.role !== "supervisor") {
 		throw new LaunchReservationError("locator_incomplete", "the supervisor entry requires a supervisor reservation");
 	}
 	const credential = await readSocketSecret(socketSecretPath(publicSocket)).catch(() => undefined);
 	const self = { pid: process.pid, processStartTime: (await readProcessStartTime(process.pid)) ?? null };
-	await admitClaimedParticipant(reservation, self, credential, { deadlineMs: SUPERVISOR_GRANT_DEADLINE_MS });
-	return { credential, self };
+	const presence = await admitClaimedParticipant(reservation, self, credential, {
+		deadlineMs: SUPERVISOR_GRANT_DEADLINE_MS,
+	});
+	return { credential, self, presence };
 }
 
 /** Reservation-only lazy boundary: direct supervisors never load SQLite or the reservation helpers. */
