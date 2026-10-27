@@ -11,6 +11,12 @@ import {
 
 /** One worker frame's worth of unwritten entries; persisted history consumes no content budget. */
 export const DEFAULT_TRANSCRIPT_TAIL_BYTES = 16 * 1024 * 1024;
+/**
+ * What an epoch keeps of every accepted entry after persistence released its text: its kind and parent link
+ * (RULING-61 Q1 = C), charged as their bytes plus two slots each, so the count is bounded even for empty strings.
+ */
+export const DEFAULT_TRANSCRIPT_ANCESTRY_BYTES = 8 * 1024 * 1024;
+const ANCESTRY_SLOT_BYTES = 16;
 
 interface TranscriptTail {
 	readonly entries: Map<number, string>;
@@ -27,6 +33,10 @@ export interface TranscriptRoot {
 	readonly leafId: string | null;
 	readonly base: PersistedBase | null;
 	readonly entryIds: readonly string[];
+	/** Per accepted entry, at its `entryIds` index: the engine kind and parent link the epoch retains. */
+	readonly kinds: readonly string[];
+	readonly parents: readonly (string | null)[];
+	readonly ancestryBytes: number;
 	readonly tail: TranscriptTail;
 	readonly count: number;
 	readonly unavailable: TranscriptUnavailableReason | null;
@@ -42,6 +52,9 @@ export class AcceptedTranscript {
 	private leafId: string | null = null;
 	private base: PersistedBase | null = null;
 	private entryIds: string[] = [];
+	private kinds: string[] = [];
+	private parents: (string | null)[] = [];
+	private ancestryBytes = 0;
 	private tail: TranscriptTail = { entries: new Map(), retainedBytes: 0, persistence: null };
 	private unavailable: TranscriptUnavailableReason | null = null;
 
@@ -58,6 +71,9 @@ export class AcceptedTranscript {
 		if (transition.kind === "replace") {
 			this.base = transition.base;
 			this.entryIds = [];
+			this.kinds = [];
+			this.parents = [];
+			this.ancestryBytes = 0;
 			this.tail = {
 				entries: new Map(),
 				retainedBytes: 0,
@@ -77,6 +93,7 @@ export class AcceptedTranscript {
 		if (this.unavailable !== null) return;
 		if (transition.kind === "append") {
 			const index = this.entryIds.length;
+			if (!this.retainAncestry(transition.type, transition.parentId)) return;
 			this.entryIds.push(transition.id);
 			if (transition.persistence) this.persisted(transition.persistence);
 			if (index + (this.base?.count ?? 0) >= (this.tail.persistence?.count ?? 0)) {
@@ -94,6 +111,20 @@ export class AcceptedTranscript {
 		} else this.leafId = transition.leafId;
 	}
 
+	/** The parent link shares the previous entry's own id string when it names it, so the common chain costs one slot. */
+	private retainAncestry(type: string, parentId: string | null): boolean {
+		const bytes = ANCESTRY_SLOT_BYTES + Buffer.byteLength(type) + Buffer.byteLength(parentId ?? "");
+		if (this.ancestryBytes + bytes > DEFAULT_TRANSCRIPT_ANCESTRY_BYTES) {
+			this.markUnavailable("transcript_ancestry_over_byte_limit");
+			return false;
+		}
+		const previous = this.entryIds.at(-1);
+		this.kinds.push(type);
+		this.parents.push(previous !== undefined && previous === parentId ? previous : parentId);
+		this.ancestryBytes += bytes;
+		return true;
+	}
+
 	private markUnavailable(reason: TranscriptUnavailableReason): void {
 		this.unavailable ??= reason;
 		process.stderr.write(`senpi rpc acceptance: transcript component unavailable: ${reason}\n`);
@@ -105,6 +136,9 @@ export class AcceptedTranscript {
 			leafId: this.leafId,
 			base: this.base,
 			entryIds: this.entryIds,
+			kinds: this.kinds,
+			parents: this.parents,
+			ancestryBytes: this.ancestryBytes,
 			tail: this.tail,
 			count: this.entryIds.length,
 			unavailable: this.unavailable,

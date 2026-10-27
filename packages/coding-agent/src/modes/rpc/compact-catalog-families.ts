@@ -1,8 +1,8 @@
 import {
 	CATALOG_FAMILIES,
 	type CatalogFamily,
-	FAMILY_PRODUCERS,
 	familyId,
+	familyProducers,
 	familyRegistry,
 	memberId,
 } from "./compact-catalog-registry.ts";
@@ -53,10 +53,11 @@ const rootLeaf = (family: "active" | "calls" | "settled", current: FrozenCompact
 
 /**
  * Every component of one frozen root, in schema order (R4.B2): the family registry, then each family's members or
- * its explicit empty component. A family with a located producer is never omitted; a `pending` one is never emitted,
- * so a reader can tell "no members" from "no producer yet" (RULING-60 Q1). Members stream one at a time: a value
- * goes through `walk` into bounded leaves, a collection through `rows`, and each component's leaves are released
- * once the catalog has placed it. The producer assembly is incomplete until S10b (`familyRegistry().assembly`).
+ * its explicit empty component. A family with a complete producer is never omitted; a `pending` one is never
+ * emitted, and a `partial` one emits only the members it enumerated and never an explicit empty, so a reader can
+ * tell "no members" from "no producer yet" (RULING-60 Q1, RULING-61 Q1). Members stream one at a time: a value goes
+ * through `walk` into bounded leaves, a collection through `rows`, and each component's leaves are released once
+ * the catalog has placed it. The producer assembly is incomplete until S10b (the registry's `assembly`).
  */
 export async function* checkpointComponents(
 	store: CompactContentStore,
@@ -66,12 +67,13 @@ export async function* checkpointComponents(
 ): AsyncGenerator<CatalogComponent> {
 	const current = root.current;
 	if (!current) throw new CompactReadError("unavailable");
-	yield* textComponent(store, FAMILIES, FAMILIES, JSON.stringify(familyRegistry()));
+	const producers = familyProducers(root.transcript);
+	yield* textComponent(store, FAMILIES, FAMILIES, JSON.stringify(familyRegistry(producers)));
 	for (const family of CATALOG_FAMILIES) {
-		if (FAMILY_PRODUCERS[family] === "pending") continue;
+		if (producers[family] === "pending") continue;
 		switch (family) {
 			case "transcript":
-				yield* transcriptComponents(store, root.transcript, valid);
+				yield* transcriptComponents(store, root.transcript, producers, valid);
 				break;
 			case "opaque":
 				break;

@@ -292,10 +292,12 @@ export class SessionAcceptanceLane {
 	/**
 	 * No record is accepted after retirement, and every root this lane published is released except those in `keep`:
 	 * a legacy view still queued at a seal reads its root to the end (RULING-51 Q2=A), and the lane's storage retires
-	 * with the last such release. A root never published by this lane is not kept.
+	 * with the last such release. A root never published by this lane is not kept. The epoch's retained transcript
+	 * (ids, kinds, parents, tail) goes with the lane; a kept root holds its own reference until released.
 	 */
 	retire(reason: "close" | "worker_failed", keep: ReadonlySet<FrozenAcceptedRoot> = new Set()): void {
 		this.retiredAs ??= reason;
+		this.transcript = new AcceptedTranscript();
 		for (const root of this.live) if (!keep.has(root)) this.release(root);
 		this.retireStorage();
 	}

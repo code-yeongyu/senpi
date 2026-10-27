@@ -138,6 +138,8 @@ for (const invalid of ["duplicate end", "unknown end", "retired append"] as cons
 					{
 						kind: "append",
 						id: "foreign-entry",
+						type: "message",
+						parentId: null,
 						entry: "{}",
 						owningMessageId: carrier.messageId,
 						recoveryEpoch: "retired",

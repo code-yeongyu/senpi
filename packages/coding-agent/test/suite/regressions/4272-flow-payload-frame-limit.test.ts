@@ -33,10 +33,12 @@ it("an append is charged its entry and its flow together", () => {
 		targetId: "t",
 		message: { role: "user", content: "c".repeat(4096), timestamp: 1 },
 	};
-	const edit: TranscriptTransition = { kind: "append", id: "a", entry, flow };
+	const edit: TranscriptTransition = { kind: "append", id: "a", type: "message", parentId: null, entry, flow };
 	const compaction: TranscriptTransition = {
 		kind: "append",
 		id: "a",
+		type: "message",
+		parentId: null,
 		entry,
 		flow: { kind: "compaction", removedIds: [] },
 	};

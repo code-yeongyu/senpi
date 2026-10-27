@@ -19,8 +19,14 @@ it("frame accounting uses journal bytes at the limit without serializing transit
 	const budget = SESSION_WORKER_LIMITS.outputBytes - overhead;
 	const entry = '"\\\n'.repeat(Math.floor(budget / 3)) + "x".repeat(budget % 3);
 	expect(Buffer.byteLength(entry) + overhead).toBe(SESSION_WORKER_LIMITS.outputBytes);
-	const at: TranscriptTransition = { kind: "append", id: "at-limit", entry };
-	const over: TranscriptTransition = { kind: "append", id: "over-limit", entry: `${entry}한` };
+	const at: TranscriptTransition = { kind: "append", id: "at-limit", type: "message", parentId: null, entry };
+	const over: TranscriptTransition = {
+		kind: "append",
+		id: "over-limit",
+		type: "message",
+		parentId: null,
+		entry: `${entry}한`,
+	};
 	const stringify = vi.spyOn(JSON, "stringify");
 	const frames = withinFrameLimit([at, over]);
 	expect(stringify).not.toHaveBeenCalled();

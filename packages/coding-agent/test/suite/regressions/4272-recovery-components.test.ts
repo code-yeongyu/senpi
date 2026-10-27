@@ -60,7 +60,13 @@ async function catalogOf(rig: ReturnType<typeof recoveryRig>) {
 	return { token, manifest, root, entries, text };
 }
 
-const append = (entry: object, id: string) => ({ kind: "append" as const, id, entry: JSON.stringify(entry) });
+const append = (entry: { type: string; id: string; parentId: string | null; timestamp: string }, id: string) => ({
+	kind: "append" as const,
+	id,
+	type: entry.type,
+	parentId: entry.parentId,
+	entry: JSON.stringify(entry),
+});
 
 it("X03 T1 every family of the versioned schema has a registry row and an explicit component; the producer assembly is marked incomplete until S10b", async () => {
 	const rig = recoveryRig();
@@ -83,6 +89,7 @@ it("X03 T1 every family of the versioned schema has a registry row and an explic
 		version: 1,
 		assembly: "incomplete",
 		families: CATALOG_FAMILIES.map((family) => ({ family, producer: FAMILY_PRODUCERS[family] })),
+		incomplete: ["active", "calls", "settled", "identity", "source"],
 	});
 	expect(FAMILY_PRODUCERS).toEqual({
 		transcript: "complete",
@@ -94,7 +101,7 @@ it("X03 T1 every family of the versioned schema has a registry row and an explic
 		calls: "root",
 		settled: "root",
 		identity: "pending",
-		source: "pending",
+		source: "partial",
 	});
 	expect(
 		entries.map(([kind]) => kind),
@@ -191,7 +198,7 @@ it("RULING-60 Q1 (1)(2) every accepted entry is cataloged under its engine kind'
 	};
 	const persistence = { fileIdentity: { path: "/nowhere/s.jsonl", dev: "1", ino: "1" }, count: 1 };
 	rig.lane.applyTranscript([
-		{ kind: "append", id: "e0", persistence },
+		{ kind: "append", id: "e0", type: "message", parentId: null, persistence },
 		append(message, "e1"),
 		append(custom, "e2"),
 		append(label, "e3"),
@@ -224,7 +231,7 @@ it("RULING-60 Q1 (1)(2) every accepted entry is cataloged under its engine kind'
 		),
 	);
 	expect(rows).toEqual([
-		{ index: 0, id: "e0", source: "file" },
+		{ index: 0, id: "e0", source: "file", parentId: null, kind: "message", family: "transcript" },
 		{ index: 1, id: "e1", source: "tail", parentId: null, kind: "message", family: "transcript" },
 		{ index: 2, id: "e2", source: "tail", parentId: "e1", kind: "custom", family: "source" },
 		{ index: 3, id: "e3", source: "tail", parentId: "e2", kind: "label", family: "source" },
