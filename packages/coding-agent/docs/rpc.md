@@ -989,6 +989,27 @@ with the recorded one, reads through it and reclassifies the volume. A failed ch
 `launch-reservation-rejected` reason `presence_pre_action_failed`, the actor performs no further action (the
 reserving process and the supervisor cancel the generation they offered a role in), and the lock is never re-acquired.
 
+A presence object is deleted only by a process that holds it at that moment, and only once the store no longer needs
+it. On Windows holding means an exclusive open with `DELETE` access and share mode 0; because presence locks and probes
+never share delete access, that open fails with a sharing violation while any other handle on the object exists, and
+the object is then left for the sweep. The reserving process and a granted supervisor each delete their own object
+right after their `released` commit and the close of their lock. Recovery deletes a retired generation's objects after
+it has released the locks it recovered, and keeps the retired record as the tombstone. The sweep runs only inside a
+start that already holds the endpoint lock, after recovery and before the start creates its own object; it is never a
+timer or a background job. It handles at most 32 objects per run, in name order, in the presence root that start
+resolved. It considers an object only when every row naming it is `released` or belongs to a retired generation, or
+when no row names it and the creation time in its header is more than 24 hours old (the window between creating an
+object and committing its offer, never evidence about a process). It then takes the exclusive hold, rereads the rows in
+a short store transaction while holding, compares the held object's volume serial, file ID and header with what the row
+recorded, and deletes; a held object is skipped, and so is one whose identity is not the recorded one. The hold is
+released on every path, a thrown store error included, and a failed sweep never decides the start (it is noted in the
+endpoint's stderr log). A recovery probe that finds no object rereads the row: an entry that committed `released`
+meanwhile is discharged by that commit, and a missing object for an entry that did not stays unknown. An issuer whose
+predeclared object is missing once its offer committed cancels the generation before any spawn, with
+`presence-placement-rejected` reason `presence_object_missing`; one whose object another handle holds exclusively at
+that moment (a sweep deciding its fate) cannot know whether the object survives, so it cancels the same way with
+`presence_object_busy` instead of spawning a participant whose object may be deleted under it.
+
 An endpoint has at most one generation that is not retired: reserving another while one is pending, serving or
 cancelling fails with `generation_active`. Recovery retires an abandoned generation in two transitions. The fence
 (`cancelling`) revokes every outstanding offer and refuses later claims and grants with `generation_cancelled`.
@@ -1035,8 +1056,8 @@ When recovery cannot prove that every recorded actor ended, the start fails with
 `authority_live` and `authority_unknown` (the actor's recorded process is live, or its evidence cannot be used),
 `census_live` and `census_unknown` (a recorded supervisor, host child or session claim), and `revision_changed` (the
 generation changed while recovery ran). `detail` names the actor, its PID, its recorded host label and kernel session.
-The fence stays; nothing else is written, no credential is touched, no process is signalled and no presence object is
-deleted. The next ensure runs the same bounded check again.
+The fence stays; nothing else is written, no credential is touched, no process is signalled and no presence object of
+that generation is deleted. The next ensure runs the same bounded check again.
 
 ### Generation handoff (`handoffHost`, `probeHost`, `stopHost`)
 

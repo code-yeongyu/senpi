@@ -20,6 +20,10 @@
  * nonce-claim transaction, which revalidates the revision and records the binding. A participant keeps that lock through
  * the grant and everything it then does, and closes it only after its `released` commit; a handle that no committed
  * authority ever used is the only one released early. A row without a local root holds no lock at all.
+ *
+ * Presence cleanup (design 4.2a Revision 7): after its `released` commit and the close of its guard, an actor deletes
+ * its own object through an exclusive open; a sharing violation leaves it for the sweep. An issuer whose predeclared
+ * object is missing once the offer committed cancels that offer before any spawn.
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -46,7 +50,8 @@ import {
 	type StoreLocator,
 	spawnableChildLaunch,
 } from "./host-lifecycle-launch.ts";
-import { predeclarePresenceObject, verifyRecordedPresenceRoot } from "./presence-placement.ts";
+import { deletePresenceObject, type PresenceDeletion, presenceObjectState } from "./presence-cleanup.ts";
+import { predeclarePresenceObject, PresencePlacementError, verifyRecordedPresenceRoot } from "./presence-placement.ts";
 import { loadPresencePlacement, type PresencePlacementLoad } from "./socket-secret-native.ts";
 import { socketSecretPath } from "./socket-transport.ts";
 
@@ -118,6 +123,12 @@ export interface HeldPresence {
 	 */
 	release(): void;
 	/**
+	 * Deletes the object after the actor's `released` commit and after `release()` closed the guard (design 4.2a Revision
+	 * 7 "Clean exit"): an exclusive open that fails with a sharing violation while any other handle exists, leaving the
+	 * object for the sweep. Never called for a handle whose authority is still recorded.
+	 */
+	deleteAfterRelease(): PresenceDeletion;
+	/**
 	 * The Revision 7 pre-action check on the holding handle (design 4.2a "Descriptor-loss detection"), run before each
 	 * authorized bind, spawn or credential mutation: the bridge compares the handle's physical identity with the recorded
 	 * one, reads through it and reclassifies the volume. A failed check is terminal for the actor and throws
@@ -136,7 +147,14 @@ export interface HeldPresence {
  * authority, never who holds it; every other result is `presence_unknown`.
  */
 export function acquirePresence(object: PresenceObjectRecord, native: PresencePlacementLoad): HeldPresence {
-	if (object.status !== "predeclared") return { object, release: () => {}, preActionCheck: () => {} };
+	if (object.status !== "predeclared") {
+		return {
+			object,
+			release: () => {},
+			deleteAfterRelease: () => ({ status: "left", reason: "presence_unavailable", detail: null }),
+			preActionCheck: () => {},
+		};
+	}
 	if (native.status !== "available") {
 		throw new LaunchReservationError("presence_unknown", `${object.presenceId}: ${native.reason}`);
 	}
@@ -161,6 +179,7 @@ export function acquirePresence(object: PresenceObjectRecord, native: PresencePl
 		release: () => {
 			bridge.presenceReleaseAfterQuiescence({ presenceId: object.presenceId, state: "released" });
 		},
+		deleteAfterRelease: () => deletePresenceObject(object, native),
 		preActionCheck: () => {
 			const check = bridge.presencePreActionCheck(object.presenceId);
 			if (check.status === "valid") return;
@@ -179,16 +198,44 @@ export function acquireOwnerPresence(reservation: ReservationPresence, native: P
 }
 
 /**
- * The reserving owner's own `released` commit once the generation is terminal for it, then the close of its guard.
+ * The reserving owner's own `released` commit once the generation is terminal for it, then the close of its guard, then
+ * the deletion of its object (left for the sweep when another handle is open). Returns the deletion outcome; the
+ * commit and the close are the contract, the deletion is cleanup.
  */
 export function releaseReservingOwner(
 	store: EndpointReservationStore,
 	generation: string,
 	owner: LaunchIdentity,
 	presence: HeldPresence,
-): void {
+): PresenceDeletion {
 	store.releaseOwner(generation, identityKey(owner));
 	presence.release();
+	return presence.deleteAfterRelease();
+}
+
+/**
+ * The issuer's check once its offer committed (design 4.2a Revision 7): a predeclared object that is missing, which
+ * only the sweep's age filter can cause after a creation that stalled past it, cancels the offer before any spawn. An
+ * object another handle holds exclusively at that moment (a sweep deciding its fate) is unknown, not "exists and fine":
+ * the issuer cancels rather than spawn a participant whose object may be deleted under it.
+ */
+function requireOfferedObject(
+	store: EndpointReservationStore,
+	generation: string,
+	role: ReservationRole,
+	object: PresenceObjectRecord,
+	native: PresencePlacementLoad,
+): void {
+	const state = presenceObjectState(object, native);
+	if (state === "present" || state === "unknown") return;
+	store.cancel(generation);
+	const presenceId = object.status === "predeclared" ? object.presenceId : "";
+	throw new PresencePlacementError(
+		state === "missing" ? "presence_object_missing" : "presence_object_busy",
+		state === "missing"
+			? `${presenceId} of ${role} in ${generation} vanished before the offer committed`
+			: `${presenceId} of ${role} in ${generation} is held exclusively by another handle after the offer committed`,
+	);
 }
 
 /**
@@ -345,14 +392,11 @@ export function offerSupervisorLaunch(
 		throw error;
 	}
 	try {
-		store.offer(
-			generation,
-			"supervisor",
-			identityKey(owner),
-			predeclarePresenceObject(presence.reservation.root, presence.native),
-		);
+		const object = predeclarePresenceObject(presence.reservation.root, presence.native);
+		store.offer(generation, "supervisor", identityKey(owner), object);
+		requireOfferedObject(store, generation, "supervisor", object, presence.native);
 	} catch (error: unknown) {
-		store.cancel(generation);
+		if (store.reservation(generation).state !== "cancelling") store.cancel(generation);
 		releaseReservingOwner(store, generation, owner, presence.ownerPresence);
 		throw error;
 	}
@@ -382,7 +426,9 @@ export function offerHostRole(
 	native: PresencePlacementLoad = loadPresencePlacement(),
 ): void {
 	const { root } = store.reservation(generation).presence;
-	store.offer(generation, "host", identityKey(issuer), predeclarePresenceObject(root, native));
+	const object = predeclarePresenceObject(root, native);
+	store.offer(generation, "host", identityKey(issuer), object);
+	requireOfferedObject(store, generation, "host", object, native);
 }
 
 /** Two spellings of one path compare equal; win32 paths compare case-insensitively like the filesystem does. */
@@ -652,6 +698,8 @@ export async function admitClaimedParticipant(
 			store.close();
 		}
 		presence.release();
+		// Clean exit (Revision 7): the `released` commit precedes every deletion; a busy object is the sweep's.
+		presence.deleteAfterRelease();
 	};
 	let granted = false;
 	try {

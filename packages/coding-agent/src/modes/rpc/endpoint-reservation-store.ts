@@ -26,6 +26,9 @@
  * (`cancelling`) and retires it only at the revision it fenced, with a discharge for every recorded authority entry,
  * persisted with the retired record. A retired generation is a tombstone that nothing revives, and no generation is
  * reserved for an endpoint while an earlier one is not retired. A schema-4 record is refused.
+ *
+ * The Revision 7 cleanup sweep asks the store, in a short transaction while it holds an object, whether the database
+ * still needs that object (`presenceObjectDisposition`); the schema is unchanged by it.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
@@ -171,6 +174,21 @@ export class EndpointReservationError extends Error {
 		this.name = "EndpointReservationError";
 		this.reason = reason;
 	}
+}
+
+/**
+ * Whether the database still needs a presence object (design 4.2a Revision 7 "Presence cleanup"): `referenced` while
+ * any row naming it belongs to a generation that is not retired and has not committed `released` for that entry;
+ * `retired` when every such row belongs to a retired generation; `released` when the rest committed `released`; and
+ * `unreferenced` when no row names it at all.
+ */
+export type PresenceObjectDisposition = "referenced" | "released" | "retired" | "unreferenced";
+
+/** The disposition of an object at a path, with the identity its row recorded, for a sweep to compare through its hold. */
+export interface PresenceObjectDispositionRow {
+	readonly disposition: PresenceObjectDisposition;
+	/** The recorded volume serial, file ID and header of the row(s) naming the path; absent for `unreferenced`. */
+	readonly recorded: { readonly volumeSerial: string; readonly fileId: string; readonly header: string } | undefined;
 }
 
 /** What a wrapper may forward: no nonce, no credential. */
@@ -944,6 +962,53 @@ export class EndpointReservationStore {
 
 	reservation(generation: string): ReservationRow {
 		return this.#reservation(generation);
+	}
+
+	/**
+	 * Whether the database still needs the presence object at `path`, with the identity the row recorded for it, read
+	 * in one short `BEGIN IMMEDIATE` transaction so a cleanup sweep that holds the object sees the rows as committed,
+	 * serialized against every writer. Rows naming one path that disagree on its identity are malformed (`row_malformed`).
+	 */
+	presenceObjectDisposition(path: string): PresenceObjectDispositionRow {
+		return this.#transaction(() => {
+			const rows = this.#database
+				.prepare(
+					`SELECT state, owner_status AS status, owner_presence_volume_serial AS volume_serial,
+					owner_presence_file_id AS file_id, owner_presence_header AS header
+					FROM reservations WHERE owner_presence_path = ?
+					UNION ALL
+					SELECT r.state, ro.status, ro.presence_volume_serial, ro.presence_file_id, ro.presence_header
+					FROM roles ro JOIN reservations r ON r.generation = ro.generation WHERE ro.presence_path = ?`,
+				)
+				.all(path, path) as {
+				state: ReservationState;
+				status: string;
+				volume_serial: string | null;
+				file_id: string | null;
+				header: string | null;
+			}[];
+			if (rows.length === 0) return { disposition: "unreferenced", recorded: undefined };
+			const [first] = rows;
+			if (
+				!first ||
+				first.volume_serial === null ||
+				first.file_id === null ||
+				first.header === null ||
+				rows.some(
+					(row) =>
+						row.volume_serial !== first.volume_serial ||
+						row.file_id !== first.file_id ||
+						row.header !== first.header,
+				)
+			) {
+				throw new EndpointReservationError("row_malformed", `presence object ${path}`);
+			}
+			const recorded = { volumeSerial: first.volume_serial, fileId: first.file_id, header: first.header };
+			if (rows.some(({ state, status }) => state !== "retired" && status !== "released")) {
+				return { disposition: "referenced", recorded };
+			}
+			return { disposition: rows.every(({ state }) => state === "retired") ? "retired" : "released", recorded };
+		});
 	}
 
 	roleRow(locator: ReservationLocator): RoleRow | undefined {

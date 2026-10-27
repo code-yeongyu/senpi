@@ -92,8 +92,10 @@ export async function admitReservedHostArgs(args: string[]): Promise<ReservedHos
 		HOST_STARTUP_BUDGET_MS,
 	);
 	const credential = await readSocketSecret(socketSecretPath(locator.endpoint)).catch(() => undefined);
-	// The host holds its presence lock from before its claim for the life of this process: its shutdown does not yet
-	// prove quiescence, so it commits no `released` and the kernel releases the guard when the process exits.
+	// The host holds its presence lock from before its claim for the life of this process: its win32 shutdown bounds
+	// the session dispose and the listener close by timers (multi-session-host.ts), so it cannot prove the quiescence a
+	// `released` commit asserts; it commits none, the kernel releases the guard at process exit, and its object is deleted
+	// at retirement or by the sweep (presence-cleanup.ts).
 	const presence = await admitClaimedParticipant(locator, self, credential, {
 		deadlineMs: Math.max(0, until - Date.now()),
 	});

@@ -5,6 +5,7 @@ pub mod classify;
 mod owner_dacl;
 pub mod presence;
 pub mod presence_binding;
+pub mod presence_cleanup;
 pub mod presence_placement;
 #[cfg(windows)]
 pub mod presence_windows;

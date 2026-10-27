@@ -1,6 +1,8 @@
 import type { ProcessIdentityResult } from "../../src/utils/process-identity.ts";
 import type {
 	NativeKernelSessionIdentity,
+	NativePresenceHold,
+	NativePresenceHoldRequest,
 	NativePresencePlacementBinding,
 	NativePresenceProbe,
 	NativePresenceResult,
@@ -13,6 +15,9 @@ import type {
  * "Lifetime object and binding"): directories by canonical path, presence objects by path with their content and file ID,
  * and one exclusive lock per object. A probe acquires only an existing, unlocked object whose content and physical
  * identity match the request; contention is `occupied`.
+ *
+ * Cleanup (Revision 7 "Presence cleanup"): an exclusive hold (share mode 0) succeeds only while no other handle, a lock
+ * holder's or another hold, is open on the object; while a hold exists every other open is a sharing violation (32).
  */
 export const FAKE_LOCAL_APP_DATA = "C:\\Users\\u\\AppData\\Local";
 export const FAKE_KERNEL_SESSION = "133100000000000000";
@@ -36,6 +41,8 @@ export interface FakeWindowsOptions {
 	/** Runs once the lock is taken, before the probe returns. */
 	readonly onAcquire?: (request: NativePresenceProbe) => void;
 	readonly onRelease?: (receipt: PresenceReleasedReceipt) => void;
+	/** Runs once an exclusive hold is taken, before it returns. */
+	readonly onHold?: (request: NativePresenceHoldRequest) => void;
 	/** This machine's kernel session (PID 4 creation FILETIME); `null` is an unverified (denied) read. */
 	readonly kernelSession?: string | null;
 	/** Another machine's disk, copied byte for byte: the same directories and objects, none of them locked. */
@@ -70,12 +77,16 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 	);
 	/** Locked object path -> the presence ID its holder acquired it as. */
 	const held = new Map<string, string>();
+	/** Exclusive hold ID -> the object path it holds. */
+	const holds = new Map<string, string>();
 	/**
 	 * `probeOutcome` answers every probe instead of the lock table; tests set it once their setup has run.
-	 * `storeLocality` is how the store directory classifies NOW, and `kernelSession` this machine's current session.
+	 * `holdOutcome` answers every exclusive hold the same way. `storeLocality` is how the store directory classifies
+	 * NOW, and `kernelSession` this machine's current session.
 	 */
 	const control: {
 		probeOutcome?: NativePresenceResult;
+		holdOutcome?: NativePresenceHold;
 		preActionOutcome?: FakeWindowsOptions["preActionOutcome"];
 		storeLocality: "local" | "not_local";
 		kernelSession: NativeKernelSessionIdentity;
@@ -88,6 +99,8 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 		kernelSession: sessionOf(options.kernelSession === undefined ? FAKE_KERNEL_SESSION : options.kernelSession),
 		directoryLocality: new Map(),
 	};
+	const heldExclusively = (path: string) => [...holds.values()].includes(path);
+	const nameOf = (path: string) => path.slice(path.lastIndexOf("\\") + 1);
 	let preActionCalls = 0;
 	let nextId = 1000 + objects.size + directories.size;
 	const canonical = (path: string) => (path.startsWith("\\\\?\\") ? path : `\\\\?\\${path}`);
@@ -154,6 +167,8 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 			if (control.probeOutcome) return control.probeOutcome;
 			const object = objects.get(request.path);
 			if (!object) return { status: "unknown", reason: "os_error", code: 2 };
+			// An exclusive hold shares nothing: the probe's open itself fails with ERROR_SHARING_VIOLATION.
+			if (heldExclusively(request.path)) return { status: "unknown", reason: "os_error", code: 32 };
 			if (held.has(request.path)) return { status: "occupied" };
 			// The bridge's admissibility (crate presence_binding.rs): rule 1 tag and identity, rule 2 recorded local and the
 			// object's own handle local now, rule 3 for a relocated object a verified, equal kernel session.
@@ -221,9 +236,47 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 			}
 			return { status: "unknown", reason: "not_held" };
 		},
+		presenceRootList: (path) => {
+			calls.push(`presenceRootList ${path}`);
+			const root = canonical(path);
+			if (!directories.has(root)) return { status: "failed", step: "read_dir", code: 3 };
+			const names = [...objects.keys()]
+				.filter((object) => object.slice(0, object.lastIndexOf("\\")) === root)
+				.map(nameOf)
+				.sort();
+			return { status: "listed", names };
+		},
+		presenceObjectHold: (request) => {
+			calls.push(`presenceObjectHold ${nameOf(request.path)}`);
+			if (control.holdOutcome) return control.holdOutcome;
+			if (holds.has(request.holdId)) return { status: "failed", step: "hold_id", code: 0 };
+			const object = objects.get(request.path);
+			if (!object) return { status: "missing" };
+			// Share mode 0 against a lock holder's handle, or against another hold, is a sharing violation either way.
+			if (held.has(request.path) || heldExclusively(request.path)) return { status: "busy" };
+			holds.set(request.holdId, request.path);
+			options.onHold?.(request);
+			return {
+				status: "held",
+				volumeSerial: object.volumeSerial,
+				fileId: object.fileId,
+				header: Buffer.from(object.content),
+			};
+		},
+		presenceObjectRelease: (holdId, deleteObject) => {
+			const path = holds.get(holdId);
+			calls.push(
+				`presenceObjectRelease ${path === undefined ? "?" : nameOf(path)} ${deleteObject ? "delete" : "close"}`,
+			);
+			if (path === undefined) return { status: "failed", step: "hold_id", code: 0 };
+			holds.delete(holdId);
+			if (!deleteObject) return { status: "closed" };
+			objects.delete(path);
+			return { status: "deleted" };
+		},
 	};
 	const load: PresencePlacementLoad = { status: "available", native };
-	return { native, load, calls, directories, objects, held, control };
+	return { native, load, calls, directories, objects, held, holds, control };
 }
 
 /**

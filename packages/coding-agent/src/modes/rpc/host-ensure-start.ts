@@ -53,6 +53,7 @@ import {
 	reservationStorePath,
 	selectLaunchRoute,
 } from "./host-launch-reservation.ts";
+import { sweepPresenceObjects } from "./presence-cleanup.ts";
 import { resolvePresenceRoot } from "./presence-placement.ts";
 import { loadPresencePlacement } from "./socket-secret-native.ts";
 
@@ -89,9 +90,13 @@ export async function startHost(
 	const reserving = ownLaunchRoute() === "reservation";
 	const hostRoute = reserving ? await hostLaunchRoute(socket, options.hostArgs ?? []) : undefined;
 	// Exactly one successor (design 4.2a "Recovery transaction order"): an earlier generation is recovered and retired
-	// under this endpoint lock before this start holds its own presence, touches the credential or reserves.
+	// under this endpoint lock before this start holds its own presence, touches the credential or reserves. The bounded
+	// presence sweep (Revision 7 "Presence cleanup") runs here too, inside this endpoint-locked invocation and nowhere
+	// else, over the root this start resolves, before the owner creates its own object there.
 	if (reserving) await recoverBeforeSuccessor(socket, paths);
-	const owner = reserving ? acquireReservingOwner(socket) : undefined;
+	const placement = reserving ? resolveReservingPlacement(socket) : undefined;
+	if (placement) await sweepBeforeSuccessor(placement, paths);
+	const owner = placement ? acquireReservingOwner(placement) : undefined;
 	// The settings file must exist before the supervisor reads it at boot, so it
 	// records the policy before the spawn instead of beside the pidfile. A valid public
 	// secret belongs to the endpoint, not to this start: clients that already read it
@@ -421,16 +426,47 @@ function withFenceFailure(error: unknown, fence: string | undefined): unknown {
 	return error;
 }
 
-/**
- * Resolves the presence root once (#4199 design 4.2a "Placement.") and acquires the reserving owner's own presence
- * object in it. A root recorded `presence_unavailable` holds no lock and never refuses the start.
- */
-function acquireReservingOwner(socket: string) {
+/** Resolves the presence root once (#4199 design 4.2a "Placement."), the root this start's objects go to. */
+function resolveReservingPlacement(socket: string) {
 	const target = hostEnsureLockTarget(socket);
 	const native = loadPresencePlacement();
 	// The lock target is named by the canonical endpoint identity, which also keys a relocated per-user root.
 	const reservation = resolvePresenceRoot({ coordinationTarget: target, endpointKey: basename(target), native });
-	return { target, native, reservation, presence: acquireOwnerPresence(reservation, native) };
+	return { target, native, reservation };
+}
+
+/**
+ * The bounded presence sweep of the resolved root (#4199 design 4.2a Revision 7 "Presence cleanup"), under this
+ * invocation's endpoint lock: it deletes only objects it holds exclusively whose row is `released` or retired, or that
+ * no row names and that are older than the age filter. Its outcome never decides the start.
+ */
+async function sweepBeforeSuccessor(
+	placement: ReturnType<typeof resolveReservingPlacement>,
+	paths: HostDaemonPaths,
+): Promise<void> {
+	if (placement.reservation.root.status !== "placed") return;
+	try {
+		const store = await openEndpointReservationStore(`${placement.target}.reservation.db`);
+		try {
+			sweepPresenceObjects(store, placement.reservation.root, placement.native);
+		} finally {
+			store.close();
+		}
+	} catch (error: unknown) {
+		// A failed sweep leaves objects for the next endpoint-locked invocation; it is reported, never a failed start.
+		await appendStderr(
+			paths,
+			`presence sweep skipped: ${error instanceof Error ? error.message : String(error)}`,
+		).catch(() => undefined);
+	}
+}
+
+/**
+ * Acquires the reserving owner's own presence object in the resolved root. A root recorded `presence_unavailable`
+ * holds no lock and never refuses the start.
+ */
+function acquireReservingOwner(placement: ReturnType<typeof resolveReservingPlacement>) {
+	return { ...placement, presence: acquireOwnerPresence(placement.reservation, placement.native) };
 }
 
 /**
