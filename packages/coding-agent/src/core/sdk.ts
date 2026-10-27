@@ -1,5 +1,11 @@
 import { join } from "node:path";
-import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+	Agent,
+	type AgentMessage,
+	createInternalAgentChannel,
+	setDefaultStreamFn,
+	type ThinkingLevel,
+} from "@earendil-works/pi-agent-core";
 import type { SimpleStreamOptions, ThinkingSelection } from "@earendil-works/pi-ai";
 import { type Api, type Message, type Model, modelsAreEqual, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
@@ -476,7 +482,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		});
 	};
 
+	const internalChannel = createInternalAgentChannel();
 	agent = new Agent({
+		internalChannel,
 		initialState: {
 			systemPrompt: "",
 			model,
@@ -587,6 +595,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const session = new AgentSession({
 		agent,
+		internalChannel,
 		serviceTier: options.serviceTier,
 		sessionManager,
 		settingsManager,

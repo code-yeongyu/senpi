@@ -2112,6 +2112,133 @@ describe("agentLoop with AgentMessage", () => {
 		expect(parallelObserved).toBe(true);
 	});
 
+	describe("tool batch interleave (characterization, plan P0-01a G2)", () => {
+		const interleaveSchema = Type.Object({});
+		const interleaveBatch: AgentToolCall[] = [
+			{ type: "toolCall", id: "a", name: "par", arguments: {} },
+			{ type: "toolCall", id: "b", name: "par", arguments: {} },
+			{ type: "toolCall", id: "s", name: "seq", arguments: {} },
+			{ type: "toolCall", id: "c", name: "par", arguments: {} },
+			{ type: "toolCall", id: "d", name: "par", arguments: {} },
+		];
+
+		// Runs one batch [a, b, s, c, d] (s is executionMode "sequential") and records
+		// tool bodies and tool events in the order the loop produces them. Gated bodies
+		// wait until the emit sink opens their gate on a named event, so the order is
+		// decided by the executor alone, never by timers.
+		async function runInterleave(
+			toolExecution: AgentLoopConfig["toolExecution"],
+			openGateOn: Record<string, string> = {},
+		): Promise<string[]> {
+			const trace: string[] = [];
+			const gates = new Map<string, () => void>();
+			const gated = new Map<string, Promise<void>>();
+			for (const id of Object.values(openGateOn)) {
+				gated.set(id, new Promise<void>((resolve) => gates.set(id, resolve)));
+			}
+			const execute: AgentTool<typeof interleaveSchema>["execute"] = async (toolCallId) => {
+				trace.push(`run:${toolCallId}`);
+				await gated.get(toolCallId);
+				trace.push(`done:${toolCallId}`);
+				return { content: [{ type: "text", text: toolCallId }], details: undefined };
+			};
+			const tool = (
+				name: string,
+				executionMode?: AgentTool["executionMode"],
+			): AgentTool<typeof interleaveSchema> => ({
+				name,
+				label: name,
+				description: name,
+				parameters: interleaveSchema,
+				...(executionMode ? { executionMode } : {}),
+				execute,
+			});
+			const context: AgentContext = { messages: [], tools: [tool("par"), tool("seq", "sequential")] };
+			const config: AgentLoopConfig = {
+				model: createModel(),
+				convertToLlm: identityConverter,
+				...(toolExecution ? { toolExecution } : {}),
+			};
+			let callIndex = 0;
+			await runAgentLoop(
+				[createUserMessage("run the batch")],
+				context,
+				config,
+				(event) => {
+					let label: string | undefined;
+					if (event.type === "tool_execution_start") label = `start:${event.toolCallId}`;
+					if (event.type === "tool_execution_end") label = `end:${event.toolCallId}`;
+					if (event.type === "message_end" && event.message.role === "toolResult") {
+						label = `result:${event.message.toolCallId}`;
+					}
+					if (!label) return;
+					trace.push(label);
+					const opens = openGateOn[label];
+					if (opens) gates.get(opens)?.();
+				},
+				undefined,
+				() => {
+					const mockStream = new MockAssistantStream();
+					const reason = callIndex === 0 ? "toolUse" : "stop";
+					const message =
+						reason === "toolUse"
+							? createAssistantMessage(interleaveBatch, reason)
+							: createAssistantMessage([{ type: "text", text: "done" }], reason);
+					callIndex++;
+					queueMicrotask(() => mockStream.push({ type: "done", reason, message }));
+					return mockStream;
+				},
+			);
+			return trace;
+		}
+
+		it("toolExecution sequential finishes each call, result message included, before the next starts", async () => {
+			const trace = await runInterleave("sequential");
+			expect(trace).toEqual(
+				["a", "b", "s", "c", "d"].flatMap((id) => [
+					`start:${id}`,
+					`run:${id}`,
+					`done:${id}`,
+					`end:${id}`,
+					`result:${id}`,
+				]),
+			);
+		});
+
+		it("default parallel config runs waves around the sequential call and emits results in source order", async () => {
+			// a waits until b has ended, and c waits until d has ended: both leading and
+			// trailing waves must be running concurrently for the batch to finish at all.
+			const trace = await runInterleave(undefined, { "end:b": "a", "end:d": "c" });
+			expect(trace).toEqual([
+				"start:a",
+				"start:b",
+				"start:s",
+				"start:c",
+				"start:d",
+				"run:a",
+				"run:b",
+				"done:b",
+				"end:b",
+				"done:a",
+				"end:a",
+				"run:s",
+				"done:s",
+				"end:s",
+				"run:c",
+				"run:d",
+				"done:d",
+				"end:d",
+				"done:c",
+				"end:c",
+				"result:a",
+				"result:b",
+				"result:s",
+				"result:c",
+				"result:d",
+			]);
+		});
+	});
+
 	it("runs finishTurn after tool-result messages and before turn_end", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {

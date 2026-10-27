@@ -162,10 +162,30 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=10240
         run: npm run check
 
+      # Dead-code check: fails on a new unused file, export or dependency (knip.jsonc; senpi#4419).
+      - name: Knip dead-code check
+        run: npm run knip:check
+
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      # Export coverage never shrinks: every file knip export-checks under the base branch's knip.jsonc stays
+      # export-checked (scripts/check-knip-export-coverage.mjs; senpi#4421). The shallow checkout lacks the base, and for
+      # a pull request its own commits (used when the base has no knip.jsonc yet), so fetch both first.
+      - name: Knip export coverage
+        env:
+          BASE_REF: ${{ github.base_ref || github.event.repository.default_branch }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git fetch --no-tags --depth=1 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          history=HEAD
+          if [ -n "$PR_NUMBER" ]; then
+            git fetch --no-tags --shallow-exclude="refs/heads/${BASE_REF}" origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/origin/pr-head"
+            history=origin/pr-head
+          fi
+          KNIP_COVERAGE_BASE="origin/${BASE_REF}" KNIP_COVERAGE_HISTORY="$history" node scripts/run-tests.mjs node --test scripts/check-knip-export-coverage.mjs
 
       - name: Real CLI text-tool recovery self-test
         timeout-minutes: 5
@@ -607,14 +627,39 @@ jobs:
               Start-Sleep -Milliseconds 500
             }
           }
+          # senpi#4354: NTFS directory junctions on the fixed volume. The classifying handle follows
+          # reparse points, so each is classified by its target volume.
+          New-Item -ItemType Junction -Path "$tmp\junction-winfsp" -Target 'M:\' | Out-Null
+          New-Item -ItemType Junction -Path "$tmp\junction-vhdx" -Target 'V:\' | Out-Null
           @(
             'RECEIPT_WINFSP_DISK_NTFS=M:\',
             'RECEIPT_WINFSP_NETWORK=N:\',
             'RECEIPT_DOKANY_DISK_MIRROR=O:\',
             'RECEIPT_SMB_MAPPED_DRIVE=S:\',
             'RECEIPT_SMB_UNC=\\localhost\receipt\',
-            'RECEIPT_VHDX_NTFS=V:\'
+            'RECEIPT_VHDX_NTFS=V:\',
+            "RECEIPT_JUNCTION_WINFSP=$tmp\junction-winfsp",
+            "RECEIPT_JUNCTION_VHDX=$tmp\junction-vhdx"
           ) | Add-Content $env:GITHUB_ENV
+          # senpi#4354: a ReFS-formatted VHDX (kernel ReFS driver => local). An image that cannot format
+          # ReFS records why instead of failing the job; the receipt then prints that reason.
+          @(
+            "create vdisk file=`"$tmp\receipt-refs.vhdx`" maximum=4096 type=expandable",
+            "select vdisk file=`"$tmp\receipt-refs.vhdx`"",
+            'attach vdisk',
+            'create partition primary',
+            'format fs=refs quick label=refs',
+            'assign letter=R'
+          ) | Set-Content "$tmp\vhdx-refs.txt"
+          diskpart /s "$tmp\vhdx-refs.txt" | Tee-Object "$tmp\vhdx-refs.log"
+          $refsExit = $LASTEXITCODE
+          $deadline = (Get-Date).AddSeconds(60)
+          while ($refsExit -eq 0 -and -not (Test-Path 'R:\') -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+          if ($refsExit -eq 0 -and (Test-Path 'R:\')) {
+            'RECEIPT_REFS_VHDX=R:\' | Add-Content $env:GITHUB_ENV
+          } else {
+            "RECEIPT_REFS_UNAVAILABLE=diskpart exit $refsExit; R: mounted=$(Test-Path 'R:\')" | Add-Content $env:GITHUB_ENV
+          }
 
       - name: Fixture receipts
         shell: bash
@@ -844,6 +889,21 @@ jobs:
               if (passed === 0 || other !== 0) process.exit(1);
             ' "$report"
           done
+        working-directory: packages/coding-agent
+
+      # Whether the bundled CLI runs a .cmd BROWSER helper decides the Windows default sign-in method; a skipped
+      # test must fail the job, not pass it.
+      - name: Run Claude CLI BROWSER=<.cmd> sign-in test
+        shell: bash
+        run: |
+          node ../../scripts/run-tests.mjs vitest run test/anthropic-subscription-claude-cli-auth-windows.test.ts --reporter=default --reporter=json --outputFile=vitest-cli-auth.json
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("vitest-cli-auth.json", "utf8"));
+            const file = r.testResults.find((t) => t.name.replace(/\\/g, "/").endsWith("anthropic-subscription-claude-cli-auth-windows.test.ts"));
+            const passed = file ? file.assertionResults.filter((a) => a.status === "passed").length : 0;
+            console.log("claude cli BROWSER .cmd test passed=" + passed);
+            if (passed === 0) process.exit(1);
+          '
         working-directory: packages/coding-agent
       - name: Check OS temp after tests
         if: always() && steps.test_temp_snapshot.outcome == 'success'

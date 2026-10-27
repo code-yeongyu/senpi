@@ -4,6 +4,9 @@ const SIGNATURE_STRING_SAMPLE_WINDOW_LENGTH = 64;
 const SIGNATURE_ARRAY_ITEM_LIMIT = 40;
 const SIGNATURE_OBJECT_KEY_LIMIT = 80;
 const SIGNATURE_DEPTH_LIMIT = 8;
+const SIGNATURE_OMITTED_VALUE_DEPTH = 1;
+const SIGNATURE_HASH_OFFSET_BASIS = 0x811c9dc5;
+const SIGNATURE_HASH_PRIME = 0x01000193;
 
 type RenderSignatureValue =
 	| string
@@ -40,17 +43,52 @@ function sampleSignatureString(text: string): string {
 	].join("\u0000");
 }
 
-function hashSignatureString(source: string): string {
-	let hash = 0x811c9dc5;
+function updateSignatureHash(hash: number, source: string): number {
 	for (let index = 0; index < source.length; index++) {
 		hash ^= source.charCodeAt(index);
-		hash = Math.imul(hash, 0x01000193);
+		hash = Math.imul(hash, SIGNATURE_HASH_PRIME);
 	}
+	return hash;
+}
+
+function formatSignatureHash(hash: number): string {
 	return (hash >>> 0).toString(36);
 }
 
-function hashSignatureValue(value: unknown): string {
-	return hashSignatureString(JSON.stringify(summarizeSignatureValue(value)));
+function hashSignatureString(source: string): string {
+	return formatSignatureHash(updateSignatureHash(SIGNATURE_HASH_OFFSET_BASIS, source));
+}
+
+function hashSignatureEntry(
+	hash: number,
+	key: string,
+	value: unknown,
+	seen: WeakSet<object>,
+	serializerKey = key,
+): number {
+	const summarized = summarizeSignatureValue(value, serializerKey, SIGNATURE_OMITTED_VALUE_DEPTH, seen);
+	return updateSignatureHash(hash, JSON.stringify([key, summarized]));
+}
+
+function hashSignatureArrayTail(tail: readonly unknown[], seen: WeakSet<object>): string {
+	let hash = SIGNATURE_HASH_OFFSET_BASIS;
+	for (let offset = 0; offset < tail.length; offset++) {
+		const key = String(SIGNATURE_ARRAY_ITEM_LIMIT + offset);
+		if (!(offset in tail)) {
+			hash = updateSignatureHash(hash, JSON.stringify([key, null]));
+			continue;
+		}
+		hash = hashSignatureEntry(hash, key, tail[offset], seen, String(offset % SIGNATURE_ARRAY_ITEM_LIMIT));
+	}
+	return formatSignatureHash(hash);
+}
+
+function hashSignatureEntries(entries: readonly (readonly [string, unknown])[], seen: WeakSet<object>): string {
+	let hash = SIGNATURE_HASH_OFFSET_BASIS;
+	for (const [key, value] of entries) {
+		hash = hashSignatureEntry(hash, key, value, seen);
+	}
+	return formatSignatureHash(hash);
 }
 
 function summarizeSignatureValue(
@@ -97,9 +135,10 @@ function summarizeSignatureValue(
 			.slice(0, SIGNATURE_ARRAY_ITEM_LIMIT)
 			.map((item, index) => summarizeSignatureValue(item, String(index), depth + 1, seen));
 		if (value.length > SIGNATURE_ARRAY_ITEM_LIMIT) {
-			const tailHash = hashSignatureValue(value.slice(SIGNATURE_ARRAY_ITEM_LIMIT));
+			const tail = value.slice(SIGNATURE_ARRAY_ITEM_LIMIT);
+			const tailHash = hashSignatureArrayTail(tail, seen);
 			seen.delete(value);
-			return [...summarized, `[+${value.length - SIGNATURE_ARRAY_ITEM_LIMIT} items hash=${tailHash}]`];
+			return [...summarized, `[+${tail.length} items hash=${tailHash}]`];
 		}
 		seen.delete(value);
 		return summarized;
@@ -112,7 +151,7 @@ function summarizeSignatureValue(
 	}
 	if (entries.length > SIGNATURE_OBJECT_KEY_LIMIT) {
 		const omitted = entries.slice(SIGNATURE_OBJECT_KEY_LIMIT);
-		summarized.__truncatedKeys = `[+${omitted.length} keys hash=${hashSignatureValue(Object.fromEntries(omitted))}]`;
+		summarized.__truncatedKeys = `[+${omitted.length} keys hash=${hashSignatureEntries(omitted, seen)}]`;
 	}
 	seen.delete(value);
 	return summarized;

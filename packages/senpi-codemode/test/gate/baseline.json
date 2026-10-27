@@ -4913,6 +4913,10 @@
   },
   "imports": {
     "extension": [
+      "packages/senpi-codemode/src/kernels/js/permission-host.ts",
+      "packages/senpi-codemode/src/kernels/js/permission-sessions.ts",
+      "packages/senpi-codemode/src/kernels/js/permission-slots.mjs",
+      "packages/senpi-codemode/src/kernels/js/permission-worker-frames.ts",
       "node:async_hooks",
       "node:child_process",
       "node:crypto",
@@ -5045,6 +5049,13 @@
       "packages/senpi-codemode/src/tool/types.ts"
     ],
     "firstKernel": [
+      "packages/senpi-codemode/src/kernels/js/interpose.js",
+      "packages/senpi-codemode/src/kernels/js/permission-authority.mjs",
+      "packages/senpi-codemode/src/kernels/js/permission-host.ts",
+      "packages/senpi-codemode/src/kernels/js/permission-runtime.js",
+      "packages/senpi-codemode/src/kernels/js/permission-sessions.ts",
+      "packages/senpi-codemode/src/kernels/js/permission-slots.mjs",
+      "packages/senpi-codemode/src/kernels/js/permission-worker-frames.ts",
       "node:async_hooks",
       "node:buffer",
       "node:child_process",

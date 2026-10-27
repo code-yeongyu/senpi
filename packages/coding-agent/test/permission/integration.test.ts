@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os, { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parsePermissionFlag } from "../../src/core/extensions/builtin/permission-system/cli.ts";
 import { disabled, expand, fromConfig, merge } from "../../src/core/extensions/builtin/permission-system/config.ts";
@@ -21,6 +21,7 @@ import {
 } from "../../src/core/extensions/builtin/permission-system/storage.ts";
 import {
 	CorrectedError,
+	DENIAL_IS_FINAL,
 	DeniedError,
 	type PermissionConfig,
 	RejectedError,
@@ -716,7 +717,7 @@ describe("permission integration", () => {
 		it("should detect external paths in bash command", () => {
 			// given
 			const registry = createBuiltinParserRegistry();
-			const cwd = "/home/user/project";
+			const cwd = join(realpathSync.native(tmpdir()), "project");
 
 			// when
 			const requests = registry.parse("bash", { command: "cat ../config.txt" }, cwd);
@@ -725,13 +726,14 @@ describe("permission integration", () => {
 			expect(requests).toHaveLength(2);
 			expect(requests[0]?.permission).toBe("bash");
 			expect(requests[1]?.permission).toBe("external_directory");
-			expect(requests[1]?.patterns).toContain("../config.txt");
+			expect(requests[1]?.patterns).toContain(join(dirname(cwd), "config.txt"));
+			expect(requests[1]?.originalPaths).toEqual(["../config.txt"]);
 		});
 
 		it("should detect multiple external paths", () => {
 			// given
 			const registry = createBuiltinParserRegistry();
-			const cwd = "/home/user/project";
+			const cwd = join(realpathSync.native(tmpdir()), "project");
 
 			// when
 			const requests = registry.parse("bash", { command: "cp ../config.txt ../../backup/" }, cwd);
@@ -739,8 +741,11 @@ describe("permission integration", () => {
 			// then
 			const externalRequest = requests.find((r) => r.permission === "external_directory");
 			expect(externalRequest).toBeDefined();
-			expect(externalRequest?.patterns).toContain("../config.txt");
-			expect(externalRequest?.patterns).toContain("../../backup/");
+			expect(externalRequest?.patterns).toEqual([
+				join(dirname(cwd), "config.txt"),
+				join(dirname(dirname(cwd)), "backup"),
+			]);
+			expect(externalRequest?.originalPaths).toEqual(["../config.txt", "../../backup/"]);
 		});
 
 		it("should not flag internal paths", () => {
@@ -762,13 +767,15 @@ describe("permission integration", () => {
 			const cwd = "/home/user/project";
 
 			// when
-			const requests = registry.parse("bash", { command: "cat ~/.bashrc" }, cwd);
+			const requests = registry.parse("bash", { command: "cat ~/permission-home-fixture.txt" }, cwd);
 
 			// then
 			const externalRequest = requests.find((r) => r.permission === "external_directory");
 			expect(externalRequest).toBeDefined();
-			// The external directory parser returns the raw path, expansion happens in fromConfig
-			expect(externalRequest?.patterns[0]).toMatch(/^~\/\.bashrc$/);
+			expect(externalRequest?.patterns).toEqual([
+				join(realpathSync.native(os.homedir()), "permission-home-fixture.txt"),
+			]);
+			expect(externalRequest?.originalPaths).toEqual(["~/permission-home-fixture.txt"]);
 		});
 	});
 
@@ -1336,7 +1343,7 @@ describe("permission integration", () => {
 				expect(result).toEqual({
 					requestID: "req-noui-3",
 					reply: "reject",
-					message: "Permission required for bash (ls, pwd). Use --permission bash=allow to override.",
+					message: `Permission required for bash (ls, pwd), and there is no UI to ask, so the call did not run. ${DENIAL_IS_FINAL} The user can allow it with --permission bash=allow.`,
 				});
 			});
 		});

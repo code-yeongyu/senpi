@@ -59,7 +59,8 @@ export function probeStdioTransport(
 			return;
 		}
 		if (outcome.kind === "indeterminate" || !outcome.discovery) {
-			const reason = outcome.kind === "indeterminate" ? outcome.reason : outcome.error?.message;
+			const reason =
+				outcome.kind === "indeterminate" ? `${outcome.reason}. ${outcome.action}` : outcome.error?.message;
 			const message = `MCP server ${serverName} modern discovery failed: ${reason}`;
 			logger.error(message);
 			throw new ConnectError(message, { phase: "modern-stdio", serverName });

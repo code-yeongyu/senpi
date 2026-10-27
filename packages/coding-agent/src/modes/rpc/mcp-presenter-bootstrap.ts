@@ -12,6 +12,10 @@ export function presenterBootstrapStream(fd: number): Duplex | undefined {
 	try {
 		const stat = fstatSync(fd);
 		if (!stat.isSocket() && !stat.isFIFO()) return undefined;
+		// Node's fs read blocks a worker until peer EOF, even after destroy(), and process.exit()
+		// joins that worker. A socket handle can cancel the pending read after enrollment.
+		// Bun does not support inherited net.Socket fds; it retains the file-stream adapter below.
+		if (stat.isSocket() && !process.versions.bun) return new Socket({ fd, readable: true, writable: true });
 	} catch {
 		// Bootstrap is optional authority, never a reason to terminate the shared host.
 		return undefined;
@@ -54,7 +58,16 @@ export function presenterBootstrapStream(fd: number): Duplex | undefined {
 }
 
 /** Relay one bounded enrollment exchange; fd 3 and stdin are never touched. */
-export function relayPresenterBootstrap(upstream: Duplex, child: ChildProcess): Promise<void> {
+export function relayPresenterBootstrap(
+	upstream: Duplex,
+	child: ChildProcess,
+	/**
+	 * The launch this CLI is performing. A v2 enrollment for a different kind, or naming a predecessor other
+	 * than the host this launch replaces (`null` for an initial launch), is dropped before the host sees it.
+	 * `predecessorHostInstance: undefined` means nothing proves the replaced host, so no replacement enrolls.
+	 */
+	launch?: { readonly kind: "initial" | "replacement"; readonly predecessorHostInstance: string | null | undefined },
+): Promise<void> {
 	const downstream = child.stdio[MCP_PRESENTER_BOOTSTRAP_FD];
 	if (!(downstream instanceof Socket)) {
 		upstream.destroy();
@@ -77,6 +90,27 @@ export function relayPresenterBootstrap(upstream: Duplex, child: ChildProcess): 
 		const unreadUp = attachJsonlLineReader(
 			upstream,
 			(line) => {
+				if (launch) {
+					try {
+						const record: unknown = JSON.parse(line);
+						if (
+							typeof record === "object" &&
+							record !== null &&
+							"type" in record &&
+							record.type === "enroll" &&
+							"version" in record &&
+							record.version === 2 &&
+							(!("launchKind" in record) ||
+								record.launchKind !== launch.kind ||
+								launch.predecessorHostInstance === undefined ||
+								!("predecessorHostInstance" in record) ||
+								record.predecessorHostInstance !== launch.predecessorHostInstance)
+						)
+							return finish();
+					} catch {
+						return finish();
+					}
+				}
 				if (!downstream.write(`${line}\n`)) finish();
 			},
 			{ maxLineLength: 16 * 1024, onOversizedLine: finish },
@@ -87,7 +121,10 @@ export function relayPresenterBootstrap(upstream: Duplex, child: ChildProcess): 
 				try {
 					const record: unknown = JSON.parse(line);
 					acknowledging =
-						typeof record === "object" && record !== null && "type" in record && record.type === "enrolled";
+						typeof record === "object" &&
+						record !== null &&
+						"type" in record &&
+						(record.type === "enrolled" || record.type === "unavailable");
 					upstream.write(`${line}\n`, () => {
 						if (acknowledging) finish();
 					});

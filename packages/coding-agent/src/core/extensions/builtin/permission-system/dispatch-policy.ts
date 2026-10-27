@@ -37,8 +37,10 @@ export function createDispatchAuthorizer(
 			let action: DispatchPolicy["action"] = "allow";
 			const decisions = requests.map((permission) => {
 				const rules = permission.patterns.map((pattern) =>
-					service.dispatchDecision(permission.permission, permission.ruleAliases ?? pattern, {
+					service.dispatchDecision(permission.permission, pattern, {
 						presetBound: state.preset === "auto",
+						ruleAliases: permission.ruleAliases,
+						originalPaths: permission.originalPaths,
 					}),
 				);
 				for (const decision of rules) {
