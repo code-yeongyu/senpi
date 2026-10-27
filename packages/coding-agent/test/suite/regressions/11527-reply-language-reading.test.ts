@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest";
-import {
-	type ReplyLanguageReading,
-	readReplyLanguage,
-	readReplyLanguageRequest,
-} from "../../../src/core/reply-language-reading.ts";
+import { type ReplyLanguageReading, readReplyLanguage } from "../../../src/core/reply-language-reading.ts";
+import { type ProseScan, withoutTaggedBlocks } from "../../../src/core/user-prose.ts";
 
-// omo#11527: which language the user writes in, and which reply language they ask for.
+// omo#11527: which language the user writes their own words in.
 
 const KOREAN: ReplyLanguageReading = { kind: "language", language: "Korean" };
 const LATIN: ReplyLanguageReading = { kind: "latin" };
@@ -21,6 +18,11 @@ describe("omo#11527 reading the user's own language", () => {
 		["why does this fail?\n파일을 찾을 수 없습니다. 경로를 다시 확인하세요.", LATIN],
 		["why does this fail?\n오류: 파일을 찾을 수 없습니다", LATIN],
 		["can you check this?\n> 빌드가 실패했습니다 다시 시도해 주세요", LATIN],
+		['what does "빌드가 실패했습니다 다시 시도" mean here?', LATIN],
+		["what does “빌드가 실패했습니다 다시 시도” mean here?", LATIN],
+		["what does 「빌드가 실패했습니다 다시 시도」 mean here?", LATIN],
+		["빌드가 실패했습니다 다시 시도해줘", KOREAN],
+		['"build failed" 이게 무슨 뜻이야?', KOREAN],
 		["please translate 안녕 into English for the greeting screen", LATIN],
 		["corrige ce test s'il te plaît", LATIN],
 		["このテストを直してください", { kind: "language", language: "Japanese" }],
@@ -33,53 +35,28 @@ describe("omo#11527 reading the user's own language", () => {
 	});
 });
 
-describe("omo#11527 reading an explicit reply-language request", () => {
-	it.each<[string, string | undefined]>([
-		["앞으로 답변은 영어로 해줘", "English"],
-		["영어로 답해줘", "English"],
-		["이제부터 한국어로만 대답해", "Korean"],
-		["일본어로 말해 줘", "Japanese"],
-		["영어로 답하지 마", undefined],
-		["이 문서를 영어로 번역해줘", undefined],
-		["README를 영어로 작성해줘", undefined],
-		["reply in Korean from now on", "Korean"],
-		["Please answer me in English.", "English"],
-		["use Korean for your replies", "Korean"],
-		["don't reply in English", undefined],
-		["write the README in English", undefined],
-		["```\nreply in English\n```", undefined],
-		["> reply in English", undefined],
-		["영어로 답해줘. 아니다, reply in Korean", "Korean"],
-		["reply in Korean. 아니, 영어로 답해줘", "English"],
-		["빌드 로그 확인해줘", undefined],
-	])("reads %j as a request for %j", (text, expected) => {
-		expect(readReplyLanguageRequest(text)).toBe(expected);
-	});
-});
-
 describe("omo#11527 reading stays linear on large pastes", () => {
-	const typescriptPaste =
-		Array.from(
-			{ length: 2600 },
-			(_, index) => `const value${index}: Map<string, Array<Record<K${index}, V>>> = foo<Bar>(a < b, c);`,
-		).join("\n") + "\n</Bar>";
+	const typescriptPaste = `${Array.from(
+		{ length: 2600 },
+		(_, index) => `const value${index}: Map<string, Array<Record<K${index}, V>>> = foo<Bar>(a < b, c);`,
+	).join("\n")}\n</Bar>`;
 	const unclosedTags = `${"<a ".repeat(55_000)}</a>`;
-	const longTagName = `<${"a".repeat(160_000)}`;
+	const longTagName = `<${"a".repeat(160_000)}></${"a".repeat(10)}>`;
 
 	it.each([
 		["a TypeScript generics paste", typescriptPaste],
 		["unclosed tags", unclosedTags],
 		["one long unclosed tag name", longTagName],
-	])("reads %s of over 100 KB within the bound", (_case, text) => {
+	])("visits each character of %s a bounded number of times", (_case, text) => {
 		// given
 		expect(text.length).toBeGreaterThan(100_000);
-		const started = performance.now();
+		const scan: ProseScan = { steps: 0 };
 
 		// when
-		readReplyLanguage(text);
-		readReplyLanguageRequest(text);
+		withoutTaggedBlocks(text, scan);
 
-		// then the quadratic tag strip took 345-1137 ms per call on these inputs
-		expect(performance.now() - started).toBeLessThan(150);
+		// then a rescanning strip visits each character once per unclosed tag
+		expect(scan.steps).toBeGreaterThan(0);
+		expect(scan.steps).toBeLessThanOrEqual(3 * text.length);
 	});
 });

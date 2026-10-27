@@ -1,10 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import {
-	REPLY_LANGUAGE_NAMES,
-	type ReplyLanguageReading,
-	readReplyLanguage,
-	readReplyLanguageRequest,
-} from "./reply-language-reading.ts";
+import { type ReplyLanguageReading, readReplyLanguage, SCRIPT_LANGUAGE_NAMES } from "./reply-language-reading.ts";
+import { REQUESTABLE_LANGUAGE_NAMES, readReplyLanguageRequest } from "./reply-language-request.ts";
 import { followerMessage, toolResultUserWords } from "./tool-result-user-words.ts";
 
 /**
@@ -27,6 +23,9 @@ export interface ReplyLanguage {
 	readonly language: string;
 	readonly requested: boolean;
 }
+
+/** Every language name a note can carry; a note never carries any other text. */
+const REPLY_LANGUAGE_NAMES = [...new Set([...SCRIPT_LANGUAGE_NAMES, ...REQUESTABLE_LANGUAGE_NAMES])];
 
 const WRITTEN = "the language of the user's messages";
 const REQUESTED = "the user asked for it";
@@ -64,20 +63,42 @@ function textOf(content: unknown): string {
 }
 
 /**
- * Each conversion re-reads the whole history, so a message's reading is kept with the message and
- * recomputed only when its content object changes.
+ * The shape of a message's content: its block count and text lengths. No caller edits user content
+ * in place today (context edits and the environment fold build new messages), but a context hook
+ * could; an edit that changes the shape then invalidates the cached reading. Computing it touches
+ * each block once, never the text.
  */
-const readings = new WeakMap<object, { readonly content: unknown; readonly reading: UserMessageReading }>();
+function contentShape(content: unknown): string {
+	if (typeof content === "string") return `s${content.length}`;
+	if (!Array.isArray(content)) return "-";
+	return content
+		.map((block: unknown) =>
+			typeof block === "object" && block !== null && "text" in block && typeof block.text === "string"
+				? block.text.length
+				: "x",
+		)
+		.join(",");
+}
+
+/**
+ * Each conversion re-reads the whole history, so a message's reading is kept with the message and
+ * recomputed only when its content object or the content's shape changes.
+ */
+const readings = new WeakMap<
+	object,
+	{ readonly content: unknown; readonly shape: string; readonly reading: UserMessageReading }
+>();
 
 function readUserMessage(message: { readonly content: unknown }): UserMessageReading {
+	const shape = contentShape(message.content);
 	const cached = readings.get(message);
-	if (cached && cached.content === message.content) return cached.reading;
+	if (cached && cached.content === message.content && cached.shape === shape) return cached.reading;
 	const text = textOf(message.content);
 	const noted = NOTED_LANGUAGE.exec(text);
 	const reading: UserMessageReading = noted
 		? { noted: { language: noted[1] ?? "", requested: noted[2] === REQUESTED }, reading: { kind: "none" } }
 		: { request: readReplyLanguageRequest(text), reading: readReplyLanguage(text) };
-	readings.set(message, { content: message.content, reading });
+	readings.set(message, { content: message.content, shape, reading });
 	return reading;
 }
 

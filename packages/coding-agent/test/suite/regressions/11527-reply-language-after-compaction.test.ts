@@ -1,12 +1,18 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Message, ToolResultMessage } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { convertToLlm } from "../../../src/core/messages.ts";
+import { readReplyLanguage } from "../../../src/core/reply-language-reading.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { REPLY_LANGUAGE_NOTE_MIN_CHARS, replyLanguageNote } from "../../../src/core/user-language.ts";
 import { assistantMsg, userMsg } from "../../utilities.ts";
 
 // omo#11527: a Korean-speaking user got English replies after compactions and tool-heavy turns.
+
+vi.mock("../../../src/core/reply-language-reading.ts", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../../src/core/reply-language-reading.ts")>();
+	return { ...actual, readReplyLanguage: vi.fn(actual.readReplyLanguage) };
+});
 
 const LONG_ENGLISH_OUTPUT = "The build finished and every check reported green on this head. ".repeat(
 	Math.ceil(REPLY_LANGUAGE_NOTE_MIN_CHARS / 60),
@@ -165,24 +171,28 @@ describe("omo#11527 reply language after compaction and long tool output", () =>
 		expect(roles.some((role, index) => role === "user" && roles[index + 1] === "user")).toBe(false);
 	});
 
-	it("re-reads a large pasted message quickly on every conversion", () => {
-		// given a session whose first message is a 120 KB TypeScript paste
-		const paste = Array.from(
-			{ length: 2600 },
-			(_, index) => `const v${index}: Map<K, Array<V${index}>> = f<T>(a < b);`,
-		);
-		const messages: AgentMessage[] = [
-			userMsg(`이거 봐줘\n${paste.join("\n")}`),
-			toolCall("call-1"),
-			toolResult("call-1", LONG_ENGLISH_OUTPUT),
-		];
-		convertToLlm(messages);
-		const started = performance.now();
+	it("reads each user message once across conversions, and again after an in-place edit", () => {
+		// given
+		const message = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: "빌드 로그 확인해줘" }],
+			timestamp: 1,
+		};
+		const messages: AgentMessage[] = [message, toolCall("call-1"), toolResult("call-1", LONG_ENGLISH_OUTPUT)];
+		vi.mocked(readReplyLanguage).mockClear();
 
-		// when
-		for (let round = 0; round < 20; round++) convertToLlm(messages);
+		// when the history is converted three times
+		for (let round = 0; round < 3; round++) convertToLlm(messages);
 
-		// then each conversion reuses the message's reading
-		expect(performance.now() - started).toBeLessThan(150);
+		// then
+		expect(readReplyLanguage).toHaveBeenCalledTimes(1);
+		expect(notes(convertToLlm(messages))).toEqual([KOREAN_NOTE]);
+
+		// when a hook edits the same content array in place
+		message.content.push({ type: "text", text: "reply in English" });
+
+		// then the reading is redone and follows the edit
+		expect(notes(convertToLlm(messages))).toEqual([ENGLISH_REQUESTED_NOTE]);
+		expect(readReplyLanguage).toHaveBeenCalledTimes(2);
 	});
 });
