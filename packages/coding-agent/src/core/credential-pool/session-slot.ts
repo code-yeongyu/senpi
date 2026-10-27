@@ -1,5 +1,5 @@
 import { applyAccountOrder, rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
-import { isAvailable } from "./failover.ts";
+import { attemptCandidates, noSlotsError } from "./failover.ts";
 import type { RotationSlot } from "./rotation-slots.ts";
 
 export type SlotPickPolicy = {
@@ -24,14 +24,17 @@ export function pickRotationSlot<TSlot extends RotationSlot>(
 /**
  * The account a session's next streamed request starts on, for callers that send a resolved key
  * outside the rotation stream (compaction, /btw, look-at, cache keepalive). It is the stream's own
- * pick over the accounts the pool has not blocked; when every account is blocked the same pick runs
- * over all of them, so the caller reports that account's failure instead of using another account.
+ * first pick: the same candidates (unblocked accounts, else the rate-limited one due back first) and
+ * the same order. When the stream would refuse, this throws the stream's refusal, so an auxiliary
+ * request never authenticates as an account the stream would not use.
  */
-export function selectSessionSlot(
-	slots: readonly RotationSlot[],
+export function selectSessionSlot<TSlot extends RotationSlot>(
+	slots: readonly TSlot[],
 	policy: SlotPickPolicy,
 	now: number,
-): RotationSlot | undefined {
-	const available = slots.filter((slot) => isAvailable(slot, now));
-	return pickRotationSlot(available.length > 0 ? available : slots, policy);
+): TSlot | undefined {
+	if (slots.length === 0) return undefined;
+	const candidates = attemptCandidates(slots, new Set(), now);
+	if (candidates.length === 0) throw noSlotsError(slots, now);
+	return pickRotationSlot(candidates, policy);
 }

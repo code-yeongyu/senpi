@@ -870,11 +870,11 @@ export class ModelRuntime implements Models {
 		model: Model<Api>,
 		sessionId: string,
 	): Promise<{ apiKey?: string; slotName?: string } | undefined> {
-		// couldRotateCredentials' policy gates, without its snapshot fast path: a runtime that has not
-		// refreshed yet holds no snapshot, and these callers are not on the latency-sensitive path.
-		if (this.credentials.hasRuntimeApiKey(model.provider)) return undefined;
-		if (this.config.getProvider(model.provider)?.credentials?.rotation === false) return undefined;
-		if (this.ownsAccountSelection(model.provider)) return undefined;
+		// The stream's own synchronous admission check, so a provider the stream would not rotate costs
+		// nothing beyond getAuth. Remote compaction's before_provider_request hook calls this on every
+		// request to such a model; there a pooled provider pays one extra credential read and two slot
+		// listings (each reads the pool's health state) before getAuth.
+		if (!this.couldRotateCredentials(model, undefined)) return undefined;
 		const sources = await this.credentialRotationSources(model, undefined);
 		if (!sources) return undefined;
 		const { rotation } = await this.loadCredentialPool();
