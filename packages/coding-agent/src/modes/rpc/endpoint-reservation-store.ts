@@ -206,13 +206,17 @@ export class EndpointReservationStore {
 	}
 
 	/**
-	 * Creates a pending generation that expects exactly `expectedRoles` (design 4.2a: a launcher that admits a supervisor
-	 * expects both hops; a self-reserving direct supervisor or standalone host expects only its child's role). The caller
-	 * holds the endpoint lock.
+	 * Creates a pending generation that expects exactly `expectedRoles` (design 4.2a, the minimum record). The ensure path,
+	 * which admits a supervisor that admits a host, expects both; a self-reserving direct supervisor expects only its host
+	 * child; a standalone public host, reserving itself with no child hop, expects (and self-offers) only "host". Unknown
+	 * or absent roles are refused. The caller holds the endpoint lock.
 	 */
 	reserve(endpoint: string, owner: string, expectedRoles: readonly ReservationRole[]): string {
 		const roles = [...new Set(expectedRoles)].sort();
 		if (roles.length === 0) throw new EndpointReservationError("role_not_expected", "a reservation expects no role");
+		const unknown = roles.filter((role) => role !== "supervisor" && role !== "host");
+		if (unknown.length > 0)
+			throw new EndpointReservationError("role_not_expected", `unknown role ${unknown.join(",")}`);
 		const generation = randomBytes(16).toString("hex");
 		this.#transaction(() => {
 			this.#database
@@ -228,7 +232,7 @@ export class EndpointReservationStore {
 	offer(generation: string, role: ReservationRole, issuer: string): void {
 		this.#transaction(() => {
 			this.#pending(generation);
-			if (!this.#expectedRoles(generation).includes(role)) {
+			if (!this.#expectedRoles(generation)?.includes(role)) {
 				throw new EndpointReservationError("role_not_expected", `${role} in ${generation}`);
 			}
 			if (this.#role(generation, role)) {
@@ -333,7 +337,7 @@ export class EndpointReservationStore {
 		});
 	}
 
-	/** Commits `serving` once every offered role has been granted. */
+	/** Commits `serving` only when the generation's expected roles are known and non-empty, each is granted, and every offered row is granted. */
 	markServing(generation: string): void {
 		this.#transaction(() => {
 			this.#pending(generation);
@@ -345,7 +349,12 @@ export class EndpointReservationStore {
 			// listener, while a self-reserving launcher that expects only its child's role commits once that one is granted.
 			const granted = new Set(rows.filter(({ status }) => status === "granted").map(({ role }) => role));
 			const expected = this.#expectedRoles(generation);
-			if (rows.some(({ status }) => status !== "granted") || expected.some((role) => !granted.has(role))) {
+			// An empty or unreadable expected set never vouches for serving: fail closed.
+			if (
+				expected === undefined ||
+				rows.some(({ status }) => status !== "granted") ||
+				expected.some((role) => !granted.has(role))
+			) {
 				throw new EndpointReservationError("roles_not_granted", generation);
 			}
 			this.#database.prepare("UPDATE reservations SET state = 'serving' WHERE generation = ?").run(generation);
@@ -375,13 +384,14 @@ export class EndpointReservationStore {
 		return row && { role: locator.role, status: row.status, issuer: row.issuer, participant: row.participant };
 	}
 
-	#expectedRoles(generation: string): ReservationRole[] {
+	/** The recorded expected roles, or `undefined` when the record is absent, empty or names a role this build does not know. */
+	#expectedRoles(generation: string): ReservationRole[] | undefined {
 		const row = this.#database
 			.prepare("SELECT expected_roles FROM reservations WHERE generation = ?")
 			.get(generation) as { expected_roles: string } | undefined;
-		return (row?.expected_roles.split(",") ?? []).filter(
-			(role): role is ReservationRole => role === "supervisor" || role === "host",
-		);
+		const tokens = row?.expected_roles.split(",") ?? [];
+		const roles = tokens.filter((role): role is ReservationRole => role === "supervisor" || role === "host");
+		return roles.length > 0 && roles.length === tokens.length ? roles : undefined;
 	}
 
 	#transaction<T>(run: () => T): T {

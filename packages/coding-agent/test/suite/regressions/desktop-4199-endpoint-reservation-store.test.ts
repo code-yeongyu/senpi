@@ -209,6 +209,21 @@ describe("endpoint reservation store", () => {
 		}
 	});
 
+	it("refuses a reservation that names a role it does not know", async () => {
+		const { store: s } = await store();
+		const bogus = ["bogus"] as unknown as ("supervisor" | "host")[];
+		expect(rejection(() => s.reserve(ENDPOINT, OWNER, bogus))).toBe("role_not_expected");
+	});
+
+	it("never commits serving from an expected set it cannot read", async () => {
+		const { path, store: s } = await store();
+		const generation = s.reserve(ENDPOINT, OWNER, ["host"]);
+		const raw = new DatabaseSync(path);
+		raw.prepare("UPDATE reservations SET expected_roles = 'bogus' WHERE generation = ?").run(generation);
+		raw.close();
+		expect(rejection(() => s.markServing(generation))).toBe("roles_not_granted");
+	});
+
 	it("bumps the revision on every transition", async () => {
 		const { store: s, generation, locator, nonce } = await offered();
 		const before = s.reservation(generation).revision;
