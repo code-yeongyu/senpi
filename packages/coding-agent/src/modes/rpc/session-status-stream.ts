@@ -219,9 +219,17 @@ export class SessionStatusStream {
 		this.lastChanges.delete(sessionId);
 	}
 
-	mirrorTargets(sessionId: string, recordType: string): readonly string[] {
-		const subscriptions = [...this.pendings.values(), ...this.subscriptions.values()].filter((subscription) =>
-			mirrorsRecord(subscription.options.mirror, recordType),
+	dialogTargets(sessionId: string): readonly string[] {
+		return this.mirrorTargets(sessionId, "ui_request_pending", true);
+	}
+
+	mirrorTargets(sessionId: string, recordType: string, dialogs = false): readonly string[] {
+		const subscriptions = [...this.pendings.values(), ...this.subscriptions.values()].filter(
+			(subscription) =>
+				(dialogs ? subscription.options.dialogs === true : true) &&
+				(recordType === "snapshot_marker" || dialogs
+					? subscription.options.mirror.kind !== "none"
+					: mirrorsRecord(subscription.options.mirror, recordType)),
 		);
 		if (subscriptions.length === 0) return [];
 		const entry = this.source?.entryView(sessionId) ?? this.lastViews.get(sessionId)?.entry;

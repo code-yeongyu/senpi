@@ -14,6 +14,7 @@
  *     live_generation   a generation pidfile (any, the pointer's included) names a live process
  *     live_claim        a session-path claim in `reservations/` has a live owner
  *     reachable         the socket (or a `.next-*` successor bind) did not refuse the connection
+ *     credential_unavailable  win32: the socket secret cannot be read, so its pipe cannot be proven silent
  *     locked            the ensure lock was not free within 2 s
  *     legacy_layout     the agent dir predates layout 2; its flat files belong to a legacy host
  *     unknown_identity  nothing in the directory names its socket, so its lock cannot be taken
@@ -136,7 +137,11 @@ export async function gcEndpoint(
 	try {
 		await options._test?.afterLockAcquired?.(socket);
 		const evidence = await endpointInUse(hostDaemonDirectoryPaths(dir), socket);
-		if (evidence.inUse === "live_claim" || (evidence.inUse !== undefined && options.staleEngine === undefined)) {
+		if (
+			evidence.inUse === "live_claim" ||
+			evidence.inUse === "credential_unavailable" ||
+			(evidence.inUse !== undefined && options.staleEngine === undefined)
+		) {
 			return { removed: false, reason: evidence.inUse };
 		}
 		if (evidence.inUse !== undefined)

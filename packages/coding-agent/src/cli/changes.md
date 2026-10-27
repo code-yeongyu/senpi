@@ -1,3 +1,21 @@
+## 2026-10-25 - Public host commands accept presenter enforcement (senpi#4247)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command-args.ts` and `packages/coding-agent/src/cli/host-command.ts`: accept and forward `--mcp-presenter-enforcement` only for ensure and handoff, separately from the launch specification.
+
+### Why
+
+- The public deployment path could pass fd 4 but not the enforcement option required to enroll.
+
+### Why an extension could not handle it
+
+- Host launch arguments are parsed before any session or extension exists.
+
+### Expected merge conflict zones
+
+- The host argument parser, help text and request options.
+
 ## 2026-10-25 - Private presenter bootstrap launch options (#4197)
 
 ### What changed

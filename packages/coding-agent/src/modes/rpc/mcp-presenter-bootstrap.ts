@@ -12,6 +12,10 @@ export function presenterBootstrapStream(fd: number): Duplex | undefined {
 	try {
 		const stat = fstatSync(fd);
 		if (!stat.isSocket() && !stat.isFIFO()) return undefined;
+		// Node's fs read blocks a worker until peer EOF, even after destroy(), and process.exit()
+		// joins that worker. A socket handle can cancel the pending read after enrollment.
+		// Bun does not support inherited net.Socket fds; it retains the file-stream adapter below.
+		if (stat.isSocket() && !process.versions.bun) return new Socket({ fd, readable: true, writable: true });
 	} catch {
 		// Bootstrap is optional authority, never a reason to terminate the shared host.
 		return undefined;

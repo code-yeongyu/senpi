@@ -1,3 +1,25 @@
+## 2026-10-26 - The faux provider captures block seeds at emission (senpi#4285, part of #4272)
+
+### What changed
+
+- `packages/ai/src/providers/faux.ts`: both the streamed and the deferred-fetch stream enable capture; each tool
+  argument delta carries `parsedThrough: 0`, because faux never parses its generated chunks and only the end installs
+  the arguments.
+
+### Why
+
+- Faux backs the unit tests and real-CLI QA; its streams must carry the same capture facts as provider streams so
+  later stages can be exercised end to end (R3.C6.2).
+
+### Why an extension could not handle it
+
+- Capture has to run inside the stream's `push`, which only the provider controls.
+
+### Expected merge conflict zones
+
+- LOW: the two `createAssistantMessageEventStream()` sites in `createFauxCore` and the tool delta push in
+  `streamWithDeltas`.
+
 ## 2026-10-24 - Kimi K3.1 Pro rows in the kimi-coding shard (senpi#4183)
 
 ### What changed

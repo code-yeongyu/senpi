@@ -14,6 +14,8 @@ export type HostUpgradePolicy = "never" | "if-engine-differs";
 
 export interface EnsureHostOptions {
 	readonly presenterBootstrap?: Duplex;
+	/** Deployment opt-in, never a project setting or proof of enrollment. Defaults off for a new host. */
+	readonly mcpPresenterEnforcement?: boolean;
 	readonly socket: string;
 	readonly agentDir?: string;
 	readonly keyRoot?: string;
@@ -49,6 +51,8 @@ export interface EnsureHostOptions {
 		readonly beforeReadinessTeardown?: () => Promise<void>;
 		/** Overrides the process-identity probe so a test can force its failure. */
 		readonly readProcessStartTime?: (pid: number) => Promise<string | undefined>;
+		/** The platform whose public-secret rules admission applies; production uses `process.platform`. */
+		readonly platform?: NodeJS.Platform;
 	};
 }
 

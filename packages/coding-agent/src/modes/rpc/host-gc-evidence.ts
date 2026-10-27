@@ -22,7 +22,7 @@ import { claimOwnerIsLive, readSessionPathClaims } from "./host-reservations.ts"
 import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { readSocketSecret, resolveSocketTransportAddress, socketSecretPath } from "./socket-transport.ts";
 
-export type EndpointInUse = "live_generation" | "live_claim" | "reachable";
+export type EndpointInUse = "live_generation" | "live_claim" | "reachable" | "credential_unavailable";
 
 export type SocketSilence = "socket_refused" | "socket_absent";
 
@@ -44,11 +44,14 @@ export async function endpointInUse(
 		if (await claimOwnerIsLive(claim.owner)) return { inUse: "live_claim" };
 	}
 	const silence = await socketSilence(socket);
+	if (silence === "credential_unavailable") return { inUse: silence };
 	if (silence === undefined) return { inUse: "reachable" };
 	// A successor mid-handoff listens on `<socket>.next-<gen>` before it registers anywhere.
 	const successors = (await socketSiblings(socket)).filter((name) => name.startsWith(`${basename(socket)}.next-`));
 	for (const successor of successors) {
-		if ((await socketSilence(join(dirname(socket), successor))) === undefined) return { inUse: "reachable" };
+		const successorSilence = await socketSilence(join(dirname(socket), successor));
+		if (successorSilence === "credential_unavailable") return { inUse: successorSilence };
+		if (successorSilence === undefined) return { inUse: "reachable" };
 	}
 	return { inUse: undefined, silence };
 }
@@ -101,12 +104,13 @@ async function recordIsLive(record: DaemonPidFile): Promise<boolean> {
  * ECONNREFUSED counts only when the entry IS a socket: Linux refuses a connect to a regular file the
  * same way it refuses a dead socket, and a file named where the socket should be is not ours to unlink.
  */
-async function socketSilence(socket: string): Promise<SocketSilence | undefined> {
+async function socketSilence(socket: string): Promise<SocketSilence | "credential_unavailable" | undefined> {
 	let secret: Buffer | undefined;
 	if (process.platform === "win32") {
-		// The pipe name includes the secret; without one no client can reach the pipe either.
+		// The pipe name includes the secret, so without a readable one nothing proves the pipe silent: a
+		// live host may still serve it under the key whose file was lost (sisyphuslabs/omo-desktop-app#4199).
 		secret = await readSocketSecret(socketSecretPath(socket)).catch(() => undefined);
-		if (secret === undefined) return "socket_absent";
+		if (secret === undefined) return "credential_unavailable";
 	}
 	return new Promise((resolveProbe) => {
 		const connection = createConnection(resolveSocketTransportAddress(socket, process.platform, secret));

@@ -18,6 +18,7 @@ import {
 } from "./host-daemon-registration.ts";
 import { claimHostOwner } from "./host-daemon-state.ts";
 import { HostEnsureRefusedError } from "./host-decision.ts";
+import { admitPublicSecretMutation } from "./host-ensure-admission.ts";
 import { decideEnsureAction as decide } from "./host-ensure-client.ts";
 import { refuseIfForeignHeld, refuseIfStalled, unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
@@ -109,9 +110,15 @@ async function ensureHostLocked(
 	options: EnsureHostOptions,
 	stopDeadline = Date.now() + Math.min(options.stoppingTimeoutMs ?? STOP_WAIT_BUDGET_MS, STOP_WAIT_BUDGET_MS),
 ): Promise<EnsuredHost> {
+	const testOptions = options._test;
+	// Admission before mutation (#4199 design 4.2a): on a Windows public endpoint an unusable secret makes every probe of a
+	// live owner fail, so nothing below may read that failure as absence and stop, clear or re-provision. It runs first,
+	// before even the `endpoint.json` repair: no owner-evidence repair precedes admission.
+	if ((testOptions?.platform ?? process.platform) === "win32") {
+		await admitPublicSecretMutation(paths, socket, testOptions?.readProcessStartTime);
+	}
 	// Under the lock, so a torn or foreign `endpoint.json` is repaired rather than left unaddressable.
 	await ensureEndpointIdentity(paths, socket, { repair: true });
-	const testOptions = options._test;
 	const registered = await readHostRegistration(paths);
 	// A record naming ANOTHER endpoint is not about this ensure's host. The per-socket directory
 	// makes that structural, and the field stays as the second guard for a directory that was
@@ -262,6 +269,7 @@ async function upgradeGeneration(
 		agentDir: options.agentDir ?? getAgentDir(),
 		hostArgs: options.hostArgs ?? [],
 		presenterBootstrap: options.presenterBootstrap,
+		mcpPresenterEnforcement: options.mcpPresenterEnforcement,
 		...(options.env ? { env: options.env } : {}),
 		...(options.policy ? { policy: options.policy } : {}),
 		_test: {

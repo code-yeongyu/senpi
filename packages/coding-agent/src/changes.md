@@ -1,3 +1,21 @@
+## 2026-10-25 - Keep presenter bootstrap through CLI re-execution (senpi#4247)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: explicitly preserves the live reserved presenter descriptor through runtime selection and isolated CLI re-execution, keeping the lifetime descriptor separate.
+
+### Why
+
+- `packages/coding-agent/src/cli.ts`: inheriting only standard I/O dropped fd 4 before the public host command could enroll its caller.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli.ts`: runtime re-execution precedes extension loading and owns descriptor inheritance.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli.ts`: the runtime-selection and isolated-process spawn options.
+
 ## 2026-10-25 - Host-owned MCP presenter deployment options (#4197)
 
 ### What changed

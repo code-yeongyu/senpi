@@ -1334,7 +1334,8 @@ which prints the bare socket path).
   `reason` is `socket_refused` or `socket_absent`. A sibling that is a directory is not unlinked: it stays and
   the removed entry lists it as `skipped: [{ path, type: "directory" }]`. Because the directory goes last, a
   removal that fails part-way leaves the endpoint listed for the next gc. Everything else is kept with its
-  reason: `live_generation`, `live_claim`, `reachable`, `locked` (an ensure held the lock for 2 s),
+  reason: `live_generation`, `live_claim`, `reachable`, `credential_unavailable` (Windows: the socket secret
+  is missing or invalid, so the pipe it names cannot be proven silent), `locked` (an ensure held the lock for 2 s),
   `legacy_layout` (a flat directory without `layout.json` - a legacy host's, never touched), `unknown_identity`
   (nothing names the socket, so its lock cannot be taken), or `failed` (reading the evidence or removing threw;
   the entry carries `error`) - and a `failed` endpoint never stops gc from going on to the others.
@@ -1644,6 +1645,7 @@ A multi-session host advertising the capability `session_status` pushes one `ses
 - `include_context`: carry each session's published `context` on its records; default `false`.
 - `mirror`: `"none"` (default), `"all"` or an array of record types (`["message_update", "tool_execution_start"]`). The matched sessions' records of those types are also delivered to this connection. Mirroring is an explicit opt-in open to every subscriber of the host (the socket is per user, mode 0600): it is not an attachment and does not keep a session alive. Worker content is mirrored only with `include_workers: true`.
 - `effects`: also deliver `effect_status` receipts of matched sessions; default `true` for `childrenOf`, `false` otherwise. Each `effect_status` is enqueued after the record that caused the transition and shares the subscription's `seq`.
+- `dialogs`: with capability `dialog_observer`, also deliver the `ui_request_pending` and `ui_request_settled` records of matched sessions; default `false`. It takes effect only together with a `mirror` selection, stays observing, and grants no answering authority (see "UI-answer receipts and dialog observation").
 
 Response:
 
@@ -3424,6 +3426,14 @@ If an extension cancelled:
 ```
 
 ### State
+
+#### get_snapshot
+
+Atomic snapshot cursor (capability `snapshot_cursor`). Subscribe with `mirror` before taking a snapshot to cut the live record stream at a source-issued cursor rather than at response arrival. Terminal control endpoints support the same command.
+
+`get_snapshot {sessionId, tail?, maxBytes?, observe?: true}` returns `{state, entries, next_before, history_truncated, markerId}`. `state` uses the existing `get_state` projection, including `pendingDialogs` and `pendingQuestions`. `entries` is the newest tail, in chronological order. `tail` defaults to 100 and accepts non-negative integers; `maxBytes` defaults to 8 MiB and accepts positive integers, capped at 48 MiB. The byte bound applies to serialized history entries. An entry that does not fit ends the tail; it is never silently skipped. `history_truncated` reports omitted history; `next_before` is the oldest returned entry's id when older history remains, otherwise null (also null when no entry fits).
+
+State capture, history capture, and enqueueing `{type: "snapshot_marker", sessionId, markerId}` are one synchronous operation. The marker goes only to the requesting connection, only when a matching subscription has `mirror` enabled (including a list of selected record types). Other subscribers never receive that marker. Apply the snapshot and then records after its marker; a post-marker record can arrive **before** the correlated response. A reader without a mirrored subscription receives the snapshot response but no marker record. `observe: true` does not attach or refresh activity.
 
 #### get_state
 
@@ -5490,6 +5500,22 @@ With enforcement, only the authority's winning whole-form action admits once.
 The host advertises `mcp_form_presenter_v1` only when enforcement is enabled;
 the capability reports protocol support, not authority to present or answer a form.
 
+The public `host ensure` and `host handoff` commands accept the same deployment option,
+separately from `--launch-spec`. Add `--mcp-presenter-fd 4` with a live inherited duplex
+channel to enroll the launch owner of a new host. The runtime-selecting CLI re-exec,
+supervisor and host child preserve that channel. The option alone enables enforcement,
+not a presenter; fd 4 alone does not enable enforcement.
+
+An enforcing predecessor keeps enforcement in its successor, including when an older
+handoff caller omits the option. Conditional `handoff --when idle` carries the non-secret
+`mcp_presenter_enforcement` boolean in `begin_handover`, independently of the launch
+specification and environment. It uses only the existing authenticated owner's channel
+for fresh successor enrollment; the CLI cannot enroll itself into the predecessor.
+Reuse and already-current handover answers report the serving host's actual capabilities.
+Neither a successful CLI exit nor an equal `runtimeBuildId` proves enforcement or
+enrollment. A deployment requesting enforcement against an unenforced existing host must
+coordinate a replacement, not force-restart another owner's busy host.
+
 The native launch owner enrolls an Ed25519 public key through an inherited private
 bootstrap channel. Descriptor 4 is reserved for this channel; descriptor 3 remains
 the separate owner-lifetime channel. Enrollment and management proofs sign the
@@ -5900,6 +5926,25 @@ Dismiss any dialog method. The extension receives `undefined` (for select/input/
 ```json
 {"type": "extension_ui_response", "id": "uuid-3", "cancelled": true}
 ```
+
+### UI-answer receipts and dialog observation
+
+With capability `ui_answer_ledger`, `extension_ui_response` accepts an optional `answerId` string of 1-256 characters. The response preserves the frame's correlation `id` and adds `disposition`:
+
+- `applied`: success; the pending request was settled once.
+- `replay`: success; this `(uiRequestId, answerId)` pair was already applied, with no repeated delivery.
+- `already_answered`: failure; the request was already settled with a different answer id.
+- `unknown`: failure; no pending request or receipt exists (`unknown_extension_ui_request`).
+
+A malformed answer (for example `invalid_answer_id` or `question_incomplete`) is refused without a `disposition` and leaves its request pending. A single-session stdio connection still ignores an unnamed response that matches no request; a named response always gets a reply.
+
+`get_state.answeredUiRequests` contains the latest 64 receipts, oldest first, as `{uiRequestId, answerId?}`. Receipts are session-local and memory-only, retained for that session's life in the host generation. The ledger evicts FIFO beyond 1,024 requests; replay does not extend retention. Omitting `answerId` keeps the short-form answer contract but provides no named replay identity. A restart, unloaded session, or evicted receipt is not proof of non-execution.
+
+With capability `dialog_observer`, `subscribe_sessions` accepts `dialogs?: boolean` (default false). A matching `dialogs: true` subscription must also enable `mirror`. It receives these new records on its connection FIFO:
+
+`{type: "ui_request_pending", sessionId, uiRequestId, method, request}` when a dialog or question is registered, with its original request frame; `{type: "ui_request_settled", sessionId, uiRequestId, disposition: "answered" | "cancelled"}` when it settles. Timeout and lifecycle teardown count as cancellation. The feed survives the command connection's departure while the session remains loaded. A dialog already present in the snapshot is not emitted again.
+
+The subscription remains observing: it creates no attachment and carries no correlated `response` records. The original select, confirm, input, and editor `extension_ui_request` records remain targeted, not mirrored. Use a separate attached command connection for answers; dialog observation grants no answering authority.
 
 ## Error Handling
 

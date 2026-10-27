@@ -101,7 +101,7 @@ import {
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
-import { settleExtensionUiResponse } from "./extension-ui-response.ts";
+import { answeredUiRequestId, settleExtensionUiResponse } from "./extension-ui-response.ts";
 import { answerGetEntries } from "./get-entries-command.ts";
 import { runHoldInput } from "./held-input-commands.ts";
 import { HostSessionControl } from "./host-session-control.ts";
@@ -116,6 +116,9 @@ import {
 	sessionRetryFallbackError,
 } from "./rpc-input-validation.ts";
 import { buildRpcSessionState } from "./rpc-session-state.ts";
+import { getSnapshot } from "./get-snapshot.ts";
+import type { UiRequestChange } from "./snapshot-types.ts";
+import { sessionUiAnswerLedger } from "./ui-answer-ledger.ts";
 import type {
 	RpcAuthProvider,
 	RpcCommand,
@@ -204,6 +207,8 @@ export interface RpcConnectionOptions {
  */
 export interface RpcConnectionSink {
 	writeRaw(chunk: string): void;
+	/** Shared bindings accept correlated records synchronously, before JSONL buffering. */
+	writeRecord?(record: object): void;
 	waitForBackpressure(): Promise<void>;
 	/** Tears the transport down once its event queue can no longer deliver (overflow, write failure). */
 	close?(): void;
@@ -378,7 +383,9 @@ export function createRpcConnectionHandler(
 	let loadedSurfacesDigest: string | undefined;
 	let rpcCommandsDigest: string | undefined;
 	let suppressLoadedSurfaceEvents = false;
-	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
+	const eventOutput = sink.writeRecord
+		? undefined
+		: createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
 
 	const effectContext = (): EffectCommandContext => ({
 		session,
@@ -390,11 +397,15 @@ export function createRpcConnectionHandler(
 		routingSessionId === undefined ? value : { ...value, sessionId: routingSessionId };
 
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
-		eventOutput.writeImmediate(tagSessionRecord(obj));
+		const record = tagSessionRecord(obj);
+		if (sink.writeRecord) sink.writeRecord(record);
+		else eventOutput?.writeImmediate(record);
 	};
 
 	const outputEvent = (event: object) => {
-		eventOutput.enqueueEvent(tagSessionRecord(event));
+		const record = tagSessionRecord(event);
+		if (sink.writeRecord) sink.writeRecord(record);
+		else eventOutput?.enqueueEvent(record);
 	};
 
 	const currentLoadedSurfaces = (): {
@@ -462,7 +473,7 @@ export function createRpcConnectionHandler(
 	});
 
 	const waitForRpcBackpressure = async (): Promise<void> => {
-		eventOutput.flushEvents();
+		eventOutput?.flushEvents();
 		await sink.waitForBackpressure();
 	};
 
@@ -496,10 +507,14 @@ export function createRpcConnectionHandler(
 	};
 
 	// Pending extension UI requests waiting for response
-	const pendingExtensionRequests = new SessionExtensionUiRequests(() => session.refreshLifecycle());
+	const uiRequestChanged = (change?: UiRequestChange): void => {
+		session.refreshLifecycle();
+		if (change && routingSessionId !== undefined) output(change);
+	};
+	const pendingExtensionRequests = new SessionExtensionUiRequests(uiRequestChanged);
 	const grantRequests = new Map<string, string | undefined>();
 	sessionDialogRequests.set(session, pendingExtensionRequests);
-	const questions = new ConnectionQuestionBridge(output, () => session.refreshLifecycle());
+	const questions = new ConnectionQuestionBridge(output, uiRequestChanged);
 
 	let shutdownRequested = false;
 
@@ -1133,6 +1148,8 @@ export function createRpcConnectionHandler(
 						capabilities: [
 							...new Set([
 								"multi_session",
+								"snapshot_cursor",
+								"ui_answer_ledger",
 								"session_lifecycle",
 								AUTO_TITLE_SESSIONS_CAPABILITY,
 								MEDIA_PLACEHOLDERS_CAPABILITY,
@@ -1398,6 +1415,18 @@ export function createRpcConnectionHandler(
 				}
 				if (wasGrantCapable !== (clientCapabilities?.includes("grant_select") === true)) refreshGrantPresentation();
 				return success(id, "set_client_info");
+			}
+
+			case "get_snapshot": {
+				const snapshot = getSnapshot(session, command, {
+					lastAbortSource,
+					enqueue: (markerId) => {
+						if (routingSessionId !== undefined) output({ type: "snapshot_marker", markerId });
+					},
+				});
+				return "error" in snapshot
+					? error(id, "get_snapshot", snapshot.error, RPC_ERROR_INVALID_ARGUMENT)
+					: success(id, "get_snapshot", snapshot.data);
 			}
 
 			case "get_state":
@@ -2117,23 +2146,20 @@ export function createRpcConnectionHandler(
 			"type" in parsed &&
 			parsed.type === "extension_ui_response"
 		) {
-			if (
-				!options.workerSecurityBridge &&
-				"id" in parsed &&
-				typeof parsed.id === "string" &&
-				grantRequests.has(parsed.id)
-			) {
+			const requestId = answeredUiRequestId(parsed as RpcExtensionUIResponse);
+			if (!options.workerSecurityBridge && requestId !== undefined && grantRequests.has(requestId)) {
 				const sender = options.clientInfo?.connectionId();
 				const capable =
 					sender === undefined
 						? clientCapabilities?.includes("grant_select") === true
 						: options.clientInfo?.hasCapability?.(sender, "grant_select") === true;
-				if (grantRequests.get(parsed.id) !== sender || !capable) return;
+				if (grantRequests.get(requestId) !== sender || !capable) return;
 			}
 			const reply = settleExtensionUiResponse(parsed as RpcExtensionUIResponse, {
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,
+				ledger: sessionUiAnswerLedger(session),
 				// An answer is a person's input by its entry point, whatever the connection role.
 				beforeAnswer: () => session.admitHumanAnswer(),
 			});
@@ -2175,9 +2201,7 @@ export function createRpcConnectionHandler(
 	// session's handler (it has a routing `sessionId`) does not: the host broadcasts the record once.
 	const stopLimitEvents =
 		options.sessionId === undefined
-			? subscriptionLimits.subscribe((limits) =>
-					eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
-				)
+			? subscriptionLimits.subscribe((limits) => outputEvent({ type: "subscription_limits", ...limits }))
 			: () => {};
 	const dispose = async (disposeOptions: { readonly processExit?: boolean } = {}): Promise<void> => {
 		unbindMcpForms?.();
