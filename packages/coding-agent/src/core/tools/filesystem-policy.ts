@@ -1,6 +1,10 @@
 import { lstat, readlink, realpath } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-import { isBlockingAutomountPath, realpathWithoutOpenStrict } from "../../utils/paths.ts";
+import {
+	isBlockingAutomountPath,
+	realpathWithoutOpenStrict,
+	UnresolvableAutomountPathError,
+} from "../../utils/paths.ts";
 import type { FilesystemPolicy, FilesystemPolicyChecker, FilesystemPolicyDecision } from "../extensions/types.ts";
 import { isMissingPathError, RESOLUTION_TIMED_OUT, withResolutionDeadline } from "./bounded-realpath.ts";
 
@@ -51,8 +55,9 @@ async function canonicalizeByOpening(filePath: string): Promise<string> {
  */
 export async function canonicalizeFilesystemPath(filePath: string): Promise<string> {
 	const absolutePath = resolve(filePath);
-	// A macOS automount trigger blocks in open(2) on this thread, where no deadline can fire.
-	if (isBlockingAutomountPath(absolutePath)) return absolutePath;
+	// A macOS automount trigger blocks in open(2) on this thread, where no deadline can fire, and an
+	// unresolved answer would let a /home alias slip past a containment check, so the path is refused.
+	if (isBlockingAutomountPath(absolutePath)) throw new UnresolvableAutomountPathError(absolutePath);
 	const canonicalPath = await withResolutionDeadline(canonicalizeByOpening(absolutePath));
 	if (canonicalPath !== RESOLUTION_TIMED_OUT) return canonicalPath;
 	return realpathWithoutOpenStrict(absolutePath);

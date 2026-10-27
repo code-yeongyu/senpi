@@ -32,6 +32,23 @@ export interface PathInputOptions {
  */
 const AUTOMOUNT_TRIGGER_ROOT = "/home";
 
+/**
+ * Thrown instead of resolving a macOS automount trigger path. Resolution could block forever, and
+ * answering with the unresolved path would let a `/home` alias of a directory reach a containment
+ * check that the real `/Users` path would have failed, so the path is refused rather than guessed.
+ */
+export class UnresolvableAutomountPathError extends Error {
+	readonly code = "unresolvable_automount_path";
+	readonly path: string;
+	constructor(inputPath: string) {
+		super(
+			`unresolvable_automount_path: '${inputPath}' is under the macOS /home automount trigger, which cannot be resolved without risking an indefinite block; use the path under the real home directory instead`,
+		);
+		this.name = "UnresolvableAutomountPathError";
+		this.path = inputPath;
+	}
+}
+
 export interface AutomountPathOptions {
 	/** Platform to judge against. Defaults to the running platform. */
 	platform?: NodeJS.Platform;
@@ -45,9 +62,13 @@ export interface AutomountPathOptions {
  */
 export function isBlockingAutomountPath(inputPath: string, options?: AutomountPathOptions): boolean {
 	if ((options?.platform ?? process.platform) !== "darwin") return false;
-	if (inputPath !== AUTOMOUNT_TRIGGER_ROOT && !inputPath.startsWith(`${AUTOMOUNT_TRIGGER_ROOT}/`)) return false;
-	const home = options?.homeDir ?? homedir();
-	if (inputPath === home || inputPath.startsWith(home.endsWith("/") ? home : `${home}/`)) return false;
+	// The default macOS filesystem is case-insensitive, so `/Home/x` reaches the same trigger, and an
+	// unnormalized spelling such as `/./home/x` names it too: normalize and case-fold before judging.
+	const normalized = nodeResolvePath(inputPath);
+	const folded = normalized.toLowerCase();
+	if (folded !== AUTOMOUNT_TRIGGER_ROOT && !folded.startsWith(`${AUTOMOUNT_TRIGGER_ROOT}/`)) return false;
+	const home = nodeResolvePath(options?.homeDir ?? homedir()).toLowerCase();
+	if (folded === home || folded.startsWith(home.endsWith("/") ? home : `${home}/`)) return false;
 	return true;
 }
 

@@ -20,9 +20,12 @@ export async function resolveAndContain(input: ResolveAndContainInput): Promise<
 	let canonicalRoot: string;
 	let canonicalPath: string;
 	try {
-		// A macOS automount trigger blocks in open(2) on this thread, where no deadline can fire.
-		canonicalRoot = isBlockingAutomountPath(input.rootDir) ? input.rootDir : await realpath(input.rootDir);
-		canonicalPath = isBlockingAutomountPath(resolvedPath) ? resolvedPath : await realpath(resolvedPath);
+		// A macOS automount trigger blocks in open(2) on this thread, where no deadline can fire, and an
+		// unresolved answer would let a /home alias of a contained directory pass this check, so a path
+		// under the trigger is denied instead of resolved.
+		if (isBlockingAutomountPath(input.rootDir) || isBlockingAutomountPath(resolvedPath)) return null;
+		canonicalRoot = await realpath(input.rootDir);
+		canonicalPath = await realpath(resolvedPath);
 	} catch {
 		return null;
 	}
