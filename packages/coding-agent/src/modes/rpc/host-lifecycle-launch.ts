@@ -23,9 +23,12 @@ import {
 } from "./host-watchdog.ts";
 import type { SocketFileIdentity } from "./socket-ownership.ts";
 import { SOCKET_SECRET_FILE_ENV } from "./socket-transport.ts";
+import type { ReservationLocator } from "./endpoint-reservation-store.ts";
 
 export interface SupervisorLaunch {
 	readonly presenterBootstrapFd?: number;
+	/** The reservation this supervisor must claim before starting; absent for a direct launch (#4199). */
+	readonly reservation?: StoreLocator;
 	readonly socket: string;
 	readonly hostArgs: readonly string[];
 	/** Optional runtime command used by rebranded/bundled callers. */
@@ -52,6 +55,66 @@ export interface SupervisorLaunch {
 export { resolveCliMainPath } from "./host-cli-entry.ts";
 
 /** Hidden internal launch route: wire-invisible, never advertised by the public CLI surface. */
+/** A reservation locator plus the store it names (#4199 design 4.2a); never a nonce or a credential. */
+export interface StoreLocator extends ReservationLocator {
+	readonly storePath: string;
+}
+
+export type LaunchReservationRejection =
+	| "locator_incomplete"
+	| "store_mismatch"
+	| "identity_unverified"
+	| "participant_mismatch"
+	| "generation_cancelled"
+	| "grant_deadline"
+	| "commitment_mismatch"
+	| "claim_deadline";
+
+export class LaunchReservationError extends Error {
+	readonly code = "launch-reservation-rejected";
+	readonly reason: LaunchReservationRejection;
+
+	constructor(reason: LaunchReservationRejection, detail: string) {
+		super(`launch reservation ${reason}: ${detail}`);
+		this.name = "LaunchReservationError";
+		this.reason = reason;
+	}
+}
+
+export const LOCATOR_FLAGS = {
+	storePath: "--reservation-store",
+	endpoint: "--reservation-endpoint",
+	generation: "--reservation-generation",
+	role: "--reservation-role",
+} as const;
+
+/** `undefined` for a launch with no locator (a direct launch); a partial locator is refused, never ignored. */
+export function parseReservationLocatorArgs(argv: readonly string[]): StoreLocator | undefined {
+	const value = (flag: string) => {
+		const index = argv.indexOf(flag);
+		return index >= 0 ? argv[index + 1] : undefined;
+	};
+	const storePath = value(LOCATOR_FLAGS.storePath);
+	const endpoint = value(LOCATOR_FLAGS.endpoint);
+	const generation = value(LOCATOR_FLAGS.generation);
+	const role = value(LOCATOR_FLAGS.role);
+	if (storePath === undefined && endpoint === undefined && generation === undefined && role === undefined) {
+		return undefined;
+	}
+	if (!storePath || !endpoint || !generation || (role !== "supervisor" && role !== "host")) {
+		throw new LaunchReservationError("locator_incomplete", "every reservation flag is required together");
+	}
+	return { storePath, endpoint, generation, role };
+}
+
+/**
+ * The host child's whole startup budget, shared by every wait the supervisor and the host make for each other: the
+ * supervisor's wait for the host's claim and for its listener, and the host's wait for its grant. The claim comes only
+ * after the CLI has loaded, so a shorter claim or grant deadline would fail starts that succeed without a reservation
+ * (measured: a tsx-started host missed a 10 s claim deadline at load average ~210).
+ */
+export const HOST_STARTUP_BUDGET_MS = 30_000;
+
 export const INTERNAL_SUPERVISOR_FLAG = "--internal-rpc-host-supervisor";
 
 /**
@@ -88,6 +151,8 @@ export function findInternalSupervisorArgs(argv: readonly string[]): readonly st
 
 /** `--socket <path>` selects the public socket; every other argument is forwarded to the host CLI. */
 export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch | undefined {
+	const reservation = parseReservationLocatorArgs(argv);
+	const locatorFlags = new Set<string>(Object.values(LOCATOR_FLAGS));
 	const hostArgs: string[] = [];
 	let socket: string | undefined;
 	let childCommand: string | undefined;
@@ -99,6 +164,10 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 	let replaceIdentity: SocketFileIdentity | undefined;
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index];
+		if (locatorFlags.has(arg)) {
+			index++;
+			continue;
+		}
 		if (arg === "--mcp-presenter-fd" && argv[index + 1] === "4") {
 			presenterBootstrapFd = 4;
 			index++;
@@ -154,6 +223,7 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 					bindSocket,
 					replaceIdentity,
 					presenterBootstrapFd,
+					...(reservation ? { reservation } : {}),
 				};
 }
 
@@ -192,10 +262,22 @@ export function resolveHostChildLaunch(
 	internalSocket: string,
 	compiled: boolean = isBunBinary,
 ): { command: string; args: string[] } {
+	const reservationArgs = launch.reservation
+		? [
+				LOCATOR_FLAGS.storePath,
+				launch.reservation.storePath,
+				LOCATOR_FLAGS.endpoint,
+				launch.reservation.endpoint,
+				LOCATOR_FLAGS.generation,
+				launch.reservation.generation,
+				LOCATOR_FLAGS.role,
+				"host",
+			]
+		: [];
 	if (launch.childCommand) {
 		return {
 			command: launch.childCommand,
-			args: [...(launch.childArgs ?? []), "--listen", `unix://${internalSocket}`],
+			args: [...(launch.childArgs ?? []), "--listen", `unix://${internalSocket}`, ...reservationArgs],
 		};
 	}
 	return {
@@ -208,6 +290,7 @@ export function resolveHostChildLaunch(
 			"--listen",
 			`unix://${internalSocket}`,
 			...launch.hostArgs,
+			...reservationArgs,
 		],
 	};
 }

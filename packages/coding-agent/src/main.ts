@@ -122,7 +122,7 @@ import { runPrintMode } from "./modes/print-mode.ts";
 import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
 import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes/rpc/custom-capability.ts";
 import type { PreparableRuntimeFactory, PrepareRuntimeOptions } from "./modes/rpc/host-warm.ts";
-import { dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
+import { admitReservedHostArgs, dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { readPipedStdin } from "./utils/piped-stdin.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -1146,6 +1146,8 @@ export async function main(args: string[], options?: MainOptions) {
 	if (await dispatchInternalSupervisor(args)) {
 		return;
 	}
+	const reservedHost = await admitReservedHostArgs(args);
+	args = reservedHost.args;
 
 	if (process.platform === "win32") {
 		cleanupWindowsSelfUpdateQuarantine(getInstallPackageDir());
@@ -1385,6 +1387,8 @@ export async function main(args: string[], options?: MainOptions) {
 				parsed.provider && parsed.model ? { provider: parsed.provider, modelId: parsed.model } : undefined,
 			initialThinkingLevel: parsed.thinking,
 			listen: parsed.listen,
+			// A reserved host commits its pre-listen intent immediately before its bind (#4199 design 4.2a step 4).
+			...(reservedHost.beforeListen ? { beforeListen: reservedHost.beforeListen } : {}),
 			toolRuntime,
 		});
 	}

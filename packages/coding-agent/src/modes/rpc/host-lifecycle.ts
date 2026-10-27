@@ -2,18 +2,22 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
+import { readProcessStartTime } from "../../utils/process-identity.ts";
 import { HostAdmission } from "./host-admission.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { isCliModuleEntry } from "./host-cli-entry.ts";
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import type { LaunchIdentity } from "./host-launch-reservation.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
 import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
 import {
 	HOST_CHILD_WATCH_FD,
+	HOST_STARTUP_BUDGET_MS,
 	parseSupervisorArgs,
+	type StoreLocator,
 	type SupervisorLaunch,
 	spawnHostChild,
 } from "./host-lifecycle-launch.ts";
@@ -38,6 +42,7 @@ import { startSupervisorTicker } from "./host-lifecycle-ticker.ts";
 import { errorMessage, writeHostReady, writeStderrLine } from "./host-supervisor-log.ts";
 import { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import { PUBLIC_SOCKET_IDENTITY_FILE, statSocketIdentity, writeSocketIdentityFile } from "./socket-ownership.ts";
+import { readSocketSecret, socketSecretPath } from "./socket-transport.ts";
 
 // The exit verdict, the launch surface and the cold-start/idle-exit policy live in their own modules
 // (host-child-exit.ts, host-lifecycle-launch.ts, host-lifecycle-policy.ts); they stay exported from
@@ -91,7 +96,15 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// has no such caller, so a fresh profile would otherwise die reading it (#1370).
 	// It is provisioned BEFORE the internal hop and the child so a provisioning
 	// failure leaves no scratch directory and no host process behind.
-	const publicSecret = process.platform === "win32" ? await ensurePublicSocketSecret(publicSocket) : undefined;
+	// A parent-admitted supervisor claims its reservation and starts only once granted, verifying the parent's secret
+	// read-only; it never provisions it (#4199 design 4.2a). The reservation module loads only on that path, so a direct
+	// launch keeps its startup import graph (test/supervisor-import-graph.test.ts).
+	const admittedLaunch = launch.reservation ? await admitReservedLaunch(launch.reservation, publicSocket) : undefined;
+	const publicSecret = admittedLaunch
+		? admittedLaunch.credential
+		: process.platform === "win32"
+			? await ensurePublicSocketSecret(publicSocket)
+			: undefined;
 	const hop = await prepareInternalHop(paths.dir);
 	const { internal, internalSocket, internalSecret, internalKey } = hop;
 	const state: SupervisorState = {
@@ -113,6 +126,11 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	});
 	const watchers: Array<() => void> = [];
 
+	// The granted supervisor offers the host role before spawning, in the same reservation generation.
+	const grantHost =
+		launch.reservation && admittedLaunch && publicSecret
+			? await offerReservedHost(launch.reservation, publicSecret, admittedLaunch.self)
+			: undefined;
 	const child = spawnHostChild({
 		launch,
 		internalSocket,
@@ -224,13 +242,17 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// default kill, which would leave that directory behind.
 	registerSupervisorSignals(shutdown, () => drain.drain());
 	try {
+		await grantHost?.grant();
 		// Direct supervisor launches predate owner records and may have no generation directory.
 		// Ensured starts create it before spawning and always carry an explicit owner/null record.
 		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
 			await owner.start(launch.ownerFd);
 		}
-		await waitForListener(internalSocket, 30_000, internalSecret, internalKey);
+		await waitForListener(internalSocket, HOST_STARTUP_BUDGET_MS, internalSecret, internalKey);
 		await activity.openObserver();
+		// The pre-listen intent (design 4.2a step 4): one short transaction that revalidates this supervisor's grant
+		// immediately before the public bind, so a cancellation recorded since the grant ends the start here.
+		await admittedLaunch?.commitListenIntent();
 		await prepareSocketPath(bindSocket);
 		await listen(server, bindSocket, publicSecret);
 		await publicEndpoint?.publish();
@@ -257,7 +279,14 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		);
 		watchers.push(await drain.acceptRequests(generation));
 	} catch (cause) {
-		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
+		// A failed start fences the generation it offered the host in (design 4.2a "Crash, cancellation and commit"): a
+		// granted host, or a wrapper descendant still claiming, cannot commit a pre-listen intent afterwards. The fence's
+		// own failure is reported beside the cause, never instead of it.
+		const fence = await grantHost?.cancel().then(
+			() => undefined,
+			(error: unknown) => ` (reservation fence also failed: ${errorMessage(error)})`,
+		);
+		await shutdown(`startup failed: ${errorMessage(cause)}${fence ?? ""}`, 1);
 	}
 	if (process.platform === "win32") {
 		watchers.push(
@@ -279,4 +308,91 @@ if (!isBundledNode && isCliModuleEntry(import.meta.url)) {
 		process.exit(2);
 	}
 	void runHostSupervisor(launch);
+}
+
+/** How long a parent-admitted supervisor waits for its grant before giving up its start; its own identity read counts. */
+const SUPERVISOR_GRANT_DEADLINE_MS = 10_000;
+
+/**
+ * The parent-admitted supervisor's entry (design 4.2a steps 2-3): read this process's own identity with the bounded
+ * retry, claim, wait for the grant and verify the parent's secret against it. Returns the pre-listen intent (step 4)
+ * the startup commits immediately before the public bind.
+ */
+async function admitReservedLaunch(
+	reservation: StoreLocator,
+	publicSocket: string,
+): Promise<{ credential: Buffer | undefined; self: LaunchIdentity; commitListenIntent: () => Promise<void> }> {
+	const {
+		admitClaimedParticipant,
+		commitListenIntent,
+		IDENTITY_OBSERVATION_PROBE_MS,
+		LaunchReservationError,
+		readClaimantIdentity,
+	} = await import("./host-launch-reservation.ts");
+	if (reservation.role !== "supervisor") {
+		throw new LaunchReservationError("locator_incomplete", "the supervisor entry requires a supervisor reservation");
+	}
+	const until = Date.now() + SUPERVISOR_GRANT_DEADLINE_MS;
+	const credential = await readSocketSecret(socketSecretPath(publicSocket)).catch(() => undefined);
+	const self = await readClaimantIdentity(
+		process.pid,
+		(pid) => readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
+		SUPERVISOR_GRANT_DEADLINE_MS,
+	);
+	await admitClaimedParticipant(reservation, self, credential, { deadlineMs: Math.max(0, until - Date.now()) });
+	return {
+		credential,
+		self,
+		commitListenIntent: async () => {
+			if (!credential) throw new LaunchReservationError("commitment_mismatch", "no established public secret");
+			await commitListenIntent(reservation, self, credential);
+		},
+	};
+}
+
+/**
+ * Reservation-only lazy boundary: direct supervisors never load SQLite or the reservation helpers. The offer is made
+ * before the spawn; `grant` verifies and grants the claimant inside the host's startup budget, and `cancel` is the
+ * durable fence a failed start leaves behind.
+ */
+async function offerReservedHost(
+	reservation: StoreLocator,
+	secret: Buffer,
+	issuer: LaunchIdentity,
+): Promise<{ grant: () => Promise<void>; cancel: () => Promise<void> }> {
+	const { openEndpointReservationStore } = await import("./endpoint-reservation-store.ts");
+	const { grantClaimedParticipant, IDENTITY_OBSERVATION_PROBE_MS, offerHostRole } =
+		await import("./host-launch-reservation.ts");
+	const store = await openEndpointReservationStore(reservation.storePath);
+	try {
+		offerHostRole(store, reservation.generation, issuer);
+	} finally {
+		store.close();
+	}
+	return {
+		grant: async () => {
+			const store = await openEndpointReservationStore(reservation.storePath);
+			try {
+				await grantClaimedParticipant(
+					store,
+					reservation.generation,
+					"host",
+					issuer,
+					secret,
+					(pid) => readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
+					{ deadlineMs: HOST_STARTUP_BUDGET_MS },
+				);
+			} finally {
+				store.close();
+			}
+		},
+		cancel: async () => {
+			const store = await openEndpointReservationStore(reservation.storePath);
+			try {
+				store.cancel(reservation.generation);
+			} finally {
+				store.close();
+			}
+		},
+	};
 }
