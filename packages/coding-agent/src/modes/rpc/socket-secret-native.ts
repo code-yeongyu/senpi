@@ -138,11 +138,52 @@ export interface NativeKnownFolder {
 	readonly reason?: string | null;
 }
 
-/** What presence placement needs from the bridge (#4199 design 4.2a "Placement."). */
+/** `presenceRootList`: the `*.presence` entries of a root, in name order. */
+export interface NativePresenceRootListing {
+	readonly status: "listed" | "failed" | "unavailable";
+	readonly names?: readonly string[] | null;
+	readonly reason?: string | null;
+	readonly step?: string | null;
+	readonly code?: number | null;
+}
+
+export interface NativePresenceHoldRequest {
+	/** The caller's key for this hold; one hold per key at a time. */
+	readonly holdId: string;
+	readonly path: string;
+}
+
+/**
+ * `presenceObjectHold` (Revision 7 "Presence cleanup"): an exclusive open with `DELETE` access and share mode 0. `busy`
+ * is a sharing violation (another handle is open), `missing` is not-found. A held object reports its identity and its
+ * whole content; the hold stays until `presenceObjectRelease` names it.
+ */
+export interface NativePresenceHold {
+	readonly status: "held" | "busy" | "missing" | "failed" | "unavailable";
+	readonly volumeSerial?: string | null;
+	readonly fileId?: string | null;
+	readonly header?: Buffer | null;
+	readonly reason?: string | null;
+	readonly step?: string | null;
+	readonly code?: number | null;
+}
+
+/** `presenceObjectRelease`: `deleted` only when delete-on-close was set through the held handle before it closed. */
+export interface NativePresenceHoldRelease {
+	readonly status: "deleted" | "closed" | "failed" | "unavailable";
+	readonly reason?: string | null;
+	readonly step?: string | null;
+	readonly code?: number | null;
+}
+
+/** What presence placement and cleanup need from the bridge (#4199 design 4.2a "Placement.", "Presence cleanup"). */
 export interface NativePresencePlacementBinding extends NativeSocketSecretBinding, NativePresenceBinding {
 	localAppDataPath(): NativeKnownFolder;
 	presenceRootOpen(path: string, create: boolean): NativePresenceRoot;
 	presenceObjectCreate(request: NativePresenceObjectRequest): NativePresenceObject;
+	presenceRootList(path: string): NativePresenceRootListing;
+	presenceObjectHold(request: NativePresenceHoldRequest): NativePresenceHold;
+	presenceObjectRelease(holdId: string, deleteObject: boolean): NativePresenceHoldRelease;
 }
 
 export type PresencePlacementUnavailableReason = "unsupported_platform" | "native_unavailable" | "native_abi_mismatch";
@@ -175,6 +216,9 @@ export function loadPresencePlacement(options: SocketSecretNativeOptions = {}): 
 		"localAppDataPath",
 		"presenceRootOpen",
 		"presenceObjectCreate",
+		"presenceRootList",
+		"presenceObjectHold",
+		"presenceObjectRelease",
 		"presenceAcquire",
 		"presenceProbe",
 		"presencePreActionCheck",

@@ -9,7 +9,7 @@
  * and startup goes on. Issuers, participants and probers never re-resolve: they open the RECORDED canonical path and
  * require it to classify `local` and to carry the recorded physical identity. An offer predeclares its role's presence
  * object in that root, created new and flushed before the offer commits. Objects are never renamed, truncated or
- * replaced; cleanup belongs to the Revision 7 cleanup rules, not here.
+ * replaced; cleanup belongs to the Revision 7 cleanup rules (`presence-cleanup.ts`), not here.
  */
 import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
@@ -36,7 +36,8 @@ export type PresencePlacementRejection =
 	| "presence_root_not_local"
 	| "presence_object_exists"
 	| "presence_object_failed"
-	| "presence_object_not_local";
+	| "presence_object_not_local"
+	| "presence_object_missing";
 
 /** A typed refusal to use or create presence in the recorded root; `reason` is machine-readable. */
 export class PresencePlacementError extends Error {

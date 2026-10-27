@@ -14,7 +14,12 @@
  * Process evidence of a row another invocation wrote counts only on a store that recorded `local` and still classifies
  * `local` (clause iii), or when the row's and this prober's kernel sessions are both verified and equal (clauses i, iv).
  * A FILETIME is compared exactly, as a decimal integer string, never through milliseconds or a tolerance. Nothing here
- * mutates the credential, signals a process, deletes a record or a presence object, or waits for a lock.
+ * mutates the credential, signals a process, deletes a record, or waits for a lock.
+ *
+ * Presence cleanup (Revision 7): a probe that finds no object rereads the row, because every deletion is preceded by
+ * a `released` commit; an entry released meanwhile is discharged by that commit, and a missing object for an entry
+ * that is not stays unknown. After the retirement commit and the release of the recovered guards, the retired
+ * generation's objects are deleted through exclusive opens; an object another handle holds is left for the sweep.
  */
 import { readdir, readFile } from "node:fs/promises";
 import { type ProcessIdentityResult, readProcessIdentity } from "../../utils/process-identity.ts";
@@ -31,6 +36,7 @@ import {
 import { generationPaths, type HostDaemonDirectory } from "./host-daemon-paths.ts";
 import type { ReservationRecoveryRefusal } from "./host-decision.ts";
 import { readSessionPathClaims } from "./host-reservations.ts";
+import { deletePresenceObject } from "./presence-cleanup.ts";
 import { kernelSession } from "./presence-placement.ts";
 import type { PresencePlacementLoad } from "./socket-secret-native.ts";
 
@@ -138,7 +144,10 @@ function probeSet(reservation: ReservationRow, roles: readonly RoleRow[]): Autho
 type Acquisition =
 	| { readonly kind: "acquired"; release(): void }
 	| { readonly kind: "occupied" }
-	| { readonly kind: "unknown"; readonly reason: string };
+	| { readonly kind: "unknown"; readonly reason: string; readonly notFound: boolean };
+
+/** ERROR_FILE_NOT_FOUND and ERROR_PATH_NOT_FOUND: the recorded path names no object now. */
+const NOT_FOUND_CODES = new Set([2, 3]);
 
 /**
  * One nonblocking acquisition of a recorded object. The bridge keeps the guard only when it is admissible: rule 1 (tag
@@ -146,8 +155,10 @@ type Acquisition =
  * object, rule 3 (the row's and this kernel's sessions verified and equal). Anything else it releases at once.
  */
 function acquire(object: PresenceObjectRecord, reservation: ReservationRow, prober: RecoveryProber): Acquisition {
-	if (object.status !== "predeclared") return { kind: "unknown", reason: "presence_unavailable" };
-	if (prober.native.status !== "available") return { kind: "unknown", reason: prober.native.reason };
+	if (object.status !== "predeclared") return { kind: "unknown", reason: "presence_unavailable", notFound: false };
+	if (prober.native.status !== "available") {
+		return { kind: "unknown", reason: prober.native.reason, notFound: false };
+	}
 	const bridge = prober.native.native;
 	const relocated =
 		reservation.presence.root.status === "placed" && reservation.presence.root.placement === "relocated";
@@ -163,7 +174,12 @@ function acquire(object: PresenceObjectRecord, reservation: ReservationRow, prob
 	});
 	if (result.status === "occupied") return { kind: "occupied" };
 	if (result.status !== "acquired") {
-		return { kind: "unknown", reason: "reason" in result ? `${result.status}:${result.reason}` : result.status };
+		return {
+			kind: "unknown",
+			reason: "reason" in result ? `${result.status}:${result.reason}` : result.status,
+			notFound:
+				result.status === "unknown" && result.reason === "os_error" && NOT_FOUND_CODES.has(result.code ?? -1),
+		};
 	}
 	return {
 		kind: "acquired",
@@ -316,6 +332,8 @@ async function recoverGeneration(
 	const fenced = store.reservation(generation);
 	const held = new Map<AuthorityEntry, () => void>();
 	const proofs: Partial<Record<AuthorityEntry, RecoveryProof>> = {};
+	/** The retired generation's objects, deleted once the recovered guards are released. */
+	let retiredObjects: readonly PresenceObjectRecord[] | undefined;
 	try {
 		// (3) Nonblocking acquisitions in presence-ID order, outside every transaction.
 		for (const holder of probeSet(fenced, store.roleRows(generation))) {
@@ -328,6 +346,9 @@ async function recoverGeneration(
 			if (acquisition.kind === "occupied") {
 				return refused("presence_occupied", `${describeHolder(holder)}: its presence object is held`);
 			}
+			// Not-found: the holder's clean exit may have committed `released` and deleted the object after the fenced read.
+			// Reread the row; a `released` entry is discharged by that commit and step (4) drops it from the probe set.
+			if (acquisition.notFound && releasedMeanwhile(store, generation, holder.entry)) continue;
 			const verdict = await observeRecorded(parseRecorded(holder.identity), holder.session, fenced, prober, false);
 			if (verdict.kind === "gone") {
 				proofs[holder.entry] = "process_gone";
@@ -364,10 +385,21 @@ async function recoverGeneration(
 			}
 			throw error;
 		}
+		retiredObjects = [current.ownerPresence, ...store.roleRows(generation).map((row) => row.presence)];
 		return undefined;
 	} finally {
 		for (const release of held.values()) release();
+		// At retirement (Revision 7): the tombstone is kept; the objects are deleted by exclusive open after the guards
+		// are released. One another handle still holds is left for the sweep.
+		for (const object of retiredObjects ?? []) deletePresenceObject(object, prober.native);
 	}
+}
+
+/** Rereads one entry of `generation` after a not-found probe: discharged by its own `released` commit, or not. */
+function releasedMeanwhile(store: EndpointReservationStore, generation: string, entry: AuthorityEntry): boolean {
+	const reservation = store.reservation(generation);
+	if (entry === "owner") return reservation.ownerStatus === "released";
+	return store.roleRow({ endpoint: reservation.endpoint, generation, role: entry })?.status === "released";
 }
 
 /**

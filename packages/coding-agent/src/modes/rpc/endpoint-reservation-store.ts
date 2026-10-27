@@ -22,6 +22,9 @@
  * (`cancelling`) and retires it only at the revision it fenced, with a discharge for every recorded authority entry,
  * persisted with the retired record. A retired generation is a tombstone that nothing revives, and no generation is
  * reserved for an endpoint while an earlier one is not retired. A schema-4 record is refused.
+ *
+ * The Revision 7 cleanup sweep asks the store, in a short transaction while it holds an object, whether the database
+ * still needs that object (`presenceObjectDisposition`); the schema is unchanged by it.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
@@ -150,6 +153,14 @@ export class EndpointReservationError extends Error {
 		this.reason = reason;
 	}
 }
+
+/**
+ * Whether the database still needs a presence object (design 4.2a Revision 7 "Presence cleanup"): `referenced` while
+ * any row naming it belongs to a generation that is not retired and has not committed `released` for that entry;
+ * `retired` when every such row belongs to a retired generation; `released` when the rest committed `released`; and
+ * `unreferenced` when no row names it at all.
+ */
+export type PresenceObjectDisposition = "referenced" | "released" | "retired" | "unreferenced";
 
 /** What a wrapper may forward: no nonce, no credential. */
 export interface ReservationLocator {
@@ -852,6 +863,26 @@ export class EndpointReservationStore {
 
 	reservation(generation: string): ReservationRow {
 		return this.#reservation(generation);
+	}
+
+	/**
+	 * Whether the database still needs the presence object at `path`, read in one short `BEGIN IMMEDIATE` transaction so
+	 * a cleanup sweep that holds the object sees the rows as committed, serialized against every writer.
+	 */
+	presenceObjectDisposition(path: string): PresenceObjectDisposition {
+		return this.#transaction(() => {
+			const rows = this.#database
+				.prepare(
+					`SELECT state, owner_status AS status FROM reservations WHERE owner_presence_path = ?
+					UNION ALL
+					SELECT r.state, ro.status FROM roles ro JOIN reservations r ON r.generation = ro.generation
+					WHERE ro.presence_path = ?`,
+				)
+				.all(path, path) as { state: ReservationState; status: string }[];
+			if (rows.length === 0) return "unreferenced";
+			if (rows.some(({ state, status }) => state !== "retired" && status !== "released")) return "referenced";
+			return rows.every(({ state }) => state === "retired") ? "retired" : "released";
+		});
 	}
 
 	roleRow(locator: ReservationLocator): RoleRow | undefined {
