@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { catalogDigest, storedBytes } from "../../../src/modes/rpc/compact-catalog-codec.ts";
 import { CompactContentStore, CompactWriteError } from "../../../src/modes/rpc/compact-content-store.ts";
@@ -18,10 +19,27 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-async function rig(count: number, text = (n: number) => `component-${n}`) {
+/** The written spec of `compact-catalog-codec.ts` for a leaf digest, restated so no expected value comes from the encoder. */
+const specLeafDigest = (bytes: Buffer): string => {
+	const tag = Buffer.from("senpi-recovery-catalog/1/utf16le/leaf", "ascii");
+	const length = Buffer.alloc(8);
+	length.writeBigUInt64BE(BigInt(bytes.length));
+	return createHash("sha256")
+		.update(Buffer.from([tag.length]))
+		.update(tag)
+		.update(length)
+		.update(bytes)
+		.digest("hex");
+};
+
+async function rig(count: number, text = (n: number) => `component-${n}`, spill = false) {
 	const root = await spoolRoot();
 	const control = controlledIo();
-	const store = new CompactContentStore({ dir: root.dir, io: control.io });
+	const store = new CompactContentStore(
+		spill
+			? { dir: root.dir, io: control.io, spillAboveBytes: 0, spillTargetBytes: 0 }
+			: { dir: root.dir, io: control.io },
+	);
 	const texts = Array.from({ length: count }, (_, n) => text(n));
 	const components: CatalogComponent[] = texts.map((body, n) => {
 		const leaf = store.createLeaf(body, true);
@@ -211,6 +229,57 @@ it("T5 X04 a cut retired while the first catalog read is held publishes nothing 
 		await expect(build).rejects.toMatchObject({ reason: "released" });
 		await fixture.store.idle();
 		expect(fixture.store.status().structuredBytes).toEqual(before);
+	} finally {
+		await fixture.close();
+	}
+});
+
+it("RULING-58 (1) a surrogate pair split across a leaf boundary is hashed exactly as stored and reads back byte-identical from the committed leaves", async () => {
+	const catalogs = new CompactRecoveryCatalog();
+	const fixture = await rig(0, undefined, true);
+	try {
+		const text = "a\u{1F600}b";
+		const leaves = [fixture.store.createLeaf("a\ud83d", true), fixture.store.createLeaf("\ude00b", true)];
+		const owner = fixture.store.text.own(leaves);
+		for (const leaf of leaves) fixture.store.adjust(leaf, -1, 0);
+		await fixture.store.idle();
+		for (const leaf of leaves) expect(fixture.store.isCommitted(leaf), "read from the stored file").toBe(true);
+		const component: CatalogComponent = { kind: protocolId("row"), id: protocolId("split"), leaves, owner };
+		const root = await catalogs.build(fixture.store, catalogRootRef(8), [component]);
+		fixture.store.adjust(owner, -1, 0);
+		const read = await catalogs.read(fixture.store, root, childRef(root.ref, 0));
+		if (read.kind !== "component") throw new Error("expected a component");
+		expect(read.text).toBe(text);
+		expect(storedBytes(read.text).equals(Buffer.from(text, "utf16le"))).toBe(true);
+		expect(read.entry.length).toBe(8);
+		expect(read.entry.digest).toBe(specLeafDigest(Buffer.from(text, "utf16le")));
+		catalogs.release(fixture.store, root);
+	} finally {
+		await fixture.close();
+	}
+});
+
+it("RULING-58 (2) a side pointer leaf that is parsable but not a pointer list is corruption (integrity), never an out-of-range ref", async () => {
+	const catalogs = new CompactRecoveryCatalog();
+	const fixture = await rig(3);
+	try {
+		const root = await catalogs.build(fixture.store, catalogRootRef(9), fixture.components);
+		fixture.drop();
+		const original = fixture.store.readLeaf.bind(fixture.store);
+		for (const corrupt of ['[{"x":1}]', "{", '[{"l":[0]}]']) {
+			vi.spyOn(fixture.store, "readLeaf").mockImplementation(async (id) =>
+				id === root.side ? corrupt : original(id),
+			);
+			await expect(catalogs.read(fixture.store, root, childRef(root.ref, 0)), corrupt).rejects.toMatchObject({
+				name: "CompactReadError",
+				reason: "integrity",
+			});
+			vi.restoreAllMocks();
+		}
+		await expect(catalogs.read(fixture.store, root, childRef(root.ref, 3))).rejects.toMatchObject({
+			reason: "range",
+		});
+		catalogs.release(fixture.store, root);
 	} finally {
 		await fixture.close();
 	}

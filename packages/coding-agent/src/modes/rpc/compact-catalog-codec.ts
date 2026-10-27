@@ -14,16 +14,20 @@ import {
  * RULING-46 item 2).
  *
  * Digest: SHA-256 over `u8 tagLength || tag || u64be byteLength || bytes`, where `tag` is the ASCII
- * `senpi-recovery-catalog/<version>/<domain>` and `domain` is `leaf` (one component's stored bytes), `node` (a
- * catalog node as a child) or `root` (the catalog root named by the manifest). Bytes are the EXACT stored bytes of
- * the content store: the UTF-16LE encoding of the leaf text, never a reconstructed value. A format bump changes
- * `CATALOG_VERSION`, hence every tag; a retired prefix is never reused.
+ * `senpi-recovery-catalog/<version>/<encoding>/<domain>`: `encoding` names the stored encoding of the hashed bytes
+ * (`utf16le`, RULING-58 (1): a store that writes another encoding gets its own tag and never collides) and `domain`
+ * is `leaf` (one component's stored bytes), `node` (a catalog node as a child) or `root` (the catalog root named by
+ * the manifest). Bytes are the EXACT stored bytes of the content store: the UTF-16LE code units of the leaf text,
+ * a lone surrogate included, never a reconstructed or transcoded value. A format bump changes `CATALOG_VERSION`,
+ * hence every tag; a retired prefix is never reused.
  *
  * Node: one JSON text with this fixed field order and no other field, integers in canonical decimal, entries in
  * child order; every string is an allow-listed ASCII identifier, so the encoding is deterministic by construction.
  */
 export const CATALOG_FORMAT = "senpi-recovery-catalog";
 export const CATALOG_VERSION = 1;
+/** The one encoding `storedBytes` writes and every tag names (`compact-content-store.ts` `flushLeaf`). */
+const CATALOG_ENCODING = "utf16le" satisfies BufferEncoding;
 /** A node is one store leaf: 32,768 UTF-16 code units, 64 KiB stored, under D (131,072) and F. */
 export const CATALOG_NODE_MAX_UNITS = COMPACT_LEAF_CODE_UNITS;
 
@@ -36,14 +40,14 @@ export interface CatalogEntry {
 	readonly digest: ContentDigest;
 }
 
-export const storedBytes = (text: string): Buffer => Buffer.from(text, "utf16le");
+export const storedBytes = (text: string): Buffer => Buffer.from(text, CATALOG_ENCODING);
 
 /** A digest over `length` bytes fed in order; `finish` after exactly that many. */
 export function catalogDigester(
 	domain: CatalogDomain,
 	length: number,
 ): { update(bytes: Buffer): void; finish(): ContentDigest } {
-	const tag = Buffer.from(`${CATALOG_FORMAT}/${CATALOG_VERSION}/${domain}`, "ascii");
+	const tag = Buffer.from(`${CATALOG_FORMAT}/${CATALOG_VERSION}/${CATALOG_ENCODING}/${domain}`, "ascii");
 	const prefix = Buffer.alloc(1 + tag.length + 8);
 	prefix.writeUInt8(tag.length, 0);
 	tag.copy(prefix, 1);

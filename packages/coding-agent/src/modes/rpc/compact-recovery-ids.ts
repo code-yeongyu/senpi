@@ -1,13 +1,22 @@
+/**
+ * The one identifier grammar of the recovery protocol (S09-Q2 A, RULING-57 Q2): every id, digest and ref is parsed
+ * here before any use as a key, a path element, a log field or a lookup, and S15's admission ids reuse these parsers.
+ *
+ * A content ref is CUT-SCOPED (RULING-58 (3)): it is the position of a node or component under one catalog root,
+ * minted by this process for one token, and it resolves only under that token through verified node reads. It is
+ * never a stable identifier outside the process: another cut, another host or a later run of this host gives the
+ * same bytes another ref, and a ref from one cut names nothing under another (a typed `range` refusal).
+ */
 declare const identity: unique symbol;
 
 /** An opaque protocol identifier: ASCII from the allow-list below, 1..128 bytes (S09-Q2 A, RULING-57 Q2). */
 export type BoundedId = string & { readonly [identity]: "BoundedId" };
 /** A SHA-256 digest: exactly 64 lowercase hex characters. */
 export type ContentDigest = string & { readonly [identity]: "ContentDigest" };
-/** A catalog ref: a 16-digit catalog counter root and three-digit child steps, meaningful only under its token. */
+/** A catalog ref: a 16-digit catalog counter root and at most `CATALOG_REF_MAX_STEPS` three-digit child steps. */
 export type ContentRef = string & { readonly [identity]: "ContentRef" };
 
-type IdentityRefusal = "empty" | "overlong" | "forbidden_character" | "malformed";
+type IdentityRefusal = "empty" | "overlong" | "forbidden_character" | "malformed" | "too_deep";
 type IdentityOutcome<T> =
 	| { readonly ok: true; readonly value: T }
 	| { readonly ok: false; readonly reason: IdentityRefusal };
@@ -17,6 +26,10 @@ const COUNTER_DIGITS = 16;
 /** Child descriptors per catalog node (R4.B1), the bound of every child step. */
 export const CATALOG_NODE_MAX_ENTRIES = 128;
 const STEP_DIGITS = 3;
+/** The deepest ref: 128^8 addressable children, far past any catalog, in 50 of the 128 bytes an id may have. */
+export const CATALOG_REF_MAX_STEPS = 8;
+const REF_ROOT_LENGTH = "c-".length + COUNTER_DIGITS;
+const REF_STEP_LENGTH = ":".length + STEP_DIGITS;
 /** No path separator, dot, quote, backslash, space, control or non-ASCII character, so '..' cannot be formed. */
 const BOUNDED_ID = /^[A-Za-z0-9][A-Za-z0-9:_-]*$/;
 const CONTENT_DIGEST = /^[0-9a-f]{64}$/;
@@ -42,6 +55,7 @@ export function parseContentRef(value: string): IdentityOutcome<ContentRef> {
 	const bounded = parseBoundedId(value);
 	if (!bounded.ok) return bounded;
 	if (!CONTENT_REF.test(value)) return refused("malformed");
+	if ((value.length - REF_ROOT_LENGTH) / REF_STEP_LENGTH > CATALOG_REF_MAX_STEPS) return refused("too_deep");
 	return { ok: true, value: value as ContentRef };
 }
 

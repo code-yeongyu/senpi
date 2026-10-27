@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
 	BOUNDED_ID_MAX_BYTES,
+	CATALOG_REF_MAX_STEPS,
 	catalogRootRef,
 	childRef,
 	parseBoundedId,
@@ -62,4 +63,18 @@ it("RULING-57 Q2 a content ref is a fixed-size counter root with three-digit chi
 	expect(parseContentRef(`c-0000000000000007${":000".repeat(28)}`)).toEqual({ ok: false, reason: "overlong" });
 	// A ref is itself a bounded id: the same character class and bound, so it can be logged or keyed as one.
 	expect(parseBoundedId(childRef(root, 3))).toEqual({ ok: true, value: "c-0000000000000007:003" });
+});
+
+it("RULING-58 (3) a ref has at most CATALOG_REF_MAX_STEPS child steps: the validator refuses a deeper one as too_deep and the minter never produces one", () => {
+	expect(CATALOG_REF_MAX_STEPS).toBe(8);
+	const deepest = `c-0000000000000007${":000".repeat(CATALOG_REF_MAX_STEPS)}`;
+	expect(Buffer.byteLength(deepest)).toBeLessThan(BOUNDED_ID_MAX_BYTES);
+	expect(parseContentRef(deepest)).toEqual({ ok: true, value: deepest });
+	expect(parseContentRef(`${deepest}:000`)).toEqual({ ok: false, reason: "too_deep" });
+	expect(parseContentRef(`${deepest}${":127".repeat(5)}`)).toEqual({ ok: false, reason: "too_deep" });
+	let ref = catalogRootRef(7);
+	for (let step = 0; step < CATALOG_REF_MAX_STEPS; step++) ref = childRef(ref, 0);
+	expect(ref).toBe(deepest);
+	expect(refSteps(ref)).toHaveLength(CATALOG_REF_MAX_STEPS);
+	expect(() => childRef(ref, 0)).toThrow(RangeError);
 });

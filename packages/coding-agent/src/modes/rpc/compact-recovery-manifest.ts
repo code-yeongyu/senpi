@@ -135,9 +135,8 @@ export class RecoveryManifests {
 		};
 		return lane.cutStorage(root, async (store, cutValid) => {
 			const texts = new Map<TextField, ManifestText | null>();
-			const oversized: TextField[] = [];
+			const oversized: { readonly field: TextField; readonly component: CatalogComponent }[] = [];
 			const owned: LeafId[] = [];
-			const components: CatalogComponent[] = [];
 			for (const field of TEXT_FIELDS) {
 				const value = strings[field];
 				if (value === null) {
@@ -151,54 +150,75 @@ export class RecoveryManifests {
 				}
 				const leaves = chunks(value).map((chunk) => store.createLeaf(chunk));
 				owned.push(...leaves);
-				components.push({ kind: MANIFEST, id: protocolId(field), leaves, owner: store.text.own(leaves) });
-				oversized.push(field);
+				const component = { kind: MANIFEST, id: protocolId(field), leaves, owner: store.text.own(leaves) };
+				oversized.push({ field, component });
 			}
 			try {
 				const check = () => {
 					cutValid();
 					valid();
 				};
-				const built = await this.catalogs.build(store, ref, [...components, ...checkpointComponents(root)], check);
-				let leftmost = ref;
-				for (let level = 1; level < built.depth; level++) leftmost = childRef(leftmost, 0);
-				const node = oversized.length ? await this.catalogs.read(store, built, leftmost) : undefined;
-				for (const [index, field] of oversized.entries()) {
-					const entry = node?.kind === "node" ? node.entries[index] : undefined;
-					if (!entry) throw new CompactReadError("ownership");
-					texts.set(field, { ref: childRef(leftmost, index), length: entry.length, digest: entry.digest });
-				}
-				const text = (field: TextField): ManifestText | null => {
-					const value = texts.get(field);
-					if (value === undefined) throw new CompactReadError("ownership");
-					return value;
-				};
-				const required = (field: TextField): ManifestText => text(field) ?? raise();
-				const manifest: RecoveryManifest = {
-					format: "senpi-recovery-manifest",
-					version: 1,
-					socketEpoch: required("socketEpoch"),
-					admissionId: required("admissionId"),
-					routeKind: token.admission.routeKind,
-					session: required("session"),
-					sessionEpoch: required("sessionEpoch"),
-					generation: token.admission.generation,
-					sequence: token.cut.sequence,
-					historyVersion: token.cut.historyVersion,
-					token: required("token"),
-					leaf: text("leaf"),
-					activeMessage: text("activeMessage"),
-					turn: text("turn"),
-					checkpointDigest: built.digest,
-					catalogRoot: ref,
-					catalogRootLength: built.length,
-				};
-				return { manifest, root: built, store };
+				const components = [...oversized.map(({ component }) => component), ...checkpointComponents(root)];
+				const built = await this.catalogs.build(store, ref, components, check);
+				return await this.assemble(store, token, ref, built, oversized, texts);
 			} finally {
-				for (const component of components) store.adjust(component.owner, -1, 0);
+				for (const { component } of oversized) store.adjust(component.owner, -1, 0);
 				for (const leaf of owned) store.adjust(leaf, -1, 0);
 			}
 		});
+	}
+
+	/** Owns `built` from here: a failure anywhere below releases the tree, so no owner outlives a refused build. */
+	private async assemble(
+		store: CompactContentStore,
+		token: CheckpointToken,
+		ref: ContentRef,
+		built: CatalogRoot,
+		oversized: readonly { readonly field: TextField; readonly component: CatalogComponent }[],
+		texts: Map<TextField, ManifestText | null>,
+	): Promise<Built> {
+		try {
+			let leftmost = ref;
+			for (let level = 1; level < built.depth; level++) leftmost = childRef(leftmost, 0);
+			const node = oversized.length ? await this.catalogs.read(store, built, leftmost) : undefined;
+			for (const [index, { field, component }] of oversized.entries()) {
+				const entry = node?.kind === "node" ? node.entries[index] : undefined;
+				// The oversized components went in first, so they are the leftmost leaf's first entries in field order;
+				// any other layout is this builder's own invariant broken, refused as a typed internal error.
+				if (!entry || entry.kind !== component.kind || entry.id !== component.id)
+					throw new CompactReadError("ownership");
+				texts.set(field, { ref: childRef(leftmost, index), length: entry.length, digest: entry.digest });
+			}
+			const text = (field: TextField): ManifestText | null => {
+				const value = texts.get(field);
+				if (value === undefined) throw new CompactReadError("ownership");
+				return value;
+			};
+			const required = (field: TextField): ManifestText => text(field) ?? raise();
+			const manifest: RecoveryManifest = {
+				format: "senpi-recovery-manifest",
+				version: 1,
+				socketEpoch: required("socketEpoch"),
+				admissionId: required("admissionId"),
+				routeKind: token.admission.routeKind,
+				session: required("session"),
+				sessionEpoch: required("sessionEpoch"),
+				generation: token.admission.generation,
+				sequence: token.cut.sequence,
+				historyVersion: token.cut.historyVersion,
+				token: required("token"),
+				leaf: text("leaf"),
+				activeMessage: text("activeMessage"),
+				turn: text("turn"),
+				checkpointDigest: built.digest,
+				catalogRoot: ref,
+				catalogRootLength: built.length,
+			};
+			return { manifest, root: built, store };
+		} catch (cause) {
+			this.catalogs.release(store, built);
+			throw cause;
+		}
 	}
 }
 

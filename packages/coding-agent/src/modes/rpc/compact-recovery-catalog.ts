@@ -150,6 +150,8 @@ export class CompactRecoveryCatalog {
 			const step = steps[depth];
 			if (step === undefined) return { kind: "node", ref: here, entries: decoded.entries, ...expected };
 			const entry = decoded.entries[step];
+			// The pointer leaf carries no digest of its own: it only says where the child's bytes are, and those bytes are
+			// verified against this parent's entry before any use, so a wrong or stale pointer surfaces as `integrity`.
 			const pointer = this.pointer(await store.readLeaf(side), step);
 			if (!entry || !pointer) throw new CompactReadError("range");
 			here = childRef(here, step);
@@ -167,13 +169,18 @@ export class CompactRecoveryCatalog {
 		store.adjust(root.owner, -1, 0);
 	}
 
+	/** A pointer leaf that is not a pointer list is corruption of this store's private bytes, never a bad ref. */
 	private pointer(text: string, step: number): Pointer | undefined {
+		let json: unknown;
 		try {
-			return PointersSchema.safeParse(JSON.parse(text)).data?.[step];
+			json = JSON.parse(text);
 		} catch (cause) {
 			if (cause instanceof SyntaxError) throw new CompactReadError("integrity");
 			throw cause;
 		}
+		const pointers = PointersSchema.safeParse(json);
+		if (!pointers.success) throw new CompactReadError("integrity");
+		return pointers.data[step];
 	}
 
 	private async describe(

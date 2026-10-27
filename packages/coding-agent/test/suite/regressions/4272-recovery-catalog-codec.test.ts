@@ -7,6 +7,7 @@ import {
 	type CatalogEntry,
 	CatalogNodeWriter,
 	catalogDigest,
+	catalogDigester,
 	decodeCatalogNode,
 	storedBytes,
 } from "../../../src/modes/rpc/compact-catalog-codec.ts";
@@ -18,12 +19,13 @@ import {
 	protocolId,
 } from "../../../src/modes/rpc/compact-recovery-ids.ts";
 
-// Part of #4272 (S09, RULING-57 Q1): SHA-256 over the exact stored bytes under a length-prefixed, per-kind domain
-// tag; node bytes deterministic by construction. Every expected digest here is computed from the written spec
-// (`compact-catalog-codec.ts` header), never taken from the encoder under test.
+// Part of #4272 (S09, RULING-57 Q1, RULING-58 (1)): SHA-256 over the exact stored bytes under a length-prefixed
+// domain tag that names the format, its version, the stored encoding and the kind; node bytes deterministic by
+// construction. Every expected digest here is computed from the written spec (`compact-catalog-codec.ts` header),
+// never taken from the encoder under test.
 
 const specDigest = (domain: "leaf" | "node" | "root", bytes: Buffer): string => {
-	const tag = Buffer.from(`${CATALOG_FORMAT}/${CATALOG_VERSION}/${domain}`, "ascii");
+	const tag = Buffer.from(`${CATALOG_FORMAT}/${CATALOG_VERSION}/utf16le/${domain}`, "ascii");
 	const length = Buffer.alloc(8);
 	length.writeBigUInt64BE(BigInt(bytes.length));
 	return createHash("sha256")
@@ -55,7 +57,7 @@ const GOLDEN_TEXT =
 	'"},{"kind":"node","id":"node-0000000000000001","length":70000,"digest":"' +
 	"ff".repeat(32) +
 	'"}]}';
-const GOLDEN_NODE_DIGEST = "4e2ee6fc0072903974dff45a8439fdd917ef7f70a6a814a590d9c28f8fefc107";
+const GOLDEN_NODE_DIGEST = "fa1de8cdae098d7eb81dfdda48b25efc90103c0411f11f69f8a2946fb050e794";
 
 it("RULING-57 Q1 (2) golden bytes: one node's encoding and digest are pinned; the stored bytes are the UTF-16LE text", () => {
 	const writer = new CatalogNodeWriter();
@@ -81,8 +83,23 @@ it("RULING-57 Q1 (1) domain separation: the same bytes digested as leaf, node an
 	// The length prefix separates a payload from its own prefix: an empty payload has a non-trivial digest.
 	expect(catalogDigest("leaf", Buffer.alloc(0))).toBe(specDigest("leaf", Buffer.alloc(0)));
 	expect(catalogDigest("leaf", Buffer.alloc(0))).toBe(
-		"f74d0a448927f4688580b5e6c03d136d77259ae29ff327694e7603fba8ef641f",
+		"3d5f96ca2a52d51a2ddb9a6cf945cf997897987a6fb89d78921d25353bd057ed",
 	);
+});
+
+it("RULING-58 (1) the stored bytes of a lone surrogate are its code unit as stored; a pair split across two fragments digests exactly as the stored bytes", () => {
+	expect(storedBytes("\ud83d").equals(Buffer.from([0x3d, 0xd8]))).toBe(true);
+	expect(storedBytes("\ud83d").toString("utf16le")).toBe("\ud83d");
+	const whole = storedBytes("a\u{1F600}b");
+	expect(whole.length).toBe(8);
+	const fragments = [storedBytes("a\ud83d"), storedBytes("\ude00b")];
+	expect(Buffer.concat(fragments).equals(whole)).toBe(true);
+	const digester = catalogDigester("leaf", whole.length);
+	for (const fragment of fragments) digester.update(fragment);
+	expect(digester.finish()).toBe(specDigest("leaf", whole));
+	expect(catalogDigest("leaf", whole)).toBe(specDigest("leaf", whole));
+	// A re-encoded value (the replacement character for each lone unit) would hash differently: never the digest.
+	expect(specDigest("leaf", Buffer.from("a\ufffd\ufffdb", "utf16le"))).not.toBe(specDigest("leaf", whole));
 });
 
 it("RULING-57 Q1 (2) the writer is capped by construction: 128 entries, and the leaf bound before the 128th when entries are wide", () => {

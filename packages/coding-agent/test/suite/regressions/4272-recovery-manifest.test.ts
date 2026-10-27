@@ -10,7 +10,7 @@ import { serializeJsonLine } from "../../../src/modes/rpc/jsonl.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
-import { recoveryRig, streaming } from "./4272-recovery-support.ts";
+import { cutStructuredBytes, recoveryRig, streaming } from "./4272-recovery-support.ts";
 
 // Part of #4272 (S09, R4.B1, X03/X04/T5): the manifest names a frozen checkpoint and its catalog root with bounded
 // protocol ids only; an arbitrary id becomes a content ref whose original value reads back exactly; selection stays
@@ -35,7 +35,7 @@ function unwrap<T>(outcome: RecoveryOutcome<T>): T {
 
 /** The written spec of `compact-catalog-codec.ts`, restated here so no expected value comes from the encoder. */
 const specDigest = (domain: "leaf" | "node" | "root", bytes: Buffer): string => {
-	const tag = Buffer.from(`senpi-recovery-catalog/1/${domain}`, "ascii");
+	const tag = Buffer.from(`senpi-recovery-catalog/1/utf16le/${domain}`, "ascii");
 	const length = Buffer.alloc(8);
 	length.writeBigUInt64BE(BigInt(bytes.length));
 	return createHash("sha256")
@@ -127,6 +127,7 @@ it("RULING-57 Q2 (2) a bounded routing session id stays inline, a null leaf/turn
 		ok: false,
 		failure: { kind: "storage_unavailable", reason: "range" },
 	});
+	expect(rig.checkpoints.status().unavailable, "range counted apart from integrity").toEqual({ range: 2 });
 	rig.checkpoints.release(token);
 	await rig.lane.idle();
 });
@@ -143,11 +144,14 @@ it("RULING-57 Q1 (3) a flipped byte in the stored root node is a typed integrity
 	) {
 		return (await original.call(this, id)).replace('"version":1', '"version":2');
 	});
-	expect(await rig.checkpoints.readCatalog(token, caller, manifest.catalogRoot)).toEqual({
-		ok: false,
-		failure: { kind: "storage_unavailable", reason: "integrity" },
-	});
+	const refusal = await rig.checkpoints.readCatalog(token, caller, manifest.catalogRoot);
+	expect(refusal).toEqual({ ok: false, failure: { kind: "storage_unavailable", reason: "integrity" } });
+	// RULING-58 (2): the refusal carries no stored bytes and no partial decode, only its kind and typed detail.
+	expect(Object.keys(refusal)).toEqual(["ok", "failure"]);
+	expect(refusal.ok ? [] : Object.keys(refusal.failure)).toEqual(["kind", "reason"]);
+	expect(JSON.stringify(refusal)).not.toMatch(/senpi-recovery-catalog|[0-9a-f]{64}/);
 	expect(rig.checkpoints.status().refused).toEqual({ storage_unavailable: 1 });
+	expect(rig.checkpoints.status().unavailable, "integrity is the corruption signal").toEqual({ integrity: 1 });
 	expect(node(unwrap(await rig.checkpoints.readCatalog(token, caller, manifest.catalogRoot))).digest).toBe(
 		manifest.checkpointDigest,
 	);
@@ -165,9 +169,14 @@ it("T5 X04 a token superseded while its first catalog read is held publishes not
 	const producer = streaming(writer, lane);
 	const checkpoints = writer.recoveryCheckpoints;
 	const caller = (socketEpoch: string) => ({ socketEpoch, sessionId: "s" });
-	try {
+	const probe = lane.freeze();
+	const live = async () => {
 		await lane.idle();
-		const before = lane.storageStatus().structuredBytes;
+		const bytes = await cutStructuredBytes(lane, probe);
+		return bytes.resident + bytes.spilled;
+	};
+	try {
+		const before = await live();
 		const first = unwrap(checkpoints.freeze(route("s", "socket-1"), lane)).token;
 		const survivor = unwrap(checkpoints.freeze(route("s", "socket-2"), lane)).token;
 		const held = control.hold("read");
@@ -179,9 +188,12 @@ it("T5 X04 a token superseded while its first catalog read is held publishes not
 			ok: false,
 			failure: { kind: "repair_needed", reason: "superseded_token", newerGeneration: 2 },
 		});
+		expect(await live(), "the superseded build left no node or pointer leaf in the cut's store").toBe(before);
 		const manifest = unwrap(await checkpoints.catalog(survivor, caller("socket-2")));
+		const catalogBytes = (await live()) - before;
+		expect(catalogBytes).toBeGreaterThan(0);
 		for (let offset = 0; offset < 50; offset++) producer.blockDelta("text", 0, "later", offset * 5);
-		await lane.idle();
+		const afterDeltas = await live();
 		expect(unwrap(await checkpoints.catalog(survivor, caller("socket-2")))).toBe(manifest);
 		const again = node(unwrap(await checkpoints.readCatalog(survivor, caller("socket-2"), manifest.catalogRoot)));
 		expect(again.digest).toBe(manifest.checkpointDigest);
@@ -198,10 +210,10 @@ it("T5 X04 a token superseded while its first catalog read is held publishes not
 		});
 		checkpoints.release(survivor);
 		checkpoints.release(third);
-		expect(lane.liveRoots).toBe(0);
-		await lane.idle();
-		expect(lane.storageStatus().structuredBytes, "every catalog owner released with its token").toEqual(before);
+		expect(lane.liveRoots).toBe(1);
+		expect(await live(), "every catalog owner released with its token").toBe(afterDeltas - catalogBytes);
 	} finally {
+		lane.release(probe);
 		lane.retire("close");
 		await lane.idle();
 		await root.cleanup();

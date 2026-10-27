@@ -13,6 +13,7 @@ import {
 	type RecoveryStreamState,
 	type RecoveryToken,
 	type RefusalReason,
+	type StorageUnavailableReason,
 	recovered,
 	refusalReason,
 	repairNeeded,
@@ -63,6 +64,7 @@ export class RecoveryCheckpoints {
 	private readonly streams = new RecoveryStreams();
 	private readonly manifests = new RecoveryManifests();
 	private readonly refusals = new Map<RefusalReason, number>();
+	private readonly unavailable = new Map<StorageUnavailableReason, number>();
 	private minted = 0;
 	private frozen = 0;
 	private reclaimed = 0;
@@ -87,6 +89,7 @@ export class RecoveryCheckpoints {
 			frozen: this.frozen,
 			reclaimed: this.reclaimed,
 			refused: Object.fromEntries(this.refusals),
+			unavailable: Object.fromEntries(this.unavailable),
 		};
 	}
 
@@ -294,10 +297,12 @@ export class RecoveryCheckpoints {
 		throw cause;
 	}
 
-	/** Every typed failure leaves through here, counted by its reason. */
+	/** Every typed failure leaves through here, counted by its reason; a storage refusal also by its detail. */
 	private refuse(failure: RecoveryFailure): RecoveryOutcome<never> {
 		const reason = refusalReason(failure);
 		this.refusals.set(reason, (this.refusals.get(reason) ?? 0) + 1);
+		if (failure.kind === "storage_unavailable")
+			this.unavailable.set(failure.reason, (this.unavailable.get(failure.reason) ?? 0) + 1);
 		return { ok: false, failure };
 	}
 }
