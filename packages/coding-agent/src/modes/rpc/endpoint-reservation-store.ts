@@ -165,6 +165,14 @@ export interface ClaimPresenceBinding {
 	readonly presenceId: string;
 }
 
+/** One reservation that is not retired, with every recorded authority entry, as an admission census reads it. */
+export interface ReservationCensusRow {
+	readonly generation: string;
+	readonly state: ReservationState;
+	readonly owner: string;
+	readonly roles: readonly Pick<RoleRow, "role" | "status" | "participant">[];
+}
+
 interface Statement {
 	run(...params: unknown[]): unknown;
 	get(...params: unknown[]): unknown;
@@ -764,6 +772,30 @@ export class EndpointReservationStore {
 	/** The roles the reserving owner expects in `generation`; `undefined` when the record is absent or unreadable. */
 	expectedRoles(generation: string): readonly ReservationRole[] | undefined {
 		return this.#read(() => this.#expectedRoles(generation));
+	}
+
+	/**
+	 * Every reservation of this store that is not retired, with its role rows, for the owner census an admission takes
+	 * before public-secret recovery (design 4.2a "Admission BEFORE mutation"). The store is keyed by the physical endpoint,
+	 * so no endpoint filter is applied: a spelling the reserving writer chose must not hide its generation. Read-only.
+	 */
+	census(): readonly ReservationCensusRow[] {
+		return this.#read(() => {
+			const reservations = this.#database
+				.prepare("SELECT generation, state, owner FROM reservations WHERE state != 'retired' ORDER BY rowid")
+				.all() as { generation: string; state: ReservationState; owner: string }[];
+			const roles = this.#database.prepare(
+				"SELECT role, status, participant FROM roles WHERE generation = ? ORDER BY role",
+			);
+			return reservations.map((reservation) => ({
+				...reservation,
+				roles: roles.all(reservation.generation) as {
+					role: ReservationRole;
+					status: RoleStatus;
+					participant: string | null;
+				}[],
+			}));
+		});
 	}
 
 	/** The recorded expected roles, or `undefined` when the record is absent, empty or names a role this build does not know. */
