@@ -273,6 +273,17 @@ describe("endpoint reservation store", () => {
 		expect(s.reservation(generation).revision).toBe(before + 1);
 	});
 
+	// senpi#4468 r2 LOW: the census filters on the states this schema writes; a row in a state this build does not know
+	// is unreadable evidence and refuses typed, never listed as if it were one of them and never silently dropped.
+	it("census lists the states this schema writes and refuses a row in a state it does not know", async () => {
+		const { path, store: s, generation } = await offered();
+		expect(s.census().map((row) => [row.generation, row.state])).toEqual([[generation, "pending"]]);
+		const raw = new DatabaseSync(path);
+		raw.prepare("UPDATE reservations SET state = 'archived' WHERE generation = ?").run(generation);
+		raw.close();
+		expect(rejection(() => s.census())).toBe("row_malformed");
+	});
+
 	it("rejects a store written by an unsupported schema", async () => {
 		const { path, store: s } = await store();
 		s.close();
