@@ -9,6 +9,7 @@ import {
 	openEndpointReservationStore,
 } from "../../../src/modes/rpc/endpoint-reservation-store.ts";
 import {
+	acquireOwnerPresence,
 	claimLaunchRole,
 	commitListenIntent,
 	credentialCommitment,
@@ -65,7 +66,11 @@ describe("supervisor launch reservation", () => {
 		// Off Windows the presence root is typed unavailable; placement has its own suite.
 		const native = loadPresencePlacement({ platform: "linux" });
 		const reservation = resolvePresenceRoot({ coordinationTarget: storePath, endpointKey: "endpoint", native });
-		const offer = offerSupervisorLaunch(store, ENDPOINT, OWNER, { reservation, native });
+		const offer = offerSupervisorLaunch(store, ENDPOINT, OWNER, {
+			reservation,
+			native,
+			ownerPresence: acquireOwnerPresence(reservation, native),
+		});
 		return { root, storePath, store, ...offer };
 	}
 
@@ -80,7 +85,7 @@ describe("supervisor launch reservation", () => {
 	it("grants the claimant whose identity the issuer observed, bound to the commitment", async () => {
 		const { store, args, generation } = await launched();
 		const locator = locatorOf(args);
-		expect(await claimLaunchRole(locator, SUPERVISOR)).toBe("claimed");
+		expect(await claimLaunchRole(locator, SUPERVISOR)).toMatchObject({ outcome: "claimed" });
 		grantVerifiedParticipant(store, generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
 		expect(await waitForGrant(locator, SUPERVISOR, { deadlineMs: 1_000 })).toEqual({
 			granted: true,

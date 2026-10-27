@@ -28,10 +28,16 @@ describe("reservation claim across processes", () => {
 		roots.push(root);
 		const storePath = join(root, "endpoint.reservation.db");
 		const store = await openEndpointReservationStore(storePath);
-		const generation = store.reserve(ENDPOINT, "owner", ["supervisor", "host"], {
-			root: { status: "presence_unavailable", reason: "unsupported_platform", detail: null },
-			ownerKernelSession: { status: "unverified", reason: "unsupported_platform" },
-		});
+		const generation = store.reserve(
+			ENDPOINT,
+			"owner",
+			["supervisor", "host"],
+			{
+				root: { status: "presence_unavailable", reason: "unsupported_platform", detail: null },
+				ownerKernelSession: { status: "unverified", reason: "unsupported_platform" },
+			},
+			{ status: "presence_unavailable" },
+		);
 		store.offer(generation, "supervisor", "owner", { status: "presence_unavailable" });
 		store.close();
 

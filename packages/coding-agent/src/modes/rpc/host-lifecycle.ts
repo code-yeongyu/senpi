@@ -9,7 +9,7 @@ import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { isCliModuleEntry } from "./host-cli-entry.ts";
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
-import type { LaunchIdentity } from "./host-launch-reservation.ts";
+import type { LaunchIdentity, ParticipantRelease } from "./host-launch-reservation.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
 import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
@@ -131,6 +131,15 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		launch.reservation && admittedLaunch && publicSecret
 			? await offerReservedHost(launch.reservation, publicSecret, admittedLaunch.self)
 			: undefined;
+	// The Revision 7 pre-action check before the spawn (design 4.2a "Descriptor-loss detection"): a failed check is
+	// terminal. The fenced state this supervisor can commit is the cancellation of the generation it offered the host
+	// in; it then performs no further action and exits, leaving its guard to the kernel.
+	try {
+		admittedLaunch?.presence?.preActionCheck();
+	} catch (cause: unknown) {
+		await grantHost?.cancel().catch(() => {});
+		throw cause;
+	}
 	const child = spawnHostChild({
 		launch,
 		internalSocket,
@@ -212,6 +221,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		}),
 	);
 
+	const reservedPresence = admittedLaunch?.presence;
 	const teardown: SupervisorShutdown = {
 		paths,
 		generation,
@@ -228,6 +238,9 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		stopWatchers: () => {
 			for (const stop of watchers.splice(0)) stop();
 		},
+		// The supervisor holds its presence lock from before its claim through every spawn and bind it makes, and gives
+		// it up only once the shutdown has observed its child's exit and closed its listener.
+		...(reservedPresence ? { afterQuiescence: () => reservedPresence.releaseAfterQuiescence() } : {}),
 	};
 	let shutdownPromise: Promise<never> | undefined;
 	// Single-flight: concurrent triggers (listener error, child exit, signals) must not process.exit
@@ -254,6 +267,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		// immediately before the public bind, so a cancellation recorded since the grant ends the start here.
 		await admittedLaunch?.commitListenIntent();
 		await prepareSocketPath(bindSocket);
+		// The pre-action check before the public bind; a failure lands in the catch below, which fences the generation.
+		admittedLaunch?.presence?.preActionCheck();
 		await listen(server, bindSocket, publicSecret);
 		await publicEndpoint?.publish();
 		state.publicSocketOwned = true;
@@ -321,7 +336,12 @@ const SUPERVISOR_GRANT_DEADLINE_MS = 10_000;
 async function admitReservedLaunch(
 	reservation: StoreLocator,
 	publicSocket: string,
-): Promise<{ credential: Buffer | undefined; self: LaunchIdentity; commitListenIntent: () => Promise<void> }> {
+): Promise<{
+	credential: Buffer | undefined;
+	self: LaunchIdentity;
+	presence: ParticipantRelease | undefined;
+	commitListenIntent: () => Promise<void>;
+}> {
 	const {
 		admitClaimedParticipant,
 		commitListenIntent,
@@ -339,10 +359,13 @@ async function admitReservedLaunch(
 		(pid) => readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
 		SUPERVISOR_GRANT_DEADLINE_MS,
 	);
-	await admitClaimedParticipant(reservation, self, credential, { deadlineMs: Math.max(0, until - Date.now()) });
+	const presence = await admitClaimedParticipant(reservation, self, credential, {
+		deadlineMs: Math.max(0, until - Date.now()),
+	});
 	return {
 		credential,
 		self,
+		presence,
 		commitListenIntent: async () => {
 			if (!credential) throw new LaunchReservationError("commitment_mismatch", "no established public secret");
 			await commitListenIntent(reservation, self, credential);

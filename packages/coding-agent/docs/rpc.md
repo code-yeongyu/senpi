@@ -920,7 +920,7 @@ claims nothing. The supervisor allows the host claim, and the host its grant wai
 the listener. A reservation read blocked by another writer reports `store_busy`; claim, grant and intent waits retry
 that read within their original deadline rather than aborting startup. Other reservation errors still propagate.
 
-The reservation store is at schema 3 and refuses an older store with `schema_unsupported`. The process that reserves a
+The reservation store is at schema 4 and refuses an older store with `schema_unsupported`. The process that reserves a
 generation resolves its presence root once and records it in the reservation. If the store's directory classifies `local`
 from its opened handle, the root is the private sibling directory `<endpoint lock target>.presence`. Otherwise the root is
 `senpi\rpc-presence\<endpoint key>` under `FOLDERID_LocalAppData`, and that directory must classify `local` too.
@@ -941,6 +941,31 @@ physical directory, or that no longer classifies `local`, fails with `presence-p
 usable Windows bridge). Creating the object can also fail with `presence_object_exists`, `presence_object_failed` or
 `presence_object_not_local`. A refused claim consumes no nonce. A presence object is never renamed, truncated or
 replaced.
+
+Each actor holds its presence object's lock before it acts. The reserving process creates its own object in the root
+and acquires it before it provisions or repairs the public secret and before it persists the reservation, which records
+that object. A supervisor or host acquires the object its offer predeclared before the claim transaction. The
+acquisition is one nonblocking attempt that keeps the lock only when the opened object's content, volume serial, file ID
+and locality match the record. The claim then requires the reservation to still be at the revision read before the
+acquisition (`revision_changed` otherwise), requires that object (`presence_not_bound`), and records the binding. A busy
+lock fails the start with `launch-reservation-rejected` reason `presence_occupied`; any other failure is
+`presence_unknown`. Neither claims, spawns or listens, and a busy lock is never read as proof of who holds it. A
+participant that fails before it may act, or whose claim is refused, closes that unused handle; one refused after its
+grant (a commitment mismatch) first commits its `released`, then closes the lock, and keeps the lock held when that
+commit fails. A granted supervisor keeps its lock through every spawn and bind. Once its shutdown has observed the host's
+exit and closed its listener, it commits `released` and only then closes the lock; a drained supervisor keeps its
+listening handle open until it exits, so it commits no `released` and leaves the lock to the kernel. The host keeps its
+lock until its process exits. The reserving process commits its own `released` once the generation is serving, then
+closes its lock; a `released` commit that fails there does not fail the serving start, and the lock stays held until the
+process exits. A start that fails after the reservation persisted cancels the generation, commits the owner's
+`released` and closes its lock. A row without a local presence root takes no lock.
+
+Before each authorized action, the holder runs the pre-action check on its lock handle: the reserving process before it
+provisions or repairs the public secret and before it spawns the supervisor, the supervisor before it spawns the host
+and before it binds the public listener, the host before it binds. The check compares the handle's physical identity
+with the recorded one, reads through it and reclassifies the volume. A failed check is terminal: it fails with
+`launch-reservation-rejected` reason `presence_pre_action_failed`, the actor performs no further action (the
+reserving process and the supervisor cancel the generation they offered a role in), and the lock is never re-acquired.
 
 ### Generation handoff (`handoffHost`, `probeHost`, `stopHost`)
 

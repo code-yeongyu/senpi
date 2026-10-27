@@ -68,7 +68,10 @@ export type LaunchReservationRejection =
 	| "generation_cancelled"
 	| "grant_deadline"
 	| "commitment_mismatch"
-	| "claim_deadline";
+	| "claim_deadline"
+	| "presence_occupied"
+	| "presence_unknown"
+	| "presence_pre_action_failed";
 
 export class LaunchReservationError extends Error {
 	readonly code = "launch-reservation-rejected";

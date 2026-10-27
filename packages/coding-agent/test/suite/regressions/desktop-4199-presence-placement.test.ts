@@ -13,6 +13,7 @@ import {
 import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { startHost } from "../../../src/modes/rpc/host-ensure-start.ts";
 import {
+	acquireOwnerPresence,
 	claimLaunchRole,
 	offerHostRole,
 	offerSupervisorLaunch,
@@ -20,12 +21,9 @@ import {
 	reservationStorePath,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import { PresencePlacementError, resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
-import {
-	loadPresencePlacement,
-	type NativePresencePlacementBinding,
-	type PresencePlacementLoad,
-} from "../../../src/modes/rpc/socket-secret-native.ts";
+import { loadPresencePlacement } from "../../../src/modes/rpc/socket-secret-native.ts";
 import { createSocketSecret, socketSecretPath } from "../../../src/modes/rpc/socket-transport.ts";
+import { FAKE_KERNEL_SESSION, FAKE_LOCAL_APP_DATA, fakeWindows } from "../../helpers/fake-windows-presence.ts";
 
 const mocked = vi.hoisted(() => ({ lockDir: "", placement: undefined as unknown }));
 
@@ -61,95 +59,10 @@ const ENDPOINT = "C:\\Users\\u\\.senpi\\agent\\rpc\\rpc.sock";
 const LOCK_DIR = "C:\\Users\\u\\AppData\\Local\\Temp\\senpi-rpc-host-locks";
 const ENDPOINT_KEY = "0123456789abcdef0123456789abcdef";
 const TARGET = `${LOCK_DIR}\\${ENDPOINT_KEY}`;
-const LOCAL_APP_DATA = "C:\\Users\\u\\AppData\\Local";
-const SESSION = "133100000000000000";
+const LOCAL_APP_DATA = FAKE_LOCAL_APP_DATA;
+const SESSION = FAKE_KERNEL_SESSION;
 const OWNER = { pid: 100, processStartTime: "133000000000000001" };
 const SUPERVISOR = { pid: 200, processStartTime: "133000000000000002" };
-
-interface FakeDirectory {
-	volumeSerial: string;
-	fileId: string;
-	locality: "local" | "not_local";
-}
-
-interface FakeOptions {
-	readonly storeLocality?: "local" | "not_local";
-	readonly localAppData?: string | null;
-	readonly rootLocality?: "local" | "not_local";
-	readonly createOutcome?: "exists" | "failed";
-	readonly onCreate?: () => void;
-}
-
-/** A Windows volume as the bridge reports it: directories by canonical path, presence objects by path. */
-function fakeWindows(options: FakeOptions = {}) {
-	const calls: string[] = [];
-	const directories = new Map<string, FakeDirectory>();
-	const objects = new Map<string, Buffer>();
-	let nextId = 1000;
-	const canonical = (path: string) => (path.startsWith("\\\\?\\") ? path : `\\\\?\\${path}`);
-	const native: NativePresencePlacementBinding = {
-		__senpiSocketSecretAbi1: () => "1",
-		publishNoReplace: () => {
-			throw new Error("not used");
-		},
-		kernelSessionIdentity: () => {
-			calls.push("kernelSessionIdentity");
-			return { status: "verified", creationTime: SESSION, reason: null };
-		},
-		classifyVolume: (path) => {
-			calls.push(`classifyVolume ${path}`);
-			return { locality: options.storeLocality ?? "local", reason: null, reportedFileSystem: "NTFS" };
-		},
-		localAppDataPath: () => {
-			calls.push("localAppDataPath");
-			const path = options.localAppData === undefined ? LOCAL_APP_DATA : options.localAppData;
-			return path === null ? { status: "failed", code: 2 } : { status: "found", path };
-		},
-		presenceRootOpen: (path, create) => {
-			calls.push(`presenceRootOpen ${path} ${create}`);
-			const key = canonical(path);
-			let directory = directories.get(key);
-			if (!directory && create) {
-				directory = { volumeSerial: "7", fileId: String(nextId++), locality: options.rootLocality ?? "local" };
-				directories.set(key, directory);
-			}
-			if (!directory) return { status: "failed", step: "open", code: 2 };
-			return { status: "opened", path: key, ...directory, reason: null, reportedFileSystem: "NTFS" };
-		},
-		presenceObjectCreate: (request) => {
-			calls.push(`presenceObjectCreate ${request.rootPath} ${request.name}`);
-			options.onCreate?.();
-			const directory = directories.get(request.rootPath);
-			if (!directory) return { status: "failed", step: "open_root", code: 2 };
-			if (directory.volumeSerial !== request.rootVolumeSerial || directory.fileId !== request.rootFileId) {
-				return { status: "root_mismatch" };
-			}
-			if (directory.locality !== "local") return { status: "root_not_local", reason: "driver_not_in_path" };
-			if (options.createOutcome === "exists") return { status: "exists" };
-			if (options.createOutcome === "failed") return { status: "failed", step: "flush", code: 112 };
-			const path = `${request.rootPath}\\${request.name}`;
-			if (objects.has(path)) return { status: "exists" };
-			objects.set(path, Buffer.from(request.header));
-			return {
-				status: "created",
-				volumeSerial: directory.volumeSerial,
-				fileId: String(nextId++),
-				locality: "local",
-				reason: null,
-				reportedFileSystem: "NTFS",
-			};
-		},
-		presenceAcquire: () => ({ status: "unavailable", reason: "unsupported_platform" }),
-		presenceProbe: () => ({ status: "unavailable", reason: "unsupported_platform" }),
-		presenceProbeRetained: () => ({ status: "unavailable", reason: "unsupported_platform" }),
-		presencePreActionCheck: () => ({ status: "unavailable", reason: "unsupported_platform" }),
-		presenceWaitAndAcquire: async () => ({ status: "unavailable", reason: "unsupported_platform" }),
-		presenceCancelWait: () => {},
-		presenceReleaseAfterQuiescence: () => ({ status: "unavailable", reason: "unsupported_platform" }),
-	};
-	const load: PresencePlacementLoad = { status: "available", native };
-	return { native, load, calls, directories, objects };
-}
 
 function locatorOf(args: readonly string[]) {
 	const locator = parseReservationLocatorArgs(args);
@@ -195,7 +108,11 @@ describe("#4199 presence placement", () => {
 			endpointKey: ENDPOINT_KEY,
 			native: fake.load,
 		});
-		const offer = offerSupervisorLaunch(store, ENDPOINT, OWNER, { reservation, native: fake.load });
+		const offer = offerSupervisorLaunch(store, ENDPOINT, OWNER, {
+			reservation,
+			native: fake.load,
+			ownerPresence: acquireOwnerPresence(reservation, fake.load),
+		});
 		return { store, reservation, ...offer, locator: locatorOf(offer.args) };
 	}
 
@@ -257,7 +174,7 @@ describe("#4199 presence placement", () => {
 		expect(store.reservation(generation).presence.root).toMatchObject({ status: "presence_unavailable" });
 		expect(store.roleRow(locator)?.presence).toEqual({ status: "presence_unavailable" });
 		expect(fake.calls.some((call) => call.startsWith("presenceObjectCreate"))).toBe(false);
-		expect(await claimLaunchRole(locator, SUPERVISOR, fake.load)).toBe("claimed");
+		expect(await claimLaunchRole(locator, SUPERVISOR, fake.load)).toMatchObject({ outcome: "claimed" });
 	});
 
 	it("Placement: off Windows the root is typed unavailable and startup is not refused for it", async () => {
@@ -269,7 +186,11 @@ describe("#4199 presence placement", () => {
 			root: { status: "presence_unavailable", reason: "unsupported_platform", detail: null },
 			ownerKernelSession: { status: "unverified", reason: "unsupported_platform" },
 		});
-		const { generation } = offerSupervisorLaunch(store, ENDPOINT, OWNER, { reservation, native });
+		const { generation } = offerSupervisorLaunch(store, ENDPOINT, OWNER, {
+			reservation,
+			native,
+			ownerPresence: acquireOwnerPresence(reservation, native),
+		});
 		expect(store.reservation(generation).state).toBe("pending");
 	});
 
@@ -302,13 +223,17 @@ describe("#4199 presence placement", () => {
 			endpointKey: ENDPOINT_KEY,
 			native: fake.load,
 		});
-		const { generation, args } = offerSupervisorLaunch(store, ENDPOINT, OWNER, { reservation, native: fake.load });
+		const { generation, args } = offerSupervisorLaunch(store, ENDPOINT, OWNER, {
+			reservation,
+			native: fake.load,
+			ownerPresence: acquireOwnerPresence(reservation, fake.load),
+		});
 		expect(committedAtCreate).toBeUndefined();
 		const presence = store.roleRow(locatorOf(args))?.presence;
 		if (presence?.status !== "predeclared") throw new Error(`expected a predeclared object, got ${presence?.status}`);
 		if (reservation.root.status !== "placed") throw new Error("expected a placed root");
 		expect(presence.path).toBe(`${reservation.root.path}\\${presence.presenceId}.presence`);
-		expect(fake.objects.get(presence.path)?.toString("hex")).toBe(presence.header);
+		expect(fake.objects.get(presence.path)?.content.toString("hex")).toBe(presence.header);
 		expect(presence).toMatchObject({
 			volumeSerial: "7",
 			classification: "local",
@@ -366,7 +291,7 @@ describe("#4199 presence placement", () => {
 		const native = loadPresencePlacement({ platform: "linux" });
 		expect(await rejectionOf(() => claimLaunchRole(locator, SUPERVISOR, native))).toBe("presence_root_unverifiable");
 		expect(store.roleRow(locator)?.status).toBe("offered");
-		expect(await claimLaunchRole(locator, SUPERVISOR, fake.load)).toBe("claimed");
+		expect(await claimLaunchRole(locator, SUPERVISOR, fake.load)).toMatchObject({ outcome: "claimed" });
 	});
 
 	it.each([
@@ -419,7 +344,8 @@ describe("#4199 presence placement", () => {
 		vi.stubGlobal("process", Object.create(process, { platform: { value: "win32" } }));
 		await vi.mocked(childProcess.spawn).withImplementation(
 			() => {
-				createdBeforeSpawn = fake.objects.size === 1;
+				// The reserving owner's own object and the supervisor's.
+				createdBeforeSpawn = fake.objects.size === 2;
 				throw reachedSpawn;
 			},
 			async () => {
@@ -427,7 +353,9 @@ describe("#4199 presence placement", () => {
 			},
 		);
 		expect(createdBeforeSpawn).toBe(true);
-		expect([...fake.objects.keys()][0]?.startsWith(`\\\\?\\${join(root, "endpoint")}.presence\\`)).toBe(true);
+		for (const path of fake.objects.keys()) {
+			expect(path.startsWith(`\\\\?\\${join(root, "endpoint")}.presence\\`)).toBe(true);
+		}
 	});
 
 	it("loads the placement natives only on Windows and reports a missing or incomplete bridge as unavailable", () => {
