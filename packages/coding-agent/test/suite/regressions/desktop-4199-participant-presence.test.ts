@@ -627,14 +627,8 @@ describe("#4199 participant presence: acquire before authority, release after qu
 			if (args[1] === "supervisor") supervisorLocator.current = { generation: args[0] };
 			return offer.apply(this, args);
 		});
-		const releaseOwner = EndpointReservationStore.prototype.releaseOwner;
-		vi.spyOn(EndpointReservationStore.prototype, "releaseOwner").mockImplementation(function (
-			this: EndpointReservationStore,
-			...args
-		) {
+		vi.spyOn(EndpointReservationStore.prototype, "releaseOwner").mockImplementation(() => {
 			mocked.events.push("released commit refused: store_busy");
-			void releaseOwner;
-			void args;
 			throw new EndpointReservationError("store_busy", "database is locked");
 		});
 		const close = EndpointReservationStore.prototype.close;

@@ -337,20 +337,19 @@ async function fenceFailedStart(reservation: {
 	readonly presence: HeldPresence;
 }): Promise<string | undefined> {
 	const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+	const notes: string[] = [];
 	try {
 		reservation.store.cancel(reservation.generation);
 	} catch (error: unknown) {
-		return `reservation fence also failed: ${message(error)}`;
-	} finally {
-		try {
-			releaseReservingOwner(reservation.store, reservation.generation, reservation.issuer, reservation.presence);
-		} catch (error: unknown) {
-			reservation.store.close();
-			return `reserving owner's released commit also failed (its guard stays held): ${message(error)}`;
-		}
-		reservation.store.close();
+		notes.push(`reservation fence also failed: ${message(error)}`);
 	}
-	return undefined;
+	try {
+		releaseReservingOwner(reservation.store, reservation.generation, reservation.issuer, reservation.presence);
+	} catch (error: unknown) {
+		notes.push(`reserving owner's released commit also failed (its guard stays held): ${message(error)}`);
+	}
+	reservation.store.close();
+	return notes.length === 0 ? undefined : notes.join("; ");
 }
 
 /** The original error, with a failed fence noted on its message; the error object itself is what callers compare. */
