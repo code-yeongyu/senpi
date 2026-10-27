@@ -155,7 +155,11 @@ describe("Models.login refuses a blank API key", () => {
 		await models.login("optionalkey", "api_key", submit(""));
 
 		const stored = await store.read("optionalkey");
-		expect(stored).toEqual({ type: "api_key", env: { OPTIONAL_BASE_URL: "http://127.0.0.1:8080" } });
+		expect(stored).toEqual({
+			type: "api_key",
+			env: { OPTIONAL_BASE_URL: "http://127.0.0.1:8080" },
+			loginId: expect.any(String),
+		});
 		expect(Object.hasOwn(stored ?? {}, "key")).toBe(false);
 	});
 });

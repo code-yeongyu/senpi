@@ -15,7 +15,7 @@ export interface ActiveFallbackState {
 	pinnedByBilling: boolean;
 	/** Derived OR of the two provenance flags - the only field consumers read. */
 	pinned: boolean;
-	/** The original provider's credential revision when the episode began; a change releases it (senpi#4099). */
+	/** The original provider's login id when the episode began; a sign-in moves it and releases a billing pin (senpi#4099). */
 	recoveryRevision?: string;
 }
 
@@ -61,8 +61,8 @@ export interface RetryFallbackControllerDeps {
 	getCurrentSelector(): { model: Model<Api>; thinkingLevel?: ThinkingLevel } | undefined;
 	isAuthAvailable(provider: string): boolean;
 	/**
-	 * An opaque revision of `provider`'s stored credential and blocked pool slots, never key material;
-	 * `undefined` when it cannot be read. A change means a re-login or a cleared block (senpi#4099).
+	 * The `loginId` the last sign-in stored for `provider` ("" when none did), never key material;
+	 * `undefined` when it cannot be read. Only a sign-in changes it; a token refresh never does (senpi#4099).
 	 */
 	recoveryRevision?(provider: string): Promise<string | undefined>;
 }

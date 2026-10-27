@@ -48,6 +48,22 @@ describe("a re-login releases a billing-pinned fallback (senpi#4099)", () => {
 		expect(harness.eventsOfType("retry_fallback_reverted")).toHaveLength(1);
 	});
 
+	it("keeps the pin when a token refresh rewrites the same account's material without a sign-in", async () => {
+		const harness = await createChainHarness();
+		harnesses.push(harness);
+		harness.setResponses([usageNotIncluded(), fauxAssistantMessage("fallback"), fauxAssistantMessage("fallback")]);
+
+		await harness.session.prompt("first");
+		// A refresh by any session on this account rewrites the stored material through `modify`, never a login path.
+		await harness.authStorage.modify("faux", async (current) =>
+			current?.type === "api_key" ? { ...current, key: "synthetic-rotated-key" } : current,
+		);
+		await harness.session.prompt("second");
+
+		expect(calledModels(harness)).toEqual(["faux-1", "faux-2", "faux-2"]);
+		expect(harness.eventsOfType("retry_fallback_reverted")).toEqual([]);
+	});
+
 	it("keeps the pin when only another provider's credential changes", async () => {
 		const harness = await createChainHarness();
 		harnesses.push(harness);
