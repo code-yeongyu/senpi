@@ -118,6 +118,7 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
+import { latestReplyLanguage } from "./user-language.ts";
 
 /**
  * Whether `value` is plain JSON: null, booleans, finite numbers, strings, arrays of those, and objects
@@ -860,6 +861,23 @@ function contextEntriesOfPath(path: SessionEntry[]): SessionEntry[] {
 	return contextEntries;
 }
 
+/**
+ * The summary replaces the user's own turns, so it carries the language they were written in,
+ * read from the user messages before the compaction (omo#11527).
+ */
+function annotateCompactionUserLanguage(head: ProjectedSessionEntry | undefined, path: SessionEntry[]): void {
+	if (head?.sourceEntry.type !== "compaction") return;
+	const end = path.indexOf(head.sourceEntry);
+	const userMessages = path
+		.slice(0, Math.max(end, 0))
+		.flatMap((entry) => (entry.type === "message" && entry.message.role === "user" ? [entry.message] : []));
+	const userLanguage = latestReplyLanguage(userMessages);
+	if (userLanguage === undefined) return;
+	for (const message of head.messages) {
+		if (message.role === "compactionSummary") message.userLanguage = userLanguage;
+	}
+}
+
 function projectContextEntry(entry: SessionEntry, edit: ContextEditEntry | undefined): AgentMessage[] {
 	const messages = sessionEntryToContextMessages(entry);
 	if (!edit) return messages;
@@ -910,6 +928,7 @@ function projectSession(
 					: projectContextEntry(sourceEntry, edits.get(sourceEntry.id)),
 		}),
 	);
+	annotateCompactionUserLanguage(projectedEntries[0], path);
 	const recoveryIndex = path.findLastIndex(
 		(entry) =>
 			entry.type === "compaction" &&
