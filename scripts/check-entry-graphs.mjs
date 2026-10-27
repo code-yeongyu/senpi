@@ -45,17 +45,21 @@ const BUDGETS = {
 			// +3 (senpi#4283): the one-pass token-wise redactor provider-error.ts runs, split by responsibility to stay under
 			// 250 pure LOC per file: utils/secret-redaction.ts (the state machine), utils/secret-classifier.ts (credential
 			// words, key prefixes, JWTs) and utils/secret-lexer.ts (token and delimiter units). Measured: 31 files.
+			// +2 (senpi#4272 S02c): assistant-capture-record.ts separates frozen-value construction to keep files
+			// below 250 pure LOC; assistant-seed-frontier.ts shares the producer/projector frontier contract.
+			// Both are browser-safe leaves without new runtime dependencies. Measured: 33 files.
 			// +1 (senpi#4099): auth/pool/login-id.ts, the one-function leaf that stamps a fresh loginId on a sign-in's
-			// credential so a re-login (never a token refresh) releases a billing-pinned fallback. Measured: 32 files.
-			maxFiles: 32,
+			// credential so a re-login (never a token refresh) releases a billing-pinned fallback. Measured: 34 files.
+			maxFiles: 34,
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
 		},
 		"./utils/*": {
 			maxFiles: 3,
 			// senpi#4283: every provider stream redacts its error at the boundary, so event-stream.ts reaches
 			// provider-error.ts and the three redactor modules (secret-redaction, secret-classifier, secret-lexer).
-			// Measured: event-stream 6 files (including assistant-capture), provider-error 4; every other ./utils/* entry stays at 3.
-			overrides: { "./utils/event-stream": 6, "./utils/provider-error": 4 },
+			// S02c adds the two capture leaves described above. Measured: event-stream 8 files,
+			// provider-error 4; every other ./utils/* entry stays at 3.
+			overrides: { "./utils/event-stream": 8, "./utils/provider-error": 4 },
 			forbid: ["providers/", "api/", "index.ts"],
 		},
 	},

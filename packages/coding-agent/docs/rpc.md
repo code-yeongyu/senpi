@@ -185,6 +185,13 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
   between runs, a refresh while the last end is still bound may set or update that run's stop.
   Goal guards are captured during their bound end's own processing, never inherited from
   another run. Provider errors and policy rejections carry no `lastStop`, even if a deadline fired.
+- Wire-only `observedAt` is the host's ISO wall-clock time when it serializes or enqueues
+  that lifecycle delivery: push, `get_state`, `open_session`, classic stdio, worker-host,
+  TUI-control, and attach replay. Replay re-stamps a wire copy at send time. It is never
+  persisted and never changes `activityRevision.instanceId`, activity revision, `seq`, `epoch`,
+  `since`, completion identity, or activity content. Forwarding preserves the engine owner's
+  activity key, including absent activity; inspecting or replaying never mints a revision.
+  It is not a heartbeat or proof of liveness.
 - Optional `activity` is present only while `state` is `running` and a live activity is known:
   `{ kind: "tool", toolName, toolCallId, since, outstanding }` represents the oldest outstanding
   top-level tool operation, including preparation, approval and dependency waits. Nested calls
@@ -231,6 +238,19 @@ Clients must not notify or settle while `restoring` is true or `persisted` is fa
 Use `completionId` to deduplicate root completion/failure, not `agent_settled` or
 `agent_idle`: a queued result or background source can still own unfinished work.
 An ordinary reply completing is not itself a request to mark a thread Done.
+
+Clients order lifecycle content by session + `seq`, never by wall clock. An equal lifecycle
+`seq` may refresh receipt information and, under the activity ordering rule, the activity projection.
+It never re-runs ordinary state or completion effects. Activity revisions and `observedAt` never
+authorize replacing ordinary lifecycle content at an equal or older lifecycle `seq`.
+An older `seq` never replaces a newer one. Measure "last seen" age on the client's own receipt clock,
+not from `observedAt`. A disconnect never infers a terminal state and never erases a known
+`done`, `failed`, or `cancelled`. An old `running` means "last known running".
+
+Terminal child `lost` means the runner's FINAL loss of custody or contact for that reported
+run. It is not proof that the work or its side effects stopped. A transient transport failure
+must not publish terminal `lost`. Revival uses a higher `runEpoch`; a late same-epoch report
+never reopens a terminal. These delivery rules change no lifecycle transition.
 
 #### request_self_settle
 
@@ -363,6 +383,8 @@ model context or history.
 ## Account display names
 
 `get_provider_accounts` returns secret-free descriptors containing `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Render a named account as `displayName (name)`; keep using the immutable `name` for `account_pin`, `account_remove`, and comparisons. Legacy accounts omit `displayName`.
+
+A blocked account also says why: `blockedReason` is `auth_error` (the provider rejected the key; it is skipped until one request re-probes it at `blockedUntil`), `rate_limit` (a cooldown that ends at `blockedUntil`) or `disabled` (no end time; replace the credential). Both fields appear only while `blocked` is true, and `blockedReason` is absent when the stored block names no reason. A client choosing an account for a new request should skip `auth_error` accounts rather than send a request that will fail with 401.
 
 Use `/account <provider> rename <id> <display name...>` or the corresponding `/gpt-account` and `/claude-account` commands to name saved accounts; `clear-name <id>` removes only the label. `/gpt-account add` offers optional naming after login is saved, and only when Senpi generated the account ID itself; the Claude lane names accounts through its own login prompt and never asks twice. Blank input or cancellation keeps that login usable. Environment accounts cannot be renamed.
 
@@ -761,6 +783,8 @@ for its child to exit, even if the child no longer responds. `senpi host status`
 and `status --all` expose the same `lifecycle` field (`null` for an older or
 unreachable host). Session counts during stopping are unobserved and represented
 by the existing empty listing, not a claim that the child has already exited.
+Shutdown signals the child immediately, then waits for its observed exit and any
+pending startup publication before removing the generation's ownership state.
 
 A ready probe does not reserve an open: a later `open_session` can fail with
 `errorCode: "host_stopping"` and `errorData.instanceId`, including on a connection

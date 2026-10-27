@@ -1,0 +1,54 @@
+{
+	"caseId": "utf8-split",
+	"kind": "valid",
+	"contractIds": [
+		"R4.B3"
+	],
+	"description": "U+1F600 (F0 9F 98 80) starts at offset 131070: record 1 ends with F0 9F, record 2 starts with 98 80; reassembly is byte-exact.",
+	"digestAlgorithm": "sha256",
+	"limits": {
+		"D": 131072,
+		"F": 262144,
+		"H": 16384
+	},
+	"source": {
+		"generator": {
+			"kind": "segments",
+			"params": {
+				"segments": [
+					{
+						"kind": "repeat",
+						"patternBase64": "YQ==",
+						"length": 131070
+					},
+					{
+						"kind": "bytes",
+						"base64": "8J+YgA=="
+					},
+					{
+						"kind": "bytes",
+						"base64": "dGFpbA=="
+					}
+				]
+			}
+		}
+	},
+	"sourceLength": 131078,
+	"sourceDigest": "dd5b1f14bd541a6fa0d9f17c25004a4610daa5aaf9ad3b6e630931404189985f",
+	"expectedRecords": [
+		{
+			"offset": 0,
+			"length": 131072,
+			"digest": "677460646caf9a8957097beb60e8eba8494cc9ceb013376ce53c3ea47850baf1",
+			"next": 131072,
+			"complete": false
+		},
+		{
+			"offset": 131072,
+			"length": 6,
+			"digest": "74eda9fdafa3523c99b5d60906dc2012564972558df9afb23facc8e062ae5084",
+			"next": null,
+			"complete": true
+		}
+	]
+}

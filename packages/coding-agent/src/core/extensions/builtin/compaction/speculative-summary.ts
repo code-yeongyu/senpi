@@ -99,7 +99,8 @@ function summarizationStream(
 	options: StreamOptions & Record<string, unknown>,
 ): AssistantMessageEventStream {
 	const runtime = context.modelRegistry?.modelRuntime;
-	return runtime ? runtime.stream(model, requestContext, options) : stream(model, requestContext, options);
+	const scoped = { ...options, cwd: context.cwd };
+	return runtime ? runtime.stream(model, requestContext, scoped) : stream(model, requestContext, scoped);
 }
 
 export async function generateSummaryMessage(options: {

@@ -12,6 +12,7 @@ import type { ContextUsage } from "../../core/extensions/types.ts";
 import type { SessionEntry, UsageTotals } from "../../core/session-manager.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { RpcSessionLifecycle } from "./lifecycle-delivery.ts";
 import type { RpcExtensionUIRequest, RpcQuestionUiRequest } from "./rpc-question-types.ts";
 import type { UiAnswerReceipt } from "./ui-answer-ledger.ts";
 
@@ -58,6 +59,10 @@ export interface RpcProviderAccount {
 	displayName?: string;
 	source: "login" | "import" | "env";
 	blocked: boolean;
+	/** Present only while `blocked`: `auth_error` = key rejected, skip it until `blockedUntil` (senpi#4327). */
+	blockedReason?: "auth_error" | "rate_limit" | "disabled";
+	/** Epoch ms when the block lifts; absent for `disabled` and for a block that names no time. */
+	blockedUntil?: number;
 	pinned: boolean;
 }
 
@@ -111,7 +116,7 @@ export interface RpcSessionState {
 	paused: boolean;
 	pausedNoticeCount: number;
 	holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
-	lifecycle: import("../../core/session-lifecycle-types.ts").SessionLifecycle;
+	lifecycle: RpcSessionLifecycle;
 	model?: Model<any>;
 	/**
 	 * Model switch held until the next compaction, or `null` when no switch is held.

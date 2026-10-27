@@ -12,6 +12,7 @@ import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.
 import type { RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { createStructuredHarness } from "../structured-lane-sdk-harness.ts";
 import { scriptProvider, textReply } from "../structured-lane-support.ts";
+import { expectSameBytesExceptDeliveryStamp } from "../../helpers/rpc-delivery-stamp.ts";
 import { createInProcessRig } from "../rpc-inprocess-host-support.ts";
 
 const FLAG = "SENPI_ENGINE_SOCKET_COMPACT_UPDATES";
@@ -148,7 +149,7 @@ it("T5 sequences in-process records in producer order, correlation before its co
 		expect(seen.slice(turn, turnEnd).every((record) => record.turnId === turnId)).toBe(true);
 		expect(seen.at(-1)?.turnId, "agent_end closes the turn").toBeNull();
 
-		expect(actual).toEqual(expected);
+		expectSameBytesExceptDeliveryStamp(actual, expected);
 		expect(actual.some((line) => /"(messageId|turnId|sessionEpoch)":/.test(line))).toBe(false);
 	} finally {
 		await binding.dispose();

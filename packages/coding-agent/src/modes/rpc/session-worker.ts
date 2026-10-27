@@ -8,7 +8,7 @@ import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import type { SecurityNoticeSnapshot } from "../../core/security-notices.ts";
-import { recoveryCarrier } from "../../core/session-recovery-identity.ts";
+import { recoveryCarrier, setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
 import { getDefaultSessionDir, type SessionManager } from "../../core/session-manager.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
@@ -117,12 +117,18 @@ class WorkerEventWriter extends SessionEventWriter {
 		const replaced = "type" in record && record.type === "session_replaced";
 		if (ordered && replaced) journaled = session.sessionManager;
 		const transitions = ordered && !replaced ? (journaled?.drainTranscript() ?? []) : [];
+		const epochSignal = ordered && replaced ? new SharedArrayBuffer(36) : undefined;
 		const order = ordered
 			? {
 					ordinal: outputOrdinal++,
 					recovery: recoveryCarrier(record),
 					...(replaced
-						? { bootstrap: { transcript: withinFrameLimit(session.sessionManager.beginTranscriptJournal()) } }
+						? {
+								bootstrap: {
+									transcript: withinFrameLimit(session.sessionManager.beginTranscriptJournal()),
+									epochSignal,
+								},
+							}
 						: {}),
 					...(transitions.length > 0 ? { transitions: withinFrameLimit(transitions) } : {}),
 				}
@@ -138,6 +144,7 @@ class WorkerEventWriter extends SessionEventWriter {
 			activity,
 			snapshot: replacement,
 		}));
+		if (epochSignal) setSessionRecoveryEpoch(session, Buffer.from(epochSignal).toString("ascii"));
 		return true;
 	}
 }
@@ -223,6 +230,8 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			const opened = await registry.openSession(prepared.profile);
 			entry = registry.getForCommand(opened.sessionId, "open_session");
 			ordered = message.acceptance === true;
+			if (message.recoveryEpoch && entry.runtime)
+				setSessionRecoveryEpoch(entry.runtime.session, message.recoveryEpoch);
 			journaled = ordered ? entry.runtime?.session.sessionManager : undefined;
 			send({
 				type: "ready",

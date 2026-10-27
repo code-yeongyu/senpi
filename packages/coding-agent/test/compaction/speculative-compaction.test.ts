@@ -102,6 +102,7 @@ function createContext(options?: {
 	});
 
 	return {
+		cwd: process.cwd(),
 		model,
 		modelRegistry,
 		registration,
