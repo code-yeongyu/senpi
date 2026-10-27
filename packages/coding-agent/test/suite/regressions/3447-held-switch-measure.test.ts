@@ -11,7 +11,11 @@ const reportedInput = 321_000;
 function seedUndercountedContext(harness: Harness): void {
 	const model = harness.getModel();
 	const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
-	harness.sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: "do the task" }], timestamp: 1 });
+	harness.sessionManager.appendMessage({
+		role: "user",
+		content: [{ type: "text", text: "do the task" }],
+		timestamp: 1,
+	});
 	const steps = 20;
 	for (let step = 0; step < steps; step++) {
 		const toolCallId = `call-${step}`;

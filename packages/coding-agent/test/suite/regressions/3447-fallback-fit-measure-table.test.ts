@@ -52,7 +52,11 @@ function appendSteps(harness: Harness, steps: number, resultChars: number, repor
 }
 
 function seed(harness: Harness, shape: Seed): void {
-	harness.sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: "do the task" }], timestamp: 1 });
+	harness.sessionManager.appendMessage({
+		role: "user",
+		content: [{ type: "text", text: "do the task" }],
+		timestamp: 1,
+	});
 	if (shape.compactedPrefixSteps !== undefined) {
 		appendSteps(harness, shape.compactedPrefixSteps, 400, 90_000, "old");
 		const firstKept = harness.sessionManager.getBranch().at(-1);
@@ -127,7 +131,12 @@ describe("#3447 fallback fit charges one measure with and without reported usage
 				{ id: "faux-rung", contextWindow: rungWindow, maxTokens: rungMaxTokens },
 			],
 			settings: {
-				retry: { enabled: true, maxRetries: 0, baseDelayMs: 60_000, fallbackChains: { [primary]: ["faux/faux-rung"] } },
+				retry: {
+					enabled: true,
+					maxRetries: 0,
+					baseDelayMs: 60_000,
+					fallbackChains: { [primary]: ["faux/faux-rung"] },
+				},
 			},
 		};
 		const first = await createHarness(options);
@@ -140,32 +149,38 @@ describe("#3447 fallback fit charges one measure with and without reported usage
 		return resumed;
 	}
 
-	it.each(rows)("#given $name and a rung only a reduction fits #when fallback switches #then it reduces once and the rung answers", async (row) => {
-		const harness = await sessionFor(row, await gapWindow(row.shape), reportMaxTokens);
-		const seededEstimate = contextEstimate(harness);
-		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: usageLimit }),
-			fauxAssistantMessage("answer from the rung"),
-		]);
+	it.each(rows)(
+		"#given $name and a rung only a reduction fits #when fallback switches #then it reduces once and the rung answers",
+		async (row) => {
+			const harness = await sessionFor(row, await gapWindow(row.shape), reportMaxTokens);
+			const seededEstimate = contextEstimate(harness);
+			harness.setResponses([
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: usageLimit }),
+				fauxAssistantMessage("answer from the rung"),
+			]);
 
-		await harness.session.prompt("continue");
+			await harness.session.prompt("continue");
 
-		expect(harness.eventsOfType("model_change_rejected")).toEqual([]);
-		const reduced = harness.eventsOfType("resume_context_reduced");
-		expect(reduced).toHaveLength(1);
-		expect(reduced[0]?.tokensBefore).toBeGreaterThanOrEqual(seededEstimate);
-		expect(harness.session.model?.id).toBe("faux-rung");
-	});
+			expect(harness.eventsOfType("model_change_rejected")).toEqual([]);
+			const reduced = harness.eventsOfType("resume_context_reduced");
+			expect(reduced).toHaveLength(1);
+			expect(reduced[0]?.tokensBefore).toBeGreaterThanOrEqual(seededEstimate);
+			expect(harness.session.model?.id).toBe("faux-rung");
+		},
+	);
 
-	it.each(rows)("#given $name and a rung that cannot hold it #when the guard refuses #then it charges the full per-message estimate", async (row) => {
-		const harness = await sessionFor(row, 30_000, 4_000);
-		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: usageLimit })]);
+	it.each(rows)(
+		"#given $name and a rung that cannot hold it #when the guard refuses #then it charges the full per-message estimate",
+		async (row) => {
+			const harness = await sessionFor(row, 30_000, 4_000);
+			harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: usageLimit })]);
 
-		await harness.session.prompt("continue");
+			await harness.session.prompt("continue");
 
-		const [rejected] = harness.eventsOfType("model_change_rejected");
-		expect(rejected?.liveContextTokens).toBe(contextEstimate(harness));
-	});
+			const [rejected] = harness.eventsOfType("model_change_rejected");
+			expect(rejected?.liveContextTokens).toBe(contextEstimate(harness));
+		},
+	);
 
 	it("#given a reported figure implausibly above a large estimate #when fallback switches to a rung the estimate fits #then it switches without cutting the context", async () => {
 		const shape: Seed = { steps: 30, resultChars: 2_000, reportedInput: 600_000 };

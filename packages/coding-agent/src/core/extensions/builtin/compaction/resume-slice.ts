@@ -118,24 +118,63 @@ export function planResumeSlice({
 	const summary = buildSliceSummary(entryList);
 	let measuredCutIndex = -1;
 
-	const minTarget = Math.max(1, toEstimate(MIN_KEEP_TOKENS));
-	for (let target = toEstimate(keepBudget); target >= minTarget; target = Math.floor(target / 2)) {
-		const cut = findCutPoint(entryList, boundaryStart, entryList.length, target);
-		if (cut.firstKeptEntryIndex === measuredCutIndex) continue;
-		measuredCutIndex = cut.firstKeptEntryIndex;
-		const firstKeptEntryId = entryList[cut.firstKeptEntryIndex]?.id;
-		if (!firstKeptEntryId) continue;
+	const planAt = (firstKeptIndex: number): ResumeSlicePlan | undefined => {
+		const firstKeptEntryId = entryList[firstKeptIndex]?.id;
+		if (!firstKeptEntryId) return undefined;
 		const tokensAfter = Math.ceil(
 			measureSlicedContext(entryList, firstKeptEntryId, summary, projection.liveContextTokens) * tokenScale,
 		);
-		if (tokensAfter + overhead > projection.contextWindow) continue;
+		if (tokensAfter + overhead > projection.contextWindow) return undefined;
 		return {
 			firstKeptEntryId,
 			summary,
 			tokensBefore: projection.liveContextTokens,
 			tokensAfter,
-			droppedEntries: Math.max(0, cut.firstKeptEntryIndex - boundaryStart),
+			droppedEntries: Math.max(0, firstKeptIndex - boundaryStart),
 		};
+	};
+
+	const minTarget = Math.max(1, toEstimate(MIN_KEEP_TOKENS));
+	for (let target = toEstimate(keepBudget); target >= minTarget; target = Math.floor(target / 2)) {
+		const cut = findCutPoint(entryList, boundaryStart, entryList.length, target);
+		if (cut.firstKeptEntryIndex === measuredCutIndex) continue;
+		measuredCutIndex = cut.firstKeptEntryIndex;
+		const plan = planAt(cut.firstKeptEntryIndex);
+		if (plan) return plan;
 	}
-	return undefined;
+	return planAtEarliestFittingUserTurn(entryList, boundaryStart, planAt);
+}
+
+/**
+ * `findCutPoint` keeps the entry that crosses its budget, so a single oldest turn
+ * larger than the whole budget is never dropped by the halving above. A cut at a
+ * user turn is always boundary-safe, and the kept context only shrinks as the cut
+ * moves later, so the earliest fitting user turn is found by binary search
+ * (senpi#3447).
+ */
+function planAtEarliestFittingUserTurn(
+	entries: readonly SessionEntry[],
+	boundaryStart: number,
+	planAt: (firstKeptIndex: number) => ResumeSlicePlan | undefined,
+): ResumeSlicePlan | undefined {
+	const userTurns: number[] = [];
+	for (let index = boundaryStart + 1; index < entries.length; index++) {
+		const entry = entries[index];
+		if (entry?.type === "message" && entry.message.role === "user") userTurns.push(index);
+	}
+	let low = 0;
+	let high = userTurns.length - 1;
+	let best: ResumeSlicePlan | undefined;
+	while (low <= high) {
+		const middle = Math.floor((low + high) / 2);
+		const index = userTurns[middle];
+		const plan = index === undefined ? undefined : planAt(index);
+		if (plan) {
+			best = plan;
+			high = middle - 1;
+		} else {
+			low = middle + 1;
+		}
+	}
+	return best;
 }
