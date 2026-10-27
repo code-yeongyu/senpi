@@ -16,11 +16,23 @@
  * `handoffHost` already enforce that; this module only gives their outcomes a machine-readable shape.
  *
  * A terminal control endpoint (`endpoint_kind: "tui"`) is owned by its terminal process and is never
- * ensured, handed off, drained or stopped by a host operator: `ensure`, `handoff` and `stop` against
- * one refuse with `unsupported_endpoint_kind` (exit 3) from disk alone, before any connection.
+ * ensured, handed off, drained or stopped by a host operator: `ensure`, `handoff`, `stop` and `repair`
+ * against one refuse with `unsupported_endpoint_kind` (exit 3) from disk alone, before any connection.
+ *
+ * `repair` is the explicit Repair connection action of a Windows public endpoint (#4199 design 4.2a): one
+ * bounded recovery check under the endpoint lock, the busy-owner wait when a held presence object is the
+ * remaining step, and the repair anchor when the user confirmed a restart. It answers with the same typed
+ * `recovery { reason, action, ... }` an ensure refuses with, or `recovered`.
  */
+import { win32 } from "node:path";
 import { daemonEnvKeys, daemonEnvOverrides, writeDaemonEnvKeys } from "./host-daemon-env.ts";
 import { createHostDaemonPaths, type ShardKind, shardKey, shardSocketPathForKey } from "./host-daemon-paths.ts";
+import { recoveryProber } from "./endpoint-recovery.ts";
+import { type RepairOutcome, repairEndpointReservations } from "./endpoint-repair.ts";
+import { openEndpointReservationStore } from "./endpoint-reservation-store.ts";
+import { acquireHostEnsureLock, hostEnsureLockTarget } from "./host-ensure-lock.ts";
+import { ownLaunchRoute } from "./host-launch-reservation.ts";
+import { loadPresencePlacement } from "./socket-secret-native.ts";
 import {
 	decideHostAction,
 	type HostDecisionPolicy,
@@ -102,6 +114,14 @@ export type HostRequest =
 	  }
 	/** Removes endpoint state under `agentDir` only on the three-part evidence (`host-gc.ts`). */
 	| { readonly action: "gc"; readonly agentDir: string }
+	| {
+			readonly action: "repair";
+			readonly target: HostTarget;
+			/** The user confirmed "Restart this computer": record the repair anchor where the restart proves something. */
+			readonly confirmRestart?: boolean;
+			/** Dismissing the card: cancels an outstanding busy-owner wait. */
+			readonly signal?: AbortSignal;
+	  }
 	| { readonly action: "shard_path"; readonly kind: ShardKind; readonly owner: string; readonly root: string };
 
 export async function runHostRequest(
@@ -122,7 +142,12 @@ async function runHostRequestInKeyRoot(
 	presenterBootstrap?: Duplex,
 	mcpPresenterEnforcement?: boolean,
 ): Promise<HostOutcome> {
-	if (request.action === "ensure" || request.action === "handoff" || request.action === "stop") {
+	if (
+		request.action === "ensure" ||
+		request.action === "handoff" ||
+		request.action === "stop" ||
+		request.action === "repair"
+	) {
 		const { socket, agentDir } = request.target;
 		if ((await endpointKindOfSocket(socket, agentDir)) === "tui") {
 			return refusal("refuse", undefined, { reason: "unsupported_endpoint_kind", socket, endpoint_kind: "tui" });
@@ -154,8 +179,66 @@ async function runHostRequestInKeyRoot(
 				exitCode: HOST_EXIT_OK,
 				payload: { ...(await gcHostEndpoints(request.agentDir, { staleEngine: {} })) },
 			};
+		case "repair":
+			return repairOutcome(request.target, request.confirmRestart === true, request.signal);
 		default:
 			return assertNever(request);
+	}
+}
+
+/** How long a repair waits for the endpoint lock an ensure may be holding. */
+const REPAIR_LOCK_WAIT_MS = 30_000;
+
+/**
+ * The explicit Repair connection action, engine half (#4199 design 4.2a, tests 20 and 26). Only an endpoint that
+ * launches through a reservation (a Windows public endpoint) has anything to repair; elsewhere it refuses typed.
+ */
+async function repairOutcome(target: HostTarget, confirmRestart: boolean, signal?: AbortSignal): Promise<HostOutcome> {
+	const { socket, agentDir } = target;
+	if (ownLaunchRoute() !== "reservation") {
+		return refusal("refuse", undefined, { reason: "unsupported_platform", socket });
+	}
+	const lockTarget = hostEnsureLockTarget(socket);
+	const paths = await createHostDaemonPaths({ agentDir, socket });
+	const store = await openEndpointReservationStore(`${lockTarget}.reservation.db`);
+	let outcome: RepairOutcome;
+	try {
+		outcome = await repairEndpointReservations({
+			store,
+			endpoint: socket,
+			paths,
+			prober: recoveryProber(win32.dirname(lockTarget), loadPresencePlacement(), { daemonDirectory: paths.dir }),
+			withEndpointLock: async (run) => {
+				const release = await acquireHostEnsureLock(socket, REPAIR_LOCK_WAIT_MS);
+				try {
+					return await run();
+				} finally {
+					await release();
+				}
+			},
+			confirmRestart,
+			signal,
+		});
+	} finally {
+		store.close();
+	}
+	switch (outcome.status) {
+		case "recovered":
+			return { exitCode: HOST_EXIT_OK, payload: { action: "repair", socket, recovered: outcome.generations } };
+		case "cancelled":
+			return refusal("refuse", undefined, { reason: "cancelled", socket });
+		case "refused": {
+			const { status: _status, detail, occupied: _occupied, anchor, ...recovery } = outcome;
+			return refusal("refuse", undefined, {
+				reason: "reservation_recovery_required",
+				socket,
+				detail,
+				recovery,
+				...(anchor !== undefined && { anchor }),
+			});
+		}
+		default:
+			return assertNever(outcome);
 	}
 }
 

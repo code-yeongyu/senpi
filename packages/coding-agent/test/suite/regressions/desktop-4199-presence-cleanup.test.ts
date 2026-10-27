@@ -158,7 +158,7 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 			launch.store,
 			ENDPOINT,
 			launch.paths,
-			recoveryProber(STORE_DIR, machine.load, processes.observe),
+			recoveryProber(STORE_DIR, machine.load, { observe: processes.observe }),
 		);
 	}
 

@@ -28,6 +28,7 @@ import {
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
 } from "./custom-capability.ts";
+import type { RecoveryEscalationReason } from "./endpoint-reservation-store.ts";
 import { describeHostHolder, type HostHolder } from "./host-holder.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import type { RpcLaunchProfile } from "./rpc-types.ts";
@@ -123,8 +124,52 @@ export type HostRefusalReason =
 	| "reservation_recovery_required";
 
 /**
+ * The Repair connection action a recovery refusal calls for (#4199 design 4.2a "Visible Repair connection action",
+ * Revision 7 "Repair amendments"). The desktop card and the CLI show the same one; none of them deletes a record,
+ * steals a lock, signals a PID, rotates a credential or changes the endpoint.
+ *
+ * - `wait_for_owner`: an admissible presence object is visibly held, so its owner is alive even if unreachable;
+ *   recovery completes automatically when it idle-exits (`host repair` waits for that release, never for a deadline).
+ * - `drain_owner`: a recorded process is live on this kernel; let it idle-exit or drain it through its own authorized
+ *   stop (`host stop`), naming its sessions; never a raw signal.
+ * - `restart_computer`: the identity is unknowable on a local-store endpoint; an explicit override, anchored to the
+ *   current verified kernel session (`host repair --confirm-restart`), after which the same endpoint recovers.
+ * - `resolve_on_recorded_host`: rows of a non-local store from another machine or an earlier kernel session; no local
+ *   proof can arrive. The holder names the recorded host label and session (section 8 question 6, option A).
+ * - `restore_store_access`: the presence store denied access; restore it, then repair again.
+ * - `retry`: the generation changed while recovery ran; ensure or repair again.
+ */
+export type RecoveryAction =
+	| "wait_for_owner"
+	| "drain_owner"
+	| "restart_computer"
+	| "resolve_on_recorded_host"
+	| "restore_store_access"
+	| "retry";
+
+/** The bounded assessment behind an `authority_unknown` or `census_unknown` refusal (design 4.2a "Bounded unknown escalation"). */
+export interface RecoveryEscalation {
+	readonly reason: RecoveryEscalationReason;
+	/** Observations this attempt made: at most two; 0 when an unchanged record answered from its marker. */
+	readonly observations: number;
+	/** True when the unchanged escalated record answered without a new query. */
+	readonly cached: boolean;
+}
+
+/** The actor a refusal stopped at, as the card names it: its entry, recorded host label and kernel session. */
+export interface RecoveryHolder {
+	readonly entry: "owner" | "supervisor" | "host" | "census";
+	/** The recorded host label of its presence object (display only; empty without one). */
+	readonly hostLabel: string;
+	/** The kernel session its row recorded; `null` when unverified. */
+	readonly kernelSession: string | null;
+}
+
+/**
  * Why recovery of an earlier reservation generation refused (`reservation_recovery_required`, #4199 design 4.2a
- * "Recovery transaction order"), and which generation it stopped at.
+ * "Recovery transaction order"), which generation it stopped at, and the Repair action that follows. The same typed
+ * result is returned by `host ensure`, `host repair` and the desktop card (design 4.2a "CLI returns the same typed
+ * reason/action").
  */
 export interface ReservationRecoveryRefusal {
 	readonly reason:
@@ -135,6 +180,11 @@ export interface ReservationRecoveryRefusal {
 		| "census_unknown"
 		| "revision_changed";
 	readonly generation: string;
+	readonly action: RecoveryAction;
+	/** For `authority_unknown` and `census_unknown`: the escalated reason and the observations behind it. */
+	readonly escalation?: RecoveryEscalation;
+	/** The actor the refusal stopped at, when it names one. */
+	readonly holder?: RecoveryHolder;
 }
 
 /**

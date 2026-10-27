@@ -1,6 +1,8 @@
 /**
- * `senpi host ensure|status|stop|handoff|shard-path|gc` - the one command every client calls to get a daemon.
+ * `senpi host ensure|status|stop|handoff|shard-path|gc|repair` - the one command every client calls to get a daemon.
  * (`gc` removes the state of endpoints whose host is provably gone, never signalling anything.)
+ * (`repair` is the explicit Repair connection action of a Windows public endpoint whose startup reservation could
+ * not be recovered: one bounded check, the wait for a busy owner's release, the anchor of a confirmed restart.)
  * (`shard-path` alone contacts no host: it answers the shard naming contract, as a JSON line under
  * `--json` and as the bare socket path otherwise.)
  *
@@ -43,7 +45,7 @@ import { presenterBootstrapStream } from "../modes/rpc/mcp-presenter-bootstrap.t
 
 export { parseHostArgs } from "./host-command-args.ts";
 
-const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc> [options]
+const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc|repair> [options]
 
   ensure      [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
   status      [--include-workers] [--all] [--socket <path>]   (--all: every endpoint, ignores --socket)
@@ -53,6 +55,8 @@ const USAGE = `usage: ${APP_NAME} host <ensure|status|stop|handoff|shard-path|gc
               (--when idle: the running host hands over to THIS runtime at its next safe idle point)
   shard-path  --kind <p|i> --owner <id> [--root <dir>] [--json]   (no host contact)
   gc          [--agent-dir <dir>] [--json]   (removes provably dead endpoints only; ignores --socket)
+  repair      [--confirm-restart] [--socket <path>]   (Windows public endpoint: the Repair connection action;
+              waits for a busy owner's release, SIGINT cancels; --confirm-restart records the repair anchor)
   session     <open|close|model|prompt|steer|abort|read|state|list|wait> [...]   (see "senpi host session")
 
   --rpc-key-root <dir>   endpoint credentials only; keeps this client's profile
@@ -74,11 +78,18 @@ export async function runHostCommand(args: readonly string[]): Promise<number> {
 		const request = await hostRequest(parsed);
 		const presenterBootstrap =
 			parsed.presenterBootstrapFd === undefined ? undefined : presenterBootstrapStream(parsed.presenterBootstrapFd);
-		const outcome = await runHostRequest(request, {
-			keyRoot: parsed.keyRoot,
-			presenterBootstrap,
-			mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
-		}).finally(() => presenterBootstrap?.destroy());
+		const dismissed = request.action === "repair" ? cancelOnSignal() : undefined;
+		const outcome = await runHostRequest(
+			request.action === "repair" && dismissed ? { ...request, signal: dismissed.signal } : request,
+			{
+				keyRoot: parsed.keyRoot,
+				presenterBootstrap,
+				mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
+			},
+		).finally(() => {
+			presenterBootstrap?.destroy();
+			dismissed?.dispose();
+		});
 		if (parsed.subcommand === "shard-path" && !parsed.json) writeSync(1, `${String(outcome.payload.socket)}\n`);
 		else emit(outcome.payload);
 		return outcome.exitCode;
@@ -126,9 +137,29 @@ async function hostRequest(parsed: ParsedHostArgs): Promise<HostRequest> {
 			};
 		case "gc":
 			return { action: "gc", agentDir: resolve(parsed.agentDir ?? agentDir) };
+		case "repair":
+			return { action: "repair", target, confirmRestart: parsed.confirmRestart };
 		default:
 			return assertNever(parsed.subcommand);
 	}
+}
+
+/**
+ * A repair's busy-owner wait ends when the caller dismisses it: SIGINT or SIGTERM cancels the native wait, which
+ * releases nothing it did not acquire, and the command answers `cancelled` (exit 3) instead of dying mid-wait.
+ */
+function cancelOnSignal(): { readonly signal: AbortSignal; dispose(): void } {
+	const controller = new AbortController();
+	const cancel = () => controller.abort();
+	process.once("SIGINT", cancel);
+	process.once("SIGTERM", cancel);
+	return {
+		signal: controller.signal,
+		dispose: () => {
+			process.off("SIGINT", cancel);
+			process.off("SIGTERM", cancel);
+		},
+	};
 }
 
 function launchSpec(specPath: string | undefined): Promise<ResolvedHostLaunchSpec> | ResolvedHostLaunchSpec {

@@ -6,7 +6,7 @@ import type { IdleHandoverTerms } from "../modes/rpc/host-handover-request.ts";
 import { type HostStopGeneration, parseHostStopGeneration } from "../modes/rpc/host-stop-generation.ts";
 import { handoverTerms } from "./host-handover-args.ts";
 
-const SUBCOMMANDS = ["ensure", "status", "stop", "handoff", "shard-path", "gc"] as const;
+const SUBCOMMANDS = ["ensure", "status", "stop", "handoff", "shard-path", "gc", "repair"] as const;
 type HostSubcommand = (typeof SUBCOMMANDS)[number];
 
 const POLICIES = ["upgrade", "fallback", "never"] as const;
@@ -35,6 +35,8 @@ export interface ParsedHostArgs {
 	/** Endpoint credentials only: where the public endpoint's key records live; the profile is unchanged. */
 	readonly keyRoot?: string;
 	readonly handover?: IdleHandoverTerms;
+	/** `repair --confirm-restart`: the user confirmed "Restart this computer"; record the repair anchor. */
+	readonly confirmRestart: boolean;
 }
 
 /** Parses the command line, or answers with the message that says why it could not. */
@@ -61,6 +63,7 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 	let keyRoot: string | undefined;
 	let presenterBootstrapFd: number | undefined;
 	let mcpPresenterEnforcement: boolean | undefined;
+	let confirmRestart = false;
 	const handover: Record<string, string> = {};
 	for (let index = 0; index < rest.length; index++) {
 		const flag = rest[index];
@@ -91,6 +94,8 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 		} else if (flag === "--agent-dir" && subcommand === "gc" && value !== undefined) {
 			agentDir = value;
 			index++;
+		} else if (flag === "--confirm-restart" && subcommand === "repair") {
+			confirmRestart = true;
 		} else if (subcommand === "handoff" && value !== undefined && HANDOVER_FLAGS.has(flag ?? "")) {
 			handover[flag ?? ""] = value;
 			index++;
@@ -157,6 +162,7 @@ export function parseHostArgs(args: readonly string[]): ParsedHostArgs | string 
 		...(agentDir !== undefined && { agentDir }),
 		...(keyRoot !== undefined && { keyRoot }),
 		...(terms !== undefined && { handover: terms }),
+		confirmRestart,
 	};
 }
 

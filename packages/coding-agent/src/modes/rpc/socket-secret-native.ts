@@ -245,6 +245,7 @@ export function loadPresencePlacement(options: SocketSecretNativeOptions = {}): 
 		"presenceObjectRelease",
 		"presenceAcquire",
 		"presenceProbe",
+		"presenceProbeRetained",
 		"presencePreActionCheck",
 		"presenceWaitAndAcquire",
 		"presenceCancelWait",

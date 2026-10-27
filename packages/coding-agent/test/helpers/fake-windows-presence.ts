@@ -18,6 +18,11 @@ import type {
  *
  * Cleanup (Revision 7 "Presence cleanup"): an exclusive hold (share mode 0) succeeds only while no other handle, a lock
  * holder's or another hold, is open on the object; while a hold exists every other open is a sharing violation (32).
+ *
+ * The blocking wait (Revision 7 "Busy owner first", design test 26): `presenceWaitAndAcquire` acquires at once when the
+ * object is free and otherwise parks until the kernel releases the holder's lock (`releaseHeld`, the explicit release
+ * event, or the holder's own quiescence receipt) or the wait is cancelled; it never polls. The handle it acquires is
+ * the retained guard that `presenceProbeRetained` applies the admissibility rules to.
  */
 export const FAKE_LOCAL_APP_DATA = "C:\\Users\\u\\AppData\\Local";
 export const FAKE_KERNEL_SESSION = "133100000000000000";
@@ -43,6 +48,8 @@ export interface FakeWindowsOptions {
 	readonly onRelease?: (receipt: PresenceReleasedReceipt) => void;
 	/** Runs once an exclusive hold is taken, before it returns. */
 	readonly onHold?: (request: NativePresenceHoldRequest) => void;
+	/** Runs once a blocking wait is parked on a held object. */
+	readonly onWait?: (request: { readonly presenceId: string; readonly path: string; readonly waitId: string }) => void;
 	/** This machine's kernel session (PID 4 creation FILETIME); `null` is an unverified (denied) read. */
 	readonly kernelSession?: string | null;
 	/** Another machine's disk, copied byte for byte: the same directories and objects, none of them locked. */
@@ -79,6 +86,11 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 	const held = new Map<string, string>();
 	/** Exclusive hold ID -> the object path it holds. */
 	const holds = new Map<string, string>();
+	/** Wait ID -> the parked blocking wait, resolved by a release event or a cancellation. */
+	const waits = new Map<
+		string,
+		{ readonly presenceId: string; readonly path: string; readonly settle: (result: NativePresenceResult) => void }
+	>();
 	/**
 	 * `probeOutcome` answers every probe instead of the lock table; tests set it once their setup has run.
 	 * `holdOutcome` answers every exclusive hold the same way. `storeLocality` is how the store directory classifies
@@ -100,6 +112,33 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 		directoryLocality: new Map(),
 	};
 	const heldExclusively = (path: string) => [...holds.values()].includes(path);
+	/** The kernel released the lock on `path`: the first parked wait for it acquires, as a `LockFileEx` completion. */
+	const releaseHeld = (path: string) => {
+		held.delete(path);
+		for (const [waitId, wait] of waits) {
+			if (wait.path !== path) continue;
+			waits.delete(waitId);
+			held.set(path, wait.presenceId);
+			wait.settle({ status: "acquired" });
+			return;
+		}
+	};
+	/** Rules 1-3 as the bridge applies them to an opened handle (crate presence_binding.rs). */
+	const admissible = (request: NativePresenceProbe, object: FakeObject) => {
+		const directory = directories.get(request.path.slice(0, request.path.lastIndexOf("\\")));
+		const session = control.kernelSession;
+		return (
+			object.content.equals(request.header) &&
+			object.volumeSerial === request.volumeSerial &&
+			object.fileId === request.fileId &&
+			request.createdLocal &&
+			directory?.locality === "local" &&
+			(!request.relocated ||
+				(session.status === "verified" &&
+					request.kernelSession !== null &&
+					request.kernelSession === session.creationTime))
+		);
+	};
 	const nameOf = (path: string) => path.slice(path.lastIndexOf("\\") + 1);
 	let preActionCalls = 0;
 	let nextId = 1000 + objects.size + directories.size;
@@ -172,21 +211,7 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 			if (held.has(request.path)) return { status: "occupied" };
 			// The bridge's admissibility (crate presence_binding.rs): rule 1 tag and identity, rule 2 recorded local and the
 			// object's own handle local now, rule 3 for a relocated object a verified, equal kernel session.
-			const directory = directories.get(request.path.slice(0, request.path.lastIndexOf("\\")));
-			const session = control.kernelSession;
-			if (
-				!object.content.equals(request.header) ||
-				object.volumeSerial !== request.volumeSerial ||
-				object.fileId !== request.fileId ||
-				!request.createdLocal ||
-				directory?.locality !== "local" ||
-				(request.relocated &&
-					(session.status !== "verified" ||
-						request.kernelSession === null ||
-						request.kernelSession !== session.creationTime))
-			) {
-				return { status: "unknown", reason: "inadmissible" };
-			}
+			if (!admissible(request, object)) return { status: "unknown", reason: "inadmissible" };
 			held.set(request.path, request.presenceId);
 			options.onAcquire?.(request);
 			return { status: "acquired" };
@@ -196,13 +221,8 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 			calls.push(`presenceProbeRetained ${request.presenceId}`);
 			if (held.get(request.path) !== request.presenceId) return { status: "unknown", reason: "not_held" };
 			const object = objects.get(request.path);
-			if (
-				!object ||
-				!object.content.equals(request.header) ||
-				object.volumeSerial !== request.volumeSerial ||
-				object.fileId !== request.fileId ||
-				!request.createdLocal
-			) {
+			if (!object || !admissible(request, object)) {
+				// Inadmissible: the retained handle is closed at once.
 				held.delete(request.path);
 				return { status: "unknown", reason: "inadmissible" };
 			}
@@ -224,14 +244,35 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 			}
 			return { status: "fenced", reason: "not_held" };
 		},
-		presenceWaitAndAcquire: async () => ({ status: "unknown", reason: "not_modelled" }),
-		presenceCancelWait: () => {},
+		presenceWaitAndAcquire: (presenceId, path, waitId) => {
+			calls.push(`presenceWaitAndAcquire ${presenceId}`);
+			if (!objects.has(path)) return Promise.resolve({ status: "unknown", reason: "os_error", code: 2 });
+			if ([...waits.values()].some((wait) => wait.presenceId === presenceId)) {
+				return Promise.resolve({ status: "unknown", reason: "wait_pending" });
+			}
+			if (!held.has(path)) {
+				held.set(path, presenceId);
+				return Promise.resolve({ status: "acquired" });
+			}
+			return new Promise<NativePresenceResult>((settle) => {
+				waits.set(waitId, { presenceId, path, settle });
+				options.onWait?.({ presenceId, path, waitId });
+			});
+		},
+		presenceCancelWait: (waitId) => {
+			calls.push(`presenceCancelWait ${waitId}`);
+			const wait = waits.get(waitId);
+			if (!wait) return;
+			waits.delete(waitId);
+			wait.settle({ status: "cancelled" });
+		},
 		presenceReleaseAfterQuiescence: (receipt) => {
 			calls.push(`presenceReleaseAfterQuiescence ${receipt.presenceId}`);
 			options.onRelease?.(receipt);
 			for (const [path, presenceId] of held) {
 				if (presenceId !== receipt.presenceId) continue;
-				held.delete(path);
+				// The holder's clean close releases the kernel lock: a parked wait acquires.
+				releaseHeld(path);
 				return { status: "released" };
 			}
 			return { status: "unknown", reason: "not_held" };
@@ -276,7 +317,7 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 		},
 	};
 	const load: PresencePlacementLoad = { status: "available", native };
-	return { native, load, calls, directories, objects, held, holds, control };
+	return { native, load, calls, directories, objects, held, holds, waits, control, releaseHeld };
 }
 
 /**

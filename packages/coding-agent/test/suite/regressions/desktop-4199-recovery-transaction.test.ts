@@ -130,12 +130,18 @@ describe("#4199 recovery transaction: probe set, admissibility, kernel-session g
 		machine: Machine,
 		processes = fakeProcessTable(),
 		store = launch.store,
+		/** An explicit repair (design test 12): one new bounded assessment of an unchanged escalated record. */
+		fresh = false,
 	) {
 		return recoverEndpointReservations(
 			store,
 			ENDPOINT,
 			launch.paths,
-			recoveryProber(STORE_DIR, machine.load, processes.observe, launch.paths.dir),
+			recoveryProber(STORE_DIR, machine.load, {
+				observe: processes.observe,
+				fresh,
+				daemonDirectory: launch.paths.dir,
+			}),
 		);
 	}
 
@@ -369,7 +375,9 @@ describe("#4199 recovery transaction: probe set, admissibility, kernel-session g
 		processes.denied(4444);
 		expect(await recover(launch, machine, processes)).toMatchObject({ status: "refused", reason: "census_unknown" });
 		processes.live(4444, "134000000000000005");
-		expect(await recover(launch, machine, processes)).toMatchObject({ status: "recovered" });
+		// The unchanged escalated record answers an automatic caller from its marker; the explicit repair observes again.
+		expect(await recover(launch, machine, processes)).toMatchObject({ status: "refused", reason: "census_unknown" });
+		expect(await recover(launch, machine, processes, launch.store, true)).toMatchObject({ status: "recovered" });
 		expect(processes.observed).toEqual(expect.arrayContaining([4343, 4444]));
 		expect(processes.observed).not.toContain(4242);
 	});
