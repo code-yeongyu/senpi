@@ -24,7 +24,7 @@ import {
 // construction. Every expected digest here is computed from the written spec (`compact-catalog-codec.ts` header),
 // never taken from the encoder under test.
 
-const specDigest = (domain: "leaf" | "node" | "root", bytes: Buffer): string => {
+const specDigest = (domain: "leaf" | "node" | "root" | "pointer", bytes: Buffer): string => {
 	const tag = Buffer.from(`${CATALOG_FORMAT}/${CATALOG_VERSION}/utf16le/${domain}`, "ascii");
 	const length = Buffer.alloc(8);
 	length.writeBigUInt64BE(BigInt(bytes.length));
@@ -72,14 +72,18 @@ it("RULING-57 Q1 (2) golden bytes: one node's encoding and digest are pinned; th
 	expect(decodeCatalogNode(text)).toEqual({ ok: true, entries: golden });
 });
 
-it("RULING-57 Q1 (1) domain separation: the same bytes digested as leaf, node and root give three different digests, each per spec", () => {
+it("RULING-57 Q1 (1) domain separation: the same bytes digested as leaf, node, root and pointer give four different digests, each per spec", () => {
 	const bytes = storedBytes(GOLDEN_TEXT);
 	const asLeaf = catalogDigest("leaf", bytes);
 	const asNode = catalogDigest("node", bytes);
 	const asRoot = catalogDigest("root", bytes);
-	expect(new Set([asLeaf, asNode, asRoot]).size).toBe(3);
+	const asPointer = catalogDigest("pointer", bytes);
+	expect(new Set([asLeaf, asNode, asRoot, asPointer]).size).toBe(4);
 	expect(asLeaf).toBe(specDigest("leaf", bytes));
 	expect(asRoot).toBe(specDigest("root", bytes));
+	expect(asPointer).toBe(specDigest("pointer", bytes));
+	const pointerText = '{"h":0,"v":[1,2]}';
+	expect(catalogDigest("pointer", storedBytes(pointerText))).toBe(specDigest("pointer", storedBytes(pointerText)));
 	// The length prefix separates a payload from its own prefix: an empty payload has a non-trivial digest.
 	expect(catalogDigest("leaf", Buffer.alloc(0))).toBe(specDigest("leaf", Buffer.alloc(0)));
 	expect(catalogDigest("leaf", Buffer.alloc(0))).toBe(
