@@ -10,8 +10,10 @@ type RecoveryDeps = Pick<RetryFallbackControllerDeps, "recoveryRevision" | "cool
  * that account, so when the original provider's login id moved since the episode began, the
  * billing pin and the original's cooldown, unusable mark and circuit are released and the
  * existing revert path tries it once. A still-dead original falls back again and pins with the
- * fresh id. Only billing-pinned episodes read the store. A token refresh keeps the id, and an
- * id that is gone ("") is no sign-in, so neither releases. Refusal pins hold: a new credential
+ * fresh id. This step reads the store at a turn boundary only while a billing pin holds; the
+ * other read is `applyCandidate` (controller.ts), once when an episode begins at its first
+ * fallback switch, to record the starting id. A token refresh keeps the id or drops it to "", and
+ * an id that is gone ("") is no sign-in, so neither releases. Refusal pins hold: a new credential
  * does not change the context that was refused (senpi#4099).
  */
 export async function releaseOnCredentialChange(

@@ -62,7 +62,7 @@ export interface RetryFallbackControllerDeps {
 	isAuthAvailable(provider: string): boolean;
 	/**
 	 * The `loginId` the last sign-in stored for `provider` ("" when none did), never key material;
-	 * `undefined` when it cannot be read. Only a sign-in changes it; a token refresh never does (senpi#4099).
+	 * `undefined` when it cannot be read. Only a sign-in writes a new id; a token refresh keeps it or drops it to "" (senpi#4099).
 	 */
 	recoveryRevision?(provider: string): Promise<string | undefined>;
 }

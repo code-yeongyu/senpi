@@ -18,7 +18,7 @@ export interface ApiKeyCredential {
 	type: "api_key";
 	key?: string;
 	env?: ProviderEnv;
-	/** Random id the last sign-in wrote (`stampLogin`); refreshes keep it. Not key material. */
+	/** Random id the last sign-in wrote (`stampLogin`); a refresh keeps or drops it, never mints one. Not key material. */
 	loginId?: string;
 }
 
@@ -33,7 +33,7 @@ export interface OAuthCredentials {
 /** Stored canonical OAuth credential. */
 export interface OAuthCredential extends OAuthCredentials {
 	type: "oauth";
-	/** Random id the last sign-in wrote (`stampLogin`); refreshes keep it. Not key material. */
+	/** Random id the last sign-in wrote (`stampLogin`); a refresh keeps or drops it, never mints one. Not key material. */
 	loginId?: string;
 }
 
