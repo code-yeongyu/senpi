@@ -63,42 +63,52 @@ function textOf(content: unknown): string {
 }
 
 /**
- * The shape of a message's content: its block count and text lengths. No caller edits user content
- * in place today (context edits and the environment fold build new messages), but a context hook
- * could; an edit that changes the shape then invalidates the cached reading. Computing it touches
- * each block once, never the text.
+ * A 32-bit FNV-1a hash of a message's text parts. No caller edits user content in place today
+ * (context edits and the environment fold build new messages), but a context hook could; any such
+ * edit, even one that keeps every length, changes the hash and invalidates the cached reading.
  */
-function contentShape(content: unknown): string {
-	if (typeof content === "string") return `s${content.length}`;
-	if (!Array.isArray(content)) return "-";
-	return content
-		.map((block: unknown) =>
-			typeof block === "object" && block !== null && "text" in block && typeof block.text === "string"
-				? block.text.length
-				: "x",
-		)
-		.join(",");
+function contentHash(content: unknown): number {
+	let hash = 0x811c9dc5;
+	const mix = (text: string): void => {
+		for (let index = 0; index < text.length; index++) {
+			hash ^= text.charCodeAt(index);
+			hash = Math.imul(hash, 0x01000193);
+		}
+		hash ^= 0x1f;
+		hash = Math.imul(hash, 0x01000193);
+	};
+	if (typeof content === "string") mix(content);
+	else if (Array.isArray(content)) {
+		content.forEach((block: unknown) =>
+			mix(
+				typeof block === "object" && block !== null && "text" in block && typeof block.text === "string"
+					? block.text
+					: "\u0000",
+			),
+		);
+	}
+	return hash >>> 0;
 }
 
 /**
  * Each conversion re-reads the whole history, so a message's reading is kept with the message and
- * recomputed only when its content object or the content's shape changes.
+ * recomputed only when its content object or the content's hash changes.
  */
 const readings = new WeakMap<
 	object,
-	{ readonly content: unknown; readonly shape: string; readonly reading: UserMessageReading }
+	{ readonly content: unknown; readonly hash: number; readonly reading: UserMessageReading }
 >();
 
 function readUserMessage(message: { readonly content: unknown }): UserMessageReading {
-	const shape = contentShape(message.content);
+	const hash = contentHash(message.content);
 	const cached = readings.get(message);
-	if (cached && cached.content === message.content && cached.shape === shape) return cached.reading;
+	if (cached && cached.content === message.content && cached.hash === hash) return cached.reading;
 	const text = textOf(message.content);
 	const noted = NOTED_LANGUAGE.exec(text);
 	const reading: UserMessageReading = noted
 		? { noted: { language: noted[1] ?? "", requested: noted[2] === REQUESTED }, reading: { kind: "none" } }
 		: { request: readReplyLanguageRequest(text), reading: readReplyLanguage(text) };
-	readings.set(message, { content: message.content, shape, reading });
+	readings.set(message, { content: message.content, hash, reading });
 	return reading;
 }
 

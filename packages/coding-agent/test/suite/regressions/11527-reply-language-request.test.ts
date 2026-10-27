@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { readReplyLanguageRequest } from "../../../src/core/reply-language-request.ts";
 
-// omo#11527: only the user's own directive to the agent is a reply-language request; reported
-// speech (quoted, attributed, spoken by someone else, or pasted) never is.
+// omo#11527: a reply-language request is decided for the whole message: only a short message whose
+// first or last line is the user's own directive has one; any sign of reported speech or pasted
+// content anywhere in the message (quotes, attribution, speaker label, header, paste) means none.
 
 const DIRECTIVES = [
 	["Korean directive", "영어로 답해줘"],
@@ -42,10 +43,25 @@ describe("omo#11527 a reply-language request is the user's own directive only", 
 			expect(readReplyLanguageRequest(`이거 봐줘\n${text}`)).toBeUndefined();
 		});
 
-		it("does not count inside a pasted block of several lines, but counts the user's own line after it", () => {
-			const pasted = `참고로 이 로그 봐줘\n\nline one\n${directive}\nline three\nline four`;
-			expect(readReplyLanguageRequest(pasted)).toBeUndefined();
-			expect(readReplyLanguageRequest(`${pasted}\n\n한국어로 답해줘`)).toBe("Korean");
+		it("counts first, then a normal question, in a short message (positive control)", () => {
+			expect(readReplyLanguageRequest(`${directive}\n빌드는 왜 실패했어?`)).toBe("English");
+		});
+
+		it.each([
+			["a Korean label ending its line with a colon", `고객 메시지:\n${directive}`],
+			["an English label ending its line with a colon", `The customer wrote:\n${directive}`],
+			["a fullwidth colon label", `고객 메시지：\n${directive}`],
+			["a forwarded-message header", `---------- Forwarded message ---------\n${directive}`],
+			["an original-message header", `-----Original Message-----\n${directive}`],
+			["a Korean forwarded header", `전달된 메시지\n${directive}`],
+			["a lazy blockquote continuation", `> 고객 메시지\n${directive}`],
+			["a mail header line", `From: kim@example.com\n${directive}`],
+			["a pasted block of several lines", `참고로 이 로그 봐줘\nline one\n${directive}\nline three`],
+			["a paste before the user's own last line", `line one\nline two\nline three\n${directive}`],
+			["a long message", `${"빌드 로그를 확인했는데 계속 실패하네요 ".repeat(12)}\n${directive}`],
+			["a directive in the middle line", `이거 봐줘\n${directive}\n빌드는 왜 실패했어?`],
+		])("does not count after %s", (_form, text) => {
+			expect(readReplyLanguageRequest(text)).toBeUndefined();
 		});
 	});
 
@@ -68,6 +84,7 @@ describe("omo#11527 a reply-language request is the user's own directive only", 
 		["일본어로 말해 줘", "Japanese"],
 		["reply in Korean from now on", "Korean"],
 		["Please answer me in English.", "English"],
+		["please reply in Korean from now on", "Korean"],
 		["Can you reply in English?", "English"],
 		["use Korean for your replies", "Korean"],
 		["영어로 답해줘. 아니다, reply in Korean", "Korean"],
