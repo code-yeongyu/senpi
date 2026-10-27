@@ -972,11 +972,22 @@ and locality match the record. The claim then requires the reservation to still 
 acquisition (`revision_changed` otherwise), requires that object (`presence_not_bound`), and records the binding. A busy
 lock fails the start with `launch-reservation-rejected` reason `presence_occupied`; any other failure is
 `presence_unknown`. Neither claims, spawns or listens, and a busy lock is never read as proof of who holds it. A
-participant that fails before it may act, or whose claim is refused, closes that unused handle. A granted supervisor
-keeps its lock through every spawn and bind. Once its shutdown has observed the host's exit and closed its listener, it
-commits `released` and only then closes the lock. The host keeps its lock until its process exits. The reserving process
-commits its own `released` once the generation is serving, then closes its lock. A row without a local presence root
-takes no lock.
+participant that fails before it may act, or whose claim is refused, closes that unused handle; one refused after its
+grant (a commitment mismatch) first commits its `released`, then closes the lock, and keeps the lock held when that
+commit fails. A granted supervisor keeps its lock through every spawn and bind. Once its shutdown has observed the host's
+exit and closed its listener, it commits `released` and only then closes the lock; a drained supervisor keeps its
+listening handle open until it exits, so it commits no `released` and leaves the lock to the kernel. The host keeps its
+lock until its process exits. The reserving process commits its own `released` once the generation is serving, then
+closes its lock; a `released` commit that fails there does not fail the serving start, and the lock stays held until the
+process exits. A start that fails after the reservation persisted cancels the generation, commits the owner's
+`released` and closes its lock. A row without a local presence root takes no lock.
+
+Before each authorized action, the holder runs the pre-action check on its lock handle: the reserving process before it
+provisions or repairs the public secret and before it spawns the supervisor, the supervisor before it spawns the host
+and before it binds the public listener, the host before it binds. The check compares the handle's physical identity
+with the recorded one, reads through it and reclassifies the volume. A failed check is terminal: it fails with
+`launch-reservation-rejected` reason `presence_pre_action_failed`, the actor performs no further action (the
+reserving process and the supervisor cancel the generation they offered a role in), and the lock is never re-acquired.
 
 ### Generation handoff (`handoffHost`, `probeHost`, `stopHost`)
 

@@ -3,7 +3,9 @@
 //! authority lasts. A successful acquisition is the only release proof; contention is `Occupied`, and every
 //! other failure is `Unknown`, never a release. The registry has no unlock while authority is active: a
 //! guard leaves it only with a quiescence receipt, whose reason is the holder's `released` commit or one
-//! of the recovery order's release points (`ReleaseReason`). Any descriptor loss, identity change or
+//! of the recovery order's release points (`ReleaseReason`), except that the handle a blocking wait
+//! retained (`wait_and_acquire`) leaves without one when `probe_retained` finds it inadmissible or
+//! without an identity, because that handle was never evidence. Any descriptor loss, identity change or
 //! locality flip found by the pre-action check fences the registry for good; it never re-acquires and
 //! continues. The Windows backend (`LockFileEx` on byte [0,1)) lives in `presence_windows.rs`; tests drive a
 //! fake backend whose process-death and kernel-release events are separate.
@@ -187,6 +189,9 @@ struct Guard<H> {
     path: String,
     identity: FileIdentity,
     handle: H,
+    /// Retained by a blocking wait (Repair's busy-owner wait), not by `acquire`: only such a guard
+    /// may be probed in place and released without a receipt (`probe_retained`).
+    wait_retained: bool,
 }
 
 pub struct PresenceRegistry<B: PresenceBackend> {
@@ -244,6 +249,7 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
                 path: path.to_string(),
                 identity,
                 handle,
+                wait_retained: false,
             },
         );
         LockAttempt::Acquired
@@ -253,7 +259,8 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
     /// note 4): the probe's admissibility rule applied to a guard this registry already holds, through
     /// that handle, which is never closed and reacquired. An inadmissible handle is released at once;
     /// a handle that no longer answers an identity query is released as `Unknown`; a guard not held,
-    /// or held for another path, is `NotHeld` and nothing changes.
+    /// held for another path, or held by `acquire` (the holder's own authority guard, which leaves
+    /// only with a receipt) is `NotHeld` and nothing changes.
     pub fn probe_retained(
         &mut self,
         presence_id: &str,
@@ -266,7 +273,7 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
         let Some(guard) = self.guards.get(presence_id) else {
             return LockAttempt::NotHeld;
         };
-        if guard.path != path {
+        if guard.path != path || !guard.wait_retained {
             return LockAttempt::NotHeld;
         }
         let identity = match self.backend.handle_identity(&guard.handle) {
@@ -331,6 +338,7 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
                         path: path.to_string(),
                         identity,
                         handle,
+                        wait_retained: false,
                     },
                 );
                 LockAttempt::Acquired
@@ -360,6 +368,7 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
                             path: path.to_string(),
                             identity,
                             handle,
+                            wait_retained: true,
                         },
                     );
                     WaitOutcome::Acquired
@@ -420,7 +429,8 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
     }
 
     /// Closes a guard after its `released` commit, or at one of the recovery order's release points
-    /// (`ReleaseReason`). This is the only way a guard leaves the registry.
+    /// (`ReleaseReason`). The only other way a guard leaves the registry is `probe_retained` finding a
+    /// wait-retained handle inadmissible or without an identity; an `acquire`d guard leaves only here.
     pub fn release_after_quiescence(&mut self, receipt: QuiescenceReceipt) -> bool {
         self.guards.remove(&receipt.presence_id).is_some()
     }
@@ -628,12 +638,35 @@ mod tests {
         assert!(registry.holds("p-1"), "a guard under another path is left alone");
     }
 
+    /// senpi#4470 review LOW: `probe_retained` acts only on a guard a blocking wait retained. The
+    /// holder's own `acquire`d authority guard never leaves the registry without a receipt, whatever
+    /// header or rule a misdirected call brings.
     #[test]
-    fn a_retained_handle_that_lost_its_identity_is_unknown_and_released() {
+    fn probe_retained_never_drops_an_acquired_authority_guard() {
         let mut kernel = FakeKernel::with_file(PATH, 1);
         let mut registry = PresenceRegistry::new(&mut kernel);
         assert_eq!(registry.acquire("p-1", PATH), LockAttempt::Acquired);
-        registry.backend.lost_handles.push(1);
+        assert_eq!(
+            registry.probe_retained("p-1", PATH, |_, _, _| false),
+            LockAttempt::NotHeld,
+            "an authority guard is not a wait's retained handle"
+        );
+        assert!(registry.holds("p-1"), "the authority guard stays registered");
+        assert_eq!(registry.pre_action_check("p-1", true), Ok(()));
+    }
+
+    #[test]
+    fn a_retained_handle_that_lost_its_identity_is_unknown_and_released() {
+        let mut kernel = FakeKernel::with_file(PATH, 1).held_by(PATH, "host");
+        kernel.process_dies("host");
+        kernel.released_on_wait = true;
+        let mut registry = PresenceRegistry::new(&mut kernel);
+        assert_eq!(
+            registry.wait_and_acquire("p-1", PATH, &CancelToken::default()),
+            WaitOutcome::Acquired
+        );
+        let retained = registry.backend.next_handle;
+        registry.backend.lost_handles.push(retained);
         assert_eq!(
             registry.probe_retained("p-1", PATH, |_, _, _| panic!("no identity, no rule")),
             LockAttempt::Unknown(6)
@@ -729,6 +762,7 @@ mod tests {
                         file_id: 1,
                     },
                     handle,
+                    wait_retained: false,
                 },
             )]),
             fenced: None,

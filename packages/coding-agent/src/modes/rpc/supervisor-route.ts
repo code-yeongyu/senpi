@@ -94,7 +94,9 @@ export async function admitReservedHostArgs(args: string[]): Promise<ReservedHos
 	const credential = await readSocketSecret(socketSecretPath(locator.endpoint)).catch(() => undefined);
 	// The host holds its presence lock from before its claim for the life of this process: its shutdown does not yet
 	// prove quiescence, so it commits no `released` and the kernel releases the guard when the process exits.
-	await admitClaimedParticipant(locator, self, credential, { deadlineMs: Math.max(0, until - Date.now()) });
+	const presence = await admitClaimedParticipant(locator, self, credential, {
+		deadlineMs: Math.max(0, until - Date.now()),
+	});
 	const flags = new Set<string>(Object.values(LOCATOR_FLAGS));
 	const remaining: string[] = [];
 	for (let index = 0; index < args.length; index++) {
@@ -105,6 +107,9 @@ export async function admitReservedHostArgs(args: string[]): Promise<ReservedHos
 		args: remaining,
 		beforeListen: async () => {
 			if (!credential) throw new LaunchReservationError("commitment_mismatch", "no established public secret");
+			// The Revision 7 pre-action check before the bind (design 4.2a "Descriptor-loss detection"): a failed check is
+			// terminal, so no listen intent is recorded for a bind that will not happen.
+			presence?.preActionCheck();
 			await commitListenIntent(locator, self, credential);
 		},
 	};

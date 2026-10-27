@@ -72,7 +72,8 @@ export type LaunchReservationRejection =
 	| "presence_occupied"
 	| "presence_unknown"
 	| "launch_capability_missing"
-	| "launch_capability_unknown";
+	| "launch_capability_unknown"
+	| "presence_pre_action_failed";
 
 export class LaunchReservationError extends Error {
 	readonly code = "launch-reservation-rejected";
