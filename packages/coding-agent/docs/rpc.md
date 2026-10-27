@@ -996,11 +996,22 @@ acquisition is discharged only when its recorded PID, reopened now, is absent or
 (compared exactly). That observation counts only when the store recorded `local` and still classifies `local`, or when
 the row's and this machine's kernel-session identities are both verified and equal; an `unverified` identity equals
 nothing. On a store recorded and still classified `local`, a verified kernel-session identity that differs from the
-one the generation recorded, with every probed object acquired, proves every process of that earlier boot gone. Then
-every recorded generation supervisor, host child and session-path claim of the endpoint must be gone under the same
-rules. Recovery retires at the revision it revalidated while it still holds the acquired locks, and releases them after
-the commit. A generation that served and whose actors committed `released` retires without any probe, so an ordinary
-restart is not refused.
+one the generation recorded, with every probed object acquired, proves every process of that earlier boot gone: it
+resolves only entries provably from that boot (a verified session equal to it, on a directory recorded and still
+`local`), never a current-boot entry, one with an unverified session or one without provenance. Then every recorded
+generation supervisor, host child and session-path claim of the endpoint must be gone. A row naming one of the
+generation's recorded actors (the owner, a claimed participant) is that actor's own entry and is discharged by the
+actor's proof, so a quiescent actor that stays alive doing unrelated work does not block. Every other row carries only
+the provenance its launch recorded beside it: `startHost` writes `generations/<instanceId>/launch-provenance.json`
+(the reservation generation, the reserving owner's kernel session, whether the daemon directory classified `local`
+from its opened handle) before the spawn, and the census applies the rules above to the row from that record (the
+daemon directory recorded `local` and `local` now, or verified equal sessions). A row with no provenance (a legacy or
+foreign writer) is unknown. A generations or reservations directory that exists but cannot be listed, a pidfile or
+provenance record that cannot be read, and a half-written or malformed claim are incomplete discovery, which is unknown,
+never nothing to find. Recovery retires at the revision it revalidated while it still holds the acquired locks, and
+releases them after the commit. A generation that served and whose actors committed `released` retires without any
+probe, so an ordinary restart is not refused. A retired generation also refuses a late `released` commit of its owner
+or a role with `generation_retired`: the tombstone is immutable.
 
 When recovery cannot prove that every recorded actor ended, the start fails with `HostEnsureRefusedError` reason
 `reservation_recovery_required`, and `host ensure --json` (exit 3) carries

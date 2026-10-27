@@ -870,6 +870,10 @@ export class EndpointReservationStore {
 	/** A granted participant's own `released` commit: its authority ended. */
 	release(generation: string, role: ReservationRole, participant: string): void {
 		this.#transaction(() => {
+			// The tombstone is immutable: a late commit cannot change a retired generation's recorded discharge.
+			if (this.#reservation(generation).state === "retired") {
+				throw new EndpointReservationError("generation_retired", generation);
+			}
 			const row = this.#role(generation, role);
 			if (!row || row.status !== "granted") throw new EndpointReservationError("role_not_granted", `${role}`);
 			if (row.participant !== participant) throw new EndpointReservationError("participant_mismatch", `${role}`);
@@ -887,6 +891,7 @@ export class EndpointReservationStore {
 	releaseOwner(generation: string, owner: string): void {
 		this.#transaction(() => {
 			const reservation = this.#reservation(generation);
+			if (reservation.state === "retired") throw new EndpointReservationError("generation_retired", generation);
 			if (reservation.owner !== owner) throw new EndpointReservationError("owner_mismatch", generation);
 			if (reservation.state === "pending") throw new EndpointReservationError("owner_not_terminal", generation);
 			this.#database

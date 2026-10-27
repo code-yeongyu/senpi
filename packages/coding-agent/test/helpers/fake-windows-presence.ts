@@ -76,10 +76,13 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 		probeOutcome?: NativePresenceResult;
 		storeLocality: "local" | "not_local";
 		kernelSession: NativeKernelSessionIdentity;
+		/** How one directory classifies NOW, by exact path, where it differs from `storeLocality` (another volume). */
+		directoryLocality: Map<string, "local" | "not_local">;
 	} = {
 		probeOutcome: options.probeOutcome,
 		storeLocality: options.storeLocality ?? "local",
 		kernelSession: sessionOf(options.kernelSession === undefined ? FAKE_KERNEL_SESSION : options.kernelSession),
+		directoryLocality: new Map(),
 	};
 	let nextId = 1000 + objects.size + directories.size;
 	const canonical = (path: string) => (path.startsWith("\\\\?\\") ? path : `\\\\?\\${path}`);
@@ -94,7 +97,8 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 		},
 		classifyVolume: (path) => {
 			calls.push(`classifyVolume ${path}`);
-			return { locality: control.storeLocality, reason: null, reportedFileSystem: "NTFS" };
+			const locality = control.directoryLocality.get(path) ?? control.storeLocality;
+			return { locality, reason: null, reportedFileSystem: "NTFS" };
 		},
 		localAppDataPath: () => {
 			calls.push("localAppDataPath");

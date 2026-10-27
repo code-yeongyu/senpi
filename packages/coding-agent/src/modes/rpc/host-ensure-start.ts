@@ -34,6 +34,7 @@ import { relayPresenterBootstrap } from "./mcp-presenter-bootstrap.ts";
 import { type EndpointReservationStore, openEndpointReservationStore } from "./endpoint-reservation-store.ts";
 import { recoverEndpointReservations, recoveryProber } from "./endpoint-recovery.ts";
 import { hostEnsureLockTarget } from "./host-ensure-lock.ts";
+import { recordLaunchProvenance } from "./launch-provenance.ts";
 import {
 	acquireOwnerPresence,
 	grantClaimedParticipant,
@@ -125,6 +126,18 @@ export async function startHost(
 						hostRoute === "reservation" ? ["supervisor", "host"] : ["supervisor"],
 					)
 				: undefined;
+		// The provenance of every row this launch writes under its generation directory (launch-provenance.ts): the
+		// owner's kernel session and the daemon directory's classification from its opened handle, recorded before the
+		// spawn so no row of this launch can exist without it.
+		if (reservation) {
+			await recordLaunchProvenance(generationPaths(paths, instanceId).launchProvenanceFile, {
+				generation: reservation.generation,
+				kernelSession: owner.reservation.ownerKernelSession,
+				directoryLocal:
+					owner.native.status === "available" &&
+					owner.native.native.classifyVolume(paths.dir).locality === "local",
+			});
+		}
 		const supervisorArgs = [
 			"--socket",
 			socket,
@@ -330,7 +343,7 @@ async function recoverBeforeSuccessor(socket: string, paths: HostDaemonPaths): P
 	const store = await openEndpointReservationStore(reservationStorePath(socket));
 	try {
 		if (store.activeGenerations(socket).length === 0) return;
-		const prober = recoveryProber(win32.dirname(target), loadPresencePlacement());
+		const prober = recoveryProber(win32.dirname(target), loadPresencePlacement(), undefined, paths.dir);
 		const outcome = await recoverEndpointReservations(store, socket, paths, prober);
 		if (outcome.status === "refused") {
 			throw new HostEnsureRefusedError(

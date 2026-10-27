@@ -165,6 +165,20 @@ describe("#4199 recovery fence and retirement tombstone", () => {
 		});
 	});
 
+	// senpi#4479 LOW: the tombstone is immutable; a late released commit of its owner or a role is refused too.
+	it("a retired generation refuses the owner's and a role's released commit", async () => {
+		const { store, generation, locator } = await crashed(true);
+		store.cancel(generation);
+		store.retire(generation, store.reservation(generation).revision, {
+			owner: "process_gone",
+			supervisor: "presence_released",
+		});
+		expect(rejection(() => store.release(generation, "supervisor", SUPERVISOR))).toBe("generation_retired");
+		expect(rejection(() => store.releaseOwner(generation, OWNER))).toBe("generation_retired");
+		expect(store.reservation(generation)).toMatchObject({ state: "retired", ownerStatus: "reserving" });
+		expect(store.roleRow(locator)?.status).toBe("granted");
+	});
+
 	it("test 11/22: a retired generation is a tombstone; late claims, replayed nonces and stale grants fail before and after retirement", async () => {
 		const store = await open();
 		const generation = store.reserve(ENDPOINT, OWNER, ["supervisor", "host"], NO_PRESENCE, NO_OBJECT);
