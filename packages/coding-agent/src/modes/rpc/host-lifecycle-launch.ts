@@ -62,6 +62,7 @@ export interface StoreLocator extends ReservationLocator {
 
 export type LaunchReservationRejection =
 	| "locator_incomplete"
+	| "store_mismatch"
 	| "identity_unverified"
 	| "participant_mismatch"
 	| "generation_cancelled"
@@ -105,6 +106,14 @@ export function parseReservationLocatorArgs(argv: readonly string[]): StoreLocat
 	}
 	return { storePath, endpoint, generation, role };
 }
+
+/**
+ * The host child's whole startup budget, shared by every wait the supervisor and the host make for each other: the
+ * supervisor's wait for the host's claim and for its listener, and the host's wait for its grant. The claim comes only
+ * after the CLI has loaded, so a shorter claim or grant deadline would fail starts that succeed without a reservation
+ * (measured: a tsx-started host missed a 10 s claim deadline at load average ~210).
+ */
+export const HOST_STARTUP_BUDGET_MS = 30_000;
 
 export const INTERNAL_SUPERVISOR_FLAG = "--internal-rpc-host-supervisor";
 

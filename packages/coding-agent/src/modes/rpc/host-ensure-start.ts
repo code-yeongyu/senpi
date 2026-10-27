@@ -30,9 +30,13 @@ import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
 import { ensureSocketSecret, socketSecretPath } from "./socket-transport.ts";
 import { relayPresenterBootstrap } from "./mcp-presenter-bootstrap.ts";
-import { openEndpointReservationStore } from "./endpoint-reservation-store.ts";
-import { hostEnsureLockTarget } from "./host-ensure-lock.ts";
-import { grantClaimedParticipant, offerSupervisorLaunch } from "./host-launch-reservation.ts";
+import { type EndpointReservationStore, openEndpointReservationStore } from "./endpoint-reservation-store.ts";
+import {
+	grantClaimedParticipant,
+	IDENTITY_OBSERVATION_PROBE_MS,
+	offerSupervisorLaunch,
+	reservationStorePath,
+} from "./host-launch-reservation.ts";
 
 export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
 export { DEFAULT_STOP_TIMEOUT_MS };
@@ -64,9 +68,6 @@ export async function startHost(
 	// secret belongs to the endpoint, not to this start: clients that already read it
 	// derive the pipe name from it, so a start reuses it and never rotates it.
 	const publicSecret = process.platform === "win32" ? await ensureSocketSecret(socketSecretPath(socket)) : undefined;
-	// A Windows public endpoint launches its supervisor through a reservation (#4199 design 4.2a): the supervisor claims
-	// its role and starts only once this process, the issuer, has verified and granted it.
-	const reservation = publicSecret ? await reserveSupervisorLaunch(socket) : undefined;
 	await writeHostSettings(paths, {
 		socket,
 		capabilities: PINNED_HOST_CLIENT_CAPABILITIES,
@@ -83,7 +84,12 @@ export async function startHost(
 	let exitedEarly: ChildExit | undefined;
 	let childExit: Promise<ChildExit> | undefined;
 	let presenterEnrollment: Promise<void> | undefined;
+	let reservation: Awaited<ReturnType<typeof reserveSupervisorLaunch>> | undefined;
 	try {
+		// A Windows public endpoint launches its supervisor through a reservation (#4199 design 4.2a): the supervisor
+		// claims its role and starts only once this process, the issuer, has verified and granted it. Reserved inside
+		// this try, so every failure after it, up to and including readiness, fences the generation it left behind.
+		reservation = publicSecret ? await reserveSupervisorLaunch(socket) : undefined;
 		const supervisorArgs = [
 			"--socket",
 			socket,
@@ -138,18 +144,20 @@ export async function startHost(
 		// guard-less record never claims ownership and never authorizes a signal - every later caller
 		// reads it as unknown - so the worst case is a fresh host next time, not a killed healthy one.
 		if (reservation && publicSecret) {
+			// The claimant is observed with the bounded retry (two probes inside the claim deadline), each probe given the
+			// time a loaded runner's CIM read needs; a test's probe keeps its own behavior. A failure here lands in the
+			// catch below, which fences the generation and closes the store.
 			await grantClaimedParticipant(
 				reservation.store,
 				reservation.generation,
 				"supervisor",
 				reservation.issuer,
 				publicSecret,
-				(pid) => probe(pid),
+				testOptions?.readProcessStartTime
+					? (pid) => probe(pid)
+					: (pid) => readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
 				{ deadlineMs: SUPERVISOR_CLAIM_DEADLINE_MS },
-			).catch((error: unknown) => {
-				reservation.store.cancel(reservation.generation);
-				throw error;
-			});
+			);
 		}
 		pidFile = { pid: child.pid, processStartTime: processStartTime ?? null };
 		await testOptions?.beforePidFileWrite?.();
@@ -174,16 +182,20 @@ export async function startHost(
 		if (!exitedBeforeCleanup && child?.pid !== undefined && childExit) {
 			await stopUnregisteredStart(child, childExit, stopTarget("start_failed"));
 		}
+		// The durable fence of a failed start (design 4.2a "Crash, cancellation and commit"): stopping the spawned
+		// wrapper proves nothing about a descendant that claimed, so the generation is cancelled, which revokes its
+		// offers and refuses every later grant and pre-listen intent. The fence's own failure never replaces the error.
+		const fence = reservation ? await fenceFailedStart(reservation) : undefined;
 		if (!exitedBeforeCleanup) {
 			await clearHostRegistration(paths);
-			throw error;
+			throw withFenceFailure(error, fence);
 		}
 		const diagnostic = await appendStderr(
 			paths,
 			`RPC socket host exited with code ${exitedBeforeCleanup.code ?? "null"}${exitedBeforeCleanup.signal ? ` (${exitedBeforeCleanup.signal})` : ""} before answering get_protocol_info`,
 		);
 		await clearHostRegistration(paths);
-		throw new Error(diagnostic);
+		throw new Error(fence === undefined ? diagnostic : `${diagnostic} (${fence})`);
 	} finally {
 		await stderr.close();
 	}
@@ -191,13 +203,19 @@ export async function startHost(
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, isCompatible, childExit);
 	if (result.ready) {
 		if (reservation) {
-			reservation.store.markServing(reservation.generation);
-			reservation.store.close();
+			try {
+				reservation.store.markServing(reservation.generation);
+			} finally {
+				reservation.store.close();
+			}
 		}
 		await presenterEnrollment;
 		return { pid: pidFile.pid, socket, reused: false, release: result.hold.release };
 	}
 	await testOptions?.beforeReadinessTeardown?.();
+	// Readiness failed with the supervisor granted: its generation is fenced the same way, before the child is stopped,
+	// so a granted descendant of the wrapper cannot bind after this start has reported failure.
+	const fence = reservation ? await fenceFailedStart(reservation) : undefined;
 	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop failure here
 	// (unreadable identity, a host that outlives SIGKILL) would otherwise propagate instead of the
 	// readiness message and skip the registration cleanup below. This child is ours and its handle is
@@ -216,10 +234,11 @@ export async function startHost(
 		: result.exited
 			? `RPC socket host exited with code ${result.exited.code ?? "null"}${result.exited.signal ? ` (${result.exited.signal})` : ""} before answering get_protocol_info`
 			: `spawned RPC socket host did not answer get_protocol_info within ${readinessTimeoutMs}ms`;
-	const diagnostic = await appendStderr(
-		paths,
-		stopFailure === undefined ? message : `${message} (teardown also reported: ${stopFailure})`,
-	);
+	const notes = [
+		...(stopFailure === undefined ? [] : [`teardown also reported: ${stopFailure}`]),
+		...(fence === undefined ? [] : [fence]),
+	];
+	const diagnostic = await appendStderr(paths, notes.length === 0 ? message : `${message} (${notes.join("; ")})`);
 	// The record of that teardown is already written: clearing the registration removes the
 	// generation directory, and with it the intent the record cites.
 	await clearHostRegistration(paths);
@@ -261,17 +280,47 @@ export async function appendStderr(paths: HostDaemonPaths, message: string): Pro
 	}
 }
 
-/** How long the issuer waits for the launched supervisor to claim its role. */
+/** How long the issuer waits for the launched supervisor to claim its role; the claimant's observation counts. */
 const SUPERVISOR_CLAIM_DEADLINE_MS = 10_000;
+
+/**
+ * Cancels the generation of a failed start and closes its store. Returns the fence's own failure as text, for the
+ * caller to report beside the start's diagnostic; it never throws, so no fence failure replaces the original error.
+ */
+async function fenceFailedStart(reservation: {
+	readonly store: EndpointReservationStore;
+	readonly generation: string;
+}): Promise<string | undefined> {
+	try {
+		reservation.store.cancel(reservation.generation);
+		return undefined;
+	} catch (error: unknown) {
+		return `reservation fence also failed: ${error instanceof Error ? error.message : String(error)}`;
+	} finally {
+		reservation.store.close();
+	}
+}
+
+/** The original error, with a failed fence noted on its message; the error object itself is what callers compare. */
+function withFenceFailure(error: unknown, fence: string | undefined): unknown {
+	if (fence !== undefined && error instanceof Error) error.message = `${error.message} (${fence})`;
+	return error;
+}
 
 /** Opens the endpoint's reservation store beside its lock, reserves a generation and offers the supervisor role. */
 async function reserveSupervisorLaunch(socket: string) {
-	const store = await openEndpointReservationStore(`${hostEnsureLockTarget(socket)}.reservation.db`);
+	const store = await openEndpointReservationStore(reservationStorePath(socket));
 	// An unreadable own start time is recorded as unverified; it never decides a grant, which checks the claimant.
 	const issuer = {
 		pid: process.pid,
 		processStartTime: (await readProcessStartTime(process.pid).catch(() => undefined)) ?? null,
 	};
-	const { generation, args } = offerSupervisorLaunch(store, socket, issuer);
-	return { store, issuer, generation, args };
+	try {
+		const { generation, args } = offerSupervisorLaunch(store, socket, issuer);
+		return { store, issuer, generation, args };
+	} catch (error: unknown) {
+		// Nothing was offered to anyone: the store is closed and the error is the start's.
+		store.close();
+		throw error;
+	}
 }

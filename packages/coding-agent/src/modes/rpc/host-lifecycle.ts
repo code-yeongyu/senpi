@@ -15,6 +15,7 @@ import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } fro
 import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
 import {
 	HOST_CHILD_WATCH_FD,
+	HOST_STARTUP_BUDGET_MS,
 	parseSupervisorArgs,
 	type StoreLocator,
 	type SupervisorLaunch,
@@ -241,7 +242,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// default kill, which would leave that directory behind.
 	registerSupervisorSignals(shutdown, () => drain.drain());
 	try {
-		await grantHost?.();
+		await grantHost?.grant();
 		// Direct supervisor launches predate owner records and may have no generation directory.
 		// Ensured starts create it before spawning and always carry an explicit owner/null record.
 		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
@@ -249,6 +250,9 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		}
 		await waitForListener(internalSocket, HOST_STARTUP_BUDGET_MS, internalSecret, internalKey);
 		await activity.openObserver();
+		// The pre-listen intent (design 4.2a step 4): one short transaction that revalidates this supervisor's grant
+		// immediately before the public bind, so a cancellation recorded since the grant ends the start here.
+		await admittedLaunch?.commitListenIntent();
 		await prepareSocketPath(bindSocket);
 		await listen(server, bindSocket, publicSecret);
 		await publicEndpoint?.publish();
@@ -275,7 +279,14 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		);
 		watchers.push(await drain.acceptRequests(generation));
 	} catch (cause) {
-		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
+		// A failed start fences the generation it offered the host in (design 4.2a "Crash, cancellation and commit"): a
+		// granted host, or a wrapper descendant still claiming, cannot commit a pre-listen intent afterwards. The fence's
+		// own failure is reported beside the cause, never instead of it.
+		const fence = await grantHost?.cancel().then(
+			() => undefined,
+			(error: unknown) => ` (reservation fence also failed: ${errorMessage(error)})`,
+		);
+		await shutdown(`startup failed: ${errorMessage(cause)}${fence ?? ""}`, 1);
 	}
 	if (process.platform === "win32") {
 		watchers.push(
@@ -299,52 +310,89 @@ if (!isBundledNode && isCliModuleEntry(import.meta.url)) {
 	void runHostSupervisor(launch);
 }
 
-/** How long a parent-admitted supervisor waits for its grant before giving up its start. */
+/** How long a parent-admitted supervisor waits for its grant before giving up its start; its own identity read counts. */
 const SUPERVISOR_GRANT_DEADLINE_MS = 10_000;
 
 /**
- * The host child's whole startup budget. Its reservation claim comes only after the CLI has loaded, so the supervisor
- * waits for that claim as long as it waits for the listener: a shorter claim deadline would fail starts that succeed
- * without a reservation (measured: a tsx-started host missed a 10 s claim deadline at load average ~210).
+ * The parent-admitted supervisor's entry (design 4.2a steps 2-3): read this process's own identity with the bounded
+ * retry, claim, wait for the grant and verify the parent's secret against it. Returns the pre-listen intent (step 4)
+ * the startup commits immediately before the public bind.
  */
-const HOST_STARTUP_BUDGET_MS = 30_000;
-
 async function admitReservedLaunch(
 	reservation: StoreLocator,
 	publicSocket: string,
-): Promise<{ credential: Buffer | undefined; self: LaunchIdentity }> {
-	const { admitClaimedParticipant, LaunchReservationError } = await import("./host-launch-reservation.ts");
+): Promise<{ credential: Buffer | undefined; self: LaunchIdentity; commitListenIntent: () => Promise<void> }> {
+	const {
+		admitClaimedParticipant,
+		commitListenIntent,
+		IDENTITY_OBSERVATION_PROBE_MS,
+		LaunchReservationError,
+		readClaimantIdentity,
+	} = await import("./host-launch-reservation.ts");
 	if (reservation.role !== "supervisor") {
 		throw new LaunchReservationError("locator_incomplete", "the supervisor entry requires a supervisor reservation");
 	}
+	const until = Date.now() + SUPERVISOR_GRANT_DEADLINE_MS;
 	const credential = await readSocketSecret(socketSecretPath(publicSocket)).catch(() => undefined);
-	const self = { pid: process.pid, processStartTime: (await readProcessStartTime(process.pid)) ?? null };
-	await admitClaimedParticipant(reservation, self, credential, { deadlineMs: SUPERVISOR_GRANT_DEADLINE_MS });
-	return { credential, self };
+	const self = await readClaimantIdentity(
+		process.pid,
+		(pid) => readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
+		SUPERVISOR_GRANT_DEADLINE_MS,
+	);
+	await admitClaimedParticipant(reservation, self, credential, { deadlineMs: Math.max(0, until - Date.now()) });
+	return {
+		credential,
+		self,
+		commitListenIntent: async () => {
+			if (!credential) throw new LaunchReservationError("commitment_mismatch", "no established public secret");
+			await commitListenIntent(reservation, self, credential);
+		},
+	};
 }
 
-/** Reservation-only lazy boundary: direct supervisors never load SQLite or the reservation helpers. */
+/**
+ * Reservation-only lazy boundary: direct supervisors never load SQLite or the reservation helpers. The offer is made
+ * before the spawn; `grant` verifies and grants the claimant inside the host's startup budget, and `cancel` is the
+ * durable fence a failed start leaves behind.
+ */
 async function offerReservedHost(
 	reservation: StoreLocator,
 	secret: Buffer,
 	issuer: LaunchIdentity,
-): Promise<() => Promise<void>> {
+): Promise<{ grant: () => Promise<void>; cancel: () => Promise<void> }> {
 	const { openEndpointReservationStore } = await import("./endpoint-reservation-store.ts");
-	const { grantClaimedParticipant } = await import("./host-launch-reservation.ts");
+	const { grantClaimedParticipant, IDENTITY_OBSERVATION_PROBE_MS, offerHostRole } =
+		await import("./host-launch-reservation.ts");
 	const store = await openEndpointReservationStore(reservation.storePath);
 	try {
-		store.offer(reservation.generation, "host", JSON.stringify(issuer));
+		offerHostRole(store, reservation.generation, issuer);
 	} finally {
 		store.close();
 	}
-	return async () => {
-		const store = await openEndpointReservationStore(reservation.storePath);
-		try {
-			await grantClaimedParticipant(store, reservation.generation, "host", issuer, secret, readProcessStartTime, {
-				deadlineMs: HOST_STARTUP_BUDGET_MS,
-			});
-		} finally {
-			store.close();
-		}
+	return {
+		grant: async () => {
+			const store = await openEndpointReservationStore(reservation.storePath);
+			try {
+				await grantClaimedParticipant(
+					store,
+					reservation.generation,
+					"host",
+					issuer,
+					secret,
+					(pid) => readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
+					{ deadlineMs: HOST_STARTUP_BUDGET_MS },
+				);
+			} finally {
+				store.close();
+			}
+		},
+		cancel: async () => {
+			const store = await openEndpointReservationStore(reservation.storePath);
+			try {
+				store.cancel(reservation.generation);
+			} finally {
+				store.close();
+			}
+		},
 	};
 }

@@ -149,6 +149,35 @@ describe("endpoint reservation store", () => {
 		expect(s.roleRow(locator)).toMatchObject({ status: "granted", participant: SUPERVISOR });
 	});
 
+	// Design 4.2a step 4: a granted participant revalidates generation, role and grant in one short transaction that
+	// records its pre-listen intent, so a cancellation fenced after the grant is seen before the bind.
+	it("records a pre-listen intent only for the granted participant with its commitment while the generation is pending", async () => {
+		const { store: s, generation, locator, nonce } = await offered();
+		expect(rejection(() => s.commitListenIntent(locator, SUPERVISOR, COMMITMENT))).toBe("role_not_granted");
+		s.claim(locator, nonce, SUPERVISOR);
+		expect(rejection(() => s.commitListenIntent(locator, SUPERVISOR, COMMITMENT))).toBe("role_not_granted");
+		s.grant(generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
+		expect(rejection(() => s.commitListenIntent(locator, INTRUDER, COMMITMENT))).toBe("participant_mismatch");
+		expect(rejection(() => s.commitListenIntent(locator, SUPERVISOR, randomBytes(32)))).toBe("commitment_mismatch");
+		expect(
+			rejection(() => s.commitListenIntent({ ...locator, endpoint: `${ENDPOINT}2` }, SUPERVISOR, COMMITMENT)),
+		).toBe("endpoint_mismatch");
+		expect(s.roleRow(locator)).toMatchObject({ status: "granted", listenIntent: false });
+		const before = s.reservation(generation).revision;
+		s.commitListenIntent(locator, SUPERVISOR, COMMITMENT);
+		expect(s.roleRow(locator)).toMatchObject({ status: "granted", participant: SUPERVISOR, listenIntent: true });
+		expect(s.reservation(generation).revision).toBe(before + 1);
+	});
+
+	it("refuses a pre-listen intent once the generation is cancelling, keeping the grant on record", async () => {
+		const { store: s, generation, locator, nonce } = await offered();
+		s.claim(locator, nonce, SUPERVISOR);
+		s.grant(generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
+		s.cancel(generation);
+		expect(rejection(() => s.commitListenIntent(locator, SUPERVISOR, COMMITMENT))).toBe("generation_cancelled");
+		expect(s.roleRow(locator)).toMatchObject({ status: "granted", participant: SUPERVISOR, listenIntent: false });
+	});
+
 	it("refuses to grant an offered role that nobody claimed", async () => {
 		const { store: s, generation } = await offered();
 		expect(rejection(() => s.grant(generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT))).toBe(

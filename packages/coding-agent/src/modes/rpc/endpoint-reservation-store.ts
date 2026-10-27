@@ -7,12 +7,16 @@
  * 256-bit nonce through a compare-and-set on endpoint, generation, role, nonce and state. The store holds nonces and so
  * is credential-bearing; it never holds the public secret, only a SHA-256 commitment to it. Rows are never deleted:
  * cancellation is a durable `cancelling` state that revokes offers and keeps every claimed identity.
+ *
+ * Schema 3 (design 4.2a step 4): a granted role records its participant's pre-listen intent, committed in a short
+ * transaction that revalidates the generation, role, grant and commitment, so a cancellation fenced after the grant is
+ * seen before the bind and the intent stays on record across it for the recovery census.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 
-export const ENDPOINT_RESERVATION_SCHEMA = 2;
+export const ENDPOINT_RESERVATION_SCHEMA = 3;
 
 export type ReservationRole = "supervisor" | "host";
 export type ReservationState = "pending" | "cancelling" | "serving";
@@ -36,6 +40,7 @@ export type ReservationRejection =
 	| "participant_mismatch"
 	| "issuer_mismatch"
 	| "commitment_invalid"
+	| "commitment_mismatch"
 	| "roles_not_granted";
 
 /** A typed refusal; `reason` is machine-readable and the message never carries a nonce. */
@@ -70,6 +75,8 @@ export interface RoleRow {
 	readonly status: RoleStatus;
 	readonly issuer: string;
 	readonly participant: string | null;
+	/** Whether the granted participant committed its pre-listen intent (design 4.2a step 4). */
+	readonly listenIntent: boolean;
 }
 
 /** One reservation that is not retired, with every recorded authority entry, as an admission census reads it. */
@@ -172,8 +179,18 @@ CREATE TABLE IF NOT EXISTS roles (
 	status TEXT NOT NULL,
 	participant TEXT,
 	commitment TEXT,
+	listen_intent INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (generation, role)
 );`;
+
+interface RoleColumns {
+	status: RoleStatus;
+	nonce: string | null;
+	issuer: string;
+	participant: string | null;
+	commitment: string | null;
+	listen_intent: number | bigint;
+}
 
 export async function openEndpointReservationStore(path: string): Promise<EndpointReservationStore> {
 	const validated = await precreatePrivate(path);
@@ -334,6 +351,34 @@ export class EndpointReservationStore {
 	}
 
 	/**
+	 * The granted participant's pre-listen intent (design 4.2a step 4): one short transaction that revalidates the
+	 * generation (pending, this endpoint), the role's grant to exactly this participant and the commitment it is about
+	 * to serve, then records the intent. A generation cancelled after the grant refuses it, so the cancellation cannot go
+	 * unnoticed merely because the optional notification was lost; the grant itself stays on record either way.
+	 */
+	commitListenIntent(locator: ReservationLocator, participant: string, commitment: Uint8Array): void {
+		this.#transaction(() => {
+			this.#locate(locator);
+			this.#pending(locator.generation);
+			const row = this.#role(locator.generation, locator.role);
+			if (!row || row.status !== "granted") {
+				throw new EndpointReservationError("role_not_granted", `${locator.role} in ${locator.generation}`);
+			}
+			if (row.participant !== participant) {
+				throw new EndpointReservationError("participant_mismatch", `${locator.role} in ${locator.generation}`);
+			}
+			const granted = Buffer.from(row.commitment ?? "", "hex");
+			if (granted.length !== 32 || commitment.length !== 32 || !timingSafeEqual(granted, commitment)) {
+				throw new EndpointReservationError("commitment_mismatch", `${locator.role} in ${locator.generation}`);
+			}
+			this.#database
+				.prepare("UPDATE roles SET listen_intent = 1 WHERE generation = ? AND role = ?")
+				.run(locator.generation, locator.role);
+			this.#bump(locator.generation);
+		});
+	}
+
+	/**
 	 * The durable cancellation fence: revokes every outstanding offer and keeps claimed and granted identities. It also
 	 * fences a `serving` generation, which recovery does to an abandoned generation before its retirement census.
 	 */
@@ -392,7 +437,15 @@ export class EndpointReservationStore {
 
 	roleRow(locator: ReservationLocator): RoleRow | undefined {
 		const row = this.#role(locator.generation, locator.role);
-		return row && { role: locator.role, status: row.status, issuer: row.issuer, participant: row.participant };
+		return (
+			row && {
+				role: locator.role,
+				status: row.status,
+				issuer: row.issuer,
+				participant: row.participant,
+				listenIntent: Number(row.listen_intent) === 1,
+			}
+		);
 	}
 
 	/**
@@ -494,14 +547,11 @@ export class EndpointReservationStore {
 		if (state !== "pending") throw new EndpointReservationError("generation_not_pending", generation);
 	}
 
-	#role(
-		generation: string,
-		role: ReservationRole,
-	): { status: RoleStatus; nonce: string | null; issuer: string; participant: string | null } | undefined {
+	#role(generation: string, role: ReservationRole): RoleColumns | undefined {
 		return this.#read(
 			() =>
 				this.#database.prepare("SELECT * FROM roles WHERE generation = ? AND role = ?").get(generation, role) as
-					| { status: RoleStatus; nonce: string | null; issuer: string; participant: string | null }
+					| RoleColumns
 					| undefined,
 		);
 	}
