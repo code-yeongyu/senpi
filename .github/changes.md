@@ -1,3 +1,21 @@
+## 2026-10-25 - The Windows RPC job drives a terminal control endpoint over a pipe (senpi#4267)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `RPC named pipes (Windows)` job's TUI step now runs the terminal endpoint suite that registers, lists, attaches and drives a terminal over a named pipe, plus the terminal socket wrong-secret suite.
+
+### Why
+
+- Terminal control endpoints now register on win32; the job proves it end to end instead of proving the old refusal.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `rpc-windows` job's TUI step and its comment.
+
 ## 2026-10-25 - CI and release workflows pin Bun 1.4.4 (senpi#4223)
 
 ### What changed

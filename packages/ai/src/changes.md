@@ -1,3 +1,23 @@
+## 2026-10-25 - Root exports the assistant capture accessors (senpi#4277, part of #4272)
+
+### What changed
+
+- `packages/ai/src/index.ts`: exports `assistantRecords`, `carryAssistantCapture`, `getAssistantCapture`,
+  `isAssistantProgress` and the `AssistantProgress`/`AssistantRecord` types from `utils/assistant-capture.ts`.
+
+### Why
+
+- The agent loop reads provider records and carries carriers through `@earendil-works/pi-ai`; S02b's projector
+  reads the same accessor.
+
+### Why an extension could not handle it
+
+- The root export list is the package's public surface.
+
+### Expected merge conflict zones
+
+- LOW: one export block after `export * from "./api/lazy.ts"`.
+
 ## 2026-10-24 - Provider requests carry the session working directory (senpi#2848)
 
 ### What changed

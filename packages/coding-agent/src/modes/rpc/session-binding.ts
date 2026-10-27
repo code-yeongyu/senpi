@@ -38,13 +38,9 @@ export async function createRpcSessionBinding(
 	// session is inside is what the loop-lag watchdog blames for a stall. The record
 	// stream already carries that transition; no extra subscription is needed.
 	const toolSpans = createToolAttributionSpans(sessionId);
-	const enqueueRecords = (chunk: string): void => {
-		for (const line of chunk.split("\n")) {
-			if (!line) continue;
-			const record = JSON.parse(line) as object;
-			toolSpans.observe(record);
-			writer.enqueue(sessionId, record);
-		}
+	const enqueueRecord = (record: object): void => {
+		toolSpans.observe(record);
+		writer.enqueue(sessionId, record);
 	};
 	// Attachments share one entry, so resolve the host from the live runtime. In
 	// particular, switch_session must use the entry's replacement-aware method
@@ -69,18 +65,25 @@ export async function createRpcSessionBinding(
 	// an unawaited prompt (senpi#2871).
 	let droppedAfterClose = false;
 	const handler: RpcConnectionHandler = await runWithProviderScope(entry.scope, async () => {
-		const writeInScope = bindToProviderScope(enqueueRecords);
+		const writeInScope = bindToProviderScope(enqueueRecord);
+		const dropAfterClose = (): void => {
+			if (!droppedAfterClose)
+				process.stderr.write(
+					`senpi rpc host: dropped a record for closed session ${sessionId} at ${new Date().toISOString()}\n`,
+				);
+			droppedAfterClose = true;
+		};
+		const writeRecord = (record: object): void => {
+			if (entry.scope.state === "closed") return dropAfterClose();
+			writeInScope(record);
+		};
 		const taggedSink: RpcConnectionSink = {
-			writeRaw: (chunk) => {
-				if (entry.scope.state === "closed") {
-					if (!droppedAfterClose)
-						process.stderr.write(
-							`senpi rpc host: dropped a record for closed session ${sessionId} at ${new Date().toISOString()}\n`,
-						);
-					droppedAfterClose = true;
-					return;
-				}
-				writeInScope(chunk);
+			writeRecord,
+			// A late raw reply after the scope closed is dropped like any record (senpi#2871); while the scope is
+			// open, records arrive only through writeRecord, so a raw write is a wiring bug.
+			writeRaw: () => {
+				if (entry.scope.state === "closed") return dropAfterClose();
+				throw new Error("Shared session bindings deliver records through writeRecord, never writeRaw");
 			},
 			waitForBackpressure: bindToProviderScope(async () => {}),
 		};
@@ -88,7 +91,6 @@ export async function createRpcSessionBinding(
 			sessionId,
 			shutdownHandler: bindToProviderScope(requestClose),
 			disposeRuntime: false,
-			eventFlushScheduler: (flush) => flush(),
 			publishLoadedSurfacesChanged: (previous, digest) => {
 				if (entry.scope.state !== "closed") writer.publishLoadedSurfacesChanged(sessionId, previous, digest);
 			},

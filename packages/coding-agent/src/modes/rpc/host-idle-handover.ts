@@ -40,6 +40,8 @@ export interface HandoverLaunch {
 }
 
 export interface IdleHandoverRequest {
+	/** Successor deployment policy only; never enrollment authority. */
+	readonly mcpPresenterEnforcement?: boolean;
 	readonly operationId: string;
 	readonly ifInstanceId: string;
 	readonly ifGeneration: number;
@@ -143,7 +145,8 @@ export class HostIdleHandover {
 				: { kind: "refused", reason: "operation_conflict", detail: "this operation id names other terms" };
 		}
 		if (current !== undefined && current.view.state !== "handover_blocked") {
-			return current.request.targetRuntimeBuildId === request.targetRuntimeBuildId
+			return current.request.targetRuntimeBuildId === request.targetRuntimeBuildId &&
+				Boolean(current.request.mcpPresenterEnforcement) === Boolean(request.mcpPresenterEnforcement)
 				? answer(current)
 				: { kind: "refused", reason: "handover_in_progress", detail: current.view.operationId };
 		}
@@ -220,6 +223,7 @@ export class HostIdleHandover {
 function sameTerms(a: IdleHandoverRequest, b: IdleHandoverRequest): boolean {
 	return (
 		a.targetRuntimeBuildId === b.targetRuntimeBuildId &&
+		Boolean(a.mcpPresenterEnforcement) === Boolean(b.mcpPresenterEnforcement) &&
 		a.ifInstanceId === b.ifInstanceId &&
 		a.ifGeneration === b.ifGeneration
 	);

@@ -46,7 +46,13 @@ it("answers a uiRequestId answer under the frame id, once, and refuses a replay 
 	const { answer, answered } = await terminalAsking("ask-1");
 
 	const first = await answer({ id: "answer-1", uiRequestId: "ask-1", answers: { q1: { selected: ["yes"] } } });
-	expect(first).toEqual({ id: "answer-1", type: "response", command: "extension_ui_response", success: true });
+	expect(first).toEqual({
+		id: "answer-1",
+		type: "response",
+		command: "extension_ui_response",
+		success: true,
+		disposition: "applied",
+	});
 	expect(answered).toEqual([
 		{
 			requestId: "ask-1",
@@ -80,6 +86,7 @@ it("keeps the short form: id alone names the question and is answered under that
 		type: "response",
 		command: "extension_ui_response",
 		success: true,
+		disposition: "applied",
 	});
 	expect(answered).toEqual([
 		{

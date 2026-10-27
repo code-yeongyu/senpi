@@ -93,8 +93,8 @@ class WorkerEventWriter extends SessionEventWriter {
 		}));
 	}
 	override enqueue(_sessionId: string, record: object): boolean {
-		if (Buffer.byteLength(JSON.stringify(record)) > SESSION_WORKER_LIMITS.outputBytes)
-			failWorker("session_worker_output_limit");
+		const line = JSON.stringify(record);
+		if (Buffer.byteLength(line) > SESSION_WORKER_LIMITS.outputBytes) failWorker("session_worker_output_limit");
 		const session = entry?.runtime?.session;
 		if (!session) throw new Error("Session output preceded runtime creation");
 		const activity = {
@@ -114,7 +114,9 @@ class WorkerEventWriter extends SessionEventWriter {
 			failWorker("session_worker_snapshot_limit");
 		exchange((signal) => ({
 			type: "output",
-			record,
+			// Keep one JSON-normal transfer format, including toJSON and non-cloneable fields.
+			// S12 replaces this whole-record serialization with compact records and permits.
+			record: JSON.parse(line) as object,
 			connection: this.currentConnection(),
 			signal,
 			activity,

@@ -1,3 +1,122 @@
+## 2026-10-26 - Spillable compact content storage for current session state (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-content-store.ts`: owned bounded leaves (32,768 UTF-16 code units) created synchronously in RAM. A serial asynchronous job chain spills the oldest resident leaf per job to a private epoch spool (0700/0600). A leaf's RAM copy is released only after its file write completed; a failed write keeps the bytes resident, unlinks its partial file, halts further spilling and is reported with its own retained-bytes counter. A deleted or short committed file is a typed read error, never empty content, and does not halt spilling. Unreferenced files count as reclamation debt until their unlink completes; a failed unlink keeps the debt and is retried with bounded backoff, and `spillHalted` also reports debt above the work allowance holding spilling back. Retirement joins owned I/O, then removes the epoch directory only when the store created it, and drops unlinks queued after it.
+- `packages/coding-agent/src/modes/rpc/compact-spool-dir.ts`: the store creates its epoch directory itself (0700, refusing an existing one as `spool_create`) with a private ownership marker. Removal checks the directory and the marker without following symlinks (owner, no group/other mode bits, marker token) and otherwise rejects with `CompactSpoolRefusedError`.
+- `packages/coding-agent/src/modes/rpc/compact-storage-io.ts`: the asynchronous file seam (`CompactStorageIo`, node promise filesystem default), the storage failure record and `CompactStorageReadError`.
+- `packages/coding-agent/src/modes/rpc/compact-session-state.ts`: the in-memory current-state owner over that store. `accept` validates a typed transition completely, then publishes the next sequence, or throws `CompactTransitionError` with state unchanged (backwards overlap outside producer-declared coverage, and seed coverage that is neither none nor the whole seed, included). `freeze`/`read`/`release` pin and materialize immutable cuts; a cut shares the small active tail instead of minting a leaf per freeze, and the tail bytes cuts hold are reported. Settled message rows are a resident map: a status change replaces the whole row, a removal deletes it, and a transition that addresses a removed or unknown message is refused. Persistence status changes only through `message_status`, never through storage success or failure.
+
+### Why
+
+- senpi#4272 (contract R3.C6.4 first half, ruling 08 mechanism A): current content must be retained as current state, not as the cumulative prefixes of every update, and storage failure must keep accepted content and report it rather than drop it (R3.C2.4).
+
+### Why an extension could not handle it
+
+- The store and its consumer sit below extension delivery in the RPC host's session state; extensions see neither the host's retained content nor its spool directory.
+
+### Expected merge conflict zones
+
+- None upstream: all four files are fork-only and new.
+
+## 2026-10-26 - Deliver shared-binding records through a structured sink (senpi#4276, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: adds an optional synchronous structured sink before JSONL event buffering; classic stdout keeps its existing buffer.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: submits records directly to the writer within their provider scope, preserving the once-only closed-scope diagnostic and tool attribution.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: remembers frozen wire lines without handing the fanout a live source object.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: retains message-presence metadata at acceptance, derives lazy placeholder lines from frozen JSONL, and retains JSON-normal question frames.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: accepts structured binding records before sizing and transfers the JSON-normal record from that sizing serialization. Full-record worker serialization remains a staged gap for S12.
+- `packages/coding-agent/src/modes/rpc/json-normal-value.ts`: implements JSON value normalization by walking, including keyed toJSON calls, boxed primitives, omissions, sparse arrays, nonfinite numbers, getter snapshots, and cycle/BigInt errors.
+- `packages/coding-agent/src/modes/rpc/media-placeholders.ts`: uses the same normalizing walk before media projection, preserving unchanged sibling identities for ordinary JSON data and legacy placeholder bytes for JSON-capable objects.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` and `packages/coding-agent/src/modes/rpc/session-binding.ts`: the shared path serialized and parsed each cumulative partial before the writer could accept it.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` and `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: retaining the original provider object after removing the parse detour would allow later mutation to change lazy replay and recovery selection.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: bypassing the old JSONL detour must not send functions or change toJSON/prototype semantics across postMessage.
+- `packages/coding-agent/src/modes/rpc/json-normal-value.ts` and `packages/coding-agent/src/modes/rpc/media-placeholders.ts`: inspecting raw media before normalization could use different bytes from an image's toJSON representation or invoke getters more than once. Writer acceptance and media projection share a parse-free normalization implementation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`, and `packages/coding-agent/src/modes/rpc/session-worker.ts`: these files own connection dispatch, session scope, writer acceptance, retained replay, and isolate transfer below extension delivery.
+- `packages/coding-agent/src/modes/rpc/json-normal-value.ts` and `packages/coding-agent/src/modes/rpc/media-placeholders.ts`: all capability destinations must inspect one JSON-normal representation below extension delivery, without a live JSON parse.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the sink interface and output closures.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: provider-scoped sink construction.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: the rememberSnapshot call.
+- `packages/coding-agent/src/modes/rpc/session-event-fanout.ts`: retained snapshot metadata, lazy placeholder derivation, and question retention.
+- `packages/coding-agent/src/modes/rpc/session-worker.ts`: WorkerEventWriter.enqueue sizing and transfer.
+- `packages/coding-agent/src/modes/rpc/json-normal-value.ts`: the shared JSON normalization walk.
+- `packages/coding-agent/src/modes/rpc/media-placeholders.ts`: normalization before media projection and copy-on-write sibling preservation.
+
+## 2026-10-25 - Atomic snapshot cursor, UI-answer receipts, dialog observation (#4266)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` captures state and bounded newest entries synchronously with a source-issued marker and uses session-owned answer receipts and dialog change hooks.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts` exports the additive snapshot and dialog event contracts. The split wire types add `get_snapshot`, `answerId`, `answeredUiRequests`, and `dialogs`.
+- The event writer sends markers only to their requesting mirrored subscriber and dialog lifecycle records only to matching opt-in subscribers, on the existing connection FIFO. Targeted UI frames and replies retain their routing.
+- New snapshot and receipt modules own capture and bounded, memory-only FIFO retention; existing read classification remains activity-neutral.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: response arrival cannot identify a snapshot cut when live records arrive across an awaited response write, and reconnecting clients need explicit answer outcomes.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: public clients need typed snapshot and observation contracts rather than guessing record order.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: only the session handler can capture state and enqueue a cursor without yielding.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: extensions do not own the public RPC protocol or connection routing.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: imports, state dispatch, and UI response settlement; all other command semantics stay in place.
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: additive type exports.
+
+## 2026-10-25 - Preserve presenter enforcement through host replacement (senpi#4247)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`, `host-ensure-types.ts`, `host-ensure-start.ts`, `host-ensure.ts`, `host-handoff.ts` and `host-successor.ts`: carry the explicit deployment option into new and immediate successor launches. An enforcing predecessor cannot silently downgrade.
+- `packages/coding-agent/src/modes/rpc/host-handover-request.ts`, `host-idle-handover.ts` and `host-handover-wire.ts`: carry the non-secret deployment boolean through conditional idle handover and include it in operation identity. Enrollment still uses the existing owner's private successor challenge.
+- `packages/coding-agent/src/modes/rpc/mcp-presenter-bootstrap.ts`: use a cancellable socket read on Node so CLI exit does not wait for the caller to close fd 4 after enrollment; retain Bun's descriptor adapter.
+
+### Why
+
+- Passing a bootstrap channel without enforcement closed the channel before enrollment. Runtime identity alone does not prove enforcement, so reuse keeps the serving host's reported capabilities and never enrolls the caller.
+
+### Why an extension could not handle it
+
+- Host startup, replacement and private descriptor ownership belong to the engine control plane.
+
+### Expected merge conflict zones
+
+- Ensure/handoff option forwarding, successor argv and conditional handover parsing.
+
+## 2026-10-25 - Observing state and history reads, history tail paging (senpi#4267)
+
+### What changed
+
+- `host-observe-request.ts`: `get_state` and `get_entries` join the observing set.
+- `get-entries-page.ts`, `get-entries-command.ts`: `get_entries { before?, tail? }` and `next_before`; one answer for host connections and terminal endpoints. `connection-handler.ts` uses it.
+- `custom-capability.ts`, `host-capabilities.ts`, `rpc-session-command-types.ts`, `rpc-read-response-types.ts`: `observe_reads`, `entries_tail`, `tui_observer` and the wire fields.
+
+### Why
+
+- A watcher reads state and the newest history without holding a host open or walking a long history from its start.
+
+### Why an extension could not handle it
+
+- Host occupancy and the `get_entries` wire contract live in the RPC host itself.
+
+### Expected merge conflict zones
+
+- LOW: the observing set in `host-observe-request.ts`; the `get_entries` case in `connection-handler.ts`.
+
 ## 2026-10-25 - Host-issued presenter grants and private form settlement (#4197)
 
 ### What changed
