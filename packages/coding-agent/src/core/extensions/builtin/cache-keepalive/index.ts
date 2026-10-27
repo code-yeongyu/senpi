@@ -197,8 +197,7 @@ export function createCacheKeepAliveExtension(
 				const headers = preparation ? await preparation.transformHeaders(authHeaders) : authHeaders;
 				const systemPrompt = current.getSystemPrompt();
 				// The ping splits the system prompt where the real request does (senpi#4447, senpi#2389).
-				const stablePrefix =
-					prefix?.status === "ready" ? prefix.request.context.systemPromptStablePrefix : undefined;
+				const stablePrefix = current.getSystemPromptStablePrefix?.();
 				const result = await warm(
 					current.model,
 					{

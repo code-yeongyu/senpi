@@ -703,12 +703,13 @@ export interface SystemMessage {
 	 */
 	sections?: Record<string, string | null>;
 	/**
-	 * Leading message only: how many characters at the start of `content` are the same across
-	 * sessions. Providers with block-level prompt caching (Anthropic) send that part as its own block
-	 * holding the system cache breakpoint, so another session reads it from cache even when the rest
-	 * differs. Request-time only; rendered text is unchanged (senpi#4447).
+	 * Leading message only: the start of the rendered prompt that is the same across sessions in the same
+	 * working directory. Providers with block-level prompt caching (Anthropic) send it as its own block
+	 * holding the system cache breakpoint when the rendered prompt still starts with it, so another session
+	 * reads it from cache even when the rest differs; a rewrite that no longer starts with it sends one block.
+	 * Request-time only; rendered text is unchanged (senpi#4447).
 	 */
-	stablePrefixLength?: number;
+	stablePrefix?: string;
 	/** Complete definitions of tools that become available at this point. */
 	toolsAdded?: Tool[];
 	/** Tools that stop being available at this point. */
@@ -992,9 +993,9 @@ export interface ToolReference {
 export interface Context {
 	systemPrompt?: string;
 	/**
-	 * Leading part of `systemPrompt` that is the same across sessions; the rest changes between sessions
-	 * (memory, MCP instructions). Folded into the leading system message as `stablePrefixLength` when
-	 * `systemPrompt` starts with it (senpi#4447).
+	 * Leading part of `systemPrompt` that is the same across sessions in the same working directory; the rest
+	 * changes between sessions (memory, MCP instructions). Folded into the leading system message as
+	 * `stablePrefix` when `systemPrompt` starts with it (senpi#4447).
 	 */
 	systemPromptStablePrefix?: string;
 	messages: Message[];

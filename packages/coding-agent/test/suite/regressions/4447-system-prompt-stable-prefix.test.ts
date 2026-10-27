@@ -45,7 +45,7 @@ async function firstRequestSystem(harness: Harness): Promise<{ prompt: string; s
 	let captured: { prompt: string; stablePrefixLength?: number } = { prompt: "" };
 	harness.setResponses([
 		(context) => {
-			const stablePrefixLength = getInitialSystemMessage(context.messages)?.stablePrefixLength;
+			const stablePrefixLength = getInitialSystemMessage(context.messages)?.stablePrefix?.length;
 			captured = {
 				prompt: getCurrentSystemPrompt(context.messages),
 				...(stablePrefixLength === undefined ? {} : { stablePrefixLength }),

@@ -76,6 +76,31 @@ describe("Anthropic system prompt stable prefix (senpi#4447)", () => {
 		]);
 	});
 
+	it("sends one block when a rewrite left a stable prefix the prompt no longer starts with", async () => {
+		let payload: { system?: unknown } | undefined;
+		const fetch: typeof globalThis.fetch = async (_input, init) => {
+			payload = JSON.parse(String(init?.body));
+			return new Response('event: message_stop\ndata: {"type":"message_stop"}\n\n', {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			});
+		};
+		const transcript = normalizeContext(context(STABLE));
+		const [leading, ...rest] = transcript.messages;
+		if (leading?.role !== "system") throw new Error("expected a leading system message");
+		const rewritten = "A context_with_system handler replaced the whole prompt.";
+		await streamAnthropic(
+			model,
+			{ ...transcript, messages: [{ ...leading, content: rewritten }, ...rest] },
+			{
+				apiKey: "sk-ant-api-test",
+				fetch,
+			},
+		).result();
+
+		expect(payload?.system).toEqual([{ type: "text", text: rewritten, cache_control: { type: "ephemeral" } }]);
+	});
+
 	it("leaves the rendered system prompt unchanged for every other provider", () => {
 		expect(getCurrentSystemPrompt(normalizeContext(context(STABLE)).messages)).toBe(PROMPT);
 	});

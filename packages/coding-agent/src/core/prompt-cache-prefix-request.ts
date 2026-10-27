@@ -171,12 +171,12 @@ export async function buildPromptCachePrefixRequest(
  */
 function toPrefixContext(transcript: TranscriptContext): Context {
 	const systemPrompt = getCurrentSystemPrompt(transcript.messages);
-	const stablePrefixLength = getInitialSystemMessage(transcript.messages)?.stablePrefixLength;
+	const stablePrefix = getInitialSystemMessage(transcript.messages)?.stablePrefix;
 	return {
 		systemPrompt,
-		...(stablePrefixLength === undefined
+		...(stablePrefix === undefined || !systemPrompt.startsWith(stablePrefix)
 			? {}
-			: { systemPromptStablePrefix: systemPrompt.slice(0, stablePrefixLength) }),
+			: { systemPromptStablePrefix: stablePrefix }),
 		messages: transcript.messages.filter((message) => message.role !== "system"),
 		tools: getCurrentTools(transcript.messages),
 		...(transcript.activeToolNames === undefined ? {} : { activeToolNames: transcript.activeToolNames }),

@@ -808,6 +808,7 @@ export default function compactionExtension(
 				origin: "core-route" as const,
 				customInstructions: event.customInstructions,
 				systemPrompt: ctx.getSystemPrompt(),
+				systemPromptStablePrefix: ctx.getSystemPromptStablePrefix?.(),
 				tools: getSummarizationTools(),
 			};
 			let compaction: CompactionResult | undefined;

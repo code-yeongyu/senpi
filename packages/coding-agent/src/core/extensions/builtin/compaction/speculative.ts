@@ -86,6 +86,7 @@ export interface SpeculativeCompactionContext {
 	getCompactionModel?(): Model<any> | undefined;
 	getMessageRevision(): number;
 	getSystemPrompt?(): string;
+	getSystemPromptStablePrefix?(): string | undefined;
 	prepareProviderRequest?(messages: AgentMessage[]): Promise<ProviderRequestPreparation>;
 	isIdle?(): boolean;
 	applyCompaction(
@@ -111,6 +112,8 @@ export interface SpeculativeCompactionSnapshot {
 	customInstructions?: string;
 	/** Agent system prompt; used to make the summarization request look like normal agent traffic. */
 	systemPrompt?: string;
+	/** The turn's stable prefix of `systemPrompt`, so the summary request splits it like the turn (senpi#4447). */
+	systemPromptStablePrefix?: string;
 	/** Agent tool definitions; forwarded so the request shape matches normal agent traffic. */
 	tools?: Tool[];
 }
@@ -257,6 +260,7 @@ export function createSpeculativeCompactionSnapshot(
 		branchEntries,
 		promptVariant: getPromptVariant({ reason: "extension", preparation }),
 		systemPrompt: context.getSystemPrompt?.(),
+		systemPromptStablePrefix: context.getSystemPromptStablePrefix?.(),
 	};
 }
 

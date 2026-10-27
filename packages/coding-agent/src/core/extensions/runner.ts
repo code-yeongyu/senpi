@@ -582,6 +582,7 @@ export class ExtensionRunner {
 		reason: "rejected",
 	});
 	private getSystemPromptFn: () => string = () => "";
+	private getSystemPromptStablePrefixFn: () => string | undefined = () => undefined;
 	private getLoadedHookSourcesFn: ExtensionContextActions["getLoadedHookSources"] = () => ({
 		agentDir: "",
 		cwd: this.cwd,
@@ -747,6 +748,7 @@ export class ExtensionRunner {
 		this.getMessageRevisionFn = contextActions.getMessageRevision;
 		this.applyCompactionFn = contextActions.applyCompaction;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
+		this.getSystemPromptStablePrefixFn = contextActions.getSystemPromptStablePrefix ?? (() => undefined);
 		this.getLoadedHookSourcesFn = contextActions.getLoadedHookSources;
 		if (contextActions.getAgentDir) this.getAgentDirFn = contextActions.getAgentDir;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
@@ -1722,6 +1724,10 @@ export class ExtensionRunner {
 			getSystemPrompt: () => {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
+			},
+			getSystemPromptStablePrefix: () => {
+				runner.assertActive();
+				return runner.getSystemPromptStablePrefixFn();
 			},
 			getSystemPromptOptions: () => {
 				runner.assertActive();

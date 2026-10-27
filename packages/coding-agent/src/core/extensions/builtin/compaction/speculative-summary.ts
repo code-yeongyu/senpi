@@ -150,6 +150,9 @@ export async function generateSummaryMessage(options: {
 		const providerRequest = await options.context.prepareProviderRequest?.(requestMessages);
 		const requestContext = {
 			systemPrompt: options.snapshot.systemPrompt ?? options.prompt.system,
+			...(options.snapshot.systemPrompt !== undefined && options.snapshot.systemPromptStablePrefix !== undefined
+				? { systemPromptStablePrefix: options.snapshot.systemPromptStablePrefix }
+				: {}),
 			messages: repairOrphanedToolResults(
 				normalizeSummarizationTurnOrder(convertToLlm(providerRequest?.messages ?? requestMessages)),
 			),

@@ -24,7 +24,7 @@ export function createInitialSystemMessage(
 	return {
 		role: "system",
 		content: systemPrompt ?? "",
-		...(splitsPrompt ? { stablePrefixLength: stablePrefix.length } : {}),
+		...(splitsPrompt ? { stablePrefix } : {}),
 		...(hasTools ? { toolsAdded: tools } : {}),
 		timestamp: 0,
 	};
@@ -89,10 +89,10 @@ export function getCurrentSystemMessage(messages: TranscriptMessages): SystemMes
 	const content: string[] = [];
 	const sections = new Map<string, string>();
 	let timestamp: number | undefined;
-	let stablePrefixLength: number | undefined;
+	let stablePrefix: string | undefined;
 	for (const message of messages) {
 		if (!isSystemMessage(message)) continue;
-		if (timestamp === undefined) stablePrefixLength = message.stablePrefixLength;
+		if (timestamp === undefined) stablePrefix = message.stablePrefix;
 		timestamp ??= message.timestamp;
 		const text = contentText(message.content);
 		if (text.length > 0) content.push(text);
@@ -106,7 +106,7 @@ export function getCurrentSystemMessage(messages: TranscriptMessages): SystemMes
 	return {
 		role: "system",
 		content: content.join("\n\n"),
-		...(stablePrefixLength === undefined ? {} : { stablePrefixLength }),
+		...(stablePrefix === undefined ? {} : { stablePrefix }),
 		...(sections.size > 0 ? { sections: Object.fromEntries(sections) } : {}),
 		...(tools.length > 0 ? { toolsAdded: tools } : {}),
 		timestamp: timestamp ?? 0,

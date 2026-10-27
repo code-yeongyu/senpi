@@ -2484,16 +2484,12 @@ function buildParams(
 		];
 		if (initialSystemText) {
 			params.system.push(
-				...anthropicSystemTextBlocks(initialSystemText, initialSystemMessage?.stablePrefixLength, cacheControl),
+				...anthropicSystemTextBlocks(initialSystemText, initialSystemMessage?.stablePrefix, cacheControl),
 			);
 		}
 	} else if (initialSystemText) {
 		// Add cache control to system prompt for non-OAuth tokens
-		params.system = anthropicSystemTextBlocks(
-			initialSystemText,
-			initialSystemMessage?.stablePrefixLength,
-			cacheControl,
-		);
+		params.system = anthropicSystemTextBlocks(initialSystemText, initialSystemMessage?.stablePrefix, cacheControl);
 	}
 
 	// Temperature is incompatible with extended thinking and unsupported on Claude Opus 4.7+.
