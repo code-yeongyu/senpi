@@ -22,12 +22,14 @@ export interface ModelToolMetadata {
 export function createPicoModels(
 	runtime: ModelRuntime,
 	toolMetadata: ReadonlyMap<string, ModelToolMetadata>,
+	cwd: string,
 ): PicoModels {
 	return {
 		resolve: (ref) => runtime.getModel(ref.provider, ref.modelId),
 		async *stream(model, request, ctx): AsyncIterable<AssistantMessageEvent> {
 			const stream = runtime.streamSimple(model, toAiContext(request, toolMetadata), {
 				signal: ctx.abortSignal,
+				cwd,
 				...(request.thinkingLevel === "off" ? {} : { reasoning: request.thinkingLevel }),
 			});
 			for await (const event of stream) {

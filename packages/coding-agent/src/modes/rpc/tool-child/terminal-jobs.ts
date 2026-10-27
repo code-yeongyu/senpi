@@ -58,6 +58,7 @@ export interface TerminalJobArgs {
 	readonly defaultCols: number;
 	readonly defaultRows: number;
 	readonly timeoutAction?: TimeoutAction;
+	readonly redactSecretsInOutput?: boolean;
 }
 
 function parseArgs(value: unknown): TerminalJobArgs {
@@ -80,6 +81,7 @@ function parseArgs(value: unknown): TerminalJobArgs {
 		...(typeof shellPath === "string" ? { shellPath } : {}),
 		defaultCols: Number(field("defaultCols")) || 0,
 		defaultRows: Number(field("defaultRows")) || 0,
+		redactSecretsInOutput: field("redactSecretsInOutput") === true,
 		...(timeoutAction === "background" || timeoutAction === "kill" ? { timeoutAction } : {}),
 	};
 }
@@ -148,6 +150,7 @@ export function createTerminalJobHandlers(injected?: TerminalManager): Readonly<
 		...(args.shellPath === undefined ? {} : { shellPath: args.shellPath }),
 		defaultCols: args.defaultCols,
 		defaultRows: args.defaultRows,
+		redactSecretsInOutput: args.redactSecretsInOutput,
 		getEnv: () => ({ ...args.env }),
 		launchBarrier: barrierFor(job),
 	});

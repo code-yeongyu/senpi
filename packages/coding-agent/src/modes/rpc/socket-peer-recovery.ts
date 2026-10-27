@@ -2,6 +2,8 @@ import { serializeJsonLine } from "./jsonl.ts";
 
 export const EVENT_RESYNC_CAPABILITY = "event_resync";
 export type ResyncReason = "overflow" | "stall";
+/** A shed's recovery cut: read once when the gap is delivered, released on that and on every other end. */
+export type ResyncCut = { (): readonly object[]; readonly release?: () => void };
 export type RpcSessionResyncRequired = {
 	readonly type: "resync_required";
 	readonly sessionId: string;
@@ -35,10 +37,10 @@ export class SocketPeerRecovery {
 	private pingBuffered = false;
 	private replyLost = false;
 	private readonly write: (line: string) => void;
-	private readonly snapshot: (reason: ResyncReason) => () => readonly object[];
-	private readSnapshot: (() => readonly object[]) | undefined;
+	private readonly snapshot: (reason: ResyncReason) => ResyncCut;
+	private cut: ResyncCut | undefined;
 
-	constructor(write: (line: string) => void, snapshot: (reason: ResyncReason) => () => readonly object[]) {
+	constructor(write: (line: string) => void, snapshot: (reason: ResyncReason) => ResyncCut) {
 		this.write = write;
 		this.snapshot = snapshot;
 		// Negotiate the heartbeat before session traffic can fill the output side.
@@ -54,7 +56,13 @@ export class SocketPeerRecovery {
 	shed(reason: ResyncReason): void {
 		if (this.reason !== undefined) return;
 		this.reason = reason;
-		this.readSnapshot = this.snapshot(reason);
+		this.cut = this.snapshot(reason);
+	}
+
+	/** The peer closed or failed before its gap was delivered. */
+	release(): void {
+		this.cut?.release?.();
+		this.cut = undefined;
 	}
 
 	/** A fresh set_client_info is the existing connection-scoped acknowledgement. */
@@ -80,10 +88,14 @@ export class SocketPeerRecovery {
 		this.reason = undefined;
 		this.awaitingPing = false;
 		this.pingBuffered = false;
-		const snapshot = this.readSnapshot;
-		this.readSnapshot = undefined;
+		const cut = this.cut;
+		this.cut = undefined;
 		const gap = reason === undefined ? [] : [{ type: "resync_required", reason, replyLost: this.replyLost }];
 		this.replyLost = false;
-		return [...gap, ...(snapshot?.() ?? [])];
+		try {
+			return [...gap, ...(cut?.() ?? [])];
+		} finally {
+			cut?.release?.();
+		}
 	}
 }

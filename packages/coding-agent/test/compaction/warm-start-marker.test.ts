@@ -58,6 +58,7 @@ function createContext(): SpeculativeCompactionContext & {
 	});
 	sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: "second user" }], timestamp: 3 });
 	return {
+		cwd: process.cwd(),
 		model,
 		modelRegistry,
 		registration,

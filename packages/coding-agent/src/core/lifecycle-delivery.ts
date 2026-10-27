@@ -6,6 +6,7 @@ import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { SessionLifecycleController } from "./session-lifecycle.ts";
 import type { DeliveryTicketId } from "./session-lifecycle-types.ts";
 import { isRecord } from "./work-custody-record.ts";
+import { recoveryCarrier } from "./session-recovery-identity.ts";
 
 /** Keep delivery identities, not materialized conversation history, between engine turns. */
 export const lifecycleDeliveryEntries: HistoryReducer<Map<string, string>> = {
@@ -47,6 +48,7 @@ export function consumeLifecycleDelivery(
 			message.content,
 			message.display,
 			message.details,
+			{ recoveryOwner: recoveryCarrier(message) },
 		);
 	controller.obligations.consumed(ticketId, { runId, transcriptEntryId });
 	return transcriptEntryId;

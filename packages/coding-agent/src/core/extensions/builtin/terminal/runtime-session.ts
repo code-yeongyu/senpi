@@ -5,6 +5,7 @@ import type {
 	TerminalSessionExit,
 	TerminalSessionOptions,
 } from "@earendil-works/pi-pty";
+import { SecretOutputRedactor } from "../../../tools/secret-output-redactor.ts";
 import { type ChildProcessIdentity, processBootAtMs } from "./process-identity.ts";
 import { loadPty } from "./pty.lazy.ts";
 import { DEFAULT_SCROLLBACK, MAX_SESSION_OUTPUT_CHARS } from "./shared.ts";
@@ -13,6 +14,7 @@ const pty = await loadPty();
 
 export interface TerminalRuntimeOptions extends TerminalSessionOptions {
 	readonly scrollback?: number;
+	readonly redactSecretsInOutput?: boolean;
 }
 
 export interface DeltaRead {
@@ -46,6 +48,8 @@ export class TerminalRuntimeSession {
 	private finalScreen: TerminalScreenSnapshot | null = null;
 	private readonly screenRelease: Promise<void>;
 	private readonly decoder = new TextDecoder("utf-8", { fatal: false });
+	private readonly redactor: SecretOutputRedactor | undefined;
+	private redactionIdleTimer: ReturnType<typeof setTimeout> | undefined;
 	private buffer = "";
 	private droppedChars = 0;
 	private consumed = 0;
@@ -53,6 +57,7 @@ export class TerminalRuntimeSession {
 	private unsubscribeData: (() => void) | null = null;
 
 	constructor(command: string, options: TerminalRuntimeOptions) {
+		this.redactor = options.redactSecretsInOutput === true ? new SecretOutputRedactor() : undefined;
 		this.command = command;
 		this.argv = [options.command ?? command, ...(options.args ?? [])];
 		this.screen = new pty.TerminalScreen({
@@ -62,18 +67,23 @@ export class TerminalRuntimeSession {
 		});
 		this.session = new pty.TerminalSession(options);
 		this.unsubscribeData = this.session.onData((chunk) => {
-			const text = this.ingest(chunk);
-			if (text.length === 0) return;
-			for (const listener of this.outputListeners) {
-				try {
-					listener(text);
-				} catch {
-					// Output observers must not interfere with the session's ingest path.
-				}
+			const text = this.decoder.decode(chunk, { stream: true });
+			this.ingest(this.redactor ? this.redactor.push(text) : text);
+			const redactor = this.redactor;
+			if (redactor) {
+				clearTimeout(this.redactionIdleTimer);
+				this.redactionIdleTimer = setTimeout(() => {
+					this.redactionIdleTimer = undefined;
+					this.ingest(redactor.flushIdle());
+				}, 50);
+				this.redactionIdleTimer.unref?.();
 			}
 		});
 		this.screenRelease = new Promise((resolve) => {
 			this.session.onExit(() => {
+				clearTimeout(this.redactionIdleTimer);
+				this.redactionIdleTimer = undefined;
+				if (this.redactor) this.ingest(this.redactor.push(this.decoder.decode()) + this.redactor.finish());
 				// Best-effort like every screen write (#837): a failed release leaves an empty final screen, never an unhandled rejection.
 				void this.releaseScreen()
 					.catch(() => {})
@@ -133,9 +143,8 @@ export class TerminalRuntimeSession {
 		return this.droppedChars + this.buffer.length;
 	}
 
-	private ingest(chunk: Uint8Array): string {
-		const text = this.decoder.decode(chunk, { stream: true });
-		if (text.length === 0) return text;
+	private ingest(text: string): void {
+		if (text.length === 0) return;
 		if (this.screen) this.ownScreenWrite(this.screen.feed(text));
 		this.buffer += text;
 		if (this.buffer.length > MAX_SESSION_OUTPUT_CHARS) {
@@ -143,7 +152,13 @@ export class TerminalRuntimeSession {
 			this.buffer = this.buffer.slice(overflow);
 			this.droppedChars += overflow;
 		}
-		return text;
+		for (const listener of this.outputListeners) {
+			try {
+				listener(text);
+			} catch {
+				// Output observers must not interfere with the session's ingest path.
+			}
+		}
 	}
 
 	/** Subscribe to decoded output without affecting the read cursor. */
@@ -193,6 +208,8 @@ export class TerminalRuntimeSession {
 	}
 
 	dispose(): void {
+		clearTimeout(this.redactionIdleTimer);
+		this.redactionIdleTimer = undefined;
 		this.unsubscribeData?.();
 		this.unsubscribeData = null;
 		this.outputListeners.clear();

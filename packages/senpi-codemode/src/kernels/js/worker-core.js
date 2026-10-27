@@ -50,6 +50,7 @@ export function createWorkerCore(transport, options) {
 		getRuntime: () => runtime,
 		emit: (message) => transport.send(message),
 		nestedInvokes,
+		runAuthority: options.runAuthority,
 	});
 
 	function emit(message) {
@@ -72,7 +73,7 @@ export function createWorkerCore(transport, options) {
 		activeCell = cell;
 		rejections.startCell(cell);
 		try {
-			const run = runInCell(cell, () =>
+			const execute = () => runInCell(cell, () =>
 				runtime.run(message.code, message.cellId, {
 					emit: (event) => {
 						if (releasedCellError() === undefined) emit(event);
@@ -80,6 +81,7 @@ export function createWorkerCore(transport, options) {
 					callTool: async (toolName, args) => await callTool(toolName, args),
 				}),
 			);
+			const run = options.runAuthority ? options.runAuthority(message.authority, execute) : execute();
 			const value = await Promise.race([run, release.promise]);
 			rejections.finishCell(cell);
 			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: durationMs(startedAtMs), ...memoryReport() });
@@ -265,7 +267,7 @@ function cellInterruptedError(reason) {
 
 function bridgeError(error) {
 	if (error instanceof Error) {
-		return { name: error.name, message: error.message, stack: error.stack, ...(typeof error.code === "string" ? { code: error.code } : {}) };
+		return { name: error.name, message: error.message, stack: error.stack, ...(typeof error.code === "string" ? { code: error.code } : {}), ...(error.code === "cell_permission_denied" && error.rule ? { permissionRule: error.rule } : {}) };
 	}
 	return { message: String(error) };
 }

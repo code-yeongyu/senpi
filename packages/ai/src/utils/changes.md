@@ -1,3 +1,149 @@
+## 2026-10-27 - Explicit producer-time seed frontier (part of #4272)
+
+### What changed
+
+- `packages/ai/src/utils/assistant-capture.ts` carries `nextOffset` on block starts; frozen-value construction moves to `packages/ai/src/utils/assistant-capture-record.ts`.
+- `packages/ai/src/utils/assistant-seed-frontier.ts` accepts only zero or full UTF-16 seed length and supplies typed missing/invalid frontier errors.
+
+### Why
+
+- Identical nonempty seeds previously hid whether subsequent deltas replayed from zero or continued at the seed length.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/assistant-capture.ts`, `packages/ai/src/utils/assistant-capture-record.ts`, and `packages/ai/src/utils/assistant-seed-frontier.ts` own producer-time capture and its internal consumer contract, before extension delivery.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/assistant-capture.ts`, `packages/ai/src/utils/assistant-capture-record.ts`, and `packages/ai/src/utils/assistant-seed-frontier.ts`.
+
+## 2026-10-26 - Provider error bodies are classified raw and kept redacted at the stream boundary (senpi#4282)
+
+### What changed
+
+- `provider-error.ts` (new): `isModelConfigError` (every quantifier bounded) and `sanitizeProviderErrorMessage`, which classifies the raw `errorMessage` of an error message (`stopReason: "error"`) first, sets `errorCause: { type: "model_config", model }` when it names a model the route does not serve, then keeps only the redacted text of every provider error.
+- `secret-redaction.ts` (new): `redactSecrets` and `redactCredentialShapes`, the one-pass state machine. One left-to-right pass reads the text as alternating tokens and delimiters; each token is classified from its own characters and the delimiters beside it, with index arithmetic only and no regular expression. The whole value of a strict name (password, secret, authorization, bearer) is read forward to its closing quote (at the opening quote's escaping depth) or, when bare, to whitespace, `,`, `;`, `&`, a quote or `<`, and the scan resumes after it.
+- `secret-lexer.ts` (new): character classes, percent escapes and HTML entities read as what they encode, the token and delimiter units, and the forward scans that find where a quoted or bare value ends. The shared logical-unit reader collapses canonical percent layers in one forward walk, then repeatedly percent-decodes a 64-character window to a fixpoint, retaining source offsets. Independently encoded percent signs and hex digits, mixed depths and either hex case use the same semantics; an unresolved window returns a typed refusal and the scanner redacts the remaining suffix conservatively. Work is linear: canonical prefixes are consumed once and every remaining window has constant work and storage. Both exported redactors use the same scanner and shape classifier; shapes mode deliberately interprets neither credential names nor URL passwords. JWT segment dots and URL authority slashes use logical units too. Scaling tests count scanner character reads through both exports instead of load-sensitive wall time.
+- `secret-classifier.ts` (new): credential words (a name is normalized: lowercase, camelCase split, trailing digits and `value`/`val`/`id` qualifiers stripped), known key prefixes and JWTs. A prefix or JWT is recognized wherever a word starts inside a token (after `/`, `+`, `~`, `-`, `.`, `%`, including percent-encoded token punctuation), never inside a word; each prefix check is bounded work, and a failed JWT candidate skips to its first `.`, so every segment is walked at most three times.
+- `event-stream.ts`: `AssistantMessageEventStream.push` and `end` run `sanitizeProviderErrorMessage` on every partial, error and final message, so no consumer of any provider stream sees a raw provider error body.
+- `retry.ts`: `isRetryableAssistantError` returns false for a `model_config` cause.
+- `secret-lexer.ts`: a percent-window refusal requires an unresolved percent/hex run contiguous to the window edge; a space or non-hex literal ends that dependency, so printf and SQL percent text stays readable. Windows without a percent followed by a hex digit skip fixpoint-buffer allocation and decoding passes.
+- `secret-classifier.ts` and `secret-redaction.ts`: a single known key's redacted span ends at its credential alphabet boundary, preserving a following path separator or filename suffix. If another credential starts anywhere after the first start, even inside its alphabet or behind a word character, the whole remaining token is conservatively redacted. Hook diagnostics retain the source filename around a single PAT. The suffix matrix covers every prefix alias and JWT, slash, dot, colon, query/form separators, underscore, hyphen, end of string, a word character and three joined credential families in EN/KO prose, paths, URLs and userinfo through both public redactors.
+
+### Why
+
+- A redaction applied at `message_end` left the raw body in `message_start`/`message_update` events published before it; every provider builds its error through this stream, so it is the one place where the body enters our objects.
+- Regex redaction was quadratic on shaped input twice in review (a keyword repeated over one name run, then the JWT rule on `eyJ-` runs: 1 MB took about 52 s), synchronously inside `push`; it also mangled names that only contain a credential word, missed numbered or qualified names, and missed cookie pairs after a short first value. A token-wise pass is linear by construction.
+
+### Why an extension could not handle it
+
+- The provider stream class and the retry classifier are core pi-ai code that every provider and the agent loop share.
+
+### Expected merge conflict zones
+
+- LOW: the `AssistantMessageEventStream` class body in `event-stream.ts`; the top of `isRetryableAssistantError`.
+
+## 2026-10-26 - Relay hints and consistent replaced terminals (senpi#4307, part of #4272)
+
+### What changed
+
+- `assistant-capture.ts` (fork-only): `CaptureHint.carried` makes a push relay a source capture's block facts, with
+  usage and metadata from the relaying stream; `null` records nothing. A start whose block is not appended yet records
+  nothing. `carryAssistantCapture` with a replaced terminal takes the new terminal's usage and message and adds every
+  scalar that differs from the source terminal to its metadata. `AssistantCapture.rewrittenFrom` (set through
+  `CaptureHint.rewrittenFrom` on a terminal and kept when the terminal is re-carried) names the first index from which
+  earlier block records no longer name the terminal's blocks (block index/identity only). The terminal message always
+  wins for content: readers replace each block's content from the terminal (or the block's end event), never
+  append-only from live records.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
+## 2026-10-26 - Capture vocabulary for replaced signatures, redaction and late names (senpi#4285, part of #4272)
+
+### What changed
+
+- `packages/ai/src/utils/assistant-capture.ts` (fork-only): `message_block_metadata` gains `thinkingSignature` and
+  `textSignature` (replacements, beside the appending `thinkingSignatureDelta`), `redacted` and `name`;
+  `pushAssistantSignature` records a changed text/thinking signature and `pushAssistantCompleteBlock` records a block
+  appended complete with no event as an insert and an end sharing one frozen copy.
+
+### Why
+
+- Google and Devin replace signatures rather than append them, Bedrock redacts a block mid-stream and Devin can name
+  a tool after its start; the S02a-1 vocabulary only appended signatures.
+
+### Why an extension could not handle it
+
+- The progress records are internal to the provider stream's ordered queue.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
+## 2026-10-25 - Assistant streams capture block seeds at emission and keep one ordered progress lane (senpi#4277, part of #4272)
+
+### What changed
+
+- `packages/ai/src/utils/event-stream.ts`: `EventStream` keeps one ordered queue whose entries are public events or
+  internal progress records. Ordinary iteration yields only public events with the same microtask timing as before:
+  a queued progress record is skipped in the same `next()` call, and a waiting reader that receives one keeps
+  waiting. `AssistantMessageEventStream` takes `{ captureBlocks }`; with it, `push(event, hint?)` freezes the event's
+  capture carrier before queuing. Every instance registers a progress writer; a records reader is registered only
+  when the class does not replace `[Symbol.asyncIterator]`. Ordinary iteration drops each event's carrier as it is
+  dequeued, so a wrapper that reads that way can only lose controls, never forward wrong ones. `done` is now
+  `protected`; `mapIterator` and `enqueueProgress` are new protected members.
+- `packages/ai/src/utils/assistant-capture.ts` (fork-only, new): the carrier and record vocabulary. Carriers live in
+  a `WeakMap` keyed by the event object (never enumerable, never serialized) and hold frozen copies: usage, changed
+  message metadata, the public block at start/end (provider scratch and symbols removed), the exact raw argument
+  prefix the adapter emitted, UTF-16 coverage and delta offsets, and the parse frontier `parsedThrough`.
+  Progress records are `message_block_state` (native insert/end), `message_block_metadata` (changed fields only) and
+  `message_tool_arguments_reset` (authoritative raw replacement). `assistantRecords` reads records;
+  `assistantEvents` reads events and hands each record to a callback as it is read.
+
+### Why
+
+- Provider events carry the shared live partial and the queue held references, so a seed read when a consumer
+  resumed could already contain later bytes, and native insertions/ends happened with no event at all. The facts
+  have to be frozen when the producer emits them, and native-only transitions need their own ordered lane
+  (R3.C6.2; contract ruling 05, decisions D1-D5).
+
+### Why an extension could not handle it
+
+- Capture has to run inside the producer's `push`, before the event is queued; extensions only see events after
+  the consumer resumes, when the live partial may already be ahead.
+
+### Expected merge conflict zones
+
+- MEDIUM: `EventStream` queue and iterator internals (`#queue` entry type, `push`/`deliver`, `mapIterator`,
+  `FifoQueue.prepend`) and the `AssistantMessageEventStream` constructor, `push` and iterator overrides.
+
+## 2026-10-25 - Preserve protocol-owned tool arguments (senpi#4191)
+
+### What changed
+
+- `packages/ai/src/utils/validation.ts`: accepts a schema-bound protocol validator before the existing coercion path.
+- `packages/ai/src/utils/tool-argument-validator.ts`: stores protocol validators without serializing them into provider requests.
+- Protocol validation preserves AJV error paths, required-property names, messages, and keywords so the model can correct its call without echoing argument values.
+- `packages/ai/src/utils/tool-argument-coercion.ts`: owns the unchanged primitive coercion extracted from `packages/ai/src/utils/validation.ts`.
+- `packages/ai/src/utils/tool-schema-compat.ts`: documents provider adaptation as a separate, potentially lossy wire step.
+
+### Why
+
+- `packages/ai/src/utils/validation.ts`: modern MCP must validate and send the arguments the model produced, rather than repair them through legacy coercion.
+- `packages/ai/src/utils/tool-schema-compat.ts`: an object-only provider's schema restrictions must not weaken MCP's source schema or rewrite dispatched arguments.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/validation.ts`: validation runs before an extension tool's execute callback.
+- `packages/ai/src/utils/tool-schema-compat.ts`: provider wire conversion occurs after extensions supply their tool definitions.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/validation.ts`: the argument-validation entry and primitive-coercion import.
+- `packages/ai/src/utils/tool-schema-compat.ts`: the module-level documentation.
+
 ## 2026-10-22 - Extract the configuration reference error without behavior changes (senpi#3858)
 
 ### What changed
