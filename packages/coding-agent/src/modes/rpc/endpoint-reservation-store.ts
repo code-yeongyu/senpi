@@ -952,15 +952,20 @@ export class EndpointReservationStore {
 	}
 
 	/**
-	 * Persists the escalated reason of a bounded assessment on a fenced generation, at its current revision (design 4.2a
-	 * "Bounded unknown escalation"). Not a transition: the revision is not bumped, and the credential, identities, fence
-	 * and nonce state are untouched. A later marker replaces an earlier one.
+	 * Persists the escalated reason of a bounded assessment on a fenced generation, at the revision the assessment READ
+	 * (design 4.2a "Bounded unknown escalation": "at the revision read"): a record that moved since is refused with
+	 * `revision_changed`, so a marker never describes an old record while being valid for the new one. Not a transition:
+	 * the revision is not bumped, and the credential, identities, fence and nonce state are untouched. A later marker
+	 * replaces an earlier one.
 	 */
-	escalate(generation: string, marker: Omit<EscalationMarker, "revision">): EscalationMarker {
+	escalate(generation: string, marker: Omit<EscalationMarker, "revision">, readRevision: number): EscalationMarker {
 		return this.#transaction(() => {
 			const reservation = this.#reservation(generation);
 			if (reservation.state !== "cancelling") {
 				throw new EndpointReservationError("generation_not_fenced", generation);
+			}
+			if (reservation.revision !== readRevision) {
+				throw new EndpointReservationError("revision_changed", `${generation} at ${reservation.revision}`);
 			}
 			const record: EscalationMarker = { revision: reservation.revision, ...marker };
 			this.#database

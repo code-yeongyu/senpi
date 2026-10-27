@@ -1048,8 +1048,10 @@ reservation as its escalated reason at the revision read (`escalation` in the re
 `owner_identity_unreadable` (a denied or failed reopen), `owner_identity_incomplete` (no recorded identity, or one that
 cannot be compared), `owner_identity_domain_mismatch` (both kernel sessions verified and different) and
 `owner_identity_domain_unverified` (either unverified); `owner_identity_inconsistent` is reserved for the native
-identity adapter's same-birth account or handle inconsistency. An unchanged record (same revision) answers a later
-automatic ensure from that marker with `observations: 0, cached: true` and no new query, while its presence objects are
+identity adapter's same-birth account or handle inconsistency. The marker is written only when the record is still at
+the revision the attempt read; a record that changed meanwhile gets none, so the next attempt's budget is fresh. An
+unchanged record (same revision) answers a later automatic ensure from that marker with `observations: 0, cached: true`
+and no new query for the marker's own `subject` only; every other entry is queried as usual, its presence objects are
 still probed once and a verified different kernel session is still checked; a transition discards the marker, an
 explicit `host repair` opens one new bounded assessment, and a repair that resolves the record to `live` drops it.
 
@@ -1070,7 +1072,10 @@ also records the repair anchor, the current verified kernel session at the fence
 none (`anchor: null`), and after the restart the lifetime acquisition is the proof instead. After a verified different
 kernel session, on a store recorded and still classified `local`, the anchor proves every process that could have
 exercised the generation's authority gone, so the next ensure retires it; a later claim or commit (a changed revision)
-discards the anchor, and a non-local store never records one. Cancelling the restart leaves everything intact.
+discards the anchor, and a non-local store never records one. Cancelling the restart leaves everything intact. Neither
+the anchor nor the Revision 6 reboot proof resolves an entry without observing it: an entry whose process is live now
+blocks, an absent one is gone by observation, and the proof resolves only an entry whose recorded identity is missing or
+whose observations found it unreadable or noncomparable; an entry the deadline left unobserved stays unknown.
 
 ### Generation handoff (`handoffHost`, `probeHost`, `stopHost`)
 

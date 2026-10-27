@@ -324,8 +324,10 @@ class ObservationBudget {
  * admits it, absence, a different birth or an exit on this kernel says nothing about that row. Then only an absent PID or
  * an exactly different creation FILETIME is `gone`; equal is `live`; an unreadable identity is requeried once inside
  * the budget and then `unknown`, a noncomparable one is `unknown` at once. A proven prior boot (the Revision 6 proof or
- * a repair anchor) ends every process of that boot without a query, and an unchanged escalated record answers from its
- * marker without one (`cached`).
+ * a repair anchor) resolves an entry only after the observation could not decide it (no recorded identity, an unreadable
+ * or noncomparable one): an entry whose process is observed live blocks whatever the boot evidence says, and an absent
+ * one is gone by observation. An unchanged escalated record answers its marker's own subject from the marker without a
+ * query (`cached`); every other entry is queried.
  */
 async function observeRecorded(
 	subject: string,
@@ -345,23 +347,38 @@ async function observeRecorded(
 			detail: `kernel_session_gate (${describeSession(rowSession)})`,
 		};
 	}
-	if (priorBoot) return { kind: "gone", reason: "prior_boot" };
+	// The marker answers its own subject without a query; under a prior-boot proof the entry is observed instead, so
+	// that a live current-boot process at that PID is seen, never resolved from a marker written before the boot.
 	const cached = reservation.escalation;
-	if (cached !== null && !prober.fresh) return { kind: "unknown", reason: cached.reason, detail: "escalated record" };
-	if (recorded === undefined || recorded.pid === 0) {
-		return { kind: "unknown", reason: "owner_identity_incomplete", detail: "no recorded identity" };
+	if (cached !== null && !prober.fresh && cached.subject === subject && !priorBoot) {
+		return { kind: "unknown", reason: cached.reason, detail: "escalated record" };
 	}
+	if (recorded === undefined || recorded.pid === 0) {
+		return priorBoot
+			? { kind: "gone", reason: "prior_boot" }
+			: { kind: "unknown", reason: "owner_identity_incomplete", detail: "no recorded identity" };
+	}
+	let unreadable = false;
 	for (;;) {
 		const observed = await budget.observe(subject, recorded.pid);
 		if (observed === undefined) {
-			return { kind: "unknown", reason: "owner_identity_unreadable", detail: "observation budget spent" };
+			// An identity that every observation made found unreadable is what the boot proof resolves; an entry the
+			// deadline left unobserved is no observation at all, and stays unknown whatever the boot evidence says.
+			return priorBoot && unreadable
+				? { kind: "gone", reason: "prior_boot" }
+				: { kind: "unknown", reason: "owner_identity_unreadable", detail: "observation budget spent" };
 		}
 		if (observed.kind === "absent") return { kind: "gone", reason: "absent" };
 		// The design's one fresh reopen/requery; the budget refuses a third.
-		if (observed.kind === "error") continue;
+		if (observed.kind === "error") {
+			unreadable = true;
+			continue;
+		}
 		const start = recorded.processStartTime;
 		if (start === null || !/^\d+$/.test(start) || !/^\d+$/.test(observed.identity)) {
-			return { kind: "unknown", reason: "owner_identity_incomplete", detail: "noncomparable identity" };
+			return priorBoot
+				? { kind: "gone", reason: "prior_boot" }
+				: { kind: "unknown", reason: "owner_identity_incomplete", detail: "noncomparable identity" };
 		}
 		return BigInt(start) === BigInt(observed.identity)
 			? { kind: "live" }
@@ -531,15 +548,30 @@ async function recoverGeneration(
 			readonly occupied?: PresenceObjectRecord;
 			readonly unknown?: { readonly subject: string; readonly reason: RecoveryEscalationReason };
 			readonly storeDenied?: boolean;
+			/** The revision the refused evidence was read at (step 4's revalidated revision for the census). */
+			readonly readRevision?: number;
 		} = {},
 	): RecoveryOutcome => {
 		let escalation: RecoveryEscalation | undefined;
 		if (extra.unknown) {
 			const observations = budget.counts.get(extra.unknown.subject) ?? 0;
-			const cached = observations === 0 && fenced.escalation !== null && !prober.fresh;
-			// The durable escalated reason, at the revision this attempt read; a transition discards it.
+			const cached =
+				observations === 0 &&
+				fenced.escalation !== null &&
+				fenced.escalation.subject === extra.unknown.subject &&
+				!prober.fresh;
+			// The durable escalated reason, at the revision this attempt read: a record that changed since (a transition
+			// committed meanwhile) gets no marker, so the next attempt's budget is fresh.
 			if (!cached) {
-				store.escalate(generation, { subject: extra.unknown.subject, reason: extra.unknown.reason, observations });
+				try {
+					store.escalate(
+						generation,
+						{ subject: extra.unknown.subject, reason: extra.unknown.reason, observations },
+						extra.readRevision ?? fenced.revision,
+					);
+				} catch (error: unknown) {
+					if (!(error instanceof EndpointReservationError && error.reason === "revision_changed")) throw error;
+				}
 			}
 			escalation = { reason: extra.unknown.reason, observations, cached };
 		} else if (
@@ -631,6 +663,7 @@ async function recoverGeneration(
 		if (result.verdict === "unknown") {
 			return refused("census_unknown", result.detail, {
 				unknown: { subject: result.subject, reason: result.reason },
+				readRevision: current.revision,
 			});
 		}
 		try {
