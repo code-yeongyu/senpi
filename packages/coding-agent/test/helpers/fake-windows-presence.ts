@@ -6,6 +6,8 @@ import type {
 	NativePresencePlacementBinding,
 	NativePresenceProbe,
 	NativePresenceResult,
+	NativeProcessBinding,
+	NativeProcessObservation,
 	PresencePlacementLoad,
 	PresenceReleasedReceipt,
 } from "../../src/modes/rpc/socket-secret-native.ts";
@@ -57,6 +59,8 @@ export interface FakeWindowsOptions {
 		readonly directories: ReadonlyMap<string, FakeDirectory>;
 		readonly objects: ReadonlyMap<string, FakeObject>;
 	};
+	/** The processes this kernel shows the identity adapter; a fresh, empty table when absent. */
+	readonly processes?: ReturnType<typeof fakeProcessIdentity>;
 }
 
 interface FakeObject {
@@ -143,7 +147,9 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 	let preActionCalls = 0;
 	let nextId = 1000 + objects.size + directories.size;
 	const canonical = (path: string) => (path.startsWith("\\\\?\\") ? path : `\\\\?\\${path}`);
+	const processes = options.processes ?? fakeProcessIdentity();
 	const native: NativePresencePlacementBinding = {
+		...processes.native,
 		__senpiSocketSecretAbi1: () => "1",
 		publishNoReplace: () => {
 			throw new Error("not used");
@@ -317,7 +323,7 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 		},
 	};
 	const load: PresencePlacementLoad = { status: "available", native };
-	return { native, load, calls, directories, objects, held, holds, waits, control, releaseHeld };
+	return { native, load, calls, directories, objects, held, holds, waits, control, releaseHeld, processes };
 }
 
 /**
@@ -326,6 +332,142 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
  */
 export function cloneMachine(machine: ReturnType<typeof fakeWindows>, options: FakeWindowsOptions = {}) {
 	return fakeWindows({ ...options, copyOf: { directories: machine.directories, objects: machine.objects } });
+}
+
+/** What one kernel answers for a PID the identity adapter opens (crate `process_handle.rs`): the facts read on that handle. */
+export interface FakeProcess {
+	/** `GetProcessId` on the opened handle; defaults to the opened PID. A different value is an inconsistent handle. */
+	readonly handlePid?: number | null;
+	/** The complete creation FILETIME as a decimal string; `null` is an unreadable `GetProcessTimes`. */
+	readonly creationTime: string | null;
+	/** The `TokenUser` SID; `null` is an unreadable token. */
+	readonly userSid: string | null;
+	/** Whether the process object is signalled; `null` is a failed wait. */
+	readonly exited?: boolean | null;
+	/** `GetExitCodeProcess` of a signalled object. */
+	readonly exitCode?: number;
+}
+
+/**
+ * The Windows process-identity adapter as the #4199 bridge exposes it (design 4.2a "OS identity", clause (ii) of
+ * "Process evidence and the kernel-session gate"): `processOpen` opens a PID once, reads `GetProcessId`, the creation
+ * FILETIME, the `TokenUser` SID and the exit state on that one handle and RETAINS the handle under the caller's handle ID
+ * until `processClose`; `processObserve` rereads the same handle. The table is explicit, never real PID recycling: a PID
+ * not in it is `no_such_process`, a denied one is `access_denied`, and a test installs a replacement under a recorded PID
+ * with its own creation FILETIME or SID. Nothing here classifies: live, gone and unknown are the caller's rule.
+ *
+ * The exit wait (`processWaitExit`, design 4.2a "process-object signalling for exit ... not wrapper exit"): a wait on a
+ * retained handle parks until the process object is signalled (`signal`), the wait is cancelled, or the handle is closed;
+ * it never polls and no ChildProcess is involved.
+ */
+export function fakeProcessIdentity() {
+	const table = new Map<number, FakeProcess | "denied" | "failed">();
+	/** Retained handle ID -> the PID it was opened on. A handle keeps the process object: its facts stay readable. */
+	const handles = new Map<string, number>();
+	/** Wait ID -> the parked exit wait, settled by the object's signal, a cancellation or the handle's close. */
+	const exitWaits = new Map<
+		string,
+		{ readonly handleId: string; readonly pid: number; readonly settle: (result: NativeProcessObservation) => void }
+	>();
+	const calls: string[] = [];
+	const settleExit = (pid: number, exitCode: number) => {
+		for (const [waitId, wait] of exitWaits) {
+			if (wait.pid !== pid) continue;
+			exitWaits.delete(waitId);
+			wait.settle({ status: "exited", exitCode });
+		}
+	};
+	const facts = (pid: number, process: FakeProcess): NativeProcessObservation => ({
+		status: "opened",
+		handlePid: process.handlePid === undefined ? pid : process.handlePid,
+		creationTime: process.creationTime,
+		userSid: process.userSid,
+		exited: process.exited === undefined ? false : process.exited,
+	});
+	const answer = (pid: number): NativeProcessObservation => {
+		const process = table.get(pid);
+		if (process === undefined) return { status: "no_such_process" };
+		if (process === "denied") return { status: "access_denied" };
+		if (process === "failed") return { status: "failed", code: 6 };
+		return facts(pid, process);
+	};
+	const native: NativeProcessBinding = {
+		processOpen: (handleId, pid) => {
+			calls.push(`processOpen ${pid}`);
+			if (handles.has(handleId)) return { status: "held", reason: "handle_in_use" };
+			const observation = answer(pid);
+			if (observation.status === "opened") handles.set(handleId, pid);
+			return observation;
+		},
+		processObserve: (handleId) => {
+			const pid = handles.get(handleId);
+			calls.push(`processObserve ${pid ?? "?"}`);
+			if (pid === undefined) return { status: "not_held" };
+			const process = table.get(pid);
+			// The retained handle keeps the process object: a process the table dropped meanwhile is signalled, not absent.
+			if (process === undefined || process === "denied" || process === "failed") {
+				return { status: "opened", handlePid: pid, creationTime: null, userSid: null, exited: true };
+			}
+			return facts(pid, process);
+		},
+		processClose: (handleId) => {
+			calls.push(`processClose ${handles.get(handleId) ?? "?"}`);
+			if (!handles.delete(handleId)) return { status: "not_held" };
+			// A closed handle ends its pending wait: the duplicated wait handle is released, the waiter answers cancelled.
+			for (const [waitId, wait] of exitWaits) {
+				if (wait.handleId !== handleId) continue;
+				exitWaits.delete(waitId);
+				wait.settle({ status: "cancelled" });
+			}
+			return { status: "closed" };
+		},
+		processWaitExit: (handleId, waitId) => {
+			const pid = handles.get(handleId);
+			calls.push(`processWaitExit ${pid ?? "?"}`);
+			if (pid === undefined) return Promise.resolve({ status: "not_held" });
+			if (exitWaits.has(waitId)) return Promise.resolve({ status: "held", reason: "wait_pending" });
+			const process = table.get(pid);
+			if (typeof process === "object" && process.exited === true) {
+				return Promise.resolve({ status: "exited", exitCode: process.exitCode ?? 0 });
+			}
+			return new Promise<NativeProcessObservation>((settle) => {
+				exitWaits.set(waitId, { handleId, pid, settle });
+			});
+		},
+		processCancelWaitExit: (waitId) => {
+			calls.push(`processCancelWaitExit`);
+			const wait = exitWaits.get(waitId);
+			if (!wait) return;
+			exitWaits.delete(waitId);
+			wait.settle({ status: "cancelled" });
+		},
+	};
+	return {
+		table,
+		handles,
+		exitWaits,
+		calls,
+		native,
+		live(pid: number, creationTime: string, userSid: string) {
+			table.set(pid, { creationTime, userSid, exited: false });
+		},
+		exited(pid: number, creationTime: string, userSid: string) {
+			table.set(pid, { creationTime, userSid, exited: true });
+		},
+		/** The process exits: its object is signalled with `exitCode`, and every wait parked on it answers `exited`. */
+		signal(pid: number, exitCode = 0) {
+			const process = table.get(pid);
+			if (typeof process === "object") table.set(pid, { ...process, exited: true, exitCode });
+			settleExit(pid, exitCode);
+		},
+		denied(pid: number) {
+			table.set(pid, "denied");
+		},
+		/** Every field of `facts` the kernel answers for `pid`, for the unreadable and inconsistent rows of the table. */
+		answers(pid: number, process: FakeProcess) {
+			table.set(pid, process);
+		},
+	};
 }
 
 /**

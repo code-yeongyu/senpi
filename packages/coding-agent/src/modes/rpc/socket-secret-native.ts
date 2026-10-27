@@ -200,8 +200,59 @@ export interface NativePresenceHoldRelease {
 	readonly code?: number | null;
 }
 
-/** What presence placement and cleanup need from the bridge (#4199 design 4.2a "Placement.", "Presence cleanup"). */
-export interface NativePresencePlacementBinding extends NativeSocketSecretBinding, NativePresenceBinding {
+/**
+ * What one opened process handle answered (`processOpen`, `processObserve`; crate `process_binding.rs`): `opened` carries
+ * `GetProcessId`, the complete creation FILETIME as a decimal string, the `TokenUser` SID and the exit state read on that
+ * one handle, each `null` when its query failed. `exited` (with `exitCode`) and `cancelled` are the answers of
+ * `processWaitExit`. napi-rs leaves an absent optional field `undefined`.
+ */
+export interface NativeProcessObservation {
+	readonly status:
+		| "opened"
+		| "no_such_process"
+		| "access_denied"
+		| "failed"
+		| "held"
+		| "not_held"
+		| "closed"
+		| "exited"
+		| "cancelled"
+		| "unavailable";
+	readonly reason?: string | null;
+	readonly code?: number | null;
+	readonly handlePid?: number | null;
+	readonly creationTime?: string | null;
+	readonly userSid?: string | null;
+	readonly exited?: boolean | null;
+	/** `GetExitCodeProcess` of a signalled object (`exited`); `null` when it could not be read. */
+	readonly exitCode?: number | null;
+}
+
+/**
+ * The Windows process-identity adapter (#4199 design 4.2a "OS identity", Revision 8 clause (ii)): `processOpen` opens a
+ * PID once with `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE)`, reads its facts on that handle and RETAINS
+ * it under `handleId` until `processClose`, so an issuer keeps the handle it verified on while it grants and observes the
+ * participant; `processObserve` rereads the retained handle. JS never owns the HANDLE.
+ *
+ * `processWaitExit` is the design's process-object exit signalling ("`RegisterWaitForSingleObject` or equivalent, not
+ * wrapper exit"): it resolves `exited` once the retained process object is signalled, `cancelled` on
+ * `processCancelWaitExit(waitId)` or on the close of the handle, and `not_held`, `held` (`wait_pending`) or `failed` at
+ * once. The bridge waits on a duplicate of the handle on its own thread; nothing polls.
+ */
+export interface NativeProcessBinding {
+	processOpen(handleId: string, pid: number): NativeProcessObservation;
+	processObserve(handleId: string): NativeProcessObservation;
+	processClose(handleId: string): NativeProcessObservation;
+	processWaitExit(handleId: string, waitId: string): Promise<NativeProcessObservation>;
+	processCancelWaitExit(waitId: string): void;
+}
+
+/**
+ * What presence placement, cleanup and process evidence need from the bridge (#4199 design 4.2a "Placement.", "Presence
+ * cleanup", "OS identity").
+ */
+export interface NativePresencePlacementBinding
+	extends NativeSocketSecretBinding, NativePresenceBinding, NativeProcessBinding {
 	localAppDataPath(): NativeKnownFolder;
 	presenceRootOpen(path: string, create: boolean): NativePresenceRoot;
 	presenceObjectCreate(request: NativePresenceObjectRequest): NativePresenceObject;
@@ -250,6 +301,11 @@ export function loadPresencePlacement(options: SocketSecretNativeOptions = {}): 
 		"presenceWaitAndAcquire",
 		"presenceCancelWait",
 		"presenceReleaseAfterQuiescence",
+		"processOpen",
+		"processObserve",
+		"processClose",
+		"processWaitExit",
+		"processCancelWaitExit",
 	].every((name) => typeof exports[name] === "function");
 	return complete
 		? { status: "available", native: binding as NativePresencePlacementBinding }

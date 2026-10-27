@@ -6,6 +6,12 @@
  * grants only when the claimed identity equals what it observed through the OS for the process it launched, bound to
  * the credential commitment. Nothing in argv, environment or an inherited channel grants anything.
  *
+ * On Windows that observation is the bridge's retained-handle adapter (design 4.2a "OS identity", Revision 8 clause
+ * (ii)): the issuer opens the claimant's recorded PID on its own kernel, requires `GetProcessId`, the exact creation
+ * FILETIME and the `TokenUser` SID to match on that handle, and retains the handle while it grants and observes that
+ * participant; a non-match only refuses the grant. A claimant records the same three read on one handle of itself.
+ * Elsewhere the identity is the PID and the platform's start-time discriminator, as before.
+ *
  * The locator must resolve to the endpoint's fixed store beside its ensure lock (step 1): a claimant computes that path
  * itself and refuses a locator naming any other file. A commitment is the private SHA-256 digest of the credential bound
  * to its role and its path, so one credential yields a different commitment per hop. Before its bind, a granted
@@ -52,20 +58,30 @@ import {
 } from "./host-lifecycle-launch.ts";
 import { deletePresenceObject, type PresenceDeletion, presenceObjectState } from "./presence-cleanup.ts";
 import { predeclarePresenceObject, PresencePlacementError, verifyRecordedPresenceRoot } from "./presence-placement.ts";
+import {
+	classifyObservation,
+	type ProcessEvidence,
+	type ProcessExitWait,
+	type ProcessRecord,
+	processRecordKey,
+} from "./process-evidence.ts";
 import { loadPresencePlacement, type PresencePlacementLoad } from "./socket-secret-native.ts";
 import { socketSecretPath } from "./socket-transport.ts";
 
 export { LaunchReservationError, parseReservationLocatorArgs, type StoreLocator } from "./host-lifecycle-launch.ts";
 
-/** A process as the OS identifies it: PID and its exact start discriminator. */
-export interface LaunchIdentity {
-	readonly pid: number;
-	readonly processStartTime: string | null;
-}
+/**
+ * A process as the OS identifies it: PID, its exact start discriminator and, when read through the Windows bridge on one
+ * process handle, its `TokenUser` SID. An identity without a SID is one the platform's start-time reader produced.
+ */
+export type LaunchIdentity = ProcessRecord;
 
-/** Identities are stored as their canonical JSON, so equality is exact on PID and start discriminator. */
+/**
+ * Identities are stored as their canonical JSON, so equality is exact on PID, start discriminator and, when recorded, SID;
+ * an identity without a SID keeps the two-field encoding every earlier row has.
+ */
 function identityKey(identity: LaunchIdentity): string {
-	return JSON.stringify({ pid: identity.pid, processStartTime: identity.processStartTime });
+	return processRecordKey(identity);
 }
 
 /** The endpoint's one reservation store, beside its ensure lock (design 4.2a step 1); the only store a locator may name. */
@@ -622,10 +638,11 @@ function parseIdentity(text: string): LaunchIdentity {
 	const value: unknown = JSON.parse(text);
 	const pid = typeof value === "object" && value !== null ? Reflect.get(value, "pid") : undefined;
 	const start = typeof value === "object" && value !== null ? Reflect.get(value, "processStartTime") : undefined;
+	const sid = typeof value === "object" && value !== null ? Reflect.get(value, "userSid") : undefined;
 	if (typeof pid !== "number" || !(typeof start === "string" || start === null)) {
 		throw new LaunchReservationError("identity_unverified", "the recorded participant identity is malformed");
 	}
-	return { pid, processStartTime: start };
+	return typeof sid === "string" ? { pid, processStartTime: start, userSid: sid } : { pid, processStartTime: start };
 }
 
 /** How an admitted participant that holds a presence lock ends its authority, once it is quiescent. */
@@ -730,11 +747,30 @@ export async function admitClaimedParticipant(
 	return { releaseAfterQuiescence, preActionCheck: () => presence.preActionCheck() };
 }
 
+/** A granted participant as the issuer observed it, and the handle the issuer keeps open on it. */
+export interface GrantedParticipant {
+	readonly identity: LaunchIdentity;
+	/**
+	 * The participant's exit as its process object signals it (design 4.2a: "process-object signalling for exit ... not
+	 * wrapper exit"), through the retained handle: the issuer's authority on that participant's death. `cancelled` when
+	 * `signal` aborts or `release` runs first; `unavailable` off the bridge, where nothing is retained.
+	 */
+	waitExit(signal?: AbortSignal): Promise<ProcessExitWait>;
+	/** Closes the retained handle once the issuer stops observing the participant. Idempotent. */
+	release(): void;
+}
+
 /**
- * The issuer's half of either hop: wait (bounded) for the claim, read the claimed PID's start time through the
- * OS with `observe` (retried once inside the remaining budget), and grant only when it equals the claimed one, bound to
- * the commitment of `secret` for that role. The claimant may be a wrapper's descendant, so the spawned PID is never
- * assumed to be it.
+ * The issuer's half of either hop: wait (bounded) for the claim, open the claimed PID through `evidence` and grant only
+ * the process whose identity matches the claimed one on that handle, bound to the commitment of `secret` for that role.
+ * The claimant may be a wrapper's descendant, so the spawned PID is never assumed to be it. Through the bridge the
+ * observation table decides: the match is `GetProcessId`, the exact creation FILETIME and the SID; a different creation
+ * time, an exited object or an absent PID refuses `participant_mismatch`, a same-birth SID mismatch or a handle whose
+ * PID is not the claimed one refuses `identity_inconsistent`, an unreadable or noncomparable observation refuses
+ * `identity_unverified`. An unreadable observation (a denied or failed open, an unreadable field, a start-time reader
+ * that threw) is reopened once more inside the remaining budget, like the recovery requery; nothing else is retried.
+ * A start-time reader's identity is compared exactly, as the platform encodes it, by the store's compare-and-grant, as
+ * before. A refused handle is closed at once; the granted handle stays open until `release`.
  */
 export async function grantClaimedParticipant(
 	store: EndpointReservationStore,
@@ -742,18 +778,66 @@ export async function grantClaimedParticipant(
 	role: ReservationRole,
 	issuer: LaunchIdentity,
 	secret: Buffer,
-	observe: (pid: number) => Promise<string | undefined>,
+	evidence: ProcessEvidence,
 	options: { readonly deadlineMs: number },
-): Promise<LaunchIdentity> {
+): Promise<GrantedParticipant> {
 	const until = Date.now() + options.deadlineMs;
 	const claim = await waitForClaim(store, generation, role, options);
 	if (!claim.claimed) throw new LaunchReservationError(claim.reason, `${role} in ${generation}`);
-	const observed = {
-		pid: claim.participant.pid,
-		processStartTime:
-			(await observeStartTime(claim.participant.pid, observe, Math.max(1, until - Date.now()))) ?? null,
-	};
-	const { endpoint } = store.reservation(generation);
-	grantVerifiedParticipant(store, generation, role, issuer, observed, endpointCommitment(secret, role, endpoint));
-	return observed;
+	const { pid } = claim.participant;
+	const retained = await observeClaimant(claim.participant, evidence, Math.max(1, until - Date.now()));
+	try {
+		const { observation } = retained;
+		// A reader's identity of a reader-domain claim is the store's to compare; every other observation, a reader's of a
+		// SID-bearing (handle-domain) claim included, goes through the table first.
+		const verdict =
+			observation.kind === "present" && typeof claim.participant.userSid !== "string"
+				? undefined
+				: classifyObservation(claim.participant, observation);
+		if (verdict?.kind === "gone") {
+			throw new LaunchReservationError("participant_mismatch", `pid ${pid} is not the claimant (${verdict.reason})`);
+		}
+		if (verdict?.kind === "unknown") {
+			throw new LaunchReservationError(
+				verdict.reason === "inconsistent" ? "identity_inconsistent" : "identity_unverified",
+				`pid ${pid}: ${verdict.detail}`,
+			);
+		}
+		// Live on the retained handle: the identity as that handle read it; the reader's: its start time. The table never
+		// answers live for an absent or unreadable PID, and a `null` start time grants nothing below either way.
+		const observed: LaunchIdentity =
+			observation.kind === "opened"
+				? { pid, processStartTime: observation.facts.creationTime, userSid: observation.facts.userSid }
+				: { pid, processStartTime: observation.kind === "present" ? observation.identity : null };
+		// The store's compare-and-grant checks the observed identity against the claim once more, atomically.
+		const { endpoint } = store.reservation(generation);
+		grantVerifiedParticipant(store, generation, role, issuer, observed, endpointCommitment(secret, role, endpoint));
+		return {
+			identity: observed,
+			waitExit: (signal) => retained.waitExit(signal),
+			release: () => retained.close(),
+		};
+	} catch (error: unknown) {
+		retained.close();
+		throw error;
+	}
+}
+
+/**
+ * Opens the claimant through `evidence`, reopening once more when the first observation is unreadable (the design's
+ * second observation inside the smaller of `deadlineMs` and the five-second bound; a loaded runner's start-time read
+ * outlasts one probe). The returned handle is the last one opened; every earlier one is closed. An absent, gone,
+ * inconsistent or comparable answer is final at the first observation.
+ */
+async function observeClaimant(claimed: LaunchIdentity, evidence: ProcessEvidence, deadlineMs: number) {
+	const until = Date.now() + Math.min(deadlineMs, IDENTITY_OBSERVATION_BUDGET_MS);
+	for (let attempt = 1; ; attempt++) {
+		const retained = await evidence.open(claimed.pid);
+		const { observation } = retained;
+		const verdict = observation.kind === "present" ? undefined : classifyObservation(claimed, observation);
+		const unreadable = verdict?.kind === "unknown" && verdict.reason === "unreadable";
+		if (!unreadable || attempt >= IDENTITY_OBSERVATION_ATTEMPTS || Date.now() >= until) return retained;
+		retained.close();
+		await delay(Math.min(100, Math.max(1, until - Date.now())));
+	}
 }

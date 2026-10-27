@@ -39,6 +39,7 @@ import {
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { generationHeartbeatStopped } from "./host-stalled-evidence.ts";
 import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
+import type { ProcessRecord } from "./process-evidence.ts";
 
 /** How long a client should wait before retrying a path another generation still holds. */
 export const SESSION_PATH_RETRY_AFTER_MS = 2_000;
@@ -48,6 +49,11 @@ export interface SessionPathOwner {
 	readonly host_socket?: string;
 	readonly pid: number;
 	readonly processStartTime: string | null;
+	/**
+	 * The owner's `TokenUser` SID when its identity was read on a Windows process handle (sisyphuslabs/omo-desktop-app#4199):
+	 * with it, `processStartTime` is the complete creation FILETIME the recovery census compares exactly.
+	 */
+	readonly userSid?: string;
 	readonly sessionPath: string;
 	/** Whether the owner had a client attached when it last published this claim. */
 	readonly attached?: boolean;
@@ -89,6 +95,8 @@ export function createEndpointReservations(host: {
 	readonly instanceId: string;
 	readonly onFailure?: (message: string) => void;
 	readonly publicSocket?: string;
+	/** This host's own identity as the claims record it; the start-time reader's when absent. */
+	readonly identity?: () => Promise<ProcessRecord>;
 }): SessionPathReservations | undefined {
 	const told = process.env[HOST_DAEMON_DIR_ENV];
 	const dir =
@@ -103,6 +111,7 @@ export function createEndpointReservations(host: {
 		instanceId: host.instanceId,
 		...(host.publicSocket === undefined ? {} : { publicSocket: host.publicSocket }),
 		...(host.onFailure ? { onFailure: host.onFailure } : {}),
+		...(host.identity ? { identity: host.identity } : {}),
 	});
 }
 
@@ -113,23 +122,33 @@ export function createSessionPathReservations(options: {
 	readonly pid?: number;
 	readonly publicSocket?: string;
 	readonly onFailure?: (message: string) => void;
+	/**
+	 * The claimant's own identity (`ownProcessIdentity`: PID, creation FILETIME and SID on one handle through the Windows
+	 * bridge); the start-time reader of `pid` when absent, which is every earlier claim's identity.
+	 */
+	readonly identity?: () => Promise<ProcessRecord>;
 }): SessionPathReservations {
 	const paths = hostDaemonDirectoryPaths(options.daemonDir);
 	const dir = paths.reservationsDir;
 	const pid = options.pid ?? process.pid;
-	const startTime = readProcessStartTime(pid).then(
-		(value) => value ?? null,
-		() => null,
-	);
+	const readIdentity =
+		options.identity ??
+		(async (): Promise<ProcessRecord> => ({
+			pid,
+			processStartTime: (await readProcessStartTime(pid).catch(() => undefined)) ?? null,
+		}));
+	const identity = readIdentity().catch((): ProcessRecord => ({ pid, processStartTime: null }));
 	const held = new Set<string>();
 	const updates = new Map<string, Promise<void>>();
 	const report = (message: string): void => options.onFailure?.(message);
 	const publish = async (sessionPath: string, attached: boolean, stillHeld?: () => boolean): Promise<void> => {
+		const self = await identity;
 		const owner: SessionPathOwner = {
 			instanceId: options.instanceId,
 			...(options.publicSocket === undefined ? {} : { host_socket: options.publicSocket }),
 			pid,
-			processStartTime: await startTime,
+			processStartTime: self.processStartTime,
+			...(typeof self.userSid === "string" ? { userSid: self.userSid } : {}),
 			sessionPath,
 			attached,
 		};
@@ -352,13 +371,17 @@ async function readOwnerExactly(file: string): Promise<SessionPathOwner | "absen
 		return (error as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "unreadable";
 	}
 	if (typeof parsed !== "object" || parsed === null) return "unreadable";
-	const { instanceId, pid, processStartTime, sessionPath, attached, host_socket } = parsed as Record<string, unknown>;
+	const { instanceId, pid, processStartTime, userSid, sessionPath, attached, host_socket } = parsed as Record<
+		string,
+		unknown
+	>;
 	if (typeof instanceId !== "string" || typeof pid !== "number" || typeof sessionPath !== "string")
 		return "unreadable";
 	return {
 		instanceId,
 		pid,
 		processStartTime: typeof processStartTime === "string" ? processStartTime : null,
+		...(typeof userSid === "string" ? { userSid } : {}),
 		sessionPath,
 		...(typeof host_socket === "string" ? { host_socket } : {}),
 		...(typeof attached === "boolean" ? { attached } : {}),

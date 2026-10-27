@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
 import { basename, win32 } from "node:path";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
-import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../../utils/process-identity.ts";
+import { readProcessStartTime, waitForStartTime } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { clearHostRegistration, writeHostRegistration } from "./host-daemon-registration.ts";
 import { callerHostOwner, writeHostOwner, writeHostSettings } from "./host-daemon-state.ts";
@@ -43,6 +43,7 @@ import { recordLaunchProvenance } from "./launch-provenance.ts";
 import {
 	acquireOwnerPresence,
 	grantClaimedParticipant,
+	type GrantedParticipant,
 	type HeldPresence,
 	IDENTITY_OBSERVATION_PROBE_MS,
 	type LaunchIdentity,
@@ -55,6 +56,7 @@ import {
 } from "./host-launch-reservation.ts";
 import { sweepPresenceObjects } from "./presence-cleanup.ts";
 import { resolvePresenceRoot } from "./presence-placement.ts";
+import { ownProcessIdentity, processEvidence, type ProcessRecord } from "./process-evidence.ts";
 import { loadPresencePlacement } from "./socket-secret-native.ts";
 
 export { DEFAULT_READINESS_TIMEOUT_MS } from "./host-lifecycle-launch.ts";
@@ -125,11 +127,13 @@ export async function startHost(
 	await writeHostOwner(generationPaths(paths, instanceId).dir, lifetimeOwner);
 	// A stranded generation is still writing its diagnostics here; only a fresh endpoint starts over.
 	const stderr = await open(paths.stderrLog, generation === 0 ? "w" : "a", 0o600);
-	let pidFile: DaemonPidFile | undefined;
+	let pidFile: ProcessRecord | undefined;
 	let child: ReturnType<typeof spawn> | undefined;
 	let exitedEarly: ChildExit | undefined;
 	let childExit: Promise<ChildExit> | undefined;
 	let presenterEnrollment: Promise<void> | undefined;
+	/** The granted supervisor's handle (Revision 8 clause (ii)), kept while this issuer observes it for readiness. */
+	let grantedSupervisor: GrantedParticipant | undefined;
 	let reservation: Awaited<ReturnType<typeof reserveSupervisorLaunch>> | undefined;
 	try {
 		// The supervisor claims its role and starts only once this process, the issuer, has verified and granted it.
@@ -212,22 +216,29 @@ export async function startHost(
 		// guard-less record never claims ownership and never authorizes a signal - every later caller
 		// reads it as unknown - so the worst case is a fresh host next time, not a killed healthy one.
 		if (reservation && publicSecret) {
-			// The claimant is observed with the bounded retry (two probes inside the claim deadline), each probe given the
-			// time a loaded runner's CIM read needs; a test's probe keeps its own behavior. A failure here lands in the
-			// catch below, which fences the generation and closes the store.
-			await grantClaimedParticipant(
+			// Through the bridge the claimant is verified on one retained handle (PID, creation FILETIME, SID); elsewhere it
+			// is observed with the bounded retry (two probes inside the claim deadline), each probe given the time a loaded
+			// runner's CIM read needs; a test's probe keeps its own behavior. A failure here lands in the catch below, which
+			// fences the generation and closes the store.
+			grantedSupervisor = await grantClaimedParticipant(
 				reservation.store,
 				reservation.generation,
 				"supervisor",
 				reservation.issuer,
 				publicSecret,
-				testOptions?.readProcessStartTime
-					? (pid) => probe(pid)
-					: (pid) => readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
+				processEvidence(
+					reservation.native,
+					testOptions?.readProcessStartTime
+						? (pid) => probe(pid)
+						: (pid) => readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
+				),
 				{ deadlineMs: SUPERVISOR_CLAIM_DEADLINE_MS },
 			);
 		}
-		pidFile = { pid: child.pid, processStartTime: processStartTime ?? null };
+		// The generation record names the process the issuer verified on its retained handle (its PID, creation FILETIME
+		// and SID through the bridge), so the recovery census reads it in the domain it observes in; off the reservation
+		// path it names the spawned pid by the start-time probe, as before.
+		pidFile = grantedSupervisor?.identity ?? { pid: child.pid, processStartTime: processStartTime ?? null };
 		await testOptions?.beforePidFileWrite?.();
 		await writeHostRegistration(paths, {
 			record: pidFile,
@@ -244,6 +255,7 @@ export async function startHost(
 		// self-exit. Latch it before killing, or the catch reports the SIGTERM it is
 		// about to send and discards the actual startup failure.
 		const exitedBeforeCleanup = exitedEarly;
+		grantedSupervisor?.release();
 		// Keep the ChildProcess handle owned until registration succeeds. If startup
 		// fails before the pidfile is written, terminate this exact child through
 		// its still-attached handle rather than leaving an unmanaged daemon behind.
@@ -269,6 +281,8 @@ export async function startHost(
 	}
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, isCompatible, childExit);
+	// This issuer's observation of the supervisor ends with its readiness verdict; the supervisor is its own holder now.
+	grantedSupervisor?.release();
 	if (result.ready) {
 		if (reservation) {
 			try {
@@ -502,11 +516,10 @@ async function reserveSupervisorLaunch(
 		owner.presence.release();
 		throw error;
 	});
-	// An unreadable own start time is recorded as unverified; it never decides a grant, which checks the claimant.
-	const issuer = {
-		pid: process.pid,
-		processStartTime: (await readProcessStartTime(process.pid).catch(() => undefined)) ?? null,
-	};
+	// The issuer's own identity, read on one handle of itself through the bridge (PID, creation FILETIME, SID) so recovery
+	// can verify this owner the same way; an unreadable own start time is recorded as unverified and never decides a grant,
+	// which checks the claimant.
+	const issuer = await ownProcessIdentity(owner.native);
 	try {
 		const { generation, args } = offerSupervisorLaunch(
 			store,
@@ -519,7 +532,7 @@ async function reserveSupervisorLaunch(
 			},
 			expectedRoles,
 		);
-		return { store, issuer, generation, args, presence: owner.presence };
+		return { store, issuer, generation, args, presence: owner.presence, native: owner.native };
 	} catch (error: unknown) {
 		// Nothing was offered to anyone (a failed reservation or predeclaration released or fenced its own authority):
 		// the store is closed and the error is the start's.

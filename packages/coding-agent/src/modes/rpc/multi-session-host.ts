@@ -34,6 +34,7 @@ import { prepareSocketPath } from "./host-lifecycle-proxy.ts";
 import { createZeroSessionTrim, startHostObservers } from "./host-observers.ts";
 import { runAsHostGenerationProcess } from "./host-process-role.ts";
 import { createEndpointReservations } from "./host-reservations.ts";
+import { ownProcessIdentity } from "./process-evidence.ts";
 import { hostChildDrainRequestFile, watchDrainRequest } from "./host-stop-intent.ts";
 import { armHostWatchdog } from "./host-watchdog.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
@@ -56,6 +57,7 @@ import {
 } from "./socket-ownership.ts";
 import { formatSocketAddress, listen, resolveSocketPath } from "./host-socket-bind.ts";
 import { socketSink } from "./socket-sink.ts";
+import { loadPresencePlacement } from "./socket-secret-native.ts";
 import { ensureSocketSecret, SOCKET_SECRET_FILE_ENV, socketSecretPath } from "./socket-transport.ts";
 import { WorkerSessionRegistry } from "./worker-session-registry.ts";
 import { McpPresenterControl } from "./mcp-presenter-control.ts";
@@ -141,6 +143,9 @@ export function createHostCore(
 		instanceId: hostInstanceId(),
 		publicSocket: hostContext?.host_socket,
 		onFailure: hostLog,
+		// The claims name this host as the Windows bridge reads it on one handle of itself (PID, creation FILETIME, SID),
+		// the identity the reservation recovery census compares; the start-time reader's elsewhere (#4199).
+		identity: () => ownProcessIdentity(loadPresencePlacement()),
 	});
 	const registry = options.workerConfiguration
 		? new WorkerSessionRegistry({

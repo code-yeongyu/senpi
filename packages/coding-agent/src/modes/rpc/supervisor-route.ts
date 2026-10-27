@@ -78,19 +78,26 @@ export async function admitReservedHostArgs(args: string[]): Promise<ReservedHos
 		readClaimantIdentity,
 	} = await import("./host-launch-reservation.ts");
 	const { HOST_STARTUP_BUDGET_MS, LOCATOR_FLAGS } = await import("./host-lifecycle-launch.ts");
+	const { bridgeProcessIdentity } = await import("./process-evidence.ts");
+	const { loadPresencePlacement } = await import("./socket-secret-native.ts");
 	const { readProcessStartTime } = await import("../../utils/process-identity.ts");
 	const { readSocketSecret, socketSecretPath } = await import("./socket-transport.ts");
 	const locator = parseReservationLocatorArgs(args);
 	if (!locator || locator.role !== "host") {
 		throw new LaunchReservationError("locator_incomplete", "the host entry requires a host reservation");
 	}
-	// The grant wait shares the supervisor's startup budget for this host, its own identity read included.
+	// The grant wait shares the supervisor's startup budget for this host, its own identity read included. The host's own
+	// identity as its issuer verifies it: PID, creation FILETIME and SID on one handle of itself through the bridge (design
+	// 4.2a clause (ii)); PID and start time, read with the bounded retry, elsewhere.
 	const until = Date.now() + HOST_STARTUP_BUDGET_MS;
-	const self = await readClaimantIdentity(
-		process.pid,
-		(pid) => readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
-		HOST_STARTUP_BUDGET_MS,
-	);
+	const native = loadPresencePlacement();
+	const self =
+		(await bridgeProcessIdentity(native, process.pid)) ??
+		(await readClaimantIdentity(
+			process.pid,
+			(pid) => readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
+			HOST_STARTUP_BUDGET_MS,
+		));
 	const credential = await readSocketSecret(socketSecretPath(locator.endpoint)).catch(() => undefined);
 	// The host holds its presence lock from before its claim for the life of this process: its win32 shutdown bounds
 	// the session dispose and the listener close by timers (multi-session-host.ts), so it cannot prove the quiescence a
@@ -98,6 +105,7 @@ export async function admitReservedHostArgs(args: string[]): Promise<ReservedHos
 	// at retirement or by the sweep (presence-cleanup.ts).
 	const presence = await admitClaimedParticipant(locator, self, credential, {
 		deadlineMs: Math.max(0, until - Date.now()),
+		presence: native,
 	});
 	const flags = new Set<string>(Object.values(LOCATOR_FLAGS));
 	const remaining: string[] = [];

@@ -13,6 +13,12 @@
  *
  * Process evidence of a row another invocation wrote counts only on a store that recorded `local` and still classifies
  * `local` (clause iii), or when the row's and this prober's kernel sessions are both verified and equal (clauses i, iv).
+ * On Windows the evidence is the bridge's retained-handle adapter (design 4.2a "OS identity"): a reopened PID is the
+ * recorded process only when `GetProcessId`, the exact creation FILETIME and the `TokenUser` SID all match on that one
+ * handle; a different creation time is gone, a same-birth SID mismatch or handle/PID inconsistency is
+ * `owner_identity_inconsistent`, an unreadable answer stays unknown (`process-evidence.ts`). A record without a SID
+ * (the start-time reader's domain) is never compared against a handle's reading, nor a SID-bearing one against the
+ * reader's: such an observation is incomplete.
  * A census row (a generation pidfile, a host-child pidfile, a session claim) carries only the provenance its own launch
  * recorded beside it (launch-provenance.ts: the owner's kernel session and the daemon directory's classification at the
  * write), never the reservation store's locality or the owner's session by default; a row with no provenance stays
@@ -39,7 +45,6 @@
  * ended is discarded. The guard a busy-owner wait acquired (`held`) is step 3's acquisition of that object.
  */
 import { readdir, readFile } from "node:fs/promises";
-import { type ProcessIdentityResult, readProcessIdentity } from "../../utils/process-identity.ts";
 import {
 	type AuthorityEntry,
 	EndpointReservationError,
@@ -62,6 +67,15 @@ import { readSessionPathClaimsCompletely } from "./host-reservations.ts";
 import { readLaunchProvenanceRecord } from "./launch-provenance.ts";
 import { deletePresenceObject } from "./presence-cleanup.ts";
 import { kernelSession } from "./presence-placement.ts";
+import {
+	classifyObservation,
+	identityReaderEvidence,
+	nativeProcessEvidence,
+	type ProcessEvidence,
+	type ProcessObservation,
+	type ProcessRecord,
+	processRecordKey,
+} from "./process-evidence.ts";
 import type { PresencePlacementLoad } from "./socket-secret-native.ts";
 
 /** What recovery could not resolve; each is a typed refusal, never a deadline or a guess. */
@@ -100,7 +114,8 @@ export interface RecoveryProber {
 	readonly session: KernelSessionRecord;
 	readonly storeLocalNow: boolean;
 	readonly daemonDirectoryLocalNow: boolean;
-	readonly observe: (pid: number) => Promise<ProcessIdentityResult>;
+	/** One new observation of a recorded PID: through the bridge's handle on Windows, the identity reader elsewhere. */
+	readonly observe: (pid: number) => Promise<ProcessObservation>;
 	readonly clock: RecoveryClock;
 	/** The caller's remaining startup deadline; the observation budget is the smaller of it and five seconds. */
 	readonly remainingMs: number;
@@ -110,7 +125,7 @@ export interface RecoveryProber {
 }
 
 export interface RecoveryProberOptions {
-	readonly observe?: (pid: number) => Promise<ProcessIdentityResult>;
+	readonly observe?: (pid: number) => Promise<ProcessObservation>;
 	/** The endpoint's daemon directory, classified from its opened handle; without it census rows get no clause (iii). */
 	readonly daemonDirectory?: string;
 	readonly clock?: RecoveryClock;
@@ -122,8 +137,19 @@ export interface RecoveryProberOptions {
 /** The design's budget: at most two observations within five seconds, or the shorter caller deadline. */
 export const OBSERVATION_BUDGET_MS = 5_000;
 
-function observeProcess(pid: number): Promise<ProcessIdentityResult> {
-	return readProcessIdentity(pid, process.platform, OBSERVATION_BUDGET_MS);
+/**
+ * "Reopening a stored PID yields a new observation, not renewed authority": each observation opens the PID, reads its
+ * facts on that handle and closes it; nothing recovery observes is retained.
+ */
+function observeThrough(evidence: ProcessEvidence): (pid: number) => Promise<ProcessObservation> {
+	return async (pid) => {
+		const retained = await evidence.open(pid);
+		try {
+			return retained.observation;
+		} finally {
+			retained.close();
+		}
+	};
 }
 
 const realClock: RecoveryClock = {
@@ -142,7 +168,13 @@ export function recoveryProber(
 ): RecoveryProber {
 	const common = {
 		native,
-		observe: options.observe ?? observeProcess,
+		observe:
+			options.observe ??
+			observeThrough(
+				native.status === "available"
+					? nativeProcessEvidence(native.native)
+					: identityReaderEvidence(OBSERVATION_BUDGET_MS),
+			),
 		clock: options.clock ?? realClock,
 		remainingMs: options.remainingMs ?? OBSERVATION_BUDGET_MS,
 		fresh: options.fresh ?? false,
@@ -282,13 +314,11 @@ function acquire(object: PresenceObjectRecord, reservation: ReservationRow, prob
 
 type ProcessVerdict =
 	| { readonly kind: "live" }
-	| { readonly kind: "gone"; readonly reason: "absent" | "birth_mismatch" | "prior_boot" }
+	| { readonly kind: "gone"; readonly reason: "absent" | "birth_mismatch" | "exited" | "prior_boot" }
 	| { readonly kind: "unknown"; readonly reason: RecoveryEscalationReason; readonly detail: string };
 
-interface RecordedProcess {
-	readonly pid: number;
-	readonly processStartTime: string | null;
-}
+/** The recorded identity: `{"pid":..,"processStartTime":..}`, with `userSid` when it was read through the bridge. */
+type RecordedProcess = ProcessRecord;
 
 function parseRecorded(text: string): RecordedProcess | undefined {
 	try {
@@ -296,8 +326,13 @@ function parseRecorded(text: string): RecordedProcess | undefined {
 		if (typeof value !== "object" || value === null) return undefined;
 		const pid = Reflect.get(value, "pid");
 		const start = Reflect.get(value, "processStartTime");
+		const sid = Reflect.get(value, "userSid");
 		if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return undefined;
-		return { pid, processStartTime: typeof start === "string" ? start : null };
+		return {
+			pid,
+			processStartTime: typeof start === "string" ? start : null,
+			userSid: typeof sid === "string" ? sid : null,
+		};
 	} catch {
 		return undefined;
 	}
@@ -333,7 +368,7 @@ class ObservationBudget {
 	}
 
 	/** One observation of `pid` for `subject`, or `undefined` when the budget is spent. */
-	async observe(subject: string, pid: number): Promise<ProcessIdentityResult | undefined> {
+	async observe(subject: string, pid: number): Promise<ProcessObservation | undefined> {
 		if (this.expired || (this.counts.get(subject) ?? 0) >= 2) return undefined;
 		this.counts.set(subject, (this.counts.get(subject) ?? 0) + 1);
 		const result = await Promise.race([this.#prober.observe(pid), this.#expiry]);
@@ -369,13 +404,18 @@ function holderProvenance(holder: AuthorityHolder, reservation: ReservationRow, 
 
 /**
  * Recovery-time observation of a PID another invocation recorded. The gate comes first: unless clause (iii) or (i)
- * admits it, absence, a different birth or an exit on this kernel says nothing about that row. Then only an absent PID or
- * an exactly different creation FILETIME is `gone`; equal is `live`; an unreadable identity is requeried once inside
- * the budget and then `unknown`, a noncomparable one is `unknown` at once. A proven prior boot (the Revision 6 proof or
- * a repair anchor) resolves an entry only after the observation could not decide it (no recorded identity, an unreadable
- * or noncomparable one): an entry whose process is observed live blocks whatever the boot evidence says, and an absent
- * one is gone by observation. An unchanged escalated record answers its marker's own subject from the marker without a
- * query (`cached`); every other entry is queried.
+ * admits it, absence, a different birth or an exit on this kernel says nothing about that row. Then the observation
+ * table (`classifyObservation`): an absent PID, an exactly different creation FILETIME or a signalled process object is
+ * `gone`; the same PID, creation time and SID on one handle is `live`; an unreadable or inconsistent answer (denied,
+ * unreadable fields, a same-birth SID mismatch, a handle whose `GetProcessId` is not the opened PID) is requeried once
+ * inside the budget and then `unknown` with that reason, a noncomparable record (no recorded identity, a record from
+ * the other observation domain) is `unknown` at once. A proven prior boot (the Revision 6 proof or a repair anchor)
+ * resolves an entry only after the observation could not decide it (no recorded identity, an unreadable or
+ * noncomparable one): an entry whose process is observed live blocks whatever the boot evidence says, an absent one is
+ * gone by observation, and an inconsistent one (a process answering the recorded birth under another SID) stays
+ * unknown, since the design calls that an unresolved inconsistency and never permission to reclaim. An unchanged
+ * escalated record answers its marker's own subject from the marker without a query (`cached`); every other entry is
+ * queried.
  */
 async function observeRecorded(
 	subject: string,
@@ -406,31 +446,38 @@ async function observeRecorded(
 			? { kind: "gone", reason: "prior_boot" }
 			: { kind: "unknown", reason: "owner_identity_incomplete", detail: "no recorded identity" };
 	}
-	let unreadable = false;
+	// What the last observation could not resolve; the escalated reason once the budget refuses another.
+	let unresolved: { readonly reason: RecoveryEscalationReason; readonly detail: string } = {
+		reason: "owner_identity_unreadable",
+		detail: "observation budget spent",
+	};
+	// Observations made, and how many of them found the identity unreadable (as opposed to inconsistent).
+	let observations = 0;
+	let unreadable = 0;
 	for (;;) {
 		const observed = await budget.observe(subject, recorded.pid);
 		if (observed === undefined) {
 			// An identity that every observation made found unreadable is what the boot proof resolves; an entry the
-			// deadline left unobserved is no observation at all, and stays unknown whatever the boot evidence says.
-			return priorBoot && unreadable
+			// deadline left unobserved is no observation at all, and an inconsistent one is no permission to reclaim:
+			// both stay unknown whatever the boot evidence says.
+			return priorBoot && observations > 0 && unreadable === observations
 				? { kind: "gone", reason: "prior_boot" }
-				: { kind: "unknown", reason: "owner_identity_unreadable", detail: "observation budget spent" };
+				: { kind: "unknown", ...unresolved };
 		}
-		if (observed.kind === "absent") return { kind: "gone", reason: "absent" };
-		// The design's one fresh reopen/requery; the budget refuses a third.
-		if (observed.kind === "error") {
-			unreadable = true;
-			continue;
-		}
-		const start = recorded.processStartTime;
-		if (start === null || !/^\d+$/.test(start) || !/^\d+$/.test(observed.identity)) {
+		observations++;
+		const verdict = classifyObservation(recorded, observed);
+		if (verdict.kind !== "unknown") return verdict;
+		if (verdict.reason === "incomplete") {
 			return priorBoot
 				? { kind: "gone", reason: "prior_boot" }
-				: { kind: "unknown", reason: "owner_identity_incomplete", detail: "noncomparable identity" };
+				: { kind: "unknown", reason: "owner_identity_incomplete", detail: verdict.detail };
 		}
-		return BigInt(start) === BigInt(observed.identity)
-			? { kind: "live" }
-			: { kind: "gone", reason: "birth_mismatch" };
+		// Unreadable or inconsistent: the design's one fresh reopen/requery; the budget refuses a third.
+		if (verdict.reason === "unreadable") unreadable++;
+		unresolved = {
+			reason: verdict.reason === "inconsistent" ? "owner_identity_inconsistent" : "owner_identity_unreadable",
+			detail: `${verdict.detail}; observation budget spent`,
+		};
 	}
 }
 
@@ -517,11 +564,6 @@ async function directoryProvenance(
 	};
 }
 
-/** The canonical identity key the store records (`{"pid":..,"processStartTime":..}`), for an exact match. */
-function identityKeyOf(recorded: RecordedProcess): string {
-	return JSON.stringify({ pid: recorded.pid, processStartTime: recorded.processStartTime });
-}
-
 type CensusResult =
 	| { readonly verdict: "gone" }
 	| { readonly verdict: "live"; readonly detail: string }
@@ -606,7 +648,8 @@ async function census(
 		...roles.flatMap((row) => (row.participant ? [row.participant] : [])),
 	]);
 	for (const { name, recorded, provenance } of entries) {
-		if (recorded.pid !== 0 && authorities.has(identityKeyOf(recorded))) continue;
+		// The store's key is the canonical record JSON (`processRecordKey`): with its SID for a row the bridge wrote.
+		if (recorded.pid !== 0 && authorities.has(processRecordKey(recorded))) continue;
 		if (provenance === undefined) {
 			return {
 				verdict: "unknown",

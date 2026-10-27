@@ -621,6 +621,8 @@ describe("#4199 participant presence: acquire before authority, release after qu
 		const paths = await createHostDaemonPaths({ agentDir, socket });
 		const storePath = reservationStorePath(socket);
 		const SUPERVISOR_START = "133000000000000011";
+		/** The issuer verifies the supervisor on the bridge's handle (senpi#4199 slice J): PID, creation FILETIME and SID. */
+		const SUPERVISOR_SID = "S-1-5-21-1000-2000-3000-1001";
 		const HOST = { pid: 300, processStartTime: "133000000000000012" };
 		const supervisorLocator = { current: undefined as undefined | { generation: string } };
 		// The supervisor offer names the generation; the in-process claimant uses it once the dummy child has a pid.
@@ -675,12 +677,13 @@ describe("#4199 participant presence: acquire before authority, release after qu
 				const child = actualSpawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], options);
 				if (child.pid !== undefined) children.push(child.pid);
 				mocked.events.push("spawn");
-				// The spawned supervisor's claim, made in-process with the identity the issuer's probe will confirm.
+				// The spawned supervisor's claim, made in-process with the identity the issuer's handle will confirm.
+				if (child.pid !== undefined) fake.processes.live(child.pid, SUPERVISOR_START, SUPERVISOR_SID);
 				void (async () => {
 					const generation = supervisorLocator.current?.generation ?? "";
 					await claimLaunchRole(
 						{ storePath, endpoint: socket, generation, role: "supervisor" },
-						{ pid: child.pid ?? 0, processStartTime: SUPERVISOR_START },
+						{ pid: child.pid ?? 0, processStartTime: SUPERVISOR_START, userSid: SUPERVISOR_SID },
 						fake.load,
 					);
 				})();

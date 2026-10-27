@@ -64,6 +64,8 @@ export type LaunchReservationRejection =
 	| "locator_incomplete"
 	| "store_mismatch"
 	| "identity_unverified"
+	/** The claimant's PID answers the claimed creation time under another SID, or a handle whose PID is not the claimed one. */
+	| "identity_inconsistent"
 	| "participant_mismatch"
 	| "generation_cancelled"
 	| "grant_deadline"

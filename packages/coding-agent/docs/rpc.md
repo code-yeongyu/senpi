@@ -899,11 +899,26 @@ are what this decision encodes; the other two are what a client must not undo el
   fanning out children cannot flood a desktop's session list.
 
 Windows public-endpoint startup uses a reservation generation for both the supervisor and host. The launcher grants
-the supervisor only after checking its claimed PID and process start time through the OS. That supervisor then offers
-the host role in the same generation and forwards a non-secret store locator through the child argv, including through
-runtime wrappers. The host consumes the locator before public CLI parsing, claims with its own process identity and
-waits for the supervisor's verified grant before listening. Both grants carry a SHA-256 commitment of the established
-public secret bound to the granted role and the secret's path, not the private hop credential and never the bare digest.
+the supervisor only after checking its claimed PID and process start time through the OS: on Windows it opens the
+claimed PID through the native bridge and requires `GetProcessId`, the exact creation FILETIME and the `TokenUser` SID
+to match on that one handle, which it keeps open while it grants and observes the participant; a same-birth SID
+mismatch or a handle whose PID is not the claimed one refuses `identity_inconsistent`, a different creation time or an
+exited process `participant_mismatch`, an unreadable one (a handle-domain claim observed off the bridge included)
+`identity_unverified`. Each participant records its own PID,
+creation FILETIME and SID read on one handle of itself (`userSid` in its recorded identity). The daemon's own records
+are written the same way on that path: the generation record (`generations/<instanceId>/host.pid`) names the supervisor
+by the identity its issuer verified on the retained handle, the supervisor records its host child (`host-child.pid`)
+through the bridge, and a host's session-path claims carry its own handle identity; each adds `userSid` beside
+`processStartTime`, which is then the complete creation FILETIME. A record without `userSid` was read by the platform's
+start-time reader and keeps its two fields; a handle that answered its creation FILETIME but not its SID is never
+recorded as such a two-field row (the record is written through the platform reader instead, or left unverified), so
+no later reader compares a handle's FILETIME against its own. The supervisor learns its host's death from the host's process object,
+waited on through the retained handle (never from a wrapper's exit; the child's exit event stays a secondary signal).
+That supervisor then offers the host role in the same generation and forwards a non-secret store locator through the
+child argv, including through runtime wrappers. The host consumes the locator before public CLI parsing, claims with
+its own process identity and waits for the supervisor's verified grant before listening. Both grants carry a SHA-256
+commitment of the established public secret bound to the granted role and the secret's path, not the private hop
+credential and never the bare digest.
 The locator must name the endpoint's fixed store, `<endpoint lock target>.reservation.db`; a claimant that computes a
 different path refuses it (`store_mismatch`) and reads nothing from the named file. Cancellation, a claim or grant
 deadline, an unreadable or changed process identity, or a mismatched commitment fails startup; a failed host admission
@@ -914,11 +929,12 @@ after the grant ends the start unbound (`generation_cancelled`). A start that fa
 grant or readiness) cancels its generation and closes the store; a failing fence is reported beside the original
 diagnostic, never instead of it. The supervisor fences its generation the same way when its own startup fails after it
 offered the host role.
-Process identities are observed at most twice within five seconds, inside the existing claim or grant deadline; an
-identity still unreadable after that stays unknown and grants nothing, and a claimant that cannot read its own identity
-claims nothing. The supervisor allows the host claim, and the host its grant wait, the same 30-second startup budget as
-the listener. A reservation read blocked by another writer reports `store_busy`; claim, grant and intent waits retry
-that read within their original deadline rather than aborting startup. Other reservation errors still propagate.
+Process identities are observed at most twice within five seconds, inside the existing claim or grant deadline (through
+the bridge, a reopen of the claimed PID; elsewhere, a start-time read); an identity still unreadable after that stays
+unknown and grants nothing, and a claimant that cannot read its own identity off the bridge claims nothing. The
+supervisor allows the host claim, and the host its grant wait, the same 30-second startup budget as the listener. A
+reservation read blocked by another writer reports `store_busy`; claim, grant and intent waits retry that read within
+their original deadline rather than aborting startup. Other reservation errors still propagate.
 
 A launcher chooses this reservation route for a selected command only after that command, wrapper included, reports
 the launch capabilities. The probe runs `<command> <args...> --launch-capabilities --version`. This build answers with
@@ -1029,10 +1045,14 @@ owner until its `released` commit and for every granted role without one. Offere
 not probed. An acquisition counts only when the object's tag and file identity match the row, the row recorded `local`
 and the object's directory still classifies `local`, and, for an object in the per-user root, the row's and this
 machine's kernel-session identities are both verified and equal. A busy object always refuses. An entry without such an
-acquisition is discharged only when its recorded PID, reopened now, is absent or has a different creation FILETIME
-(compared exactly). That observation counts only when the store recorded `local` and still classifies `local`, or when
-the row's and this machine's kernel-session identities are both verified and equal; an `unverified` identity equals
-nothing. On a store recorded and still classified `local`, a verified kernel-session identity that differs from the
+acquisition is discharged only when its recorded PID, reopened now through the native bridge, is absent, has a different
+creation FILETIME (compared exactly) or is a signalled process object with the recorded identity; the same PID, creation
+FILETIME and `TokenUser` SID on one handle is live. A recorded identity without `userSid` (one the start-time reader
+wrote, whose CIM creation time differs from the handle's FILETIME in its last digit) is never compared against the
+handle's reading: it is `owner_identity_incomplete`, never gone by a different creation time. That observation counts
+only when the store recorded `local` and still classifies `local`, or when the row's and this machine's kernel-session
+identities are both verified and equal; an `unverified` identity equals nothing. On a store recorded and still
+classified `local`, a verified kernel-session identity that differs from the
 one the generation recorded, with every probed object acquired, proves every process of that earlier boot gone: it
 resolves only entries provably from that boot (a verified session equal to it, on a directory recorded and still
 `local`), never a current-boot entry, one with an unverified session or one without provenance. Then every recorded
@@ -1077,10 +1097,13 @@ at most one requery, inside the smaller of the start's readiness deadline and fi
 that deadline passes is abandoned and its late answer is never read. What is still unknown then is persisted on the
 reservation as its escalated reason at the revision read (`escalation` in the record: `revision`, `subject`, `reason`,
 `observations`), and the refusal's `escalation: { reason, observations, cached }` names it. The reasons are
-`owner_identity_unreadable` (a denied or failed reopen), `owner_identity_incomplete` (no recorded identity, or one that
-cannot be compared), `owner_identity_domain_mismatch` (both kernel sessions verified and different) and
-`owner_identity_domain_unverified` (either unverified); `owner_identity_inconsistent` is reserved for the native
-identity adapter's same-birth account or handle inconsistency. The marker is written only when the record is still at
+`owner_identity_unreadable` (a denied or failed reopen, or an unreadable `GetProcessId`, creation time, SID or exit
+state), `owner_identity_inconsistent` (the recorded creation FILETIME under another SID, or a handle whose readable
+`GetProcessId` is not the reopened PID; it gets the same one requery, and no prior-boot proof resolves it),
+`owner_identity_incomplete` (no
+recorded identity, or one that cannot be compared, a recorded identity without a SID included),
+`owner_identity_domain_mismatch` (both kernel sessions verified and different) and `owner_identity_domain_unverified`
+(either unverified). The marker is written only when the record is still at
 the revision the attempt read; a record that changed meanwhile gets none, so the next attempt's budget is fresh. An
 unchanged record (same revision) answers a later automatic ensure from that marker with `observations: 0, cached: true`
 and no new query for the marker's own `subject` only; every other entry is queried as usual, its presence objects are

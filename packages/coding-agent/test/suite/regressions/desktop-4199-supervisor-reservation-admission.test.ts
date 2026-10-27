@@ -19,6 +19,7 @@ import {
 	waitForClaim,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import { resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
+import { startTimeEvidence } from "../../../src/modes/rpc/process-evidence.ts";
 import { loadPresencePlacement } from "../../../src/modes/rpc/socket-secret-native.ts";
 import { socketSecretPath } from "../../../src/modes/rpc/socket-transport.ts";
 import { admitReservedHostArgs } from "../../../src/modes/rpc/supervisor-route.ts";
@@ -128,7 +129,7 @@ describe("supervisor admission through a reservation", () => {
 	it("the issuer grants the claimant whose start time the OS confirms, bound to the secret's commitment", async () => {
 		const { store, generation, locator } = await offered();
 		const admitted = admitClaimedParticipant(locator, SELF, SECRET, { deadlineMs: 5_000 });
-		const observe = async (pid: number) => (pid === SELF.pid ? SELF.processStartTime : undefined);
+		const observe = startTimeEvidence(async (pid) => (pid === SELF.pid ? SELF.processStartTime : undefined));
 		await grantClaimedParticipant(store, generation, "supervisor", OWNER, SECRET, observe, { deadlineMs: 5_000 });
 		await expect(admitted).resolves.toBeUndefined();
 	});
@@ -151,7 +152,7 @@ describe("supervisor admission through a reservation", () => {
 	it("the issuer's grant carries the commitment bound to the claimed role and the secret's path", async () => {
 		const { store, generation, locator } = await offered();
 		const admitted = admitClaimedParticipant(locator, SELF, SECRET, { deadlineMs: 5_000 });
-		const observe = async (pid: number) => (pid === SELF.pid ? SELF.processStartTime : undefined);
+		const observe = startTimeEvidence(async (pid) => (pid === SELF.pid ? SELF.processStartTime : undefined));
 		await grantClaimedParticipant(store, generation, "supervisor", OWNER, SECRET, observe, { deadlineMs: 5_000 });
 		await expect(admitted).resolves.toBeUndefined();
 		expect(store.grantedRole(locator, JSON.stringify(SELF))?.commitment).toBe(COMMITMENT.toString("hex"));
@@ -167,9 +168,17 @@ describe("supervisor admission through a reservation", () => {
 			if (probes === 1) throw new Error("CIM probe timed out");
 			return SELF.processStartTime;
 		};
-		await grantClaimedParticipant(first.store, first.generation, "supervisor", OWNER, SECRET, flaky, {
-			deadlineMs: 5_000,
-		});
+		await grantClaimedParticipant(
+			first.store,
+			first.generation,
+			"supervisor",
+			OWNER,
+			SECRET,
+			startTimeEvidence(flaky),
+			{
+				deadlineMs: 5_000,
+			},
+		);
 		expect(probes).toBe(2);
 		expect(
 			first.store.roleRow({ endpoint: ENDPOINT, generation: first.generation, role: "supervisor" })?.status,
@@ -183,9 +192,15 @@ describe("supervisor admission through a reservation", () => {
 			throw new Error("CIM probe timed out");
 		};
 		await expect(
-			grantClaimedParticipant(second.store, second.generation, "supervisor", OWNER, SECRET, unreadable, {
-				deadlineMs: 5_000,
-			}),
+			grantClaimedParticipant(
+				second.store,
+				second.generation,
+				"supervisor",
+				OWNER,
+				SECRET,
+				startTimeEvidence(unreadable),
+				{ deadlineMs: 5_000 },
+			),
 		).rejects.toMatchObject({ reason: "identity_unverified" });
 		expect(starved).toBe(IDENTITY_OBSERVATION_ATTEMPTS);
 		expect(
@@ -216,7 +231,7 @@ describe("supervisor admission through a reservation", () => {
 	it("the issuer refuses a claimant the OS no longer sees with the claimed start time", async () => {
 		const { store, generation, locator } = await offered();
 		void admitClaimedParticipant(locator, SELF, SECRET, { deadlineMs: 100 }).catch(() => undefined);
-		const replaced = async () => "133000000000000099";
+		const replaced = startTimeEvidence(async () => "133000000000000099");
 		await expect(
 			grantClaimedParticipant(store, generation, "supervisor", OWNER, SECRET, replaced, { deadlineMs: 5_000 }),
 		).rejects.toMatchObject({ reason: "participant_mismatch" });
@@ -226,9 +241,17 @@ describe("supervisor admission through a reservation", () => {
 	it("the issuer gives up, bounded, when nothing claims the role", async () => {
 		const { store, generation } = await offered();
 		await expect(
-			grantClaimedParticipant(store, generation, "supervisor", OWNER, SECRET, async () => undefined, {
-				deadlineMs: 0,
-			}),
+			grantClaimedParticipant(
+				store,
+				generation,
+				"supervisor",
+				OWNER,
+				SECRET,
+				startTimeEvidence(async () => undefined),
+				{
+					deadlineMs: 0,
+				},
+			),
 		).rejects.toMatchObject({ reason: "claim_deadline" });
 	});
 });
