@@ -73,6 +73,11 @@ export interface MultiSessionHostOptions {
 	creationModel?: { provider: string; modelId: string };
 	initialThinkingLevel?: string;
 	listen?: string;
+	/**
+	 * Runs immediately before the socket host binds its listener, after everything else is armed: a reserved host
+	 * commits its pre-listen intent here (#4199 design 4.2a step 4), and a refusal ends the start unbound.
+	 */
+	beforeListen?: () => Promise<void>;
 	/** Resolved `--tool-runtime`; absent means `in-process`. Advertised as `tool_runtime:<value>`. */
 	toolRuntime?: ToolRuntimeKind;
 	/** Test seam: defaults to the real shared-session binding. */
@@ -595,6 +600,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		void shutdown(0, cleanup);
 		setImmediate(killTrackedDetachedChildren);
 	});
+	await options.beforeListen?.();
 	boundIdentity = await listen(server, socketPath, secret);
 	// A key record that cannot be published safely ends this host: held connections are refused, never served keyless.
 	await transport.publish(() => shutdown(1));

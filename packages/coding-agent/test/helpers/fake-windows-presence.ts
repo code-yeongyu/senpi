@@ -108,7 +108,7 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 			if (!object) return { status: "unknown", reason: "os_error", code: 2 };
 			if (held.has(request.path)) return { status: "occupied" };
 			if (
-				!object.content.equals(request.tag) ||
+				!object.content.equals(request.header) ||
 				object.volumeSerial !== request.volumeSerial ||
 				object.fileId !== request.fileId ||
 				!request.createdLocal
@@ -117,6 +117,23 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 			}
 			held.set(request.path, request.presenceId);
 			options.onAcquire?.(request);
+			return { status: "acquired" };
+		},
+		// The retained-guard check applies the probe's rules to a guard this fake already holds for the path.
+		presenceProbeRetained: (request) => {
+			calls.push(`presenceProbeRetained ${request.presenceId}`);
+			if (held.get(request.path) !== request.presenceId) return { status: "unknown", reason: "not_held" };
+			const object = objects.get(request.path);
+			if (
+				!object ||
+				!object.content.equals(request.header) ||
+				object.volumeSerial !== request.volumeSerial ||
+				object.fileId !== request.fileId ||
+				!request.createdLocal
+			) {
+				held.delete(request.path);
+				return { status: "unknown", reason: "inadmissible" };
+			}
 			return { status: "acquired" };
 		},
 		presencePreActionCheck: () => ({ status: "unknown", reason: "not_modelled" }),

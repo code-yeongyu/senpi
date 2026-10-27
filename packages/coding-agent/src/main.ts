@@ -1146,7 +1146,8 @@ export async function main(args: string[], options?: MainOptions) {
 	if (await dispatchInternalSupervisor(args)) {
 		return;
 	}
-	args = await admitReservedHostArgs(args);
+	const reservedHost = await admitReservedHostArgs(args);
+	args = reservedHost.args;
 
 	if (process.platform === "win32") {
 		cleanupWindowsSelfUpdateQuarantine(getInstallPackageDir());
@@ -1386,6 +1387,8 @@ export async function main(args: string[], options?: MainOptions) {
 				parsed.provider && parsed.model ? { provider: parsed.provider, modelId: parsed.model } : undefined,
 			initialThinkingLevel: parsed.thinking,
 			listen: parsed.listen,
+			// A reserved host commits its pre-listen intent immediately before its bind (#4199 design 4.2a step 4).
+			...(reservedHost.beforeListen ? { beforeListen: reservedHost.beforeListen } : {}),
 			toolRuntime,
 		});
 	}

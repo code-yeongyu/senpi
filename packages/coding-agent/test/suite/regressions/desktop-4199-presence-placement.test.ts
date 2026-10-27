@@ -18,6 +18,7 @@ import {
 	offerHostRole,
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
+	reservationStorePath,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import { PresencePlacementError, resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
 import { loadPresencePlacement } from "../../../src/modes/rpc/socket-secret-native.ts";
@@ -93,7 +94,9 @@ describe("#4199 presence placement", () => {
 	async function openStore() {
 		const root = await mkdtemp(join(tmpdir(), "rpc4199-placement-"));
 		roots.push(root);
-		const store = await openEndpointReservationStore(join(root, "endpoint.reservation.db"));
+		// The endpoint's fixed store beside its (mocked) ensure lock: the one store a claimant's locator may name.
+		mocked.lockDir = root;
+		const store = await openEndpointReservationStore(reservationStorePath(ENDPOINT));
 		stores.push(store);
 		return store;
 	}
