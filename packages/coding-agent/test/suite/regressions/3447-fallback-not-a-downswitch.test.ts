@@ -6,51 +6,38 @@ import { createHarness, type Harness } from "../harness.ts";
 
 // https://github.com/code-yeongyu/senpi/issues/3447
 // The one fit measure applies to a downswitch only. A rung whose usable window is
-// the same as or larger than the session model's has no fit charge, so it must land
-// without a refusal or a reduction even when the per-message estimate plus the
-// switch reserves exceeds its window (the #900 shape).
+// the same as or larger than the session model's carries no fit charge, so it must
+// land without a refusal even when the per-message estimate plus the switch
+// reserves exceeds its window and nothing can be sliced (the #900 shape).
 const primary = "faux/faux-primary";
 const usageLimit = "billing error: insufficient_quota for this model";
 const maxTokens = 2_048;
 const compaction = { enabled: true, reserveTokens: 5_000, speculativeEnabled: false };
 
 function seed(harness: Harness, reportedInput: number): void {
-	const model = harness.getModel();
-	const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
 	harness.sessionManager.appendMessage({
 		role: "user",
-		content: [{ type: "text", text: "do the task" }],
+		content: [{ type: "text", text: Array.from({ length: 6_000 }, (_, index) => `word${index}`).join(" ") }],
 		timestamp: 1,
 	});
-	const steps = 10;
-	for (let step = 0; step < steps; step++) {
-		const toolCallId = `call-${step}`;
-		const input = step === steps - 1 ? reportedInput : 0;
+	if (reportedInput > 0) {
+		const model = harness.getModel();
+		const reply = fauxAssistantMessage("read it");
 		harness.sessionManager.appendMessage({
-			...fauxAssistantMessage("running a tool"),
-			content: [{ type: "toolCall", id: toolCallId, name: "bash", arguments: { command: `step ${step}` } }],
+			...reply,
 			api: model.api,
 			provider: model.provider,
 			model: model.id,
-			stopReason: "toolUse",
-			usage: { input, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: input, cost },
-		});
-		harness.sessionManager.appendMessage({
-			role: "toolResult",
-			toolCallId,
-			toolName: "bash",
-			content: [{ type: "text", text: `result ${step} `.padEnd(3_000, "z") }],
-			isError: false,
-			timestamp: Date.now(),
+			usage: { ...reply.usage, input: reportedInput, totalTokens: reportedInput },
 		});
 	}
 	harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
 }
 
-async function seededEstimate(): Promise<number> {
+async function seededEstimate(reportedInput: number): Promise<number> {
 	const probe = await createHarness({ models: [{ id: "faux-primary", contextWindow: 400_000, maxTokens }] });
 	try {
-		seed(probe, 0);
+		seed(probe, reportedInput);
 		return filterContextExcludedMessages(probe.sessionManager.buildSessionContext().messages).reduce(
 			(total, message) => total + estimateTokens(message),
 			0,
@@ -62,9 +49,9 @@ async function seededEstimate(): Promise<number> {
 
 const rows = [
 	{ name: "an equal window without reported usage", reportedInput: 0, primaryShrink: 0 },
-	{ name: "an equal window with reported usage below the estimate", reportedInput: 20_000, primaryShrink: 0 },
-	{ name: "a larger window without reported usage", reportedInput: 0, primaryShrink: 3_000 },
-	{ name: "a larger window with reported usage below the estimate", reportedInput: 20_000, primaryShrink: 3_000 },
+	{ name: "an equal window with reported usage below the estimate", reportedInput: 5_000, primaryShrink: 0 },
+	{ name: "a larger window without reported usage", reportedInput: 0, primaryShrink: 1_000 },
+	{ name: "a larger window with reported usage below the estimate", reportedInput: 5_000, primaryShrink: 1_000 },
 ] as const;
 
 describe("#3447 a fallback rung that is not a downswitch carries no fit charge", () => {
@@ -76,7 +63,7 @@ describe("#3447 a fallback rung that is not a downswitch carries no fit charge",
 	it.each(rows)(
 		"#given a rung with $name #when fallback switches #then it lands with no refusal and no reduction",
 		async (row) => {
-			const rungWindow = (await seededEstimate()) + 14_000;
+			const rungWindow = (await seededEstimate(row.reportedInput)) + 12_000;
 			const harness = await createHarness({
 				models: [
 					{ id: "faux-primary", contextWindow: rungWindow - row.primaryShrink, maxTokens },
