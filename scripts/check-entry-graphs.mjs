@@ -45,7 +45,9 @@ const BUDGETS = {
 			// +3 (senpi#4283): the one-pass token-wise redactor provider-error.ts runs, split by responsibility to stay under
 			// 250 pure LOC per file: utils/secret-redaction.ts (the state machine), utils/secret-classifier.ts (credential
 			// words, key prefixes, JWTs) and utils/secret-lexer.ts (token and delimiter units). Measured: 31 files.
-			maxFiles: 31,
+			// +1 (senpi#4099): auth/pool/login-id.ts, the one-function leaf that stamps a fresh loginId on a sign-in's
+			// credential so a re-login (never a token refresh) releases a billing-pinned fallback. Measured: 32 files.
+			maxFiles: 32,
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
 		},
 		"./utils/*": {
