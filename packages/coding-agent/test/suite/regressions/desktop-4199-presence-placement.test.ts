@@ -141,6 +141,7 @@ function fakeWindows(options: FakeOptions = {}) {
 		},
 		presenceAcquire: () => ({ status: "unavailable", reason: "unsupported_platform" }),
 		presenceProbe: () => ({ status: "unavailable", reason: "unsupported_platform" }),
+		presenceProbeRetained: () => ({ status: "unavailable", reason: "unsupported_platform" }),
 		presencePreActionCheck: () => ({ status: "unavailable", reason: "unsupported_platform" }),
 		presenceWaitAndAcquire: async () => ({ status: "unavailable", reason: "unsupported_platform" }),
 		presenceCancelWait: () => {},
