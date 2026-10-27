@@ -129,7 +129,7 @@ export async function startHost(
 		// The provenance of every row this launch writes under its generation directory (launch-provenance.ts): the
 		// owner's kernel session and the daemon directory's classification from its opened handle, recorded before the
 		// spawn so no row of this launch can exist without it.
-		if (reservation) {
+		if (reservation && owner) {
 			await recordLaunchProvenance(generationPaths(paths, instanceId).launchProvenanceFile, {
 				generation: reservation.generation,
 				kernelSession: owner.reservation.ownerKernelSession,
