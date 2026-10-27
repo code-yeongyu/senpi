@@ -18,6 +18,7 @@ import { SelectorCooldowns } from "../../../src/core/retry-fallback/cooldown.ts"
 
 const CURSOR = "cursor-cli-oauth";
 const SYNTHETIC = "synthetic";
+const SUBSCRIPTION = "anthropic-subscription";
 const billing = { errorMessage: '429 {"error":{"type":"usage_not_included","message":"not in your plan"}}' };
 
 function model(provider: string, id: string): Model<Api> {
@@ -29,7 +30,13 @@ function oauth(access: string): Credential {
 }
 
 function cursorSlot(name: string) {
-	return { name, access: `${name}-a`, refresh: `${name}-r`, expires: Date.now() + 3_600_000, source: "import" as const };
+	return {
+		name,
+		access: `${name}-a`,
+		refresh: `${name}-r`,
+		expires: Date.now() + 3_600_000,
+		source: "import" as const,
+	};
 }
 
 function createController(storage: AuthStorage, provider: string) {
@@ -101,7 +108,59 @@ const seedPooledCursor = async (storage: AuthStorage) => {
 	storage.set(CURSOR, addAccount(emptyCredential(), cursorSlot("alpha")));
 };
 
+const seedSubscription = async (storage: AuthStorage) => {
+	storage.set(SUBSCRIPTION, oauth("subscribed"));
+};
+
+/** A fresh `anthropic` OAuth login; the next store parse migrates it into the subscription lane. */
+const signInAnthropic = async (storage: AuthStorage) => {
+	storage.set("anthropic", oauth("anthropic-fresh"));
+	await storage.list();
+};
+
 const rows: Row[] = [
+	{
+		path: "anthropic OAuth login migrated into anthropic-subscription",
+		provider: SUBSCRIPTION,
+		seed: seedSubscription,
+		write: async (storage) => {
+			await signInAnthropic(storage);
+			expect(storage.listSlots(SUBSCRIPTION).map((slot) => slot.source)).toContain("import");
+		},
+		signIn: true,
+	},
+	{
+		path: "re-parsing a store whose anthropic grant is already migrated",
+		provider: SUBSCRIPTION,
+		seed: async (storage) => {
+			await seedSubscription(storage);
+			await signInAnthropic(storage);
+		},
+		write: async (storage) => {
+			await storage.list();
+			storage.reload();
+			await storage.list();
+		},
+		signIn: false,
+	},
+	{
+		path: "AuthStorage.setSlot adding a new slot",
+		provider: SYNTHETIC,
+		seed: async (storage) => void storage.set(SYNTHETIC, oauth("first")),
+		write: async (storage) => void storage.setSlot(SYNTHETIC, { name: "added", key: "added-key", source: "login" }),
+		signIn: true,
+	},
+	{
+		path: "AuthStorage.setSlot updating an existing slot",
+		provider: SYNTHETIC,
+		seed: async (storage) => void storage.set(SYNTHETIC, oauth("first")),
+		write: async (storage) => {
+			const [existing] = storage.listSlots(SYNTHETIC);
+			if (!existing) throw new Error("seed stored no slot");
+			storage.setSlot(SYNTHETIC, { ...existing, access: "rotated-a" });
+		},
+		signIn: false,
+	},
 	{
 		path: "AuthStorage.set (login, RPC login_api_key)",
 		provider: SYNTHETIC,
