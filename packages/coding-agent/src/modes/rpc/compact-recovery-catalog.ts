@@ -1,4 +1,3 @@
-import { z } from "zod";
 import {
 	type CatalogEntry,
 	CatalogNodeWriter,
@@ -7,6 +6,7 @@ import {
 	decodeCatalogNode,
 	storedBytes,
 } from "./compact-catalog-codec.ts";
+import { CatalogPointerWriter, catalogPointer, type PointerHead } from "./compact-catalog-pointers.ts";
 import type { CompactContentStore, LeafId } from "./compact-content-store.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import { childRef, type ContentDigest, type ContentRef, protocolId, refSteps } from "./compact-recovery-ids.ts";
@@ -19,11 +19,12 @@ export interface CatalogComponent {
 	readonly owner: LeafId;
 }
 
-/** A built catalog: the root node, its private pointer leaf and the one owner that releases the whole tree. */
+/** A built catalog: the root node, the head of its private pointer leaves and the one owner of the whole tree. */
 export interface CatalogRoot {
 	readonly ref: ContentRef;
 	readonly node: LeafId;
 	readonly side: LeafId;
+	readonly sideDigest: ContentDigest;
 	readonly owner: LeafId;
 	readonly digest: ContentDigest;
 	readonly length: number;
@@ -42,35 +43,30 @@ export type CatalogRead =
 	  }
 	| { readonly kind: "component"; readonly ref: ContentRef; readonly entry: CatalogEntry; readonly text: string };
 
-/** Where a child lives in the store: a node with its pointer leaf, or a component's leaves. Never hashed or sent. */
-const PointerSchema = z.union([
-	z.object({ n: z.number().int().positive(), s: z.number().int().positive() }).strict(),
-	z.object({ l: z.array(z.number().int().positive()) }).strict(),
-]);
-type Pointer = z.infer<typeof PointerSchema>;
-type NodePointer = Extract<Pointer, { readonly n: number }>;
-const PointersSchema = z.array(PointerSchema);
-
-/** One open node per level: its entries, their pointers, and the owners the sealed node will share. */
+/** One open node per level: its entries, its pointer leaves so far, and the owners the sealed node will share. */
 interface Level {
 	readonly writer: CatalogNodeWriter;
-	readonly pointers: Pointer[];
+	readonly pointers: CatalogPointerWriter;
+	readonly sides: LeafId[];
 	readonly owners: LeafId[];
 }
 interface Sealed {
 	readonly entry: CatalogEntry;
-	readonly pointer: NodePointer;
+	readonly node: LeafId;
+	readonly head: PointerHead;
 	readonly owner: LeafId;
 }
+type Child = { readonly leaves: readonly LeafId[] } | Pick<Sealed, "node" | "head">;
 
 const NODE = protocolId("node");
-const newLevel = (): Level => ({ writer: new CatalogNodeWriter(), pointers: [], owners: [] });
 
 /**
  * Builds and reads immutable catalog trees (R4.B1): nodes are packed bottom-up as components stream in, so at most
  * one open node per level is resident and no collection of every component exists. Every node is one store leaf
- * whose owner shares the pinned content it describes; releasing the root owner releases the tree. Level 0 owners
- * belong to the frozen root; a sealed node's owner is this builder's until its parent seals or the build fails.
+ * plus its pointer leaves, under one owner that shares the pinned content it describes; releasing the root owner
+ * releases the tree. Level 0 owners stay the caller's. Every reference the build itself takes (a node or pointer
+ * leaf, a sealed node's owner) is in `held` from the call that creates it until a parent owner takes it over, so a
+ * failure at any point, the root read included, releases all of them and reports no root.
  */
 export class CompactRecoveryCatalog {
 	private buffered = 0;
@@ -83,52 +79,78 @@ export class CompactRecoveryCatalog {
 		components: Iterable<CatalogComponent> | AsyncIterable<CatalogComponent>,
 		valid: () => void = () => undefined,
 	): Promise<CatalogRoot> {
+		const held = new Set<LeafId>();
+		const transfer = (id: LeafId): void => {
+			store.adjust(id, -1, 0);
+			held.delete(id);
+		};
+		const newLevel = (): Level => {
+			const sides: LeafId[] = [];
+			const pointers = new CatalogPointerWriter((text) => {
+				const side = store.createLeaf(text, true);
+				held.add(side);
+				sides.push(side);
+				return side;
+			});
+			return { writer: new CatalogNodeWriter(), pointers, sides, owners: [] };
+		};
 		const levels: Level[] = [];
 		const at = (level: number): Level => levels[level] ?? (levels[level] = newLevel());
 		let count = 0;
 		let nodes = 0;
 		const seal = (level: number): Sealed => {
 			const sealed = at(level);
-			levels[level] = newLevel();
 			const text = sealed.writer.encode();
 			const node = store.createLeaf(text, true);
-			const side = store.createLeaf(JSON.stringify(sealed.pointers), true);
-			const owner = store.text.own([node, side, ...sealed.owners]);
-			for (const held of level > 0 ? [node, side, ...sealed.owners] : [node, side]) store.adjust(held, -1, 0);
+			held.add(node);
+			const head = sealed.pointers.finish();
+			const owner = store.text.own([node, ...sealed.sides, ...sealed.owners]);
+			held.add(owner);
+			for (const taken of level > 0 ? [node, ...sealed.sides, ...sealed.owners] : [node, ...sealed.sides])
+				transfer(taken);
+			levels[level] = newLevel();
 			this.buffered -= sealed.writer.count;
 			const bytes = storedBytes(text);
 			const id = protocolId(`node-${String(++nodes).padStart(16, "0")}`);
-			const entry = { kind: NODE, id, length: bytes.length, digest: catalogDigest("node", bytes) };
-			return { entry, pointer: { n: node, s: side }, owner };
+			return {
+				entry: { kind: NODE, id, length: bytes.length, digest: catalogDigest("node", bytes) },
+				node,
+				head,
+				owner,
+			};
 		};
-		const place = (level: number, entry: CatalogEntry, pointer: Pointer, owner: LeafId): void => {
+		const place = (level: number, entry: CatalogEntry, child: Child, owner: LeafId): void => {
 			if (!at(level).writer.push(entry)) {
 				const sealed = seal(level);
-				place(level + 1, sealed.entry, sealed.pointer, sealed.owner);
+				place(level + 1, sealed.entry, sealed, sealed.owner);
 				if (!at(level).writer.push(entry)) throw new CompactReadError("size_limit");
 			}
-			at(level).pointers.push(pointer);
-			at(level).owners.push(owner);
 			this.peakBuffered = Math.max(this.peakBuffered, ++this.buffered);
+			const open = at(level);
+			open.owners.push(owner);
+			if ("leaves" in child) open.pointers.component(child.leaves);
+			else open.pointers.node(child.node, child.head);
 		};
 		try {
 			for await (const component of components) {
-				const entry = await this.describe(store, component, valid);
-				place(0, entry, { l: [...component.leaves] }, component.owner);
+				place(0, await this.describe(store, component, valid), component, component.owner);
 				count += 1;
 			}
 			for (let level = 0; ; level++) {
 				at(level);
 				const top = level === levels.length - 1;
 				const sealed = seal(level);
-				if (top) return this.root(store, ref, sealed, level + 1, count, nodes);
-				place(level + 1, sealed.entry, sealed.pointer, sealed.owner);
+				if (!top) {
+					place(level + 1, sealed.entry, sealed, sealed.owner);
+					continue;
+				}
+				const root = await this.root(store, ref, sealed, level + 1, count, nodes);
+				held.delete(root.owner);
+				return root;
 			}
 		} catch (cause) {
-			for (const [level, { owners, writer }] of levels.entries()) {
-				if (level > 0) for (const owner of owners) store.adjust(owner, -1, 0);
-				this.buffered -= writer.count;
-			}
+			for (const { writer } of levels) this.buffered -= writer.count;
+			for (const id of held) store.adjust(id, -1, 0);
 			throw cause;
 		}
 	}
@@ -138,29 +160,36 @@ export class CompactRecoveryCatalog {
 		if (ref !== root.ref && !ref.startsWith(`${root.ref}:`)) throw new CompactReadError("range");
 		const steps = refSteps(ref);
 		let node = root.node;
-		let side = root.side;
+		let head: PointerHead = { side: root.side, digest: root.sideDigest };
 		let expected: Pick<CatalogEntry, "length" | "digest"> = root;
 		let here = root.ref;
 		for (let depth = 0; ; depth++) {
-			const text = await store.readLeaf(node);
+			// The root node is named by the caller's root, so a released root stays `ownership`.
+			const text = depth === 0 ? await store.readLeaf(node) : await this.stored(store, node);
 			if (catalogDigest(depth === 0 ? "root" : "node", storedBytes(text)) !== expected.digest)
 				throw new CompactReadError("integrity");
 			const decoded = decodeCatalogNode(text);
 			if (!decoded.ok) throw new CompactReadError("integrity");
 			const step = steps[depth];
-			if (step === undefined) return { kind: "node", ref: here, entries: decoded.entries, ...expected };
+			if (step === undefined)
+				return {
+					kind: "node",
+					ref: here,
+					entries: decoded.entries,
+					digest: expected.digest,
+					length: expected.length,
+				};
 			const entry = decoded.entries[step];
-			// The pointer leaf carries no digest of its own: it only says where the child's bytes are, and those bytes are
-			// verified against this parent's entry before any use, so a wrong or stale pointer surfaces as `integrity`.
-			const pointer = this.pointer(await store.readLeaf(side), step);
-			if (!entry || !pointer) throw new CompactReadError("range");
+			if (!entry) throw new CompactReadError("range");
+			const pointer = await catalogPointer((side) => this.stored(store, side), head, step);
+			if (!pointer) throw new CompactReadError("integrity");
 			here = childRef(here, step);
-			if ("l" in pointer) {
+			if (pointer.kind === "component") {
 				if (depth + 1 !== steps.length) throw new CompactReadError("range");
-				return { kind: "component", ref: here, entry, text: await this.verify(store, entry, pointer.l) };
+				return { kind: "component", ref: here, entry, text: await this.verify(store, entry, pointer.leaves) };
 			}
-			node = pointer.n;
-			side = pointer.s;
+			node = pointer.node;
+			head = pointer.head;
 			expected = entry;
 		}
 	}
@@ -169,18 +198,14 @@ export class CompactRecoveryCatalog {
 		store.adjust(root.owner, -1, 0);
 	}
 
-	/** A pointer leaf that is not a pointer list is corruption of this store's private bytes, never a bad ref. */
-	private pointer(text: string, step: number): Pointer | undefined {
-		let json: unknown;
+	/** Reads a leaf a stored pointer names: the tree owner keeps it alive, so a missing one is corruption. */
+	private async stored(store: CompactContentStore, id: LeafId): Promise<string> {
 		try {
-			json = JSON.parse(text);
+			return await store.readLeaf(id);
 		} catch (cause) {
-			if (cause instanceof SyntaxError) throw new CompactReadError("integrity");
+			if (cause instanceof CompactReadError && cause.reason === "ownership") throw new CompactReadError("integrity");
 			throw cause;
 		}
-		const pointers = PointersSchema.safeParse(json);
-		if (!pointers.success) throw new CompactReadError("integrity");
-		return pointers.data[step];
 	}
 
 	private async describe(
@@ -202,7 +227,7 @@ export class CompactRecoveryCatalog {
 		const chunks: string[] = [];
 		let fed = 0;
 		for (const leaf of leaves) {
-			const text = await store.readLeaf(leaf);
+			const text = await this.stored(store, leaf);
 			fed += text.length * 2;
 			if (fed > entry.length) throw new CompactReadError("integrity");
 			digester.update(storedBytes(text));
@@ -215,13 +240,24 @@ export class CompactRecoveryCatalog {
 	private async root(
 		store: CompactContentStore,
 		ref: ContentRef,
-		{ pointer, owner }: Sealed,
+		{ node, head, owner }: Sealed,
 		depth: number,
 		components: number,
 		nodes: number,
 	): Promise<CatalogRoot> {
-		const bytes = storedBytes(await store.readLeaf(pointer.n));
+		const bytes = storedBytes(await store.readLeaf(node));
 		const digest = catalogDigest("root", bytes);
-		return { ref, node: pointer.n, side: pointer.s, owner, digest, length: bytes.length, depth, components, nodes };
+		return {
+			ref,
+			node,
+			side: head.side,
+			sideDigest: head.digest,
+			owner,
+			digest,
+			length: bytes.length,
+			depth,
+			components,
+			nodes,
+		};
 	}
 }
