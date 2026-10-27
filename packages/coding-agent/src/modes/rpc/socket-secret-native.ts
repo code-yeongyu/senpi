@@ -56,7 +56,11 @@ export interface NativeSocketSecretBinding {
 	classifyVolume(path: string): NativeVolumeLocality;
 }
 
-/** A successful probe is retained native release evidence, never a transient "free" hint. */
+/**
+ * A successful probe is retained native release evidence, never a transient "free" hint. A blocking wait's `acquired`
+ * is NOT yet evidence: that handle becomes evidence only once `probeRetained` applies the admissibility rules to it
+ * (design Revision 8, r7 note 4), inside the recovery transaction.
+ */
 export type NativePresenceResult =
 	| { readonly status: "acquired" | "occupied" | "valid" | "released" | "cancelled" }
 	| { readonly status: "unknown" | "fenced"; readonly reason: string; readonly code?: number | null }
@@ -65,7 +69,11 @@ export type NativePresenceResult =
 export interface NativePresenceProbe {
 	readonly presenceId: string;
 	readonly path: string;
-	readonly tag: Buffer;
+	/**
+	 * The object's whole immutable header as the row recorded it (design 4.2a: random tag, schema, creation timestamp).
+	 * The bridge compares the opened object with it byte for byte; the tag alone never matches.
+	 */
+	readonly header: Buffer;
 	readonly volumeSerial: string;
 	readonly fileId: string;
 	readonly createdLocal: boolean;
@@ -73,15 +81,29 @@ export interface NativePresenceProbe {
 	readonly kernelSession: string | null;
 }
 
-/** The caller commits terminal state and drains actions/listeners before supplying this receipt. */
+/**
+ * Why a guard leaves the registry (design 4.2a recovery transaction order). `released` is the holder's own quiescence
+ * commit; the other three are the points at which recovery releases guards it recovered: `recovery_abandoned` when step 3
+ * meets contention or an error and the attempt cannot retire, `discharged` when step 4 finds the role committed
+ * `released` meanwhile, `retired` after step 5's retirement commit and object deletion. Nothing else releases a guard.
+ */
+export type PresenceReleaseReason = "released" | "recovery_abandoned" | "discharged" | "retired";
+
+/** The caller commits the state named by `state` (terminal, drained, or the recovery step) before supplying this receipt. */
 export interface PresenceReleasedReceipt {
 	readonly presenceId: string;
-	readonly state: "released";
+	readonly state: PresenceReleaseReason;
 }
 
 export interface NativePresenceBinding {
 	presenceAcquire(presenceId: string, path: string): NativePresenceResult;
 	presenceProbe(request: NativePresenceProbe): NativePresenceResult;
+	/**
+	 * The probe's admissibility rules applied to a guard this process already retains, the one a blocking wait acquired
+	 * (design Revision 8, r7 note 4): `acquired` keeps it, an inadmissible handle is released at once (`unknown`,
+	 * `inadmissible`), and a guard not held is `unknown` (`not_held`). The handle is never closed and reacquired.
+	 */
+	presenceProbeRetained(request: NativePresenceProbe): NativePresenceResult;
 	presencePreActionCheck(presenceId: string): NativePresenceResult;
 	presenceWaitAndAcquire(presenceId: string, path: string, waitId: string): Promise<NativePresenceResult>;
 	presenceCancelWait(waitId: string): void;
@@ -91,6 +113,8 @@ export interface NativePresenceBinding {
 export interface SocketSecretPresence {
 	acquire(presenceId: string, path: string): NativePresenceResult;
 	probe(request: NativePresenceProbe): NativePresenceResult;
+	/** Step 3's admissibility check for the guard `waitAndAcquire` retained; see `presenceProbeRetained`. */
+	probeRetained(request: NativePresenceProbe): NativePresenceResult;
 	preActionCheck(presenceId: string): NativePresenceResult;
 	waitAndAcquire(presenceId: string, path: string, signal?: AbortSignal): Promise<NativePresenceResult>;
 	releaseAfterQuiescence(receipt: PresenceReleasedReceipt): NativePresenceResult;
@@ -204,6 +228,7 @@ export function loadSocketSecretPresence(
 		guard: {
 			acquire: (id, path) => binding.presenceAcquire(id, path),
 			probe: (request) => binding.presenceProbe(request),
+			probeRetained: (request) => binding.presenceProbeRetained(request),
 			preActionCheck: (id) => binding.presencePreActionCheck(id),
 			releaseAfterQuiescence: (receipt) => binding.presenceReleaseAfterQuiescence(receipt),
 			async waitAndAcquire(id, path, signal) {
@@ -229,6 +254,7 @@ function assertPresenceBinding(value: object): asserts value is NativePresenceBi
 		![
 			"presenceAcquire",
 			"presenceProbe",
+			"presenceProbeRetained",
 			"presencePreActionCheck",
 			"presenceWaitAndAcquire",
 			"presenceCancelWait",

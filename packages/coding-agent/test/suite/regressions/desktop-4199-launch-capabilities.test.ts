@@ -1,5 +1,4 @@
 import * as childProcess from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -11,8 +10,10 @@ import {
 import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { startHost } from "../../../src/modes/rpc/host-ensure-start.ts";
 import {
+	credentialCommitment,
 	grantVerifiedParticipant,
 	parseReservationLocatorArgs,
+	reservationStorePath,
 	selectLaunchRoute,
 	waitForClaim,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
@@ -180,7 +181,9 @@ describe("#4199 launch capabilities and mixed-version route selection (design se
 		const root = await tempRoot();
 		const endpoint = join(root, "public.sock");
 		const secret = await createSocketSecret(socketSecretPath(endpoint));
-		const store = await openEndpointReservationStore(join(root, "endpoint.reservation.db"));
+		// The endpoint's fixed store beside its (mocked) ensure lock: the one store the supervisor's locator may name.
+		mocked.lockDir = root;
+		const store = await openEndpointReservationStore(reservationStorePath(endpoint));
 		stores.push(store);
 		const issuer = { pid: 1, processStartTime: "issuer" };
 		const none = { status: "presence_unavailable" } as const;
@@ -215,7 +218,7 @@ describe("#4199 launch capabilities and mixed-version route selection (design se
 			"supervisor",
 			issuer,
 			self,
-			createHash("sha256").update(secret).digest(),
+			credentialCommitment(secret, "supervisor", socketSecretPath(endpoint)),
 		);
 		return { outcome: await run, stop, launched, store, generation, endpoint };
 	}
