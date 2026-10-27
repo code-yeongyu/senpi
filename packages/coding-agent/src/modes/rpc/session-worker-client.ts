@@ -157,12 +157,16 @@ export class SessionWorkerClient {
 	}
 
 	async commit(): Promise<WorkerSnapshot> {
-		const result = await this.request({ type: "commit", ...(this.acceptance ? { acceptance: true } : {}) });
+		const nonce = randomUUID();
+		const result = await this.request({
+			type: "commit",
+			...(this.acceptance ? { acceptance: true, recoveryEpoch: nonce } : {}),
+		});
 		if (result.type !== "ready") throw new Error("Invalid worker commit response");
 		if (this.acceptance) {
 			// Accepted before the open resolves, so the entry is admitted only after its baseline (R3.C1.1).
 			if (!result.bootstrap) throw new Error("Invalid worker commit response");
-			this.acceptance.bootstrap(result.bootstrap);
+			this.acceptance.bootstrap(result.bootstrap, nonce);
 		}
 		this.snapshot = result.snapshot;
 		return result.snapshot;

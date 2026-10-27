@@ -1,6 +1,6 @@
 import { bindToProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
-import { recoveryCarrier } from "../../core/session-recovery-identity.ts";
+import { recoveryCarrier, setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
 import {
 	createRpcConnectionHandler,
 	type RpcConnectionHandler,
@@ -41,6 +41,7 @@ export async function createRpcSessionBinding(
 	// stream already carries that transition; no extra subscription is needed.
 	const toolSpans = createToolAttributionSpans(sessionId);
 	const lane = entry.acceptance;
+	if (lane) setSessionRecoveryEpoch(entry.runtime.session, lane.recoveryEpoch);
 	if (lane) writer.registerAcceptance(sessionId, lane);
 	// The manager whose journal the lane follows; a replacement's bootstrap moves the lane to the new one.
 	let journaled = lane ? entry.runtime.session.sessionManager : undefined;
@@ -50,6 +51,7 @@ export async function createRpcSessionBinding(
 		if (lane && "type" in record && record.type === "session_replaced") {
 			journaled = entry.runtime?.session.sessionManager;
 			lane.bootstrap({ transcript: journaled?.beginTranscriptJournal() ?? [] });
+			if (entry.runtime) setSessionRecoveryEpoch(entry.runtime.session, lane.recoveryEpoch);
 		} else if (lane) {
 			lane.applyTranscript(journaled?.drainTranscript() ?? []);
 			lane.accept(record, recoveryCarrier(record));

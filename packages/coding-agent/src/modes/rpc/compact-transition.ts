@@ -14,6 +14,10 @@ export interface BlockAddress {
 export type CompactTransition =
 	| (BlockAddress & {
 			readonly type: "block_start";
+			readonly epoch: string;
+			readonly ordinal: number;
+			/** Producer-owned ordinal of this message's first block_start, stable across all its blocks. */
+			readonly firstOrdinal: number;
 			readonly kind: CompactBlockKind;
 			readonly seed: string;
 			/**
@@ -28,11 +32,14 @@ export type CompactTransition =
 	| { readonly type: "message_remove"; readonly messageId: string };
 
 type CompactRejection =
+	| "invalid_start_identity"
+	| "duplicate_or_stale_start"
 	| "unknown_block"
 	| "duplicate_block"
 	| "invalid_coverage"
 	| "non_contiguous"
 	| "conflicting_overlap"
+	| "cold_operation_required"
 	| "unknown_message";
 
 export class CompactTransitionError extends Error {

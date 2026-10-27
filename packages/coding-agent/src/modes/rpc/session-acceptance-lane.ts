@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { RecoveryCarrier } from "../../core/session-recovery-identity.ts";
 import type { TranscriptTransition } from "../../core/session-transcript-journal.ts";
 import { AcceptedTranscript, type TranscriptRoot } from "./accepted-transcript.ts";
 import { correlatedRecord } from "./client-message-events.ts";
+import { CompactSettledMessages, type SettledDiagnostic, type SettledRoot } from "./compact-settled-messages.ts";
+import type { CompactContentStoreOptions } from "./compact-content-store.ts";
 
 /** Where one accepted recovery record sits in its runtime incarnation (R3.C1.1). */
 interface AcceptedRef {
@@ -27,12 +31,17 @@ export interface FrozenAcceptedRoot {
 	readonly turnId: string | null;
 	readonly correlation: AcceptedCorrelation | null;
 	readonly transcript: TranscriptRoot;
+	readonly settled: SettledRoot;
 }
 
 /** The incarnation's transcript as its manager journaled it up to bootstrap: base, unpersisted entries, leaf. */
 export interface SessionBootstrap {
 	readonly transcript: readonly TranscriptTransition[];
+	/** Replacement handshake: the host fills this nonce before returning the worker's output credit. */
+	readonly epochSignal?: SharedArrayBuffer;
 }
+
+const RETIRED_SETTLED: SettledRoot = Object.freeze({ base: undefined, overrides: undefined });
 
 /** Recovery kinds take a sequence; responses and every other record keep FIFO order with none. */
 const SEQUENCED = new Set([
@@ -48,6 +57,7 @@ const SEQUENCED = new Set([
 	"tool_execution_end",
 	"entry_appended",
 	"session_abort",
+	"transcript_write_failed",
 ]);
 
 function field(record: object, key: string): unknown {
@@ -76,6 +86,25 @@ export class SessionAcceptanceLane {
 	private correlation: AcceptedCorrelation | null = null;
 	private readonly live = new Set<FrozenAcceptedRoot>();
 	private retiredAs: "close" | "worker_failed" | undefined;
+	private nonce: string = randomUUID();
+	private settled!: CompactSettledMessages;
+	private readonly rootOwners = new WeakMap<FrozenAcceptedRoot, CompactSettledMessages>();
+	private cleanup: Promise<void> = Promise.resolve();
+	private readonly storage: CompactContentStoreOptions | undefined;
+	private readonly diagnose: (reason: SettledDiagnostic) => void;
+
+	constructor(
+		storage?: CompactContentStoreOptions,
+		diagnose: (reason: SettledDiagnostic) => void = (reason) =>
+			process.stderr.write(`senpi rpc acceptance: settled transition: ${reason}\n`),
+	) {
+		this.storage = storage;
+		this.diagnose = diagnose;
+	}
+
+	get recoveryEpoch(): string {
+		return this.nonce;
+	}
 
 	get retired(): boolean {
 		return this.retiredAs !== undefined;
@@ -85,8 +114,19 @@ export class SessionAcceptanceLane {
 		return this.live.size;
 	}
 
-	bootstrap(input: SessionBootstrap): void {
+	bootstrap(input: SessionBootstrap, nonce: string = randomUUID()): void {
 		if (this.retired) return;
+		if (this.settled) this.retireSettled();
+		this.nonce = nonce;
+		if (input.epochSignal) Buffer.from(nonce, "ascii").copy(Buffer.from(input.epochSignal));
+		this.settled = new CompactSettledMessages(
+			nonce,
+			{
+				...this.storage,
+				dir: join(this.storage?.dir ?? tmpdir(), `senpi-settled-${randomUUID()}`),
+			},
+			this.diagnose,
+		);
 		this.epoch = randomUUID();
 		this.sequence = 0;
 		this.transcript = new AcceptedTranscript();
@@ -102,6 +142,7 @@ export class SessionAcceptanceLane {
 		for (const transition of transitions) {
 			this.sequence += 1;
 			this.transcript.apply(transition);
+			if (transition.kind === "append" && this.transcript.available) this.settled.append(transition);
 		}
 	}
 
@@ -113,8 +154,10 @@ export class SessionAcceptanceLane {
 		if (type === "turn_start" || (this.turnId === null && turnScoped(type, record))) this.turnId = randomUUID();
 		const turnId = this.turnId;
 		if (type === "turn_end" || type === "agent_end") this.turnId = null;
-		const messageId = type.startsWith("message_") ? (carrier?.messageId ?? null) : null;
+		const messageId = type.startsWith("message_") && this.settled.valid(carrier) ? carrier.messageId : null;
 		if (type === "message_start") this.activeMessageId = messageId;
+		if (type === "message_end") this.settled.end(record, carrier, this.sequence, turnId);
+		if (type === "transcript_write_failed") this.settled.fail(carrier, String(field(record, "errorMessage")));
 		if (type === "message_end" && this.activeMessageId === messageId) this.activeMessageId = null;
 		return {
 			sessionEpoch: this.epoch,
@@ -133,19 +176,44 @@ export class SessionAcceptanceLane {
 			turnId: this.turnId,
 			correlation: this.correlation,
 			transcript: this.transcript.freeze(),
+			// A retired lane's paged settled store refuses new cuts; its root is never live or readable.
+			settled: this.retired ? RETIRED_SETTLED : this.settled.freeze(),
 		});
+		if (this.retired) return root;
+		this.rootOwners.set(root, this.settled);
 		this.live.add(root);
 		return root;
 	}
 
 	release(root: FrozenAcceptedRoot): void {
-		this.live.delete(root);
+		if (this.live.delete(root)) this.rootOwners.get(root)?.release(root.settled);
+	}
+
+	readSettled(root: FrozenAcceptedRoot) {
+		const owner = this.rootOwners.get(root);
+		if (this.retired || !owner || !this.live.has(root)) throw new Error("accepted root released");
+		return owner.read(root.settled);
+	}
+
+	storageStatus() {
+		return this.settled.storageStatus();
+	}
+
+	async idle(): Promise<void> {
+		await this.cleanup;
+		await this.settled.idle();
+	}
+
+	private retireSettled(): void {
+		for (const root of this.live) this.release(root);
+		this.cleanup = Promise.all([this.cleanup, this.settled.retire()]).then(() => {});
+		void this.cleanup.catch(() => this.diagnose("retired_owner"));
 	}
 
 	/** No record is accepted after retirement, and every root this lane published is released. */
 	retire(reason: "close" | "worker_failed"): void {
 		this.retiredAs ??= reason;
-		this.live.clear();
+		if (this.settled) this.retireSettled();
 	}
 
 	/** A change of the outer client correlation is its own transition, sequenced just before its record (C1.1). */

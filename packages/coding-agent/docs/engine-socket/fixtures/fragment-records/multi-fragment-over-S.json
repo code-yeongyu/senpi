@@ -1,0 +1,102 @@
+{
+	"caseId": "multi-fragment-over-S",
+	"kind": "valid",
+	"contractIds": [
+		"R4.B3"
+	],
+	"description": "1,310,720 raw bytes (over S = 1,048,576): ten D-byte records, contiguous offsets, last complete.",
+	"digestAlgorithm": "sha256",
+	"limits": {
+		"D": 131072,
+		"F": 262144,
+		"H": 16384
+	},
+	"source": {
+		"generator": {
+			"kind": "segments",
+			"params": {
+				"segments": [
+					{
+						"kind": "xorshift32",
+						"seed": 1592590341,
+						"length": 1310720
+					}
+				]
+			}
+		}
+	},
+	"sourceLength": 1310720,
+	"sourceDigest": "9bd45761796e78bcad864e5505bce9445be785189f02d805524740a51ed6f8c0",
+	"expectedRecords": [
+		{
+			"offset": 0,
+			"length": 131072,
+			"digest": "7ba8d9f96e8eac524b09c49da003ee18b17c3006b1e9f33626ab4a15dd428748",
+			"next": 131072,
+			"complete": false
+		},
+		{
+			"offset": 131072,
+			"length": 131072,
+			"digest": "542840d1f7e53a162c15adc239a33ab5abc0e0cd44fa689b7871b10f04f88d79",
+			"next": 262144,
+			"complete": false
+		},
+		{
+			"offset": 262144,
+			"length": 131072,
+			"digest": "1a6c59a6b6e51ec18c648238ea799e12aa923af0d69b4e3a52ef5768482ddd56",
+			"next": 393216,
+			"complete": false
+		},
+		{
+			"offset": 393216,
+			"length": 131072,
+			"digest": "9f125c9fd31bc0cf47eae84b6f6eb2b5c0be01ba23f9a6a8b77357895021b2c3",
+			"next": 524288,
+			"complete": false
+		},
+		{
+			"offset": 524288,
+			"length": 131072,
+			"digest": "e27bb675358980867d799bb3ae2c0109a15365c4588a94b0ce60a3c53cfa2e03",
+			"next": 655360,
+			"complete": false
+		},
+		{
+			"offset": 655360,
+			"length": 131072,
+			"digest": "d7e74266c2c3146bd3a676fa2266951bc48eea40f3dbd0e892761bf5a29286c4",
+			"next": 786432,
+			"complete": false
+		},
+		{
+			"offset": 786432,
+			"length": 131072,
+			"digest": "f9ea2d3e6309457b610de150d4a427ca6d8467e0cd5a532291330bab55988283",
+			"next": 917504,
+			"complete": false
+		},
+		{
+			"offset": 917504,
+			"length": 131072,
+			"digest": "8a70f33a8dfe4cf0e8c59d8440586a51b779e09aa5e607f05bca709a84445c47",
+			"next": 1048576,
+			"complete": false
+		},
+		{
+			"offset": 1048576,
+			"length": 131072,
+			"digest": "77fcd4b0875147990cf7a42335788fc6d41d2a52df14efbbd3d77b81c6a01163",
+			"next": 1179648,
+			"complete": false
+		},
+		{
+			"offset": 1179648,
+			"length": 131072,
+			"digest": "463be82a2814041187375440430030c2f22dc1a4d1c3aa10f88f389c74161fa7",
+			"next": null,
+			"complete": true
+		}
+	]
+}

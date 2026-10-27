@@ -112,7 +112,8 @@ export abstract class CompactSpoolStorage {
 	): Promise<string | undefined> {
 		const path = await this.ensureDir(retainedInMemoryBytes);
 		if (path === undefined) return undefined;
-		const file = join(path, `${operation === "spill_write" ? "leaf" : "page"}-${this.nextFile++}.bin`);
+		const prefix = operation === "spill_write" ? "leaf" : operation === "value_write" ? "value" : "page";
+		const file = join(path, `${prefix}-${this.nextFile++}.bin`);
 		this.pendingIoCopyBytes += data.byteLength;
 		try {
 			await this.io.writeFile(file, data);
@@ -206,7 +207,8 @@ export abstract class CompactSpoolStorage {
 	}
 
 	private fail(operation: CompactStorageOperation, path: string, cause: unknown, retained: number): void {
-		if (operation === "spill_write" || operation === "spool_create") this.halted = true;
+		if (operation === "spill_write" || operation === "value_write" || operation === "spool_create")
+			this.halted = true;
 		this.record({ operation, path, cause: describeCause(cause), retainedInMemoryBytes: retained });
 	}
 

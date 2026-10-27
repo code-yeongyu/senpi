@@ -62,7 +62,7 @@ export type HostToSessionWorker =
 			subscriptionLimits: readonly MirroredLimits[];
 	  }
 	/** `acceptance`: the host owns an acceptance lane, so the isolate sends a bootstrap and ordered output frames. */
-	| { type: "commit"; request: number; acceptance?: true }
+	| { type: "commit"; request: number; acceptance?: true; recoveryEpoch?: string }
 	| {
 			type: "bind";
 			request: number;

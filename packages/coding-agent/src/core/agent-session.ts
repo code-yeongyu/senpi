@@ -112,7 +112,7 @@ import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
 import { compactUpdatesEnabled } from "./engine-socket-flag.ts";
-import { carryRecovery, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
+import { carryRecovery, recoveryCarrier, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
 import {
 	type ClientMessageIdentity,
@@ -1532,7 +1532,7 @@ export class AgentSession {
 	// prompt-owned run's prompt throws the first one once the queue settles; any other run reports it
 	// as a continuation error when it happens.
 	private readonly _transcriptWriteFailures = new TranscriptWriteFailures();
-	private readonly _recoveryIdentity = compactUpdatesEnabled() ? new SessionRecoveryIdentity() : undefined;
+	private readonly _recoveryIdentity = compactUpdatesEnabled() ? new SessionRecoveryIdentity(undefined, this) : undefined;
 	private _promptOwnsRun = false;
 	// Preserve provenance across agent-core's conversion of our admission error
 	// into an assistant error message. Matching provider text alone is not proof
@@ -3956,6 +3956,15 @@ export class AgentSession {
 				: event.type === "message_update"
 					? withResolvedToolName(event, (name) => this.resolveToolCallName(name))
 					: event;
+		let consumedEntry: string | undefined;
+		if (event.type === "message_end") {
+			try {
+				consumedEntry = this._lifecycleBinding.consumedEntry(event.message);
+			} catch (error) {
+				this._transcriptWriteFailures.record(event.message, error);
+			}
+		}
+		this._recoveryIdentity?.hint(event, consumedEntry);
 		this._emit(carryRecovery(event, sessionEvent), event);
 		if (event.type === "agent_end") {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
@@ -3976,12 +3985,13 @@ export class AgentSession {
 				if (event.message.role === "custom") {
 					// Persist as CustomMessageEntry
 					entryId =
-						this._lifecycleBinding.consumedEntry(event.message) ??
+						consumedEntry ??
 						this.sessionManager.appendCustomMessageEntry(
 							event.message.customType,
 							event.message.content,
 							event.message.display,
 							event.message.details,
+							{ recoveryOwner: recoveryCarrier(event) },
 						);
 					this._incrementMessageRevision();
 					this.externalAdmission.observePersisted(event.message);
@@ -3995,6 +4005,7 @@ export class AgentSession {
 					// Regular LLM message - persist as SessionMessageEntry
 					entryId = this.sessionManager.appendOwnedMessage(event.message, {
 						inputSource: this._userInputSources.get(event.message),
+						recoveryOwner: recoveryCarrier(event),
 					});
 					this._emitEntryAppended(entryId);
 					this._incrementMessageRevision();
@@ -4008,7 +4019,7 @@ export class AgentSession {
 				this._takePersistWatcher(event.message)?.failed(error);
 				this._sessionLogger.warn("transcript_write_failed", { role: event.message.role, error: errorMessage });
 				this._transcriptWriteFailures.record(event.message, error);
-				this._emit({ type: "transcript_write_failed", role: event.message.role, errorMessage });
+				this._emit(carryRecovery(event, { type: "transcript_write_failed", role: event.message.role, errorMessage }));
 				if (!this._promptOwnsRun) this._reportContinuationTranscriptFailure();
 			}
 			if (entryId) this._entryIdsByMessage.set(event.message, entryId);
@@ -8055,17 +8066,20 @@ export class AgentSession {
 
 	private _appendCustomMessage(appMessage: CustomMessage): void {
 		this.agent.state.messages.push(appMessage);
+		const start = { type: "message_start" as const, message: appMessage };
+		this._recoveryIdentity?.observe(start);
 		const entryId = this.sessionManager.appendCustomMessageEntry(
 			appMessage.customType,
 			appMessage.content,
 			appMessage.display,
 			appMessage.details,
+			{ recoveryOwner: recoveryCarrier(start) },
 		);
 		this._emitEntryAppended(entryId);
 		this._recordWrittenTicket(appMessage, entryId);
 		this._takePersistWatcher(appMessage)?.persisted(entryId);
 		this._incrementMessageRevision();
-		this._emit({ type: "message_start", message: appMessage });
+		this._emit(start);
 		this._emit({ type: "message_end", message: appMessage });
 	}
 

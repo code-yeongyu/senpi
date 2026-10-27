@@ -39,6 +39,8 @@ export type TranscriptTransition =
 			readonly id: string;
 			readonly entry?: string;
 			readonly persistence?: TranscriptPersistence;
+			readonly owningMessageId?: string;
+			readonly recoveryEpoch?: string;
 	  }
 	| { readonly kind: "persisted"; readonly persistence: TranscriptPersistence }
 	| { readonly kind: "leaf"; readonly leafId: string | null }

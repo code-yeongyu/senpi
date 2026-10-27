@@ -12,6 +12,7 @@ import type { ContextUsage } from "../../core/extensions/types.ts";
 import type { SessionEntry, UsageTotals } from "../../core/session-manager.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import type { RpcSessionLifecycle } from "./lifecycle-delivery.ts";
 import type { RpcExtensionUIRequest, RpcQuestionUiRequest } from "./rpc-question-types.ts";
 import type { UiAnswerReceipt } from "./ui-answer-ledger.ts";
 
@@ -115,7 +116,7 @@ export interface RpcSessionState {
 	paused: boolean;
 	pausedNoticeCount: number;
 	holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
-	lifecycle: import("../../core/session-lifecycle-types.ts").SessionLifecycle;
+	lifecycle: RpcSessionLifecycle;
 	model?: Model<any>;
 	/**
 	 * Model switch held until the next compaction, or `null` when no switch is held.
