@@ -17,6 +17,7 @@ import { ENVIRONMENT_CONTEXT_MESSAGE_TYPE, foldEnvironmentContextIntoNextUserMes
 import { replaceElidedImages } from "./image-elision-placeholder.ts";
 import { omitProviderRejectedImages } from "./provider-rejected-images.ts";
 import { appendToolResultUserWords } from "./tool-result-user-words.ts";
+import { insertReplyLanguageNotes, replyLanguageNote } from "./user-language.ts";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -98,6 +99,8 @@ export interface CompactionSummaryMessage {
 	tokensBefore: number;
 	details?: unknown;
 	timestamp: number;
+	/** The non-Latin language of the user's own messages before the compaction (omo#11527). */
+	userLanguage?: string;
 }
 
 export interface ConfigurationUpdateMessage {
@@ -194,7 +197,8 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 	// Continuations are append-only here too: the transport array must extend the
 	// previous request verbatim to keep the provider's cache prefix valid.
 	const environmentMessages = new Set<Message>();
-	const converted = messages
+	// omo#11527: a reply-language note follows long stretches of tool output and summaries.
+	const converted = insertReplyLanguageNotes(messages)
 		.map((m): Message | undefined => {
 			switch (m.role) {
 				case "bashExecution":
@@ -231,7 +235,14 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 					return withContextProvenance(m, {
 						role: "user",
 						content: [
-							{ type: "text" as const, text: COMPACTION_SUMMARY_PREFIX + m.summary + COMPACTION_SUMMARY_SUFFIX },
+							{
+								type: "text" as const,
+								text:
+									COMPACTION_SUMMARY_PREFIX +
+									m.summary +
+									COMPACTION_SUMMARY_SUFFIX +
+									(m.userLanguage === undefined ? "" : `\n\n${replyLanguageNote(m.userLanguage)}`),
+							},
 						],
 						timestamp: m.timestamp,
 					});
