@@ -216,6 +216,8 @@ import {
 	type ResumeCompactionRequirement,
 } from "./extensions/builtin/compaction/resume-admission.ts";
 import {
+	chargeContextTokens,
+	contextTokenParts,
 	planResumeSlice,
 	RESUME_SLICE_ORIGIN,
 	RESUME_SLICE_SCHEMA,
@@ -8715,6 +8717,8 @@ export class AgentSession {
 	 */
 	private _reduceForSwitchTarget(model: Model<Api>, liveContextTokens: number): number {
 		if (!this._getCompactionSettings().enabled) return liveContextTokens;
+		// Not a downswitch: `_getDownswitchLiveContextTokens` charges no fit (senpi#3447 r2).
+		if (liveContextTokens <= 0) return liveContextTokens;
 		// senpi#3447: the repair decision, the slice and the guard charge one measure,
 		// so the figure returned here (and handed to the guard) is the one the
 		// decision used. Deciding on the raw per-message estimate let a transcript the
@@ -8735,19 +8739,17 @@ export class AgentSession {
 	 * is ignored, as the compaction threshold already does.
 	 */
 	private _switchTokenScale(liveContextTokens: number): number {
-		const estimatedTokens = this._estimateSwitchContextTokens();
-		if (estimatedTokens <= 0) return 1;
-		return resolveThresholdContextTokens(liveContextTokens, estimatedTokens) / estimatedTokens;
+		const { summaryTokens, otherTokens } = contextTokenParts(this._switchContextMessages());
+		if (otherTokens <= 0) return 1;
+		const charged = resolveThresholdContextTokens(liveContextTokens, summaryTokens + otherTokens);
+		return Math.max(1, (charged - summaryTokens) / otherTokens);
 	}
 
 	// Measured per message rather than through the context estimate: a retained
 	// turn keeps the usage it reported before the reduction, so a usage-derived
 	// total cannot observe the compaction that just ran (the sdk.ts convention).
-	private _estimateSwitchContextTokens(): number {
-		return filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages).reduce(
-			(total, message) => total + estimateTokens(message),
-			0,
-		);
+	private _switchContextMessages(): AgentMessage[] {
+		return filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages);
 	}
 
 	private _projectSwitchFit(model: Model<Api>, tokenScale = 1): ModelUsabilityBudgetProjection {
@@ -8755,7 +8757,7 @@ export class AgentSession {
 			model,
 			systemPrompt: this.agent.state.systemPrompt,
 			tools: this.agent.state.tools,
-			liveContextTokens: Math.ceil(this._estimateSwitchContextTokens() * tokenScale),
+			liveContextTokens: chargeContextTokens(this._switchContextMessages(), tokenScale),
 			compaction: this._getCompactionSettings(),
 			includeSpeculationLead: false,
 			admission: "switch",

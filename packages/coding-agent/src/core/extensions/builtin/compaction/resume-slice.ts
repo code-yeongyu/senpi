@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { estimateTokens, findCutPoint } from "../../../compaction/compaction.ts";
 import { buildSessionContext, type CompactionEntry, type SessionEntry } from "../../../session-manager.ts";
 import type { ModelUsabilityBudgetProjection } from "./model-usability-budget.ts";
@@ -76,11 +77,36 @@ function buildSliceSummary(entries: readonly SessionEntry[]): string {
 	return `${CHECKPOINT_MARKER}\n\nEarlier checkpoint:\n${bounded}`;
 }
 
+/**
+ * Live context tokens at `tokenScale` reported tokens per estimated token
+ * (senpi#3447). A compaction or branch summary is written fresh and its estimate
+ * is about right, so only the other messages take the reported ratio.
+ */
+export function chargeContextTokens(messages: readonly AgentMessage[], tokenScale: number): number {
+	const { summaryTokens, otherTokens } = contextTokenParts(messages);
+	return Math.ceil(summaryTokens + otherTokens * tokenScale);
+}
+
+export function contextTokenParts(messages: readonly AgentMessage[]): {
+	readonly summaryTokens: number;
+	readonly otherTokens: number;
+} {
+	let summaryTokens = 0;
+	let otherTokens = 0;
+	for (const message of messages) {
+		const tokens = estimateTokens(message);
+		if (message.role === "compactionSummary" || message.role === "branchSummary") summaryTokens += tokens;
+		else otherTokens += tokens;
+	}
+	return { summaryTokens, otherTokens };
+}
+
 function measureSlicedContext(
 	entries: readonly SessionEntry[],
 	firstKeptEntryId: string,
 	summary: string,
 	tokensBefore: number,
+	tokenScale: number,
 ): number {
 	const preview: CompactionEntry = {
 		type: "compaction",
@@ -92,10 +118,7 @@ function measureSlicedContext(
 		tokensBefore,
 		fromHook: false,
 	};
-	return buildSessionContext([...entries, preview], PREVIEW_ENTRY_ID).messages.reduce(
-		(total, message) => total + estimateTokens(message),
-		0,
-	);
+	return chargeContextTokens(buildSessionContext([...entries, preview], PREVIEW_ENTRY_ID).messages, tokenScale);
 }
 
 /**
@@ -121,8 +144,12 @@ export function planResumeSlice({
 	const planAt = (firstKeptIndex: number): ResumeSlicePlan | undefined => {
 		const firstKeptEntryId = entryList[firstKeptIndex]?.id;
 		if (!firstKeptEntryId) return undefined;
-		const tokensAfter = Math.ceil(
-			measureSlicedContext(entryList, firstKeptEntryId, summary, projection.liveContextTokens) * tokenScale,
+		const tokensAfter = measureSlicedContext(
+			entryList,
+			firstKeptEntryId,
+			summary,
+			projection.liveContextTokens,
+			tokenScale,
 		);
 		if (tokensAfter + overhead > projection.contextWindow) return undefined;
 		return {
