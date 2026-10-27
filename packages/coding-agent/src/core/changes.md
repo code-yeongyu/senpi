@@ -1,32 +1,3 @@
-## 2026-10-27 - Fallback fit counts the reported usage in both the repair and the guard (senpi#3447)
-
-### What changed
-
-- `packages/coding-agent/src/core/agent-session.ts`: `_reduceForSwitchTarget` scales the per-message estimate to the
-  live context the switch guard charges (provider-reported when available), so the repair decision, the slice, and the
-  guard use one measure. `_projectSwitchFit` takes that scale; held switches keep scale 1. `_emit` attaches this
-  turn's rung refusals to `retry_fallback_exhausted` as `refusals`.
-- `packages/coding-agent/src/core/extensions/builtin/compaction/resume-slice.ts`: `planResumeSlice` accepts an optional
-  `tokenScale` (default 1) and sizes cut targets and the fit check in reported tokens.
-- `packages/coding-agent/src/core/retry-fallback/controller.ts`: records each rung the switch refuses in the turn and
-  exposes them as `turnRefusals`. `FallbackRungRefusal` lives in `controller-types.ts`.
-- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, `print-mode.ts`: an exhaustion with refusals
-  shows each refused rung's reason and numbers.
-
-### Why
-
-- A rung the estimate said fits was not reduced, then refused on the larger reported usage, so fallback ended with no
-  reduction and no visible reason.
-
-### Why an extension could not handle it
-
-- The fallback walk, the switch guard, and the slice repair are core internals that extensions do not see.
-
-### Expected merge conflict zones
-
-- LOW: `_reduceForSwitchTarget` / `_projectSwitchFit`, the `retry_fallback_exhausted` event type, `_emit`'s event
-  rewrites, the controller's walk loop.
-
 ## 2026-10-26 - AgentSession structured lane (senpi#4349, part of #4272)
 
 ### What changed

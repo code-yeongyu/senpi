@@ -10,8 +10,6 @@
 
 ### Fixed
 
-- A fallback to a smaller-window model now reduces the context when the provider-reported usage does not fit, instead of skipping the reduction on a lower estimate and then refusing the switch; a refusal that remains is shown with the refused model's window and requirement ([#3447](https://github.com/code-yeongyu/senpi/issues/3447)).
-
 ### Removed
 
 ## [2026.10.27-1] - 2026-10-26
