@@ -7,6 +7,7 @@ import { AcceptedTranscript, type TranscriptRoot } from "./accepted-transcript.t
 import { CALL_RECORDS } from "./compact-call-model.ts";
 import { COMPONENT_RECORDS } from "./compact-current-components.ts";
 import { CompactLaneCurrent } from "./compact-lane-current.ts";
+import type { CutStorageUse } from "./compact-session-state.ts";
 import type { CanonicalUnit } from "./compact-lane-transitions.ts";
 import { CompactSettledMessages, type SettledDiagnostic, type SettledRoot } from "./compact-settled-messages.ts";
 import type { FrozenCompactState } from "./compact-state-view.ts";
@@ -257,6 +258,11 @@ export class SessionAcceptanceLane {
 	readCurrentCalls(root: FrozenAcceptedRoot) {
 		if (!this.live.has(root)) throw new Error("accepted root released");
 		return this.current.readCalls(root.current);
+	}
+
+	/** The cut's content store under its lease (S09 catalog build and reads). */
+	cutStorage<T>(root: FrozenAcceptedRoot, use: CutStorageUse<T>): Promise<T> {
+		return this.current.cutStorage(root.current, use);
 	}
 
 	readSettled(root: FrozenAcceptedRoot) {
