@@ -64,9 +64,10 @@ const NODE = protocolId("node");
  * Builds and reads immutable catalog trees (R4.B1): nodes are packed bottom-up as components stream in, so at most
  * one open node per level is resident and no collection of every component exists. Every node is one store leaf
  * plus its pointer leaves, under one owner that shares the pinned content it describes; releasing the root owner
- * releases the tree. Level 0 owners stay the caller's. Every reference the build itself takes (a node or pointer
- * leaf, a sealed node's owner) is in `held` from the call that creates it until a parent owner takes it over, so a
- * failure at any point, the root read included, releases all of them and reports no root.
+ * releases the tree. Every reference the build itself takes (a node or pointer leaf, a sealed node's owner, and a
+ * level-0 component's owner from the moment it is placed) is in `held` from the call that creates it until a
+ * parent owner takes it over, so a failure at any point, the root read included, releases all of them and reports
+ * no root. A component's producer may drop its own reference once `build` has consumed the component.
  */
 export class CompactRecoveryCatalog {
 	private buffered = 0;
@@ -106,8 +107,7 @@ export class CompactRecoveryCatalog {
 			const head = sealed.pointers.finish();
 			const owner = store.text.own([node, ...sealed.sides, ...sealed.owners]);
 			held.add(owner);
-			for (const taken of level > 0 ? [node, ...sealed.sides, ...sealed.owners] : [node, ...sealed.sides])
-				transfer(taken);
+			for (const taken of [node, ...sealed.sides, ...sealed.owners]) transfer(taken);
 			levels[level] = newLevel();
 			this.buffered -= sealed.writer.count;
 			const bytes = storedBytes(text);
@@ -127,6 +127,10 @@ export class CompactRecoveryCatalog {
 			}
 			this.peakBuffered = Math.max(this.peakBuffered, ++this.buffered);
 			const open = at(level);
+			if (level === 0 && owner !== 0) {
+				store.adjust(owner, 1, 0);
+				held.add(owner);
+			}
 			open.owners.push(owner);
 			if ("leaves" in child) open.pointers.component(child.leaves);
 			else open.pointers.node(child.node, child.head);

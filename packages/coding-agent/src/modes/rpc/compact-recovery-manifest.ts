@@ -18,6 +18,7 @@ import {
 	protocolId,
 } from "./compact-recovery-ids.ts";
 import type { CheckpointToken, RecoveryRouteKind } from "./compact-recovery-types.ts";
+import { CompactValues } from "./compact-values.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 
 /** A manifest string: inline when it is a bounded protocol id, otherwise a ref to its exact stored value. */
@@ -158,8 +159,11 @@ export class RecoveryManifests {
 					cutValid();
 					valid();
 				};
-				const components = [...oversized.map(({ component }) => component), ...checkpointComponents(root)];
-				const built = await this.catalogs.build(store, ref, components, check);
+				const components = async function* () {
+					yield* oversized.map(({ component }) => component);
+					yield* checkpointComponents(store, new CompactValues(store), root, check);
+				};
+				const built = await this.catalogs.build(store, ref, components(), check);
 				return await this.assemble(store, token, ref, built, oversized, texts);
 			} finally {
 				for (const { component } of oversized) store.adjust(component.owner, -1, 0);
