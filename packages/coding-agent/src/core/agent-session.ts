@@ -6379,6 +6379,7 @@ export class AgentSession {
 				});
 			}
 		}
+		this.agent.state.systemPromptStablePrefix = result?.systemPromptStablePrefix;
 		if (result?.systemPrompt !== undefined) {
 			this._systemPromptOverride = result.systemPrompt;
 			this.agent.state.systemPrompt = result.systemPrompt;

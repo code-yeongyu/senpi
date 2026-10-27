@@ -2268,6 +2268,13 @@ export interface BeforeAgentStartEventResult {
 	};
 	/** Replace the complete system prompt for this turn. Later handlers observe this exact override. */
 	systemPrompt?: string;
+	/**
+	 * Whether this handler's change to `systemPrompt` is the same in every session (`"stable"`) or differs
+	 * between sessions or commits (`"volatile"`: memory, per-session state). Defaults to `"stable"` for
+	 * builtin extensions and `"volatile"` for every other extension. The prompt up to the first volatile
+	 * change is sent as a separately cached prefix where the provider supports it (senpi#4447).
+	 */
+	systemPromptCache?: "stable" | "volatile";
 	/** Exact render parts of a complete replacement, used only by preview accounting. */
 	readonly systemPromptParts?: readonly DynamicSystemPromptPart[];
 }

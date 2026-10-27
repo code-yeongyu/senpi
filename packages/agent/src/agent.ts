@@ -107,6 +107,7 @@ function createMutableAgentState(initialState?: AgentInitialState): MutableAgent
 
 	return {
 		systemPrompt: initialState?.systemPrompt ?? "",
+		systemPromptStablePrefix: initialState?.systemPromptStablePrefix,
 		model: initialState?.model ?? DEFAULT_MODEL,
 		thinkingLevel: initialState?.thinkingLevel ?? "off",
 		reasoningBaseline: initialState?.reasoningBaseline,
@@ -738,6 +739,9 @@ export class Agent {
 	private createContextSnapshot(): AgentContext {
 		return {
 			systemPrompt: this._state.systemPrompt,
+			...(this._state.systemPromptStablePrefix === undefined
+				? {}
+				: { systemPromptStablePrefix: this._state.systemPromptStablePrefix }),
 			messages: this._state.messages.slice(),
 			tools: this._state.tools.slice(),
 			...(this._state.declaredTools ? { declaredTools: this._state.declaredTools.slice() } : {}),

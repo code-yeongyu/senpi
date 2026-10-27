@@ -77,6 +77,7 @@ import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
 import { normalizeAnthropicRetryFailure } from "../utils/retry-profile/failure.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { anthropicSystemTextBlocks } from "./anthropic-system-blocks.ts";
 import {
 	applyServerFallbackAbort,
 	applyServerFallbackContinuation,
@@ -2482,21 +2483,17 @@ function buildParams(
 			},
 		];
 		if (initialSystemText) {
-			params.system.push({
-				type: "text",
-				text: sanitizeSurrogates(initialSystemText),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			});
+			params.system.push(
+				...anthropicSystemTextBlocks(initialSystemText, initialSystemMessage?.stablePrefixLength, cacheControl),
+			);
 		}
 	} else if (initialSystemText) {
 		// Add cache control to system prompt for non-OAuth tokens
-		params.system = [
-			{
-				type: "text",
-				text: sanitizeSurrogates(initialSystemText),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			},
-		];
+		params.system = anthropicSystemTextBlocks(
+			initialSystemText,
+			initialSystemMessage?.stablePrefixLength,
+			cacheControl,
+		);
 	}
 
 	// Temperature is incompatible with extended thinking and unsupported on Claude Opus 4.7+.

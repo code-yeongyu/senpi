@@ -10,13 +10,21 @@ export type { TranscriptContext } from "../types.ts";
 export function createInitialSystemMessage(
 	systemPrompt: string | undefined,
 	tools: Tool[] | undefined,
+	stablePrefix?: string,
 ): SystemMessage | undefined {
 	const hasSystemPrompt = systemPrompt !== undefined && systemPrompt.length > 0;
 	const hasTools = tools !== undefined && tools.length > 0;
 	if (!hasSystemPrompt && !hasTools) return undefined;
+	const splitsPrompt =
+		hasSystemPrompt &&
+		stablePrefix !== undefined &&
+		stablePrefix.length > 0 &&
+		stablePrefix.length < systemPrompt.length &&
+		systemPrompt.startsWith(stablePrefix);
 	return {
 		role: "system",
 		content: systemPrompt ?? "",
+		...(splitsPrompt ? { stablePrefixLength: stablePrefix.length } : {}),
 		...(hasTools ? { toolsAdded: tools } : {}),
 		timestamp: 0,
 	};
@@ -29,7 +37,11 @@ export function createInitialSystemMessage(
  * over unchanged (senpi#2095 allowed-tools): it has no system-message representation.
  */
 export function normalizeContext(context: Context): TranscriptContext {
-	const initialMessage = createInitialSystemMessage(context.systemPrompt, context.tools);
+	const initialMessage = createInitialSystemMessage(
+		context.systemPrompt,
+		context.tools,
+		context.systemPromptStablePrefix,
+	);
 	const messages = initialMessage ? [initialMessage, ...context.messages] : context.messages;
 	return (
 		context.activeToolNames ? { messages, activeToolNames: context.activeToolNames } : { messages }
@@ -77,8 +89,10 @@ export function getCurrentSystemMessage(messages: TranscriptMessages): SystemMes
 	const content: string[] = [];
 	const sections = new Map<string, string>();
 	let timestamp: number | undefined;
+	let stablePrefixLength: number | undefined;
 	for (const message of messages) {
 		if (!isSystemMessage(message)) continue;
+		if (timestamp === undefined) stablePrefixLength = message.stablePrefixLength;
 		timestamp ??= message.timestamp;
 		const text = contentText(message.content);
 		if (text.length > 0) content.push(text);
@@ -92,6 +106,7 @@ export function getCurrentSystemMessage(messages: TranscriptMessages): SystemMes
 	return {
 		role: "system",
 		content: content.join("\n\n"),
+		...(stablePrefixLength === undefined ? {} : { stablePrefixLength }),
 		...(sections.size > 0 ? { sections: Object.fromEntries(sections) } : {}),
 		...(tools.length > 0 ? { toolsAdded: tools } : {}),
 		timestamp: timestamp ?? 0,

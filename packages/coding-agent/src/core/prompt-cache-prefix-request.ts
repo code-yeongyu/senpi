@@ -3,6 +3,7 @@ import {
 	type Context,
 	getCurrentSystemPrompt,
 	getCurrentTools,
+	getInitialSystemMessage,
 	type ModelsSimpleStreamOptions,
 	type ProviderHeaders,
 	type TranscriptContext,
@@ -128,6 +129,9 @@ export async function buildPromptCachePrefixRequest(
 	const transcript = await buildProviderContext(
 		{
 			systemPrompt: composed.systemPrompt,
+			...(composed.systemPromptStablePrefix === undefined
+				? {}
+				: { systemPromptStablePrefix: composed.systemPromptStablePrefix }),
 			messages: [],
 			tools: state.tools.slice(),
 			...(state.declaredTools !== undefined ? { declaredTools: state.declaredTools.slice() } : {}),
@@ -166,8 +170,13 @@ export async function buildPromptCachePrefixRequest(
  * declaration is replayed back out of it; the tools stay the loop's provider declarations.
  */
 function toPrefixContext(transcript: TranscriptContext): Context {
+	const systemPrompt = getCurrentSystemPrompt(transcript.messages);
+	const stablePrefixLength = getInitialSystemMessage(transcript.messages)?.stablePrefixLength;
 	return {
-		systemPrompt: getCurrentSystemPrompt(transcript.messages),
+		systemPrompt,
+		...(stablePrefixLength === undefined
+			? {}
+			: { systemPromptStablePrefix: systemPrompt.slice(0, stablePrefixLength) }),
 		messages: transcript.messages.filter((message) => message.role !== "system"),
 		tools: getCurrentTools(transcript.messages),
 		...(transcript.activeToolNames === undefined ? {} : { activeToolNames: transcript.activeToolNames }),
@@ -176,6 +185,7 @@ function toPrefixContext(transcript: TranscriptContext): Context {
 
 async function composeTurnSystemPrompt(sources: PromptCachePrefixSources, signal: AbortSignal, sizesOnly: boolean) {
 	let systemPrompt = sources.getBaseSystemPrompt();
+	let systemPromptStablePrefix: string | undefined;
 	let accounting: PromptSizeAccounting | undefined;
 	const extensionNames = sizesOnly
 		? promptSizeExtensionNames(sources.runner.getExtensionPaths(), (path) =>
@@ -210,9 +220,10 @@ async function composeTurnSystemPrompt(sources: PromptCachePrefixSources, signal
 			},
 		);
 		systemPrompt = result?.systemPrompt ?? base;
+		systemPromptStablePrefix = result?.systemPromptStablePrefix;
 		if (sources.getBaseSystemPrompt() === base) break;
 	}
-	return { systemPrompt, accounting, extensionNames };
+	return { systemPrompt, systemPromptStablePrefix, accounting, extensionNames };
 }
 
 async function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T | typeof CANCELLED> {

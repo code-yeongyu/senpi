@@ -594,6 +594,9 @@ export async function buildProviderContext(
 	const { tools, activeToolNames } = providerTools(context, config.model);
 	return normalizeContext({
 		systemPrompt: context.systemPrompt,
+		...(context.systemPromptStablePrefix === undefined
+			? {}
+			: { systemPromptStablePrefix: context.systemPromptStablePrefix }),
 		messages: await config.convertToLlm(messages),
 		...(tools === undefined ? {} : { tools: tools.map(toProviderToolDeclaration) }),
 		...(activeToolNames === undefined ? {} : { activeToolNames }),

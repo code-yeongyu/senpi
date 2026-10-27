@@ -166,7 +166,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				// Use the known instructions now. Deferred catalog registration refreshes
 				// the service for subsequent turns instead of gating this provider request.
 				const systemPrompt = injectMcpInstructions(service, event.systemPrompt);
-				return systemPrompt === undefined ? undefined : { systemPrompt };
+				return systemPrompt === undefined ? undefined : { systemPrompt, systemPromptCache: "volatile" };
 			} catch (error) {
 				if (!(error instanceof Error)) throw error;
 				await reportMcpAsyncError("mcp.before_agent_start", error, sink);
