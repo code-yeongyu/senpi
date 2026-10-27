@@ -157,6 +157,35 @@ describe("endpoint reservation store", () => {
 		expect(s.roleRow(locator)).toMatchObject({ status: "granted", participant: SUPERVISOR });
 	});
 
+	// Design 4.2a step 4: a granted participant revalidates generation, role and grant in one short transaction that
+	// records its pre-listen intent, so a cancellation fenced after the grant is seen before the bind.
+	it("records a pre-listen intent only for the granted participant with its commitment while the generation is pending", async () => {
+		const { store: s, generation, locator, nonce } = await offered();
+		expect(rejection(() => s.commitListenIntent(locator, SUPERVISOR, COMMITMENT))).toBe("role_not_granted");
+		s.claim(locator, nonce, SUPERVISOR);
+		expect(rejection(() => s.commitListenIntent(locator, SUPERVISOR, COMMITMENT))).toBe("role_not_granted");
+		s.grant(generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
+		expect(rejection(() => s.commitListenIntent(locator, INTRUDER, COMMITMENT))).toBe("participant_mismatch");
+		expect(rejection(() => s.commitListenIntent(locator, SUPERVISOR, randomBytes(32)))).toBe("commitment_mismatch");
+		expect(
+			rejection(() => s.commitListenIntent({ ...locator, endpoint: `${ENDPOINT}2` }, SUPERVISOR, COMMITMENT)),
+		).toBe("endpoint_mismatch");
+		expect(s.roleRow(locator)).toMatchObject({ status: "granted", listenIntent: false });
+		const before = s.reservation(generation).revision;
+		s.commitListenIntent(locator, SUPERVISOR, COMMITMENT);
+		expect(s.roleRow(locator)).toMatchObject({ status: "granted", participant: SUPERVISOR, listenIntent: true });
+		expect(s.reservation(generation).revision).toBe(before + 1);
+	});
+
+	it("refuses a pre-listen intent once the generation is cancelling, keeping the grant on record", async () => {
+		const { store: s, generation, locator, nonce } = await offered();
+		s.claim(locator, nonce, SUPERVISOR);
+		s.grant(generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
+		s.cancel(generation);
+		expect(rejection(() => s.commitListenIntent(locator, SUPERVISOR, COMMITMENT))).toBe("generation_cancelled");
+		expect(s.roleRow(locator)).toMatchObject({ status: "granted", participant: SUPERVISOR, listenIntent: false });
+	});
+
 	it("refuses to grant an offered role that nobody claimed", async () => {
 		const { store: s, generation } = await offered();
 		expect(rejection(() => s.grant(generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT))).toBe(
@@ -232,11 +261,67 @@ describe("endpoint reservation store", () => {
 		expect(rejection(() => s.markServing(generation))).toBe("roles_not_granted");
 	});
 
+	it.each(["host,bogus", ""])(
+		"treats a stored expected set %j as unreadable for offer and serving",
+		async (stored) => {
+			const { path, store: s } = await store();
+			const generation = s.reserve(ENDPOINT, OWNER, ["host"], NO_PRESENCE, NO_OBJECT);
+			const raw = new DatabaseSync(path);
+			raw.prepare("UPDATE reservations SET expected_roles = ? WHERE generation = ?").run(stored, generation);
+			raw.close();
+			expect(rejection(() => s.offer(generation, "host", OWNER, NO_OBJECT))).toBe("role_not_expected");
+			expect(rejection(() => s.markServing(generation))).toBe("roles_not_granted");
+		},
+	);
+
 	it("bumps the revision on every transition", async () => {
 		const { store: s, generation, locator, nonce } = await offered();
 		const before = s.reservation(generation).revision;
 		s.claim(locator, nonce, SUPERVISOR);
 		expect(s.reservation(generation).revision).toBe(before + 1);
+	});
+
+	// senpi#4473 review LOW: a row whose placement names a placed root or a predeclared object but lacks a column is
+	// unreadable evidence (design 4.2a Revision 6 "Missing/replaced/unverifiable objects are unknown"), never a row that
+	// recorded no presence; the read refuses typed instead of answering presence_unavailable.
+	it.each([
+		[
+			"a placed root missing its path",
+			"UPDATE reservations SET presence_placement = 'beside_store', presence_root_path = NULL",
+		],
+		[
+			"a relocated root missing its file ID",
+			"UPDATE reservations SET presence_placement = 'relocated', presence_root_file_id = NULL",
+		],
+		["an unknown placement", "UPDATE reservations SET presence_placement = 'elsewhere'"],
+		["an unknown unavailable reason", "UPDATE reservations SET presence_unavailable_reason = 'bogus'"],
+	])("refuses to read %s as presence_unavailable", async (_name, sql) => {
+		const { path, store: s, generation } = await offered();
+		const raw = new DatabaseSync(path);
+		raw.prepare(`${sql} WHERE generation = ?`).run(generation);
+		raw.close();
+		expect(rejection(() => s.reservation(generation))).toBe("row_malformed");
+	});
+
+	it("refuses to read a predeclared object missing a column as presence_unavailable", async () => {
+		const { path, store: s, generation, locator } = await offered();
+		const raw = new DatabaseSync(path);
+		raw.prepare("UPDATE roles SET presence_status = 'predeclared', presence_id = NULL WHERE generation = ?").run(
+			generation,
+		);
+		raw.close();
+		expect(rejection(() => s.roleRow(locator))).toBe("row_malformed");
+	});
+
+	// senpi#4468 r2 LOW: the census filters on the states this schema writes; a row in a state this build does not know
+	// is unreadable evidence and refuses typed, never listed as if it were one of them and never silently dropped.
+	it("census lists the states this schema writes and refuses a row in a state it does not know", async () => {
+		const { path, store: s, generation } = await offered();
+		expect(s.census().map((row) => [row.generation, row.state])).toEqual([[generation, "pending"]]);
+		const raw = new DatabaseSync(path);
+		raw.prepare("UPDATE reservations SET state = 'archived' WHERE generation = ?").run(generation);
+		raw.close();
+		expect(rejection(() => s.census())).toBe("row_malformed");
 	});
 
 	it("rejects a store written by an unsupported schema", async () => {

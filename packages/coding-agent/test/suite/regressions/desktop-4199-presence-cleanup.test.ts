@@ -1,11 +1,11 @@
 import * as childProcess from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-	type EndpointReservationStore,
+	EndpointReservationError,
+	EndpointReservationStore,
 	openEndpointReservationStore,
 	type PresenceObjectRecord,
 	presenceObjectPath,
@@ -19,11 +19,13 @@ import {
 	acquirePresence,
 	admitClaimedParticipant,
 	claimLaunchRole,
+	credentialCommitment,
 	grantVerifiedParticipant,
 	offerHostRole,
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
 	releaseReservingOwner,
+	reservationStorePath,
 	waitForClaim,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import {
@@ -73,6 +75,8 @@ const OWNER = { pid: 100, processStartTime: "134000000000000000" };
 const SUPERVISOR = { pid: 4242, processStartTime: "134000000000000000" };
 const WRAPPER = { pid: 4343, processStartTime: "134000000000000002" };
 const SECRET = Buffer.alloc(32, 7);
+// A commitment is bound to its role and credential path (design 4.2a), never the bare digest of the secret.
+const COMMITMENT = credentialCommitment(SECRET, "supervisor", socketSecretPath(ENDPOINT));
 const HOUR_MS = 60 * 60 * 1000;
 
 type Machine = ReturnType<typeof fakeWindows>;
@@ -116,7 +120,9 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 	 */
 	async function launched(machine: Machine, expectedRoles: readonly ReservationRole[] = ["supervisor"]) {
 		const root = await tempRoot();
-		const storePath = join(root, "endpoint.reservation.db");
+		// The endpoint's fixed store beside its (mocked) ensure lock: the one store a claimant's locator may name.
+		mocked.lockDir = root;
+		const storePath = reservationStorePath(ENDPOINT);
 		const store = await openStore(storePath);
 		const reservation = resolvePresenceRoot({
 			coordinationTarget: TARGET,
@@ -135,14 +141,7 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 		const locator = parseReservationLocatorArgs(args);
 		if (!locator) throw new Error("no locator");
 		await claimLaunchRole(locator, SUPERVISOR, machine.load);
-		grantVerifiedParticipant(
-			store,
-			generation,
-			"supervisor",
-			OWNER,
-			SUPERVISOR,
-			createHash("sha256").update(SECRET).digest(),
-		);
+		grantVerifiedParticipant(store, generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
 		const paths = await createHostDaemonPaths({ agentDir: join(root, "agent"), socket: join(root, "rpc.sock") });
 		const owner = predeclared(store.reservation(generation).ownerPresence);
 		const supervisor = predeclared(store.roleRow(locator)?.presence);
@@ -213,7 +212,8 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 				onHold: () => order.push(`exclusive open while role ${late.status?.()}`),
 			});
 			mocked.placement = machine.load;
-			const store = await openStore(join(await tempRoot(), "endpoint.reservation.db"));
+			mocked.lockDir = await tempRoot();
+			const store = await openStore(reservationStorePath(ENDPOINT));
 			const reservation = resolvePresenceRoot({
 				coordinationTarget: TARGET,
 				endpointKey: ENDPOINT_KEY,
@@ -235,14 +235,7 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 				presence: machine.load,
 			});
 			await waitForClaim(store, generation, "supervisor", { deadlineMs: 5_000 });
-			grantVerifiedParticipant(
-				store,
-				generation,
-				"supervisor",
-				OWNER,
-				SUPERVISOR,
-				createHash("sha256").update(SECRET).digest(),
-			);
+			grantVerifiedParticipant(store, generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
 			const presence = await admitted;
 			expect(machine.held.get(supervisor.path)).toBe(supervisor.presenceId);
 			expect(order).toEqual([]);
@@ -436,6 +429,136 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 			]);
 		});
 
+		// senpi#4480 review LOW 3: the recheck must change the outcome, so the disposition changes while the object is held.
+		it("deletes nothing that a row came to reference while it held the object", async () => {
+			const late: {
+				store?: EndpointReservationStore;
+				generation: string;
+				path: string;
+				object?: PresenceObjectRecord;
+			} = {
+				generation: "",
+				path: "",
+			};
+			const machine = fakeWindows({
+				onHold: (request) => {
+					if (request.path !== late.path || !late.store || !late.object) return;
+					// Between the sweep's first classification (unreferenced, old) and its recheck, an issuer commits an
+					// offer naming the object: the recheck sees it referenced and the sweep must leave it.
+					late.store.offer(late.generation, "host", JSON.stringify(OWNER), late.object);
+				},
+			});
+			const launch = await launched(machine, ["supervisor", "host"]);
+			const rootPath = launch.reservation.root.status === "placed" ? launch.reservation.root.path : "";
+			const now = 1_800_000_000_000;
+			const old = stray(machine, rootPath, now, PRESENCE_SWEEP_AGE_MS + HOUR_MS);
+			const object = machine.objects.get(old.path);
+			if (!object) throw new Error("no stray");
+			late.store = await openStore(launch.storePath);
+			late.generation = launch.generation;
+			late.path = old.path;
+			late.object = {
+				status: "predeclared",
+				presenceId: old.presenceId,
+				path: old.path,
+				header: object.content.toString("hex"),
+				volumeSerial: object.volumeSerial,
+				fileId: object.fileId,
+				classification: "local",
+				fileSystem: "NTFS",
+				kernelSession: { status: "unverified", reason: "test" },
+				hostLabel: "",
+			};
+			const report = sweep(launch, machine, { now: () => now });
+			expect(report).toMatchObject({ status: "swept", deleted: [] });
+			expect(report.status === "swept" && report.skipped).toContainEqual({ name: old.name, reason: "referenced" });
+			expect(machine.objects.has(old.path)).toBe(true);
+			expect(machine.holds.size).toBe(0);
+		});
+
+		// senpi#4480 review LOW 1: a released or retired row is deleted only through a hold on the object it recorded.
+		it("leaves a released row's object whose identity or header differs from the row", async () => {
+			const machine = fakeWindows();
+			const launch = await launched(machine);
+			launch.store.markServing(launch.generation);
+			machine.control.holdOutcome = { status: "failed", step: "open", code: 5 };
+			releaseReservingOwner(launch.store, launch.generation, OWNER, launch.ownerPresence);
+			machine.control.holdOutcome = undefined;
+			// The path now names another object: same name, different file identity (a replaced file).
+			machine.objects.set(launch.owner.path, {
+				content: Buffer.from(launch.owner.header, "hex"),
+				volumeSerial: launch.owner.volumeSerial,
+				fileId: "replaced-file",
+			});
+			const report = sweep(launch, machine);
+			expect(report).toMatchObject({ status: "swept", deleted: [] });
+			expect(report.status === "swept" && report.skipped).toContainEqual({
+				name: nameOf(launch.owner),
+				reason: "identity_mismatch",
+			});
+			expect(machine.objects.has(launch.owner.path)).toBe(true);
+			expect(machine.holds.size).toBe(0);
+		});
+
+		// senpi#4480 review LOW 4: a store error while an object is held releases the hold and never decides the start.
+		it("releases its hold on a store error that is not store_busy, and such an error never aborts the start", async () => {
+			const machine = fakeWindows();
+			const launch = await launched(machine);
+			const rootPath = launch.reservation.root.status === "placed" ? launch.reservation.root.path : "";
+			const now = 1_800_000_000_000;
+			const old = stray(machine, rootPath, now, PRESENCE_SWEEP_AGE_MS + HOUR_MS);
+			let rechecks = 0;
+			const disposition = EndpointReservationStore.prototype.presenceObjectDisposition;
+			vi.spyOn(EndpointReservationStore.prototype, "presenceObjectDisposition").mockImplementation(function (
+				this: EndpointReservationStore,
+				...args
+			) {
+				if (args[0] === old.path && ++rechecks === 2) {
+					throw new EndpointReservationError("store_insecure", "replaced while opening");
+				}
+				return disposition.apply(this, args);
+			});
+			expect(() => sweep(launch, machine, { now: () => now })).toThrow(
+				expect.objectContaining({ reason: "store_insecure" }),
+			);
+			expect(machine.holds.size).toBe(0);
+			expect(machine.objects.has(old.path)).toBe(true);
+			// The start that runs the sweep proceeds past it.
+			const root = await tempRoot();
+			mocked.lockDir = root;
+			mocked.placement = machine.load;
+			const socket = join(root, "rpc.sock");
+			const agentDir = join(root, "agent");
+			await createSocketSecret(socketSecretPath(socket));
+			const paths = await createHostDaemonPaths({ agentDir, socket });
+			const startRoot = `\\\\?\\${join(root, "endpoint")}.presence`;
+			machine.native.presenceRootOpen(startRoot, true);
+			const startOld = stray(machine, startRoot, now, PRESENCE_SWEEP_AGE_MS + 2 * HOUR_MS);
+			rechecks = 0;
+			vi.mocked(EndpointReservationStore.prototype.presenceObjectDisposition).mockImplementation(function (
+				this: EndpointReservationStore,
+				...args
+			) {
+				if (args[0] === startOld.path)
+					throw new EndpointReservationError("store_insecure", "replaced while opening");
+				return disposition.apply(this, args);
+			});
+			const reachedSpawn = new Error("start reached the supervisor spawn");
+			vi.stubGlobal("process", Object.create(process, { platform: { value: "win32" } }));
+			let outcome: unknown;
+			await vi.mocked(childProcess.spawn).withImplementation(
+				() => {
+					throw reachedSpawn;
+				},
+				async () => {
+					outcome = await startHost(paths, socket, { agentDir, socket }).catch((error: unknown) => error);
+				},
+			);
+			vi.unstubAllGlobals();
+			expect(outcome).toBe(reachedSpawn);
+			expect(machine.holds.size).toBe(0);
+		});
+
 		it("handles only its bound per run, in name order", async () => {
 			const { machine, serving, now } = await populated();
 			machine.calls.length = 0;
@@ -563,7 +686,8 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 
 		it("a reserving owner whose supervisor object vanished cancels the offer, commits its own `released` and deletes its object, before any spawn", async () => {
 			const machine = fakeWindows();
-			const store = await openStore(join(await tempRoot(), "endpoint.reservation.db"));
+			mocked.lockDir = await tempRoot();
+			const store = await openStore(reservationStorePath(ENDPOINT));
 			const reservation = resolvePresenceRoot({
 				coordinationTarget: TARGET,
 				endpointKey: ENDPOINT_KEY,
@@ -579,6 +703,24 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 			expect(store.reservation(generation ?? "")).toMatchObject({ state: "cancelling", ownerStatus: "released" });
 			expect(machine.held.size).toBe(0);
 			expect(machine.objects.has(owner.path)).toBe(false);
+		});
+
+		// senpi#4480 review LOW 2: a busy object after the offer commit is unknown where the spawn is decided, never present.
+		it("a supervisor whose host object is held exclusively after the offer commit cancels the offer before spawning the host", async () => {
+			const machine = fakeWindows();
+			const launch = await launched(machine, ["supervisor", "host"]);
+			const create = machine.native.presenceObjectCreate;
+			vi.spyOn(machine.native, "presenceObjectCreate").mockImplementation((request) => {
+				const created = create(request);
+				// A sweep from a timed-out earlier start took the exclusive hold right after creation.
+				machine.holds.set(`sweep-${request.name}`, `${request.rootPath}\\${request.name}`);
+				return created;
+			});
+			expect(() => offerHostRole(launch.store, launch.generation, SUPERVISOR, machine.load)).toThrow(
+				expect.objectContaining({ reason: "presence_object_busy" }),
+			);
+			expect(launch.store.reservation(launch.generation).state).toBe("cancelling");
+			expect(launch.store.roleRow({ ...launch.locator, role: "host" })?.status).toBe("revoked");
 		});
 
 		it("a supervisor whose host object vanished cancels the offer before spawning the host", async () => {

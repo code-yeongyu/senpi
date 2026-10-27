@@ -16,9 +16,19 @@
  * On Windows the evidence is the bridge's retained-handle adapter (design 4.2a "OS identity"): a reopened PID is the
  * recorded process only when `GetProcessId`, the exact creation FILETIME and the `TokenUser` SID all match on that one
  * handle; a different creation time is gone, a same-birth SID mismatch or handle/PID inconsistency is
- * `owner_identity_inconsistent`, an unreadable answer stays unknown (`process-evidence.ts`). A FILETIME is compared
- * exactly, as a decimal integer string, never through milliseconds or a tolerance. Nothing here mutates the credential,
- * signals a process, deletes a record, or waits for a lock.
+ * `owner_identity_inconsistent`, an unreadable answer stays unknown (`process-evidence.ts`). A record without a SID
+ * (the start-time reader's domain) is never compared against a handle's reading, nor a SID-bearing one against the
+ * reader's: such an observation is incomplete.
+ * A census row (a generation pidfile, a host-child pidfile, a session claim) carries only the provenance its own launch
+ * recorded beside it (launch-provenance.ts: the owner's kernel session and the daemon directory's classification at the
+ * write), never the reservation store's locality or the owner's session by default; a row with no provenance stays
+ * unknown. A row whose identity is a recorded authority of the generation is that actor's own entry and is discharged
+ * by that actor's proof (its `released` commit, an admissible acquisition or the exact process proof), so a quiescent
+ * actor that stays alive doing unrelated work does not block. Incomplete discovery (a directory or record that cannot
+ * be read) is unknown, never nothing to find. The prior-boot proof and the repair anchor resolve only entries provably
+ * from the boot they ended, and only after an observation could not decide them.
+ * A FILETIME is compared exactly, as a decimal integer string, never through milliseconds or a tolerance. Nothing here
+ * mutates the credential, signals a process, deletes a record, or waits for a lock.
  *
  * Presence cleanup (Revision 7): a probe that finds no object rereads the row, because every deletion is preceded by
  * a `released` commit; an entry released meanwhile is discharged by that commit, and a missing object for an entry
@@ -53,7 +63,8 @@ import type {
 	RecoveryHolder,
 	ReservationRecoveryRefusal,
 } from "./host-decision.ts";
-import { readSessionPathClaims } from "./host-reservations.ts";
+import { readSessionPathClaimsCompletely } from "./host-reservations.ts";
+import { readLaunchProvenanceRecord } from "./launch-provenance.ts";
 import { deletePresenceObject } from "./presence-cleanup.ts";
 import { kernelSession } from "./presence-placement.ts";
 import {
@@ -63,6 +74,7 @@ import {
 	type ProcessEvidence,
 	type ProcessObservation,
 	type ProcessRecord,
+	processRecordKey,
 } from "./process-evidence.ts";
 import type { PresencePlacementLoad } from "./socket-secret-native.ts";
 
@@ -93,11 +105,15 @@ export interface RecoveredGuard {
 	release(): void;
 }
 
-/** The probing invocation's own view: its bridge, its kernel session and how the store directory classifies now. */
+/**
+ * The probing invocation's own view: its bridge, its kernel session, how the store directory classifies now, and how
+ * the endpoint's daemon directory (where the census rows live) classifies now.
+ */
 export interface RecoveryProber {
 	readonly native: PresencePlacementLoad;
 	readonly session: KernelSessionRecord;
 	readonly storeLocalNow: boolean;
+	readonly daemonDirectoryLocalNow: boolean;
 	/** One new observation of a recorded PID: through the bridge's handle on Windows, the identity reader elsewhere. */
 	readonly observe: (pid: number) => Promise<ProcessObservation>;
 	readonly clock: RecoveryClock;
@@ -110,6 +126,8 @@ export interface RecoveryProber {
 
 export interface RecoveryProberOptions {
 	readonly observe?: (pid: number) => Promise<ProcessObservation>;
+	/** The endpoint's daemon directory, classified from its opened handle; without it census rows get no clause (iii). */
+	readonly daemonDirectory?: string;
 	readonly clock?: RecoveryClock;
 	readonly remainingMs?: number;
 	readonly fresh?: boolean;
@@ -163,12 +181,19 @@ export function recoveryProber(
 		held: options.held,
 	};
 	if (native.status !== "available") {
-		return { ...common, session: { status: "unverified", reason: native.reason }, storeLocalNow: false };
+		return {
+			...common,
+			session: { status: "unverified", reason: native.reason },
+			storeLocalNow: false,
+			daemonDirectoryLocalNow: false,
+		};
 	}
+	const local = (directory: string) => native.native.classifyVolume(directory).locality === "local";
 	return {
 		...common,
 		session: kernelSession(native.native.kernelSessionIdentity()),
-		storeLocalNow: native.native.classifyVolume(storeDirectory).locality === "local",
+		storeLocalNow: local(storeDirectory),
+		daemonDirectoryLocalNow: options.daemonDirectory !== undefined && local(options.daemonDirectory),
 	};
 }
 
@@ -263,7 +288,7 @@ function acquire(object: PresenceObjectRecord, reservation: ReservationRow, prob
 	const request = {
 		presenceId: object.presenceId,
 		path: object.path,
-		tag: Buffer.from(object.header, "hex"),
+		header: Buffer.from(object.header, "hex"),
 		volumeSerial: object.volumeSerial,
 		fileId: object.fileId,
 		createdLocal: object.classification === "local",
@@ -351,54 +376,104 @@ class ObservationBudget {
 	}
 }
 
+/** What a row recorded about where and when it was written, for the gate (clauses i, iii, iv) and the boot proofs. */
+interface RowProvenance {
+	readonly session: KernelSessionRecord;
+	/** The row's directory recorded `local` when the row was written, and classifies `local` now (clause iii). */
+	readonly local: boolean;
+}
+
+/**
+ * A boot proven ended: the Revision 6 reboot proof names the generation's recorded session, which resolves rows whose
+ * verified session equals it; the repair anchor names the session at the anchor and resolves every local row that is
+ * not provably from the current boot (the restart ended every process that could have exercised that authority).
+ */
+type PriorBootProof = { readonly kind: "reboot" | "anchor"; readonly session: string };
+
+/** Whether the proof covers this row: only a local row, and only one provably from the boot the proof ended. */
+function fromPriorBoot(row: RowProvenance, proof: PriorBootProof | undefined, prober: RecoveryProber): boolean {
+	if (proof === undefined || !row.local) return false;
+	if (proof.kind === "reboot") return row.session.status === "verified" && row.session.value === proof.session;
+	return !sameSession(row.session, prober.session);
+}
+
+/** A holder's provenance: its presence row's session (or the launch owner's without an object) and the store's locality. */
+function holderProvenance(holder: AuthorityHolder, reservation: ReservationRow, prober: RecoveryProber): RowProvenance {
+	return { session: holder.session, local: recordedLocal(reservation) && prober.storeLocalNow };
+}
+
 /**
  * Recovery-time observation of a PID another invocation recorded. The gate comes first: unless clause (iii) or (i)
  * admits it, absence, a different birth or an exit on this kernel says nothing about that row. Then the observation
  * table (`classifyObservation`): an absent PID, an exactly different creation FILETIME or a signalled process object is
  * `gone`; the same PID, creation time and SID on one handle is `live`; an unreadable or inconsistent answer (denied,
  * unreadable fields, a same-birth SID mismatch, a handle whose `GetProcessId` is not the opened PID) is requeried once
- * inside the budget and then `unknown` with that reason, a noncomparable record is `unknown` at once. A proven prior
- * boot (the Revision 6 proof or a repair anchor) ends every process of that boot without a query, and an unchanged
- * escalated record answers from its marker without one (`cached`).
+ * inside the budget and then `unknown` with that reason, a noncomparable record (no recorded identity, a record from
+ * the other observation domain) is `unknown` at once. A proven prior boot (the Revision 6 proof or a repair anchor)
+ * resolves an entry only after the observation could not decide it (no recorded identity, an unreadable or
+ * noncomparable one): an entry whose process is observed live blocks whatever the boot evidence says, an absent one is
+ * gone by observation, and an inconsistent one (a process answering the recorded birth under another SID) stays
+ * unknown, since the design calls that an unresolved inconsistency and never permission to reclaim. An unchanged
+ * escalated record answers its marker's own subject from the marker without a query (`cached`); every other entry is
+ * queried.
  */
 async function observeRecorded(
 	subject: string,
 	recorded: RecordedProcess | undefined,
-	rowSession: KernelSessionRecord,
+	row: RowProvenance,
 	reservation: ReservationRow,
 	prober: RecoveryProber,
-	priorBoot: boolean,
+	proof: PriorBootProof | undefined,
 	budget: ObservationBudget,
 ): Promise<ProcessVerdict> {
-	const clauseIII = recordedLocal(reservation) && prober.storeLocalNow;
-	if (!clauseIII && !sameSession(rowSession, prober.session)) {
-		const bothVerified = rowSession.status === "verified" && prober.session.status === "verified";
+	if (!row.local && !sameSession(row.session, prober.session)) {
+		const bothVerified = row.session.status === "verified" && prober.session.status === "verified";
 		return {
 			kind: "unknown",
 			reason: bothVerified ? "owner_identity_domain_mismatch" : "owner_identity_domain_unverified",
-			detail: `kernel_session_gate (${describeSession(rowSession)})`,
+			detail: `kernel_session_gate (${describeSession(row.session)})`,
 		};
 	}
-	if (priorBoot) return { kind: "gone", reason: "prior_boot" };
+	const priorBoot = fromPriorBoot(row, proof, prober);
+	// The marker answers its own subject without a query; under a prior-boot proof the entry is observed instead, so
+	// that a live current-boot process at that PID is seen, never resolved from a marker written before the boot.
 	const cached = reservation.escalation;
-	if (cached !== null && !prober.fresh) return { kind: "unknown", reason: cached.reason, detail: "escalated record" };
+	if (cached !== null && !prober.fresh && cached.subject === subject && !priorBoot) {
+		return { kind: "unknown", reason: cached.reason, detail: "escalated record" };
+	}
 	if (recorded === undefined || recorded.pid === 0) {
-		return { kind: "unknown", reason: "owner_identity_incomplete", detail: "no recorded identity" };
+		return priorBoot
+			? { kind: "gone", reason: "prior_boot" }
+			: { kind: "unknown", reason: "owner_identity_incomplete", detail: "no recorded identity" };
 	}
 	// What the last observation could not resolve; the escalated reason once the budget refuses another.
 	let unresolved: { readonly reason: RecoveryEscalationReason; readonly detail: string } = {
 		reason: "owner_identity_unreadable",
 		detail: "observation budget spent",
 	};
+	// Observations made, and how many of them found the identity unreadable (as opposed to inconsistent).
+	let observations = 0;
+	let unreadable = 0;
 	for (;;) {
 		const observed = await budget.observe(subject, recorded.pid);
-		if (observed === undefined) return { kind: "unknown", ...unresolved };
+		if (observed === undefined) {
+			// An identity that every observation made found unreadable is what the boot proof resolves; an entry the
+			// deadline left unobserved is no observation at all, and an inconsistent one is no permission to reclaim:
+			// both stay unknown whatever the boot evidence says.
+			return priorBoot && observations > 0 && unreadable === observations
+				? { kind: "gone", reason: "prior_boot" }
+				: { kind: "unknown", ...unresolved };
+		}
+		observations++;
 		const verdict = classifyObservation(recorded, observed);
 		if (verdict.kind !== "unknown") return verdict;
 		if (verdict.reason === "incomplete") {
-			return { kind: "unknown", reason: "owner_identity_incomplete", detail: verdict.detail };
+			return priorBoot
+				? { kind: "gone", reason: "prior_boot" }
+				: { kind: "unknown", reason: "owner_identity_incomplete", detail: verdict.detail };
 		}
 		// Unreadable or inconsistent: the design's one fresh reopen/requery; the budget refuses a third.
+		if (verdict.reason === "unreadable") unreadable++;
 		unresolved = {
 			reason: verdict.reason === "inconsistent" ? "owner_identity_inconsistent" : "owner_identity_unreadable",
 			detail: `${verdict.detail}; observation budget spent`,
@@ -418,15 +493,17 @@ function priorBootProven(
 	prober: RecoveryProber,
 	holders: readonly AuthorityHolder[],
 	proofs: Partial<Record<AuthorityEntry, RecoveryProof>>,
-): boolean {
+): PriorBootProof | undefined {
 	const recorded = reservation.presence.ownerKernelSession;
-	return (
-		recorded.status === "verified" &&
+	return recorded.status === "verified" &&
 		prober.session.status === "verified" &&
 		recorded.value !== prober.session.value &&
+		recordedLocal(reservation) &&
+		prober.storeLocalNow &&
 		holders.length > 0 &&
 		holders.every((holder) => proofs[holder.entry] === "presence_released")
-	);
+		? { kind: "reboot", session: recorded.value }
+		: undefined;
 }
 
 /**
@@ -436,27 +513,55 @@ function priorBootProven(
  * have exercised that authority at the anchor gone. The anchor is read at the generation's current revision only, so a
  * later claim or commit discards it. A non-local store never records one.
  */
-function anchorProven(reservation: ReservationRow, prober: RecoveryProber): boolean {
+function anchorProven(reservation: ReservationRow, prober: RecoveryProber): PriorBootProof | undefined {
 	const anchor = reservation.repairAnchor;
-	return (
-		anchor !== null &&
+	return anchor !== null &&
 		prober.session.status === "verified" &&
 		prober.session.value !== anchor.kernelSession &&
 		recordedLocal(reservation) &&
 		prober.storeLocalNow
-	);
+		? { kind: "anchor", session: anchor.kernelSession }
+		: undefined;
 }
 
+/**
+ * A record as found: absent (`none`), or a process. A record that names no PID names no process; one whose guard does
+ * not parse still names its PID, unguarded. A record that exists but cannot be read is incomplete discovery: it stays in
+ * the census with an unreadable identity, which is unknown.
+ */
 async function readRecord(path: string): Promise<RecordedProcess | "none"> {
 	let text: string;
 	try {
 		text = await readFile(path, "utf8");
-	} catch {
-		return "none";
+	} catch (error: unknown) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return "none";
+		return { pid: 0, processStartTime: null };
 	}
-	// A record that names no PID names no process; one whose guard does not parse still names its PID, unguarded. A record
-	// that cannot be read at all is not proof of anything, so it stays in the census with an unreadable identity.
 	return parseRecorded(text) ?? { pid: 0, processStartTime: null };
+}
+
+type CensusEntry = {
+	readonly name: string;
+	readonly recorded: RecordedProcess;
+	/** The provenance the row's launch recorded beside it, or nothing (a legacy or foreign writer). */
+	readonly provenance: RowProvenance | undefined;
+};
+
+/** A row's provenance from its generation directory's launch record, with clause (iii) applied to that directory. */
+async function directoryProvenance(
+	paths: HostDaemonDirectory,
+	instanceId: string,
+	prober: RecoveryProber,
+): Promise<RowProvenance | "unreadable" | undefined> {
+	// A claim file is untrusted input: an instance id that is not a plain directory name names no generation.
+	if (instanceId === "" || instanceId === "." || instanceId === ".." || /[\\/]/.test(instanceId)) return undefined;
+	const record = await readLaunchProvenanceRecord(generationPaths(paths, instanceId).launchProvenanceFile);
+	if (record.status === "unreadable") return "unreadable";
+	if (record.status === "none") return undefined;
+	return {
+		session: record.provenance.kernelSession,
+		local: record.provenance.directoryLocal && prober.daemonDirectoryLocalNow,
+	};
 }
 
 type CensusResult =
@@ -472,30 +577,88 @@ type CensusResult =
 
 /**
  * The listener/session/descendant census (design 4.2a, "All existing full-census predicates remain"): every recorded
- * generation supervisor and host child of this endpoint and every session-path claim, each observed exactly through the
- * gate. Their rows were written by the generation's launch, so they carry its owner's kernel session.
+ * generation supervisor and host child of this endpoint and every session-path claim. A row whose identity is one of
+ * the generation's recorded authorities is that actor's own entry, discharged by the actor's proof; every other row is
+ * observed exactly through the gate with the provenance its launch recorded beside it (none: unknown). A directory or
+ * record that cannot be read is incomplete discovery, which is unknown.
  */
 async function census(
 	paths: HostDaemonDirectory,
 	reservation: ReservationRow,
+	roles: readonly RoleRow[],
 	prober: RecoveryProber,
-	priorBoot: boolean,
+	proof: PriorBootProof | undefined,
 	budget: ObservationBudget,
 ): Promise<CensusResult> {
-	const entries: { readonly name: string; readonly recorded: RecordedProcess }[] = [];
-	for (const instanceId of await readdir(paths.generationsDir).catch(() => [] as string[])) {
+	const incomplete = (subject: string, detail: string): CensusResult => ({
+		verdict: "unknown",
+		reason: "owner_identity_unreadable",
+		subject,
+		detail: `census incomplete: ${detail}`,
+	});
+	const provenances = new Map<string, RowProvenance | "unreadable" | undefined>();
+	const provenanceOf = async (instanceId: string) => {
+		if (!provenances.has(instanceId))
+			provenances.set(instanceId, await directoryProvenance(paths, instanceId, prober));
+		return provenances.get(instanceId);
+	};
+	const entries: CensusEntry[] = [];
+	let instanceIds: string[];
+	try {
+		instanceIds = await readdir(paths.generationsDir);
+	} catch (error: unknown) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+			return incomplete("generations", `generations directory unreadable (${(error as Error).message})`);
+		}
+		instanceIds = [];
+	}
+	for (const instanceId of instanceIds) {
 		const generation = generationPaths(paths, instanceId);
+		const provenance = await provenanceOf(instanceId);
+		if (provenance === "unreadable") {
+			return incomplete(`generation ${instanceId}`, `generation ${instanceId} provenance unreadable`);
+		}
 		const supervisor = await readRecord(generation.pidFile);
-		if (supervisor !== "none") entries.push({ name: `generation ${instanceId} supervisor`, recorded: supervisor });
+		if (supervisor !== "none") {
+			entries.push({ name: `generation ${instanceId} supervisor`, recorded: supervisor, provenance });
+		}
 		const child = await readRecord(generation.childPidFile);
-		if (child !== "none") entries.push({ name: `generation ${instanceId} host child`, recorded: child });
+		if (child !== "none") entries.push({ name: `generation ${instanceId} host child`, recorded: child, provenance });
 	}
-	for (const claim of await readSessionPathClaims(paths.reservationsDir)) {
-		entries.push({ name: `session claim of generation ${claim.owner.instanceId}`, recorded: claim.owner });
+	const claims = await readSessionPathClaimsCompletely(paths.reservationsDir);
+	if (claims.unreadable.length > 0) return incomplete("claims", `unreadable ${claims.unreadable.join(", ")}`);
+	for (const claim of claims.claims) {
+		const provenance = await provenanceOf(claim.owner.instanceId);
+		if (provenance === "unreadable") {
+			return incomplete(
+				`generation ${claim.owner.instanceId}`,
+				`generation ${claim.owner.instanceId} provenance unreadable`,
+			);
+		}
+		entries.push({
+			name: `session claim of generation ${claim.owner.instanceId}`,
+			recorded: claim.owner,
+			provenance,
+		});
 	}
-	const session = reservation.presence.ownerKernelSession;
-	for (const { name, recorded } of entries) {
-		const verdict = await observeRecorded(name, recorded, session, reservation, prober, priorBoot, budget);
+	// The generation's own actors: a row naming one of them is that actor's entry, which its proof discharges. Step (4)
+	// proved every holder of the probe set; the fence discharged every role that never reached `granted`.
+	const authorities = new Set<string>([
+		reservation.owner,
+		...roles.flatMap((row) => (row.participant ? [row.participant] : [])),
+	]);
+	for (const { name, recorded, provenance } of entries) {
+		// The store's key is the canonical record JSON (`processRecordKey`): with its SID for a row the bridge wrote.
+		if (recorded.pid !== 0 && authorities.has(processRecordKey(recorded))) continue;
+		if (provenance === undefined) {
+			return {
+				verdict: "unknown",
+				reason: "owner_identity_domain_unverified",
+				subject: name,
+				detail: `${name} (pid ${recorded.pid}) is unknown: no recorded provenance`,
+			};
+		}
+		const verdict = await observeRecorded(name, recorded, provenance, reservation, prober, proof, budget);
 		if (verdict.kind === "live") return { verdict: "live", detail: `${name} (pid ${recorded.pid}) is live` };
 		if (verdict.kind === "unknown") {
 			return {
@@ -568,15 +731,30 @@ async function recoverGeneration(
 			readonly occupied?: PresenceObjectRecord;
 			readonly unknown?: { readonly subject: string; readonly reason: RecoveryEscalationReason };
 			readonly storeDenied?: boolean;
+			/** The revision the refused evidence was read at (step 4's revalidated revision for the census). */
+			readonly readRevision?: number;
 		} = {},
 	): RecoveryOutcome => {
 		let escalation: RecoveryEscalation | undefined;
 		if (extra.unknown) {
 			const observations = budget.counts.get(extra.unknown.subject) ?? 0;
-			const cached = observations === 0 && fenced.escalation !== null && !prober.fresh;
-			// The durable escalated reason, at the revision this attempt read; a transition discards it.
+			const cached =
+				observations === 0 &&
+				fenced.escalation !== null &&
+				fenced.escalation.subject === extra.unknown.subject &&
+				!prober.fresh;
+			// The durable escalated reason, at the revision this attempt read: a record that changed since (a transition
+			// committed meanwhile) gets no marker, so the next attempt's budget is fresh.
 			if (!cached) {
-				store.escalate(generation, { subject: extra.unknown.subject, reason: extra.unknown.reason, observations });
+				try {
+					store.escalate(
+						generation,
+						{ subject: extra.unknown.subject, reason: extra.unknown.reason, observations },
+						extra.readRevision ?? fenced.revision,
+					);
+				} catch (error: unknown) {
+					if (!(error instanceof EndpointReservationError && error.reason === "revision_changed")) throw error;
+				}
 			}
 			escalation = { reason: extra.unknown.reason, observations, cached };
 		} else if (
@@ -624,7 +802,7 @@ async function recoverGeneration(
 			const verdict = await observeRecorded(
 				holder.entry,
 				parseRecorded(holder.identity),
-				holder.session,
+				holderProvenance(holder, fenced, prober),
 				fenced,
 				prober,
 				anchored,
@@ -660,14 +838,16 @@ async function recoverGeneration(
 		const result = await census(
 			paths,
 			current,
+			store.roleRows(generation),
 			prober,
-			anchored || priorBootProven(current, prober, holders, proofs),
+			anchored ?? priorBootProven(current, prober, holders, proofs),
 			budget,
 		);
 		if (result.verdict === "live") return refused("census_live", result.detail);
 		if (result.verdict === "unknown") {
 			return refused("census_unknown", result.detail, {
 				unknown: { subject: result.subject, reason: result.reason },
+				readRevision: current.revision,
 			});
 		}
 		try {

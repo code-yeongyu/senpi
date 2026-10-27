@@ -898,38 +898,55 @@ are what this decision encodes; the other two are what a client must not undo el
   asked for worker sessions sees a daemon serving hundreds of them exactly as it saw an empty one, so a task runner
   fanning out children cannot flood a desktop's session list.
 
-Windows public-endpoint startup uses a reservation generation for both the supervisor and host. The launcher grants the
-supervisor only after checking its claimed PID and process start time through the OS: on Windows it opens the claimed
-PID through the native bridge and requires `GetProcessId`, the exact creation FILETIME and the `TokenUser` SID to match
-on that one handle, which it keeps open while it grants and observes the participant; a same-birth SID mismatch or a
-handle whose PID is not the claimed one refuses `identity_inconsistent`, a different creation time or an exited process
-`participant_mismatch`, an unreadable one `identity_unverified`. Each participant records its own PID, creation FILETIME
-and SID read on one handle of itself (`userSid` in its recorded identity). The daemon's own records are written the same
-way on that path: the generation record (`generations/<instanceId>/host.pid`) names the supervisor by the identity its
-issuer verified on the retained handle, the supervisor records its host child (`host-child.pid`) through the bridge, and
-a host's session-path claims carry its own handle identity; each adds `userSid` beside `processStartTime`, which is
-then the complete creation FILETIME. A record without `userSid` was read by the platform's start-time reader and keeps
-its two fields. The supervisor learns its host's death from the host's process object, waited on through the retained
-handle (never from a wrapper's exit; the child's exit event stays a secondary signal). That supervisor then offers the
-host role in the same generation and forwards a non-secret store locator through the child argv, including through
-runtime wrappers.
-The host consumes the locator before public CLI parsing, claims with its own process identity and waits for the
-supervisor's verified grant before listening. Both grants carry the SHA-256 commitment of the established public secret,
-not the private hop credential. Cancellation, a claim or grant deadline, an unreadable or changed process
-identity, or a mismatched commitment fails startup; a failed host admission stops the spawned child.
-The supervisor allows the host claim the same 30-second startup budget as its listener. A reservation read blocked by
-another writer reports `store_busy`; claim and grant waits retry that read within their original deadline rather than
-aborting startup. Other reservation errors still propagate.
+Windows public-endpoint startup uses a reservation generation for both the supervisor and host. The launcher grants
+the supervisor only after checking its claimed PID and process start time through the OS: on Windows it opens the
+claimed PID through the native bridge and requires `GetProcessId`, the exact creation FILETIME and the `TokenUser` SID
+to match on that one handle, which it keeps open while it grants and observes the participant; a same-birth SID
+mismatch or a handle whose PID is not the claimed one refuses `identity_inconsistent`, a different creation time or an
+exited process `participant_mismatch`, an unreadable one `identity_unverified`. Each participant records its own PID,
+creation FILETIME and SID read on one handle of itself (`userSid` in its recorded identity). The daemon's own records
+are written the same way on that path: the generation record (`generations/<instanceId>/host.pid`) names the supervisor
+by the identity its issuer verified on the retained handle, the supervisor records its host child (`host-child.pid`)
+through the bridge, and a host's session-path claims carry its own handle identity; each adds `userSid` beside
+`processStartTime`, which is then the complete creation FILETIME. A record without `userSid` was read by the platform's
+start-time reader and keeps its two fields. The supervisor learns its host's death from the host's process object,
+waited on through the retained handle (never from a wrapper's exit; the child's exit event stays a secondary signal).
+That supervisor then offers the host role in the same generation and forwards a non-secret store locator through the
+child argv, including through runtime wrappers. The host consumes the locator before public CLI parsing, claims with
+its own process identity and waits for the supervisor's verified grant before listening. Both grants carry a SHA-256
+commitment of the established public secret bound to the granted role and the secret's path, not the private hop
+credential and never the bare digest.
+The locator must name the endpoint's fixed store, `<endpoint lock target>.reservation.db`; a claimant that computes a
+different path refuses it (`store_mismatch`) and reads nothing from the named file. Cancellation, a claim or grant
+deadline, an unreadable or changed process identity, or a mismatched commitment fails startup; a failed host admission
+stops the spawned child.
+Immediately before its bind, each granted participant commits its pre-listen intent: one short store transaction that
+revalidates the generation, role, grant and commitment and records the intent on the role row, so a generation cancelled
+after the grant ends the start unbound (`generation_cancelled`). A start that fails after reserving (spawn, identity,
+grant or readiness) cancels its generation and closes the store; a failing fence is reported beside the original
+diagnostic, never instead of it. The supervisor fences its generation the same way when its own startup fails after it
+offered the host role.
+Process identities are observed at most twice within five seconds, inside the existing claim or grant deadline (through
+the bridge, a reopen of the claimed PID; elsewhere, a start-time read); an identity still unreadable after that stays
+unknown and grants nothing, and a claimant that cannot read its own identity off the bridge claims nothing. The
+supervisor allows the host claim, and the host its grant wait, the same 30-second startup budget as the listener. A
+reservation read blocked by another writer reports `store_busy`; claim, grant and intent waits retry that read within
+their original deadline rather than aborting startup. Other reservation errors still propagate.
 
 A launcher chooses this reservation route for a selected command only after that command, wrapper included, reports
 the launch capabilities. The probe runs `<command> <args...> --launch-capabilities --version`. This build answers with
 one JSON line, `{"launch_capabilities":[...]}`, and exits 0 before it loads anything else. On Windows the list is
 `socket_secret_reservation_v1` and `participant_lifetime_locks_v1`. On other platforms it is empty: public endpoints
 there have no secret file, and participant lifetime locks are not implemented. An older runtime ignores the unknown flag
-and prints its version, which counts as its legacy answer. Only a list that names both capabilities selects the
-reservation route. A version line, or a list missing either name, keeps the legacy launch with no reservation flag and
-no claim wait. A spawn failure, a non-zero exit, no answer within 10 seconds or any other output fails with
-`launch-reservation-rejected` reason `launch_capability_unknown`; it is never read as a legacy answer.
+and prints its version, which counts as its legacy answer only in a positively recognized form: a version
+(`1.2.3`, `v1.2.3`, `2026.10.1`, with an optional pre-release or build), or the brand label an `omo` distribution
+prints as its display version (`omo@c6e7dd7 2026-09-04 10:17 +09:00`). Only a list that names both capabilities
+selects the reservation route. A recognized version line, or a list missing either name, keeps the legacy launch with
+no reservation flag and no claim wait. A spawn failure, a non-zero exit, no answer within the deadline (10 seconds for
+the reserving owner's probe; 5 seconds for the supervisor's probe of an explicit host, so that it ends inside the
+ensure's 10-second readiness window), a free-form line, more than one line or any other output fails with
+`launch-reservation-rejected` reason `launch_capability_unknown`; it is never read as a legacy answer. A probe that
+outlives its deadline is ended with its whole process tree (its process group on POSIX, `taskkill /t` on Windows).
 
 The supervisor `startHost` launches is this build, so it is not probed. When `hostArgs` select an explicit
 `--child-command`, `startHost` probes that command before it takes a lock, touches the secret or reserves anything.
@@ -968,11 +985,22 @@ and locality match the record. The claim then requires the reservation to still 
 acquisition (`revision_changed` otherwise), requires that object (`presence_not_bound`), and records the binding. A busy
 lock fails the start with `launch-reservation-rejected` reason `presence_occupied`; any other failure is
 `presence_unknown`. Neither claims, spawns or listens, and a busy lock is never read as proof of who holds it. A
-participant that fails before it may act, or whose claim is refused, closes that unused handle. A granted supervisor
-keeps its lock through every spawn and bind. Once its shutdown has observed the host's exit and closed its listener, it
-commits `released` and only then closes the lock. The host keeps its lock until its process exits. The reserving process
-commits its own `released` once the generation is serving, then closes its lock. A row without a local presence root
-takes no lock.
+participant that fails before it may act, or whose claim is refused, closes that unused handle; one refused after its
+grant (a commitment mismatch) first commits its `released`, then closes the lock, and keeps the lock held when that
+commit fails. A granted supervisor keeps its lock through every spawn and bind. Once its shutdown has observed the host's
+exit and closed its listener, it commits `released` and only then closes the lock; a drained supervisor keeps its
+listening handle open until it exits, so it commits no `released` and leaves the lock to the kernel. The host keeps its
+lock until its process exits. The reserving process commits its own `released` once the generation is serving, then
+closes its lock; a `released` commit that fails there does not fail the serving start, and the lock stays held until the
+process exits. A start that fails after the reservation persisted cancels the generation, commits the owner's
+`released` and closes its lock. A row without a local presence root takes no lock.
+
+Before each authorized action, the holder runs the pre-action check on its lock handle: the reserving process before it
+provisions or repairs the public secret and before it spawns the supervisor, the supervisor before it spawns the host
+and before it binds the public listener, the host before it binds. The check compares the handle's physical identity
+with the recorded one, reads through it and reclassifies the volume. A failed check is terminal: it fails with
+`launch-reservation-rejected` reason `presence_pre_action_failed`, the actor performs no further action (the
+reserving process and the supervisor cancel the generation they offered a role in), and the lock is never re-acquired.
 
 A presence object is deleted only by a process that holds it at that moment, and only once the store no longer needs
 it. On Windows holding means an exclusive open with `DELETE` access and share mode 0; because presence locks and probes
@@ -985,10 +1013,15 @@ timer or a background job. It handles at most 32 objects per run, in name order,
 resolved. It considers an object only when every row naming it is `released` or belongs to a retired generation, or
 when no row names it and the creation time in its header is more than 24 hours old (the window between creating an
 object and committing its offer, never evidence about a process). It then takes the exclusive hold, rereads the rows in
-a short store transaction while holding, and deletes; a held object is skipped. A recovery probe that finds no object
-rereads the row: an entry that committed `released` meanwhile is discharged by that commit, and a missing object for an
-entry that did not stays unknown. An issuer whose predeclared object is missing once its offer committed cancels the
-generation before any spawn, with `presence-placement-rejected` reason `presence_object_missing`.
+a short store transaction while holding, compares the held object's volume serial, file ID and header with what the row
+recorded, and deletes; a held object is skipped, and so is one whose identity is not the recorded one. The hold is
+released on every path, a thrown store error included, and a failed sweep never decides the start (it is noted in the
+endpoint's stderr log). A recovery probe that finds no object rereads the row: an entry that committed `released`
+meanwhile is discharged by that commit, and a missing object for an entry that did not stays unknown. An issuer whose
+predeclared object is missing once its offer committed cancels the generation before any spawn, with
+`presence-placement-rejected` reason `presence_object_missing`; one whose object another handle holds exclusively at
+that moment (a sweep deciding its fate) cannot know whether the object survives, so it cancels the same way with
+`presence_object_busy` instead of spawning a participant whose object may be deleted under it.
 
 An endpoint has at most one generation that is not retired: reserving another while one is pending, serving or
 cancelling fails with `generation_active`. Recovery retires an abandoned generation in two transitions. The fence
@@ -1014,15 +1047,25 @@ creation FILETIME (compared exactly) or is a signalled process object with the r
 FILETIME and `TokenUser` SID on one handle is live. A recorded identity without `userSid` (one the start-time reader
 wrote, whose CIM creation time differs from the handle's FILETIME in its last digit) is never compared against the
 handle's reading: it is `owner_identity_incomplete`, never gone by a different creation time. That observation counts
-only when the store recorded `local` and
-still classifies `local`, or when the row's and this machine's kernel-session identities are both verified and equal; an
-`unverified` identity equals nothing. On a store recorded and still classified `local`, a verified kernel-session
-identity that differs from the one the generation recorded, with every probed object acquired, proves every process of
-that earlier boot gone. Then
-every recorded generation supervisor, host child and session-path claim of the endpoint must be gone under the same
-rules. Recovery retires at the revision it revalidated while it still holds the acquired locks, and releases them after
-the commit. A generation that served and whose actors committed `released` retires without any probe, so an ordinary
-restart is not refused.
+only when the store recorded `local` and still classifies `local`, or when the row's and this machine's kernel-session
+identities are both verified and equal; an `unverified` identity equals nothing. On a store recorded and still
+classified `local`, a verified kernel-session identity that differs from the
+one the generation recorded, with every probed object acquired, proves every process of that earlier boot gone: it
+resolves only entries provably from that boot (a verified session equal to it, on a directory recorded and still
+`local`), never a current-boot entry, one with an unverified session or one without provenance. Then every recorded
+generation supervisor, host child and session-path claim of the endpoint must be gone. A row naming one of the
+generation's recorded actors (the owner, a claimed participant) is that actor's own entry and is discharged by the
+actor's proof, so a quiescent actor that stays alive doing unrelated work does not block. Every other row carries only
+the provenance its launch recorded beside it: `startHost` writes `generations/<instanceId>/launch-provenance.json`
+(the reservation generation, the reserving owner's kernel session, whether the daemon directory classified `local`
+from its opened handle) before the spawn, and the census applies the rules above to the row from that record (the
+daemon directory recorded `local` and `local` now, or verified equal sessions). A row with no provenance (a legacy or
+foreign writer) is unknown. A generations or reservations directory that exists but cannot be listed, a pidfile or
+provenance record that cannot be read, and a half-written or malformed claim are incomplete discovery, which is unknown,
+never nothing to find. Recovery retires at the revision it revalidated while it still holds the acquired locks, and
+releases them after the commit. A generation that served and whose actors committed `released` retires without any
+probe, so an ordinary restart is not refused. A retired generation also refuses a late `released` commit of its owner
+or a role with `generation_retired`: the tombstone is immutable.
 
 When recovery cannot prove that every recorded actor ended, the start fails with `HostEnsureRefusedError` reason
 `reservation_recovery_required`, and `host ensure --json` (exit 3) carries
@@ -1053,13 +1096,15 @@ reservation as its escalated reason at the revision read (`escalation` in the re
 `observations`), and the refusal's `escalation: { reason, observations, cached }` names it. The reasons are
 `owner_identity_unreadable` (a denied or failed reopen, or an unreadable creation time, SID or exit state),
 `owner_identity_inconsistent` (the recorded creation FILETIME under another SID, or a handle whose `GetProcessId` is not
-the reopened PID; it gets the same one requery), `owner_identity_incomplete` (no recorded identity, or one that cannot
-be compared, a recorded identity without a SID included), `owner_identity_domain_mismatch` (both kernel sessions
-verified and different) and `owner_identity_domain_unverified` (either unverified). An unchanged record (same revision)
-answers a later automatic ensure from that marker with `observations: 0, cached: true` and no new query, while its
-presence objects are still probed once and a verified different kernel session is still checked; a transition discards
-the marker, an explicit `host repair` opens one new bounded assessment, and a repair that resolves the record to `live`
-drops it.
+the reopened PID; it gets the same one requery, and no prior-boot proof resolves it), `owner_identity_incomplete` (no
+recorded identity, or one that cannot be compared, a recorded identity without a SID included),
+`owner_identity_domain_mismatch` (both kernel sessions verified and different) and `owner_identity_domain_unverified`
+(either unverified). The marker is written only when the record is still at
+the revision the attempt read; a record that changed meanwhile gets none, so the next attempt's budget is fresh. An
+unchanged record (same revision) answers a later automatic ensure from that marker with `observations: 0, cached: true`
+and no new query for the marker's own `subject` only; every other entry is queried as usual, its presence objects are
+still probed once and a verified different kernel session is still checked; a transition discards the marker, an
+explicit `host repair` opens one new bounded assessment, and a repair that resolves the record to `live` drops it.
 
 `host repair [--confirm-restart] [--socket <path>] --json` is the explicit Repair connection action, engine half. It
 refuses `unsupported_platform` off the reservation route. Otherwise it runs the recovery check once more under the
@@ -1078,7 +1123,10 @@ also records the repair anchor, the current verified kernel session at the fence
 none (`anchor: null`), and after the restart the lifetime acquisition is the proof instead. After a verified different
 kernel session, on a store recorded and still classified `local`, the anchor proves every process that could have
 exercised the generation's authority gone, so the next ensure retires it; a later claim or commit (a changed revision)
-discards the anchor, and a non-local store never records one. Cancelling the restart leaves everything intact.
+discards the anchor, and a non-local store never records one. Cancelling the restart leaves everything intact. Neither
+the anchor nor the Revision 6 reboot proof resolves an entry without observing it: an entry whose process is live now
+blocks, an absent one is gone by observation, and the proof resolves only an entry whose recorded identity is missing or
+whose observations found it unreadable or noncomparable; an entry the deadline left unobserved stays unknown.
 
 ### Generation handoff (`handoffHost`, `probeHost`, `stopHost`)
 

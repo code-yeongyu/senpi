@@ -1,6 +1,6 @@
 import * as childProcess from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -23,8 +23,10 @@ import {
 	type LaunchIdentity,
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
+	reservationStorePath,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import { recordChildPid } from "../../../src/modes/rpc/host-lifecycle-scratch.ts";
+import { recordLaunchProvenance } from "../../../src/modes/rpc/launch-provenance.ts";
 import { createSessionPathReservations, readSessionPathClaims } from "../../../src/modes/rpc/host-reservations.ts";
 import { resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
 import {
@@ -35,7 +37,7 @@ import {
 	startTimeEvidence,
 } from "../../../src/modes/rpc/process-evidence.ts";
 import { createSocketSecret, socketSecretPath } from "../../../src/modes/rpc/socket-transport.ts";
-import { fakeWindows } from "../../helpers/fake-windows-presence.ts";
+import { FAKE_KERNEL_SESSION, fakeWindows } from "../../helpers/fake-windows-presence.ts";
 
 const mocked = vi.hoisted(() => ({ lockDir: "", placement: undefined as unknown, spawn: undefined as unknown }));
 
@@ -109,7 +111,9 @@ describe("#4199 process evidence through the retained handle: PID, creation FILE
 	/** A reserving owner that holds its object, reserved and offered the supervisor role on `machine`. */
 	async function offered(machine: Machine, owner: LaunchIdentity = OWNER) {
 		const root = await tempRoot();
-		const store = await openStore(join(root, "endpoint.reservation.db"));
+		// The endpoint's fixed store beside its (mocked) ensure lock: the one store a claimant's locator may name.
+		mocked.lockDir = root;
+		const store = await openStore(reservationStorePath(ENDPOINT));
 		const reservation = resolvePresenceRoot({
 			coordinationTarget: TARGET,
 			endpointKey: ENDPOINT_KEY,
@@ -148,7 +152,12 @@ describe("#4199 process evidence through the retained handle: PID, creation FILE
 
 	/** Recovery with the machine's bridge as its only process-evidence source: no injected observer. */
 	function recover(launch: Awaited<ReturnType<typeof crashedWithoutOwnerObject>>, machine: Machine) {
-		return recoverEndpointReservations(launch.store, ENDPOINT, launch.paths, recoveryProber(STORE_DIR, machine.load));
+		return recoverEndpointReservations(
+			launch.store,
+			ENDPOINT,
+			launch.paths,
+			recoveryProber(STORE_DIR, machine.load, { daemonDirectory: launch.paths.dir }),
+		);
 	}
 
 	describe("recovery-time observation (design 4.2a 'OS identity'; clause (iii) admits it on a local store)", () => {
@@ -267,6 +276,49 @@ describe("#4199 process evidence through the retained handle: PID, creation FILE
 			});
 		});
 
+		it("a proven prior boot resolves an entry every observation found unreadable, never one found inconsistent", async () => {
+			// senpi#4481 fold meets the handle adapter: the reboot proof answers only after the observation could not decide
+			// the entry. A denied open (unreadable, twice) is such an entry; a process answering the recorded birth under
+			// another SID is "an unresolved inconsistency, not permission to reclaim", whatever the boot evidence says.
+			const S2 = "133200000000000000";
+			const ROW_PID = 9001;
+			async function rebooted(install: (machine: Machine) => void) {
+				const machine = fakeWindows();
+				const launch = await offered(machine);
+				await claimLaunchRole(launch.locator, SUPERVISOR, machine.load);
+				grantVerifiedParticipant(launch.store, launch.generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
+				// Every process of session S1 crashed, its objects left acquirable; a row of that boot sits in the census.
+				machine.held.clear();
+				const paths = await createHostDaemonPaths({
+					agentDir: join(launch.root, "agent"),
+					socket: join(launch.root, "rpc.sock"),
+				});
+				const generation = generationPaths(paths, "gen-s1");
+				await createGenerationDirectory(generation);
+				await recordLaunchProvenance(generation.launchProvenanceFile, {
+					generation: launch.generation,
+					kernelSession: { status: "verified", value: FAKE_KERNEL_SESSION },
+					directoryLocal: true,
+				});
+				await writeFile(
+					generation.pidFile,
+					JSON.stringify({ pid: ROW_PID, processStartTime: CREATED, userSid: SID }),
+				);
+				install(machine);
+				// The confirmed next boot, S2.
+				machine.control.kernelSession = { status: "verified", creationTime: S2, reason: null };
+				return recover({ ...launch, paths }, machine);
+			}
+			expect(await rebooted((machine) => machine.processes.denied(ROW_PID))).toMatchObject({
+				status: "recovered",
+			});
+			expect(await rebooted((machine) => machine.processes.live(ROW_PID, CREATED, OTHER_SID))).toMatchObject({
+				status: "refused",
+				reason: "census_unknown",
+				escalation: { reason: "owner_identity_inconsistent", observations: 2 },
+			});
+		});
+
 		it("the observation table never compares across domains: a SID marks a handle-domain record", () => {
 			// "Verified common boot/PID/clock domain and units ... different exact creation/start discriminator" is gone; a
 			// record and an observation from different readers are "noncomparable", unknown. A record carries `userSid` only
@@ -309,11 +361,20 @@ describe("#4199 process evidence through the retained handle: PID, creation FILE
 		const CHILD_PID = 7001;
 		const CHILD_CREATED = "134000000000000007";
 
-		/** An abandoned generation whose owner is gone, so only the daemon's own records can keep it from retiring. */
+		/**
+		 * An abandoned generation whose owner is gone, so only the daemon's own records can keep it from retiring. Its rows
+		 * carry the launch provenance startHost records beside them (senpi#4479 fold): the reserving owner's kernel session,
+		 * on the local daemon directory, so the census observes them through the gate (clauses i, iii).
+		 */
 		async function abandoned(machine: Machine) {
 			const launch = await crashedWithoutOwnerObject(machine);
 			const generation = generationPaths(launch.paths, "gen-a");
 			await createGenerationDirectory(generation);
+			await recordLaunchProvenance(generation.launchProvenanceFile, {
+				generation: launch.generation,
+				kernelSession: { status: "verified", value: FAKE_KERNEL_SESSION },
+				directoryLocal: true,
+			});
 			return { ...launch, generationDir: generation };
 		}
 

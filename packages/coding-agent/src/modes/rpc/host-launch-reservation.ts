@@ -1,6 +1,6 @@
 /**
- * The supervisor and host hops of the wrapper-safe launch (sisyphuslabs/omo-desktop-app#4199, design 4.2a "Wrapper-safe discovery
- * and one-time claim"). The launcher reserves a generation and offers the supervisor role, then forwards only a
+ * The supervisor and host hops of the wrapper-safe launch (sisyphuslabs/omo-desktop-app#4199, design 4.2a "Wrapper-safe
+ * discovery and one-time claim"). The launcher reserves a generation and offers the supervisor role, then forwards only a
  * non-secret locator in argv: the store path, endpoint, generation and role. Whatever process the selected runtime
  * finally becomes opens the store itself, reads its role's nonce there and claims with its own identity. The issuer
  * grants only when the claimed identity equals what it observed through the OS for the process it launched, bound to
@@ -11,6 +11,11 @@
  * FILETIME and the `TokenUser` SID to match on that handle, and retains the handle while it grants and observes that
  * participant; a non-match only refuses the grant. A claimant records the same three read on one handle of itself.
  * Elsewhere the identity is the PID and the platform's start-time discriminator, as before.
+ *
+ * The locator must resolve to the endpoint's fixed store beside its ensure lock (step 1): a claimant computes that path
+ * itself and refuses a locator naming any other file. A commitment is the private SHA-256 digest of the credential bound
+ * to its role and its path, so one credential yields a different commitment per hop. Before its bind, a granted
+ * participant commits its pre-listen intent in a short transaction that revalidates the grant (step 4).
  *
  * Every offer predeclares its role's presence object in the root the reserving owner recorded, before the offer commits
  * and so before any spawn; a claimant first checks that root is the recorded, still-local physical directory (design
@@ -28,13 +33,8 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import {
-	LaunchReservationError,
-	LOCATOR_FLAGS,
-	type StoreLocator,
-	spawnableChildLaunch,
-} from "./host-lifecycle-launch.ts";
 import {
 	LAUNCH_CAPABILITIES_FLAG,
 	launchCapabilities,
@@ -49,15 +49,24 @@ import {
 	type ReservationPresence,
 	type ReservationRole,
 } from "./endpoint-reservation-store.ts";
-import { deletePresenceObject, type PresenceDeletion, presenceObjectMissing } from "./presence-cleanup.ts";
+import { hostEnsureLockTarget } from "./host-ensure-lock.ts";
+import {
+	LaunchReservationError,
+	LOCATOR_FLAGS,
+	type StoreLocator,
+	spawnableChildLaunch,
+} from "./host-lifecycle-launch.ts";
+import { deletePresenceObject, type PresenceDeletion, presenceObjectState } from "./presence-cleanup.ts";
 import { predeclarePresenceObject, PresencePlacementError, verifyRecordedPresenceRoot } from "./presence-placement.ts";
 import {
 	classifyObservation,
 	type ProcessEvidence,
 	type ProcessExitWait,
 	type ProcessRecord,
+	processRecordKey,
 } from "./process-evidence.ts";
 import { loadPresencePlacement, type PresencePlacementLoad } from "./socket-secret-native.ts";
+import { socketSecretPath } from "./socket-transport.ts";
 
 export { LaunchReservationError, parseReservationLocatorArgs, type StoreLocator } from "./host-lifecycle-launch.ts";
 
@@ -72,12 +81,50 @@ export type LaunchIdentity = ProcessRecord;
  * an identity without a SID keeps the two-field encoding every earlier row has.
  */
 function identityKey(identity: LaunchIdentity): string {
-	const { pid, processStartTime } = identity;
-	return JSON.stringify(
-		typeof identity.userSid === "string"
-			? { pid, processStartTime, userSid: identity.userSid }
-			: { pid, processStartTime },
-	);
+	return processRecordKey(identity);
+}
+
+/** The endpoint's one reservation store, beside its ensure lock (design 4.2a step 1); the only store a locator may name. */
+export function reservationStorePath(endpoint: string): string {
+	return `${hostEnsureLockTarget(endpoint)}.reservation.db`;
+}
+
+/**
+ * How many times an identity is observed before it stays unknown, and the floor each observation keeps of the caller's
+ * deadline (design 4.2a: a second observation within five seconds, bounded by the existing claim/grant budget). A single
+ * 1 s CIM probe fails on a loaded Windows runner; the retry stays inside the deadline the caller already waits.
+ */
+export const IDENTITY_OBSERVATION_ATTEMPTS = 2;
+const IDENTITY_OBSERVATION_BUDGET_MS = 5_000;
+/** Each production probe's own limit: two of them fit the five-second bound, and one outlasts a loaded runner's CIM read. */
+export const IDENTITY_OBSERVATION_PROBE_MS = IDENTITY_OBSERVATION_BUDGET_MS / IDENTITY_OBSERVATION_ATTEMPTS;
+
+/** Store contention during the intent transaction is retried inside this bound; the transaction itself is short. */
+const INTENT_BUSY_RETRY_MS = 2_000;
+
+/**
+ * The commitment of `credential` for one hop: a private SHA-256 digest bound to the role and the credential's path, so
+ * the host's commitment is never valid for the supervisor's grant and a credential at another path never matches.
+ * Fields are length-prefixed, so no boundary between them is ambiguous.
+ */
+export function credentialCommitment(credential: Uint8Array, role: ReservationRole, path: string): Buffer {
+	const hash = createHash("sha256");
+	for (const field of [
+		Buffer.from("senpi-rpc-launch-commitment-v1"),
+		Buffer.from(role),
+		Buffer.from(path),
+		credential,
+	]) {
+		const length = Buffer.alloc(4);
+		length.writeUInt32BE(field.length);
+		hash.update(length).update(field);
+	}
+	return hash.digest();
+}
+
+/** The commitment the issuer grants and the claimant verifies for `role` of `endpoint`: the public secret's. */
+function endpointCommitment(credential: Uint8Array, role: ReservationRole, endpoint: string): Buffer {
+	return credentialCommitment(credential, role, socketSecretPath(endpoint));
 }
 
 /**
@@ -97,14 +144,23 @@ export interface HeldPresence {
 	 * object for the sweep. Never called for a handle whose authority is still recorded.
 	 */
 	deleteAfterRelease(): PresenceDeletion;
+	/**
+	 * The Revision 7 pre-action check on the holding handle (design 4.2a "Descriptor-loss detection"), run before each
+	 * authorized bind, spawn or credential mutation: the bridge compares the handle's physical identity with the recorded
+	 * one, reads through it and reclassifies the volume. A failed check is terminal for the actor and throws
+	 * `presence_pre_action_failed`; the registry stays fenced, so the actor never re-acquires and continues. A row
+	 * without presence has nothing to check.
+	 */
+	preActionCheck(): void;
 }
 
 /**
  * Opens and acquires a predeclared presence object with one nonblocking attempt. The bridge keeps the guard only when the
  * opened object's content tag, physical identity and locality match the record (admissibility rules 1 and 2), so an
  * acquired object is the predeclared one. Rule 3, the kernel-session match of a relocated object, is recovery evidence:
- * a start never uses that identity (Revision 8 clause (ii)), so an unverified session never blocks one. Busy is
- * `presence_occupied` and proves only occupied authority, never who holds it; every other result is `presence_unknown`.
+ * the design's kernel-session identity bullet says grants, starts and observations through a retained handle never use
+ * the identity, so an unverified session never blocks a start. Busy is `presence_occupied` and proves only occupied
+ * authority, never who holds it; every other result is `presence_unknown`.
  */
 export function acquirePresence(object: PresenceObjectRecord, native: PresencePlacementLoad): HeldPresence {
 	if (object.status !== "predeclared") {
@@ -112,6 +168,7 @@ export function acquirePresence(object: PresenceObjectRecord, native: PresencePl
 			object,
 			release: () => {},
 			deleteAfterRelease: () => ({ status: "left", reason: "presence_unavailable", detail: null }),
+			preActionCheck: () => {},
 		};
 	}
 	if (native.status !== "available") {
@@ -121,7 +178,7 @@ export function acquirePresence(object: PresenceObjectRecord, native: PresencePl
 	const result = bridge.presenceProbe({
 		presenceId: object.presenceId,
 		path: object.path,
-		tag: Buffer.from(object.header, "hex"),
+		header: Buffer.from(object.header, "hex"),
 		volumeSerial: object.volumeSerial,
 		fileId: object.fileId,
 		createdLocal: object.classification === "local",
@@ -139,6 +196,15 @@ export function acquirePresence(object: PresenceObjectRecord, native: PresencePl
 			bridge.presenceReleaseAfterQuiescence({ presenceId: object.presenceId, state: "released" });
 		},
 		deleteAfterRelease: () => deletePresenceObject(object, native),
+		preActionCheck: () => {
+			const check = bridge.presencePreActionCheck(object.presenceId);
+			if (check.status === "valid") return;
+			const reason = "reason" in check ? ` ${check.reason}` : "";
+			throw new LaunchReservationError(
+				"presence_pre_action_failed",
+				`${object.presenceId}: ${check.status}${reason}`,
+			);
+		},
 	};
 }
 
@@ -165,7 +231,9 @@ export function releaseReservingOwner(
 
 /**
  * The issuer's check once its offer committed (design 4.2a Revision 7): a predeclared object that is missing, which
- * only the sweep's age filter can cause after a creation that stalled past it, cancels the offer before any spawn.
+ * only the sweep's age filter can cause after a creation that stalled past it, cancels the offer before any spawn. An
+ * object another handle holds exclusively at that moment (a sweep deciding its fate) is unknown, not "exists and fine":
+ * the issuer cancels rather than spawn a participant whose object may be deleted under it.
  */
 function requireOfferedObject(
 	store: EndpointReservationStore,
@@ -174,12 +242,15 @@ function requireOfferedObject(
 	object: PresenceObjectRecord,
 	native: PresencePlacementLoad,
 ): void {
-	if (!presenceObjectMissing(object, native)) return;
+	const state = presenceObjectState(object, native);
+	if (state === "present" || state === "unknown") return;
 	store.cancel(generation);
 	const presenceId = object.status === "predeclared" ? object.presenceId : "";
 	throw new PresencePlacementError(
-		"presence_object_missing",
-		`${presenceId} of ${role} in ${generation} vanished before the offer committed`,
+		state === "missing" ? "presence_object_missing" : "presence_object_busy",
+		state === "missing"
+			? `${presenceId} of ${role} in ${generation} vanished before the offer committed`
+			: `${presenceId} of ${role} in ${generation} is held exclusively by another handle after the offer committed`,
 	);
 }
 
@@ -204,10 +275,35 @@ export function ownLaunchRoute(): LaunchRoute {
 	return routeOf(launchCapabilities(process.platform));
 }
 
-/** What an old runtime's root `--version` prints: one version, optionally `v`-prefixed, with a pre-release or build. */
-const VERSION_LINE = /^v?\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z.+-]*)?$/;
+/**
+ * What an old runtime's root `--version` prints (`DISPLAY_VERSION` in config.ts), each form positively recognized: one
+ * version, optionally `v`-prefixed, with a pre-release or build (the engine's `VERSION` and a brand's semver or CalVer
+ * `displayVersion`); or the brand label an `omo` distribution injects as its `displayVersion`,
+ * `<brand>@<commit> <date> <time> <zone>` (for example `omo@c6e7dd7 2026-09-04 10:17 +09:00`). Any other line is not a
+ * legacy answer: it is unrecognized and fails closed.
+ */
+const VERSION_LINES: readonly RegExp[] = [
+	/^v?\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z.+-]*)?$/,
+	/^[A-Za-z][A-Za-z0-9._-]*@[0-9a-f]{7,40} \d{4}-\d{2}-\d{2} \d{2}:\d{2} [+-]\d{2}:\d{2}$/,
+];
 const PROBE_OUTPUT_LIMIT = 4096;
 const LAUNCH_CAPABILITY_PROBE_DEADLINE_MS = 10_000;
+
+/**
+ * How a probe that outlived its deadline is ended. A POSIX probe runs in its own process group, so the group signal
+ * also ends what a wrapper started. Windows has no group signal, and killing only the direct child leaves the runtime a
+ * `.cmd`/`.bat` wrapper started running: the whole tree is ended by pid through `taskkill /t`.
+ */
+export function probeDeadlineKill(
+	pid: number,
+	platform: NodeJS.Platform,
+):
+	| { readonly command: string; readonly args: readonly string[] }
+	| { readonly signal: "SIGKILL"; readonly target: number } {
+	return platform === "win32"
+		? { command: "taskkill", args: ["/pid", String(pid), "/t", "/f"] }
+		: { signal: "SIGKILL", target: -pid };
+}
 
 /**
  * Runs the selected command, wrapper included, as `<command> <args...> --launch-capabilities --version` and classifies
@@ -239,8 +335,13 @@ export async function selectLaunchRoute(
 		});
 		const timer = setTimeout(() => {
 			try {
-				if (detached && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-				else child.kill("SIGKILL");
+				if (child.pid === undefined) {
+					child.kill("SIGKILL");
+				} else {
+					const kill = probeDeadlineKill(child.pid, process.platform);
+					if ("signal" in kill) process.kill(kill.target, kill.signal);
+					else spawn(kill.command, [...kill.args], { stdio: "ignore", windowsHide: true }).once("error", () => {});
+				}
 			} catch {}
 			reject(
 				unknown(
@@ -260,7 +361,7 @@ export async function selectLaunchRoute(
 	});
 	const lines = output.split(/\r?\n/).filter((line) => line.trim() !== "");
 	const answer = lines.length === 1 ? (lines[0] ?? "").trim() : undefined;
-	if (answer !== undefined && VERSION_LINE.test(answer)) return "legacy";
+	if (answer !== undefined && VERSION_LINES.some((form) => form.test(answer))) return "legacy";
 	let record: unknown;
 	try {
 		record = answer === undefined ? undefined : JSON.parse(answer);
@@ -346,19 +447,37 @@ export function offerHostRole(
 	requireOfferedObject(store, generation, "host", object, native);
 }
 
+/** Two spellings of one path compare equal; win32 paths compare case-insensitively like the filesystem does. */
+function samePath(left: string, right: string): boolean {
+	const normalize = (path: string) => (process.platform === "win32" ? resolve(path).toLowerCase() : resolve(path));
+	return normalize(left) === normalize(right);
+}
+
 /**
- * The claimant opens the store named by the locator, checks that the recorded presence root is the same still-local
- * physical directory from where it runs, reads its nonce there, acquires its role's predeclared presence object BEFORE
- * the nonce-claim transaction, and claims with its own identity bound to that object at the revision it read first. A
- * different physical directory (another profile, packaged-app virtualization) or a busy or unknown acquisition fails
- * typed and consumes nothing; a claim refused after the acquisition releases that unused handle.
+ * Opens the store a locator names, after checking it IS the endpoint's fixed reservation store (design 4.2a step 1):
+ * a wrapper that renames the store path confers nothing, and nothing in that other file is read.
+ */
+async function openLocatedStore(locator: StoreLocator): Promise<EndpointReservationStore> {
+	const expected = reservationStorePath(locator.endpoint);
+	if (!samePath(locator.storePath, expected)) {
+		throw new LaunchReservationError("store_mismatch", `the locator does not name the endpoint's reservation store`);
+	}
+	return openEndpointReservationStore(locator.storePath);
+}
+
+/**
+ * The claimant opens the endpoint's store named by the locator, checks that the recorded presence root is the same
+ * still-local physical directory from where it runs, reads its nonce there, acquires its role's predeclared presence
+ * object BEFORE the nonce-claim transaction, and claims with its own identity bound to that object at the revision it
+ * read first. A different physical directory (another profile, packaged-app virtualization) or a busy or unknown
+ * acquisition fails typed and consumes nothing; a claim refused after the acquisition releases that unused handle.
  */
 export async function claimLaunchRole(
 	locator: StoreLocator,
 	self: LaunchIdentity,
 	native: PresencePlacementLoad = loadPresencePlacement(),
 ): Promise<{ readonly outcome: "claimed" | "already_claimed_by_caller"; readonly presence: HeldPresence }> {
-	const store = await openEndpointReservationStore(locator.storePath);
+	const store = await openLocatedStore(locator);
 	try {
 		const reservation = store.reservation(locator.generation);
 		verifyRecordedPresenceRoot(reservation.presence.root, native);
@@ -420,7 +539,7 @@ export async function waitForGrant(
 	options: { readonly deadlineMs: number; readonly intervalMs?: number },
 ): Promise<GrantWait> {
 	const until = Date.now() + options.deadlineMs;
-	const store = await openEndpointReservationStore(locator.storePath);
+	const store = await openLocatedStore(locator);
 	try {
 		for (;;) {
 			try {
@@ -433,6 +552,51 @@ export async function waitForGrant(
 			}
 			if (Date.now() >= until) return { granted: false, reason: "grant_deadline" };
 			await delay(Math.min(options.intervalMs ?? 25, Math.max(1, until - Date.now())));
+		}
+	} finally {
+		store.close();
+	}
+}
+
+/**
+ * The granted participant's pre-listen intent (design 4.2a step 4), committed immediately before its bind: one short
+ * transaction revalidates generation, role, grant and the commitment of the credential it is about to serve with, then
+ * records the intent. A generation cancelled after the grant refuses it typed, so the participant aborts before it
+ * binds; the recorded grant and identity stay for the recovery census.
+ */
+export async function commitListenIntent(
+	locator: StoreLocator,
+	self: LaunchIdentity,
+	credential: Uint8Array,
+): Promise<void> {
+	const store = await openLocatedStore(locator);
+	const until = Date.now() + INTENT_BUSY_RETRY_MS;
+	try {
+		for (;;) {
+			try {
+				store.commitListenIntent(
+					locator,
+					identityKey(self),
+					endpointCommitment(credential, locator.role, locator.endpoint),
+				);
+				return;
+			} catch (error: unknown) {
+				if (!(error instanceof EndpointReservationError)) throw error;
+				if (error.reason === "store_busy" && Date.now() < until) {
+					await delay(25);
+					continue;
+				}
+				if (error.reason === "generation_cancelled") {
+					throw new LaunchReservationError("generation_cancelled", `${locator.role} in ${locator.generation}`);
+				}
+				if (error.reason === "commitment_mismatch") {
+					throw new LaunchReservationError(
+						"commitment_mismatch",
+						"the credential about to be served is not the granted one",
+					);
+				}
+				throw error;
+			}
 		}
 	} finally {
 		store.close();
@@ -485,14 +649,56 @@ function parseIdentity(text: string): LaunchIdentity {
 export interface ParticipantRelease {
 	/** Commits the role's `released`, then closes the guard. Call only after the participant's work is done. */
 	releaseAfterQuiescence(): Promise<void>;
+	/** The pre-action check of the held guard before each authorized spawn or bind; see `HeldPresence.preActionCheck`. */
+	preActionCheck(): void;
 }
 
 /**
- * A reserved participant's entry (design 4.2a steps 2-4): claim the offered role with this process's own
+ * Reads a process's exact start discriminator with `observe`, retrying a failed or empty observation
+ * `IDENTITY_OBSERVATION_ATTEMPTS` times in all within the smaller of `deadlineMs` and the design's five-second bound.
+ * Still unreadable after that: `undefined`, which grants nothing; it never becomes an inferred identity.
+ */
+export async function observeStartTime(
+	pid: number,
+	observe: (pid: number) => Promise<string | undefined>,
+	deadlineMs: number,
+): Promise<string | undefined> {
+	const until = Date.now() + Math.min(deadlineMs, IDENTITY_OBSERVATION_BUDGET_MS);
+	for (let attempt = 1; ; attempt++) {
+		try {
+			const start = await observe(pid);
+			if (start) return start;
+		} catch {
+			// A starved or failed probe is an observation failure, retried below; never a verdict on the process.
+		}
+		if (attempt >= IDENTITY_OBSERVATION_ATTEMPTS || Date.now() >= until) return undefined;
+		await delay(Math.min(100, Math.max(1, until - Date.now())));
+	}
+}
+
+/**
+ * A claimant's own identity, read with the same bound as the issuer's observation: an identity that stays unreadable
+ * claims nothing, since no grant could ever match it.
+ */
+export async function readClaimantIdentity(
+	pid: number,
+	observe: (pid: number) => Promise<string | undefined>,
+	deadlineMs: number,
+): Promise<LaunchIdentity> {
+	const processStartTime = await observeStartTime(pid, observe, deadlineMs);
+	if (processStartTime === undefined) {
+		throw new LaunchReservationError("identity_unverified", `pid ${pid} could not read its own start time`);
+	}
+	return { pid, processStartTime };
+}
+
+/**
+ * A reserved participant's entry (design 4.2a steps 2-3): claim the offered role with this process's own
  * identity, wait (bounded) for the issuer's grant, then verify the parent's established public secret read-only against
  * the granted commitment. Any failure aborts the start: no provisioning, no repair, no fallback to a direct launch, and
  * the presence handle, which then never authorized a spawn or a listener, is released. An admitted participant keeps
  * holding its lock; the returned release ends it after quiescence. A row without presence returns nothing to release.
+ * The pre-listen intent (step 4) is committed separately, immediately before the bind, with `commitListenIntent`.
  */
 export async function admitClaimedParticipant(
 	locator: StoreLocator,
@@ -501,10 +707,25 @@ export async function admitClaimedParticipant(
 	options: { readonly deadlineMs: number; readonly presence?: PresencePlacementLoad },
 ): Promise<ParticipantRelease | undefined> {
 	const { presence } = await claimLaunchRole(locator, self, options.presence);
+	const releaseAfterQuiescence = async () => {
+		const store = await openEndpointReservationStore(locator.storePath);
+		try {
+			store.release(locator.generation, locator.role, identityKey(self));
+		} finally {
+			store.close();
+		}
+		presence.release();
+		// Clean exit (Revision 7): the `released` commit precedes every deletion; a busy object is the sweep's.
+		presence.deleteAfterRelease();
+	};
+	let granted = false;
 	try {
 		const grant = await waitForGrant(locator, self, options);
 		if (!grant.granted) throw new LaunchReservationError(grant.reason, `${locator.role} in ${locator.generation}`);
-		const established = credential ? createHash("sha256").update(credential).digest("hex") : undefined;
+		granted = true;
+		const established = credential
+			? endpointCommitment(credential, locator.role, locator.endpoint).toString("hex")
+			: undefined;
 		if (established !== grant.commitment) {
 			throw new LaunchReservationError(
 				"commitment_mismatch",
@@ -512,23 +733,18 @@ export async function admitClaimedParticipant(
 			);
 		}
 	} catch (error: unknown) {
+		if (granted && presence.object.status === "predeclared") {
+			// Granted, then refused before any spawn or listen: the handle is no longer unused, so the role's authority
+			// ends with its own `released` commit before the guard closes. A commit that fails keeps the guard held; the
+			// process exits without spawn or listen and the kernel releases it.
+			await releaseAfterQuiescence().catch(() => {});
+			throw error;
+		}
 		presence.release();
 		throw error;
 	}
 	if (presence.object.status !== "predeclared") return undefined;
-	return {
-		async releaseAfterQuiescence() {
-			const store = await openEndpointReservationStore(locator.storePath);
-			try {
-				store.release(locator.generation, locator.role, identityKey(self));
-			} finally {
-				store.close();
-			}
-			presence.release();
-			// Clean exit (Revision 7): the `released` commit precedes every deletion; a busy object is the sweep's.
-			presence.deleteAfterRelease();
-		},
-	};
+	return { releaseAfterQuiescence, preActionCheck: () => presence.preActionCheck() };
 }
 
 /** A granted participant as the issuer observed it, and the handle the issuer keeps open on it. */
@@ -546,11 +762,13 @@ export interface GrantedParticipant {
 
 /**
  * The issuer's half of either hop: wait (bounded) for the claim, open the claimed PID through `evidence` and grant only
- * the process whose identity matches the claimed one on that handle, bound to the commitment of `secret`. The claimant
- * may be a wrapper's descendant, so the spawned PID is never assumed to be it. Through the bridge the observation table
- * decides: the match is `GetProcessId`, the exact creation FILETIME and the SID; a different creation time, an exited
- * object or an absent PID refuses `participant_mismatch`, a same-birth SID mismatch or a handle whose PID is not the
- * claimed one refuses `identity_inconsistent`, an unreadable or noncomparable observation refuses `identity_unverified`.
+ * the process whose identity matches the claimed one on that handle, bound to the commitment of `secret` for that role.
+ * The claimant may be a wrapper's descendant, so the spawned PID is never assumed to be it. Through the bridge the
+ * observation table decides: the match is `GetProcessId`, the exact creation FILETIME and the SID; a different creation
+ * time, an exited object or an absent PID refuses `participant_mismatch`, a same-birth SID mismatch or a handle whose
+ * PID is not the claimed one refuses `identity_inconsistent`, an unreadable or noncomparable observation refuses
+ * `identity_unverified`. An unreadable observation (a denied or failed open, an unreadable field, a start-time reader
+ * that threw) is reopened once more inside the remaining budget, like the recovery requery; nothing else is retried.
  * A start-time reader's identity is compared exactly, as the platform encodes it, by the store's compare-and-grant, as
  * before. A refused handle is closed at once; the granted handle stays open until `release`.
  */
@@ -563,10 +781,11 @@ export async function grantClaimedParticipant(
 	evidence: ProcessEvidence,
 	options: { readonly deadlineMs: number },
 ): Promise<GrantedParticipant> {
+	const until = Date.now() + options.deadlineMs;
 	const claim = await waitForClaim(store, generation, role, options);
 	if (!claim.claimed) throw new LaunchReservationError(claim.reason, `${role} in ${generation}`);
 	const { pid } = claim.participant;
-	const retained = await evidence.open(pid);
+	const retained = await observeClaimant(claim.participant, evidence, Math.max(1, until - Date.now()));
 	try {
 		const { observation } = retained;
 		// A reader's identity is the store's to compare; every other observation goes through the table first.
@@ -587,7 +806,8 @@ export async function grantClaimedParticipant(
 				? { pid, processStartTime: observation.facts.creationTime, userSid: observation.facts.userSid }
 				: { pid, processStartTime: observation.kind === "present" ? observation.identity : null };
 		// The store's compare-and-grant checks the observed identity against the claim once more, atomically.
-		grantVerifiedParticipant(store, generation, role, issuer, observed, createHash("sha256").update(secret).digest());
+		const { endpoint } = store.reservation(generation);
+		grantVerifiedParticipant(store, generation, role, issuer, observed, endpointCommitment(secret, role, endpoint));
 		return {
 			identity: observed,
 			waitExit: (signal) => retained.waitExit(signal),
@@ -596,5 +816,24 @@ export async function grantClaimedParticipant(
 	} catch (error: unknown) {
 		retained.close();
 		throw error;
+	}
+}
+
+/**
+ * Opens the claimant through `evidence`, reopening once more when the first observation is unreadable (the design's
+ * second observation inside the smaller of `deadlineMs` and the five-second bound; a loaded runner's start-time read
+ * outlasts one probe). The returned handle is the last one opened; every earlier one is closed. An absent, gone,
+ * inconsistent or comparable answer is final at the first observation.
+ */
+async function observeClaimant(claimed: LaunchIdentity, evidence: ProcessEvidence, deadlineMs: number) {
+	const until = Date.now() + Math.min(deadlineMs, IDENTITY_OBSERVATION_BUDGET_MS);
+	for (let attempt = 1; ; attempt++) {
+		const retained = await evidence.open(claimed.pid);
+		const { observation } = retained;
+		const verdict = observation.kind === "present" ? undefined : classifyObservation(claimed, observation);
+		const unreadable = verdict?.kind === "unknown" && verdict.reason === "unreadable";
+		if (!unreadable || attempt >= IDENTITY_OBSERVATION_ATTEMPTS || Date.now() >= until) return retained;
+		retained.close();
+		await delay(Math.min(100, Math.max(1, until - Date.now())));
 	}
 }

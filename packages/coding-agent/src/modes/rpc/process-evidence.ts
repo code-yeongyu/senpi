@@ -48,6 +48,20 @@ export interface ProcessRecord {
 }
 
 /**
+ * The canonical JSON of a recorded identity, the key the reservation store records for an owner or a participant and
+ * the recovery census matches daemon records against: exact on PID, start discriminator and, when recorded, SID; an
+ * identity without a SID keeps the two-field encoding every earlier row has.
+ */
+export function processRecordKey(record: ProcessRecord): string {
+	const { pid, processStartTime } = record;
+	return JSON.stringify(
+		typeof record.userSid === "string"
+			? { pid, processStartTime, userSid: record.userSid }
+			: { pid, processStartTime },
+	);
+}
+
+/**
  * What an observation says about the recorded instance. `unknown` names the design's escalation reason: `unreadable`
  * (denied or failed open, an unreadable field) is requeried once by the caller's budget, `inconsistent` (same birth,
  * another SID; `GetProcessId` not the opened PID) likewise, and `incomplete` (no comparable record) at once.

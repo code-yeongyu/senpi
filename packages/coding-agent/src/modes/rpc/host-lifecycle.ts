@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
+import { readProcessStartTime } from "../../utils/process-identity.ts";
 import { HostAdmission } from "./host-admission.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
@@ -13,7 +14,9 @@ import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.t
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
 import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
 import {
+	HOST_CAPABILITY_PROBE_DEADLINE_MS,
 	HOST_CHILD_WATCH_FD,
+	HOST_STARTUP_BUDGET_MS,
 	parseSupervisorArgs,
 	type StoreLocator,
 	type SupervisorLaunch,
@@ -129,6 +132,15 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		launch.reservation && admittedLaunch && publicSecret
 			? await offerReservedHost(launch, launch.reservation, publicSecret, admittedLaunch.self)
 			: undefined;
+	// The Revision 7 pre-action check before the spawn (design 4.2a "Descriptor-loss detection"): a failed check is
+	// terminal. The fenced state this supervisor can commit is the cancellation of the generation it offered the host
+	// in; it then performs no further action and exits, leaving its guard to the kernel.
+	try {
+		admittedLaunch?.presence?.preActionCheck();
+	} catch (cause: unknown) {
+		await grantHost?.cancel().catch(() => {});
+		throw cause;
+	}
 	const child = spawnHostChild({
 		// A host with no offered role is launched the legacy way: no reservation locator reaches it.
 		launch: grantHost ? launch : { ...launch, reservation: undefined },
@@ -261,7 +273,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// default kill, which would leave that directory behind.
 	registerSupervisorSignals(shutdown, () => drain.drain());
 	try {
-		grantedHost = await grantHost?.();
+		grantedHost = await grantHost?.grant();
 		if (grantedHost) {
 			// The authority on the host's death: its process object, waited on through the retained handle. The wait ends
 			// with the shutdown's watcher stop or the handle's release; a cancelled or unavailable wait decides nothing.
@@ -278,7 +290,12 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		}
 		await waitForListener(internalSocket, HOST_STARTUP_BUDGET_MS, internalSecret, internalKey);
 		await activity.openObserver();
+		// The pre-listen intent (design 4.2a step 4): one short transaction that revalidates this supervisor's grant
+		// immediately before the public bind, so a cancellation recorded since the grant ends the start here.
+		await admittedLaunch?.commitListenIntent();
 		await prepareSocketPath(bindSocket);
+		// The pre-action check before the public bind; a failure lands in the catch below, which fences the generation.
+		admittedLaunch?.presence?.preActionCheck();
 		await listen(server, bindSocket, publicSecret);
 		await publicEndpoint?.publish();
 		state.publicSocketOwned = true;
@@ -304,7 +321,14 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		);
 		watchers.push(await drain.acceptRequests(generation));
 	} catch (cause) {
-		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
+		// A failed start fences the generation it offered the host in (design 4.2a "Crash, cancellation and commit"): a
+		// granted host, or a wrapper descendant still claiming, cannot commit a pre-listen intent afterwards. The fence's
+		// own failure is reported beside the cause, never instead of it.
+		const fence = await grantHost?.cancel().then(
+			() => undefined,
+			(error: unknown) => ` (reservation fence also failed: ${errorMessage(error)})`,
+		);
+		await shutdown(`startup failed: ${errorMessage(cause)}${fence ?? ""}`, 1);
 	}
 	if (process.platform === "win32") {
 		watchers.push(
@@ -328,16 +352,31 @@ if (!isBundledNode && isCliModuleEntry(import.meta.url)) {
 	void runHostSupervisor(launch);
 }
 
-/** How long a parent-admitted supervisor waits for its grant before giving up its start. */
+/** How long a parent-admitted supervisor waits for its grant before giving up its start; its own identity read counts. */
 const SUPERVISOR_GRANT_DEADLINE_MS = 10_000;
+/** Store contention on the expected-roles read is retried inside this bound; the read itself is short. */
+const EXPECTED_ROLES_BUSY_RETRY_MS = 2_000;
+
+/** Runs `read` again while it reports `store_busy`, until `budgetMs` is spent; every other error propagates at once. */
+async function retryWhileBusy<T>(read: () => T, budgetMs: number): Promise<T> {
+	const until = Date.now() + budgetMs;
+	for (;;) {
+		try {
+			return read();
+		} catch (error: unknown) {
+			const busy = error instanceof Error && "reason" in error && error.reason === "store_busy";
+			if (!busy || Date.now() >= until) throw error;
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+	}
+}
 
 /**
- * The host child's whole startup budget. Its reservation claim comes only after the CLI has loaded, so the supervisor
- * waits for that claim as long as it waits for the listener: a shorter claim deadline would fail starts that succeed
- * without a reservation (measured: a tsx-started host missed a 10 s claim deadline at load average ~210).
+ * The parent-admitted supervisor's entry (design 4.2a steps 2-3): read this process's own identity (PID, creation
+ * FILETIME and SID on one handle of itself through the bridge, as the issuer will verify it; PID and start time with
+ * the bounded retry elsewhere), claim, wait for the grant and verify the parent's secret against it. Returns the
+ * pre-listen intent (step 4) the startup commits immediately before the public bind.
  */
-const HOST_STARTUP_BUDGET_MS = 30_000;
-
 async function admitReservedLaunch(
 	reservation: StoreLocator,
 	publicSocket: string,
@@ -347,20 +386,32 @@ async function admitReservedLaunch(
 	presence: ParticipantRelease | undefined;
 	/** The bridge's read of a pid on one handle, for the host child's record; absent off the bridge (the reader records). */
 	identity: ((pid: number) => Promise<LaunchIdentity | undefined>) | undefined;
+	commitListenIntent: () => Promise<void>;
 }> {
-	const { admitClaimedParticipant, LaunchReservationError } = await import("./host-launch-reservation.ts");
-	const { bridgeProcessIdentity, ownProcessIdentity } = await import("./process-evidence.ts");
+	const {
+		admitClaimedParticipant,
+		commitListenIntent,
+		IDENTITY_OBSERVATION_PROBE_MS,
+		LaunchReservationError,
+		readClaimantIdentity,
+	} = await import("./host-launch-reservation.ts");
+	const { bridgeProcessIdentity } = await import("./process-evidence.ts");
 	const { loadPresencePlacement } = await import("./socket-secret-native.ts");
 	if (reservation.role !== "supervisor") {
 		throw new LaunchReservationError("locator_incomplete", "the supervisor entry requires a supervisor reservation");
 	}
+	const until = Date.now() + SUPERVISOR_GRANT_DEADLINE_MS;
 	const credential = await readSocketSecret(socketSecretPath(publicSocket)).catch(() => undefined);
-	// The claimant's own identity as the issuer will verify it: PID, creation FILETIME and SID read on one handle of itself
-	// through the bridge; PID and start time elsewhere.
 	const native = loadPresencePlacement();
-	const self = await ownProcessIdentity(native);
+	const self =
+		(await bridgeProcessIdentity(native, process.pid)) ??
+		(await readClaimantIdentity(
+			process.pid,
+			(pid) => readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
+			SUPERVISOR_GRANT_DEADLINE_MS,
+		));
 	const presence = await admitClaimedParticipant(reservation, self, credential, {
-		deadlineMs: SUPERVISOR_GRANT_DEADLINE_MS,
+		deadlineMs: Math.max(0, until - Date.now()),
 		presence: native,
 	});
 	return {
@@ -368,35 +419,55 @@ async function admitReservedLaunch(
 		self,
 		presence,
 		identity: native.status === "available" ? (pid) => bridgeProcessIdentity(native, pid) : undefined,
+		commitListenIntent: async () => {
+			if (!credential) throw new LaunchReservationError("commitment_mismatch", "no established public secret");
+			await commitListenIntent(reservation, self, credential);
+		},
 	};
 }
 
 /**
- * Reservation-only lazy boundary: direct supervisors never load SQLite or the reservation helpers. Returns no grant when
- * the reserving owner expects no host role: it classified the host legacy, which keeps the legacy launch (#4199 design
- * section 5, "Mixed versions").
+ * Reservation-only lazy boundary: direct supervisors never load SQLite or the reservation helpers. The offer is made
+ * before the spawn; `grant` verifies and grants the claimant inside the host's startup budget, and `cancel` is the
+ * durable fence a failed start leaves behind. Returns nothing when the reserving owner expects no host role: it
+ * classified the host legacy, which keeps the legacy launch (#4199 design section 5, "Mixed versions").
  */
 async function offerReservedHost(
 	launch: SupervisorLaunch,
 	reservation: StoreLocator,
 	secret: Buffer,
 	issuer: LaunchIdentity,
-): Promise<(() => Promise<GrantedParticipant>) | undefined> {
+): Promise<{ grant: () => Promise<GrantedParticipant>; cancel: () => Promise<void> } | undefined> {
 	const { openEndpointReservationStore } = await import("./endpoint-reservation-store.ts");
-	const { grantClaimedParticipant, LaunchReservationError, offerHostRole, ownLaunchRoute, selectLaunchRoute } =
-		await import("./host-launch-reservation.ts");
+	const {
+		grantClaimedParticipant,
+		IDENTITY_OBSERVATION_PROBE_MS,
+		LaunchReservationError,
+		offerHostRole,
+		ownLaunchRoute,
+		selectLaunchRoute,
+	} = await import("./host-launch-reservation.ts");
 	const { processEvidence } = await import("./process-evidence.ts");
 	const { loadPresencePlacement } = await import("./socket-secret-native.ts");
 	const native = loadPresencePlacement();
 	const store = await openEndpointReservationStore(reservation.storePath);
 	try {
-		// An unreadable expected set is not a legacy classification: the offer below refuses it.
-		if (store.expectedRoles(reservation.generation)?.includes("host") === false) return undefined;
+		// An unreadable expected set is not a legacy classification: the offer below refuses it. A store briefly busy
+		// with another writer's short transaction is retried inside the startup budget, like every other read here.
+		const expected = await retryWhileBusy(
+			() => store.expectedRoles(reservation.generation),
+			EXPECTED_ROLES_BUSY_RETRY_MS,
+		);
+		if (expected?.includes("host") === false) return undefined;
 		// The host receives the locator only once its launch-capability result names both capabilities: an explicit child
 		// command is another runtime and answers the probe; the default host is this build and reports its own. A legacy
-		// answer here cannot downgrade a generation that expects its host.
+		// answer here cannot downgrade a generation that expects its host. The probe's deadline sits inside the ensure's
+		// readiness window, so a host that never answers is refused typed rather than reported as a readiness timeout.
 		const route = launch.childCommand
-			? await selectLaunchRoute({ command: launch.childCommand, args: launch.childArgs ?? [] })
+			? await selectLaunchRoute(
+					{ command: launch.childCommand, args: launch.childArgs ?? [] },
+					{ deadlineMs: HOST_CAPABILITY_PROBE_DEADLINE_MS },
+				)
 			: ownLaunchRoute();
 		if (route !== "reservation") {
 			throw new LaunchReservationError(
@@ -410,21 +481,34 @@ async function offerReservedHost(
 		store.close();
 	}
 	// The host is verified on one retained handle through the bridge (PID, creation FILETIME, SID), by its start time
-	// elsewhere; the handle stays open while this supervisor observes its child.
-	return async () => {
-		const store = await openEndpointReservationStore(reservation.storePath);
-		try {
-			return await grantClaimedParticipant(
-				store,
-				reservation.generation,
-				"host",
-				issuer,
-				secret,
-				processEvidence(native),
-				{ deadlineMs: HOST_STARTUP_BUDGET_MS },
-			);
-		} finally {
-			store.close();
-		}
+	// (each probe given the time a loaded runner's CIM read needs) elsewhere; the handle stays open while this supervisor
+	// observes its child.
+	return {
+		grant: async () => {
+			const store = await openEndpointReservationStore(reservation.storePath);
+			try {
+				return await grantClaimedParticipant(
+					store,
+					reservation.generation,
+					"host",
+					issuer,
+					secret,
+					processEvidence(native, (pid) =>
+						readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
+					),
+					{ deadlineMs: HOST_STARTUP_BUDGET_MS },
+				);
+			} finally {
+				store.close();
+			}
+		},
+		cancel: async () => {
+			const store = await openEndpointReservationStore(reservation.storePath);
+			try {
+				store.cancel(reservation.generation);
+			} finally {
+				store.close();
+			}
+		},
 	};
 }

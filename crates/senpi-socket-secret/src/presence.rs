@@ -2,7 +2,10 @@
 //! check): one exclusive byte-range lock per presence ID, held by the registry for as long as the actor's
 //! authority lasts. A successful acquisition is the only release proof; contention is `Occupied`, and every
 //! other failure is `Unknown`, never a release. The registry has no unlock while authority is active: a
-//! guard leaves it only with a `released` quiescence receipt. Any descriptor loss, identity change or
+//! guard leaves it only with a quiescence receipt, whose reason is the holder's `released` commit or one
+//! of the recovery order's release points (`ReleaseReason`), except that the handle a blocking wait
+//! retained (`wait_and_acquire`) leaves without one when `probe_retained` finds it inadmissible or
+//! without an identity, because that handle was never evidence. Any descriptor loss, identity change or
 //! locality flip found by the pre-action check fences the registry for good; it never re-acquires and
 //! continues. The Windows backend (`LockFileEx` on byte [0,1)) lives in `presence_windows.rs`; tests drive a
 //! fake backend whose process-death and kernel-release events are separate.
@@ -23,6 +26,12 @@ pub struct FileIdentity {
 pub enum LockAttempt {
     Acquired,
     Occupied,
+    /// A successful acquisition that failed the Revision 7 admissibility rule (design 4.2a rules 1-3),
+    /// or one made under a presence ID this registry already holds. The handle was released at once;
+    /// the object counts as unknown. Distinct from any OS error code.
+    Inadmissible,
+    /// Nothing is retained under that presence ID for that path (`probe_retained`).
+    NotHeld,
     /// The Win32 error of an open, identity or lock failure. Never a release proof.
     Unknown(u32),
     /// The registry is fenced; nothing is attempted.
@@ -56,6 +65,9 @@ pub enum FenceReason {
 pub enum WaitOutcome {
     Acquired,
     Cancelled,
+    /// The wait acquired, but the registry already holds that presence ID (for another object) or the
+    /// completed wait carries no guard for it: the waited handle is dropped and is never evidence.
+    Inadmissible,
     Unknown(u32),
     /// The registry is fenced; nothing is attempted.
     Fenced,
@@ -135,16 +147,51 @@ impl CancelToken {
     }
 }
 
-/// Proof, committed by the caller before release, that this actor's authority ended (`released`).
+/// Proof, committed by the caller before release, that this actor's authority ended (`released`), or
+/// the point of the recovery transaction order (design 4.2a, step 3-5) at which a recovered guard is
+/// released.
 #[derive(Debug)]
 pub struct QuiescenceReceipt {
     pub presence_id: String,
+}
+
+/// Why a guard leaves the registry: the holder's own `released` commit, or one of the three points of
+/// the recovery transaction order (design 4.2a) that release recovered guards. Nothing else does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReleaseReason {
+    /// The holder committed `released`: the Revision 7 quiescence receipt for its own authority.
+    Released,
+    /// Step 3 met contention or an error, so the attempt cannot retire: its acquired guards are
+    /// released at once and the attempt reports occupied/unknown.
+    RecoveryAbandoned,
+    /// Step 4 recomputed the probe set: the role committed `released` in the meantime and that
+    /// commit discharges it, so the guard acquired for it is released.
+    Discharged,
+    /// Step 5 committed retirement and deleted the retired generation's objects; the recovered
+    /// guards are released last, keeping tombstones.
+    Retired,
+}
+
+impl ReleaseReason {
+    /// The receipt states a caller may supply; any other string releases nothing.
+    pub fn parse(state: &str) -> Option<Self> {
+        match state {
+            "released" => Some(Self::Released),
+            "recovery_abandoned" => Some(Self::RecoveryAbandoned),
+            "discharged" => Some(Self::Discharged),
+            "retired" => Some(Self::Retired),
+            _ => None,
+        }
+    }
 }
 
 struct Guard<H> {
     path: String,
     identity: FileIdentity,
     handle: H,
+    /// Retained by a blocking wait (Repair's busy-owner wait), not by `acquire`: only such a guard
+    /// may be probed in place and released without a receipt (`probe_retained`).
+    wait_retained: bool,
 }
 
 pub struct PresenceRegistry<B: PresenceBackend> {
@@ -194,7 +241,7 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
             Err(code) => return LockAttempt::Unknown(code),
         };
         if self.holds(presence_id) || !admissible(&mut self.backend, &handle, identity) {
-            return LockAttempt::Unknown(13); // ERROR_INVALID_DATA: not admissible release evidence.
+            return LockAttempt::Inadmissible; // `handle` drops here: released at once.
         }
         self.guards.insert(
             presence_id.to_string(),
@@ -202,6 +249,7 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
                 path: path.to_string(),
                 identity,
                 handle,
+                wait_retained: false,
             },
         );
         LockAttempt::Acquired
@@ -209,9 +257,10 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
 
     /// Repair's retained wait handle as step 3's acquisition of its object (design Revision 8, r7
     /// note 4): the probe's admissibility rule applied to a guard this registry already holds, through
-    /// that handle, which is never closed and reacquired. An inadmissible handle is released at once
-    /// (`Unknown(13)`, as an inadmissible probe); a guard not held, or held for another path, is
-    /// `Unknown(2)` (ERROR_FILE_NOT_FOUND: nothing retained under that name).
+    /// that handle, which is never closed and reacquired. An inadmissible handle is released at once;
+    /// a handle that no longer answers an identity query is released as `Unknown`; a guard not held,
+    /// held for another path, or held by `acquire` (the holder's own authority guard, which leaves
+    /// only with a receipt) is `NotHeld` and nothing changes.
     pub fn probe_retained(
         &mut self,
         presence_id: &str,
@@ -222,10 +271,10 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
             return LockAttempt::Fenced;
         }
         let Some(guard) = self.guards.get(presence_id) else {
-            return LockAttempt::Unknown(2);
+            return LockAttempt::NotHeld;
         };
-        if guard.path != path {
-            return LockAttempt::Unknown(2);
+        if guard.path != path || !guard.wait_retained {
+            return LockAttempt::NotHeld;
         }
         let identity = match self.backend.handle_identity(&guard.handle) {
             Ok(identity) => identity,
@@ -236,7 +285,7 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
         };
         if !admissible(&mut self.backend, &guard.handle, identity) {
             self.guards.remove(presence_id);
-            return LockAttempt::Unknown(13);
+            return LockAttempt::Inadmissible;
         }
         LockAttempt::Acquired
     }
@@ -248,14 +297,14 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
             return WaitOutcome::Fenced;
         }
         if self.holds(presence_id) {
-            return WaitOutcome::Unknown(13);
+            return WaitOutcome::Inadmissible;
         }
         match completed.guards.remove(presence_id) {
             Some(guard) => {
                 self.guards.insert(presence_id.to_string(), guard);
                 WaitOutcome::Acquired
             }
-            None => WaitOutcome::Unknown(13),
+            None => WaitOutcome::Inadmissible,
         }
     }
 
@@ -266,10 +315,11 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
             return LockAttempt::Fenced;
         }
         if let Some(guard) = self.guards.get(presence_id) {
+            // A second object under a held ID is never opened, let alone counted as evidence.
             return if guard.path == path {
                 LockAttempt::Acquired
             } else {
-                LockAttempt::Unknown(13)
+                LockAttempt::Inadmissible
             };
         }
         let handle = match self.backend.open(path) {
@@ -288,6 +338,7 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
                         path: path.to_string(),
                         identity,
                         handle,
+                        wait_retained: false,
                     },
                 );
                 LockAttempt::Acquired
@@ -317,6 +368,7 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
                             path: path.to_string(),
                             identity,
                             handle,
+                            wait_retained: true,
                         },
                     );
                     WaitOutcome::Acquired
@@ -376,7 +428,9 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
         Ok(())
     }
 
-    /// Closes a guard after its `released` commit. This is the only way a guard leaves the registry.
+    /// Closes a guard after its `released` commit, or at one of the recovery order's release points
+    /// (`ReleaseReason`). The only other way a guard leaves the registry is `probe_retained` finding a
+    /// wait-retained handle inadmissible or without an identity; an `acquire`d guard leaves only here.
     pub fn release_after_quiescence(&mut self, receipt: QuiescenceReceipt) -> bool {
         self.guards.remove(&receipt.presence_id).is_some()
     }
@@ -398,6 +452,8 @@ mod tests {
         dead: Vec<&'static str>,
         lost_handles: Vec<u32>,
         released_on_wait: bool,
+        /// A Win32 error every open fails with, standing in for a real kernel answer.
+        open_error: Option<u32>,
         process: &'static str,
     }
 
@@ -443,6 +499,9 @@ mod tests {
         type Handle = u32;
 
         fn open(&mut self, path: &str) -> Result<u32, u32> {
+            if let Some(code) = self.open_error {
+                return Err(code);
+            }
             let identity = *self.files.get(path).ok_or(2u32)?;
             self.next_handle += 1;
             self.handles
@@ -510,11 +569,24 @@ mod tests {
                 if admissible {
                     LockAttempt::Acquired
                 } else {
-                    LockAttempt::Unknown(13)
+                    LockAttempt::Inadmissible
                 }
             );
             assert_eq!(registry.holds("p-1"), admissible);
         }
+    }
+
+    #[test]
+    fn a_real_error_invalid_data_stays_an_os_error_and_is_not_inadmissibility() {
+        let mut kernel = FakeKernel::with_file(PATH, 1);
+        kernel.open_error = Some(13);
+        let mut registry = PresenceRegistry::new(&mut kernel);
+        assert_eq!(
+            registry.probe("p-1", PATH, |_, _, _| panic!("a failed open reaches no rule")),
+            LockAttempt::Unknown(13)
+        );
+        assert_ne!(LockAttempt::Unknown(13), LockAttempt::Inadmissible);
+        assert!(!registry.holds("p-1"));
     }
 
     #[test]
@@ -524,9 +596,8 @@ mod tests {
             kernel.process_dies("host");
             kernel.released_on_wait = true;
             let mut registry = PresenceRegistry::new(&mut kernel);
-            let cancel = CancelToken::default();
             assert_eq!(
-                registry.wait_and_acquire("p-1", PATH, &cancel),
+                registry.wait_and_acquire("p-1", PATH, &CancelToken::default()),
                 WaitOutcome::Acquired
             );
             let handles_before = registry.backend.next_handle;
@@ -534,14 +605,16 @@ mod tests {
                 assert_eq!(identity.file_id, 1);
                 admissible
             });
-            // No reopen: the wait's handle is the one the rule was applied to.
-            assert_eq!(registry.backend.next_handle, handles_before);
+            assert_eq!(
+                registry.backend.next_handle, handles_before,
+                "the rule is applied to the wait's handle; nothing is reopened"
+            );
             assert_eq!(
                 attempt,
                 if admissible {
                     LockAttempt::Acquired
                 } else {
-                    LockAttempt::Unknown(13)
+                    LockAttempt::Inadmissible
                 }
             );
             assert_eq!(registry.holds("p-1"), admissible);
@@ -549,20 +622,73 @@ mod tests {
     }
 
     #[test]
-    fn probe_retained_without_a_retained_guard_is_unknown_and_retains_nothing() {
+    fn probe_retained_without_a_retained_guard_is_not_held_and_retains_nothing() {
         let mut kernel = FakeKernel::with_file(PATH, 1);
         let mut registry = PresenceRegistry::new(&mut kernel);
         assert_eq!(
             registry.probe_retained("p-1", PATH, |_, _, _| panic!("nothing to apply the rule to")),
-            LockAttempt::Unknown(2)
+            LockAttempt::NotHeld
         );
         assert!(!registry.holds("p-1"));
         assert_eq!(registry.acquire("p-1", PATH), LockAttempt::Acquired);
         assert_eq!(
             registry.probe_retained("p-1", r"C:\other.lock", |_, _, _| true),
-            LockAttempt::Unknown(2)
+            LockAttempt::NotHeld
         );
-        assert!(registry.holds("p-1"));
+        assert!(registry.holds("p-1"), "a guard under another path is left alone");
+    }
+
+    /// senpi#4470 review LOW: `probe_retained` acts only on a guard a blocking wait retained. The
+    /// holder's own `acquire`d authority guard never leaves the registry without a receipt, whatever
+    /// header or rule a misdirected call brings.
+    #[test]
+    fn probe_retained_never_drops_an_acquired_authority_guard() {
+        let mut kernel = FakeKernel::with_file(PATH, 1);
+        let mut registry = PresenceRegistry::new(&mut kernel);
+        assert_eq!(registry.acquire("p-1", PATH), LockAttempt::Acquired);
+        assert_eq!(
+            registry.probe_retained("p-1", PATH, |_, _, _| false),
+            LockAttempt::NotHeld,
+            "an authority guard is not a wait's retained handle"
+        );
+        assert!(registry.holds("p-1"), "the authority guard stays registered");
+        assert_eq!(registry.pre_action_check("p-1", true), Ok(()));
+    }
+
+    #[test]
+    fn a_retained_handle_that_lost_its_identity_is_unknown_and_released() {
+        let mut kernel = FakeKernel::with_file(PATH, 1).held_by(PATH, "host");
+        kernel.process_dies("host");
+        kernel.released_on_wait = true;
+        let mut registry = PresenceRegistry::new(&mut kernel);
+        assert_eq!(
+            registry.wait_and_acquire("p-1", PATH, &CancelToken::default()),
+            WaitOutcome::Acquired
+        );
+        let retained = registry.backend.next_handle;
+        registry.backend.lost_handles.push(retained);
+        assert_eq!(
+            registry.probe_retained("p-1", PATH, |_, _, _| panic!("no identity, no rule")),
+            LockAttempt::Unknown(6)
+        );
+        assert!(!registry.holds("p-1"));
+    }
+
+    #[test]
+    fn every_release_point_of_the_recovery_order_has_a_reason_and_nothing_else_does() {
+        assert_eq!(ReleaseReason::parse("released"), Some(ReleaseReason::Released));
+        assert_eq!(
+            ReleaseReason::parse("recovery_abandoned"),
+            Some(ReleaseReason::RecoveryAbandoned)
+        );
+        assert_eq!(
+            ReleaseReason::parse("discharged"),
+            Some(ReleaseReason::Discharged)
+        );
+        assert_eq!(ReleaseReason::parse("retired"), Some(ReleaseReason::Retired));
+        for state in ["", "active", "Released", "cancelled", "quiescent", "occupied"] {
+            assert_eq!(ReleaseReason::parse(state), None, "{state:?} releases nothing");
+        }
     }
 
     #[test]
@@ -636,6 +762,7 @@ mod tests {
                         file_id: 1,
                     },
                     handle,
+                    wait_retained: false,
                 },
             )]),
             fenced: None,
@@ -752,6 +879,31 @@ mod tests {
             kernel.next_handle, 1,
             "only the first acquisition opened a handle"
         );
+    }
+
+    #[test]
+    fn a_completed_wait_for_an_id_already_held_is_inadmissible_and_its_handle_dropped() {
+        const OTHER: &str = r"C:\other.lock";
+        let mut kernel = FakeKernel::with_file(PATH, 1);
+        kernel.files.insert(
+            OTHER.to_string(),
+            FileIdentity {
+                volume_serial: 7,
+                file_id: 9,
+            },
+        );
+        let mut completed = PresenceRegistry::new(&mut kernel);
+        assert_eq!(
+            completed.wait_and_acquire("p-1", OTHER, &CancelToken::default()),
+            WaitOutcome::Acquired
+        );
+        let mut other = FakeKernel::with_file(PATH, 1);
+        let mut registry = PresenceRegistry::new(&mut other);
+        assert_eq!(registry.acquire("p-1", PATH), LockAttempt::Acquired);
+        assert_eq!(registry.retain_wait(completed, "p-1"), WaitOutcome::Inadmissible);
+        assert_ne!(WaitOutcome::Inadmissible, WaitOutcome::Unknown(13));
+        assert_eq!(registry.acquire("p-1", OTHER), LockAttempt::Inadmissible);
+        assert!(registry.holds("p-1"), "the guard held first is untouched");
     }
 
     #[test]

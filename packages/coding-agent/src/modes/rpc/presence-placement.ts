@@ -37,7 +37,8 @@ export type PresencePlacementRejection =
 	| "presence_object_exists"
 	| "presence_object_failed"
 	| "presence_object_not_local"
-	| "presence_object_missing";
+	| "presence_object_missing"
+	| "presence_object_busy";
 
 /** A typed refusal to use or create presence in the recorded root; `reason` is machine-readable. */
 export class PresencePlacementError extends Error {

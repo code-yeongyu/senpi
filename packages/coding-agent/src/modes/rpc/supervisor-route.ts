@@ -42,36 +42,85 @@ export async function dispatchInternalSupervisor(args: readonly string[]): Promi
 }
 
 /**
- * Reservation-only host entry (#4199): consume the private locator before the public CLI parser and before any listener.
- * Like the supervisor route above, the ordinary CLI path loads none of the reservation/SQLite graph.
+ * Must equal `Object.values(LOCATOR_FLAGS)` in `./host-lifecycle-launch.ts`; duplicated like the sentinel above so the
+ * ordinary CLI path never imports that module. `test/suite/regressions/1781-main-lazy-modes.test.ts` asserts equality.
  */
-export async function admitReservedHostArgs(args: string[]): Promise<string[]> {
-	if (!args.some((arg) => arg.startsWith("--reservation-"))) return args;
-	const { admitClaimedParticipant, parseReservationLocatorArgs, LaunchReservationError } =
-		await import("./host-launch-reservation.ts");
-	const { LOCATOR_FLAGS } = await import("./host-lifecycle-launch.ts");
-	const { ownProcessIdentity } = await import("./process-evidence.ts");
+export const RESERVATION_LOCATOR_ROUTE_FLAGS: readonly string[] = [
+	"--reservation-store",
+	"--reservation-endpoint",
+	"--reservation-generation",
+	"--reservation-role",
+];
+
+/** A reserved host's admission: the argv with its locator consumed, and the pre-listen intent it commits before binding. */
+export interface ReservedHostAdmission {
+	readonly args: string[];
+	/**
+	 * Design 4.2a step 4: the short transaction that revalidates this host's grant and records its intent, run by the
+	 * socket host immediately before its bind. Absent for a direct launch.
+	 */
+	readonly beforeListen?: () => Promise<void>;
+}
+
+/**
+ * Reservation-only host entry (#4199): consume the private locator before the public CLI parser and before any listener.
+ * Only the exact locator flags select this path; an unrelated argument that merely shares their prefix is left to the
+ * public parser. Like the supervisor route above, the ordinary CLI path loads none of the reservation/SQLite graph.
+ */
+export async function admitReservedHostArgs(args: string[]): Promise<ReservedHostAdmission> {
+	if (!args.some((arg) => RESERVATION_LOCATOR_ROUTE_FLAGS.includes(arg))) return { args };
+	const {
+		admitClaimedParticipant,
+		commitListenIntent,
+		IDENTITY_OBSERVATION_PROBE_MS,
+		LaunchReservationError,
+		parseReservationLocatorArgs,
+		readClaimantIdentity,
+	} = await import("./host-launch-reservation.ts");
+	const { HOST_STARTUP_BUDGET_MS, LOCATOR_FLAGS } = await import("./host-lifecycle-launch.ts");
+	const { bridgeProcessIdentity } = await import("./process-evidence.ts");
 	const { loadPresencePlacement } = await import("./socket-secret-native.ts");
+	const { readProcessStartTime } = await import("../../utils/process-identity.ts");
 	const { readSocketSecret, socketSecretPath } = await import("./socket-transport.ts");
 	const locator = parseReservationLocatorArgs(args);
 	if (!locator || locator.role !== "host") {
 		throw new LaunchReservationError("locator_incomplete", "the host entry requires a host reservation");
 	}
-	// The host's own identity as its issuer verifies it: PID, creation FILETIME and SID on one handle of itself through
-	// the bridge (design 4.2a clause (ii)); PID and start time elsewhere.
+	// The grant wait shares the supervisor's startup budget for this host, its own identity read included. The host's own
+	// identity as its issuer verifies it: PID, creation FILETIME and SID on one handle of itself through the bridge (design
+	// 4.2a clause (ii)); PID and start time, read with the bounded retry, elsewhere.
+	const until = Date.now() + HOST_STARTUP_BUDGET_MS;
 	const native = loadPresencePlacement();
-	const self = await ownProcessIdentity(native);
+	const self =
+		(await bridgeProcessIdentity(native, process.pid)) ??
+		(await readClaimantIdentity(
+			process.pid,
+			(pid) => readProcessStartTime(pid, process.platform, IDENTITY_OBSERVATION_PROBE_MS),
+			HOST_STARTUP_BUDGET_MS,
+		));
 	const credential = await readSocketSecret(socketSecretPath(locator.endpoint)).catch(() => undefined);
 	// The host holds its presence lock from before its claim for the life of this process: its win32 shutdown bounds
 	// the session dispose and the listener close by timers (multi-session-host.ts), so it cannot prove the quiescence a
 	// `released` commit asserts; it commits none, the kernel releases the guard at process exit, and its object is deleted
 	// at retirement or by the sweep (presence-cleanup.ts).
-	await admitClaimedParticipant(locator, self, credential, { deadlineMs: 10_000, presence: native });
+	const presence = await admitClaimedParticipant(locator, self, credential, {
+		deadlineMs: Math.max(0, until - Date.now()),
+		presence: native,
+	});
 	const flags = new Set<string>(Object.values(LOCATOR_FLAGS));
 	const remaining: string[] = [];
 	for (let index = 0; index < args.length; index++) {
 		if (flags.has(args[index])) index++;
 		else remaining.push(args[index]);
 	}
-	return remaining;
+	return {
+		args: remaining,
+		beforeListen: async () => {
+			if (!credential) throw new LaunchReservationError("commitment_mismatch", "no established public secret");
+			// The Revision 7 pre-action check before the bind (design 4.2a "Descriptor-loss detection"): a failed check is
+			// terminal, so no listen intent is recorded for a bind that will not happen.
+			presence?.preActionCheck();
+			await commitListenIntent(locator, self, credential);
+		},
+	};
 }

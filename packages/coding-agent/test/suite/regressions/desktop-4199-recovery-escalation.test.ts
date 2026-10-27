@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -18,13 +17,16 @@ import {
 } from "../../../src/modes/rpc/endpoint-recovery.ts";
 import { repairEndpointReservations } from "../../../src/modes/rpc/endpoint-repair.ts";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { recordLaunchProvenance } from "../../../src/modes/rpc/launch-provenance.ts";
 import {
 	acquireOwnerPresence,
 	claimLaunchRole,
+	credentialCommitment,
 	grantVerifiedParticipant,
 	type LaunchIdentity,
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
+	reservationStorePath,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import { HOST_EXIT_REFUSED, runHostRequest } from "../../../src/modes/rpc/host-runner.ts";
 import { resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
@@ -151,7 +153,9 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 	 */
 	async function launched(machine: Machine, owner: LaunchIdentity = OWNER, root?: string) {
 		root ??= await tempRoot();
-		const storePath = join(root, "endpoint.reservation.db");
+		// The endpoint's fixed store beside its (mocked) ensure lock: the one store a claimant's locator may name.
+		mocked.lockDir = root;
+		const storePath = reservationStorePath(ENDPOINT);
 		const store = await openStore(storePath);
 		const socket = join(root, "rpc.sock");
 		const reservation = resolvePresenceRoot({
@@ -174,7 +178,7 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			"supervisor",
 			owner,
 			SUPERVISOR,
-			createHash("sha256").update(SECRET).digest(),
+			credentialCommitment(SECRET, "supervisor", socketSecretPath(ENDPOINT)),
 		);
 		const paths = await createHostDaemonPaths({ agentDir: join(root, "agent"), socket });
 		const ownerObject = store.reservation(generation).ownerPresence;
@@ -198,9 +202,26 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 		machine.objects.delete(launch.objects.owner.path);
 	}
 
-	async function censusEntry(launch: Launch, pid: number, processStartTime = "134000000000000005") {
+	/**
+	 * A census row of an earlier generation, with the launch provenance its reserving owner recorded beside it (senpi#4479
+	 * fold): `session` is that owner's kernel session at the launch (`null` = unverified), on the local daemon directory.
+	 */
+	async function censusEntry(
+		launch: Launch,
+		pid: number,
+		processStartTime = "134000000000000005",
+		session: string | null = FAKE_KERNEL_SESSION,
+	) {
 		const instance = generationPaths(launch.paths, "old-generation");
 		await mkdir(instance.dir, { recursive: true });
+		await recordLaunchProvenance(instance.launchProvenanceFile, {
+			generation: launch.generation,
+			kernelSession:
+				session === null
+					? { status: "unverified", reason: "access_denied" }
+					: { status: "verified", value: session },
+			directoryLocal: true,
+		});
 		await writeFile(instance.pidFile, JSON.stringify({ pid, processStartTime }));
 	}
 
@@ -214,7 +235,11 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			launch.store,
 			ENDPOINT,
 			launch.paths,
-			recoveryProber(STORE_DIR, machine.load, { observe: processes.observe, ...options }),
+			recoveryProber(STORE_DIR, machine.load, {
+				observe: processes.observe,
+				daemonDirectory: launch.paths.dir,
+				...options,
+			}),
 		);
 	}
 
@@ -279,7 +304,7 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 				launch.store,
 				ENDPOINT,
 				launch.paths,
-				recoveryProber(STORE_DIR, machine.load, { observe, clock, remainingMs }),
+				recoveryProber(STORE_DIR, machine.load, { observe, clock, remainingMs, daemonDirectory: launch.paths.dir }),
 			);
 			await armed();
 			fire();
@@ -442,6 +467,106 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 		});
 	});
 
+	// --- senpi#4481 review folds -------------------------------------------------------------------------------------
+	describe("senpi#4481 folds: the prior-boot proof and the anchor observe before they resolve; the marker answers its own subject only", () => {
+		/** Every row written in session S1 on a local store, then a confirmed reboot to S2 with every local actor gone. */
+		async function rebooted() {
+			const machine = fakeWindows({ kernelSession: S1 });
+			const launch = await launched(machine);
+			crash(machine);
+			machine.control.kernelSession = { status: "verified", creationTime: S2, reason: null };
+			return { machine, launch };
+		}
+
+		it("HIGH: a proven prior boot never marks a census entry gone without observing it; a live entry blocks", async () => {
+			const { machine, launch } = await rebooted();
+			// A row of the prior boot (session S1), as the generation's own rows are.
+			await censusEntry(launch, 4343, "134000000000000005", S1);
+			const processes = fakeProcessTable();
+			// A current-boot process at that PID with the recorded creation time: it is live, whatever the reboot proved.
+			processes.live(4343, "134000000000000005");
+			expect(await recover(launch, machine, processes)).toMatchObject({ status: "refused", reason: "census_live" });
+			expect(processes.observed).toContain(4343);
+			expect(launch.store.reservation(launch.generation).state).toBe("cancelling");
+		});
+
+		it("HIGH: a repair anchor never marks a census entry gone without observing it; a live entry blocks", async () => {
+			const machine = fakeWindows({ kernelSession: null });
+			const launch = await launched(machine);
+			crash(machine);
+			await censusEntry(launch, 4343, "134000000000000005", null);
+			const processes = fakeProcessTable();
+			processes.denied(4343);
+			machine.control.kernelSession = { status: "verified", creationTime: S1, reason: null };
+			const anchored = await repairEndpointReservations({
+				store: launch.store,
+				endpoint: ENDPOINT,
+				paths: launch.paths,
+				prober: recoveryProber(STORE_DIR, machine.load, {
+					observe: processes.observe,
+					daemonDirectory: launch.paths.dir,
+				}),
+				withEndpointLock: (run) => run(),
+				confirmRestart: true,
+			});
+			expect(anchored).toMatchObject({ status: "refused", reason: "census_unknown", action: "restart_computer" });
+			// After the restart the entry's process is live again (a current-boot writer): the anchor proves nothing for it.
+			machine.control.kernelSession = { status: "verified", creationTime: S2, reason: null };
+			processes.live(4343, "134000000000000005");
+			expect(await recover(launch, machine, processes)).toMatchObject({ status: "refused", reason: "census_live" });
+			expect(processes.observed).toContain(4343);
+		});
+
+		it("MEDIUM: an unchanged escalation marker answers only the entry it was recorded for; every other entry is queried", async () => {
+			const machine = fakeWindows();
+			const launch = await launched(machine);
+			crash(machine);
+			// The presence store is denied: every acquisition is an access-denied open, the owner's identity is denied too.
+			machine.control.probeOutcome = { status: "unknown", reason: "os_error", code: 5 };
+			const processes = fakeProcessTable();
+			processes.denied(OWNER.pid);
+			processes.denied(SUPERVISOR.pid);
+			const first = refused(await recover(launch, machine, processes));
+			expect(first).toMatchObject({ reason: "authority_unknown", action: "restore_store_access" });
+			expect(launch.store.reservation(launch.generation).escalation?.subject).toMatch(/^(owner|supervisor)$/);
+			// Access restored: every authority entry acquires (presence_released); a census entry never escalated is absent.
+			machine.control.probeOutcome = undefined;
+			await censusEntry(launch, 4343, "134000000000000005");
+			const before = processes.observed.length;
+			expect(await recover(launch, machine, processes)).toMatchObject({ status: "recovered" });
+			expect(processes.observed.slice(before)).toContain(4343);
+		});
+
+		it("LOW: the marker is stamped at the revision the attempt read; a record that changed meanwhile gets no stale marker and a fresh budget", async () => {
+			const machine = fakeWindows();
+			const launch = await launched(machine);
+			crash(machine);
+			ownerObjectMissing(launch, machine);
+			const processes = fakeProcessTable();
+			processes.denied(OWNER.pid);
+			const other = await openStore(launch.storePath);
+			const observe = processes.observe;
+			let committed = false;
+			processes.observe = async (pid) => {
+				// A participant commits released between this attempt's read and its marker write.
+				if (!committed) {
+					committed = true;
+					other.release(launch.generation, "supervisor", JSON.stringify(SUPERVISOR));
+				}
+				return observe(pid);
+			};
+			const first = refused(await recover(launch, machine, processes));
+			expect(first.reason).toMatch(/^(authority_unknown|revision_changed)$/);
+			const reservation = launch.store.reservation(launch.generation);
+			// Either no marker, or one that is not valid at the current revision: never a marker describing the old record
+			// that is valid now.
+			expect(reservation.escalation === null || reservation.escalation.revision !== reservation.revision).toBe(true);
+			processes.observe = observe;
+			const next = refused(await recover(launch, machine, processes));
+			expect(next).toMatchObject({ reason: "authority_unknown", escalation: { observations: 2, cached: false } });
+		});
+	});
+
 	describe("test 20 (engine half): the typed Repair action and the repair anchor", () => {
 		it("a denied presence store is restore_store_access; a local-store endpoint offers the restart; a non-local store names the recorded host and session", async () => {
 			const local = fakeWindows();
@@ -490,7 +615,7 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			const machine = fakeWindows({ kernelSession: null });
 			const launch = await launched(machine);
 			crash(machine);
-			await censusEntry(launch, 4242);
+			await censusEntry(launch, 4242, "134000000000000005", null);
 			const processes = fakeProcessTable();
 			processes.denied(4242);
 			machine.control.kernelSession = { status: "verified", creationTime: S1, reason: null };
@@ -498,7 +623,10 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 				store: launch.store,
 				endpoint: ENDPOINT,
 				paths: launch.paths,
-				prober: recoveryProber(STORE_DIR, machine.load, { observe: processes.observe }),
+				prober: recoveryProber(STORE_DIR, machine.load, {
+					observe: processes.observe,
+					daemonDirectory: launch.paths.dir,
+				}),
 				withEndpointLock: (run) => run(),
 				confirmRestart: true,
 			});
@@ -533,14 +661,17 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			const unverified = fakeWindows({ kernelSession: null });
 			const launchUnverified = await launched(unverified);
 			crash(unverified);
-			await censusEntry(launchUnverified, 4242);
+			await censusEntry(launchUnverified, 4242, "134000000000000005", null);
 			const processes = fakeProcessTable();
 			processes.denied(4242);
 			const refusedUnverified = await repairEndpointReservations({
 				store: launchUnverified.store,
 				endpoint: ENDPOINT,
 				paths: launchUnverified.paths,
-				prober: recoveryProber(STORE_DIR, unverified.load, { observe: processes.observe }),
+				prober: recoveryProber(STORE_DIR, unverified.load, {
+					observe: processes.observe,
+					daemonDirectory: launchUnverified.paths.dir,
+				}),
 				withEndpointLock: (run) => run(),
 				confirmRestart: true,
 			});
@@ -550,13 +681,16 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			const stale = fakeWindows({ kernelSession: null });
 			const launchStale = await launched(stale);
 			crash(stale);
-			await censusEntry(launchStale, 4242);
+			await censusEntry(launchStale, 4242, "134000000000000005", null);
 			stale.control.kernelSession = { status: "verified", creationTime: S1, reason: null };
 			await repairEndpointReservations({
 				store: launchStale.store,
 				endpoint: ENDPOINT,
 				paths: launchStale.paths,
-				prober: recoveryProber(STORE_DIR, stale.load, { observe: processes.observe }),
+				prober: recoveryProber(STORE_DIR, stale.load, {
+					observe: processes.observe,
+					daemonDirectory: launchStale.paths.dir,
+				}),
 				withEndpointLock: (run) => run(),
 				confirmRestart: true,
 			});
@@ -626,7 +760,7 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 				"supervisor",
 				OWNER,
 				SUPERVISOR,
-				createHash("sha256").update(SECRET).digest(),
+				credentialCommitment(SECRET, "supervisor", socketSecretPath(socket)),
 			);
 			const agentDir = join(root, "agent");
 			await createHostDaemonPaths({ agentDir, socket });
@@ -755,7 +889,7 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 				const probe = machine.native.presenceProbe({
 					presenceId: supervisor.presenceId,
 					path: supervisor.path,
-					tag: Buffer.from(supervisor.header, "hex"),
+					header: Buffer.from(supervisor.header, "hex"),
 					volumeSerial: supervisor.volumeSerial,
 					fileId: supervisor.fileId,
 					createdLocal: true,
