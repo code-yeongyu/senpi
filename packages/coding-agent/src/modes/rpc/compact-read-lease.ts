@@ -13,13 +13,16 @@ export class CompactReadLease {
 	private released = false;
 	private operations = 0;
 	private readonly dispose: () => void;
+	private readonly valid: () => void;
 
-	constructor(dispose: () => void) {
+	constructor(dispose: () => void, valid: () => void = () => undefined) {
 		this.dispose = dispose;
+		this.valid = valid;
 	}
 
 	assert(): void {
 		if (this.released) throw new CompactReadError("released");
+		this.valid();
 	}
 
 	async run<T>(read: () => Promise<T>): Promise<T> {

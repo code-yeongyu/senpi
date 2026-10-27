@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { COMPACT_LEAF_CODE_UNITS as LEAF } from "../../src/modes/rpc/compact-content-store.ts";
 import { CompactSessionState } from "../../src/modes/rpc/compact-session-state.ts";
 import type { CompactStorageIo } from "../../src/modes/rpc/compact-storage-io.ts";
-import { spoolRoot } from "./compact-storage-support.ts";
+import { spoolRoot, startIdentity } from "./compact-storage-support.ts";
 
 // senpi#4272 (#4322 delta review LOW 3): a spill write whose failure cannot even be described still
 // records the failure with the bytes it keeps resident, discards the partial file, and leaves the
@@ -47,6 +47,7 @@ describe("compact content store: a failure report that cannot describe its cause
 
 		state.accept({
 			type: "block_start",
+			...startIdentity(),
 			messageId: "m1",
 			contentIndex: 0,
 			kind: "text",

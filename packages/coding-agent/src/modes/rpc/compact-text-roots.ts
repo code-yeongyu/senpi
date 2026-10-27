@@ -56,9 +56,9 @@ export class CompactTextRoots {
 	}
 
 	/** Transfers one live root and one newly owned bounded leaf into the new root. */
-	append(root: LeafId, text: string): LeafId {
+	append(root: LeafId, text: string, structured = false): LeafId {
 		this.units(root);
-		const leaf = this.store.createLeaf(text);
+		const leaf = this.store.createLeaf(text, structured);
 		if (root === 0) return leaf;
 		const result = this.appendLeaf(root, leaf);
 		this.store.adjust(root, -1, 0);
@@ -145,6 +145,21 @@ export class CompactTextRoots {
 		const node = this.nodes.get(id);
 		if (!node) throw new CompactReadError("ownership");
 		return node;
+	}
+
+	/** Compatibility assembly visits actual leaves, including short append-only delta leaves. */
+	async *chunks(root: LeafId, valid: () => void): AsyncGenerator<string> {
+		valid();
+		if (root === 0) return;
+		if (root > 0) {
+			const text = await this.read(root, "", 0, this.units(root), 1, valid);
+			valid();
+			yield text;
+		} else {
+			const node = this.node(root);
+			yield* this.chunks(node.left, valid);
+			yield* this.chunks(node.right, valid);
+		}
 	}
 
 	private appendLeaf(root: LeafId, leaf: LeafId): LeafId {

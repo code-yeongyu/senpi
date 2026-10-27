@@ -64,6 +64,7 @@ interface Leaf {
 	pins: number;
 	state: "ram" | "pending" | "committed";
 	path?: string;
+	file?: { readonly path: string; readonly bytes: number };
 }
 
 export class CompactContentStore extends CompactSpoolStorage {
@@ -115,6 +116,15 @@ export class CompactContentStore extends CompactSpoolStorage {
 		return id;
 	}
 
+	/** A committed index file participates in the same ownership graph as its descriptors. */
+	ownFile(path: string, bytes: number): LeafId {
+		const id = this.createLeaf("", true);
+		const leaf = this.leaves.get(id);
+		if (!leaf) throw new CompactReadError("ownership");
+		leaf.file = { path, bytes };
+		return id;
+	}
+
 	/** Moves live and cut-pin references; the last reference drops RAM or reclaims the file. */
 	adjust(id: LeafId, live: number, pins: number): void {
 		if (id === 0) return;
@@ -131,6 +141,7 @@ export class CompactContentStore extends CompactSpoolStorage {
 		}
 		if (leaf.live > 0 || leaf.pins > 0) return;
 		this.leaves.delete(id);
+		if (leaf.file) this.discard(leaf.file.path, leaf.file.bytes);
 		(leaf.value ? this.ramValues : this.ramLeaves).delete(id);
 		if (leaf.state === "committed" && leaf.path) {
 			if (leaf.value) this.structuredBytes.spilled -= leaf.units * 2;
@@ -210,6 +221,16 @@ export class CompactContentStore extends CompactSpoolStorage {
 		if (this.residentPayloadBytes > this.spillTargetBytes) {
 			this.spillQueued = this.spillAllowed && this.ramLeaves.size > 0;
 			if (this.spillQueued) this.enqueue("spill_write", () => this.spillNext());
+		}
+	}
+
+	/** Commit at most one batch of structural leaves ahead of a cold-index rewrite. */
+	async flushValues(): Promise<void> {
+		// Amortize a cold-index rewrite across a bounded batch, without waiting for every pending owner.
+		for (let n = 0; n < 128 && !this.spillStopped; n++) {
+			const [id] = this.ramValues;
+			if (id === undefined) break;
+			await this.flushLeaf(id);
 		}
 	}
 

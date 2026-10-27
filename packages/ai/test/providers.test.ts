@@ -302,6 +302,44 @@ describe("builtin providers", () => {
 		}
 	});
 
+	it("uses official Kimi K3.1 Pro list pricing on both Moonshot providers", () => {
+		const models = builtinModels();
+		const expectedCosts = {
+			"kimi-k3.1-pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+			"kimi-k3.1-pro-highspeed": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 4 },
+		};
+		for (const provider of ["moonshotai", "moonshotai-cn"] as const) {
+			for (const [modelId, cost] of Object.entries(expectedCosts)) {
+				expect(models.getModel(provider, modelId)?.cost, `${provider}/${modelId}`).toEqual(cost);
+			}
+		}
+	});
+
+	it("gives Moonshot Kimi K3.1 Pro the Kimi K3 request contract", () => {
+		const models = builtinModels();
+		for (const provider of ["moonshotai", "moonshotai-cn"] as const) {
+			for (const modelId of ["kimi-k3", "kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"] as const) {
+				const model = models.getModel(provider, modelId);
+				expect(model?.compat, `${provider}/${modelId}`).toMatchObject({
+					supportsReasoningEffort: true,
+					thinkingFormat: "openai",
+					requiresReasoningContentOnAssistantMessages: true,
+					supportsMidConvoSystemMessages: true,
+					supportsMidConvoToolAdditions: true,
+				});
+				expect(model?.thinkingLevelMap, `${provider}/${modelId}`).toEqual({
+					off: null,
+					minimal: null,
+					low: "low",
+					medium: null,
+					high: "high",
+					xhigh: null,
+					max: "max",
+				});
+			}
+		}
+	});
+
 	it("uses API-equivalent implied pricing for Kimi Coding subscription models", () => {
 		const models = builtinModels();
 		const expectedCosts = {

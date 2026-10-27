@@ -607,14 +607,39 @@ jobs:
               Start-Sleep -Milliseconds 500
             }
           }
+          # senpi#4354: NTFS directory junctions on the fixed volume. The classifying handle follows
+          # reparse points, so each is classified by its target volume.
+          New-Item -ItemType Junction -Path "$tmp\junction-winfsp" -Target 'M:\' | Out-Null
+          New-Item -ItemType Junction -Path "$tmp\junction-vhdx" -Target 'V:\' | Out-Null
           @(
             'RECEIPT_WINFSP_DISK_NTFS=M:\',
             'RECEIPT_WINFSP_NETWORK=N:\',
             'RECEIPT_DOKANY_DISK_MIRROR=O:\',
             'RECEIPT_SMB_MAPPED_DRIVE=S:\',
             'RECEIPT_SMB_UNC=\\localhost\receipt\',
-            'RECEIPT_VHDX_NTFS=V:\'
+            'RECEIPT_VHDX_NTFS=V:\',
+            "RECEIPT_JUNCTION_WINFSP=$tmp\junction-winfsp",
+            "RECEIPT_JUNCTION_VHDX=$tmp\junction-vhdx"
           ) | Add-Content $env:GITHUB_ENV
+          # senpi#4354: a ReFS-formatted VHDX (kernel ReFS driver => local). An image that cannot format
+          # ReFS records why instead of failing the job; the receipt then prints that reason.
+          @(
+            "create vdisk file=`"$tmp\receipt-refs.vhdx`" maximum=4096 type=expandable",
+            "select vdisk file=`"$tmp\receipt-refs.vhdx`"",
+            'attach vdisk',
+            'create partition primary',
+            'format fs=refs quick label=refs',
+            'assign letter=R'
+          ) | Set-Content "$tmp\vhdx-refs.txt"
+          diskpart /s "$tmp\vhdx-refs.txt" | Tee-Object "$tmp\vhdx-refs.log"
+          $refsExit = $LASTEXITCODE
+          $deadline = (Get-Date).AddSeconds(60)
+          while ($refsExit -eq 0 -and -not (Test-Path 'R:\') -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+          if ($refsExit -eq 0 -and (Test-Path 'R:\')) {
+            'RECEIPT_REFS_VHDX=R:\' | Add-Content $env:GITHUB_ENV
+          } else {
+            "RECEIPT_REFS_UNAVAILABLE=diskpart exit $refsExit; R: mounted=$(Test-Path 'R:\')" | Add-Content $env:GITHUB_ENV
+          }
 
       - name: Fixture receipts
         shell: bash
