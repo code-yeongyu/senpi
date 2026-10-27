@@ -31,7 +31,7 @@ mod windows {
         let probe = PresenceProbe {
             presence_id: "binding-prober".into(),
             path: path.clone(),
-            tag: b"wrong-tag".to_vec().into(),
+            header: b"wrong-header".to_vec().into(),
             volume_serial: "0".into(),
             file_id: "0".into(),
             created_local: false,
@@ -68,7 +68,7 @@ mod windows {
         let request = |created_local, relocated, kernel_session| PresenceProbe {
             presence_id: "binding-proof".into(),
             path: path.clone(),
-            tag: b"tag".to_vec().into(),
+            header: b"tag".to_vec().into(),
             volume_serial: identity.volume_serial.to_string(),
             file_id: identity.file_id.to_string(),
             created_local,
@@ -109,5 +109,57 @@ mod windows {
             "released"
         );
         assert_eq!(independent.acquire("independent", &path), LockAttempt::Acquired);
+    }
+
+    /// The object's content is the design's immutable header (tag, schema, creation timestamp). The
+    /// binding compares the whole header: the tag alone, or the header plus a byte, never matches.
+    #[test]
+    fn only_the_whole_immutable_header_matches() {
+        let header = b"{\"tag\":\"c0ffee\",\"schema\":1,\"createdAt\":\"2026-10-27T00:00:00.000Z\"}\n";
+        let dir = std::env::temp_dir().join(format!("senpi-binding-header-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("presence.lock");
+        std::fs::write(&path, header).unwrap();
+        let path = path.to_str().unwrap().to_string();
+        let mut backend = WindowsPresenceBackend;
+        let handle = backend.open(&path).unwrap();
+        let identity = backend.handle_identity(&handle).unwrap();
+        drop(handle);
+        let request = |header: &[u8]| PresenceProbe {
+            presence_id: "binding-header".into(),
+            path: path.clone(),
+            header: header.to_vec().into(),
+            volume_serial: identity.volume_serial.to_string(),
+            file_id: identity.file_id.to_string(),
+            created_local: true,
+            relocated: false,
+            kernel_session: None,
+        };
+        let mut longer = header.to_vec();
+        longer.push(b'\n');
+        for partial in [
+            &b"c0ffee"[..],
+            &b"{\"tag\":\"c0ffee\""[..],
+            &header[..header.len() - 1],
+            &longer,
+        ] {
+            let verdict = presence_probe(request(partial));
+            assert_eq!(verdict.status, "unknown");
+            assert_eq!(verdict.reason.as_deref(), Some("inadmissible"));
+            let mut independent = PresenceRegistry::new(WindowsPresenceBackend);
+            assert_eq!(independent.acquire("independent", &path), LockAttempt::Acquired);
+            independent.release_after_quiescence(QuiescenceReceipt {
+                presence_id: "independent".into(),
+            });
+        }
+        assert_eq!(presence_probe(request(header)).status, "acquired");
+        assert_eq!(
+            presence_release_after_quiescence(ReleasedReceipt {
+                presence_id: "binding-header".into(),
+                state: "released".into(),
+            })
+            .status,
+            "released"
+        );
     }
 }

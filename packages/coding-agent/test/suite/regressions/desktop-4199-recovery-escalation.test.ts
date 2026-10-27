@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -21,10 +20,12 @@ import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/h
 import {
 	acquireOwnerPresence,
 	claimLaunchRole,
+	credentialCommitment,
 	grantVerifiedParticipant,
 	type LaunchIdentity,
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
+	reservationStorePath,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import { HOST_EXIT_REFUSED, runHostRequest } from "../../../src/modes/rpc/host-runner.ts";
 import { resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
@@ -153,7 +154,9 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 	 */
 	async function launched(machine: Machine, owner: LaunchIdentity = OWNER, root?: string) {
 		root ??= await tempRoot();
-		const storePath = join(root, "endpoint.reservation.db");
+		// The endpoint's fixed store beside its (mocked) ensure lock: the one store a claimant's locator may name.
+		mocked.lockDir = root;
+		const storePath = reservationStorePath(ENDPOINT);
 		const store = await openStore(storePath);
 		const socket = join(root, "rpc.sock");
 		const reservation = resolvePresenceRoot({
@@ -176,7 +179,7 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			"supervisor",
 			owner,
 			SUPERVISOR,
-			createHash("sha256").update(SECRET).digest(),
+			credentialCommitment(SECRET, "supervisor", socketSecretPath(ENDPOINT)),
 		);
 		const paths = await createHostDaemonPaths({ agentDir: join(root, "agent"), socket });
 		const ownerObject = store.reservation(generation).ownerPresence;
@@ -628,7 +631,7 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 				"supervisor",
 				OWNER,
 				SUPERVISOR,
-				createHash("sha256").update(SECRET).digest(),
+				credentialCommitment(SECRET, "supervisor", socketSecretPath(socket)),
 			);
 			const agentDir = join(root, "agent");
 			await createHostDaemonPaths({ agentDir, socket });
@@ -756,7 +759,7 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 				const probe = machine.native.presenceProbe({
 					presenceId: supervisor.presenceId,
 					path: supervisor.path,
-					tag: Buffer.from(supervisor.header, "hex"),
+					header: Buffer.from(supervisor.header, "hex"),
 					volumeSerial: supervisor.volumeSerial,
 					fileId: supervisor.fileId,
 					createdLocal: true,

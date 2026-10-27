@@ -1,5 +1,4 @@
 import * as childProcess from "node:child_process";
-import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, Server } from "node:net";
@@ -16,10 +15,12 @@ import {
 	acquireOwnerPresence,
 	admitClaimedParticipant,
 	claimLaunchRole,
+	credentialCommitment,
 	grantVerifiedParticipant,
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
 	releaseReservingOwner,
+	reservationStorePath,
 	waitForClaim,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import { runHostSupervisor } from "../../../src/modes/rpc/host-lifecycle.ts";
@@ -74,6 +75,8 @@ const TARGET = `C:\\Users\\u\\AppData\\Local\\Temp\\senpi-rpc-host-locks\\${ENDP
 const OWNER = { pid: 100, processStartTime: "133000000000000001" };
 const SELF = { pid: 200, processStartTime: "133000000000000002" };
 const SECRET = Buffer.alloc(32, 7);
+// A commitment is bound to its role and credential path (design 4.2a), never the bare digest of the secret.
+const COMMITMENT = credentialCommitment(SECRET, "supervisor", socketSecretPath(ENDPOINT));
 
 function locatorOf(args: readonly string[]) {
 	const locator = parseReservationLocatorArgs(args);
@@ -116,7 +119,9 @@ describe("#4199 participant presence: acquire before authority, release after qu
 	async function offered(fake: ReturnType<typeof fakeWindows>) {
 		// Every participant entry under test loads this bridge, as a Windows one would load the real one.
 		mocked.placement = fake.load;
-		const store = await openStore(join(await tempRoot(), "endpoint.reservation.db"));
+		// The endpoint's fixed store beside its (mocked) ensure lock: the one store a claimant's locator may name.
+		mocked.lockDir = await tempRoot();
+		const store = await openStore(reservationStorePath(ENDPOINT));
 		const reservation = resolvePresenceRoot({
 			coordinationTarget: TARGET,
 			endpointKey: ENDPOINT_KEY,
@@ -267,14 +272,7 @@ describe("#4199 participant presence: acquire before authority, release after qu
 		const object = supervisorObject(store, locator);
 		const admitted = admitClaimedParticipant(locator, SELF, SECRET, { deadlineMs: 5_000 });
 		await waitForClaim(store, generation, "supervisor", { deadlineMs: 5_000 });
-		grantVerifiedParticipant(
-			store,
-			generation,
-			"supervisor",
-			OWNER,
-			SELF,
-			createHash("sha256").update(SECRET).digest(),
-		);
+		grantVerifiedParticipant(store, generation, "supervisor", OWNER, SELF, COMMITMENT);
 		const presence = await admitted;
 		expect(fake.held.get(object.path)).toBe(object.presenceId);
 		expect(mocked.events).toEqual([]);
@@ -374,14 +372,7 @@ describe("#4199 participant presence: acquire before authority, release after qu
 		expect(store.roleRow(locator)?.presence).toEqual({ status: "presence_unavailable" });
 		const admitted = admitClaimedParticipant(locator, SELF, SECRET, { deadlineMs: 5_000 });
 		await waitForClaim(store, generation, "supervisor", { deadlineMs: 5_000 });
-		grantVerifiedParticipant(
-			store,
-			generation,
-			"supervisor",
-			OWNER,
-			SELF,
-			createHash("sha256").update(SECRET).digest(),
-		);
+		grantVerifiedParticipant(store, generation, "supervisor", OWNER, SELF, COMMITMENT);
 		await expect(admitted).resolves.toBeUndefined();
 		expect(store.roleRow(locator)?.status).toBe("granted");
 		const startFake = fakeWindows({ storeLocality: "not_local", rootLocality: "not_local" });
