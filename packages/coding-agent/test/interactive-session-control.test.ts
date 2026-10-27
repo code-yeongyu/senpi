@@ -48,7 +48,15 @@ describe("TUI session control endpoint", () => {
 		const info = await controlData(fixture.socket, { type: "get_protocol_info" });
 		expect(info).toMatchObject({
 			protocolVersion: 1,
-			capabilities: ["tui_control", "session_status", "tui_observer", "observe_reads", "entries_tail"],
+			capabilities: [
+				"tui_control",
+				"session_status",
+				"tui_observer",
+				"observe_reads",
+				"entries_tail",
+				"snapshot_cursor",
+				"ui_answer_ledger",
+			],
 			mode: "tui",
 			endpoint_kind: "tui",
 		});

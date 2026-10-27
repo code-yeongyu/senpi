@@ -1,3 +1,45 @@
+## 2026-10-26 - Bound provider actions receive the registering extension's path (senpi#4334, fixes #4328)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/runner.ts`: `bindCore`'s `providerActions.registerProvider` and
+  `registerNativeProvider` take an optional third/second `extensionPath`; the pre-bind queue flush and the
+  post-bind `runtime.registerProvider`/`registerNativeProvider` pass it through. The public `pi.registerProvider`
+  API is unchanged.
+
+### Why
+
+- The model runtime reports which extension defined a provider (`get_auth_providers` `origin.extensionPath`), and
+  only the runner knows the registering extension.
+
+### Why an extension could not handle it
+
+- The registering extension's path is host-side bookkeeping the runner owns; an extension cannot report it for
+  another extension's registration.
+
+### Expected merge conflict zones
+
+- LOW: the `providerActions` parameter type of `bindCore`, the pending-registration flush loop and the post-bind
+  `runtime.registerProvider`/`registerNativeProvider` assignments.
+
+## 2026-10-26 - ambientAuth resolve input can read stored provider env (senpi#4339)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the extension-facing `ProviderConfig.ambientAuth.resolve` input gains optional `storedProviderEnv(providerId)` — a read-only env-only view of another provider's stored credential (routing metadata only, never keys).
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/types.ts`: ambient lanes that share a cloud credential chain (vertex-garden over google-vertex ADC) need the sibling profile's project; `AuthContext` alone cannot express that read.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/types.ts`: the input is part of the public provider contract dispatched by the runner; an extension cannot widen its own resolve input.
+
+### Expected merge conflict zones
+
+- LOW: the `ambientAuth` block inside `ProviderConfig`.
+
 ## 2026-10-25 - Ephemeral terminal dialogs for private MCP forms (#4207)
 
 ### What changed

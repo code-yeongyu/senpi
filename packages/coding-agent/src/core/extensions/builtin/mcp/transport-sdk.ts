@@ -158,7 +158,7 @@ function trackStdioStart(transport: Pick<StdioClientTransport, "start">, onStart
 }
 
 function pipeStderr(
-	transport: Pick<StdioClientTransport, "stderr">,
+	transport: Pick<StdioClientTransport, "stderr" | "start" | "onclose">,
 	logger: McpLogger,
 	sink: McpAsyncErrorSink,
 	protocol: ModernProtocolState,
@@ -168,6 +168,16 @@ function pipeStderr(
 	let stderrEnded = false;
 	const stderr = transport.stderr;
 	if (stderr === undefined || stderr === null) return;
+	const start = transport.start.bind(transport);
+	transport.start = async () => {
+		const onclose = transport.onclose;
+		transport.onclose = () => {
+			stderrEnded = true;
+			if (protocol.version === undefined) protocol.resolveStdioDiagnostics?.(false);
+			onclose?.();
+		};
+		await start();
+	};
 	const logLine = (line: string) => {
 		// Arbitrary server text may echo private messages, schemas, or answers. Keep diagnostic
 		// events and allowlisted system error codes, never untrusted payload text under enforcement.
@@ -206,7 +216,7 @@ function pipeStderr(
 			if (!Buffer.isBuffer(chunk) && typeof chunk !== "string") return;
 			const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
 			if (!protocol.legacy && !protocol.privateForms) {
-				// Only legacy-positive negotiation may release startup diagnostics.
+				// Release only after legacy classification or an unclassified child's exit.
 				undecided += text.slice(0, Math.max(0, 512 * 1024 - undecided.length));
 				return;
 			}

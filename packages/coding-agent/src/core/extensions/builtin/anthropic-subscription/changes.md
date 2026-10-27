@@ -1,3 +1,65 @@
+## 2026-10-26 - Claude account listing reports the block reason too (senpi#4365)
+
+### What changed
+
+- `account-management.ts`: `getProviderAccounts` reports `blockedReason` (`auth_error` | `rate_limit` | `disabled`)
+  and `blockedUntil` while an account is blocked, matching the generic account listing; a slot with
+  `blockReason: "account_disabled"` is now `blocked` (reason `disabled`, no end time) there too.
+
+### Why
+
+- The 1495 regression asserts both listings return the same descriptors.
+
+### Why an extension could not handle it
+
+- This file is the extension; the change keeps it equal to core's listing.
+
+### Expected merge conflict zones
+
+- None upstream: the directory is fork-only.
+
+## 2026-10-26 - An unanswered attempt on another account keeps the serving account's lineage (senpi#4304, senpi#4318)
+
+### What changed
+
+- `session-turn-attempt.ts`: `createSessionTurnAttempt` takes `servedLineage`, the session's binding from before the attempt. An unanswered attempt on an account other than the one that binding names re-publishes the binding instead of its own retry checkpoint, once the attempt's process is gone: after a failure, a discard, or an abort that closed it. If Claude Code rejected a fork boundary, that boundary is dropped from the binding first (`withoutMissingAssistantUuid`). A process kept after an abort, and any attempt on the serving account, record their own retry checkpoint as before.
+- `session-stream.ts`: `createResidentAttempt` reads the binding after restored-binding admission and passes it to the attempt.
+
+### Why
+
+- A prompt cache lives on the account that served the session. A failed attempt on account B replaced the session's binding with B's retry checkpoint. The next request then preferred B, which never served the session, over the recovered account A that holds its cache, and wrote the whole conversation to B (oh-my-openagent#10304). When B was still blocked and the request went back to A, the continuity line still read `account_changed` with `seatChanged: true` (senpi#4304).
+
+### Why an extension could not handle it
+
+- The session binding and the account preference are internal to the builtin's resident session lane.
+
+### Expected merge conflict zones
+
+- LOW: the unanswered-attempt branches of `createSessionTurnAttempt` (`session-turn-attempt.ts`); the `servedLineage` line in `createResidentAttempt` (`session-stream.ts`).
+
+## 2026-10-26 - Attribute billing errors to the attempted Claude account (#4364)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-context.ts`: keep safe operational account labels and source kinds with each SDK event/error. Attempt-open logs contain only salted seat/directory digests and source/rule metadata, never slot names or absolute paths.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-attempt.ts`: attach account context to resident and auxiliary events and thrown failures without changing their classification.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/errors.ts`: preserve event account context when constructing SDK result and assistant errors.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts`: name the attempted account and source on billing/extra-usage refusals and offer pin/switch/top-up actions.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts` and `guidance.ts`: carry effective CLI/settings/stored pin provenance into the attempted account context and reuse its existing actionable switch guidance. Preserve version-floor hints beside billing guidance.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane-boundary.ts`: extract the existing OAuth/store boundary and retain the auth-lane exports, keeping the account-selection owner small as pin provenance is added.
+
+### Why
+
+- A billing refusal did not reveal which managed or ambient account actually served the request. Display names can contain email addresses, so diagnostics and guidance use operational account labels instead. Part of desktop#4753; the reporter's root cause remains unproven.
+
+### Why an extension could not handle it
+
+- The bundled provider owns the selected account before SDK dispatch and reconstructs SDK errors before failover and public-stream rendering. Other extensions cannot reliably attribute overlapping attempts or final failover errors.
+
+### Expected merge conflict zones
+
+- LOW: account context around dispatch, SDK error constructors, and final auth guidance. Preserve raw error classification, usage accounting, and retry behavior.
+
 ## 2026-10-25 - Keep Claude Code auto memory out of subscription sessions (senpi#4219)
 
 ### What changed

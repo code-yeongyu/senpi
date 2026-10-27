@@ -93,6 +93,7 @@ import type {
 	OffloadOptions,
 	ProjectTrustContext,
 	ProjectTrustEvent,
+	ProviderLoginStartEvent,
 	ProjectTrustEventResult,
 	ProviderConfig,
 	ProviderRequestPreparation,
@@ -624,6 +625,7 @@ export class ExtensionRunner {
 		this.extensions = extensions;
 		registerRunnerExtensions(this, extensions);
 		this.runtime = runtime;
+		runtime.emitProviderLoginStart = (event) => this.emitProviderLoginStart(event);
 		this.uiContext = noOpUIContext;
 		this.cwd = cwd;
 		this.sessionManager = sessionManager;
@@ -635,8 +637,8 @@ export class ExtensionRunner {
 		actions: ExtensionActions,
 		contextActions: ExtensionContextActions,
 		providerActions?: {
-			registerProvider?: (name: string, config: ProviderConfig) => void;
-			registerNativeProvider?: (provider: Provider) => void;
+			registerProvider?: (name: string, config: ProviderConfig, extensionPath?: string) => void;
+			registerNativeProvider?: (provider: Provider, extensionPath?: string) => void;
 			unregisterProvider?: (name: string) => void;
 			registerVirtualModel?: (definition: VirtualModelDefinition) => void;
 			unregisterVirtualModel?: (provider: string, id: string) => void;
@@ -760,12 +762,12 @@ export class ExtensionRunner {
 			try {
 				if (registration.kind === "config") {
 					if (providerActions?.registerProvider) {
-						providerActions.registerProvider(registration.name, registration.config);
+						providerActions.registerProvider(registration.name, registration.config, registration.extensionPath);
 					} else {
 						this.modelRegistry.registerProvider(registration.name, registration.config);
 					}
 				} else if (providerActions?.registerNativeProvider) {
-					providerActions.registerNativeProvider(registration.provider);
+					providerActions.registerNativeProvider(registration.provider, registration.extensionPath);
 				} else {
 					this.modelRegistry.registerProvider(registration.provider);
 				}
@@ -798,16 +800,16 @@ export class ExtensionRunner {
 
 		// From this point on, provider registration/unregistration takes effect immediately
 		// without requiring a /reload.
-		this.runtime.registerProvider = (name, config) => {
+		this.runtime.registerProvider = (name, config, extensionPath) => {
 			if (providerActions?.registerProvider) {
-				providerActions.registerProvider(name, config);
+				providerActions.registerProvider(name, config, extensionPath);
 				return;
 			}
 			this.modelRegistry.registerProvider(name, config);
 		};
-		this.runtime.registerNativeProvider = (provider) => {
+		this.runtime.registerNativeProvider = (provider, extensionPath) => {
 			if (providerActions?.registerNativeProvider) {
-				providerActions.registerNativeProvider(provider);
+				providerActions.registerNativeProvider(provider, extensionPath);
 				return;
 			}
 			this.modelRegistry.registerProvider(provider);
@@ -2561,6 +2563,17 @@ export class ExtensionRunner {
 		}
 
 		return { skillPaths, promptPaths, themePaths, hookPaths };
+	}
+
+	/** Awaits every `provider_login_start` handler in order; a failing handler is reported and the login goes on. */
+	async emitProviderLoginStart(event: ProviderLoginStartEvent): Promise<void> {
+		for (const { path, handler } of flattenHandlers(this.extensions, event.type)) {
+			try {
+				await handler(event, this.createContext(path));
+			} catch (err) {
+				this.reportHandlerFailure(path, event.type, err);
+			}
+		}
 	}
 
 	/** Emit input event. Transforms chain, "handled" short-circuits. */
