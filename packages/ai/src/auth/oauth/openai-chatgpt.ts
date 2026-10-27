@@ -7,7 +7,7 @@
 
 import { randomBytes } from "node:crypto";
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
+import { oauthBrandName, oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
 import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { LoginOptions, OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
@@ -15,7 +15,6 @@ import { generatePKCE } from "./pkce.ts";
 
 // every login registers a new client with this ID; OpenAI returns the issued client ID in the callback
 const DYNAMIC_CLIENT_ID = "dynamic_agent_client";
-const AGENT_NAME_HINT = "Pi";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AUTHORIZE_URL = "https://auth.openai.com/api/accounts/authorize";
 const TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token";
@@ -255,7 +254,8 @@ async function loginOpenAIChatGPT(
 	const authorizationUrl = new URL(AUTHORIZE_URL);
 	authorizationUrl.search = new URLSearchParams({
 		client_id: DYNAMIC_CLIENT_ID,
-		agent_name_hint: AGENT_NAME_HINT,
+		// Display metadata on OpenAI's consent screen (the user can edit it); not tied to the issued client ID.
+		agent_name_hint: oauthBrandName(),
 		ext_agent_host_id: hostId,
 		response_type: "code",
 		redirect_uri: REDIRECT_URI,

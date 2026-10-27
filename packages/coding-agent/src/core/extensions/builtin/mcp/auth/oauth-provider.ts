@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { oauthBrandName } from "@earendil-works/pi-ai/utils/oauth-page";
 import type { OAuthClientProvider, OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
 	OAuthClientInformationFull,
@@ -135,7 +136,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 			grant_types: ["authorization_code", "refresh_token"],
 			response_types: ["code"],
 			token_endpoint_auth_method: "none",
-			client_name: "senpi",
+			client_name: oauthBrandName(),
 			scope: this.#options.scopes?.join(" "),
 		};
 	}
