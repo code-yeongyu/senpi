@@ -236,11 +236,11 @@ describe("endpoint reservation store", () => {
 		"treats a stored expected set %j as unreadable for offer and serving",
 		async (stored) => {
 			const { path, store: s } = await store();
-			const generation = s.reserve(ENDPOINT, OWNER, ["host"]);
+			const generation = s.reserve(ENDPOINT, OWNER, ["host"], NO_PRESENCE);
 			const raw = new DatabaseSync(path);
 			raw.prepare("UPDATE reservations SET expected_roles = ? WHERE generation = ?").run(stored, generation);
 			raw.close();
-			expect(rejection(() => s.offer(generation, "host", OWNER))).toBe("role_not_expected");
+			expect(rejection(() => s.offer(generation, "host", OWNER, NO_OBJECT))).toBe("role_not_expected");
 			expect(rejection(() => s.markServing(generation))).toBe("roles_not_granted");
 		},
 	);
