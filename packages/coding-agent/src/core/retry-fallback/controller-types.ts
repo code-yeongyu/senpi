@@ -15,6 +15,8 @@ export interface ActiveFallbackState {
 	pinnedByBilling: boolean;
 	/** Derived OR of the two provenance flags - the only field consumers read. */
 	pinned: boolean;
+	/** The original provider's credential revision when the episode began; a change releases it (senpi#4099). */
+	recoveryRevision?: string;
 }
 
 export type FallbackReason = "transient" | "refusal" | "hard-error" | "billing";
@@ -58,4 +60,9 @@ export interface RetryFallbackControllerDeps {
 	): void;
 	getCurrentSelector(): { model: Model<Api>; thinkingLevel?: ThinkingLevel } | undefined;
 	isAuthAvailable(provider: string): boolean;
+	/**
+	 * An opaque revision of `provider`'s stored credential and blocked pool slots, never key material;
+	 * `undefined` when it cannot be read. A change means a re-login or a cleared block (senpi#4099).
+	 */
+	recoveryRevision?(provider: string): Promise<string | undefined>;
 }
