@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isPresetRule } from "./config.ts";
-import { evaluate } from "./evaluate.ts";
+import { evaluate, evaluateExternalSpelling } from "./evaluate.ts";
 import { createLocalEventEmitter, type PermissionEventEmitter } from "./events.ts";
+import { decideExternalPaths } from "./external-spellings.ts";
 import { approvedFileVersion, approvedStoreRealPath, loadApproved } from "./storage.ts";
 import {
 	CorrectedError,
@@ -22,6 +23,7 @@ interface DecisionOptions {
 	readonly approveBlanketAsk?: boolean;
 	readonly presetBound?: boolean;
 	readonly ruleAliases?: readonly string[] | undefined;
+	readonly originalPaths?: readonly string[] | undefined;
 }
 
 /** Core service for managing permission requests and rule evaluation */
@@ -84,7 +86,12 @@ export class PermissionService {
 
 	/**
 	 * The one decision for a call, used when it is asked and again whenever an "Always" reply re-checks
-	 * the requests still pending. Without `presetBound` it is last-match-wins over every rule. With
+	 * the requests still pending. External paths use last-match-wins separately for the absolute
+	 * lexical path, physical-prefix spellings from the component walk and their proven on-disk case; the most restrictive
+	 * decision wins (deny > ask > allow). More than 16 spellings or 40 hops asks instead.
+	 * Raw originalPaths are display-only. Remembered approvals
+	 * match the resolved target and cannot override a deny from any spelling.
+	 * Without `presetBound` it is last-match-wins over every rule. With
 	 * `presetBound` the preset's rules and the user's settings and CLI rules are evaluated apart and
 	 * the more restrictive wins, so no configured rule, in any order or layer, can widen the preset;
 	 * only an "Always" answer given in this or an earlier session (`permissions-approved.jsonl`,
@@ -101,6 +108,26 @@ export class PermissionService {
 		options: DecisionOptions = {},
 	): { readonly action: Rule["action"]; readonly rules: readonly Rule[] } {
 		this.refreshApproved();
+		if (permission === "external_directory") {
+			return decideExternalPaths(target, options.ruleAliases ?? [], (spelling, resolved, canonicalCase) =>
+				this.decideTarget(permission, spelling, options, resolved, spelling !== resolved, canonicalCase),
+			);
+		}
+		return this.decideTarget(permission, options.ruleAliases ?? target, options);
+	}
+
+	private decideTarget(
+		permission: string,
+		target: string | readonly string[],
+		options: DecisionOptions,
+		approvedTarget = target,
+		preserveAncestry = false,
+		canonicalCase?: (value: string) => string,
+	): { readonly action: Rule["action"]; readonly rules: readonly Rule[] } {
+		const evaluateTarget = (ruleset: Ruleset) =>
+			preserveAncestry
+				? evaluateExternalSpelling(target, ruleset, canonicalCase)
+				: evaluate(permission, target, ruleset);
 		// Defence in depth (HIGH 1): the agent's own tools never touch the approvals store, whatever
 		// rules say. The target's real path is compared against the store's real path.
 		if (this.protectedStorePath !== undefined && this.targetIsProtectedStore(target)) {
@@ -112,13 +139,13 @@ export class PermissionService {
 			// decision is a deny it wins outright, and a preset wildcard-ask never masks it. The preset
 			// only fills the gap the user left (no user rule matched, or the user decision is an ask).
 			const userRules = this.staticRuleset.filter((rule) => !isPresetRule(rule));
-			const userRule = evaluate(permission, target, userRules);
+			const userRule = evaluateTarget(userRules);
 			if (userRules.includes(userRule) && userRule.action === "deny") {
 				return { action: "deny", rules: [{ ...userRule }] };
 			}
-			const configured = evaluate(permission, target, this.staticRuleset);
+			const configured = evaluateTarget(this.staticRuleset);
 			if (configured.action === "deny") return { action: "deny", rules: [{ ...configured }] };
-			const approvedRule = evaluate(permission, target, this.approved);
+			const approvedRule = evaluate(permission, approvedTarget, this.approved);
 			if (this.approved.includes(approvedRule) && approvedRule.action === "allow") {
 				return { action: "allow", rules: [{ ...approvedRule }] };
 			}
@@ -129,9 +156,9 @@ export class PermissionService {
 		}
 		const presetRules = this.staticRuleset.filter((rule) => isPresetRule(rule));
 		const userRules = this.staticRuleset.filter((rule) => !isPresetRule(rule));
-		const presetRule = evaluate(permission, target, presetRules);
+		const presetRule = evaluateTarget(presetRules);
 		const preset = presetRule.action === "ask" && options.approveBlanketAsk ? "allow" : presetRule.action;
-		const userRule = evaluate(permission, target, userRules);
+		const userRule = evaluateTarget(userRules);
 		const user = userRules.includes(userRule) ? userRule.action : undefined;
 		const combined =
 			user === undefined || PermissionService.RESTRICTIVENESS[preset] >= PermissionService.RESTRICTIVENESS[user]
@@ -139,7 +166,7 @@ export class PermissionService {
 				: user;
 		const rules = [presetRule, ...(user === undefined ? [] : [userRule])].map((rule) => ({ ...rule }));
 		if (combined !== "ask") return { action: combined, rules };
-		const remembered = evaluate(permission, target, this.approved);
+		const remembered = evaluate(permission, approvedTarget, this.approved);
 		if (this.approved.includes(remembered) && remembered.action === "allow") {
 			return { action: "allow", rules: [...rules, { ...remembered }] };
 		}
@@ -209,9 +236,14 @@ export class PermissionService {
 		const deniedPatterns: string[] = [];
 		let needsAsk = false;
 
-		const options: DecisionOptions = { approveBlanketAsk, presetBound, ruleAliases };
+		const options: DecisionOptions = {
+			approveBlanketAsk,
+			presetBound,
+			ruleAliases,
+			originalPaths: info.originalPaths,
+		};
 		for (const pattern of info.patterns) {
-			const action = this.decide(info.permission, ruleAliases ?? pattern, options);
+			const action = this.decide(info.permission, pattern, options);
 			if (action === "deny") {
 				deniedPatterns.push(pattern);
 				continue;
@@ -294,6 +326,7 @@ export class PermissionService {
 			...entry.info,
 			patterns: [...entry.info.patterns],
 			always: [...entry.info.always],
+			...(entry.info.originalPaths ? { originalPaths: [...entry.info.originalPaths] } : {}),
 			metadata: { ...entry.info.metadata },
 			tool: entry.info.tool ? { ...entry.info.tool } : undefined,
 		}));
@@ -338,7 +371,7 @@ export class PermissionService {
 
 			const options = this.pendingOptions.get(requestID) ?? {};
 			const isAllowed = entry.info.patterns.every(
-				(pattern) => this.decide(entry.info.permission, options.ruleAliases ?? pattern, options) === "allow",
+				(pattern) => this.decide(entry.info.permission, pattern, options) === "allow",
 			);
 
 			if (!isAllowed) {

@@ -1,3 +1,117 @@
+## 2026-10-26 - Thrown provider errors pass the provider error boundary (senpi#4282)
+
+### What changed
+
+- `packages/agent/src/assistant-terminal-state.ts`: `createTerminalFailureAssistantMessage` runs pi-ai's `sanitizeProviderErrorMessage` on the message it builds from a thrown error, so the terminal message is classified (`errorCause: { type: "model_config" }`) and redacted before `message_start`/`message_end`.
+- `packages/agent/src/agent.ts`: `handleRunFailure` runs `sanitizeProviderErrorMessage` on the failure message of a run that threw between turns.
+- `packages/agent/src/harness/pico3/kinds/generation.ts`: the terminal message the generation builds from a thrown stream error runs `sanitizeProviderErrorMessage`, so it is classified and redacted before it is recorded.
+
+### Why
+
+- An error the stream function throws, or one that fails the run between turns, never passes `AssistantMessageEventStream`: its raw text reached every event and the session file, and a thrown `404 model_not_found` lost its classification, so the session retried it and walked the fallback chain onto another model.
+
+### Why an extension could not handle it
+
+- Both messages are built inside the agent loop and published to every subscriber before an extension sees them.
+
+### Expected merge conflict zones
+
+- LOW: the end of `createTerminalFailureAssistantMessage`; the two lines before the first `processEvents` call in `handleRunFailure` and the `pi-ai` import block of `agent.ts`; the `pi-ai` import block and the stream `catch` of `generation.ts`.
+
+## 2026-10-25 - Identify assistant stream starts for lifecycle activity (senpi#3864)
+
+### What changed
+
+- `types.ts` adds optional `streaming: true` to the `message_start` event.
+- `agent-loop.ts` sets the marker only at the provider assistant stream-start boundary; prepared messages, user messages, tool results, and synthetic failures do not set it.
+
+### Why
+
+- An assistant role alone cannot distinguish a live model stream from a prepared or synthetic assistant message.
+
+### Why an extension could not handle it
+
+- Only the agent loop knows whether a message start came from the provider stream or from prepared input.
+
+### Expected merge conflict zones
+
+- `agent-loop.ts`: provider stream-start event.
+- `types.ts`: additive message-start event metadata.
+
+## 2026-10-26 - Hand the internal channel to Agent at construction (senpi#4349, part of #4272)
+
+### What changed
+
+- `packages/agent/src/index.ts`: exposes only the internal channel factory and types for the session layer, never
+  `subscribeInternalAgent` or `dispatchInternalAgent`. `createInternalAgentChannel`, `InternalAgentChannel`,
+  `OrderedAgentRecord` and the `AgentOptions.internalChannel` constructor option DO ship in the published `.d.ts`
+  (marked `@internal`; no `stripInternal`): they are published surface, but construction-only. Passing a channel
+  when an Agent is built is the only way to receive its records; an existing Agent has no attach path.
+- `packages/agent/src/agent.ts`: consumes the internal channel option at construction and stores it in a private
+  field, with no getter or attach method. Only that channel receives this Agent's ordered records.
+- `packages/agent/src/internal-events.ts`: owns channel-local sequencing and listeners, acquiring capture on the
+  first listener and releasing it on the last. A run started without a listener still gets no progress sink.
+
+### Why
+
+- `packages/agent/src/index.ts`, `packages/agent/src/agent.ts`, and `packages/agent/src/internal-events.ts`: an
+  extension holding an existing Agent cannot attach a channel; a package subpath is public npm API, not privacy.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/index.ts`, `packages/agent/src/agent.ts`, and `packages/agent/src/internal-events.ts`: this
+  construction-time capability belongs below extension delivery, inside the session-owned agent pipeline.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/src/index.ts` export list; `packages/agent/src/agent.ts` constructor options and internal
+  dispatch wiring; `packages/agent/src/internal-events.ts` channel implementation.
+
+## 2026-10-26 - Empty-assistant recovery forwards the kept attempt's records (senpi#4307, part of #4272)
+
+### What changed
+
+- `empty-assistant-recovery.ts` (fork-only): reads attempts with `assistantEvents`, holds controls beside the events
+  they follow, forwards both when the attempt commits and discards both with a discarded attempt; replaced terminals
+  relay their capture.
+
+### Expected merge conflict zones
+
+- None upstream: the file is fork-only.
+
+## 2026-10-25 - Internal-only ordered agent channel for capture records (senpi#4277, part of #4272)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: when the run has an internal sink, `streamAssistantResponse` reads the
+  provider stream as ordered records, hands progress records to the sink in order, and carries the provider
+  carrier onto `message_start`, `message_update` and `message_end` (the terminal carrier holds the final
+  normalized message). Agent-stamped thinking timing goes to the sink as `message_block_metadata` after the event
+  it amends. Progress records do not re-arm the idle or start bound. Without a sink the loop reads the public stream
+  exactly as before.
+- `packages/agent/src/agent.ts`: a run's loop config gets the sink only when an internal listener exists at run
+  start; `processEvents` dispatches each event to the internal channel before public listeners, with no microtask
+  when there is no internal listener.
+- `packages/agent/src/internal-events.ts` (fork-only, new): `subscribeInternalAgent` registers an internal-only
+  listener (not exported from the package barrel, no production subscriber in this increment); records are frozen
+  `{ event | progress, sequence }` with one increasing sequence per agent.
+
+### Why
+
+- Contract-owner lane decision (option 3): S02a ends at an ordered internal agent channel that public
+  `Agent.subscribe` listeners, extensions and emitted events never see; the AgentSession bridge is S02b.
+
+### Why an extension could not handle it
+
+- `Agent.subscribe` is the public listener path and reaches extensions; an internal-only channel cannot be built on
+  top of it.
+
+### Expected merge conflict zones
+
+- MEDIUM: `agent-loop.ts` `streamAssistantResponse` (iterator creation, the record branch, the thinking case and
+  the terminal emits) and `createAssistantEventReader`.
+- LOW: `agent.ts` `createLoopConfig` return object and the `processEvents` listener loop.
+
 ## 2026-10-24 - Settle response stop reasons before message_end (senpi#3029)
 
 ### What changed

@@ -398,6 +398,9 @@ user sends another prompt ◄─────────────────
 thinking level changes (settings, keybinding, pi.setThinkingLevel())
   └─► thinking_level_select
 
+/login, RPC login_start, or an account command (extension-registered OAuth provider)
+  └─► provider_login_start (awaited, before the provider's login runs)
+
 exit (Ctrl+C, Ctrl+D, SIGHUP, SIGTERM)
   └─► session_shutdown
 ```
@@ -1113,6 +1116,21 @@ Fired after the active tool set gains tools. This covers `pi.setActiveTools()`, 
 pi.on("tool_activated", async (event, ctx) => {
   // event.toolNames - only the tools that just became active
   if (event.toolNames.includes("my_tool")) await warmUp(ctx);
+});
+```
+
+#### provider_login_start
+
+Fired when the OAuth login of a provider registered with `pi.registerProvider(name, { oauth })` starts, before the provider's own `oauth.login` runs. It fires for every login entry point: `/login`, RPC `login_start`, and account commands. Every handler is awaited in order, so a host can prepare what the login needs first, for example download and pin the Claude Code binary and set `CLAUDE_CODE_EXECUTABLE` before the `anthropic-subscription` login resolves it. Return values are ignored. A handler that throws is reported as an extension error and the login still runs. There is no handler time budget: the login's own cancel and idle timeout bound it through `event.signal`.
+
+```typescript
+pi.on("provider_login_start", async (event) => {
+  // event.provider - the provider id being logged in
+  // event.signal - aborts when the login is cancelled
+  // event.progress(message) - shows a progress line in the login UI
+  if (event.provider !== "anthropic-subscription") return;
+  event.progress("Downloading Claude Code");
+  process.env.CLAUDE_CODE_EXECUTABLE = await downloadPinnedClaude(event.signal);
 });
 ```
 
@@ -2170,7 +2188,13 @@ session-notice identity. Restart redelivers unconsumed queued messages once, but
 never replays a consumed result or reruns an interrupted tool.
 
 `pi.lifecycle.reportChild({ taskId, childSessionId, runEpoch, generation, state,
-waitingOn?, terminal? })` persists runner-owned child state. Stale epoch/generation
+label?, since?, waitingOn?, terminal? })` persists runner-owned child state. `label`
+is a producer-authored name and `since` is the child's own state-entry time (ISO);
+an unparseable `since` is dropped. `waitingOn` takes the `SessionLifecycle.waitingOn`
+shape described in [RPC session lifecycle](rpc.md#session-lifecycle), named lists
+included; its counts stay authoritative and the child's human waits are not kept.
+A nonterminal report appears in the parent's `waitingOn.childReports` as
+`{ taskId, childSessionId, runEpoch, state, label?, since? }`. Stale epoch/generation
 pairs are ignored; a higher `runEpoch` clears the old terminal status. Terminal
 values are `completed`, `error`, `lost`, `interrupted`, and `cancelled`. Child UI
 requests remain automatically answered by their runners, not routed to a person.
@@ -3543,6 +3567,7 @@ See [examples/extensions/timed-confirm.ts](../examples/extensions/timed-confirm.
 // Status in footer (persistent until cleared)
 ctx.ui.setStatus("my-ext", "Processing...");
 ctx.ui.setStatus("my-ext", undefined);  // Clear
+// The TUI reserves the "session-lifecycle" key for the session lifecycle status; setStatus ignores it.
 
 // Subagent tree spend, shown after the session's own cost: "$0.380 (+1.270)"
 ctx.ui.setSubagentCost(1.27);

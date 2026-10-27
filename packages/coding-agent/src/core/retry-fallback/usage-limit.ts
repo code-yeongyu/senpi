@@ -54,7 +54,7 @@ export function usageLimitScope(
 /** Project advice without mutating the diagnostic-bearing engine message. */
 export function describeUsageLimitMessage(message: AssistantMessage): AssistantMessage {
 	const scope = usageLimitScope(message);
-	if (!scope || message.errorCause?.scope === scope) return message;
+	if (!scope || (message.errorCause?.type === "usage_limit" && message.errorCause.scope === scope)) return message;
 	return {
 		...message,
 		errorCause: { type: "usage_limit", scope },

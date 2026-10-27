@@ -1,3 +1,39 @@
+## 2026-10-26 - Request-level refusals retain goal recovery (senpi#2491)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: exclude runtime-marked request-level auth refusals from terminal credential failures; retain the normal provider recovery continuation.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: a request refusal must not block an active goal with contradictory login guidance.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts`: this goal builtin owns terminal auth classification and automatic recovery.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/goal/terminal-provider-error.ts` `terminalProviderAuthFailure` guard.
+
+## 2026-10-26 - Goal retries exclude refused calls (senpi#4321)
+
+### What changed
+
+- `prompt.ts`: the no-progress check, which says retries are unbounded and to change the source, namespace, tool or assumption each time, now says that a permission denial, a refusal by the user or a rule block is final for that intent. The model asks the user or leaves that part out. The GPT-6 Astra prompt carries the same sentence.
+
+### Why
+
+- An unattended goal read "change the tool each time" as covering refusals, so a denied call could be retried another way.
+
+### Why an extension could not handle it
+
+- The continuation prompt is this builtin's own text.
+
+### Expected merge conflict zones
+
+- `buildContinuationPrompt` and `buildGpt6AstraContinuationPrompt` line lists.
+
 ## 2026-10-25 - Report the todo backstop outcome to the lifecycle (senpi#3864)
 
 ### What changed
