@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { assertPublishedWorkspacePackFiles, assertSenpiPackedWorkspaceFiles, nativePrebuildFile } from "./senpi-publish-pack-checks.mjs";
+import {
+	assertPublishedWorkspacePackFiles,
+	assertSenpiPackedWorkspaceFiles,
+	nativePrebuildFile,
+	socketSecretBridgeFile,
+} from "./senpi-publish-pack-checks.mjs";
 
 const VENDORED_FILES = [
 	"vendor/pi-client/index.js",
@@ -42,6 +47,22 @@ describe("assertSenpiPackedWorkspaceFiles", () => {
 
 	it("accepts npm dry-run package metadata with unprefixed paths", () => {
 		assert.doesNotThrow(() => assertSenpiPackedWorkspaceFiles(packedFiles([], ""), stagedManifest()));
+	});
+
+	// sisyphuslabs/omo-desktop-app#4199: the socket-secret bridge has no runtime fallback.
+	it("requires every named socket-secret bridge target, the best-effort arm64 included", () => {
+		const required = { requiredSocketSecretTargets: ["win32-x64", "win32-arm64"] };
+		const x64Only = packedFiles([socketSecretBridgeFile("win32-x64")]);
+		assert.throws(
+			() => assertSenpiPackedWorkspaceFiles(x64Only, stagedManifest(), required),
+			/missing the socket-secret bridge: native\/socket-secret\/prebuilds\/win32-arm64\/senpi_socket_secret\.win32-arm64\.node/,
+		);
+		const both = packedFiles([socketSecretBridgeFile("win32-x64"), socketSecretBridgeFile("win32-arm64")]);
+		assert.doesNotThrow(() => assertSenpiPackedWorkspaceFiles(both, stagedManifest(), required));
+	});
+
+	it("rejects a socket-secret bridge target outside Windows", () => {
+		assert.throws(() => socketSecretBridgeFile("linux-x64"), /Unsupported socket-secret bridge target: linux-x64/);
 	});
 
 	for (const path of [

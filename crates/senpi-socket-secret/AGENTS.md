@@ -11,6 +11,8 @@ src/session.rs            PID-4 creation FILETIME; `Unverified` never matches an
 src/volume.rs             Volume facts read from ONE handle that follows reparse points
 src/presence.rs           Presence guards: lock outcome rule, registry (no unlock while active), sticky pre-action fence
 src/presence_windows.rs   LockFileEx on byte [0,1) of an EXISTING object; overlapped wait cancelled by CancelIoEx
+src/publish.rs            First publication: CREATE_NEW staging with the owner-only DACL, flush, FileRenameInfo ReplaceIfExists=FALSE
+src/owner_dacl.rs         Protected DACL for the current user, SYSTEM and Administrators
 src/lib.rs                N-API exports and the `__senpiSocketSecretAbi1` ABI sentinel
 tests/native_receipts.rs  Native receipts 27 and 28; real Windows only
 tests/native_presence.rs  Presence-guard receipts (contention, release, blocking wait, cancel); real Windows only
@@ -22,6 +24,7 @@ tests/native_presence.rs  Presence-guard receipts (contention, release, blocking
 - The classifying handle follows reparse points. Never open it with `FILE_FLAG_OPEN_REPARSE_POINT`.
 - `SessionIdentity` has no `PartialEq` on purpose; compare with `same_session`, under which `Unverified` matches nothing.
 - A presence guard proves release only by a successful exclusive acquisition; `ERROR_LOCK_VIOLATION` is occupied and every other failure is unknown. A guard leaves the registry only with a quiescence receipt, a failed pre-action check fences the registry permanently, and a missing presence object is never recreated.
+- Publication never writes the final path, never copies or truncates, and a collision is only ERROR_ALREADY_EXISTS/ERROR_FILE_EXISTS. One handle (`GENERIC_WRITE | DELETE`, share read only) writes, flushes and renames the staging file, and on any outcome but `Published` deletes it through that handle; nothing is reopened or deleted by path. A failed delete is part of the result (`Publication::staging_left_behind`, N-API `stagingLeftBehind { path, windowsError }`), never a log line, and never carries the bytes.
 - Prebuilds and the loader are not wired yet; this crate ships no artifact until the packaging change lands.
 
 ## VALIDATION
