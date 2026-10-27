@@ -8,10 +8,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { openaiChatGPTOAuth } from "../../ai/src/auth/oauth/openai-chatgpt.ts";
-import { LoopbackCallbackServer } from "../src/core/extensions/builtin/mcp/auth/callback.ts";
-import { McpOAuthProvider } from "../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
-import { McpTokenStore } from "../src/core/extensions/builtin/mcp/auth/token-store.ts";
+import { openaiChatGPTOAuth } from "../../../ai/src/auth/oauth/openai-chatgpt.ts";
+import { LoopbackCallbackServer } from "../../src/core/extensions/builtin/mcp/auth/callback.ts";
+import { McpOAuthProvider } from "../../src/core/extensions/builtin/mcp/auth/oauth-provider.ts";
+import { McpTokenStore } from "../../src/core/extensions/builtin/mcp/auth/token-store.ts";
 
 const HARD_CODED_PRODUCT = /\b(?:senpi|pi)\b|π/i;
 const LOGO = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=";
