@@ -788,8 +788,12 @@ export async function grantClaimedParticipant(
 	const retained = await observeClaimant(claim.participant, evidence, Math.max(1, until - Date.now()));
 	try {
 		const { observation } = retained;
-		// A reader's identity is the store's to compare; every other observation goes through the table first.
-		const verdict = observation.kind === "present" ? undefined : classifyObservation(claim.participant, observation);
+		// A reader's identity of a reader-domain claim is the store's to compare; every other observation, a reader's of a
+		// SID-bearing (handle-domain) claim included, goes through the table first.
+		const verdict =
+			observation.kind === "present" && typeof claim.participant.userSid !== "string"
+				? undefined
+				: classifyObservation(claim.participant, observation);
 		if (verdict?.kind === "gone") {
 			throw new LaunchReservationError("participant_mismatch", `pid ${pid} is not the claimant (${verdict.reason})`);
 		}

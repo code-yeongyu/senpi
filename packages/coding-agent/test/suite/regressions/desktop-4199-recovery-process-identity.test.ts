@@ -37,7 +37,7 @@ import {
 	startTimeEvidence,
 } from "../../../src/modes/rpc/process-evidence.ts";
 import { createSocketSecret, socketSecretPath } from "../../../src/modes/rpc/socket-transport.ts";
-import { FAKE_KERNEL_SESSION, fakeWindows } from "../../helpers/fake-windows-presence.ts";
+import { FAKE_KERNEL_SESSION, fakeProcessTable, fakeWindows } from "../../helpers/fake-windows-presence.ts";
 
 const mocked = vi.hoisted(() => ({ lockDir: "", placement: undefined as unknown, spawn: undefined as unknown }));
 
@@ -239,6 +239,9 @@ describe("#4199 process evidence through the retained handle: PID, creation FILE
 				(machine: Machine) => machine.processes.answers(OWNER.pid, { creationTime: CREATED, userSid: null }),
 				(machine: Machine) =>
 					machine.processes.answers(OWNER.pid, { creationTime: CREATED, userSid: SID, exited: null }),
+				// `GetProcessId` failing on the handle is an unreadable field, not a readable PID that differs (senpi#4531 fold).
+				(machine: Machine) =>
+					machine.processes.answers(OWNER.pid, { handlePid: null, creationTime: CREATED, userSid: SID }),
 			];
 			for (const install of unreadable) {
 				const machine = fakeWindows();
@@ -399,6 +402,41 @@ describe("#4199 process evidence through the retained handle: PID, creation FILE
 				detail: expect.stringContaining(`host child (pid ${CHILD_PID}) is live`),
 			});
 			expect(launch.store.reservation(launch.generation).escalation).toBeNull();
+		});
+
+		it("a handle read without its token SID is never recorded as comparable: a later start-time reader finds it unknown, not gone", async () => {
+			// senpi#4531 review (MEDIUM): the SID is the domain marker. A handle that answered its creation FILETIME (100 ns)
+			// but not its `TokenUser` SID must not be persisted as a two-field row, or the next invocation off the bridge (the
+			// CIM table, microsecond-truncated) compares it across domains and calls a live child gone. The record stays
+			// unverified (`processStartTime: null`), as every unreadable identity at recording does.
+			const machine = fakeWindows();
+			const launch = await abandoned(machine);
+			const HANDLE_CREATED = "134000000000001237";
+			const CIM_CREATED = "134000000000001230";
+			machine.processes.answers(CHILD_PID, { creationTime: HANDLE_CREATED, userSid: null });
+			const identity = (pid: number) => bridgeProcessIdentity(machine.load, pid);
+			await recordChildPid(launch.generationDir.childPidFile, CHILD_PID, () => true, identity);
+			const reader = fakeProcessTable();
+			reader.live(CHILD_PID, CIM_CREATED);
+			expect(
+				await recoverEndpointReservations(
+					launch.store,
+					ENDPOINT,
+					launch.paths,
+					recoveryProber(STORE_DIR, machine.load, { observe: reader.observe, daemonDirectory: launch.paths.dir }),
+				),
+			).toMatchObject({
+				status: "refused",
+				reason: "census_unknown",
+				escalation: { reason: "owner_identity_incomplete" },
+			});
+			expect(reader.observed).toContain(CHILD_PID);
+			expect(JSON.parse(await readFile(launch.generationDir.childPidFile, "utf8"))).toEqual({
+				pid: CHILD_PID,
+				processStartTime: null,
+			});
+			expect(await bridgeProcessIdentity(machine.load, CHILD_PID)).toBeUndefined();
+			expect(machine.processes.handles.size).toBe(0);
 		});
 
 		it("an identity read after the child exited is never recorded, through the bridge as before", async () => {
@@ -670,6 +708,25 @@ describe("#4199 process evidence through the retained handle: PID, creation FILE
 				userSid: SID,
 			});
 			expect(machine.processes.handles.size).toBe(0);
+		});
+
+		it("a SID-bearing claim observed by a start-time reader is unverified, not a mismatch (senpi#4531 fold)", async () => {
+			// The claimant read itself on the bridge; this issuer has none. The two domains are never compared, so the refusal
+			// is `identity_unverified` (the design's unknown), not `participant_mismatch` (its gone).
+			const machine = fakeWindows();
+			const launch = await claimed(machine);
+			await expect(
+				grantClaimedParticipant(
+					launch.store,
+					launch.generation,
+					"supervisor",
+					OWNER,
+					SECRET,
+					startTimeEvidence(async (pid) => (pid === SELF.pid ? "134000000000000002" : undefined)),
+					{ deadlineMs: 5_000 },
+				),
+			).rejects.toMatchObject({ reason: "identity_unverified" });
+			expect(launch.store.roleRow(launch.locator)?.status).toBe("claimed");
 		});
 
 		it("off Windows the issuer still verifies by PID and exact start time, and identities carry no SID", async () => {

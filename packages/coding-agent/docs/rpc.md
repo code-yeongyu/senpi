@@ -903,13 +903,16 @@ the supervisor only after checking its claimed PID and process start time throug
 claimed PID through the native bridge and requires `GetProcessId`, the exact creation FILETIME and the `TokenUser` SID
 to match on that one handle, which it keeps open while it grants and observes the participant; a same-birth SID
 mismatch or a handle whose PID is not the claimed one refuses `identity_inconsistent`, a different creation time or an
-exited process `participant_mismatch`, an unreadable one `identity_unverified`. Each participant records its own PID,
+exited process `participant_mismatch`, an unreadable one (a handle-domain claim observed off the bridge included)
+`identity_unverified`. Each participant records its own PID,
 creation FILETIME and SID read on one handle of itself (`userSid` in its recorded identity). The daemon's own records
 are written the same way on that path: the generation record (`generations/<instanceId>/host.pid`) names the supervisor
 by the identity its issuer verified on the retained handle, the supervisor records its host child (`host-child.pid`)
 through the bridge, and a host's session-path claims carry its own handle identity; each adds `userSid` beside
 `processStartTime`, which is then the complete creation FILETIME. A record without `userSid` was read by the platform's
-start-time reader and keeps its two fields. The supervisor learns its host's death from the host's process object,
+start-time reader and keeps its two fields; a handle that answered its creation FILETIME but not its SID is never
+recorded as such a two-field row (the record is written through the platform reader instead, or left unverified), so
+no later reader compares a handle's FILETIME against its own. The supervisor learns its host's death from the host's process object,
 waited on through the retained handle (never from a wrapper's exit; the child's exit event stays a secondary signal).
 That supervisor then offers the host role in the same generation and forwards a non-secret store locator through the
 child argv, including through runtime wrappers. The host consumes the locator before public CLI parsing, claims with
@@ -1094,9 +1097,10 @@ at most one requery, inside the smaller of the start's readiness deadline and fi
 that deadline passes is abandoned and its late answer is never read. What is still unknown then is persisted on the
 reservation as its escalated reason at the revision read (`escalation` in the record: `revision`, `subject`, `reason`,
 `observations`), and the refusal's `escalation: { reason, observations, cached }` names it. The reasons are
-`owner_identity_unreadable` (a denied or failed reopen, or an unreadable creation time, SID or exit state),
-`owner_identity_inconsistent` (the recorded creation FILETIME under another SID, or a handle whose `GetProcessId` is not
-the reopened PID; it gets the same one requery, and no prior-boot proof resolves it), `owner_identity_incomplete` (no
+`owner_identity_unreadable` (a denied or failed reopen, or an unreadable `GetProcessId`, creation time, SID or exit
+state), `owner_identity_inconsistent` (the recorded creation FILETIME under another SID, or a handle whose readable
+`GetProcessId` is not the reopened PID; it gets the same one requery, and no prior-boot proof resolves it),
+`owner_identity_incomplete` (no
 recorded identity, or one that cannot be compared, a recorded identity without a SID included),
 `owner_identity_domain_mismatch` (both kernel sessions verified and different) and `owner_identity_domain_unverified`
 (either unverified). The marker is written only when the record is still at

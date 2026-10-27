@@ -17,7 +17,8 @@
  * A gone verdict from a different creation time needs a "verified common observation domain", so a handle observation of
  * a SID-less record and a reader observation of a SID-bearing record are both `incomplete`: the old two-field rows stay
  * readable and stay unknown, and a daemon record written through the bridge (`bridgeProcessIdentity`) reads live or
- * gone exactly.
+ * gone exactly. Because the SID is the marker, a handle read that answered its FILETIME but not its SID is never
+ * written as a two-field record: that row would read as the reader's and a later reader would compare across domains.
  */
 import { randomUUID } from "node:crypto";
 import { type ProcessIdentityResult, readProcessIdentity, readProcessStartTime } from "../../utils/process-identity.ts";
@@ -63,8 +64,9 @@ export function processRecordKey(record: ProcessRecord): string {
 
 /**
  * What an observation says about the recorded instance. `unknown` names the design's escalation reason: `unreadable`
- * (denied or failed open, an unreadable field) is requeried once by the caller's budget, `inconsistent` (same birth,
- * another SID; `GetProcessId` not the opened PID) likewise, and `incomplete` (no comparable record) at once.
+ * (denied or failed open, an unreadable field, `GetProcessId` included) is requeried once by the caller's budget,
+ * `inconsistent` (same birth, another SID; a readable `GetProcessId` that is not the opened PID) likewise, and
+ * `incomplete` (no comparable record) at once.
  */
 export type ProcessLiveness =
 	| { readonly kind: "live" }
@@ -105,8 +107,9 @@ export function classifyObservation(record: ProcessRecord, observation: ProcessO
 	}
 	const { facts } = observation;
 	if (userSid === null) return { kind: "unknown", reason: "incomplete", detail: "no recorded SID" };
+	if (facts.handlePid === null) return { kind: "unknown", reason: "unreadable", detail: "GetProcessId unreadable" };
 	if (facts.handlePid !== record.pid) {
-		return { kind: "unknown", reason: "inconsistent", detail: `GetProcessId ${facts.handlePid ?? "unreadable"}` };
+		return { kind: "unknown", reason: "inconsistent", detail: `GetProcessId ${facts.handlePid}` };
 	}
 	if (facts.creationTime === null || !FILETIME.test(facts.creationTime) || BigInt(facts.creationTime) === 0n) {
 		return { kind: "unknown", reason: "unreadable", detail: "creation time unreadable" };
@@ -261,9 +264,11 @@ export function processEvidence(
 /**
  * The identity of `pid` as the bridge reads it on one handle of it, closed at once: PID, the complete creation FILETIME
  * and the `TokenUser` SID, the handle domain. `undefined` when the bridge is unavailable or the handle answers no
- * creation time; the caller then records through its platform reader, as before. The daemon's own records (the
- * generation record, `host-child.pid`, the session claims) are written this way so the recovery census compares them
- * in the domain it observes in.
+ * creation time or no SID; the caller then records through its platform reader, as before, or leaves the record
+ * unverified. A FILETIME without its SID is never returned: the SID is what marks the record as the handle's, and
+ * without it the 100 ns value would be read as the reader's microsecond one and compared across domains. The daemon's
+ * own records (the generation record, `host-child.pid`, the session claims) are written this way so the recovery
+ * census compares them in the domain it observes in.
  */
 export async function bridgeProcessIdentity(
 	native: PresencePlacementLoad,
@@ -273,8 +278,10 @@ export async function bridgeProcessIdentity(
 	const retained = await nativeProcessEvidence(native.native).open(pid);
 	try {
 		const { observation } = retained;
-		if (observation.kind !== "opened" || observation.facts.creationTime === null) return undefined;
-		return { pid, processStartTime: observation.facts.creationTime, userSid: observation.facts.userSid };
+		if (observation.kind !== "opened") return undefined;
+		const { creationTime, userSid } = observation.facts;
+		if (creationTime === null || userSid === null) return undefined;
+		return { pid, processStartTime: creationTime, userSid };
 	} finally {
 		retained.close();
 	}
