@@ -58,7 +58,8 @@ export interface PresenceRootRequest {
 	readonly native: PresencePlacementLoad;
 }
 
-function kernelSession(identity: NativeKernelSessionIdentity): KernelSessionRecord {
+/** A bridge kernel-session read as a record: only a verified read with a value is `verified`. */
+export function kernelSession(identity: NativeKernelSessionIdentity): KernelSessionRecord {
 	return identity.status === "verified" && identity.creationTime
 		? { status: "verified", value: identity.creationTime }
 		: { status: "unverified", reason: identity.reason ?? "unverified" };
