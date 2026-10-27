@@ -8717,19 +8717,21 @@ export class AgentSession {
 	 */
 	private _reduceForSwitchTarget(model: Model<Api>, liveContextTokens: number): number {
 		if (!this._getCompactionSettings().enabled) return liveContextTokens;
-		// Not a downswitch: `_getDownswitchLiveContextTokens` charges no fit (senpi#3447 r2).
-		if (liveContextTokens <= 0) return liveContextTokens;
-		// senpi#3447: the repair decision, the slice and the guard charge one measure,
-		// so the figure returned here (and handed to the guard) is the one the
-		// decision used. Deciding on the raw per-message estimate let a transcript the
-		// estimate undercounts skip the reduction and then fail the guard.
-		const tokenScale = this._switchTokenScale(liveContextTokens);
+		// senpi#3447: on a downswitch the repair decision, the slice and the guard
+		// charge one measure, so the figure handed to the guard is the one the decision
+		// used. A rung that is not a downswitch carries no fit charge
+		// (`_getDownswitchLiveContextTokens` returns 0); it is still repaired on the
+		// plain estimate, and the guard is still handed that 0.
+		const notDownswitch = liveContextTokens <= 0;
+		const tokenScale = notDownswitch ? 1 : this._switchTokenScale(liveContextTokens);
+		const charged = (figure: number) => (notDownswitch ? liveContextTokens : figure);
 		const projection = this._projectSwitchFit(model, tokenScale);
-		if (projection.usable || projection.verdict !== "fits-after-compaction") return projection.liveContextTokens;
+		if (projection.usable || projection.verdict !== "fits-after-compaction")
+			return charged(projection.liveContextTokens);
 		const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection, tokenScale });
-		if (!plan) return projection.liveContextTokens;
+		if (!plan) return charged(projection.liveContextTokens);
 		this.applyResumeSlice(plan);
-		return this._projectSwitchFit(model, tokenScale).liveContextTokens;
+		return charged(this._projectSwitchFit(model, tokenScale).liveContextTokens);
 	}
 
 	/**
