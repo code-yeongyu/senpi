@@ -3,12 +3,15 @@ import {
 	loadSocketSecretPresence,
 	type NativePresenceBinding,
 	type NativePresenceResult,
+	type PresenceReleaseReason,
+	SocketSecretNativeAbiMismatchError,
 } from "../../../src/modes/rpc/socket-secret-native.ts";
 
 const probe = {
 	presenceId: "owner",
 	path: "C:\\private\\owner.lock",
-	tag: Buffer.from("opaque-tag"),
+	// The object's whole immutable header (tag, schema, creation time), never the tag alone.
+	header: Buffer.from('{"tag":"c0ffee","schema":1,"createdAt":"2026-10-27T00:00:00.000Z"}\n'),
 	volumeSerial: "7",
 	fileId: "9",
 	createdLocal: true,
@@ -20,6 +23,7 @@ function native(result: NativePresenceResult): NativePresenceBinding {
 	return {
 		presenceAcquire: vi.fn(() => result),
 		presenceProbe: vi.fn(() => result),
+		presenceProbeRetained: vi.fn(() => result),
 		presencePreActionCheck: vi.fn(() => result),
 		presenceWaitAndAcquire: vi.fn(async () => result),
 		presenceCancelWait: vi.fn(),
@@ -52,6 +56,43 @@ describe("#4199 Windows presence bridge", () => {
 		expect(loaded.guard.probe(probe)).toEqual(result);
 		expect(binding.presenceProbe).toHaveBeenCalledWith(probe);
 	});
+
+	it.each([
+		{ status: "acquired" },
+		{ status: "unknown", reason: "inadmissible" },
+		{ status: "unknown", reason: "not_held" },
+		{ status: "fenced", reason: "registry_fenced" },
+	] as const)("applies the rules to the retained wait handle in place: $status $reason", (result) => {
+		const binding = native(result);
+		const loaded = loadSocketSecretPresence({ platform: "win32" }, binding);
+		if (loaded.status !== "available") throw new Error("expected Windows binding");
+		expect(loaded.guard.probeRetained(probe)).toEqual(result);
+		expect(binding.presenceProbeRetained).toHaveBeenCalledWith(probe);
+		expect(binding.presenceProbe).not.toHaveBeenCalled();
+	});
+
+	it("refuses a bridge that cannot probe a retained guard as an ABI mismatch", () => {
+		const { presenceProbeRetained: _missing, ...incomplete } = native({ status: "acquired" });
+		expect(() => loadSocketSecretPresence({ platform: "win32" }, incomplete as NativePresenceBinding)).toThrow(
+			SocketSecretNativeAbiMismatchError,
+		);
+	});
+
+	it.each([
+		"released",
+		"recovery_abandoned",
+		"discharged",
+		"retired",
+	] as const satisfies readonly PresenceReleaseReason[])(
+		"forwards the %s release of the recovery order as a typed receipt",
+		(state) => {
+			const binding = native({ status: "released" });
+			const loaded = loadSocketSecretPresence({ platform: "win32" }, binding);
+			if (loaded.status !== "available") throw new Error("expected Windows binding");
+			expect(loaded.guard.releaseAfterQuiescence({ presenceId: "owner", state })).toEqual({ status: "released" });
+			expect(binding.presenceReleaseAfterQuiescence).toHaveBeenCalledWith({ presenceId: "owner", state });
+		},
+	);
 
 	it("forwards authority checks and releases only with the quiescence receipt", () => {
 		const binding = native({ status: "acquired" });

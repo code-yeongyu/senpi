@@ -19,7 +19,11 @@
  */
 import { describe, expect, it } from "vitest";
 import { INTERNAL_SUPERVISOR_FLAG } from "../../../src/modes/rpc/host-lifecycle.ts";
-import { INTERNAL_SUPERVISOR_ROUTE_FLAG } from "../../../src/modes/rpc/supervisor-route.ts";
+import { LOCATOR_FLAGS } from "../../../src/modes/rpc/host-lifecycle-launch.ts";
+import {
+	INTERNAL_SUPERVISOR_ROUTE_FLAG,
+	RESERVATION_LOCATOR_ROUTE_FLAGS,
+} from "../../../src/modes/rpc/supervisor-route.ts";
 import { probeImportGraph } from "../../helpers/esm-import-graph-probe.ts";
 import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
 
@@ -88,5 +92,10 @@ describe("main() lazy command and mode graphs", () => {
 		// The route module copies the literal so the sentinel scan does not import the module it
 		// defers; this is what keeps the copy honest.
 		expect(INTERNAL_SUPERVISOR_ROUTE_FLAG).toBe(INTERNAL_SUPERVISOR_FLAG);
+	});
+
+	it("routes a reserved host on exactly the locator flags the launch module defines", () => {
+		// Same copy rule as the sentinel (#4199): the host route triggers on the exact flags, never on a prefix.
+		expect([...RESERVATION_LOCATOR_ROUTE_FLAGS].sort()).toEqual(Object.values(LOCATOR_FLAGS).sort());
 	});
 });

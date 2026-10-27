@@ -1,5 +1,4 @@
 import * as childProcess from "node:child_process";
-import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,11 +18,13 @@ import {
 	acquirePresence,
 	admitClaimedParticipant,
 	claimLaunchRole,
+	credentialCommitment,
 	grantVerifiedParticipant,
 	offerHostRole,
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
 	releaseReservingOwner,
+	reservationStorePath,
 	waitForClaim,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import {
@@ -73,6 +74,8 @@ const OWNER = { pid: 100, processStartTime: "134000000000000000" };
 const SUPERVISOR = { pid: 4242, processStartTime: "134000000000000000" };
 const WRAPPER = { pid: 4343, processStartTime: "134000000000000002" };
 const SECRET = Buffer.alloc(32, 7);
+// A commitment is bound to its role and credential path (design 4.2a), never the bare digest of the secret.
+const COMMITMENT = credentialCommitment(SECRET, "supervisor", socketSecretPath(ENDPOINT));
 const HOUR_MS = 60 * 60 * 1000;
 
 type Machine = ReturnType<typeof fakeWindows>;
@@ -116,7 +119,9 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 	 */
 	async function launched(machine: Machine, expectedRoles: readonly ReservationRole[] = ["supervisor"]) {
 		const root = await tempRoot();
-		const storePath = join(root, "endpoint.reservation.db");
+		// The endpoint's fixed store beside its (mocked) ensure lock: the one store a claimant's locator may name.
+		mocked.lockDir = root;
+		const storePath = reservationStorePath(ENDPOINT);
 		const store = await openStore(storePath);
 		const reservation = resolvePresenceRoot({
 			coordinationTarget: TARGET,
@@ -135,14 +140,7 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 		const locator = parseReservationLocatorArgs(args);
 		if (!locator) throw new Error("no locator");
 		await claimLaunchRole(locator, SUPERVISOR, machine.load);
-		grantVerifiedParticipant(
-			store,
-			generation,
-			"supervisor",
-			OWNER,
-			SUPERVISOR,
-			createHash("sha256").update(SECRET).digest(),
-		);
+		grantVerifiedParticipant(store, generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
 		const paths = await createHostDaemonPaths({ agentDir: join(root, "agent"), socket: join(root, "rpc.sock") });
 		const owner = predeclared(store.reservation(generation).ownerPresence);
 		const supervisor = predeclared(store.roleRow(locator)?.presence);
@@ -213,7 +211,8 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 				onHold: () => order.push(`exclusive open while role ${late.status?.()}`),
 			});
 			mocked.placement = machine.load;
-			const store = await openStore(join(await tempRoot(), "endpoint.reservation.db"));
+			mocked.lockDir = await tempRoot();
+			const store = await openStore(reservationStorePath(ENDPOINT));
 			const reservation = resolvePresenceRoot({
 				coordinationTarget: TARGET,
 				endpointKey: ENDPOINT_KEY,
@@ -235,14 +234,7 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 				presence: machine.load,
 			});
 			await waitForClaim(store, generation, "supervisor", { deadlineMs: 5_000 });
-			grantVerifiedParticipant(
-				store,
-				generation,
-				"supervisor",
-				OWNER,
-				SUPERVISOR,
-				createHash("sha256").update(SECRET).digest(),
-			);
+			grantVerifiedParticipant(store, generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
 			const presence = await admitted;
 			expect(machine.held.get(supervisor.path)).toBe(supervisor.presenceId);
 			expect(order).toEqual([]);
@@ -563,7 +555,8 @@ describe("#4199 presence cleanup: holder deletion, retirement deletion, bounded 
 
 		it("a reserving owner whose supervisor object vanished cancels the offer, commits its own `released` and deletes its object, before any spawn", async () => {
 			const machine = fakeWindows();
-			const store = await openStore(join(await tempRoot(), "endpoint.reservation.db"));
+			mocked.lockDir = await tempRoot();
+			const store = await openStore(reservationStorePath(ENDPOINT));
 			const reservation = resolvePresenceRoot({
 				coordinationTarget: TARGET,
 				endpointKey: ENDPOINT_KEY,

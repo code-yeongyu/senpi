@@ -8,9 +8,13 @@
  * is credential-bearing; it never holds the public secret, only a SHA-256 commitment to it. Rows are never deleted:
  * cancellation is a durable `cancelling` state that revokes offers and keeps every claimed identity.
  *
- * Schema 3 (design 4.2a "Lifetime object and binding", "Placement."): a reservation records the presence root its
+ * Schema 3 (design 4.2a step 4): a granted role records its participant's pre-listen intent, committed in a short
+ * transaction that revalidates the generation, role, grant and commitment, so a cancellation fenced after the grant is
+ * seen before the bind and the intent stays on record across it for the recovery census.
+ *
+ * Schema 4 (design 4.2a "Lifetime object and binding", "Placement."): a reservation records the presence root its
  * owner resolved once (canonical path, physical identity, classification) and the owner's kernel-session identity, and
- * every offered role records the presence object predeclared for it in that root. A schema-2 record has no presence
+ * every offered role records the presence object predeclared for it in that root. An older record has no presence
  * binding and is refused, never read as protected.
  *
  * Schema 4 (design 4.2a "Acquire before authority; release after quiescence"): the reservation also records the
@@ -71,6 +75,7 @@ export type ReservationRejection =
 	| "participant_mismatch"
 	| "issuer_mismatch"
 	| "commitment_invalid"
+	| "commitment_mismatch"
 	| "roles_not_granted"
 	| "presence_not_predeclared"
 	| "presence_not_bound"
@@ -189,6 +194,8 @@ export interface RoleRow {
 	readonly status: RoleStatus;
 	readonly issuer: string;
 	readonly participant: string | null;
+	/** Whether the granted participant committed its pre-listen intent (design 4.2a step 4). */
+	readonly listenIntent: boolean;
 	readonly presence: PresenceObjectRecord;
 	/** The claimant held the predeclared object when its claim committed. */
 	readonly presenceBound: boolean;
@@ -323,6 +330,7 @@ CREATE TABLE IF NOT EXISTS roles (
 	status TEXT NOT NULL,
 	participant TEXT,
 	commitment TEXT,
+	listen_intent INTEGER NOT NULL DEFAULT 0,
 	presence_status TEXT NOT NULL,
 	presence_id TEXT,
 	presence_path TEXT,
@@ -386,6 +394,8 @@ interface RoleColumns extends PresenceColumns {
 	nonce: string | null;
 	issuer: string;
 	participant: string | null;
+	commitment: string | null;
+	listen_intent: number | bigint;
 	presence_bound: number | bigint;
 }
 
@@ -729,6 +739,34 @@ export class EndpointReservationStore {
 	}
 
 	/**
+	 * The granted participant's pre-listen intent (design 4.2a step 4): one short transaction that revalidates the
+	 * generation (pending, this endpoint), the role's grant to exactly this participant and the commitment it is about
+	 * to serve, then records the intent. A generation cancelled after the grant refuses it, so the cancellation cannot go
+	 * unnoticed merely because the optional notification was lost; the grant itself stays on record either way.
+	 */
+	commitListenIntent(locator: ReservationLocator, participant: string, commitment: Uint8Array): void {
+		this.#transaction(() => {
+			this.#locate(locator);
+			this.#pending(locator.generation);
+			const row = this.#role(locator.generation, locator.role);
+			if (!row || row.status !== "granted") {
+				throw new EndpointReservationError("role_not_granted", `${locator.role} in ${locator.generation}`);
+			}
+			if (row.participant !== participant) {
+				throw new EndpointReservationError("participant_mismatch", `${locator.role} in ${locator.generation}`);
+			}
+			const granted = Buffer.from(row.commitment ?? "", "hex");
+			if (granted.length !== 32 || commitment.length !== 32 || !timingSafeEqual(granted, commitment)) {
+				throw new EndpointReservationError("commitment_mismatch", `${locator.role} in ${locator.generation}`);
+			}
+			this.#database
+				.prepare("UPDATE roles SET listen_intent = 1 WHERE generation = ? AND role = ?")
+				.run(locator.generation, locator.role);
+			this.#bump(locator.generation);
+		});
+	}
+
+	/**
 	 * The durable cancellation fence: revokes every outstanding offer and keeps claimed and granted identities. It also
 	 * fences a `serving` generation, which recovery does to an abandoned generation before its retirement census.
 	 */
@@ -901,6 +939,7 @@ export class EndpointReservationStore {
 				status: row.status,
 				issuer: row.issuer,
 				participant: row.participant,
+				listenIntent: Number(row.listen_intent) === 1,
 				presence: presenceObjectOf(row),
 				presenceBound: Number(row.presence_bound) === 1,
 			}

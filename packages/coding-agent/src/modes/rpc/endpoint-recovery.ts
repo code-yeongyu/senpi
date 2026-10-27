@@ -165,7 +165,7 @@ function acquire(object: PresenceObjectRecord, reservation: ReservationRow, prob
 	const result = bridge.presenceProbe({
 		presenceId: object.presenceId,
 		path: object.path,
-		tag: Buffer.from(object.header, "hex"),
+		header: Buffer.from(object.header, "hex"),
 		volumeSerial: object.volumeSerial,
 		fileId: object.fileId,
 		createdLocal: object.classification === "local",
