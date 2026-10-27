@@ -52,6 +52,8 @@ vi.mock("../../../src/modes/rpc/socket-secret-native.ts", async (importOriginal)
 vi.mock("../../../src/modes/rpc/host-ensure-lock.ts", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../../../src/modes/rpc/host-ensure-lock.ts")>()),
 	hostEnsureLockTarget: () => join(mocked.lockDir, "endpoint"),
+	// The CLI case runs on a POSIX path under a stubbed win32 platform; the lock itself is not under test here.
+	acquireHostEnsureLock: async () => async () => {},
 }));
 
 vi.mock("../../../src/utils/process-identity.ts", async (importOriginal) => {
@@ -177,13 +179,12 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			createHash("sha256").update(SECRET).digest(),
 		);
 		const paths = await createHostDaemonPaths({ agentDir: join(root, "agent"), socket });
-		const objects = {
-			owner: store.reservation(generation).ownerPresence,
-			supervisor: store.roleRow(locator)?.presence,
-		};
-		if (objects.owner.status !== "predeclared" || objects.supervisor?.status !== "predeclared") {
+		const ownerObject = store.reservation(generation).ownerPresence;
+		const supervisorObject = store.roleRow(locator)?.presence;
+		if (ownerObject.status !== "predeclared" || supervisorObject?.status !== "predeclared") {
 			throw new Error("expected predeclared objects");
 		}
+		const objects = { owner: ownerObject, supervisor: supervisorObject };
 		return { root, storePath, store, socket, generation, locator, paths, objects };
 	}
 
@@ -333,10 +334,11 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 				action: "restart_computer",
 				escalation: { reason: "owner_identity_unreadable", observations: 0, cached: true },
 			});
-			// The unchanged marker suppressed the query, not the independent presence evidence (Revision 6).
+			// The unchanged marker suppressed the query, not the independent presence evidence (Revision 6): the owner's
+			// missing object was probed again (and the supervisor's too when presence-ID order put it first).
 			expect(processes.observed).toHaveLength(2);
 			expect(probes(machine, launch.objects.owner.presenceId)).toHaveLength(1);
-			expect(probes(machine, launch.objects.supervisor.presenceId)).toHaveLength(1);
+			expect(probes(machine, launch.objects.supervisor.presenceId).length).toBeLessThanOrEqual(1);
 			// Explicit repair: one new bounded assessment, still at most two observations.
 			const repaired = refused(await recover(launch, machine, processes, { fresh: true }));
 			expect(repaired.escalation).toEqual({ reason: "owner_identity_unreadable", observations: 2, cached: false });
@@ -407,7 +409,8 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 				reason: "authority_unknown",
 				action: "resolve_on_recorded_host",
 				escalation: { reason, observations: 0, cached: false },
-				holder: { entry: "owner", kernelSession: recorded },
+				// Whichever probe-set entry (presence-ID order) the gate stopped at; both rows recorded that session.
+				holder: { entry: expect.stringMatching(/^(owner|supervisor)$/), kernelSession: recorded },
 			});
 			// The gate decides before any query.
 			expect(processes.observed).toEqual([]);
@@ -464,7 +467,11 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			relocated.control.kernelSession = { status: "verified", creationTime: S2, reason: null };
 			expect(refused(await recover(launchRelocated, relocated, denied))).toMatchObject({
 				action: "resolve_on_recorded_host",
-				holder: { entry: "owner", hostLabel: expect.any(String), kernelSession: S1 },
+				holder: {
+					entry: expect.stringMatching(/^(owner|supervisor)$/),
+					hostLabel: expect.any(String),
+					kernelSession: S1,
+				},
 			});
 		});
 
@@ -710,6 +717,12 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 				other.close();
 			}
 			expect(launch.store.reservation(launch.generation).state).toBe("cancelling");
+			// The first check released at once what it acquired (the owner's free object, when presence-ID order probed
+			// it before the held one), since it could not retire; it released nothing after that.
+			expect(new Set(order).size).toBe(order.length);
+			for (const release of order)
+				expect(release).toBe(`release ${launch.objects.owner.presenceId} while cancelling`);
+			order.length = 0;
 			machine.calls.length = 0;
 			// The holder idle-exits: the kernel releases its lock, and the bridge's blocking wait acquires.
 			machine.releaseHeld(supervisor.path);
@@ -802,6 +815,9 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			const outcome = repair(launch, machine, { signal: abort.signal });
 			await vi.waitFor(() => expect(machine.waits.size).toBe(1));
 			const [waitId] = machine.waits.keys();
+			// The first check released what it acquired (the owner's free object) before the wait was parked.
+			expect([...machine.held.values()]).toEqual([supervisor.presenceId]);
+			machine.calls.length = 0;
 			abort.abort();
 			expect(await outcome).toEqual({ status: "cancelled" });
 			expect(cancel).toHaveBeenCalledWith(waitId);

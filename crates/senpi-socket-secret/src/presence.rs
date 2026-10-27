@@ -207,6 +207,40 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
         LockAttempt::Acquired
     }
 
+    /// Repair's retained wait handle as step 3's acquisition of its object (design Revision 8, r7
+    /// note 4): the probe's admissibility rule applied to a guard this registry already holds, through
+    /// that handle, which is never closed and reacquired. An inadmissible handle is released at once
+    /// (`Unknown(13)`, as an inadmissible probe); a guard not held, or held for another path, is
+    /// `Unknown(2)` (ERROR_FILE_NOT_FOUND: nothing retained under that name).
+    pub fn probe_retained(
+        &mut self,
+        presence_id: &str,
+        path: &str,
+        admissible: impl FnOnce(&mut B, &B::Handle, FileIdentity) -> bool,
+    ) -> LockAttempt {
+        if self.fenced.is_some() {
+            return LockAttempt::Fenced;
+        }
+        let Some(guard) = self.guards.get(presence_id) else {
+            return LockAttempt::Unknown(2);
+        };
+        if guard.path != path {
+            return LockAttempt::Unknown(2);
+        }
+        let identity = match self.backend.handle_identity(&guard.handle) {
+            Ok(identity) => identity,
+            Err(code) => {
+                self.guards.remove(presence_id);
+                return LockAttempt::Unknown(code);
+            }
+        };
+        if !admissible(&mut self.backend, &guard.handle, identity) {
+            self.guards.remove(presence_id);
+            return LockAttempt::Unknown(13);
+        }
+        LockAttempt::Acquired
+    }
+
     /// Transfer a completed blocking acquisition into the process-rooted registry. The wait runs
     /// outside its mutex so unrelated releases and pre-action checks cannot deadlock behind it.
     pub fn retain_wait(&mut self, mut completed: Self, presence_id: &str) -> WaitOutcome {
@@ -481,6 +515,54 @@ mod tests {
             );
             assert_eq!(registry.holds("p-1"), admissible);
         }
+    }
+
+    #[test]
+    fn a_retained_wait_handle_is_probed_in_place_and_released_at_once_when_inadmissible() {
+        for admissible in [true, false] {
+            let mut kernel = FakeKernel::with_file(PATH, 1).held_by(PATH, "host");
+            kernel.process_dies("host");
+            kernel.released_on_wait = true;
+            let mut registry = PresenceRegistry::new(&mut kernel);
+            let cancel = CancelToken::default();
+            assert_eq!(
+                registry.wait_and_acquire("p-1", PATH, &cancel),
+                WaitOutcome::Acquired
+            );
+            let handles_before = registry.backend.next_handle;
+            let attempt = registry.probe_retained("p-1", PATH, |_, _, identity| {
+                assert_eq!(identity.file_id, 1);
+                admissible
+            });
+            // No reopen: the wait's handle is the one the rule was applied to.
+            assert_eq!(registry.backend.next_handle, handles_before);
+            assert_eq!(
+                attempt,
+                if admissible {
+                    LockAttempt::Acquired
+                } else {
+                    LockAttempt::Unknown(13)
+                }
+            );
+            assert_eq!(registry.holds("p-1"), admissible);
+        }
+    }
+
+    #[test]
+    fn probe_retained_without_a_retained_guard_is_unknown_and_retains_nothing() {
+        let mut kernel = FakeKernel::with_file(PATH, 1);
+        let mut registry = PresenceRegistry::new(&mut kernel);
+        assert_eq!(
+            registry.probe_retained("p-1", PATH, |_, _, _| panic!("nothing to apply the rule to")),
+            LockAttempt::Unknown(2)
+        );
+        assert!(!registry.holds("p-1"));
+        assert_eq!(registry.acquire("p-1", PATH), LockAttempt::Acquired);
+        assert_eq!(
+            registry.probe_retained("p-1", r"C:\other.lock", |_, _, _| true),
+            LockAttempt::Unknown(2)
+        );
+        assert!(registry.holds("p-1"));
     }
 
     #[test]

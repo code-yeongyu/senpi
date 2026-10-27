@@ -1009,12 +1009,57 @@ restart is not refused.
 
 When recovery cannot prove that every recorded actor ended, the start fails with `HostEnsureRefusedError` reason
 `reservation_recovery_required`, and `host ensure --json` (exit 3) carries
-`recovery: { reason, generation }`. The reasons are `presence_occupied` (an actor's presence object is held),
-`authority_live` and `authority_unknown` (the actor's recorded process is live, or its evidence cannot be used),
-`census_live` and `census_unknown` (a recorded supervisor, host child or session claim), and `revision_changed` (the
-generation changed while recovery ran). `detail` names the actor, its PID, its recorded host label and kernel session.
-The fence stays; nothing else is written, no credential is touched, no process is signalled and no presence object of
-that generation is deleted. The next ensure runs the same bounded check again.
+`recovery: { reason, generation, action, holder, escalation? }`. The reasons are `presence_occupied` (an actor's
+presence object is held), `authority_live` and `authority_unknown` (the actor's recorded process is live, or its
+evidence cannot be used), `census_live` and `census_unknown` (a recorded supervisor, host child or session claim), and
+`revision_changed` (the generation changed while recovery ran). `detail` names the actor, its PID, its recorded host
+label and kernel session; `holder: { entry, hostLabel, kernelSession }` carries the same for a program (`entry` is
+`owner`, `supervisor`, `host` or `census`; `kernelSession` is `null` when the row's session is unverified). The fence
+stays; nothing else is written, no credential is touched, no process is signalled and no presence object of that
+generation is deleted.
+
+`action` is the Repair connection action the refusal calls for, the same one the desktop card shows:
+
+| `action` | When | What follows |
+|---|---|---|
+| `wait_for_owner` | `presence_occupied` | The owner is alive even if unreachable; recovery completes automatically when it idle-exits. `host repair` waits for that release. |
+| `drain_owner` | `authority_live`, `census_live` | A recorded process is live on this kernel: let it idle-exit or drain it through its own `host stop`; never a raw signal. |
+| `restart_computer` | `authority_unknown`, `census_unknown` on a store recorded `local` and still classified `local` | An explicit override: `host repair --confirm-restart` records the repair anchor, the user restarts, and the same endpoint recovers at the next ensure. |
+| `resolve_on_recorded_host` | `authority_unknown`, `census_unknown` on any other store | Rows of a non-local store from another machine or an earlier kernel session; no local proof can arrive. `holder` names the recorded host label and session. Nothing is deleted and no attestation is recorded. |
+| `restore_store_access` | `authority_unknown` when the presence object's open was denied | Restore access to the presence store, then repair again. |
+| `retry` | `revision_changed` | Ensure or repair again. |
+
+Process evidence is bounded (design 4.2a "Bounded unknown escalation"): a recorded identity gets an initial reopen and
+at most one requery, inside the smaller of the start's readiness deadline and five seconds; a query still in flight when
+that deadline passes is abandoned and its late answer is never read. What is still unknown then is persisted on the
+reservation as its escalated reason at the revision read (`escalation` in the record: `revision`, `subject`, `reason`,
+`observations`), and the refusal's `escalation: { reason, observations, cached }` names it. The reasons are
+`owner_identity_unreadable` (a denied or failed reopen), `owner_identity_incomplete` (no recorded identity, or one that
+cannot be compared), `owner_identity_domain_mismatch` (both kernel sessions verified and different) and
+`owner_identity_domain_unverified` (either unverified); `owner_identity_inconsistent` is reserved for the native
+identity adapter's same-birth account or handle inconsistency. An unchanged record (same revision) answers a later
+automatic ensure from that marker with `observations: 0, cached: true` and no new query, while its presence objects are
+still probed once and a verified different kernel session is still checked; a transition discards the marker, an
+explicit `host repair` opens one new bounded assessment, and a repair that resolves the record to `live` drops it.
+
+`host repair [--confirm-restart] [--socket <path>] --json` is the explicit Repair connection action, engine half. It
+refuses `unsupported_platform` off the reservation route. Otherwise it runs the recovery check once more under the
+endpoint lock as a new bounded assessment and answers `{ action: "repair", recovered: [generations] }` (exit 0) or the
+same `reservation_recovery_required` refusal with `recovery` (exit 3). When that check finds a presence object held
+(`wait_for_owner`), it releases the endpoint lock and asks the bridge to wait for the kernel's release of that lock: a
+blocking `LockFileEx` in a native worker thread, an event rather than polling and never a deadline, holding no store
+transaction and no endpoint lock. The handle that acquires is the retained recovery guard for that object: it is never
+closed and reacquired, the check that follows (under the endpoint lock again) applies the admissibility rules to it as
+step 3's acquisition (`presenceProbeRetained`; an inadmissible handle is released at once and the object counts
+unknown), other probers see the object busy meanwhile, and it is released after the retirement commit or at once when
+the check cannot retire. SIGINT or SIGTERM cancels the wait (`CancelIoEx`), releases nothing the wait did not acquire,
+and answers `{ reason: "cancelled" }` (exit 3). With `--confirm-restart`, a refusal whose action is `restart_computer`
+also records the repair anchor, the current verified kernel session at the fenced generation and revision
+(`anchor: { revision, kernelSession }` in the payload, and `repairAnchor` in the record); an unverified session records
+none (`anchor: null`), and after the restart the lifetime acquisition is the proof instead. After a verified different
+kernel session, on a store recorded and still classified `local`, the anchor proves every process that could have
+exercised the generation's authority gone, so the next ensure retires it; a later claim or commit (a changed revision)
+discards the anchor, and a non-local store never records one. Cancelling the restart leaves everything intact.
 
 ### Generation handoff (`handoffHost`, `probeHost`, `stopHost`)
 
@@ -1304,6 +1349,7 @@ senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
                       [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
 senpi host gc         [--json] [--agent-dir <dir>]
+senpi host repair     [--json] [--confirm-restart] [--socket <path>]
 senpi host session <open|close|model|prompt|steer|abort|read|state|list|wait> ...   (see "Driving sessions from the CLI")
 ```
 
@@ -1321,7 +1367,7 @@ and an exit code that classifies the outcome without parsing the line.
 
 | Exit | Meaning |
 |---|---|
-| `0` | it happened (`action`: `start`, `reuse`, `handoff`, `stopped`, `drained`, or a reachable `status`) |
+| `0` | it happened (`action`: `start`, `reuse`, `handoff`, `stopped`, `drained`, `repair` with `recovered`, or a reachable `status`) |
 | `1` | it failed; `{ action: "error", reason: "host_error", detail }` |
 | `2` | the command line or the launch spec is unusable (`{ action: "error", reason: "launch_spec_*" }`) |
 | `3` | refused: `{ action: "refuse", reason, host }` - or an unreachable socket (`status`) |
@@ -1481,7 +1527,7 @@ which prints the bare socket path).
   the legacy flat directory unless `rpc_host` is listed, is neither judged nor reported, and the ones it
   judges face the same three-part evidence. `classifyEndpointLiveness(entry)` returns the `alive`/`reason`
   verdict above for one `listHostEndpoints` entry, probing it once under its kind's budget; it reads only.
-- `ensure`, `handoff` and `stop` never act on a terminal control endpoint: a `--socket` whose directory's
+- `ensure`, `handoff`, `stop` and `repair` never act on a terminal control endpoint: a `--socket` whose directory's
   `endpoint.json` says `endpoint_kind: "tui"`, or whose name is a terminal socket's (`t-<16hex>.sock`, which a
   terminal that exited leaves unrecorded), is refused with exit 3 `{ action: "refuse", reason:
   "unsupported_endpoint_kind", socket, endpoint_kind: "tui", host: null }` from disk alone, before any
@@ -2313,8 +2359,8 @@ registrant opens no socket and writes no registry directory.
 - **`endpoint_kind`.** The registry record is `{ layout: 2, registry_version: 1, endpoint_kind: "tui", socket,
   created_at }` (see "Daemon state directory (layout 2)"). `senpi host status --all` lists the terminal with
   `endpoint_kind: "tui"`, `owner` and `alive`, probing it for at most 1.5 s. `senpi host gc` reaps a dead one on
-  the same evidence as a host. `ensure`, `handoff` and `stop` refuse it with `unsupported_endpoint_kind` (exit 3)
-  before connecting, because a terminal endpoint is owned by its terminal process.
+  the same evidence as a host. `ensure`, `handoff`, `stop` and `repair` refuse it with `unsupported_endpoint_kind`
+  (exit 3) before connecting, because a terminal endpoint is owned by its terminal process.
 - **Commands.** Anything not listed below is answered `unsupported` as data. No command opens another session or
   runs a command; input goes through the terminal's admission (`steer`/`follow_up`/`prompt` below), so the
   user's draft still holds it.

@@ -37,7 +37,7 @@ describe("senpi host command line", () => {
 
 		expect(result.exitCode).toBe(2);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("host <ensure|status|stop|handoff|shard-path|gc>");
+		expect(result.stderr).toContain("host <ensure|status|stop|handoff|shard-path|gc|repair>");
 	}, 60_000);
 
 	it("answers an unknown option with usage on stderr and nothing on stdout", async () => {

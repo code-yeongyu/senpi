@@ -107,34 +107,52 @@ mod windows {
         }
     }
 
+    /// Admissibility rules 1-3 (design 4.2a Revision 7) against an opened handle of the object.
+    fn admissible(
+        request: &PresenceProbe,
+    ) -> impl FnOnce(
+        &mut WindowsPresenceBackend,
+        &<WindowsPresenceBackend as PresenceBackend>::Handle,
+        crate::presence::FileIdentity,
+    ) -> bool
+           + '_ {
+        |backend, handle, identity| {
+            let identity_matches = request.volume_serial.parse::<u64>().ok() == Some(identity.volume_serial)
+                && request.file_id.parse::<u128>().ok() == Some(identity.file_id)
+                && backend.path_identity(&request.path).ok() == Some(identity);
+            let session_matches = !request.relocated
+                || request
+                    .kernel_session
+                    .as_deref()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .is_some_and(|recorded| {
+                        crate::read_kernel_session_identity()
+                            .same_session(crate::SessionIdentity::Verified(recorded))
+                    });
+            identity_matches
+                && handle.tag_matches(&request.tag)
+                && request.created_local
+                && handle.is_local()
+                && session_matches
+        }
+    }
+
     pub(super) fn probe(request: PresenceProbe) -> PresenceResult {
         let mut registry = registry().lock().unwrap();
-        let attempt = registry.probe(
-            &request.presence_id,
-            &request.path,
-            |backend, handle, identity| {
-                let identity_matches = request.volume_serial.parse::<u64>().ok()
-                    == Some(identity.volume_serial)
-                    && request.file_id.parse::<u128>().ok() == Some(identity.file_id)
-                    && backend.path_identity(&request.path).ok() == Some(identity);
-                let session_matches = !request.relocated
-                    || request
-                        .kernel_session
-                        .as_deref()
-                        .and_then(|s| s.parse::<u64>().ok())
-                        .is_some_and(|recorded| {
-                            crate::read_kernel_session_identity()
-                                .same_session(crate::SessionIdentity::Verified(recorded))
-                        });
-                identity_matches
-                    && handle.tag_matches(&request.tag)
-                    && request.created_local
-                    && handle.is_local()
-                    && session_matches
-            },
-        );
+        let attempt = registry.probe(&request.presence_id, &request.path, admissible(&request));
         match attempt {
             LockAttempt::Unknown(13) => result("unknown", Some("inadmissible"), None),
+            other => self::attempt(other),
+        }
+    }
+
+    /// The same rules applied to the guard a blocking wait retained, through that handle.
+    pub(super) fn probe_retained(request: PresenceProbe) -> PresenceResult {
+        let mut registry = registry().lock().unwrap();
+        let attempt = registry.probe_retained(&request.presence_id, &request.path, admissible(&request));
+        match attempt {
+            LockAttempt::Unknown(13) => result("unknown", Some("inadmissible"), None),
+            LockAttempt::Unknown(2) => result("unknown", Some("not_held"), None),
             other => self::attempt(other),
         }
     }
@@ -179,6 +197,19 @@ pub fn presence_probe(request: PresenceProbe) -> PresenceResult {
     #[cfg(windows)]
     {
         windows::probe(request)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = request;
+        unavailable()
+    }
+}
+
+#[napi(js_name = "presenceProbeRetained")]
+pub fn presence_probe_retained(request: PresenceProbe) -> PresenceResult {
+    #[cfg(windows)]
+    {
+        windows::probe_retained(request)
     }
     #[cfg(not(windows))]
     {

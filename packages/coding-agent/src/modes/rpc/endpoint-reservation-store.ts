@@ -25,12 +25,19 @@
  *
  * The Revision 7 cleanup sweep asks the store, in a short transaction while it holds an object, whether the database
  * still needs that object (`presenceObjectDisposition`); the schema is unchanged by it.
+ *
+ * Schema 6 (design 4.2a "Bounded unknown escalation", Revision 6 "Fresh evidence after escalation", Revision 7 "Repair
+ * amendments"): a fenced generation carries the escalated reason recovery persisted for the entry it could not resolve,
+ * at the revision it read, so an unchanged record answers a later automatic caller without a new query; and the
+ * owner-checked repair anchor, the current verified kernel session at the fenced generation and revision, persisted
+ * before a user-confirmed restart. Neither is a state transition: neither bumps the revision, and a revision change
+ * discards both. A schema-5 record is refused.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 
-export const ENDPOINT_RESERVATION_SCHEMA = 5;
+export const ENDPOINT_RESERVATION_SCHEMA = 6;
 
 export type ReservationRole = "supervisor" | "host";
 export type ReservationState = "pending" | "cancelling" | "serving" | "retired";
@@ -76,7 +83,45 @@ export type ReservationRejection =
 	| "presence_not_bound"
 	| "revision_changed"
 	| "owner_mismatch"
-	| "owner_not_terminal";
+	| "owner_not_terminal"
+	| "anchor_unverifiable";
+
+/**
+ * Why a recorded identity stayed unknown after the bounded observation budget (design 4.2a "Bounded unknown
+ * escalation"). `owner_identity_inconsistent` is the design's same-birth-wrong-account or handle/PID inconsistency; the
+ * observation adapter of this tree reads only the creation FILETIME, so nothing emits it yet.
+ */
+export type RecoveryEscalationReason =
+	| "owner_identity_unreadable"
+	| "owner_identity_inconsistent"
+	| "owner_identity_incomplete"
+	| "owner_identity_domain_mismatch"
+	| "owner_identity_domain_unverified";
+
+/**
+ * The escalated reason recovery persisted on a fenced generation for the one entry it could not resolve, at the
+ * revision it read. An unchanged record (same revision) answers a later automatic caller from this marker without a new
+ * query; any transition discards it.
+ */
+export interface EscalationMarker {
+	readonly revision: number;
+	/** The recorded authority entry (`owner`, `supervisor`, `host`) or the census entry that stayed unknown. */
+	readonly subject: string;
+	readonly reason: RecoveryEscalationReason;
+	/** How many observations the escalating attempt made inside its budget. */
+	readonly observations: number;
+}
+
+/**
+ * The owner-checked repair anchor (design 4.2a Revision 6 "Visible Repair connection action", Revision 7 "Restart only
+ * where it proves something"): the current verified kernel session, persisted at the fenced generation and revision
+ * before a user-confirmed restart. After a verified different session, every process that could have exercised the
+ * generation's authority at the anchor is gone; a revision change discards the anchor.
+ */
+export interface RepairAnchor {
+	readonly revision: number;
+	readonly kernelSession: string;
+}
 
 /** Why a reservation has no local presence root. Startup is never refused for that alone. */
 export type PresenceUnavailableReason =
@@ -182,6 +227,10 @@ export interface ReservationRow {
 	readonly ownerStatus: "reserving" | "released";
 	/** The census result recovery persisted when it retired this generation; `null` until then. */
 	readonly retirement: RetirementRecord | null;
+	/** The escalated reason of the last bounded assessment, valid while the revision is unchanged; `null` otherwise. */
+	readonly escalation: EscalationMarker | null;
+	/** The repair anchor a confirmed restart recorded, valid while the revision is unchanged; `null` otherwise. */
+	readonly repairAnchor: RepairAnchor | null;
 }
 
 export interface RoleRow {
@@ -305,7 +354,9 @@ CREATE TABLE IF NOT EXISTS reservations (
 	owner_presence_kernel_session TEXT,
 	owner_presence_kernel_session_reason TEXT,
 	owner_presence_host_label TEXT,
-	retirement TEXT
+	retirement TEXT,
+	escalation TEXT,
+	repair_anchor TEXT
 );
 CREATE TABLE IF NOT EXISTS roles (
 	generation TEXT NOT NULL REFERENCES reservations(generation),
@@ -357,6 +408,8 @@ interface ReservationColumns {
 	owner_presence_kernel_session_reason: string | null;
 	owner_presence_host_label: string | null;
 	retirement: string | null;
+	escalation: string | null;
+	repair_anchor: string | null;
 }
 
 /** One presence object's columns, as the roles table names them. */
@@ -458,6 +511,13 @@ function ownerPresenceOf(row: ReservationColumns): PresenceObjectRecord {
 		presence_kernel_session_reason: row.owner_presence_kernel_session_reason,
 		presence_host_label: row.owner_presence_host_label,
 	});
+}
+
+/** A marker or anchor persisted at an earlier revision describes a record that has since changed: it is discarded. */
+function atRevision<T extends { readonly revision: number }>(column: string | null, revision: number): T | null {
+	if (column === null) return null;
+	const record = JSON.parse(column) as T;
+	return record.revision === revision ? record : null;
 }
 
 /** The eleven presence-object column values, in the order both tables declare them. */
@@ -846,6 +906,57 @@ export class EndpointReservationStore {
 	}
 
 	/**
+	 * Persists the escalated reason of a bounded assessment on a fenced generation, at its current revision (design 4.2a
+	 * "Bounded unknown escalation"). Not a transition: the revision is not bumped, and the credential, identities, fence
+	 * and nonce state are untouched. A later marker replaces an earlier one.
+	 */
+	escalate(generation: string, marker: Omit<EscalationMarker, "revision">): EscalationMarker {
+		return this.#transaction(() => {
+			const reservation = this.#reservation(generation);
+			if (reservation.state !== "cancelling") {
+				throw new EndpointReservationError("generation_not_fenced", generation);
+			}
+			const record: EscalationMarker = { revision: reservation.revision, ...marker };
+			this.#database
+				.prepare("UPDATE reservations SET escalation = ? WHERE generation = ?")
+				.run(JSON.stringify(record), generation);
+			return record;
+		});
+	}
+
+	/** Drops the escalated reason once an explicit assessment resolved the record to a known verdict. Not a transition. */
+	clearEscalation(generation: string): void {
+		this.#transaction(() => {
+			this.#reservation(generation);
+			this.#database.prepare("UPDATE reservations SET escalation = NULL WHERE generation = ?").run(generation);
+		});
+	}
+
+	/**
+	 * Persists the repair anchor of a user-confirmed restart on a fenced generation, at its current revision: the current
+	 * kernel session, which must be verified (`anchor_unverifiable` otherwise, and nothing is recorded). Not a transition.
+	 */
+	recordRepairAnchor(generation: string, session: KernelSessionRecord): RepairAnchor {
+		return this.#transaction(() => {
+			const reservation = this.#reservation(generation);
+			if (reservation.state !== "cancelling") {
+				throw new EndpointReservationError("generation_not_fenced", generation);
+			}
+			if (session.status !== "verified") {
+				throw new EndpointReservationError(
+					"anchor_unverifiable",
+					`${generation}: kernel session ${session.reason}`,
+				);
+			}
+			const record: RepairAnchor = { revision: reservation.revision, kernelSession: session.value };
+			this.#database
+				.prepare("UPDATE reservations SET repair_anchor = ? WHERE generation = ?")
+				.run(JSON.stringify(record), generation);
+			return record;
+		});
+	}
+
+	/**
 	 * The reserving owner's own `released` commit, once the generation is terminal for it (serving or cancelling) and it
 	 * takes no further action there: the quiescence receipt that precedes closing its presence guard.
 	 */
@@ -971,6 +1082,8 @@ export class EndpointReservationStore {
 				ownerPresence: ownerPresenceOf(row),
 				ownerStatus: row.owner_status,
 				retirement: row.retirement === null ? null : (JSON.parse(row.retirement) as RetirementRecord),
+				escalation: atRevision(row.escalation, Number(row.revision)),
+				repairAnchor: atRevision(row.repair_anchor, Number(row.revision)),
 			};
 		});
 	}

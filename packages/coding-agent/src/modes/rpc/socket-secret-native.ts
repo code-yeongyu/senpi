@@ -82,6 +82,12 @@ export interface PresenceReleasedReceipt {
 export interface NativePresenceBinding {
 	presenceAcquire(presenceId: string, path: string): NativePresenceResult;
 	presenceProbe(request: NativePresenceProbe): NativePresenceResult;
+	/**
+	 * The probe's admissibility rules applied to a guard this process already retains, the one a blocking wait acquired
+	 * (design Revision 8, r7 note 4): `acquired` keeps it, an inadmissible handle is released at once (`unknown`,
+	 * `inadmissible`), and a guard not held is `unknown` (`not_held`). The handle is never closed and reacquired.
+	 */
+	presenceProbeRetained(request: NativePresenceProbe): NativePresenceResult;
 	presencePreActionCheck(presenceId: string): NativePresenceResult;
 	presenceWaitAndAcquire(presenceId: string, path: string, waitId: string): Promise<NativePresenceResult>;
 	presenceCancelWait(waitId: string): void;
@@ -221,6 +227,7 @@ export function loadPresencePlacement(options: SocketSecretNativeOptions = {}): 
 		"presenceObjectRelease",
 		"presenceAcquire",
 		"presenceProbe",
+		"presenceProbeRetained",
 		"presencePreActionCheck",
 		"presenceWaitAndAcquire",
 		"presenceCancelWait",
@@ -273,6 +280,7 @@ function assertPresenceBinding(value: object): asserts value is NativePresenceBi
 		![
 			"presenceAcquire",
 			"presenceProbe",
+			"presenceProbeRetained",
 			"presencePreActionCheck",
 			"presenceWaitAndAcquire",
 			"presenceCancelWait",

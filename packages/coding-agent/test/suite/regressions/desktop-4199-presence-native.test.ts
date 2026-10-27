@@ -20,6 +20,7 @@ function native(result: NativePresenceResult): NativePresenceBinding {
 	return {
 		presenceAcquire: vi.fn(() => result),
 		presenceProbe: vi.fn(() => result),
+		presenceProbeRetained: vi.fn(() => result),
 		presencePreActionCheck: vi.fn(() => result),
 		presenceWaitAndAcquire: vi.fn(async () => result),
 		presenceCancelWait: vi.fn(),

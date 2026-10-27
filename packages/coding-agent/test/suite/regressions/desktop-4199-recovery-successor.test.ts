@@ -226,11 +226,15 @@ describe("#4199 recovery before exactly one successor at startHost", () => {
 		expect([...fake.held.values()]).toEqual([supervisor.presenceId]);
 	});
 
-	it("the `host ensure` payload carries the typed recovery refusal (reason and generation)", async () => {
+	it("the `host ensure` payload carries the typed recovery refusal (reason, generation and Repair action)", async () => {
 		const root = await mkdtemp(join(tmpdir(), "rpc4199-successor-payload-"));
 		roots.push(root);
 		const socket = join(root, "rpc.sock");
-		const recovery = { reason: "presence_occupied", generation: "0123456789abcdef0123456789abcdef" } as const;
+		const recovery = {
+			reason: "presence_occupied",
+			generation: "0123456789abcdef0123456789abcdef",
+			action: "wait_for_owner",
+		} as const;
 		mocked.ensureRefusal = new HostEnsureRefusedError(
 			socket,
 			"reservation_recovery_required",

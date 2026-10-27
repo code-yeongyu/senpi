@@ -83,7 +83,9 @@ export async function startHost(
 	// under this endpoint lock before this start holds its own presence, touches the credential or reserves. The bounded
 	// presence sweep (Revision 7 "Presence cleanup") runs here too, inside this endpoint-locked invocation and nowhere
 	// else, over the root this start resolves, before the owner creates its own object there.
-	if (reserving) await recoverBeforeSuccessor(socket, paths);
+	if (reserving) {
+		await recoverBeforeSuccessor(socket, paths, testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS);
+	}
 	const placement = reserving ? resolveReservingPlacement(socket) : undefined;
 	if (placement) await sweepBeforeSuccessor(placement);
 	const owner = placement ? acquireReservingOwner(placement) : undefined;
@@ -310,24 +312,27 @@ const SUPERVISOR_CLAIM_DEADLINE_MS = 10_000;
 
 /**
  * Runs the recovery transaction over every generation of this endpoint that is not retired (#4199 design 4.2a). A
- * generation whose recorded authority is not proven ended refuses the start with `reservation_recovery_required`; the
- * fence it committed stays and nothing else changed. An endpoint with no such generation probes nothing.
+ * generation whose recorded authority is not proven ended refuses the start with `reservation_recovery_required` and
+ * the typed recovery result (reason, Repair action, escalation, holder); the fence it committed stays and nothing else
+ * changed. An endpoint with no such generation probes nothing. The observation budget is the smaller of this start's
+ * readiness deadline and the design's five seconds.
  */
-async function recoverBeforeSuccessor(socket: string, paths: HostDaemonPaths): Promise<void> {
+async function recoverBeforeSuccessor(socket: string, paths: HostDaemonPaths, remainingMs: number): Promise<void> {
 	const target = hostEnsureLockTarget(socket);
 	const store = await openEndpointReservationStore(`${target}.reservation.db`);
 	try {
 		if (store.activeGenerations(socket).length === 0) return;
-		const prober = recoveryProber(win32.dirname(target), loadPresencePlacement());
+		const prober = recoveryProber(win32.dirname(target), loadPresencePlacement(), { remainingMs });
 		const outcome = await recoverEndpointReservations(store, socket, paths, prober);
 		if (outcome.status === "refused") {
+			const { status: _status, detail, occupied: _occupied, ...recovery } = outcome;
 			throw new HostEnsureRefusedError(
 				socket,
 				"reservation_recovery_required",
 				undefined,
-				`${outcome.reason} in generation ${outcome.generation}: ${outcome.detail}`,
+				`${outcome.reason} in generation ${outcome.generation}: ${detail}`,
 				undefined,
-				{ reason: outcome.reason, generation: outcome.generation },
+				recovery,
 			);
 		}
 	} finally {
