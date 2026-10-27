@@ -1,8 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { storedBytes } from "../../../src/modes/rpc/compact-catalog-codec.ts";
+import { catalogDigest, storedBytes } from "../../../src/modes/rpc/compact-catalog-codec.ts";
 import { CompactContentStore, CompactWriteError } from "../../../src/modes/rpc/compact-content-store.ts";
 import { CompactReadError } from "../../../src/modes/rpc/compact-read-lease.ts";
-import { type CatalogComponent, CompactRecoveryCatalog } from "../../../src/modes/rpc/compact-recovery-catalog.ts";
+import {
+	type CatalogComponent,
+	type CatalogRoot,
+	CompactRecoveryCatalog,
+} from "../../../src/modes/rpc/compact-recovery-catalog.ts";
 import type { CompactStorageIo } from "../../../src/modes/rpc/compact-storage-io.ts";
 import { catalogRootRef, childRef, protocolId } from "../../../src/modes/rpc/compact-recovery-ids.ts";
 import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
@@ -166,20 +170,45 @@ it("X04 a component over 12,000 leaves is cataloged: its pointers span bounded s
 	}
 });
 
-it("RULING-58 (2) a pointer naming a leaf the store does not hold is corruption (integrity), never ownership; a released root stays ownership", async () => {
+const MISSING = 99_999;
+
+/** Replaces the root's pointer head with a stored side leaf of `text` under its correct `pointer` digest. */
+const withSide = (store: CompactContentStore, root: CatalogRoot, text: string): CatalogRoot => {
+	const side = store.createLeaf(text);
+	store.text.own([side]);
+	store.adjust(side, -1, 0);
+	return { ...root, side, sideDigest: catalogDigest("pointer", storedBytes(text)) };
+};
+
+it.each([
+	["a node leaf", `{"n":${MISSING},"s":1,"d":"${"00".repeat(32)}"}`, 0],
+	["a side (pointer) leaf", `{"s":${MISSING},"d":"${"00".repeat(32)}"}`, 1],
+])(
+	"RULING-58 (2) a stored pointer naming %s the store does not hold is corruption (integrity)",
+	async (_label, token, height) => {
+		const fixture = await rig(rows(3));
+		try {
+			const catalogs = new CompactRecoveryCatalog();
+			const built = await catalogs.build(fixture.store, catalogRootRef(5), fixture.components);
+			const root = withSide(fixture.store, built, `{"h":${height},"v":[${token}]}`);
+			await expect(catalogs.read(fixture.store, root, childRef(root.ref, 0))).rejects.toMatchObject({
+				name: "CompactReadError",
+				reason: "integrity",
+			});
+			fixture.drop();
+			catalogs.release(fixture.store, built);
+		} finally {
+			await fixture.close();
+		}
+	},
+);
+
+it("RULING-58 (2) a pointer naming a component leaf the store does not hold is corruption (integrity), never ownership; a released root stays ownership", async () => {
 	const fixture = await rig(rows(3));
 	try {
 		const catalogs = new CompactRecoveryCatalog();
 		const root = await catalogs.build(fixture.store, catalogRootRef(3), fixture.components);
 		const original = fixture.store.readLeaf.bind(fixture.store);
-		vi.spyOn(fixture.store, "readLeaf").mockImplementation(async (id) =>
-			id === root.side ? '[{"l":[99999]}]' : original(id),
-		);
-		await expect(catalogs.read(fixture.store, root, childRef(root.ref, 0))).rejects.toMatchObject({
-			name: "CompactReadError",
-			reason: "integrity",
-		});
-		vi.restoreAllMocks();
 		const [gone] = fixture.components[1]?.leaves ?? [];
 		vi.spyOn(fixture.store, "readLeaf").mockImplementation(async (id) => {
 			if (id === gone) throw new CompactReadError("ownership");
