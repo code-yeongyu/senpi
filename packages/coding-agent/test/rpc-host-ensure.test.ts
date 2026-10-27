@@ -10,6 +10,7 @@ import { GENERATION_HANDOFF_CAPABILITY, HostEnsureRefusedError } from "../src/mo
 import { createHostDaemonPaths, defaultHostLaunch, ensureHost } from "../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
 import {
+	ensureSocketSecret,
 	readSocketSecret,
 	resolveSocketTransportAddress,
 	sendSocketHandshake,
@@ -819,6 +820,12 @@ async function writeRegistration(
 	const paths = daemonPaths(qa);
 	const instanceId = `fixture-${record.pid}`;
 	const stamp = writer ?? { pid: process.pid, startTime: (await readFixtureStartTime(process.pid)) ?? null };
+	// A registered win32 generation serves a pipe derived from the endpoint's PUBLISHED secret. Without one, every
+	// record here is an unprovisioned endpoint with a recorded owner, and the ensure refuses
+	// `public_secret_recovery_required` (#4199 design 4.2a, admission before mutation) before it reaches the ownership
+	// decision the case is about. That refusal has its own owner, desktop-4199-public-secret-admission.test.ts; a
+	// fixture host that already published its secret keeps it (`ensureSocketSecret` reuses a valid one).
+	if (process.platform === "win32") await ensureSocketSecret(socketSecretPath(qa.socket));
 	await mkdir(join(paths.generationsDir, instanceId), { recursive: true, mode: 0o700 });
 	await writeFile(
 		join(paths.generationsDir, instanceId, "host.pid"),
