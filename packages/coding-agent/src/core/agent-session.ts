@@ -1546,6 +1546,8 @@ export class AgentSession {
 	private _requiredCompactionTurnError: RequiredCompactionError | undefined;
 	private _resumeCompactionRequirement: ResumeCompactionRequirement | undefined;
 	private _pendingModelSwitch: PendingModelSwitch | undefined;
+	// Reported tokens per estimated token when the pending switch was admitted (senpi#3447).
+	private _pendingSwitchTokenScale = 1;
 	private _resumeSlice: ResumeSlicePlan | undefined;
 	// A retry continuation immediately follows an accepted compaction. Its first
 	// response must not retrigger threshold compaction from stale provider usage.
@@ -8679,6 +8681,7 @@ export class AgentSession {
 		const pending = createPendingModelSwitch({ model, projection, persistDefault, origin });
 		this._clearPendingModelSwitch();
 		this._pendingModelSwitch = pending;
+		this._pendingSwitchTokenScale = this._switchTokenScale(projection.liveContextTokens);
 		this._emit({
 			type: "model_change_pending",
 			model,
@@ -8712,19 +8715,29 @@ export class AgentSession {
 	 */
 	private _reduceForSwitchTarget(model: Model<Api>, liveContextTokens: number): number {
 		if (!this._getCompactionSettings().enabled) return liveContextTokens;
-		// senpi#3447: the guard charges `liveContextTokens` (provider-reported when the
-		// provider has reported), so the repair decision and the slice are scaled to
-		// that same measure. Deciding on the raw per-message estimate let a transcript
-		// the estimate undercounts skip the reduction and then fail the guard.
-		const estimatedTokens = this._estimateSwitchContextTokens();
-		const tokenScale =
-			liveContextTokens > 0 && estimatedTokens > 0 ? liveContextTokens / estimatedTokens : 1;
+		// senpi#3447: the repair decision, the slice and the guard charge one measure,
+		// so the figure returned here (and handed to the guard) is the one the
+		// decision used. Deciding on the raw per-message estimate let a transcript the
+		// estimate undercounts skip the reduction and then fail the guard.
+		const tokenScale = this._switchTokenScale(liveContextTokens);
 		const projection = this._projectSwitchFit(model, tokenScale);
-		if (projection.usable || projection.verdict !== "fits-after-compaction") return liveContextTokens;
+		if (projection.usable || projection.verdict !== "fits-after-compaction") return projection.liveContextTokens;
 		const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection, tokenScale });
-		if (!plan) return liveContextTokens;
+		if (!plan) return projection.liveContextTokens;
 		this.applyResumeSlice(plan);
 		return this._projectSwitchFit(model, tokenScale).liveContextTokens;
+	}
+
+	/**
+	 * Reported tokens per estimated token, never below 1 (senpi#3447): the reported
+	 * live context when it is above the per-message estimate, the estimate otherwise.
+	 * A reported figure implausibly above a large estimate (a Cursor cacheRead spike)
+	 * is ignored, as the compaction threshold already does.
+	 */
+	private _switchTokenScale(liveContextTokens: number): number {
+		const estimatedTokens = this._estimateSwitchContextTokens();
+		if (estimatedTokens <= 0) return 1;
+		return resolveThresholdContextTokens(liveContextTokens, estimatedTokens) / estimatedTokens;
 	}
 
 	// Measured per message rather than through the context estimate: a retained
@@ -8774,12 +8787,15 @@ export class AgentSession {
 			pendingSwitchKeepRecentTokens(pending.projection),
 		);
 
-		let projection = this._projectSwitchFit(pending.model);
+		// The post-compaction transcript has no reported usage yet, so it is charged
+		// at the ratio the switch was admitted on (senpi#3447).
+		const tokenScale = this._pendingSwitchTokenScale;
+		let projection = this._projectSwitchFit(pending.model, tokenScale);
 		if (!projection.usable) {
-			const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection });
+			const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection, tokenScale });
 			if (plan) {
 				this.applyResumeSlice(plan);
-				projection = this._projectSwitchFit(pending.model);
+				projection = this._projectSwitchFit(pending.model, tokenScale);
 			}
 		}
 
@@ -8893,8 +8909,13 @@ export class AgentSession {
 		const currentUsableContext = currentBudget.contextWindow - currentBudget.requiredTokens;
 		const targetUsableContext = targetBudget.contextWindow - targetBudget.requiredTokens;
 		if (targetUsableContext >= currentUsableContext) return 0;
-		const fixedPrefixTokens = currentBudget.systemPromptTokens + currentBudget.activeToolSchemaTokens;
-		return Math.max(0, (this.getContextUsage()?.tokens ?? 0) - fixedPrefixTokens);
+		// Reported usage includes the system prompt and tool schemas; a per-message
+		// estimate never did, so only a reported figure has them taken out (senpi#3447).
+		const measured = this._measureContextTokens();
+		const fixedPrefixTokens = measured.reported
+			? currentBudget.systemPromptTokens + currentBudget.activeToolSchemaTokens
+			: 0;
+		return Math.max(0, measured.tokens - fixedPrefixTokens);
 	}
 
 	/**
@@ -14057,6 +14078,16 @@ export class AgentSession {
 		const contextWindow = model.contextWindow ?? 0;
 		if (contextWindow <= 0) return undefined;
 
+		const { tokens } = this._measureContextTokens();
+		return {
+			tokens,
+			contextWindow,
+			percent: (tokens / contextWindow) * 100,
+		};
+	}
+
+	/** The live context in tokens, and whether a provider reported it (otherwise it is a per-message estimate). */
+	private _measureContextTokens(): { readonly tokens: number; readonly reported: boolean } {
 		const messages = filterContextExcludedMessages(this.messages);
 
 		// After compaction, kept assistant usage reflects pre-compaction context size.
@@ -14084,12 +14115,7 @@ export class AgentSession {
 			}
 
 			if (!hasPostCompactionUsage) {
-				const tokens = messages.reduce((sum, message) => sum + estimateTokens(message), 0);
-				return {
-					tokens,
-					contextWindow,
-					percent: (tokens / contextWindow) * 100,
-				};
+				return { tokens: messages.reduce((sum, message) => sum + estimateTokens(message), 0), reported: false };
 			}
 		}
 
@@ -14098,13 +14124,7 @@ export class AgentSession {
 		const estimate = branchEntries.some((entry) => entry.type === "context_edit")
 			? estimateProjectedContextTokens(this.sessionManager.buildSessionProjection(), branchEntries)
 			: estimateContextTokens(messages);
-		const percent = (estimate.tokens / contextWindow) * 100;
-
-		return {
-			tokens: estimate.tokens,
-			contextWindow,
-			percent,
-		};
+		return { tokens: estimate.tokens, reported: estimate.usageTokens > 0 };
 	}
 
 	/**
