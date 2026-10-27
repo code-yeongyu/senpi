@@ -16,7 +16,11 @@
  */
 import { lstat, readdir } from "node:fs/promises";
 import { parseDaemonPidFile } from "../../utils/process-identity.ts";
-import { openEndpointReservationStore, type ReservationCensusRow } from "./endpoint-reservation-store.ts";
+import {
+	EndpointReservationError,
+	openEndpointReservationStore,
+	type ReservationCensusRow,
+} from "./endpoint-reservation-store.ts";
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { readFileOrUndefined } from "./host-daemon-state.ts";
 import { HostEnsureRefusedError } from "./host-decision.ts";
@@ -112,12 +116,19 @@ async function reservationEvidence(socket: string, readStartTime: ReadStartTime)
 		() => false,
 	);
 	if (!present) return undefined;
-	const store = await openEndpointReservationStore(path);
+	// A store this process cannot open or read (another writer holds it, it is insecure, a row is malformed) is
+	// unreadable evidence: the admission refuses typed, like every other incomplete discovery, never with a raw error.
 	let rows: readonly ReservationCensusRow[];
 	try {
-		rows = store.census();
-	} finally {
-		store.close();
+		const store = await openEndpointReservationStore(path);
+		try {
+			rows = store.census();
+		} finally {
+			store.close();
+		}
+	} catch (error: unknown) {
+		if (!(error instanceof EndpointReservationError)) throw error;
+		return `the reservation store cannot be read (${error.reason})`;
 	}
 	for (const row of rows) {
 		if (row.state === "pending") {

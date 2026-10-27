@@ -14,6 +14,7 @@ import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.t
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
 import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
 import {
+	HOST_CAPABILITY_PROBE_DEADLINE_MS,
 	HOST_CHILD_WATCH_FD,
 	HOST_STARTUP_BUDGET_MS,
 	parseSupervisorArgs,
@@ -131,6 +132,15 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		launch.reservation && admittedLaunch && publicSecret
 			? await offerReservedHost(launch, launch.reservation, publicSecret, admittedLaunch.self)
 			: undefined;
+	// The Revision 7 pre-action check before the spawn (design 4.2a "Descriptor-loss detection"): a failed check is
+	// terminal. The fenced state this supervisor can commit is the cancellation of the generation it offered the host
+	// in; it then performs no further action and exits, leaving its guard to the kernel.
+	try {
+		admittedLaunch?.presence?.preActionCheck();
+	} catch (cause: unknown) {
+		await grantHost?.cancel().catch(() => {});
+		throw cause;
+	}
 	const child = spawnHostChild({
 		// A host with no offered role is launched the legacy way: no reservation locator reaches it.
 		launch: grantHost ? launch : { ...launch, reservation: undefined },
@@ -259,6 +269,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		// immediately before the public bind, so a cancellation recorded since the grant ends the start here.
 		await admittedLaunch?.commitListenIntent();
 		await prepareSocketPath(bindSocket);
+		// The pre-action check before the public bind; a failure lands in the catch below, which fences the generation.
+		admittedLaunch?.presence?.preActionCheck();
 		await listen(server, bindSocket, publicSecret);
 		await publicEndpoint?.publish();
 		state.publicSocketOwned = true;
@@ -317,6 +329,22 @@ if (!isBundledNode && isCliModuleEntry(import.meta.url)) {
 
 /** How long a parent-admitted supervisor waits for its grant before giving up its start; its own identity read counts. */
 const SUPERVISOR_GRANT_DEADLINE_MS = 10_000;
+/** Store contention on the expected-roles read is retried inside this bound; the read itself is short. */
+const EXPECTED_ROLES_BUSY_RETRY_MS = 2_000;
+
+/** Runs `read` again while it reports `store_busy`, until `budgetMs` is spent; every other error propagates at once. */
+async function retryWhileBusy<T>(read: () => T, budgetMs: number): Promise<T> {
+	const until = Date.now() + budgetMs;
+	for (;;) {
+		try {
+			return read();
+		} catch (error: unknown) {
+			const busy = error instanceof Error && "reason" in error && error.reason === "store_busy";
+			if (!busy || Date.now() >= until) throw error;
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+	}
+}
 
 /**
  * The parent-admitted supervisor's entry (design 4.2a steps 2-3): read this process's own identity with the bounded
@@ -386,13 +414,22 @@ async function offerReservedHost(
 	} = await import("./host-launch-reservation.ts");
 	const store = await openEndpointReservationStore(reservation.storePath);
 	try {
-		// An unreadable expected set is not a legacy classification: the offer below refuses it.
-		if (store.expectedRoles(reservation.generation)?.includes("host") === false) return undefined;
+		// An unreadable expected set is not a legacy classification: the offer below refuses it. A store briefly busy
+		// with another writer's short transaction is retried inside the startup budget, like every other read here.
+		const expected = await retryWhileBusy(
+			() => store.expectedRoles(reservation.generation),
+			EXPECTED_ROLES_BUSY_RETRY_MS,
+		);
+		if (expected?.includes("host") === false) return undefined;
 		// The host receives the locator only once its launch-capability result names both capabilities: an explicit child
 		// command is another runtime and answers the probe; the default host is this build and reports its own. A legacy
-		// answer here cannot downgrade a generation that expects its host.
+		// answer here cannot downgrade a generation that expects its host. The probe's deadline sits inside the ensure's
+		// readiness window, so a host that never answers is refused typed rather than reported as a readiness timeout.
 		const route = launch.childCommand
-			? await selectLaunchRoute({ command: launch.childCommand, args: launch.childArgs ?? [] })
+			? await selectLaunchRoute(
+					{ command: launch.childCommand, args: launch.childArgs ?? [] },
+					{ deadlineMs: HOST_CAPABILITY_PROBE_DEADLINE_MS },
+				)
 			: ownLaunchRoute();
 		if (route !== "reservation") {
 			throw new LaunchReservationError(

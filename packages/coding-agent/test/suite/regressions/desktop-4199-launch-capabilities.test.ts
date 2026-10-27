@@ -4,15 +4,17 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	EndpointReservationError,
 	EndpointReservationStore,
 	openEndpointReservationStore,
 } from "../../../src/modes/rpc/endpoint-reservation-store.ts";
 import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
-import { startHost } from "../../../src/modes/rpc/host-ensure-start.ts";
+import { DEFAULT_READINESS_TIMEOUT_MS, startHost } from "../../../src/modes/rpc/host-ensure-start.ts";
 import {
 	credentialCommitment,
 	grantVerifiedParticipant,
 	parseReservationLocatorArgs,
+	probeDeadlineKill,
 	reservationStorePath,
 	selectLaunchRoute,
 	waitForClaim,
@@ -72,7 +74,16 @@ const realSpawn = () => mocked.realSpawn as typeof childProcess.spawn;
 const FIXTURE = resolve("test/fixtures/launch-capability-target.mjs");
 const PROBE_FLAG = "--launch-capabilities";
 const BOTH = ["socket_secret_reservation_v1", "participant_lifetime_locks_v1"];
-type TargetBehavior = "both" | "reservation-only" | "legacy" | "malformed" | "fail";
+type TargetBehavior =
+	| "both"
+	| "reservation-only"
+	| "legacy"
+	| "branded-legacy"
+	| "free-form"
+	| "multiline"
+	| "hang"
+	| "malformed"
+	| "fail";
 const target = (behavior: TargetBehavior) => ({ command: process.execPath, args: [FIXTURE, behavior] });
 
 /** A real spawn for every launch-capability probe; any other launch records its argv and stops the start right there. */
@@ -143,6 +154,8 @@ describe("#4199 launch capabilities and mixed-version route selection (design se
 			"legacy",
 		],
 		["an old runtime's recognized version answer", target("legacy"), "legacy"],
+		// senpi#4477 review LOW: the branded displayVersion label an old `omo` runtime prints is a recognized legacy answer.
+		["an old branded runtime's recognized displayVersion label", target("branded-legacy"), "legacy"],
 		[
 			"an old wrapper forwarding the probe to a new target (its actual result)",
 			{ command: process.execPath, args: [FIXTURE, "wrapper", FIXTURE, "both"] },
@@ -164,6 +177,9 @@ describe("#4199 launch capabilities and mixed-version route selection (design se
 	it.each([
 		["a failing runtime", target("fail")],
 		["a malformed capability record", target("malformed")],
+		// senpi#4477 review LOW: only positively recognized forms are legacy; a free-form line or two lines are not.
+		["a free-form version line nothing recognizes", target("free-form")],
+		["a multi-line answer", target("multiline")],
 		["a command that cannot be started", { command: join(tmpdir(), "rpc4199-no-such-runtime"), args: [] }],
 	] as const)(
 		"Mixed versions, final paragraph: an execution/IO error is not a legacy result: %s fails closed",
@@ -172,6 +188,41 @@ describe("#4199 launch capabilities and mixed-version route selection (design se
 		},
 		30_000,
 	);
+
+	it("Mixed versions, final paragraph: a probe that never answers fails closed at the launcher's deadline, with its process group ended", async () => {
+		const started = Date.now();
+		await expect(selectLaunchRoute(target("hang"), { deadlineMs: 300 })).rejects.toMatchObject({
+			reason: "launch_capability_unknown",
+			message: expect.stringMatching(/did not answer within 300ms/),
+		});
+		expect(Date.now() - started).toBeLessThan(5_000);
+	}, 30_000);
+
+	it("the deadline kill ends the probe's whole tree on Windows, not only the direct child", () => {
+		// A `.cmd`/`.bat` wrapper's runtime keeps running when only the wrapper is killed: Windows has no process group
+		// signal, so the tree is ended by pid.
+		expect(probeDeadlineKill(4321, "win32")).toEqual({ command: "taskkill", args: ["/pid", "4321", "/t", "/f"] });
+		expect(probeDeadlineKill(4321, "linux")).toEqual({ signal: "SIGKILL", target: -4321 });
+	});
+
+	it("the compiled binary's main() answers the probe before it does anything else", async () => {
+		const { main } = await import("../../../src/main.ts");
+		const printed: string[] = [];
+		vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+			printed.push(String(line));
+		});
+		const exited = new Promise<number | undefined>((resolve) => {
+			vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+				resolve(code);
+				return undefined as never;
+			}) as typeof process.exit);
+		});
+		await Promise.race([main([PROBE_FLAG, "--version"]), exited]);
+		expect(await exited).toBe(0);
+		expect(printed.map((line) => JSON.parse(line))).toEqual([
+			{ launch_capabilities: process.platform === "win32" ? BOTH : [] },
+		]);
+	}, 60_000);
 
 	/** A parent-admitted supervisor on this platform (presence_unavailable rows), granted by the test as its issuer. */
 	async function admittedSupervisor(
@@ -254,6 +305,35 @@ describe("#4199 launch capabilities and mixed-version route selection (design se
 		},
 		60_000,
 	);
+
+	it("a supervisor's host probe ends typed inside the ensure's readiness window when the host never answers", async () => {
+		const started = Date.now();
+		const { outcome, launched } = await admittedSupervisor(["supervisor", "host"], "hang");
+		expect(outcome).toMatchObject({ reason: "launch_capability_unknown" });
+		expect(launched).toEqual([]);
+		// The ensure's readiness gate expires DEFAULT_READINESS_TIMEOUT_MS after the grant; a probe that outlives it is
+		// reported as a readiness timeout instead of this typed refusal.
+		expect(Date.now() - started).toBeLessThan(DEFAULT_READINESS_TIMEOUT_MS);
+	}, 60_000);
+
+	it("a supervisor's expected-roles read retries a briefly busy store instead of aborting its start", async () => {
+		const expectedRoles = EndpointReservationStore.prototype.expectedRoles;
+		let busyAnswers = 0;
+		vi.spyOn(EndpointReservationStore.prototype, "expectedRoles").mockImplementation(function (
+			this: EndpointReservationStore,
+			...args
+		) {
+			if (busyAnswers === 0) {
+				busyAnswers += 1;
+				throw new EndpointReservationError("store_busy", "database is locked");
+			}
+			return expectedRoles.apply(this, args);
+		});
+		const { outcome, stop, launched } = await admittedSupervisor(["supervisor", "host"], "both");
+		expect(busyAnswers).toBe(1);
+		expect(outcome).toBe(stop);
+		expect(launched).toHaveLength(1);
+	}, 60_000);
 
 	it("Wrapper-safe launch: a supervisor offers its host role and forwards the locator only to an explicit child that reported both capabilities", async () => {
 		const { outcome, stop, launched, store, generation, endpoint } = await admittedSupervisor(

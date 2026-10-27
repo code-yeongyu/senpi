@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { DatabaseSync } from "node:sqlite";
 import {
 	openEndpointReservationStore,
 	type PresenceObjectRecord,
@@ -278,6 +279,32 @@ describe.skipIf(process.platform === "win32")("public secret admission before mu
 		},
 		20_000,
 	);
+
+	// senpi#4468 r2 LOW: a reservation store another writer holds is unreadable evidence, never a raw error.
+	it("refuses typed while the reservation store is held by another writer", async () => {
+		const { agentDir, socket, secretPath } = await endpoint();
+		const store = await reservationStore(socket);
+		const generation = store.reserve(
+			socket,
+			identityKey(await goneIdentity()),
+			["supervisor", "host"],
+			NO_PRESENCE,
+			NO_OBJECT,
+		);
+		store.offer(generation, "supervisor", identityKey({ pid: 1, processStartTime: null }), NO_OBJECT);
+		store.close();
+		const writer = new DatabaseSync(`${hostEnsureLockTarget(socket)}.reservation.db`);
+		try {
+			writer.exec("BEGIN EXCLUSIVE; UPDATE reservations SET revision = revision + 1;");
+			const failure = await ensureOnWindows(agentDir, socket);
+			expect(failure).toMatchObject({ reason: "public_secret_recovery_required" });
+			expect(String((failure as Error).message)).toMatch(/reservation store/);
+		} finally {
+			writer.exec("ROLLBACK;");
+			writer.close();
+		}
+		expect(await secretState(secretPath)).toBe("absent");
+	}, 20_000);
 
 	it("lets a start through on an endpoint with no owner evidence", async () => {
 		const { agentDir, socket } = await endpoint();
