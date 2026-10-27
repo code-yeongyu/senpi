@@ -20,7 +20,12 @@ import { TtsrManager } from "./manager.ts";
 import { getTtsrStreamDelta } from "./message-update.ts";
 import { REPETITIVE_TURNS_RULE_CONTENT } from "./prompts.ts";
 import { buildNudgeMessage, type TtsrNudgeMessage } from "./remediation.ts";
-import { collectAssistantText, RepetitiveTurnsLane, readPersistedAssistantTexts } from "./repetitive-turns-lane.ts";
+import {
+	collectAssistantText,
+	hasToolCall,
+	RepetitiveTurnsLane,
+	readPersistedAssistantTexts,
+} from "./repetitive-turns-lane.ts";
 import { compileRuleCondition } from "./rule-condition.ts";
 import { buildStreamRemediation } from "./stream-remediation.ts";
 import {
@@ -90,7 +95,6 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 			pendingRemediation = null;
 			pendingRuleNudge = null;
 			pendingNudge = null;
-			repetitiveTurns.disarm();
 		}
 	}
 
@@ -99,7 +103,6 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		genState = createGenerationState();
 		pendingRemediation = null;
 		pendingRuleNudge = null;
-		repetitiveTurns.resetTurn();
 		watcher?.reset();
 	}
 
@@ -110,6 +113,17 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 			rules: observed,
 			remediation: retryMode,
 		});
+	}
+
+	/**
+	 * Queues a rule's corrective nudge for the settle point. The activation notice says a nudge was queued, so it is
+	 * written only when the nudge will be sent; a rule already corrected in this episode is stopped at settle instead
+	 * (senpi#4537).
+	 */
+	function queueRuleNudge(ctx: ExtensionContext, rule: string, content: string): void {
+		manager?.markInjectedByNames([rule]);
+		if (!ruleAlreadyCorrected(ctx.sessionManager.getEntries(), rule)) recordInjection(rule, [rule], "nudge");
+		pendingNudge = buildNudgeMessage(rule, content);
 	}
 
 	function ensureInitialized(ctx: ExtensionContext): void {
@@ -204,16 +218,6 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 			ctx.abort("system");
 			return;
 		}
-		if (source === "text") {
-			const canArm = pendingRuleNudge === null && !genState.abortClaimed;
-			if (repetitiveTurns.observeTextDelta(delta, canArm) && !genState.abortClaimed) {
-				genState.abortClaimed = true;
-				genState.abortOwner = "collapse-repetition";
-				genState.selfAbortAt = Date.now();
-				ctx.abort("system");
-				return;
-			}
-		}
 		const interrupting = outcome.ruleMatches.filter((rule) => rule.interruptMode === "always");
 		const rule = interrupting[0];
 		if (rule !== undefined && pendingRuleNudge === null && !genState.abortClaimed) {
@@ -225,7 +229,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		}
 	});
 
-	pi.on("message_end", (event) => {
+	pi.on("message_end", (event, ctx) => {
 		// A completed message ends its stream: nothing it buffered can match a
 		// later message's deltas, so drop the tail windows now instead of holding
 		// them until the next turn_start reset.
@@ -233,23 +237,14 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		if (genState.userCancelled) return undefined;
 		if (event.message.role !== "assistant") return undefined;
 		const turnText = collectAssistantText(event.message);
-		if (repetitiveTurns.armed) {
-			repetitiveTurns.commitArmedTurn(turnText);
-			manager?.markInjectedByNames([REPETITIVE_TURNS_RULE_NAME]);
-			recordInjection(REPETITIVE_TURNS_RULE_NAME, [REPETITIVE_TURNS_RULE_NAME], "nudge");
-			pendingNudge = buildNudgeMessage(REPETITIVE_TURNS_RULE_NAME, REPETITIVE_TURNS_RULE_CONTENT);
-			return undefined;
-		}
 		if (pendingRuleNudge !== null) {
 			const pending = pendingRuleNudge;
 			pendingRuleNudge = null;
-			manager?.markInjectedByNames([pending.rule.name]);
-			recordInjection(pending.rule.name, [pending.rule.name], "nudge");
-			pendingNudge = buildNudgeMessage(pending.rule.name, pending.rule.content);
+			queueRuleNudge(ctx, pending.rule.name, pending.rule.content);
 			return undefined;
 		}
 		if (pendingRemediation !== null) {
-			if (turnText !== null) repetitiveTurns.recordCompletedTurn(turnText);
+			if (turnText !== null) repetitiveTurns.completeTurn(turnText);
 			const pending = pendingRemediation;
 			pendingRemediation = null;
 			try {
@@ -268,7 +263,13 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 				return undefined;
 			}
 		}
-		if (turnText !== null) repetitiveTurns.recordCompletedTurn(turnText);
+		if (hasToolCall(event.message)) {
+			repetitiveTurns.noteToolWork();
+			return undefined;
+		}
+		if (turnText !== null && repetitiveTurns.completeTurn(turnText)) {
+			queueRuleNudge(ctx, REPETITIVE_TURNS_RULE_NAME, REPETITIVE_TURNS_RULE_CONTENT);
+		}
 		return undefined;
 	});
 
