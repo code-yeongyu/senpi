@@ -170,14 +170,73 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
         self.guards.contains_key(presence_id)
     }
 
+    /// A probe first attempts a fresh exclusive acquisition. Contention is occupied regardless of
+    /// admissibility. An inadmissible success is dropped; an admissible success remains in the registry.
+    pub fn probe(
+        &mut self,
+        presence_id: &str,
+        path: &str,
+        admissible: impl FnOnce(&mut B, &B::Handle, FileIdentity) -> bool,
+    ) -> LockAttempt {
+        if self.fenced.is_some() {
+            return LockAttempt::Fenced;
+        }
+        let handle = match self.backend.open(path) {
+            Ok(handle) => handle,
+            Err(code) => return LockAttempt::Unknown(code),
+        };
+        let attempt = classify_lock_result(self.backend.try_lock(&handle));
+        if attempt != LockAttempt::Acquired {
+            return attempt;
+        }
+        let identity = match self.backend.handle_identity(&handle) {
+            Ok(identity) => identity,
+            Err(code) => return LockAttempt::Unknown(code),
+        };
+        if self.holds(presence_id) || !admissible(&mut self.backend, &handle, identity) {
+            return LockAttempt::Unknown(13); // ERROR_INVALID_DATA: not admissible release evidence.
+        }
+        self.guards.insert(
+            presence_id.to_string(),
+            Guard {
+                path: path.to_string(),
+                identity,
+                handle,
+            },
+        );
+        LockAttempt::Acquired
+    }
+
+    /// Transfer a completed blocking acquisition into the process-rooted registry. The wait runs
+    /// outside its mutex so unrelated releases and pre-action checks cannot deadlock behind it.
+    pub fn retain_wait(&mut self, mut completed: Self, presence_id: &str) -> WaitOutcome {
+        if self.fenced.is_some() {
+            return WaitOutcome::Fenced;
+        }
+        if self.holds(presence_id) {
+            return WaitOutcome::Unknown(13);
+        }
+        match completed.guards.remove(presence_id) {
+            Some(guard) => {
+                self.guards.insert(presence_id.to_string(), guard);
+                WaitOutcome::Acquired
+            }
+            None => WaitOutcome::Unknown(13),
+        }
+    }
+
     /// Opens and attempts the lock once. On `Acquired` the guard is retained; on anything else the
     /// handle is closed again and nothing is retained.
     pub fn acquire(&mut self, presence_id: &str, path: &str) -> LockAttempt {
         if self.fenced.is_some() {
             return LockAttempt::Fenced;
         }
-        if self.guards.contains_key(presence_id) {
-            return LockAttempt::Acquired;
+        if let Some(guard) = self.guards.get(presence_id) {
+            return if guard.path == path {
+                LockAttempt::Acquired
+            } else {
+                LockAttempt::Unknown(13)
+            };
         }
         let handle = match self.backend.open(path) {
             Ok(handle) => handle,
@@ -246,6 +305,22 @@ impl<B: PresenceBackend> PresenceRegistry<B> {
             self.fenced = Some(reason);
         }
         verdict
+    }
+
+    /// Reclassify the retained handle, rather than trusting locality supplied by JavaScript.
+    pub fn pre_action_check_with(
+        &mut self,
+        presence_id: &str,
+        is_local: impl FnOnce(&mut B, &B::Handle) -> bool,
+    ) -> Result<(), FenceReason> {
+        if let Some(reason) = self.fenced {
+            return Err(reason);
+        }
+        let local = self
+            .guards
+            .get(presence_id)
+            .is_some_and(|guard| is_local(&mut self.backend, &guard.handle));
+        self.pre_action_check(presence_id, local)
     }
 
     fn check(&mut self, presence_id: &str, store_is_local: bool) -> Result<(), FenceReason> {
@@ -378,6 +453,35 @@ mod tests {
     }
 
     const PATH: &str = r"C:\Users\u\AppData\Local\senpi\presence\p-1.lock";
+
+    #[test]
+    fn probe_attempts_the_lock_before_interpreting_admissibility() {
+        let mut kernel = FakeKernel::with_file(PATH, 1).held_by(PATH, "host");
+        let mut registry = PresenceRegistry::new(&mut kernel);
+        assert_eq!(
+            registry.probe("p-1", PATH, |_, _, _| panic!("busy must not be reclassified")),
+            LockAttempt::Occupied
+        );
+        assert!(!registry.holds("p-1"));
+    }
+
+    #[test]
+    fn probe_retains_only_admissible_successes() {
+        for admissible in [false, true] {
+            let mut kernel = FakeKernel::with_file(PATH, 1);
+            let mut registry = PresenceRegistry::new(&mut kernel);
+            let attempt = registry.probe("p-1", PATH, |_, _, _| admissible);
+            assert_eq!(
+                attempt,
+                if admissible {
+                    LockAttempt::Acquired
+                } else {
+                    LockAttempt::Unknown(13)
+                }
+            );
+            assert_eq!(registry.holds("p-1"), admissible);
+        }
+    }
 
     #[test]
     fn only_a_lock_violation_is_occupied_and_every_other_error_is_unknown() {

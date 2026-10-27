@@ -21,6 +21,9 @@ pub fn probe_volume(path: &str) -> Result<VolumeFacts, ProbeError> {
 }
 
 #[cfg(windows)]
+pub(crate) use windows_probe::probe_handle;
+
+#[cfg(windows)]
 mod windows_probe {
     use super::ProbeError;
     use crate::answers::{driver_path_from_query, remote_protocol_from_query, ProbeCodes};
@@ -65,12 +68,17 @@ mod windows_probe {
             return Err(ProbeError::OpenFailed(unsafe { GetLastError() }));
         }
         let handle = OwnedHandle(raw);
-        let (ntfs_driver, ntfs_status) = driver_in_path(handle.0, NTFS_DRIVER);
-        let (refs_driver, refs_status) = driver_in_path(handle.0, REFS_DRIVER);
-        let (remote_device, device_status) = remote_device(handle.0);
-        let (remote_protocol, remote_protocol_error) = remote_protocol(handle.0);
-        Ok(VolumeFacts {
-            reported_file_system: reported_file_system(handle.0),
+        Ok(probe_handle(handle.0))
+    }
+
+    /// Facts from the very handle whose presence lock is retained, not a second pathname lookup.
+    pub(crate) fn probe_handle(handle: HANDLE) -> VolumeFacts {
+        let (ntfs_driver, ntfs_status) = driver_in_path(handle, NTFS_DRIVER);
+        let (refs_driver, refs_status) = driver_in_path(handle, REFS_DRIVER);
+        let (remote_device, device_status) = remote_device(handle);
+        let (remote_protocol, remote_protocol_error) = remote_protocol(handle);
+        VolumeFacts {
+            reported_file_system: reported_file_system(handle),
             ntfs_driver,
             refs_driver,
             remote_device,
@@ -81,7 +89,7 @@ mod windows_probe {
                 device_status,
                 remote_protocol_error,
             },
-        })
+        }
     }
 
     fn reported_file_system(handle: HANDLE) -> Option<String> {

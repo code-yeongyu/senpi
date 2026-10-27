@@ -18,6 +18,28 @@ use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED
 
 pub struct OwnedHandle(HANDLE);
 
+// SAFETY: this handle is exclusively owned, non-inheritable, and accessed only under the registry
+// mutex or by its single blocking worker. Windows permits handles to move between threads.
+unsafe impl Send for OwnedHandle {}
+
+impl OwnedHandle {
+    pub(crate) fn is_local(&self) -> bool {
+        crate::classify(&crate::volume::probe_handle(self.0)) == crate::Locality::Local
+    }
+
+    pub(crate) fn tag_matches(&self, tag: &[u8]) -> bool {
+        use std::os::windows::{fs::FileExt, io::FromRawHandle};
+        // SAFETY: this is a borrowed view of our live handle. ManuallyDrop prevents File from closing
+        // it. seek_read supplies its own OVERLAPPED, so it does not change the lock's file offset.
+        let file = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_handle(self.0) });
+        if file.metadata().map(|m| m.len()).ok() != Some(tag.len() as u64) {
+            return false;
+        }
+        let mut actual = vec![0; tag.len()];
+        file.seek_read(&mut actual, 0).ok() == Some(tag.len()) && actual == tag
+    }
+}
+
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
         // SAFETY: the handle came from a successful CreateFileW/CreateEventW and is closed exactly once here.

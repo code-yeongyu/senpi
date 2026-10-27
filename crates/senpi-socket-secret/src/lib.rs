@@ -2,10 +2,11 @@ use napi_derive::napi;
 
 pub mod answers;
 pub mod classify;
+mod owner_dacl;
 pub mod presence;
+pub mod presence_binding;
 #[cfg(windows)]
 pub mod presence_windows;
-mod owner_dacl;
 pub mod publish;
 pub mod session;
 pub mod volume;

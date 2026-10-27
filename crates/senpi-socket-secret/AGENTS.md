@@ -11,11 +11,13 @@ src/session.rs            PID-4 creation FILETIME; `Unverified` never matches an
 src/volume.rs             Volume facts read from ONE handle that follows reparse points
 src/presence.rs           Presence guards: lock outcome rule, registry (no unlock while active), sticky pre-action fence
 src/presence_windows.rs   LockFileEx on byte [0,1) of an EXISTING object; overlapped wait cancelled by CancelIoEx
+src/presence_binding.rs   Process-rooted N-API registry, admissible retained probes, cancellable worker waits
 src/publish.rs            First publication: CREATE_NEW staging with the owner-only DACL, flush, FileRenameInfo ReplaceIfExists=FALSE
 src/owner_dacl.rs         Protected DACL for the current user, SYSTEM and Administrators
 src/lib.rs                N-API exports and the `__senpiSocketSecretAbi1` ABI sentinel
 tests/native_receipts.rs  Native receipts 27 and 28; real Windows only
 tests/native_presence.rs  Presence-guard receipts (contention, release, blocking wait, cancel); real Windows only
+tests/native_presence_binding.rs  Native binding: busy/admissible probes and quiescence; typed unavailable off Windows
 ```
 
 ## CONTRACTS
@@ -25,7 +27,8 @@ tests/native_presence.rs  Presence-guard receipts (contention, release, blocking
 - `SessionIdentity` has no `PartialEq` on purpose; compare with `same_session`, under which `Unverified` matches nothing.
 - A presence guard proves release only by a successful exclusive acquisition; `ERROR_LOCK_VIOLATION` is occupied and every other failure is unknown. A guard leaves the registry only with a quiescence receipt, a failed pre-action check fences the registry permanently, and a missing presence object is never recreated.
 - Publication never writes the final path, never copies or truncates, and a collision is only ERROR_ALREADY_EXISTS/ERROR_FILE_EXISTS. One handle (`GENERIC_WRITE | DELETE`, share read only) writes, flushes and renames the staging file, and on any outcome but `Published` deletes it through that handle; nothing is reopened or deleted by path. A failed delete is part of the result (`Publication::staging_left_behind`, N-API `stagingLeftBehind { path, windowsError }`), never a log line, and never carries the bytes.
-- Prebuilds and the loader are not wired yet; this crate ships no artifact until the packaging change lands.
+- Windows x64/arm64 prebuilds and the headless `socket-secret-native.ts` loader are wired by the packaging change. Presence exports return typed `unavailable` off Windows; the POSIX lifetime contract is not implemented.
+- Probe busy means occupied before any admissibility check. A successful probe retains the guard only when the persisted tag/file identity, creation/current locality, and (for relocated objects) verified kernel session match. Inadmissible success is unknown and closes immediately. JS GC never releases the process-rooted registry; release requires a caller-committed `released` receipt after quiescence.
 
 ## VALIDATION
 
