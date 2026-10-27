@@ -16,9 +16,21 @@
  * the grant and everything it then does, and closes it only after its `released` commit; a handle that no committed
  * authority ever used is the only one released early. A row without a local root holds no lock at all.
  */
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { LaunchReservationError, LOCATOR_FLAGS, type StoreLocator } from "./host-lifecycle-launch.ts";
+import {
+	LaunchReservationError,
+	LOCATOR_FLAGS,
+	type StoreLocator,
+	spawnableChildLaunch,
+} from "./host-lifecycle-launch.ts";
+import {
+	LAUNCH_CAPABILITIES_FLAG,
+	launchCapabilities,
+	PARTICIPANT_LIFETIME_LOCKS_V1,
+	SOCKET_SECRET_RESERVATION_V1,
+} from "./launch-capabilities.ts";
 import {
 	EndpointReservationError,
 	type EndpointReservationStore,
@@ -111,8 +123,101 @@ export function releaseReservingOwner(
 }
 
 /**
+ * Which launch route a selected command takes (design section 5, "Mixed versions", final paragraph): the parent-admitted
+ * reservation route only for a command whose explicit result names both `socket_secret_reservation_v1` and
+ * `participant_lifetime_locks_v1`; any other recognized result, including a reservation-only one, keeps the legacy route.
+ */
+export type LaunchRoute = "reservation" | "legacy";
+
+function routeOf(capabilities: readonly string[]): LaunchRoute {
+	return capabilities.includes(SOCKET_SECRET_RESERVATION_V1) && capabilities.includes(PARTICIPANT_LIFETIME_LOCKS_V1)
+		? "reservation"
+		: "legacy";
+}
+
+/**
+ * The route of a command that is this build (the supervisor `startHost` launches, a supervisor's default host): it
+ * supplies its own artifact's capability without being probed.
+ */
+export function ownLaunchRoute(): LaunchRoute {
+	return routeOf(launchCapabilities(process.platform));
+}
+
+/** What an old runtime's root `--version` prints: one version, optionally `v`-prefixed, with a pre-release or build. */
+const VERSION_LINE = /^v?\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z.+-]*)?$/;
+const PROBE_OUTPUT_LIMIT = 4096;
+const LAUNCH_CAPABILITY_PROBE_DEADLINE_MS = 10_000;
+
+/**
+ * Runs the selected command, wrapper included, as `<command> <args...> --launch-capabilities --version` and classifies
+ * its answer. A capability record selects by its names; an old runtime's version line is its recognized legacy result.
+ * A spawn failure, a non-zero exit, a deadline or any other output is an execution/IO error, never a legacy result: it
+ * fails with `launch_capability_unknown`. A route never comes from a version number, a spawn's success or a timeout.
+ */
+export async function selectLaunchRoute(
+	launch: { readonly command: string; readonly args: readonly string[] },
+	options: { readonly deadlineMs?: number } = {},
+): Promise<LaunchRoute> {
+	const probe = spawnableChildLaunch({
+		command: launch.command,
+		args: [...launch.args, LAUNCH_CAPABILITIES_FLAG, "--version"],
+	});
+	const unknown = (detail: string) => new LaunchReservationError("launch_capability_unknown", detail);
+	const output = await new Promise<string>((resolve, reject) => {
+		const detached = process.platform !== "win32";
+		const child = spawn(probe.command, probe.args, {
+			shell: probe.shell,
+			stdio: ["ignore", "pipe", "ignore"],
+			windowsHide: true,
+			// Its own process group, so a deadline also stops what a wrapper started.
+			detached,
+		});
+		let stdout = "";
+		child.stdout?.on("data", (chunk: Buffer) => {
+			if (stdout.length < PROBE_OUTPUT_LIMIT) stdout += chunk.toString("utf8");
+		});
+		const timer = setTimeout(() => {
+			try {
+				if (detached && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+				else child.kill("SIGKILL");
+			} catch {}
+			reject(
+				unknown(
+					`${launch.command} did not answer within ${options.deadlineMs ?? LAUNCH_CAPABILITY_PROBE_DEADLINE_MS}ms`,
+				),
+			);
+		}, options.deadlineMs ?? LAUNCH_CAPABILITY_PROBE_DEADLINE_MS);
+		child.once("error", (error) => {
+			clearTimeout(timer);
+			reject(unknown(`${launch.command}: ${error.message}`));
+		});
+		child.once("close", (code, signal) => {
+			clearTimeout(timer);
+			if (code === 0) resolve(stdout);
+			else reject(unknown(`${launch.command} exited with ${code ?? signal}`));
+		});
+	});
+	const lines = output.split(/\r?\n/).filter((line) => line.trim() !== "");
+	const answer = lines.length === 1 ? (lines[0] ?? "").trim() : undefined;
+	if (answer !== undefined && VERSION_LINE.test(answer)) return "legacy";
+	let record: unknown;
+	try {
+		record = answer === undefined ? undefined : JSON.parse(answer);
+	} catch {
+		record = undefined;
+	}
+	const capabilities =
+		typeof record === "object" && record !== null ? Reflect.get(record, "launch_capabilities") : undefined;
+	if (!Array.isArray(capabilities) || !capabilities.every((name) => typeof name === "string")) {
+		throw unknown(`${launch.command} answered no launch-capability result`);
+	}
+	return routeOf(capabilities);
+}
+
+/**
  * Reserves a generation with the presence root the owner resolved and the owner's held presence object, predeclares the
  * supervisor's presence object in that root, offers the supervisor role and returns the argv that carries the locator.
+ * The generation expects a host role only when its host target reported both launch capabilities.
  * It takes over `ownerPresence`: a reservation that is not persisted releases that unused handle, and a predeclaration
  * that fails fences the generation, commits the owner's `released` and only then releases it.
  */
@@ -125,13 +230,14 @@ export function offerSupervisorLaunch(
 		readonly native: PresencePlacementLoad;
 		readonly ownerPresence: HeldPresence;
 	},
+	expectedRoles: readonly ReservationRole[] = ["supervisor", "host"],
 ): { generation: string; args: readonly string[] } {
 	let generation: string;
 	try {
 		generation = store.reserve(
 			endpoint,
 			identityKey(owner),
-			["supervisor", "host"],
+			expectedRoles,
 			presence.reservation,
 			presence.ownerPresence.object,
 		);

@@ -17,6 +17,7 @@ import {
 	isBundledNode,
 } from "./config.ts";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.ts";
+import { launchCapabilityProbeAnswer } from "./modes/rpc/launch-capabilities.ts";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 
@@ -164,6 +165,12 @@ async function spawnFullCli(): Promise<number> {
 			resolve(code ?? 1);
 		});
 	});
+}
+
+// A launcher's side-effect-free launch-capability probe (#4199) carries `--version` too, so it is answered first.
+const launchCapabilityAnswer = isRootCommand(args) ? launchCapabilityProbeAnswer(args) : undefined;
+if (launchCapabilityAnswer !== undefined) {
+	await printThenExit(() => console.log(launchCapabilityAnswer));
 }
 
 if (isRootCommand(args) && (args.includes("--version") || args.includes("-v"))) {

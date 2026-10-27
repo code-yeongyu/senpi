@@ -761,6 +761,11 @@ export class EndpointReservationStore {
 		);
 	}
 
+	/** The roles the reserving owner expects in `generation`; `undefined` when the record is absent or unreadable. */
+	expectedRoles(generation: string): readonly ReservationRole[] | undefined {
+		return this.#read(() => this.#expectedRoles(generation));
+	}
+
 	/** The recorded expected roles, or `undefined` when the record is absent, empty or names a role this build does not know. */
 	#expectedRoles(generation: string): ReservationRole[] | undefined {
 		const row = this.#database

@@ -909,6 +909,23 @@ The supervisor allows the host claim the same 30-second startup budget as its li
 another writer reports `store_busy`; claim and grant waits retry that read within their original deadline rather than
 aborting startup. Other reservation errors still propagate.
 
+A launcher chooses this reservation route for a selected command only after that command, wrapper included, reports
+the launch capabilities. The probe runs `<command> <args...> --launch-capabilities --version`. This build answers with
+one JSON line, `{"launch_capabilities":[...]}`, and exits 0 before it loads anything else. On Windows the list is
+`socket_secret_reservation_v1` and `participant_lifetime_locks_v1`. On other platforms it is empty: public endpoints
+there have no secret file, and participant lifetime locks are not implemented. An older runtime ignores the unknown flag
+and prints its version, which counts as its legacy answer. Only a list that names both capabilities selects the
+reservation route. A version line, or a list missing either name, keeps the legacy launch with no reservation flag and
+no claim wait. A spawn failure, a non-zero exit, no answer within 10 seconds or any other output fails with
+`launch-reservation-rejected` reason `launch_capability_unknown`; it is never read as a legacy answer.
+
+The supervisor `startHost` launches is this build, so it is not probed. When `hostArgs` select an explicit
+`--child-command`, `startHost` probes that command before it takes a lock, touches the secret or reserves anything.
+The generation expects a host role only when that command reports both capabilities; otherwise the supervisor launches
+the host the legacy way. A supervisor launched with a reservation probes its own explicit child command before it
+offers the host role. If the generation expects a host and that command did not report both capabilities, the
+supervisor fails with `launch_capability_missing` before the host is spawned, and the host never receives the locator.
+
 The reservation store is at schema 4 and refuses an older store with `schema_unsupported`. The process that reserves a
 generation resolves its presence root once and records it in the reservation. If the store's directory classifies `local`
 from its opened handle, the root is the private sibling directory `<endpoint lock target>.presence`. Otherwise the root is

@@ -177,15 +177,39 @@ describe.skipIf(process.platform === "win32")("reserved host admission before li
 		"the supervisor grants its host or stops an unclaimed child (claims: %s)",
 		async (claims) => {
 			const context = await offered("supervisor");
+			// This build reports no launch capability off Windows, so the supervisor would hand its default host no locator
+			// (design section 5): the claiming host is the real CLI behind a wrapper that answers the probe as a Windows build.
+			// The unclaimed child reports both launch capabilities and then never participates: design section 5 makes that a
+			// launch failure, never permission to retry unsafely.
 			const childArgs = claims
-				? []
+				? [
+						"--child-command",
+						process.execPath,
+						"--child-args",
+						JSON.stringify([
+							resolve("test/fixtures/launch-capability-target.mjs"),
+							"capable-wrapper",
+							"--import",
+							"tsx",
+							resolve("src/cli.ts"),
+							"--mode",
+							"rpc",
+							"--multi-session",
+							"--no-extensions",
+						]),
+					]
 				: [
 						"--child-command",
 						process.execPath,
 						"--child-args",
 						JSON.stringify([
 							"-e",
-							'console.error("unclaimed-host-pid=" + process.pid); setInterval(() => {}, 1000)',
+							[
+								'if (process.argv.includes("--launch-capabilities")) {',
+								'console.log(\'{"launch_capabilities":["socket_secret_reservation_v1","participant_lifetime_locks_v1"]}\');',
+								"process.exit(0); }",
+								'console.error("unclaimed-host-pid=" + process.pid); setInterval(() => {}, 1000)',
+							].join(" "),
 							"--",
 						]),
 					];

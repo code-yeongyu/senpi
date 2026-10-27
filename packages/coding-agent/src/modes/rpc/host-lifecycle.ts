@@ -128,10 +128,11 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// The granted supervisor offers the host role before spawning, in the same reservation generation.
 	const grantHost =
 		launch.reservation && admittedLaunch && publicSecret
-			? await offerReservedHost(launch.reservation, publicSecret, admittedLaunch.self)
+			? await offerReservedHost(launch, launch.reservation, publicSecret, admittedLaunch.self)
 			: undefined;
 	const child = spawnHostChild({
-		launch,
+		// A host with no offered role is launched the legacy way: no reservation locator reaches it.
+		launch: grantHost ? launch : { ...launch, reservation: undefined },
 		internalSocket,
 		internal,
 		...hop.transport,
@@ -329,16 +330,36 @@ async function admitReservedLaunch(
 	return { credential, self, presence };
 }
 
-/** Reservation-only lazy boundary: direct supervisors never load SQLite or the reservation helpers. */
+/**
+ * Reservation-only lazy boundary: direct supervisors never load SQLite or the reservation helpers. Returns no grant when
+ * the reserving owner expects no host role: it classified the host legacy, which keeps the legacy launch (#4199 design
+ * section 5, "Mixed versions").
+ */
 async function offerReservedHost(
+	launch: SupervisorLaunch,
 	reservation: StoreLocator,
 	secret: Buffer,
 	issuer: LaunchIdentity,
-): Promise<() => Promise<void>> {
+): Promise<(() => Promise<void>) | undefined> {
 	const { openEndpointReservationStore } = await import("./endpoint-reservation-store.ts");
-	const { grantClaimedParticipant, offerHostRole } = await import("./host-launch-reservation.ts");
+	const { grantClaimedParticipant, LaunchReservationError, offerHostRole, ownLaunchRoute, selectLaunchRoute } =
+		await import("./host-launch-reservation.ts");
 	const store = await openEndpointReservationStore(reservation.storePath);
 	try {
+		// An unreadable expected set is not a legacy classification: the offer below refuses it.
+		if (store.expectedRoles(reservation.generation)?.includes("host") === false) return undefined;
+		// The host receives the locator only once its launch-capability result names both capabilities: an explicit child
+		// command is another runtime and answers the probe; the default host is this build and reports its own. A legacy
+		// answer here cannot downgrade a generation that expects its host.
+		const route = launch.childCommand
+			? await selectLaunchRoute({ command: launch.childCommand, args: launch.childArgs ?? [] })
+			: ownLaunchRoute();
+		if (route !== "reservation") {
+			throw new LaunchReservationError(
+				"launch_capability_missing",
+				"the reservation expects a host role the selected host command does not support",
+			);
+		}
 		// The host's presence object is predeclared in the root the reserving owner recorded, before the spawn.
 		offerHostRole(store, reservation.generation, issuer);
 	} finally {
