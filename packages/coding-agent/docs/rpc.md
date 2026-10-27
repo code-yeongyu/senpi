@@ -974,6 +974,32 @@ only offered or claimed is recorded `never_granted`. The retired record keeps ev
 discharges with the fenced revision. It is a tombstone: every later claim, offer, grant, serving commit, fence or
 retirement of it fails with `generation_retired`.
 
+A Windows public-endpoint start that finds a generation that is not retired recovers it under the endpoint lock
+before it acquires its own presence lock, touches the public secret or reserves. Recovery fences the generation, then
+makes one nonblocking acquisition attempt, in presence-ID order and outside every store transaction, for the reserving
+owner until its `released` commit and for every granted role without one. Offered and claimed-but-ungranted roles are
+not probed. An acquisition counts only when the object's tag and file identity match the row, the row recorded `local`
+and the object's directory still classifies `local`, and, for an object in the per-user root, the row's and this
+machine's kernel-session identities are both verified and equal. A busy object always refuses. An entry without such an
+acquisition is discharged only when its recorded PID, reopened now, is absent or has a different creation FILETIME
+(compared exactly). That observation counts only when the store recorded `local` and still classifies `local`, or when
+the row's and this machine's kernel-session identities are both verified and equal; an `unverified` identity equals
+nothing. On a store recorded and still classified `local`, a verified kernel-session identity that differs from the
+one the generation recorded, with every probed object acquired, proves every process of that earlier boot gone. Then
+every recorded generation supervisor, host child and session-path claim of the endpoint must be gone under the same
+rules. Recovery retires at the revision it revalidated while it still holds the acquired locks, and releases them after
+the commit. A generation that served and whose actors committed `released` retires without any probe, so an ordinary
+restart is not refused.
+
+When recovery cannot prove that every recorded actor ended, the start fails with `HostEnsureRefusedError` reason
+`reservation_recovery_required`, and `host ensure --json` (exit 3) carries
+`recovery: { reason, generation }`. The reasons are `presence_occupied` (an actor's presence object is held),
+`authority_live` and `authority_unknown` (the actor's recorded process is live, or its evidence cannot be used),
+`census_live` and `census_unknown` (a recorded supervisor, host child or session claim), and `revision_changed` (the
+generation changed while recovery ran). `detail` names the actor, its PID, its recorded host label and kernel session.
+The fence stays; nothing else is written, no credential is touched, no process is signalled and no presence object is
+deleted. The next ensure runs the same bounded check again.
+
 ### Generation handoff (`handoffHost`, `probeHost`, `stopHost`)
 
 An engine upgrade must not end the work the running daemon is doing: one machine-wide host holds every

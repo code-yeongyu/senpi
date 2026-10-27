@@ -194,6 +194,7 @@ async function ensureOutcome(
 			socket: target.socket,
 			...(error.detail !== undefined && { detail: error.detail }),
 			...(error.holder !== undefined && { holder: error.holder }),
+			...(error.recovery !== undefined && { recovery: error.recovery }),
 		});
 	}
 	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS).finally(ensured.release);

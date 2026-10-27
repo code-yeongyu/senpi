@@ -245,7 +245,12 @@ async function runHostSessionRequestOnce(request: HostSessionRequest, stoppingTi
 		if (request.action === "open" && error instanceof RpcCommandError && error.errorCode === "host_stopping")
 			throw error;
 		if (error instanceof HostEnsureRefusedError) {
-			return refusal("refuse", undefined, { reason: error.reason, socket, detail: error.detail });
+			return refusal("refuse", undefined, {
+				reason: error.reason,
+				socket,
+				detail: error.detail,
+				...(error.recovery !== undefined && { recovery: error.recovery }),
+			});
 		}
 		return mapError(error, socket);
 	} finally {

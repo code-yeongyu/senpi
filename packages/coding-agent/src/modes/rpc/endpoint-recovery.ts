@@ -29,18 +29,13 @@ import {
 	type RoleRow,
 } from "./endpoint-reservation-store.ts";
 import { generationPaths, type HostDaemonDirectory } from "./host-daemon-paths.ts";
+import type { ReservationRecoveryRefusal } from "./host-decision.ts";
 import { readSessionPathClaims } from "./host-reservations.ts";
 import { kernelSession } from "./presence-placement.ts";
 import type { PresencePlacementLoad } from "./socket-secret-native.ts";
 
 /** What recovery could not resolve; each is a typed refusal, never a deadline or a guess. */
-export type RecoveryRefusal =
-	| "presence_occupied"
-	| "authority_live"
-	| "authority_unknown"
-	| "census_live"
-	| "census_unknown"
-	| "revision_changed";
+export type RecoveryRefusal = ReservationRecoveryRefusal["reason"];
 
 export type RecoveryOutcome =
 	| { readonly status: "recovered"; readonly generations: readonly string[] }
