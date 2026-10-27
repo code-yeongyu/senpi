@@ -5902,6 +5902,15 @@ export class InteractiveMode {
 				break;
 
 			case "retry_fallback_exhausted":
+				if (event.refusals !== undefined && event.refusals.length > 0) {
+					this.showNoticeBox({
+						title: `✕ Fallback refused for context budget · ${event.chainKey}`,
+						tone: "error",
+						why: [event.lastError, ...event.refusals.map((refusal) => refusal.detail)].join("\n"),
+					});
+					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
+					break;
+				}
 				if (isRetryableProviderError(event.lastError)) {
 					this.getProviderErrors().finish(event.lastError);
 					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);

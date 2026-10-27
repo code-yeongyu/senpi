@@ -21,6 +21,11 @@ export type FallbackReason = "transient" | "refusal" | "hard-error" | "billing";
 /** Absent: the original recovered after its cooldown. `fallback-unusable`: the fallback itself could not serve. */
 export type FallbackRevertCause = "fallback-unusable";
 export type CircuitFailure = { errorMessage?: string; retryAfterMs?: number };
+/** A rung the switch refused during a fallback walk: its selector and the guard's message. */
+export interface FallbackRungRefusal {
+	readonly model: string;
+	readonly detail: string;
+}
 
 export interface FallbackSettings {
 	modelFallback: boolean;

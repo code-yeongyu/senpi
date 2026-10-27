@@ -348,7 +348,7 @@ import {
 	monotonicNow,
 } from "./retry-fallback/circuit.ts";
 import { isHealthExhaustionFailure } from "./retry-fallback/circuit-probes.ts";
-import { RetryFallbackController } from "./retry-fallback/controller.ts";
+import { type FallbackRungRefusal, RetryFallbackController } from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
 	classifyRateLimitedWait,
@@ -756,7 +756,13 @@ export type AgentSessionEvent =
 			/** `fallback-unusable`: the fallback could not serve (billing or an account limit), so the session returned early. */
 			cause?: "fallback-unusable";
 	  }
-	| { type: "retry_fallback_exhausted"; chainKey: string; lastError: string }
+	| {
+			type: "retry_fallback_exhausted";
+			chainKey: string;
+			lastError: string;
+			/** Rungs this turn's walk could not switch to (senpi#3447), each with the guard's reason and numbers. */
+			refusals?: readonly FallbackRungRefusal[];
+	  }
 	| ModelConfigErrorEvent
 	| {
 			type: "server_fallback_aborted";
@@ -2904,6 +2910,10 @@ export class AgentSession {
 		this._logSessionEvent(event);
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
+		}
+		if (event.type === "retry_fallback_exhausted" && event.refusals === undefined) {
+			const refusals = this._retryFallback.turnRefusals;
+			if (refusals.length > 0) event = { ...event, refusals };
 		}
 		if (event.type === "retry_fallback_exhausted" && usageLimitScope(event.lastError) === "account") {
 			event = {
@@ -8702,26 +8712,37 @@ export class AgentSession {
 	 */
 	private _reduceForSwitchTarget(model: Model<Api>, liveContextTokens: number): number {
 		if (!this._getCompactionSettings().enabled) return liveContextTokens;
-		const projection = this._projectSwitchFit(model);
+		// senpi#3447: the guard charges `liveContextTokens` (provider-reported when the
+		// provider has reported), so the repair decision and the slice are scaled to
+		// that same measure. Deciding on the raw per-message estimate let a transcript
+		// the estimate undercounts skip the reduction and then fail the guard.
+		const estimatedTokens = this._estimateSwitchContextTokens();
+		const tokenScale =
+			liveContextTokens > 0 && estimatedTokens > 0 ? liveContextTokens / estimatedTokens : 1;
+		const projection = this._projectSwitchFit(model, tokenScale);
 		if (projection.usable || projection.verdict !== "fits-after-compaction") return liveContextTokens;
-		const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection });
+		const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection, tokenScale });
 		if (!plan) return liveContextTokens;
 		this.applyResumeSlice(plan);
-		return this._projectSwitchFit(model).liveContextTokens;
+		return this._projectSwitchFit(model, tokenScale).liveContextTokens;
 	}
 
-	private _projectSwitchFit(model: Model<Api>): ModelUsabilityBudgetProjection {
-		// Measured per message rather than through the context estimate: a retained
-		// turn keeps the usage it reported before the reduction, so a usage-derived
-		// total cannot observe the compaction that just ran (the sdk.ts convention).
-		const liveContextTokens = filterContextExcludedMessages(
-			this.sessionManager.buildSessionContext().messages,
-		).reduce((total, message) => total + estimateTokens(message), 0);
+	// Measured per message rather than through the context estimate: a retained
+	// turn keeps the usage it reported before the reduction, so a usage-derived
+	// total cannot observe the compaction that just ran (the sdk.ts convention).
+	private _estimateSwitchContextTokens(): number {
+		return filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages).reduce(
+			(total, message) => total + estimateTokens(message),
+			0,
+		);
+	}
+
+	private _projectSwitchFit(model: Model<Api>, tokenScale = 1): ModelUsabilityBudgetProjection {
 		return projectModelUsabilityBudget({
 			model,
 			systemPrompt: this.agent.state.systemPrompt,
 			tools: this.agent.state.tools,
-			liveContextTokens,
+			liveContextTokens: Math.ceil(this._estimateSwitchContextTokens() * tokenScale),
 			compaction: this._getCompactionSettings(),
 			includeSpeculationLead: false,
 			admission: "switch",

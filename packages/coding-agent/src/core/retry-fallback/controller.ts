@@ -16,6 +16,7 @@ import type {
 	ActiveFallbackState,
 	CircuitFailure,
 	FallbackReason,
+	FallbackRungRefusal,
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
 import { pinAfterSwitch } from "./pin.ts";
@@ -23,7 +24,7 @@ import { isPureNetworkTransient } from "./transient-network.ts";
 import { UnusableEntries } from "./unusable.ts";
 import { type UsageLimitScope, usageLimitScope } from "./usage-limit.ts";
 
-export type { ActiveFallbackState, RetryFallbackControllerDeps } from "./controller-types.ts";
+export type { ActiveFallbackState, FallbackRungRefusal, RetryFallbackControllerDeps } from "./controller-types.ts";
 
 export class RetryFallbackController {
 	private readonly deps: RetryFallbackControllerDeps;
@@ -40,6 +41,8 @@ export class RetryFallbackController {
 	// Conservatively skip the refused provider for this turn: this synchronous scan cannot resolve
 	// asynchronously prepared request credentials, including per-model endpoints or keys (senpi#2491).
 	private readonly refusedProviders = new Set<string>();
+	// Rungs the switch refused during this turn's walks, so exhaustion can say why (senpi#3447).
+	private readonly refusals: FallbackRungRefusal[] = [];
 	private readonly unusable: UnusableEntries;
 	readonly probes: CircuitProbes;
 	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
@@ -65,6 +68,10 @@ export class RetryFallbackController {
 		return this.lastExhaustedChainKey;
 	}
 
+	get turnRefusals(): readonly FallbackRungRefusal[] {
+		return [...this.refusals];
+	}
+
 	isProviderSpent(provider: string): boolean {
 		return this.unusable.isProviderSpent(provider);
 	}
@@ -76,6 +83,7 @@ export class RetryFallbackController {
 	resetTurn(): void {
 		this.triedSelectors.clear();
 		this.refusedProviders.clear();
+		this.refusals.length = 0;
 		this.lastExhaustedChainKey = undefined;
 	}
 
@@ -334,6 +342,10 @@ export class RetryFallbackController {
 			} catch (error) {
 				if (!this.deps.isCandidateRefusal?.(error)) throw error;
 				this.triedSelectors.add(rungSelector(candidate.selector));
+				this.refusals.push({
+					model: formatSelector(candidate.model),
+					detail: error instanceof Error ? error.message : String(error),
+				});
 				this.skip(formatSelector(candidate.model), "refused");
 			}
 			candidate = this.nextCandidate(false, true);

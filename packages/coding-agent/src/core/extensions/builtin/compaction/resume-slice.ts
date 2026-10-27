@@ -27,6 +27,12 @@ export interface ResumeSlicePlan {
 export interface ResumeSliceInput {
 	readonly entries: readonly SessionEntry[];
 	readonly projection: ModelUsabilityBudgetProjection;
+	/**
+	 * Provider-reported tokens per estimated token (senpi#3447). The projection's
+	 * live context is in reported tokens, so every per-message measure is scaled by
+	 * this before it is compared with the window. Defaults to 1.
+	 */
+	readonly tokenScale?: number;
 }
 
 export function resumeSliceNotice(plan: ResumeSlicePlan): string {
@@ -97,23 +103,31 @@ function measureSlicedContext(
  * restored session carry an ordinary request. `findCutPoint` owns boundary
  * safety, so a retained tool result always keeps its originating tool call.
  */
-export function planResumeSlice({ entries, projection }: ResumeSliceInput): ResumeSlicePlan | undefined {
+export function planResumeSlice({
+	entries,
+	projection,
+	tokenScale = 1,
+}: ResumeSliceInput): ResumeSlicePlan | undefined {
 	const overhead = fixedOverheadTokens(projection);
 	const keepBudget = projection.contextWindow - overhead;
 	if (keepBudget < MIN_KEEP_TOKENS) return undefined;
+	const toEstimate = (tokens: number) => Math.floor(tokens / tokenScale);
 
 	const entryList = [...entries];
 	const boundaryStart = resolveBoundaryStart(entryList);
 	const summary = buildSliceSummary(entryList);
 	let measuredCutIndex = -1;
 
-	for (let target = keepBudget; target >= MIN_KEEP_TOKENS; target = Math.floor(target / 2)) {
+	const minTarget = Math.max(1, toEstimate(MIN_KEEP_TOKENS));
+	for (let target = toEstimate(keepBudget); target >= minTarget; target = Math.floor(target / 2)) {
 		const cut = findCutPoint(entryList, boundaryStart, entryList.length, target);
 		if (cut.firstKeptEntryIndex === measuredCutIndex) continue;
 		measuredCutIndex = cut.firstKeptEntryIndex;
 		const firstKeptEntryId = entryList[cut.firstKeptEntryIndex]?.id;
 		if (!firstKeptEntryId) continue;
-		const tokensAfter = measureSlicedContext(entryList, firstKeptEntryId, summary, projection.liveContextTokens);
+		const tokensAfter = Math.ceil(
+			measureSlicedContext(entryList, firstKeptEntryId, summary, projection.liveContextTokens) * tokenScale,
+		);
 		if (tokensAfter + overhead > projection.contextWindow) continue;
 		return {
 			firstKeptEntryId,
