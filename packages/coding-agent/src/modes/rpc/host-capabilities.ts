@@ -63,6 +63,9 @@ export function multiSessionHostCapabilities(options: {
 	return [
 		...new Set([
 			"multi_session",
+			"snapshot_cursor",
+			"ui_answer_ledger",
+			"dialog_observer",
 			...(options.mcpPresenters ? ["mcp_form_presenter_v1"] : []),
 			"session_lifecycle",
 			"expected_host_instance",

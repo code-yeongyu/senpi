@@ -1,3 +1,91 @@
+## 2026-10-26 - The remaining provider families capture block seeds at emission (senpi#4285, part of #4272)
+
+### What changed
+
+- `packages/ai/src/api/bedrock-converse-stream.ts`: the stream is created with capture. Each `signature` reasoning
+  delta, which grows `thinkingSignature` with no event, records a `message_block_metadata` `thinkingSignatureDelta`;
+  the first `redactedContent` of a block records `redacted: true` (plus `thinkingSignature: ""` when a signature had
+  accumulated) before the placeholder `thinking_delta`.
+- `packages/ai/src/api/mistral-conversations.ts`, `packages/ai/src/api/pi-messages.ts`: the stream is created with
+  capture. Their tool argument text grows by exactly the emitted deltas and is parsed on every delta (Pi keeps it in
+  the converter's closure-local `toolJson` store), so the default capture already records the raw spelling and the
+  parse frontier; Mistral's object arguments are recorded in the spelling the adapter emitted.
+- `packages/ai/src/api/google-generative-ai.ts`, `packages/ai/src/api/google-vertex.ts`: the stream is created with
+  capture. A thought signature that `retainThoughtSignature` installs on a text or thinking block records a
+  replacement `textSignature`/`thinkingSignature`; the tool delta (`JSON.stringify` of complete arguments) carries
+  `parsedThrough: 0`, so the complete parsed seed stays authoritative; native parts and the candidate's
+  `groundingMetadata`/`urlContextMetadata` blocks, appended with no event, record `message_block_state` insert and end
+  sharing one frozen copy.
+- `packages/ai/src/api/cursor-agent.ts` (fork-only): the stream is created with capture; an MCP argument delta
+  carries the parse frontier at Cursor's throttled reparse (`kStreamingLastParseLen`), so the stale preview survives
+  until the next 1024-unit reparse.
+- `packages/ai/src/api/devin-agent.ts`, `packages/ai/src/api/devin-agent/stream-state.ts` (fork-only): the stream is
+  created with capture; a replaced `thinkingSignature` and a tool name that arrives after its start record
+  `message_block_metadata`.
+
+### Why
+
+- These adapters mutate public blocks with no event (Bedrock signature growth and redaction, Google signatures and
+  native/grounding blocks, Devin signatures and late names) or hold raw argument text in adapter state; only the
+  adapter knows those facts at emission time (R3.C6.2, ruling 05 D1-D3). S02a-1 covered Anthropic, Responses and
+  Completions; this completes the producer side.
+
+### Why an extension could not handle it
+
+- The mutations happen inside adapter closures before any event exists; no hook exposes the emitted spelling, the
+  parse frontier or the event-less native blocks.
+
+### Expected merge conflict zones
+
+- LOW: each adapter's stream construction line.
+- LOW: `bedrock-converse-stream.ts` `handleContentBlockDelta` signature and redaction branches.
+- LOW: `google-generative-ai.ts`/`google-vertex.ts` text/thinking delta branches, the `functionCall` delta push, the
+  native-part branch and the grounding/urlContext metadata branches.
+
+## 2026-10-25 - Anthropic, Responses and Completions capture seeds and native transitions at emission (senpi#4277, part of #4272)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: the stream is created with capture. Unknown (native) blocks record a
+  `message_block_state` insert at `content_block_start` and an end at `content_block_stop` after `raw.input` is
+  parsed; each `signature_delta` records only its delta as `thinkingSignatureDelta`.
+- `packages/ai/src/api/openai-responses-shared.ts`: `processResponsesStream` enables capture on its stream; a
+  `function_call` start carries its possibly nonempty raw prefix (`item.arguments`) while its parsed seed stays
+  `{}`; native items record insert and replacement end in original index order, including image reconciliation
+  and terminal backfill; an `arguments.done` that does not extend the streamed prefix records an authoritative
+  `message_tool_arguments_reset`.
+- `packages/ai/src/api/openai-responses.ts`, `packages/ai/src/api/openai-codex-responses.ts`,
+  `packages/ai/src/api/azure-openai-responses.ts`: the stream is created with capture, so `start` is captured too.
+- `packages/ai/src/api/openai-completions.ts`: the stream is created with capture. Deferred mixed-event flushes
+  emit starts whose coverage matches what they already hold: replayed deltas start at offset 0, and a tool start's
+  raw prefix is the deferred normalized deltas (function or grammar spelling) with its parse frontier at their end.
+  Per-chunk `reasoning_details` signature growth is not recorded (each chunk re-serializes the whole list); the
+  `thinking_end` block and the terminal message carry the final signature.
+- `packages/ai/src/api/lazy.ts`: the lazy wrapper is carrier-aware. Its forwarder reads the inner stream with
+  `assistantEvents`, so events keep their carriers and progress records cross to the outer stream as they are read
+  without an extra forwarder turn; the outer stream registers a records reader that keeps its cancellation.
+
+### Why
+
+- These adapters mutate public blocks without an event (native insert/end, signature growth, raw replacement) and
+  hold raw argument spelling in adapter state; only the adapter knows them at emission time (R3.C6.2, ruling 05
+  D1-D3). Builtin providers load through `lazyApi`, so the lazy wrapper must carry what the adapter captured.
+
+### Why an extension could not handle it
+
+- The mutations happen inside adapter closures before any event exists; no hook exposes the emitted raw spelling,
+  coverage or native transitions.
+
+### Expected merge conflict zones
+
+- LOW: each adapter's stream construction line.
+- LOW: `anthropic-messages.ts` `content_block_start` native branch, `signature_delta` branch and the
+  `content_block_stop` `providerNative` branch.
+- MEDIUM: `openai-responses-shared.ts` `createSlot` (function call and native slots), the image backfill loop,
+  the `arguments.done` branch and the native `output_item.done` branches.
+- LOW: `openai-completions.ts` `flushDeferredBlocks`.
+- LOW: `lazy.ts` `setCancellationHandler` and the source iterator in `lazyStream`.
+
 ## 2026-10-22 - Anthropic stable-prefix cache checkpoints (senpi#3242)
 
 ### What changed

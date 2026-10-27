@@ -21,8 +21,8 @@ pub enum RemoteDevice {
     QueryFailed,
 }
 
-/// `GetFileInformationByHandleEx(FileRemoteProtocolInfo)`: a redirector answers it; a local file
-/// system rejects the class.
+/// `GetFileInformationByHandleEx(FileRemoteProtocolInfo)`. `Unavailable` means only that the query
+/// returned no remote-protocol information; it is not evidence of locality on its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RemoteProtocol {
     Unavailable,
@@ -60,9 +60,10 @@ pub enum Locality {
 pub const NTFS_DRIVER: &str = "\\FileSystem\\Ntfs";
 pub const REFS_DRIVER: &str = "\\FileSystem\\ReFS";
 
-/// `local` only when the reported name is NTFS or ReFS, that name's kernel driver is in the volume's
-/// I/O path, the device is not remote and no redirector answers the remote-protocol class. The
-/// reported name only selects which driver to require; every failure is `not_local`.
+/// `local` only for the full conjunction: `FILE_REMOTE_DEVICE` clear, the remote-protocol query gave no
+/// information, neither driver query failed, the reported name is NTFS or ReFS and that name's kernel
+/// driver is in the volume's I/O path. The reported name only selects which driver to require; every
+/// failure, from either driver query included, is `not_local` (design Revision 8.3).
 pub fn classify(facts: &VolumeFacts) -> Locality {
     let not_local = Locality::NotLocal;
     match facts.remote_device {
@@ -74,6 +75,9 @@ pub fn classify(facts: &VolumeFacts) -> Locality {
         RemoteProtocol::Unavailable => {}
         RemoteProtocol::Available => return not_local(NotLocalReason::RemoteProtocol),
         RemoteProtocol::QueryFailed => return not_local(NotLocalReason::QueryFailed),
+    }
+    if facts.ntfs_driver == DriverPath::QueryFailed || facts.refs_driver == DriverPath::QueryFailed {
+        return not_local(NotLocalReason::QueryFailed);
     }
     let required = match facts.reported_file_system.as_deref() {
         Some("NTFS") => facts.ntfs_driver,
@@ -212,27 +216,44 @@ mod tests {
         );
     }
 
-    // The design's 162-combination decision table (section 6, Revision 8): six reported names, three
-    // remote-flag answers, three remote-protocol answers, three answers for the matching driver.
+    // The decision table of design section 6, with the two driver answers varied independently
+    // (Revision 8.3): six names, three remote-flag answers, three remote-protocol answers and three
+    // answers for each driver query, 486 cases. The local set is listed explicitly.
     #[test]
-    fn decision_table_matches_the_design_counts() {
-        let (mut revision7, mut revision8, mut total) = (0, 0, 0);
+    fn decision_table_with_independent_driver_answers() {
+        use DriverPath::{InPath, NotInPath};
+        let (mut revision7, mut total) = (0, 0);
+        let mut local = Vec::new();
         for name in NAMES {
             for device in DEVICE {
                 for protocol in PROTOCOL {
-                    for driver in DRIVER {
-                        let case = VolumeFacts {
-                            remote_device: device,
-                            remote_protocol: protocol,
-                            ..facts(name, driver, driver)
-                        };
-                        total += 1;
-                        revision7 += usize::from(revision7_is_local(&case));
-                        revision8 += usize::from(classify(&case) == Locality::Local);
+                    for ntfs in DRIVER {
+                        for refs in DRIVER {
+                            let case = VolumeFacts {
+                                remote_device: device,
+                                remote_protocol: protocol,
+                                ..facts(name, ntfs, refs)
+                            };
+                            total += 1;
+                            revision7 += usize::from(revision7_is_local(&case));
+                            if classify(&case) == Locality::Local {
+                                local.push((name, device, protocol, ntfs, refs));
+                            }
+                        }
                     }
                 }
             }
         }
-        assert_eq!((total, revision7, revision8), (162, 6, 2));
+        let (clear, none) = (RemoteDevice::Clear, RemoteProtocol::Unavailable);
+        assert_eq!((total, revision7), (486, 18));
+        assert_eq!(
+            local,
+            vec![
+                ("NTFS", clear, none, InPath, InPath),
+                ("NTFS", clear, none, InPath, NotInPath),
+                ("ReFS", clear, none, InPath, InPath),
+                ("ReFS", clear, none, NotInPath, InPath),
+            ]
+        );
     }
 }

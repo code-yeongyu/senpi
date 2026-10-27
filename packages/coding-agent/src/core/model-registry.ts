@@ -27,6 +27,7 @@ import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelRuntime as DefaultModelRuntime } from "./model-runtime.ts";
 import type { AuthStatus, ProviderConfigInput } from "./provider-composer.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
+import type { ProviderOrigin } from "./provider-origin.ts";
 import type { VirtualModelDefinition } from "./virtual-models.ts";
 
 export type { ProviderConfigInput } from "./provider-composer.ts";
@@ -306,5 +307,9 @@ export class ModelRegistry {
 
 	getRegisteredProviderIds(): readonly string[] {
 		return this.runtime.getRegisteredProviderIds();
+	}
+
+	getProviderOrigin(providerName: string): ProviderOrigin | undefined {
+		return this.runtime.getProviderOrigin(providerName);
 	}
 }

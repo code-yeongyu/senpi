@@ -28,6 +28,9 @@ import { ToolCallQueue } from "./tool-call-queue.ts";
 import { WorkerChildren } from "./worker-children.ts";
 import { WorkerRecovery } from "./worker-recovery.ts";
 import { WorkerSlot } from "./worker-slot.ts";
+import { KernelPermissionHost } from "./permission-host.ts";
+
+export { revokeSessionKernels } from "./permission-host.ts";
 
 export { JavaScriptKernelClosedError, type JavaScriptKernelMode, type JavaScriptRunInput } from "./kernel-contract.ts";
 export type { JavaScriptMemoryReading } from "./kernel-memory-bridge.ts";
@@ -47,6 +50,7 @@ export class JavaScriptKernel {
 	readonly #options: JavaScriptKernelOptions;
 	readonly #moduleLoader: LocalModuleLoader;
 	readonly #slot: WorkerSlot;
+	readonly #permissions: KernelPermissionHost;
 	#lifecycle: LifecycleState = "open";
 	#activation: Promise<void> | null = null;
 	#closePromise: Promise<void> | null = null;
@@ -68,6 +72,10 @@ export class JavaScriptKernel {
 
 	constructor(options: JavaScriptKernelOptions) {
 		this.#options = options;
+		this.#permissions = new KernelPermissionHost(options, async () => {
+			this.#runs.settleAll("Permission rules changed; kernel revoked");
+			return await this.#terminate();
+		});
 		this.#activeCell = new ActiveCellControl({
 			runs: this.#runs,
 			bounds: options.interruptBounds ?? DEFAULT_INTERRUPT_BOUNDS,
@@ -79,11 +87,15 @@ export class JavaScriptKernel {
 		this.#memory = new JavaScriptKernelMemory(options, () => this.#slot.processPid);
 		this.#children = new WorkerChildren(options.collectOrphanedChildren);
 		this.#moduleLoader = new LocalModuleLoader(options);
-		this.#slot = new WorkerSlot(options, {
-			isOpen: () => this.#lifecycle === "open",
-			onMessage: (message) => this.#handleMessage(message),
-			onCrash: (error) => this.#handleCrash(error),
-		});
+		this.#slot = new WorkerSlot(
+			options,
+			{
+				isOpen: () => this.#lifecycle === "open",
+				onMessage: (message) => this.#handleMessage(message),
+				onCrash: (error) => this.#handleCrash(error),
+			},
+			this.#permissions,
+		);
 	}
 
 	get mode(): JavaScriptKernelMode {
@@ -114,15 +126,22 @@ export class JavaScriptKernel {
 		return this.#kernelTools.describe(names);
 	}
 
-	invokeKernelTool(
+	async invokeKernelTool(
 		request: KernelToolsInvokeRequest,
 		options?: AbortSignal | KernelToolsInvokeOptions,
 	): Promise<unknown> {
-		return this.#kernelTools.invoke(request, options);
+		await this.#permissions.admit();
+		const release = this.#permissions.invocation(request, options);
+		try {
+			return await this.#kernelTools.invoke(request, options);
+		} finally {
+			release();
+		}
 	}
 
 	async run(input: JavaScriptRunInput): Promise<ResultMessage> {
 		assertJavaScriptKernelOpen(this.#lifecycle, "run");
+		this.#permissions.assertSessionLive();
 		const promise = this.#runs.enqueue(input);
 		this.#activate();
 		return await promise;
@@ -189,6 +208,7 @@ export class JavaScriptKernel {
 			if (recovery) await recovery;
 			await this.#terminate();
 		})().finally(() => {
+			this.#permissions.dispose();
 			this.#lifecycle = "closed";
 		});
 		this.#closePromise = closePromise;
@@ -206,6 +226,7 @@ export class JavaScriptKernel {
 	}
 
 	async #ensureReady(): Promise<void> {
+		await this.#permissions.admit();
 		assertJavaScriptKernelOpen(this.#lifecycle, "run");
 		try {
 			await this.#slot.ensureReady();
@@ -217,7 +238,7 @@ export class JavaScriptKernel {
 	}
 
 	#startNext(): void {
-		if (this.#lifecycle !== "open" || this.#runs.active || !this.#slot.present) return;
+		if (this.#permissions.blocked || this.#lifecycle !== "open" || this.#runs.active || !this.#slot.present) return;
 		const next = this.#runs.startNext(performance.now());
 		if (!next) return;
 		const dispatch = dispatchCell(next.input, this.#moduleLoader, this.#options);
@@ -254,6 +275,7 @@ export class JavaScriptKernel {
 	}
 
 	#handleCrash(error: Error): void {
+		if (this.#permissions.blocked) return;
 		const active = this.#runs.active;
 		if (!active && this.#slot.startingUp) return;
 		this.#activeCell.disarm();

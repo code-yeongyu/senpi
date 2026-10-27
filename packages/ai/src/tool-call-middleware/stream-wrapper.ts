@@ -8,7 +8,9 @@ export function wrapStreamWithToolCallMiddleware(
 	protocol: ToolCallProtocol,
 	tools: Tool[],
 ): AssistantMessageEventStream {
-	const outerStream = new AssistantMessageEventStreamImpl();
+	// Every outer block is rebuilt from parser output and own state, never copied from a source block read late, so
+	// the outer stream captures its own pushes and no source record is forwarded.
+	const outerStream = new AssistantMessageEventStreamImpl({ captureBlocks: true });
 	const parser = protocol.createStreamParser(tools);
 
 	void (async (): Promise<void> => {

@@ -5,7 +5,7 @@ Rust/N-API Windows adapter for the socket-secret lifecycle of sisyphuslabs/omo-d
 ## STRUCTURE
 
 ```text
-src/answers.rs            Revision 8.2 raw query answers -> facts; the exact "absent" codes, raw codes kept
+src/answers.rs            Revision 8.2/8.3 raw query answers -> facts; the exact accepted codes, raw codes kept
 src/classify.rs           Pure Revision 8 locality rule over the volume facts (unit-tested with fakes)
 src/process_identity.rs   Pure observation table: a reopened PID is Live, Gone or Unknown against its record
 src/process_handle.rs     Retained non-inheritable process handle: PID, creation FILETIME, TokenUser SID, exit wait
@@ -18,7 +18,7 @@ tests/native_process_receipts.rs  Actual-target identity receipts on a real chil
 
 ## CONTRACTS
 
-- Locality comes from the kernel driver in the volume's I/O path (`FileFsDriverPathInformation`), never from the reported file-system name alone. Any query failure is `not_local`; only the exact absent answers listed in `src/answers.rs` (design Revision 8.2) are answers, and a new code joins that list only once a receipt shows its meaning.
+- Locality comes from the kernel driver in the volume's I/O path (`FileFsDriverPathInformation`), never from the reported file-system name alone. Local needs the full conjunction (driver in path, `FILE_REMOTE_DEVICE` clear, no remote-protocol information, neither driver query failed). Any query failure, from either driver query included, is `not_local`; only the exact codes in `src/answers.rs` (design Revisions 8.2/8.3) are answers, and a new code joins that list only with a primary-source meaning and a receipt.
 - The classifying handle follows reparse points. Never open it with `FILE_FLAG_OPEN_REPARSE_POINT`.
 - A process record is PID + full creation FILETIME + TokenUser SID read on ONE handle; a different readable creation time is Gone, every unreadable or inconsistent answer is Unknown, and Gone never authorizes signalling the PID's current holder.
 - `SessionIdentity` has no `PartialEq` on purpose; compare with `same_session`, under which `Unverified` matches nothing.

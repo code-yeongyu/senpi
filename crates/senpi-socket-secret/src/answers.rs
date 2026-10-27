@@ -1,17 +1,19 @@
-//! Revision 8.2 of the #4199 design: which raw answers of the Windows volume queries mean "absent"
-//! rather than "failed". Only the exact codes listed here become an answer; every other error stays
-//! `QueryFailed`, so the classifier keeps failing closed on anything unexpected. The raw codes travel
-//! in [`ProbeCodes`] so a receipt shows what the kernel actually returned.
+//! Revisions 8.2 and 8.3 of the #4199 design: which raw answers of the Windows volume queries are read
+//! as an answer rather than a failure. Only the exact codes listed here become an answer; every other
+//! error stays `QueryFailed`, which the classifier rejects. The raw codes travel in [`ProbeCodes`] so a
+//! receipt shows what the kernel actually returned.
 
 use crate::classify::{DriverPath, RemoteProtocol};
 
-/// `STATUS_OBJECT_NAME_NOT_FOUND`: the I/O manager found no driver object with the queried name, so
-/// that driver is not loaded and cannot be in this volume's I/O path.
+/// `STATUS_OBJECT_NAME_NOT_FOUND` ("Object Name not found") from the driver-path query: the named driver
+/// is not positively in the path. Read as `NotInPath`, which can only reject a volume that needs it.
 pub const STATUS_OBJECT_NAME_NOT_FOUND: i32 = 0xC000_0034_u32.cast_signed();
 
-/// Win32 errors with which a file system that is not a redirector rejects `FileRemoteProtocolInfo`:
-/// `ERROR_INVALID_FUNCTION`, `ERROR_NOT_SUPPORTED` and the documented `ERROR_INVALID_PARAMETER`.
-pub const REMOTE_PROTOCOL_ABSENT_ERRORS: [u32; 3] = [1, 50, 87];
+/// `ERROR_INVALID_PARAMETER` from `FileRemoteProtocolInfo`: this query returned no remote-protocol
+/// information. It is NOT evidence of locality (network and user-mode volumes return it too); it is
+/// accepted only because `classify` also requires the kernel driver in path and `FILE_REMOTE_DEVICE`
+/// clear, which are independently sufficient (design Revision 8.3).
+pub const REMOTE_PROTOCOL_NO_INFORMATION_ERRORS: [u32; 1] = [87];
 
 /// The raw answers one probe received, for receipts and diagnostics. NTSTATUS values are kept as
 /// returned; `remote_protocol_error` is `GetLastError()` after a failed query and 0 after success.
@@ -36,11 +38,11 @@ pub const fn driver_path_from_query(status: i32, driver_in_path: bool) -> Driver
     }
 }
 
-/// `GetFileInformationByHandleEx(FileRemoteProtocolInfo)`: a redirector answers it.
+/// `GetFileInformationByHandleEx(FileRemoteProtocolInfo)`: any successful answer is a redirector's.
 pub fn remote_protocol_from_query(answered: bool, last_error: u32) -> RemoteProtocol {
     if answered {
         RemoteProtocol::Available
-    } else if REMOTE_PROTOCOL_ABSENT_ERRORS.contains(&last_error) {
+    } else if REMOTE_PROTOCOL_NO_INFORMATION_ERRORS.contains(&last_error) {
         RemoteProtocol::Unavailable
     } else {
         RemoteProtocol::QueryFailed
@@ -50,7 +52,7 @@ pub fn remote_protocol_from_query(answered: bool, last_error: u32) -> RemoteProt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::classify::{classify, Locality, RemoteDevice, VolumeFacts};
+    use crate::classify::{classify, Locality, NotLocalReason, RemoteDevice, VolumeFacts};
 
     // Revision 8.2: the exact answers that mean "absent" map to an answer; every other error stays a
     // failure, so the classifier keeps failing closed on anything unexpected.
@@ -82,41 +84,59 @@ mod tests {
         }
     }
 
+    // Revision 8.3: only ERROR_INVALID_PARAMETER is read as "this query returned no remote-protocol
+    // information"; ERROR_INVALID_FUNCTION and ERROR_NOT_SUPPORTED have no class-specific contract and
+    // stay failures. The expectations are literal, not read back from the production list.
     #[test]
-    fn a_file_system_that_rejects_the_remote_protocol_class_is_not_remote_and_other_errors_fail() {
+    fn only_invalid_parameter_means_no_remote_protocol_information() {
         assert_eq!(remote_protocol_from_query(true, 0), RemoteProtocol::Available);
         assert_eq!(remote_protocol_from_query(true, 87), RemoteProtocol::Available);
-        for absent in REMOTE_PROTOCOL_ABSENT_ERRORS {
+        assert_eq!(remote_protocol_from_query(false, 87), RemoteProtocol::Unavailable);
+        // ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED, ERROR_ACCESS_DENIED, ERROR_BAD_LENGTH,
+        // ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA, ERROR_BAD_NETPATH, ERROR_NETNAME_DELETED,
+        // ERROR_UNEXP_NET_ERR, and a failure that set no error.
+        for failed in [1_u32, 50, 5, 24, 122, 234, 53, 64, 59, 0] {
             assert_eq!(
-                remote_protocol_from_query(false, absent),
-                RemoteProtocol::Unavailable,
-                "{absent}"
-            );
-        }
-        // ERROR_ACCESS_DENIED, ERROR_BAD_LENGTH, ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA,
-        // ERROR_BAD_NETPATH, ERROR_NETNAME_DELETED, ERROR_UNEXP_NET_ERR: never "not remote".
-        for unexpected in [5_u32, 24, 122, 234, 53, 64, 59, 0] {
-            assert_eq!(
-                remote_protocol_from_query(false, unexpected),
+                remote_protocol_from_query(false, failed),
                 RemoteProtocol::QueryFailed,
-                "{unexpected}"
+                "{failed}"
             );
         }
     }
 
-    // Receipt 28 in CI run 40253941781: on a fixed NTFS volume the ReFS driver query failed, which
-    // made the volume `not_local` although only the NTFS driver is required for it. A ReFS driver that
-    // is not loaded must leave a kernel NTFS volume `local`.
-    #[test]
-    fn a_kernel_ntfs_volume_stays_local_when_the_refs_driver_is_not_loaded() {
-        let volume = VolumeFacts {
-            reported_file_system: Some("NTFS".to_string()),
-            ntfs_driver: driver_path_from_query(0, true),
-            refs_driver: driver_path_from_query(STATUS_OBJECT_NAME_NOT_FOUND, false),
+    fn volume(name: &str, ntfs: (i32, bool), refs: (i32, bool)) -> VolumeFacts {
+        VolumeFacts {
+            reported_file_system: Some(name.to_string()),
+            ntfs_driver: driver_path_from_query(ntfs.0, ntfs.1),
+            refs_driver: driver_path_from_query(refs.0, refs.1),
             remote_device: RemoteDevice::Clear,
             remote_protocol: remote_protocol_from_query(false, 87),
             codes: ProbeCodes::default(),
-        };
-        assert_eq!(classify(&volume), Locality::Local);
+        }
+    }
+
+    // A matching driver in path with the other driver not loaded (0xC0000034) is local: receipt 28's
+    // fixed NTFS volume answered exactly this in CI run 40262475881.
+    #[test]
+    fn an_absent_non_matching_driver_does_not_reject_a_kernel_volume() {
+        let absent = (STATUS_OBJECT_NAME_NOT_FOUND, false);
+        assert_eq!(classify(&volume("NTFS", (0, true), absent)), Locality::Local);
+        assert_eq!(classify(&volume("ReFS", absent, (0, true))), Locality::Local);
+    }
+
+    // Revision 8.3 (Astra r8.2 blocker 2): an unlisted error from EITHER issued driver query is
+    // `not_local`, also when the driver selected by the reported name is in the path.
+    #[test]
+    fn an_unlisted_error_from_the_non_matching_driver_query_is_not_local() {
+        let access_denied = (0xC000_0022_u32.cast_signed(), false);
+        let invalid_device_request = (0xC000_0010_u32.cast_signed(), false);
+        assert_eq!(
+            classify(&volume("NTFS", (0, true), access_denied)),
+            Locality::NotLocal(NotLocalReason::QueryFailed)
+        );
+        assert_eq!(
+            classify(&volume("ReFS", invalid_device_request, (0, true))),
+            Locality::NotLocal(NotLocalReason::QueryFailed)
+        );
     }
 }

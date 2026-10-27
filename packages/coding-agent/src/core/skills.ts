@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "fs";
+import { existsSync, readdirSync, realpathSync, type Stats, statSync } from "fs";
 import ignore from "ignore";
 import { basename, dirname, join, relative, resolve, sep } from "path";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
@@ -16,7 +16,8 @@ import {
 	type SkillProvenance,
 	skillProjectRoot,
 } from "./skill-access.ts";
-import { readSkillMarkdownSource, shouldSkipSkillWalkDirectoryName } from "./skill-discovery.ts";
+import { addIgnoreRules, shouldSkipSkillWalkDirectoryName } from "./skill-discovery.ts";
+import { readUserSkillSource } from "./skill-source-cache.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 
 export { formatSkillsForPrompt } from "./skills-prompt.ts";
@@ -27,55 +28,10 @@ const MAX_NAME_LENGTH = 64;
 /** Max description length per spec */
 const MAX_DESCRIPTION_LENGTH = 1024;
 
-const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
-
 type IgnoreMatcher = ReturnType<typeof ignore>;
 
 function toPosixPath(p: string): string {
 	return p.split(sep).join("/");
-}
-
-function prefixIgnorePattern(line: string, prefix: string): string | null {
-	const trimmed = line.trim();
-	if (!trimmed) return null;
-	if (trimmed.startsWith("#") && !trimmed.startsWith("\\#")) return null;
-
-	let pattern = line;
-	let negated = false;
-
-	if (pattern.startsWith("!")) {
-		negated = true;
-		pattern = pattern.slice(1);
-	} else if (pattern.startsWith("\\!")) {
-		pattern = pattern.slice(1);
-	}
-
-	if (pattern.startsWith("/")) {
-		pattern = pattern.slice(1);
-	}
-
-	const prefixed = prefix ? `${prefix}${pattern}` : pattern;
-	return negated ? `!${prefixed}` : prefixed;
-}
-
-function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string): void {
-	const relativeDir = relative(rootDir, dir);
-	const prefix = relativeDir ? `${toPosixPath(relativeDir)}/` : "";
-
-	for (const filename of IGNORE_FILE_NAMES) {
-		const ignorePath = join(dir, filename);
-		if (!existsSync(ignorePath)) continue;
-		try {
-			const content = readFileSync(ignorePath, "utf-8");
-			const patterns = content
-				.split(/\r?\n/)
-				.map((line) => prefixIgnorePattern(line, prefix))
-				.filter((line): line is string => Boolean(line));
-			if (patterns.length > 0) {
-				ig.add(patterns);
-			}
-		} catch {}
-	}
 }
 
 export interface SkillFrontmatter {
@@ -230,10 +186,10 @@ function loadSkillsFromDirInternal(
 
 	const root = rootDir ?? dir;
 	const ig = ignoreMatcher ?? ignore();
-	addIgnoreRules(ig, dir, root);
 
 	try {
 		const entries = readdirSync(dir, { withFileTypes: true });
+		addIgnoreRules(ig, dir, root, entries);
 
 		for (const entry of entries) {
 			if (entry.name !== "SKILL.md") {
@@ -327,6 +283,7 @@ function loadSkillFromFile(
 	source: string,
 	provenance?: SkillProvenance,
 	allowedSet?: SkillAllowedSet,
+	stats?: Stats,
 ): { skill: Skill | null; diagnostics: ResourceDiagnostic[] } {
 	const diagnostics: ResourceDiagnostic[] = [];
 	const isDeclaredSkill = basename(filePath) === "SKILL.md";
@@ -335,7 +292,7 @@ function loadSkillFromFile(
 	try {
 		rawContent =
 			provenance === undefined || provenance.kind === "user"
-				? readSkillMarkdownSource(filePath)
+				? readUserSkillSource(filePath, stats ?? statSync(filePath))
 				: readSkillFileCheckedSync(filePath, provenance, allowedSet);
 	} catch (error) {
 		if (error instanceof BlockedSkillLinkError) return { skill: null, diagnostics: [error.diagnostic] };
@@ -529,13 +486,15 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 
 	for (const rawPath of skillPaths) {
 		const resolvedPath = resolvePath(rawPath, resolvedCwd, { trim: true });
-		if (!existsSync(resolvedPath)) {
+		let stats: Stats;
+		try {
+			stats = statSync(resolvedPath);
+		} catch {
 			allDiagnostics.push({ type: "warning", message: "skill path does not exist", path: resolvedPath });
 			continue;
 		}
 
 		try {
-			const stats = statSync(resolvedPath);
 			const source = getSource(resolvedPath);
 			const provenance = options.provenanceByPath?.get(resolvedPath) ?? {
 				kind: source === "project" ? ("project-auto" as const) : ("user" as const),
@@ -547,7 +506,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 					loadSkillsFromDirInternal(resolvedPath, source, true, undefined, undefined, provenance, allowedSet),
 				);
 			} else if (stats.isFile() && resolvedPath.endsWith(".md")) {
-				const result = loadSkillFromFile(resolvedPath, source, provenance, allowedSet);
+				const result = loadSkillFromFile(resolvedPath, source, provenance, allowedSet, stats);
 				if (result.skill) {
 					addSkills({ skills: [result.skill], diagnostics: result.diagnostics });
 				} else {

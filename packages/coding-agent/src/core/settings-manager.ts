@@ -226,6 +226,7 @@ export interface Settings {
 	tipsHistory?: Record<string, number>; // tipId -> epoch ms last shown
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
+	tools?: { bash?: { redactSecretsInOutput?: boolean } }; // default: false; output only
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
@@ -2188,6 +2189,10 @@ export class SettingsManager {
 
 	getShellCommandPrefix(): string | undefined {
 		return this.settings.shellCommandPrefix;
+	}
+
+	getBashRedactSecretsInOutput(): boolean {
+		return this.settings.tools?.bash?.redactSecretsInOutput === true;
 	}
 
 	setShellCommandPrefix(prefix: string | undefined): void {

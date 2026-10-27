@@ -1,7 +1,7 @@
 import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import { getBundledResourceRoots } from "../../../bundled-resources.ts";
 import { resolveReadPath } from "../../../tools/path-utils.ts";
-import { isExternalPath, toParentDirectoryPattern } from "./external-dir.ts";
+import { isExternalPath, resolveExternalPath, toParentDirectoryPattern } from "./external-dir.ts";
 import type { PermissionRequest, ToolPermissionParser } from "./parsers.ts";
 
 /** Resolve the same file the read tool will open before classifying its ownership. */
@@ -25,13 +25,16 @@ export const parseReadPermission: ToolPermissionParser = (_toolName, input, cwd)
 			},
 		];
 	}
-	if (!isExternalPath(target, cwd)) return [request];
+	const externalTarget = resolveExternalPath(target, cwd);
+	if (externalTarget === undefined) return [request];
 	return [
 		request,
 		{
 			permission: "external_directory",
-			patterns: [readPath],
-			always: [toParentDirectoryPattern(readPath, "file")],
+			patterns: [externalTarget],
+			always: [toParentDirectoryPattern(externalTarget, "file", filePath)],
+			...(readPath !== externalTarget ? { ruleAliases: [readPath] } : {}),
+			...(filePath !== externalTarget ? { originalPaths: [filePath] } : {}),
 		},
 	];
 };

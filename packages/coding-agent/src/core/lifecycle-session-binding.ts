@@ -15,6 +15,7 @@ import { bindLifecycleHumanInput } from "./lifecycle-human-input.ts";
 import type { LifecycleRecord } from "./lifecycle-record.ts";
 import { readLifecycleRuntimeFacts } from "./lifecycle-runtime-facts.ts";
 import { goalGuardAfter, type RunStopFacts } from "./lifecycle-stop.ts";
+import { wakeSourceItems } from "./lifecycle-wait-items.ts";
 import { SessionLifecycleController } from "./session-lifecycle.ts";
 import type { SessionLifecycleEvent } from "./session-lifecycle-types.ts";
 import type { TurnDeadlineKind } from "./turn-deadline.ts";
@@ -354,6 +355,7 @@ export class LifecycleSessionBinding {
 			data.source,
 			data.kind === "children" ? "children" : "background",
 			data.activeCount,
+			wakeSourceItems(data),
 		);
 	}
 

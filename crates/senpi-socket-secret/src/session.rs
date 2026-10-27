@@ -45,6 +45,7 @@ impl UnverifiedReason {
     }
 }
 
+#[cfg(windows)]
 const SYSTEM_PROCESS_ID: u32 = 4;
 
 #[cfg(not(windows))]

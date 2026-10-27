@@ -3,7 +3,9 @@
 //! receipt. Fixture-dependent cases are `#[ignore]` and run there with `--ignored`; every case is
 //! ignored off Windows, with the reason in its attribute.
 
-use senpi_socket_secret::{classify, probe_volume, read_kernel_session_identity, Locality, SessionIdentity};
+#[cfg(windows)]
+use senpi_socket_secret::{classify, probe_volume, Locality, NotLocalReason};
+use senpi_socket_secret::{read_kernel_session_identity, SessionIdentity};
 
 #[cfg(windows)]
 fn receipt_volume(label: &str, path: &str) -> Locality {
@@ -80,14 +82,17 @@ fn receipt_28_fixed_ntfs_system_volume_is_local() {
 }
 
 macro_rules! fixture_receipt {
-    ($name:ident, $variable:literal, $local:expr) => {
+    ($name:ident, $variable:literal, $expected:expr) => {
+        fixture_receipt!($name, stringify!($name), $variable, $expected);
+    };
+    ($name:ident, $label:expr, $variable:literal, $expected:expr) => {
         #[test]
         #[ignore = "native receipt 28: needs the Windows fixtures of ci.yml socket-secret-native-windows"]
         fn $name() {
             #[cfg(windows)]
             {
-                let locality = receipt_volume(stringify!($name), &fixture($variable));
-                assert_eq!(locality == Locality::Local, $local, "{locality:?}");
+                let locality = receipt_volume($label, &fixture($variable));
+                assert_eq!(locality, $expected);
             }
         }
     };
@@ -96,29 +101,69 @@ macro_rules! fixture_receipt {
 fixture_receipt!(
     receipt_28_winfsp_disk_volume_reporting_ntfs_is_not_local,
     "RECEIPT_WINFSP_DISK_NTFS",
-    false
+    Locality::NotLocal(NotLocalReason::DriverNotInPath)
 );
 fixture_receipt!(
     receipt_28_winfsp_network_volume_is_not_local,
     "RECEIPT_WINFSP_NETWORK",
-    false
+    Locality::NotLocal(NotLocalReason::RemoteDevice)
 );
 fixture_receipt!(
     receipt_28_dokany_disk_mirror_of_ntfs_is_not_local,
     "RECEIPT_DOKANY_DISK_MIRROR",
-    false
+    Locality::NotLocal(NotLocalReason::DriverNotInPath)
 );
 fixture_receipt!(
     receipt_28_mapped_smb_drive_is_not_local,
     "RECEIPT_SMB_MAPPED_DRIVE",
-    false
+    Locality::NotLocal(NotLocalReason::RemoteDevice)
 );
-fixture_receipt!(receipt_28_unc_path_is_not_local, "RECEIPT_SMB_UNC", false);
+fixture_receipt!(
+    receipt_28_unc_path_is_not_local,
+    "RECEIPT_SMB_UNC",
+    Locality::NotLocal(NotLocalReason::RemoteDevice)
+);
 fixture_receipt!(
     receipt_28_vhdx_mounted_ntfs_volume_is_local,
     "RECEIPT_VHDX_NTFS",
-    true
+    Locality::Local
 );
+
+fixture_receipt!(
+    receipt_28_junction_to_a_winfsp_volume_is_classified_by_its_target,
+    "junction_winfsp",
+    "RECEIPT_JUNCTION_WINFSP",
+    Locality::NotLocal(NotLocalReason::DriverNotInPath)
+);
+// The control for the junction above: source and target are both kernel NTFS volumes, so `Local`
+// prints whether or not the handle follows the junction. `junction_winfsp` is the proof.
+fixture_receipt!(
+    receipt_28_junction_to_the_vhdx_ntfs_volume_is_local,
+    "junction_vhdx",
+    "RECEIPT_JUNCTION_VHDX",
+    Locality::Local
+);
+
+/// senpi#4354: a real ReFS volume is local with the ReFS driver in its path. A runner image that
+/// cannot format ReFS sets `RECEIPT_REFS_UNAVAILABLE` instead; the receipt line then states the gap.
+#[test]
+#[ignore = "native receipt 28: needs the Windows fixtures of ci.yml socket-secret-native-windows"]
+fn receipt_28_refs_vhdx_volume_is_local() {
+    #[cfg(windows)]
+    {
+        let Ok(path) = std::env::var("RECEIPT_REFS_VHDX") else {
+            let why = std::env::var("RECEIPT_REFS_UNAVAILABLE")
+                .unwrap_or_else(|_| panic!("neither RECEIPT_REFS_VHDX nor RECEIPT_REFS_UNAVAILABLE is set"));
+            println!("RECEIPT_28 refs_vhdx unavailable: {why}");
+            return;
+        };
+        let facts =
+            probe_volume(&path).unwrap_or_else(|error| panic!("refs_vhdx: cannot open {path}: {error:?}"));
+        assert_eq!(receipt_volume("refs_vhdx", &path), Locality::Local);
+        assert_eq!(facts.refs_driver, senpi_socket_secret::DriverPath::InPath);
+        assert_eq!(facts.reported_file_system.as_deref(), Some("ReFS"));
+    }
+}
 
 #[cfg(windows)]
 mod filtered_token {
