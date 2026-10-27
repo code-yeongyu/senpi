@@ -2035,7 +2035,9 @@ export function createRpcConnectionHandler(
 						...(origin === undefined ? {} : { origin }),
 					};
 				});
-				return success(id, "get_auth_providers", { providers });
+				// Read after the rows: building them re-reads a store that failed to load (#4413).
+				const storeError = modelRegistry.authStorage.getLoadError();
+				return success(id, "get_auth_providers", { providers, ...(storeError ? { storeError } : {}) });
 			}
 
 			case "login_start": {

@@ -44,6 +44,7 @@ import {
 	validateReadOnlyAuthData,
 } from "./auth-credential-values.ts";
 import { migrateLegacyProviderKeys } from "./auth-provider-key-migration.ts";
+import { type AuthStoreLoadError, describeAuthStoreLoadFailure, parseAuthDocument } from "./auth-store-load-error.ts";
 import { lockWithLossHandling } from "./file-lock.ts";
 import {
 	CredentialStoreBusyError,
@@ -471,6 +472,7 @@ export class AuthStorage implements CredentialStore {
 	private busyReads = 0;
 	private dataLoaded = false;
 	private dataFromBusyRead = false;
+	private loadError: AuthStoreLoadError | undefined;
 
 	private constructor(storage: AuthStorageBackend, authPath?: string) {
 		this.storage = storage;
@@ -516,7 +518,7 @@ export class AuthStorage implements CredentialStore {
 		// Mutation paths keep the stored keys as-is: the key migration (and its
 		// pre-write backup) belongs to the load seam, so a write can never drop a
 		// legacy entry without the backup that preserves it.
-		return repairPoisonedPoolSlots(JSON.parse(stripBom(content)) as AuthStorageData).data;
+		return repairPoisonedPoolSlots(parseAuthDocument(content) as AuthStorageData).data;
 	}
 
 	/**
@@ -535,7 +537,7 @@ export class AuthStorage implements CredentialStore {
 		if (!content) {
 			return { data: {}, repaired: false, migrated: false };
 		}
-		const repaired = repairPoisonedPoolSlots(JSON.parse(stripBom(content)) as AuthStorageData);
+		const repaired = repairPoisonedPoolSlots(parseAuthDocument(content) as AuthStorageData);
 		const migrated = migrateLegacyProviderKeys(repaired.data);
 		const moved = migrateAnthropicOAuthToSubscription(migrated.data);
 		if (moved.skipped && !this.reportedMigrationSkips.has(moved.skipped)) {
@@ -579,6 +581,7 @@ export class AuthStorage implements CredentialStore {
 		this.data = data;
 		this.dataLoaded = true;
 		this.dataFromBusyRead = false;
+		this.loadError = undefined;
 		this.readState.data = data;
 		this.readState.loaded = true;
 		this.readState.revision = revision;
@@ -608,7 +611,7 @@ export class AuthStorage implements CredentialStore {
 			return "loaded";
 		} catch (error) {
 			// Preserve the last valid in-memory snapshot.
-			this.recordError(error instanceof Error ? error : new Error(String(error)));
+			if (!this.noteLoadFailure(error)) return "failed";
 			if (!(error instanceof CredentialStoreBusyError)) return "failed";
 			if (!this.dataLoaded) {
 				this.busyReads++;
@@ -625,6 +628,30 @@ export class AuthStorage implements CredentialStore {
 	 */
 	isCredentialStoreBusy(): boolean {
 		return this.dataFromBusyRead;
+	}
+
+	/**
+	 * Why the store could not be loaded on its last read, or undefined once it loads (senpi#4413). While
+	 * set, the in-memory credentials are not the store's contents and every write is refused.
+	 */
+	getLoadError(): AuthStoreLoadError | undefined {
+		return this.loadError;
+	}
+
+	/**
+	 * Records a failed read; returns false when it repeats the load error already reported, so a store
+	 * that stays broken is not re-recorded on every status read that retries it.
+	 */
+	private noteLoadFailure(error: unknown): boolean {
+		const loadError = describeAuthStoreLoadFailure(error);
+		const repeated =
+			loadError !== undefined &&
+			this.loadError?.kind === loadError.kind &&
+			this.loadError.reason === loadError.reason;
+		if (loadError) this.loadError = loadError;
+		if (repeated) return false;
+		this.recordError(error);
+		return true;
 	}
 
 	/**
@@ -817,6 +844,15 @@ export class AuthStorage implements CredentialStore {
 	}
 
 	private async reloadFromStorageAsync(options?: AuthOperationOptions): Promise<AuthStorageData> {
+		try {
+			return await this.reloadLockedAsync(options);
+		} catch (error) {
+			if (!options?.signal?.aborted) this.loadError = describeAuthStoreLoadFailure(error) ?? this.loadError;
+			throw error;
+		}
+	}
+
+	private async reloadLockedAsync(options?: AuthOperationOptions): Promise<AuthStorageData> {
 		return this.storage.withLockAsync(async (content) => {
 			const parsed = this.parseStorageContent(content);
 			const revision =

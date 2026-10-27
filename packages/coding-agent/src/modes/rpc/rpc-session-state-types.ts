@@ -35,6 +35,15 @@ export interface RpcAuthProvider {
 	origin?: ProviderOrigin;
 }
 
+/**
+ * `get_auth_providers` `storeError`: auth.json exists but could not be loaded, so stored sign-ins read
+ * as unconfigured and every write is refused until it is repaired (senpi#4413). Never a path or contents.
+ */
+export interface RpcAuthStoreError {
+	kind: "malformed_json" | "invalid_format" | "unreadable";
+	reason: string;
+}
+
 /** Auth status mirror (no credential values), from getProviderAuthStatus. */
 export interface RpcAuthStatus {
 	configured: boolean;
