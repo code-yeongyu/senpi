@@ -78,6 +78,7 @@ export type ReservationRejection =
 	| "commitment_mismatch"
 	| "roles_not_granted"
 	| "presence_not_predeclared"
+	| "row_malformed"
 	| "presence_not_bound"
 	| "revision_changed"
 	| "owner_mismatch"
@@ -166,6 +167,13 @@ export class EndpointReservationError extends Error {
  * `unreferenced` when no row names it at all.
  */
 export type PresenceObjectDisposition = "referenced" | "released" | "retired" | "unreferenced";
+
+/** The disposition of an object at a path, with the identity its row recorded, for a sweep to compare through its hold. */
+export interface PresenceObjectDispositionRow {
+	readonly disposition: PresenceObjectDisposition;
+	/** The recorded volume serial, file ID and header of the row(s) naming the path; absent for `unreferenced`. */
+	readonly recorded: { readonly volumeSerial: string; readonly fileId: string; readonly header: string } | undefined;
+}
 
 /** What a wrapper may forward: no nonce, no credential. */
 export interface ReservationLocator {
@@ -912,22 +920,49 @@ export class EndpointReservationStore {
 	}
 
 	/**
-	 * Whether the database still needs the presence object at `path`, read in one short `BEGIN IMMEDIATE` transaction so
-	 * a cleanup sweep that holds the object sees the rows as committed, serialized against every writer.
+	 * Whether the database still needs the presence object at `path`, with the identity the row recorded for it, read
+	 * in one short `BEGIN IMMEDIATE` transaction so a cleanup sweep that holds the object sees the rows as committed,
+	 * serialized against every writer. Rows naming one path that disagree on its identity are malformed (`row_malformed`).
 	 */
-	presenceObjectDisposition(path: string): PresenceObjectDisposition {
+	presenceObjectDisposition(path: string): PresenceObjectDispositionRow {
 		return this.#transaction(() => {
 			const rows = this.#database
 				.prepare(
-					`SELECT state, owner_status AS status FROM reservations WHERE owner_presence_path = ?
+					`SELECT state, owner_status AS status, owner_presence_volume_serial AS volume_serial,
+					owner_presence_file_id AS file_id, owner_presence_header AS header
+					FROM reservations WHERE owner_presence_path = ?
 					UNION ALL
-					SELECT r.state, ro.status FROM roles ro JOIN reservations r ON r.generation = ro.generation
-					WHERE ro.presence_path = ?`,
+					SELECT r.state, ro.status, ro.presence_volume_serial, ro.presence_file_id, ro.presence_header
+					FROM roles ro JOIN reservations r ON r.generation = ro.generation WHERE ro.presence_path = ?`,
 				)
-				.all(path, path) as { state: ReservationState; status: string }[];
-			if (rows.length === 0) return "unreferenced";
-			if (rows.some(({ state, status }) => state !== "retired" && status !== "released")) return "referenced";
-			return rows.every(({ state }) => state === "retired") ? "retired" : "released";
+				.all(path, path) as {
+				state: ReservationState;
+				status: string;
+				volume_serial: string | null;
+				file_id: string | null;
+				header: string | null;
+			}[];
+			if (rows.length === 0) return { disposition: "unreferenced", recorded: undefined };
+			const [first] = rows;
+			if (
+				!first ||
+				first.volume_serial === null ||
+				first.file_id === null ||
+				first.header === null ||
+				rows.some(
+					(row) =>
+						row.volume_serial !== first.volume_serial ||
+						row.file_id !== first.file_id ||
+						row.header !== first.header,
+				)
+			) {
+				throw new EndpointReservationError("row_malformed", `presence object ${path}`);
+			}
+			const recorded = { volumeSerial: first.volume_serial, fileId: first.file_id, header: first.header };
+			if (rows.some(({ state, status }) => state !== "retired" && status !== "released")) {
+				return { disposition: "referenced", recorded };
+			}
+			return { disposition: rows.every(({ state }) => state === "retired") ? "retired" : "released", recorded };
 		});
 	}
 

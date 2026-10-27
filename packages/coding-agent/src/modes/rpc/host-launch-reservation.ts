@@ -50,7 +50,7 @@ import {
 	type StoreLocator,
 	spawnableChildLaunch,
 } from "./host-lifecycle-launch.ts";
-import { deletePresenceObject, type PresenceDeletion, presenceObjectMissing } from "./presence-cleanup.ts";
+import { deletePresenceObject, type PresenceDeletion, presenceObjectState } from "./presence-cleanup.ts";
 import { predeclarePresenceObject, PresencePlacementError, verifyRecordedPresenceRoot } from "./presence-placement.ts";
 import { loadPresencePlacement, type PresencePlacementLoad } from "./socket-secret-native.ts";
 import { socketSecretPath } from "./socket-transport.ts";
@@ -196,7 +196,9 @@ export function releaseReservingOwner(
 
 /**
  * The issuer's check once its offer committed (design 4.2a Revision 7): a predeclared object that is missing, which
- * only the sweep's age filter can cause after a creation that stalled past it, cancels the offer before any spawn.
+ * only the sweep's age filter can cause after a creation that stalled past it, cancels the offer before any spawn. An
+ * object another handle holds exclusively at that moment (a sweep deciding its fate) is unknown, not "exists and fine":
+ * the issuer cancels rather than spawn a participant whose object may be deleted under it.
  */
 function requireOfferedObject(
 	store: EndpointReservationStore,
@@ -205,12 +207,15 @@ function requireOfferedObject(
 	object: PresenceObjectRecord,
 	native: PresencePlacementLoad,
 ): void {
-	if (!presenceObjectMissing(object, native)) return;
+	const state = presenceObjectState(object, native);
+	if (state === "present" || state === "unknown") return;
 	store.cancel(generation);
 	const presenceId = object.status === "predeclared" ? object.presenceId : "";
 	throw new PresencePlacementError(
-		"presence_object_missing",
-		`${presenceId} of ${role} in ${generation} vanished before the offer committed`,
+		state === "missing" ? "presence_object_missing" : "presence_object_busy",
+		state === "missing"
+			? `${presenceId} of ${role} in ${generation} vanished before the offer committed`
+			: `${presenceId} of ${role} in ${generation} is held exclusively by another handle after the offer committed`,
 	);
 }
 

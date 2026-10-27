@@ -984,10 +984,15 @@ timer or a background job. It handles at most 32 objects per run, in name order,
 resolved. It considers an object only when every row naming it is `released` or belongs to a retired generation, or
 when no row names it and the creation time in its header is more than 24 hours old (the window between creating an
 object and committing its offer, never evidence about a process). It then takes the exclusive hold, rereads the rows in
-a short store transaction while holding, and deletes; a held object is skipped. A recovery probe that finds no object
-rereads the row: an entry that committed `released` meanwhile is discharged by that commit, and a missing object for an
-entry that did not stays unknown. An issuer whose predeclared object is missing once its offer committed cancels the
-generation before any spawn, with `presence-placement-rejected` reason `presence_object_missing`.
+a short store transaction while holding, compares the held object's volume serial, file ID and header with what the row
+recorded, and deletes; a held object is skipped, and so is one whose identity is not the recorded one. The hold is
+released on every path, a thrown store error included, and a failed sweep never decides the start (it is noted in the
+endpoint's stderr log). A recovery probe that finds no object rereads the row: an entry that committed `released`
+meanwhile is discharged by that commit, and a missing object for an entry that did not stays unknown. An issuer whose
+predeclared object is missing once its offer committed cancels the generation before any spawn, with
+`presence-placement-rejected` reason `presence_object_missing`; one whose object another handle holds exclusively at
+that moment (a sweep deciding its fate) cannot know whether the object survives, so it cancels the same way with
+`presence_object_busy` instead of spawning a participant whose object may be deleted under it.
 
 An endpoint has at most one generation that is not retired: reserving another while one is pending, serving or
 cancelling fails with `generation_active`. Recovery retires an abandoned generation in two transitions. The fence

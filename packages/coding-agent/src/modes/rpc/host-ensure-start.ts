@@ -87,7 +87,7 @@ export async function startHost(
 	// else, over the root this start resolves, before the owner creates its own object there.
 	if (reserving) await recoverBeforeSuccessor(socket, paths);
 	const placement = reserving ? resolveReservingPlacement(socket) : undefined;
-	if (placement) await sweepBeforeSuccessor(placement);
+	if (placement) await sweepBeforeSuccessor(placement, paths);
 	const owner = placement ? acquireReservingOwner(placement) : undefined;
 	// The settings file must exist before the supervisor reads it at boot, so it
 	// records the policy before the spawn instead of beside the pidfile. A valid public
@@ -390,13 +390,24 @@ function resolveReservingPlacement(socket: string) {
  * invocation's endpoint lock: it deletes only objects it holds exclusively whose row is `released` or retired, or that
  * no row names and that are older than the age filter. Its outcome never decides the start.
  */
-async function sweepBeforeSuccessor(placement: ReturnType<typeof resolveReservingPlacement>): Promise<void> {
+async function sweepBeforeSuccessor(
+	placement: ReturnType<typeof resolveReservingPlacement>,
+	paths: HostDaemonPaths,
+): Promise<void> {
 	if (placement.reservation.root.status !== "placed") return;
-	const store = await openEndpointReservationStore(`${placement.target}.reservation.db`);
 	try {
-		sweepPresenceObjects(store, placement.reservation.root, placement.native);
-	} finally {
-		store.close();
+		const store = await openEndpointReservationStore(`${placement.target}.reservation.db`);
+		try {
+			sweepPresenceObjects(store, placement.reservation.root, placement.native);
+		} finally {
+			store.close();
+		}
+	} catch (error: unknown) {
+		// A failed sweep leaves objects for the next endpoint-locked invocation; it is reported, never a failed start.
+		await appendStderr(
+			paths,
+			`presence sweep skipped: ${error instanceof Error ? error.message : String(error)}`,
+		).catch(() => undefined);
 	}
 }
 

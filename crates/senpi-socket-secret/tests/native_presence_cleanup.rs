@@ -97,7 +97,7 @@ mod windows {
         let probe = presence_probe(PresenceProbe {
             presence_id: "cleanup-probe".into(),
             path: object.clone(),
-            tag: b"header-one".to_vec().into(),
+            header: b"header-one".to_vec().into(),
             volume_serial: identity.volume_serial.to_string(),
             file_id: identity.file_id.to_string(),
             created_local: true,
@@ -150,7 +150,7 @@ mod windows {
         let probe = presence_probe(PresenceProbe {
             presence_id: "cleanup-holder".into(),
             path: object.clone(),
-            tag: b"header-two".to_vec().into(),
+            header: b"header-two".to_vec().into(),
             volume_serial: identity.volume_serial.to_string(),
             file_id: identity.file_id.to_string(),
             created_local: true,
@@ -177,6 +177,39 @@ mod windows {
             presence_object_release("after-release".to_string(), true).status,
             "deleted"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// senpi#4480 review LOW: the exclusive open names the entry itself (`FILE_FLAG_OPEN_REPARSE_POINT`) and refuses a
+    /// reparse point, so nothing follows a link to hold or delete its target. A file symbolic link needs
+    /// `SeCreateSymbolicLinkPrivilege` (or Developer Mode); where the runner lacks it the receipt says so.
+    #[test]
+    fn a_reparse_point_is_refused_and_its_target_is_never_deleted() {
+        let (dir, _root_path, object) = root_with_object("reparse", b"header-link");
+        let link = dir.join("link.presence");
+        if let Err(error) = std::os::windows::fs::symlink_file(&object, &link) {
+            println!(
+                "RECEIPT_CLEANUP reparse_point skipped: symlink_file failed with {:?} ({error})",
+                error.raw_os_error()
+            );
+            return;
+        }
+        let held = hold("link", link.to_str().unwrap());
+        println!(
+            "RECEIPT_CLEANUP reparse_point status={} step={:?} code={:?}",
+            held.status, held.step, held.code
+        );
+        assert_eq!(
+            (held.status.as_str(), held.step.as_deref()),
+            ("failed", Some("reparse_point"))
+        );
+        assert_eq!(
+            presence_object_release("link".to_string(), true).status,
+            "failed",
+            "a refused open leaves no hold to release"
+        );
+        assert!(std::path::Path::new(&object).exists(), "the link's target is untouched");
+        assert!(link.exists(), "the link itself is untouched");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

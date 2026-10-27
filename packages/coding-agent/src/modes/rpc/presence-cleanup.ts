@@ -12,8 +12,10 @@
  * - The sweep (`sweepPresenceObjects`) runs only inside an invocation that already holds the endpoint lock, handles at
  *   most `PRESENCE_SWEEP_BOUND` objects per run, considers an object only when the row naming it is `released` or
  *   retired, or when no row names it and its header is older than `PRESENCE_SWEEP_AGE_MS`, takes the exclusive hold,
- *   rechecks the row in a short state transaction while holding, and deletes. A held object is skipped. The age covers
- *   only the window between creating an object and committing its offer; it is never evidence about a process.
+ *   rechecks the row in a short state transaction while holding, compares the held object's identity and header with
+ *   the row's, and deletes. A held object is skipped, and so is one whose identity is not the recorded one. The age
+ *   covers only the window between creating an object and committing its offer; it is never evidence about a process.
+ *   A hold is released on every path, a thrown store error included; the sweep's outcome never decides a start.
  *
  * Nothing here renames, truncates, replaces or recreates an object, and nothing deletes by path.
  */
@@ -21,7 +23,7 @@ import { randomUUID } from "node:crypto";
 import {
 	EndpointReservationError,
 	type EndpointReservationStore,
-	type PresenceObjectDisposition,
+	type PresenceObjectDispositionRow,
 	type PresenceObjectRecord,
 	presenceObjectPath,
 	type PresenceRootRecord,
@@ -89,11 +91,14 @@ function takeHold(native: NativePresencePlacementBinding, path: string): HoldAtt
 	};
 }
 
-function isRecorded(hold: ExclusiveHold, object: PresenceObjectRecord & { status: "predeclared" }): boolean {
+function isRecorded(
+	hold: ExclusiveHold,
+	recorded: { readonly volumeSerial: string; readonly fileId: string; readonly header: string },
+): boolean {
 	return (
-		hold.volumeSerial === object.volumeSerial &&
-		hold.fileId === object.fileId &&
-		hold.header.equals(Buffer.from(object.header, "hex"))
+		hold.volumeSerial === recorded.volumeSerial &&
+		hold.fileId === recorded.fileId &&
+		hold.header.equals(Buffer.from(recorded.header, "hex"))
 	);
 }
 
@@ -111,28 +116,43 @@ export function deletePresenceObject(object: PresenceObjectRecord, native: Prese
 		attempt.hold.release(false);
 		return { status: "left", reason: "identity_mismatch", detail: null };
 	}
+	// (identity and header compared through the hold above)
 	const released = attempt.hold.release(true);
 	return released.status === "deleted"
 		? { status: "deleted" }
 		: { status: "left", reason: "failed", detail: failure(released.step, released.code) };
 }
 
+export type PresenceObjectState = "present" | "missing" | "busy" | "unknown";
+
 /**
- * Whether a predeclared object is definitely gone or replaced (design: "If an issuer's creation stalls past the age
- * filter and the object is missing after it commits the offer, it cancels that offer before any spawn"). A busy object
- * exists; an object the bridge cannot open for another reason is not known missing.
+ * What an issuer finds once its offer committed (design: "If an issuer's creation stalls past the age filter and the
+ * object is missing after it commits the offer, it cancels that offer before any spawn"): `present` (the recorded
+ * object, opened exclusively and released again), `missing` (gone or replaced), `busy` (another handle holds it
+ * exclusively, which only a sweep about to decide its fate does: the issuer cannot know whether the object survives,
+ * so busy is never read as "exists and fine" where a spawn is decided), or `unknown` (an open the bridge could not
+ * make for another reason; the participant's own acquisition then fails closed). A row without presence is `present`.
  */
-export function presenceObjectMissing(object: PresenceObjectRecord, native: PresencePlacementLoad): boolean {
-	if (object.status !== "predeclared" || native.status !== "available") return false;
+export function presenceObjectState(object: PresenceObjectRecord, native: PresencePlacementLoad): PresenceObjectState {
+	if (object.status !== "predeclared" || native.status !== "available") return "present";
 	const attempt = takeHold(native.native, object.path);
-	if (attempt.status === "missing") return true;
-	if (attempt.status !== "held") return false;
+	if (attempt.status === "missing") return "missing";
+	if (attempt.status === "busy") return "busy";
+	if (attempt.status !== "held") return "unknown";
 	const recorded = isRecorded(attempt.hold, object);
 	attempt.hold.release(false);
-	return !recorded;
+	return recorded ? "present" : "missing";
 }
 
-export type PresenceSweepSkip = "held" | "referenced" | "young" | "unreadable" | "missing" | "failed" | "store_busy";
+export type PresenceSweepSkip =
+	| "held"
+	| "referenced"
+	| "young"
+	| "unreadable"
+	| "missing"
+	| "failed"
+	| "store_busy"
+	| "identity_mismatch";
 
 export type PresenceSweepReport =
 	| {
@@ -197,7 +217,7 @@ export function sweepPresenceObjects(
 	const deleted: string[] = [];
 	const skipped: { name: string; reason: PresenceSweepSkip }[] = [];
 	let handled = 0;
-	const disposition = (path: string): PresenceObjectDisposition | "store_busy" => {
+	const disposition = (path: string): PresenceObjectDispositionRow | "store_busy" => {
 		try {
 			return store.presenceObjectDisposition(path);
 		} catch (error: unknown) {
@@ -215,7 +235,7 @@ export function sweepPresenceObjects(
 			skipped.push({ name, reason: "store_busy" });
 			return { status: "swept", deleted, skipped, bounded: false };
 		}
-		if (before === "referenced") {
+		if (before.disposition === "referenced") {
 			skipped.push({ name, reason: "referenced" });
 			continue;
 		}
@@ -226,27 +246,42 @@ export function sweepPresenceObjects(
 			continue;
 		}
 		const { hold } = attempt;
-		if (before === "unreferenced") {
-			// An object no row names is deleted only once it is older than the age filter: an issuer may still be
-			// between creating it and committing the offer that names it.
-			const createdAt = headerCreatedAt(hold.header);
-			if (createdAt === undefined || !(now() - createdAt > ageMs)) {
-				hold.release(false);
-				skipped.push({ name, reason: createdAt === undefined ? "unreadable" : "young" });
+		// Whatever happens while the object is held, the hold is released: a thrown store error must not leak it.
+		let deleteObject = false;
+		try {
+			if (before.disposition === "unreferenced") {
+				// An object no row names is deleted only once it is older than the age filter: an issuer may still be
+				// between creating it and committing the offer that names it.
+				const createdAt = headerCreatedAt(hold.header);
+				if (createdAt === undefined || !(now() - createdAt > ageMs)) {
+					skipped.push({ name, reason: createdAt === undefined ? "unreadable" : "young" });
+					continue;
+				}
+			}
+			// The recheck, in a short state transaction, while the object is held.
+			const during = disposition(path);
+			if (during === "store_busy") {
+				skipped.push({ name, reason: "store_busy" });
+				return { status: "swept", deleted, skipped, bounded: false };
+			}
+			if (during.disposition === "referenced") {
+				skipped.push({ name, reason: "referenced" });
 				continue;
 			}
+			// A released or retired row is deleted only through a hold on the object it recorded: identity and header are
+			// compared through the hold, as the holder's own deletion compares them.
+			if (during.recorded !== undefined && !isRecorded(hold, during.recorded)) {
+				skipped.push({ name, reason: "identity_mismatch" });
+				continue;
+			}
+			deleteObject = true;
+		} finally {
+			const released = hold.release(deleteObject);
+			if (deleteObject) {
+				if (released.status === "deleted") deleted.push(name);
+				else skipped.push({ name, reason: "failed" });
+			}
 		}
-		// The recheck, in a short state transaction, while the object is held.
-		const during = disposition(path);
-		if (during === "referenced" || during === "store_busy") {
-			hold.release(false);
-			skipped.push({ name, reason: during === "store_busy" ? "store_busy" : "referenced" });
-			if (during === "store_busy") return { status: "swept", deleted, skipped, bounded: false };
-			continue;
-		}
-		const released = hold.release(true);
-		if (released.status === "deleted") deleted.push(name);
-		else skipped.push({ name, reason: "failed" });
 	}
 	return { status: "swept", deleted, skipped, bounded: false };
 }
