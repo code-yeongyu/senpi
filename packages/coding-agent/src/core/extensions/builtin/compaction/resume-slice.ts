@@ -150,15 +150,23 @@ export function planResumeSlice({
  * larger than the whole budget is never dropped by the halving above. A cut at a
  * user turn is always boundary-safe, and the kept context only shrinks as the cut
  * moves later, so the earliest fitting user turn is found by binary search
- * (senpi#3447).
+ * (senpi#3447). A cut must keep a completed assistant reply: reducing the
+ * conversation to only the request that just failed is no repair (#1873).
  */
 function planAtEarliestFittingUserTurn(
 	entries: readonly SessionEntry[],
 	boundaryStart: number,
 	planAt: (firstKeptIndex: number) => ResumeSlicePlan | undefined,
 ): ResumeSlicePlan | undefined {
+	const lastCompletedReply = entries.findLastIndex(
+		(entry) =>
+			entry.type === "message" &&
+			entry.message.role === "assistant" &&
+			entry.message.stopReason !== "error" &&
+			entry.message.stopReason !== "aborted",
+	);
 	const userTurns: number[] = [];
-	for (let index = boundaryStart + 1; index < entries.length; index++) {
+	for (let index = boundaryStart + 1; index < lastCompletedReply; index++) {
 		const entry = entries[index];
 		if (entry?.type === "message" && entry.message.role === "user") userTurns.push(index);
 	}
