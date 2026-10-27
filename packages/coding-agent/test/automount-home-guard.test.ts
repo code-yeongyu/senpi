@@ -25,9 +25,9 @@ describe("isBlockingAutomountPath", () => {
 	});
 
 	it("does not flag a normal /Users path on darwin", () => {
-		expect(isBlockingAutomountPath("/Users/person/project/src", { platform: "darwin", homeDir: "/Users/person" })).toBe(
-			false,
-		);
+		expect(
+			isBlockingAutomountPath("/Users/person/project/src", { platform: "darwin", homeDir: "/Users/person" }),
+		).toBe(false);
 	});
 
 	it("does not flag a name that merely starts with the trigger spelling", () => {
@@ -35,17 +35,23 @@ describe("isBlockingAutomountPath", () => {
 	});
 
 	it("leaves linux unchanged, where /home is a real directory", () => {
-		expect(isBlockingAutomountPath("/home/person/project", { platform: "linux", homeDir: "/home/person" })).toBe(false);
+		expect(isBlockingAutomountPath("/home/person/project", { platform: "linux", homeDir: "/home/person" })).toBe(
+			false,
+		);
 		expect(isBlockingAutomountPath("/home", { platform: "linux", homeDir: "/home/person" })).toBe(false);
 	});
 
 	it("does not flag the current user's own home when it lives under /home", () => {
-		expect(isBlockingAutomountPath("/home/person/project", { platform: "darwin", homeDir: "/home/person" })).toBe(false);
+		expect(isBlockingAutomountPath("/home/person/project", { platform: "darwin", homeDir: "/home/person" })).toBe(
+			false,
+		);
 		expect(isBlockingAutomountPath("/home/person", { platform: "darwin", homeDir: "/home/person" })).toBe(false);
 	});
 
 	it("still flags a sibling account under a /home-rooted home directory", () => {
-		expect(isBlockingAutomountPath("/home/other/project", { platform: "darwin", homeDir: "/home/person" })).toBe(true);
+		expect(isBlockingAutomountPath("/home/other/project", { platform: "darwin", homeDir: "/home/person" })).toBe(
+			true,
+		);
 	});
 });
 
