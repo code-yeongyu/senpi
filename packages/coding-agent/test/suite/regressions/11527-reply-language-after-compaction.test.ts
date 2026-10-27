@@ -195,4 +195,22 @@ describe("omo#11527 reply language after compaction and long tool output", () =>
 		expect(notes(convertToLlm(messages))).toEqual([ENGLISH_REQUESTED_NOTE]);
 		expect(readReplyLanguage).toHaveBeenCalledTimes(2);
 	});
+
+	it("reads a message again after an in-place edit that keeps every length", () => {
+		// given
+		const block = { type: "text" as const, text: "영어로 답해줘" };
+		const messages: AgentMessage[] = [
+			{ role: "user", content: [block], timestamp: 1 },
+			toolCall("call-1"),
+			toolResult("call-1", LONG_ENGLISH_OUTPUT),
+		];
+		expect(notes(convertToLlm(messages))).toEqual([ENGLISH_REQUESTED_NOTE]);
+
+		// when the same block's text is replaced by a different text of the same length
+		block.text = "불어로 답해줘";
+		expect(block.text.length).toBe("영어로 답해줘".length);
+
+		// then
+		expect(notes(convertToLlm(messages))).toEqual([replyLanguageNote({ language: "French", requested: true })]);
+	});
 });

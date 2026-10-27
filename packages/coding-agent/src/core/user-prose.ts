@@ -82,14 +82,14 @@ function withoutFencedCode(text: string): string {
 }
 
 /** The message with tagged blocks, fenced and inline code, and links removed. */
-export function userProse(text: string, scan?: ProseScan): string {
+function userProse(text: string, scan?: ProseScan): string {
 	return withoutFencedCode(withoutTaggedBlocks(text, scan))
 		.replace(/`[^`\n]*`/g, " ")
 		.replace(/\bhttps?:\/\/\S+/g, " ");
 }
 
 /** A line that is not the user's own words: a `>` quote or pasted log or error output. */
-export function isPastedLine(line: string): boolean {
+function isPastedLine(line: string): boolean {
 	return /^\s*>/.test(line) || LOG_LINE.test(line);
 }
 

@@ -1,12 +1,17 @@
-import { isPastedLine, QUOTE_MARK, userProse } from "./user-prose.ts";
+import { QUOTE_MARK, withoutTaggedBlocks } from "./user-prose.ts";
 
 /**
- * An explicit reply-language request (omo#11527). Only the user's own directive to the agent counts:
- * a short sentence that is nothing but the request, at the start of the user's own line, optionally
- * after a few lead words ("앞으로", "please"). Reported speech never counts: a sentence with any
- * quotation mark, a line with a speaker prefix ("User:", "he wrote:"), a line after an attribution
- * ("라고 했", "said"), or a line inside a pasted block of several lines. When in doubt it is not a
- * request: a missed request only costs the note, a false one would override the user's language.
+ * An explicit reply-language request (omo#11527), decided for the whole message, never line by line.
+ * A message has a request only when all of these hold:
+ * - after fenced code and tagged blocks are removed it is short: at most 3 non-empty lines and 300
+ *   characters (a paste is longer);
+ * - nothing anywhere in it marks pasted or reported content: a line ending with a colon, a speaker
+ *   prefix, a quotation or blockquote mark, a forwarded or original-message header, or an
+ *   attribution verb;
+ * - a whole sentence on its first or last non-empty line is the directive, optionally after a few
+ *   lead words ("앞으로", "please").
+ * When in doubt it is not a request: a missed request only costs the note, a false one would
+ * override the user's own language.
  */
 
 /** Languages a user can ask for by name, with their Korean names. */
@@ -58,18 +63,26 @@ const DIRECTIVES: readonly RegExp[] = [
 	),
 ];
 
-/** "Name:" or "he wrote:" at the start of a line: the rest of the line is someone else's words. */
-const SPEAKER_PREFIX = /^\s*[^:\n]{1,30}:\s/;
+/** At most this many non-empty lines, and this many characters, in a message with a request. */
+const MAX_REQUEST_LINES = 3;
+const MAX_REQUEST_CHARS = 300;
 
-/** Reported speech: after this, nothing on the line is the user's own directive. */
-const ATTRIBUTION =
-	/\b(?:said|says|wrote|writes|asked|asks|told|tells|replied|commented|quoted)\b|라고|말했|말하길|썼|적었|했대|하더라|하네|그러더라|그랬/i;
+/** Anything that marks pasted or reported content; one match anywhere means the message has no request. */
+const REPORTED_CONTENT: readonly RegExp[] = [
+	/[:：]\s*$/m,
+	/^\s*[^\s:：][^:：\n]{0,30}[:：]\s*\S/m,
+	/^\s*>/m,
+	QUOTE_MARK,
+	/-{2,}\s*(?:forwarded|original)\b|\b(?:forwarded message|original message)\b|^\s*(?:from|sent|to|subject|date)\s*[:：]|전달된\s*메시지|원본\s*메시지|원문/im,
+	/\b(?:said|says|wrote|writes|asked|asks|told|tells|replied|commented|quoted|according to)\b|라고|이라고|말했|말하길|썼|적었|했대|하더라|하네|그러더라|그랬|에\s*따르면/i,
+];
 
-/** A paragraph with more lines than this reads as a paste, not as the user's own request. */
-const MAX_OWN_PARAGRAPH_LINES = 3;
-
-/** A longer line is a paste or a long message, not a short directive. */
-const MAX_DIRECTIVE_LINE_CHARS = 200;
+function withoutFencedCode(text: string): string {
+	return text
+		.split("```")
+		.filter((_, index) => index % 2 === 0)
+		.join("\n");
+}
 
 function languageOf(name: string): string | undefined {
 	return (
@@ -78,14 +91,11 @@ function languageOf(name: string): string | undefined {
 	);
 }
 
-/** The requested language a line's sentences establish (the last directive wins). */
-function lineRequest(line: string): string | undefined {
-	if (line.length > MAX_DIRECTIVE_LINE_CHARS || SPEAKER_PREFIX.test(line) || isPastedLine(line)) return undefined;
+/** The language the last whole-sentence directive on a line asks for. */
+function lineDirective(line: string): string | undefined {
 	let requested: string | undefined;
 	for (const sentence of line.split(/[.!?。！？~]+/)) {
 		const trimmed = sentence.trim();
-		if (ATTRIBUTION.test(trimmed)) return undefined;
-		if (trimmed === "" || QUOTE_MARK.test(trimmed)) continue;
 		for (const directive of DIRECTIVES) {
 			const name = directive.exec(trimmed)?.[1];
 			if (name !== undefined) requested = languageOf(name) ?? requested;
@@ -94,13 +104,11 @@ function lineRequest(line: string): string | undefined {
 	return requested;
 }
 
-/** The reply language the user explicitly asks for in this message (the last request wins). */
+/** The reply language the user explicitly asks for in this message, if the message is a short directive. */
 export function readReplyLanguageRequest(text: string): string | undefined {
-	let requested: string | undefined;
-	for (const paragraph of userProse(text).split(/\n\s*\n/)) {
-		const lines = paragraph.split("\n").filter((line) => line.trim() !== "");
-		if (lines.length > MAX_OWN_PARAGRAPH_LINES) continue;
-		for (const line of lines) requested = lineRequest(line) ?? requested;
-	}
-	return requested;
+	const message = withoutFencedCode(withoutTaggedBlocks(text)).trim();
+	const lines = message.split("\n").filter((line) => line.trim() !== "");
+	if (lines.length === 0 || lines.length > MAX_REQUEST_LINES || message.length > MAX_REQUEST_CHARS) return undefined;
+	if (REPORTED_CONTENT.some((marker) => marker.test(message))) return undefined;
+	return lineDirective(lines.at(-1) ?? "") ?? lineDirective(lines[0] ?? "");
 }
