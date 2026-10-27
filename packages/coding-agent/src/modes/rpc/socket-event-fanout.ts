@@ -260,10 +260,7 @@ export class SocketEventSinkActor {
 		}
 		// A recovery first waits for the peer to drain again; then the gap opens the frames.
 		await waitForDrainOrStall(this.stallPeer, 0);
-		if (this.closed || !this.recovery) {
-			entry.barrier.end();
-			return;
-		}
+		if (this.closed || !this.recovery) return;
 		const barrier = this.shed.take(entry, this.snapshot, () => !this.closed);
 		const gap = this.recovery.takeGap();
 		if (!this.recoveryEnabled) this.recovery = undefined;
@@ -292,7 +289,13 @@ export class SocketEventSinkActor {
 					const item = this.queue.shift();
 					if (item === undefined) break;
 					if (isBarrier(item)) {
-						await this.deliver(item);
+						// Dequeued, the entry is neither queued nor the attempt, so nothing else ends it: its barrier
+						// (a stale recovery's fresh cut included) ends here whatever deliver returned or threw.
+						try {
+							await this.deliver(item);
+						} finally {
+							item.barrier.end();
+						}
 						continue;
 					}
 					if (item.held !== undefined && !item.held()) {
