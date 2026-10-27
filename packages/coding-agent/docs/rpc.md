@@ -942,7 +942,7 @@ the host the legacy way. A supervisor launched with a reservation probes its own
 offers the host role. If the generation expects a host and that command did not report both capabilities, the
 supervisor fails with `launch_capability_missing` before the host is spawned, and the host never receives the locator.
 
-The reservation store is at schema 4 and refuses an older store with `schema_unsupported`. The process that reserves a
+The reservation store is at schema 5 and refuses an older store with `schema_unsupported`. The process that reserves a
 generation resolves its presence root once and records it in the reservation. If the store's directory classifies `local`
 from its opened handle, the root is the private sibling directory `<endpoint lock target>.presence`. Otherwise the root is
 `senpi\rpc-presence\<endpoint key>` under `FOLDERID_LocalAppData`, and that directory must classify `local` too.
@@ -988,6 +988,55 @@ and before it binds the public listener, the host before it binds. The check com
 with the recorded one, reads through it and reclassifies the volume. A failed check is terminal: it fails with
 `launch-reservation-rejected` reason `presence_pre_action_failed`, the actor performs no further action (the
 reserving process and the supervisor cancel the generation they offered a role in), and the lock is never re-acquired.
+
+An endpoint has at most one generation that is not retired: reserving another while one is pending, serving or
+cancelling fails with `generation_active`. Recovery retires an abandoned generation in two transitions. The fence
+(`cancelling`) revokes every outstanding offer and refuses later claims and grants with `generation_cancelled`.
+Retirement then requires that fence, the revision the recovery's census was taken at (`revision_changed` otherwise,
+for example after a role committed `released` in between) and a proof for exactly the entries whose history does not
+discharge them: the reserving owner until its `released` commit and every granted role without one. The proofs are
+`presence_released` (an admissible acquisition of the entry's presence object) and `process_gone`; a missing or extra
+proof fails with `discharge_incomplete`. A role that committed `released` is recorded `released`, and a role that was
+only offered or claimed is recorded `never_granted`. The retired record keeps every identity and stores these
+discharges with the fenced revision. It is a tombstone: every later claim, offer, grant, serving commit, fence or
+retirement of it fails with `generation_retired`.
+
+A Windows public-endpoint start that finds a generation that is not retired recovers it under the endpoint lock
+before it acquires its own presence lock, touches the public secret or reserves. Recovery fences the generation, then
+makes one nonblocking acquisition attempt, in presence-ID order and outside every store transaction, for the reserving
+owner until its `released` commit and for every granted role without one. Offered and claimed-but-ungranted roles are
+not probed. An acquisition counts only when the object's tag and file identity match the row, the row recorded `local`
+and the object's directory still classifies `local`, and, for an object in the per-user root, the row's and this
+machine's kernel-session identities are both verified and equal. A busy object always refuses. An entry without such an
+acquisition is discharged only when its recorded PID, reopened now, is absent or has a different creation FILETIME
+(compared exactly). That observation counts only when the store recorded `local` and still classifies `local`, or when
+the row's and this machine's kernel-session identities are both verified and equal; an `unverified` identity equals
+nothing. On a store recorded and still classified `local`, a verified kernel-session identity that differs from the
+one the generation recorded, with every probed object acquired, proves every process of that earlier boot gone: it
+resolves only entries provably from that boot (a verified session equal to it, on a directory recorded and still
+`local`), never a current-boot entry, one with an unverified session or one without provenance. Then every recorded
+generation supervisor, host child and session-path claim of the endpoint must be gone. A row naming one of the
+generation's recorded actors (the owner, a claimed participant) is that actor's own entry and is discharged by the
+actor's proof, so a quiescent actor that stays alive doing unrelated work does not block. Every other row carries only
+the provenance its launch recorded beside it: `startHost` writes `generations/<instanceId>/launch-provenance.json`
+(the reservation generation, the reserving owner's kernel session, whether the daemon directory classified `local`
+from its opened handle) before the spawn, and the census applies the rules above to the row from that record (the
+daemon directory recorded `local` and `local` now, or verified equal sessions). A row with no provenance (a legacy or
+foreign writer) is unknown. A generations or reservations directory that exists but cannot be listed, a pidfile or
+provenance record that cannot be read, and a half-written or malformed claim are incomplete discovery, which is unknown,
+never nothing to find. Recovery retires at the revision it revalidated while it still holds the acquired locks, and
+releases them after the commit. A generation that served and whose actors committed `released` retires without any
+probe, so an ordinary restart is not refused. A retired generation also refuses a late `released` commit of its owner
+or a role with `generation_retired`: the tombstone is immutable.
+
+When recovery cannot prove that every recorded actor ended, the start fails with `HostEnsureRefusedError` reason
+`reservation_recovery_required`, and `host ensure --json` (exit 3) carries
+`recovery: { reason, generation }`. The reasons are `presence_occupied` (an actor's presence object is held),
+`authority_live` and `authority_unknown` (the actor's recorded process is live, or its evidence cannot be used),
+`census_live` and `census_unknown` (a recorded supervisor, host child or session claim), and `revision_changed` (the
+generation changed while recovery ran). `detail` names the actor, its PID, its recorded host label and kernel session.
+The fence stays; nothing else is written, no credential is touched, no process is signalled and no presence object is
+deleted. The next ensure runs the same bounded check again.
 
 ### Generation handoff (`handoffHost`, `probeHost`, `stopHost`)
 

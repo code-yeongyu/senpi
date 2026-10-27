@@ -31,6 +31,8 @@ export interface HostGenerationPaths {
 	readonly aliveFile: string;
 	/** The supervisor's own report that it is waiting out a stalled child before escalating. */
 	readonly stopProgressFile: string;
+	/** The reserving owner's record of the launch that writes this directory (launch-provenance.ts, #4199). */
+	readonly launchProvenanceFile: string;
 }
 
 export function generationPaths(paths: HostDaemonDirectory, instanceId: string): HostGenerationPaths {
@@ -49,6 +51,7 @@ export function generationPaths(paths: HostDaemonDirectory, instanceId: string):
 		stalledFile: join(dir, "host-stalled.json"),
 		aliveFile: join(dir, "host-alive.json"),
 		stopProgressFile: join(dir, "stop-progress.json"),
+		launchProvenanceFile: join(dir, "launch-provenance.json"),
 	};
 }
 

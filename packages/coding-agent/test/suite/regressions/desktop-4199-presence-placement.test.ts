@@ -197,7 +197,7 @@ describe("#4199 presence placement", () => {
 	it("Placement: the reserving owner records the root's canonical path, physical identity, classification and its kernel session", async () => {
 		const fake = fakeWindows();
 		const { store, generation, reservation } = await launched(fake);
-		expect(ENDPOINT_RESERVATION_SCHEMA).toBe(4);
+		expect(ENDPOINT_RESERVATION_SCHEMA).toBe(5);
 		expect(store.reservation(generation).presence).toEqual(reservation);
 		expect(fake.calls.filter((call) => call.startsWith("classifyVolume"))).toHaveLength(1);
 	});

@@ -2,13 +2,13 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, win32 } from "node:path";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { clearHostRegistration, writeHostRegistration } from "./host-daemon-registration.ts";
 import { callerHostOwner, writeHostOwner, writeHostSettings } from "./host-daemon-state.ts";
-import { HOST_PROTOCOL_VERSION, REQUIRED_HOST_CAPABILITIES } from "./host-decision.ts";
+import { HOST_PROTOCOL_VERSION, HostEnsureRefusedError, REQUIRED_HOST_CAPABILITIES } from "./host-decision.ts";
 import { hostChildArgv, isCompatible } from "./host-ensure-client.ts";
 import {
 	announceStop,
@@ -37,7 +37,9 @@ import { hostLaunchProfile } from "./protocol-identity.ts";
 import { ensureSocketSecret, socketSecretPath } from "./socket-transport.ts";
 import { relayPresenterBootstrap } from "./mcp-presenter-bootstrap.ts";
 import { type EndpointReservationStore, openEndpointReservationStore } from "./endpoint-reservation-store.ts";
+import { recoverEndpointReservations, recoveryProber } from "./endpoint-recovery.ts";
 import { hostEnsureLockTarget } from "./host-ensure-lock.ts";
+import { recordLaunchProvenance } from "./launch-provenance.ts";
 import {
 	acquireOwnerPresence,
 	grantClaimedParticipant,
@@ -86,6 +88,9 @@ export async function startHost(
 	// anything is locked, mutated or reserved (design section 5, "Mixed versions").
 	const reserving = ownLaunchRoute() === "reservation";
 	const hostRoute = reserving ? await hostLaunchRoute(socket, options.hostArgs ?? []) : undefined;
+	// Exactly one successor (design 4.2a "Recovery transaction order"): an earlier generation is recovered and retired
+	// under this endpoint lock before this start holds its own presence, touches the credential or reserves.
+	if (reserving) await recoverBeforeSuccessor(socket, paths);
 	const owner = reserving ? acquireReservingOwner(socket) : undefined;
 	// The settings file must exist before the supervisor reads it at boot, so it
 	// records the policy before the spawn instead of beside the pidfile. A valid public
@@ -131,6 +136,18 @@ export async function startHost(
 						hostRoute === "reservation" ? ["supervisor", "host"] : ["supervisor"],
 					)
 				: undefined;
+		// The provenance of every row this launch writes under its generation directory (launch-provenance.ts): the
+		// owner's kernel session and the daemon directory's classification from its opened handle, recorded before the
+		// spawn so no row of this launch can exist without it.
+		if (reservation && owner) {
+			await recordLaunchProvenance(generationPaths(paths, instanceId).launchProvenanceFile, {
+				generation: reservation.generation,
+				kernelSession: owner.reservation.ownerKernelSession,
+				directoryLocal:
+					owner.native.status === "available" &&
+					owner.native.native.classifyVolume(paths.dir).locality === "local",
+			});
+		}
 		const supervisorArgs = [
 			"--socket",
 			socket,
@@ -342,6 +359,33 @@ export async function appendStderr(paths: HostDaemonPaths, message: string): Pro
 
 /** How long the issuer waits for the launched supervisor to claim its role; the claimant's observation counts. */
 const SUPERVISOR_CLAIM_DEADLINE_MS = 10_000;
+
+/**
+ * Runs the recovery transaction over every generation of this endpoint that is not retired (#4199 design 4.2a). A
+ * generation whose recorded authority is not proven ended refuses the start with `reservation_recovery_required`; the
+ * fence it committed stays and nothing else changed. An endpoint with no such generation probes nothing.
+ */
+async function recoverBeforeSuccessor(socket: string, paths: HostDaemonPaths): Promise<void> {
+	const target = hostEnsureLockTarget(socket);
+	const store = await openEndpointReservationStore(reservationStorePath(socket));
+	try {
+		if (store.activeGenerations(socket).length === 0) return;
+		const prober = recoveryProber(win32.dirname(target), loadPresencePlacement(), undefined, paths.dir);
+		const outcome = await recoverEndpointReservations(store, socket, paths, prober);
+		if (outcome.status === "refused") {
+			throw new HostEnsureRefusedError(
+				socket,
+				"reservation_recovery_required",
+				undefined,
+				`${outcome.reason} in generation ${outcome.generation}: ${outcome.detail}`,
+				undefined,
+				{ reason: outcome.reason, generation: outcome.generation },
+			);
+		}
+	} finally {
+		store.close();
+	}
+}
 
 /**
  * Cancels the generation of a failed start, commits the owner's `released` (its terminal state is the fence, and it

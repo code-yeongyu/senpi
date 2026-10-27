@@ -258,15 +258,34 @@ export function createSessionPathReservations(options: {
 
 /** Every claim published in one reservations directory, for a reader pruning or reporting them. */
 export async function readSessionPathClaims(dir: string): Promise<readonly SessionPathClaim[]> {
-	const entries = await readdir(dir).catch(() => [] as string[]);
+	return (await readSessionPathClaimsCompletely(dir)).claims;
+}
+
+/**
+ * Every claim, plus what could NOT be read: a directory that exists but cannot be listed, and a claim file that is
+ * unreadable or malformed. A recovery census treats those as incomplete discovery (design 4.2a "Incomplete discovery
+ * remains unknown"), while the pruning and reporting readers above keep skipping them. An absent directory is complete.
+ */
+export async function readSessionPathClaimsCompletely(
+	dir: string,
+): Promise<{ readonly claims: readonly SessionPathClaim[]; readonly unreadable: readonly string[] }> {
+	let entries: string[];
+	try {
+		entries = await readdir(dir);
+	} catch (error: unknown) {
+		return { claims: [], unreadable: (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : [dir] };
+	}
 	const claims: SessionPathClaim[] = [];
+	const unreadable: string[] = [];
 	for (const entry of entries) {
 		if (!entry.endsWith(".json")) continue;
 		const file = join(dir, entry);
-		const owner = await readOwner(file);
-		if (owner) claims.push({ file, owner });
+		const owner = await readOwnerExactly(file);
+		if (owner === "absent") continue;
+		if (owner === "unreadable") unreadable.push(file);
+		else claims.push({ file, owner });
 	}
-	return claims;
+	return { claims, unreadable };
 }
 
 /**
@@ -319,16 +338,23 @@ async function currentInstanceId(pointerFile: string): Promise<string | undefine
 }
 
 async function readOwner(file: string): Promise<SessionPathOwner | undefined> {
+	// Absent, unreadable or half-written: no claim that anyone could act on.
+	const owner = await readOwnerExactly(file);
+	return owner === "absent" || owner === "unreadable" ? undefined : owner;
+}
+
+/** A claim file as found: its owner, `absent` (released since the directory was listed), or `unreadable` (anything else). */
+async function readOwnerExactly(file: string): Promise<SessionPathOwner | "absent" | "unreadable"> {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(await readFile(file, "utf8"));
-	} catch {
-		// Absent, unreadable or half-written: no claim that anyone could act on.
-		return undefined;
+	} catch (error: unknown) {
+		return (error as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "unreadable";
 	}
-	if (typeof parsed !== "object" || parsed === null) return undefined;
+	if (typeof parsed !== "object" || parsed === null) return "unreadable";
 	const { instanceId, pid, processStartTime, sessionPath, attached, host_socket } = parsed as Record<string, unknown>;
-	if (typeof instanceId !== "string" || typeof pid !== "number" || typeof sessionPath !== "string") return undefined;
+	if (typeof instanceId !== "string" || typeof pid !== "number" || typeof sessionPath !== "string")
+		return "unreadable";
 	return {
 		instanceId,
 		pid,

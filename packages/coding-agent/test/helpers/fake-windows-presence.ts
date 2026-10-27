@@ -1,4 +1,6 @@
+import type { ProcessIdentityResult } from "../../src/utils/process-identity.ts";
 import type {
+	NativeKernelSessionIdentity,
 	NativePresencePlacementBinding,
 	NativePresenceProbe,
 	NativePresenceResult,
@@ -34,21 +36,60 @@ export interface FakeWindowsOptions {
 	/** Runs once the lock is taken, before the probe returns. */
 	readonly onAcquire?: (request: NativePresenceProbe) => void;
 	readonly onRelease?: (receipt: PresenceReleasedReceipt) => void;
+	/** This machine's kernel session (PID 4 creation FILETIME); `null` is an unverified (denied) read. */
+	readonly kernelSession?: string | null;
+	/** Another machine's disk, copied byte for byte: the same directories and objects, none of them locked. */
+	readonly copyOf?: {
+		readonly directories: ReadonlyMap<string, FakeDirectory>;
+		readonly objects: ReadonlyMap<string, FakeObject>;
+	};
+}
+
+interface FakeObject {
+	content: Buffer;
+	volumeSerial: string;
+	fileId: string;
+}
+
+function sessionOf(value: string | null): NativeKernelSessionIdentity {
+	return value === null
+		? { status: "unverified", creationTime: null, reason: "access_denied" }
+		: { status: "verified", creationTime: value, reason: null };
 }
 
 export function fakeWindows(options: FakeWindowsOptions = {}) {
 	const calls: string[] = [];
-	const directories = new Map<string, FakeDirectory>();
-	const objects = new Map<string, { content: Buffer; volumeSerial: string; fileId: string }>();
+	const directories = new Map<string, FakeDirectory>(
+		[...(options.copyOf?.directories ?? [])].map(([path, directory]) => [path, { ...directory }]),
+	);
+	const objects = new Map<string, FakeObject>(
+		[...(options.copyOf?.objects ?? [])].map(([path, object]) => [
+			path,
+			{ ...object, content: Buffer.from(object.content) },
+		]),
+	);
 	/** Locked object path -> the presence ID its holder acquired it as. */
 	const held = new Map<string, string>();
-	/** `probeOutcome` answers every probe instead of the lock table; tests set it once their setup has run. */
-	const control: { probeOutcome?: NativePresenceResult; preActionOutcome?: FakeWindowsOptions["preActionOutcome"] } = {
+	/**
+	 * `probeOutcome` answers every probe instead of the lock table; tests set it once their setup has run.
+	 * `storeLocality` is how the store directory classifies NOW, and `kernelSession` this machine's current session.
+	 */
+	const control: {
+		probeOutcome?: NativePresenceResult;
+		preActionOutcome?: FakeWindowsOptions["preActionOutcome"];
+		storeLocality: "local" | "not_local";
+		kernelSession: NativeKernelSessionIdentity;
+		/** How one directory classifies NOW, by exact path, where it differs from `storeLocality` (another volume). */
+		directoryLocality: Map<string, "local" | "not_local">;
+	} = {
 		probeOutcome: options.probeOutcome,
 		preActionOutcome: options.preActionOutcome,
+		storeLocality: options.storeLocality ?? "local",
+		kernelSession: sessionOf(options.kernelSession === undefined ? FAKE_KERNEL_SESSION : options.kernelSession),
+		directoryLocality: new Map(),
 	};
 	let preActionCalls = 0;
-	let nextId = 1000;
+	let nextId = 1000 + objects.size + directories.size;
 	const canonical = (path: string) => (path.startsWith("\\\\?\\") ? path : `\\\\?\\${path}`);
 	const native: NativePresencePlacementBinding = {
 		__senpiSocketSecretAbi1: () => "1",
@@ -57,11 +98,12 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 		},
 		kernelSessionIdentity: () => {
 			calls.push("kernelSessionIdentity");
-			return { status: "verified", creationTime: FAKE_KERNEL_SESSION, reason: null };
+			return control.kernelSession;
 		},
 		classifyVolume: (path) => {
 			calls.push(`classifyVolume ${path}`);
-			return { locality: options.storeLocality ?? "local", reason: null, reportedFileSystem: "NTFS" };
+			const locality = control.directoryLocality.get(path) ?? control.storeLocality;
+			return { locality, reason: null, reportedFileSystem: "NTFS" };
 		},
 		localAppDataPath: () => {
 			calls.push("localAppDataPath");
@@ -113,11 +155,20 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 			const object = objects.get(request.path);
 			if (!object) return { status: "unknown", reason: "os_error", code: 2 };
 			if (held.has(request.path)) return { status: "occupied" };
+			// The bridge's admissibility (crate presence_binding.rs): rule 1 tag and identity, rule 2 recorded local and the
+			// object's own handle local now, rule 3 for a relocated object a verified, equal kernel session.
+			const directory = directories.get(request.path.slice(0, request.path.lastIndexOf("\\")));
+			const session = control.kernelSession;
 			if (
 				!object.content.equals(request.header) ||
 				object.volumeSerial !== request.volumeSerial ||
 				object.fileId !== request.fileId ||
-				!request.createdLocal
+				!request.createdLocal ||
+				directory?.locality !== "local" ||
+				(request.relocated &&
+					(session.status !== "verified" ||
+						request.kernelSession === null ||
+						request.kernelSession !== session.creationTime))
 			) {
 				return { status: "unknown", reason: "inadmissible" };
 			}
@@ -173,4 +224,35 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 	};
 	const load: PresencePlacementLoad = { status: "available", native };
 	return { native, load, calls, directories, objects, held, control };
+}
+
+/**
+ * A disk clone or restored image of `machine` booted as another kernel session (design test 23): the same directories
+ * and presence objects, byte for byte with the same tags, volume serials and file IDs, and nothing locked.
+ */
+export function cloneMachine(machine: ReturnType<typeof fakeWindows>, options: FakeWindowsOptions = {}) {
+	return fakeWindows({ ...options, copyOf: { directories: machine.directories, objects: machine.objects } });
+}
+
+/**
+ * The processes one kernel shows a PID reopen (design test 11): an explicit table, never real PID recycling. A PID not
+ * in the table is absent; a test installs a replacement under a recorded PID with its own creation FILETIME.
+ */
+export function fakeProcessTable() {
+	const table = new Map<number, ProcessIdentityResult>();
+	const observed: number[] = [];
+	return {
+		table,
+		observed,
+		live(pid: number, creationTime: string) {
+			table.set(pid, { kind: "present", identity: creationTime });
+		},
+		denied(pid: number) {
+			table.set(pid, { kind: "error", error: new Error(`OpenProcess(${pid}) failed: access denied`) });
+		},
+		observe: async (pid: number): Promise<ProcessIdentityResult> => {
+			observed.push(pid);
+			return table.get(pid) ?? { kind: "absent" };
+		},
+	};
 }

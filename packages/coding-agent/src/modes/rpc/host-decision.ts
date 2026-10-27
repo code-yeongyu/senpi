@@ -119,7 +119,23 @@ export type HostRefusalReason =
 	| "host_stopping"
 	| "host_stalled"
 	| "endpoint_occupied"
-	| "public_secret_recovery_required";
+	| "public_secret_recovery_required"
+	| "reservation_recovery_required";
+
+/**
+ * Why recovery of an earlier reservation generation refused (`reservation_recovery_required`, #4199 design 4.2a
+ * "Recovery transaction order"), and which generation it stopped at.
+ */
+export interface ReservationRecoveryRefusal {
+	readonly reason:
+		| "presence_occupied"
+		| "authority_live"
+		| "authority_unknown"
+		| "census_live"
+		| "census_unknown"
+		| "revision_changed";
+	readonly generation: string;
+}
 
 /**
  * An ensure that found an unusable host and refused to act on it. A refusal is FINAL by design:
@@ -133,6 +149,8 @@ export class HostEnsureRefusedError extends Error {
 	readonly detail: string | undefined;
 	/** The generation in the way, when its registration names one (`foreign_writer`). */
 	readonly holder: HostHolder | undefined;
+	/** The recovery refusal, for `reservation_recovery_required` only. */
+	readonly recovery: ReservationRecoveryRefusal | undefined;
 
 	constructor(
 		socket: string,
@@ -140,6 +158,7 @@ export class HostEnsureRefusedError extends Error {
 		host: HostProtocolInfo | undefined,
 		detail?: string,
 		holder?: HostHolder,
+		recovery?: ReservationRecoveryRefusal,
 	) {
 		const heldBy = holder ? ` (held by ${describeHostHolder(holder)})` : "";
 		super(
@@ -150,6 +169,7 @@ export class HostEnsureRefusedError extends Error {
 		this.reason = reason;
 		this.detail = detail;
 		this.holder = holder;
+		this.recovery = recovery;
 	}
 }
 
@@ -175,6 +195,8 @@ function refusalDetail(reason: HostRefusalReason, host: HostProtocolInfo | undef
 			return "nothing reaches its socket, but its process is alive and its own loop-lag watchdog measured a recent stall: a stalled host is still serving its sessions, so it is neither stopped nor replaced";
 		case "public_secret_recovery_required":
 			return "the endpoint's public socket secret is missing or invalid while a host that may still be serving with it is recorded; no new secret is written and nothing is stopped, so stop that host (host stop on its owner) or let it idle-exit, then ensure again";
+		case "reservation_recovery_required":
+			return "an earlier startup reservation of this endpoint was fenced, but not every process it authorized is proven to have ended; nothing was started, written or signalled, so let that process exit (it recovers at the next ensure) or resolve it on the machine that recorded it, then ensure again";
 		default:
 			return assertNever(reason);
 	}

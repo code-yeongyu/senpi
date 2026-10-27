@@ -699,7 +699,8 @@ describe("#4199 participant presence: acquire before authority, release after qu
 		result?.release();
 		expect(mocked.events.slice(-3)).toEqual(["released commit refused: store_busy", "store closed", "hold released"]);
 		const [ownerId] = [...fake.held.values()];
-		expect(mocked.events[0]).toBe(`acquire ${ownerId}`);
+		// Recovery and the sweep open and close the store before the owner acquires (S13/S14b), so the acquire is not first.
+		expect(mocked.events).toContain(`acquire ${ownerId}`);
 		const store = await openStore(storePath);
 		expect(store.reservation(supervisorLocator.current?.generation ?? "")).toMatchObject({
 			state: "serving",
