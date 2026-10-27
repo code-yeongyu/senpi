@@ -8,7 +8,7 @@ import { createHarness, type Harness } from "../harness.ts";
 // estimate undercounts was switched onto a window it does not fit.
 const reportedInput = 321_000;
 
-function seedUndercountedContext(harness: Harness): void {
+function seedUndercountedContext(harness: Harness, resultChars = 2_000): void {
 	const model = harness.getModel();
 	const cost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
 	harness.sessionManager.appendMessage({
@@ -33,7 +33,7 @@ function seedUndercountedContext(harness: Harness): void {
 			role: "toolResult",
 			toolCallId,
 			toolName: "bash",
-			content: [{ type: "text", text: `result ${step} `.padEnd(2_000, "z") }],
+			content: [{ type: "text", text: `result ${step} `.padEnd(resultChars, "z") }],
 			isError: false,
 			timestamp: Date.now(),
 		});
@@ -80,6 +80,45 @@ describe("#3447 a held switch re-checks the target with the measure it was admit
 		await harness.session.prompt("continue");
 
 		expect(harness.eventsOfType("resume_context_reduced")).toHaveLength(1);
+		expect(harness.session.model?.id).toBe("372k");
+	});
+
+	it("#given a held switch whose compaction leaves a fresh summary and a short tail #when the next send applies it #then the summary is charged at its own size and the switch lands without a slice", async () => {
+		const harness = await createHarness({
+			models: [
+				{ id: "million", contextWindow: 1_000_000, maxTokens: 32_000 },
+				{ id: "372k", contextWindow: 372_000, maxTokens: 32_000 },
+			],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", (event) => {
+						const lastReply = event.branchEntries.findLast(
+							(entry) => entry.type === "message" && entry.message.role === "assistant",
+						);
+						if (!lastReply) throw new Error("missing short-tail fixture");
+						return {
+							compaction: {
+								summary: Array.from({ length: 10_000 }, (_, index) => `fact${index}`).join(" "),
+								firstKeptEntryId: lastReply.id,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedUndercountedContext(harness, 200);
+		const target = harness.getModel("372k");
+		if (!target) throw new Error("missing held switch target fixture");
+		await harness.session.setModel(target);
+		expect(harness.eventsOfType("model_change_pending")).toHaveLength(1);
+		harness.setResponses([fauxAssistantMessage("answered on the target model")]);
+
+		await harness.session.prompt("continue");
+
+		expect(harness.eventsOfType("model_change_rejected")).toEqual([]);
+		expect(harness.eventsOfType("resume_context_reduced")).toEqual([]);
 		expect(harness.session.model?.id).toBe("372k");
 	});
 });
