@@ -17,6 +17,7 @@ import {
 	offerHostRole,
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
+	reservationStorePath,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import { PresencePlacementError, resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
 import {
@@ -179,7 +180,9 @@ describe("#4199 presence placement", () => {
 	async function openStore() {
 		const root = await mkdtemp(join(tmpdir(), "rpc4199-placement-"));
 		roots.push(root);
-		const store = await openEndpointReservationStore(join(root, "endpoint.reservation.db"));
+		// The endpoint's fixed store beside its (mocked) ensure lock: the one store a claimant's locator may name.
+		mocked.lockDir = root;
+		const store = await openEndpointReservationStore(reservationStorePath(ENDPOINT));
 		stores.push(store);
 		return store;
 	}
@@ -272,7 +275,7 @@ describe("#4199 presence placement", () => {
 	it("Placement: the reserving owner records the root's canonical path, physical identity, classification and its kernel session", async () => {
 		const fake = fakeWindows();
 		const { store, generation, reservation } = await launched(fake);
-		expect(ENDPOINT_RESERVATION_SCHEMA).toBe(3);
+		expect(ENDPOINT_RESERVATION_SCHEMA).toBe(4);
 		expect(store.reservation(generation).presence).toEqual(reservation);
 		expect(fake.calls.filter((call) => call.startsWith("classifyVolume"))).toHaveLength(1);
 	});

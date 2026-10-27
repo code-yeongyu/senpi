@@ -10,15 +10,28 @@ import {
 } from "../../../src/modes/rpc/endpoint-reservation-store.ts";
 import {
 	claimLaunchRole,
+	commitListenIntent,
+	credentialCommitment,
 	grantVerifiedParticipant,
 	LaunchReservationError,
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
+	reservationStorePath,
 	waitForClaim,
 	waitForGrant,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import { resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
 import { loadPresencePlacement } from "../../../src/modes/rpc/socket-secret-native.ts";
+import { socketSecretPath } from "../../../src/modes/rpc/socket-transport.ts";
+
+const lockRoot = vi.hoisted(() => ({ dir: "" }));
+
+// The endpoint's fixed reservation store lives beside its ensure lock (design 4.2a step 1), whose win32 name comes from
+// the pipe-address formula; on a POSIX runner the lock target is pointed at each test's own directory instead.
+vi.mock("../../../src/modes/rpc/host-ensure-lock.ts", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../../../src/modes/rpc/host-ensure-lock.ts")>()),
+	hostEnsureLockTarget: () => join(lockRoot.dir, "endpoint"),
+}));
 
 // Regression coverage for https://github.com/sisyphuslabs/omo-desktop-app/issues/4199 (design 4.2a "Wrapper-safe
 // discovery and one-time claim", tests 6 and 10 at the supervisor hop). Security contract: the launcher forwards only a
@@ -46,13 +59,14 @@ describe("supervisor launch reservation", () => {
 	async function launched() {
 		const root = await mkdtemp(join(tmpdir(), "rpc4199-launch-"));
 		roots.push(root);
-		const storePath = join(root, "endpoint.reservation.db");
+		lockRoot.dir = root;
+		const storePath = reservationStorePath(ENDPOINT);
 		const store = await openEndpointReservationStore(storePath);
 		// Off Windows the presence root is typed unavailable; placement has its own suite.
 		const native = loadPresencePlacement({ platform: "linux" });
 		const reservation = resolvePresenceRoot({ coordinationTarget: storePath, endpointKey: "endpoint", native });
 		const offer = offerSupervisorLaunch(store, ENDPOINT, OWNER, { reservation, native });
-		return { storePath, store, ...offer };
+		return { root, storePath, store, ...offer };
 	}
 
 	it("forwards only a non-secret locator that names the store, endpoint, generation and role", async () => {
@@ -170,6 +184,43 @@ describe("supervisor launch reservation", () => {
 		await claimLaunchRole(locator, SUPERVISOR);
 		const intruder = { pid: 300, processStartTime: "133000000000000003" };
 		await expect(claimLaunchRole(locator, intruder)).rejects.toMatchObject({ reason: "role_not_offered" });
+	});
+
+	// Design 4.2a step 1: the locator must resolve to the endpoint's fixed store, never a file a wrapper names.
+	it("refuses a locator whose store is not the endpoint's fixed reservation store, consuming nothing", async () => {
+		const { root, store, args, generation } = await launched();
+		const locator = locatorOf(args);
+		const elsewhere = await openEndpointReservationStore(join(root, "elsewhere.db"));
+		elsewhere.close();
+		const renamed = { ...locator, storePath: join(root, "elsewhere.db") };
+		await expect(claimLaunchRole(renamed, SUPERVISOR)).rejects.toMatchObject({ reason: "store_mismatch" });
+		await expect(waitForGrant(renamed, SUPERVISOR, { deadlineMs: 0 })).rejects.toMatchObject({
+			reason: "store_mismatch",
+		});
+		await expect(commitListenIntent(renamed, SUPERVISOR, randomBytes(32))).rejects.toMatchObject({
+			reason: "store_mismatch",
+		});
+		expect(store.roleRow({ endpoint: ENDPOINT, generation, role: "supervisor" })?.status).toBe("offered");
+	});
+
+	// Design 4.2a step 4: the granted participant commits its pre-listen intent in a transaction that revalidates the
+	// grant, so a cancellation recorded after the grant is seen before the bind.
+	it("a granted claimant commits its pre-listen intent, and not once the generation was cancelled", async () => {
+		const { store, args, generation } = await launched();
+		const locator = locatorOf(args);
+		const secret = randomBytes(32);
+		await claimLaunchRole(locator, SUPERVISOR);
+		const commitment = credentialCommitment(secret, "supervisor", socketSecretPath(ENDPOINT));
+		grantVerifiedParticipant(store, generation, "supervisor", OWNER, SUPERVISOR, commitment);
+		await expect(commitListenIntent(locator, SUPERVISOR, randomBytes(32))).rejects.toMatchObject({
+			reason: "commitment_mismatch",
+		});
+		await expect(commitListenIntent(locator, SUPERVISOR, secret)).resolves.toBeUndefined();
+		expect(store.roleRow({ endpoint: ENDPOINT, generation, role: "supervisor" })?.listenIntent).toBe(true);
+		store.cancel(generation);
+		await expect(commitListenIntent(locator, SUPERVISOR, secret)).rejects.toMatchObject({
+			reason: "generation_cancelled",
+		});
 	});
 
 	it("an argv with no locator is a direct launch, and a partial locator is refused", () => {

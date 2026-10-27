@@ -902,12 +902,23 @@ Windows public-endpoint startup uses a reservation generation for both the super
 the supervisor only after checking its claimed PID and process start time through the OS. That supervisor then offers
 the host role in the same generation and forwards a non-secret store locator through the child argv, including through
 runtime wrappers. The host consumes the locator before public CLI parsing, claims with its own process identity and
-waits for the supervisor's verified grant before listening. Both grants carry the SHA-256 commitment of the established
-public secret, not the private hop credential. Cancellation, a claim or grant deadline, an unreadable or changed process
-identity, or a mismatched commitment fails startup; a failed host admission stops the spawned child.
-The supervisor allows the host claim the same 30-second startup budget as its listener. A reservation read blocked by
-another writer reports `store_busy`; claim and grant waits retry that read within their original deadline rather than
-aborting startup. Other reservation errors still propagate.
+waits for the supervisor's verified grant before listening. Both grants carry a SHA-256 commitment of the established
+public secret bound to the granted role and the secret's path, not the private hop credential and never the bare digest.
+The locator must name the endpoint's fixed store, `<endpoint lock target>.reservation.db`; a claimant that computes a
+different path refuses it (`store_mismatch`) and reads nothing from the named file. Cancellation, a claim or grant
+deadline, an unreadable or changed process identity, or a mismatched commitment fails startup; a failed host admission
+stops the spawned child.
+Immediately before its bind, each granted participant commits its pre-listen intent: one short store transaction that
+revalidates the generation, role, grant and commitment and records the intent on the role row, so a generation cancelled
+after the grant ends the start unbound (`generation_cancelled`). A start that fails after reserving (spawn, identity,
+grant or readiness) cancels its generation and closes the store; a failing fence is reported beside the original
+diagnostic, never instead of it. The supervisor fences its generation the same way when its own startup fails after it
+offered the host role.
+Process identities are observed at most twice within five seconds, inside the existing claim or grant deadline; an
+identity still unreadable after that stays unknown and grants nothing, and a claimant that cannot read its own identity
+claims nothing. The supervisor allows the host claim, and the host its grant wait, the same 30-second startup budget as
+the listener. A reservation read blocked by another writer reports `store_busy`; claim, grant and intent waits retry
+that read within their original deadline rather than aborting startup. Other reservation errors still propagate.
 
 The reservation store is at schema 3 and refuses an older store with `schema_unsupported`. The process that reserves a
 generation resolves its presence root once and records it in the reservation. If the store's directory classifies `local`
