@@ -70,9 +70,11 @@ describe("publish-only workflow", () => {
 		const publishStep = workflow.match(/- name: Publish prepared version[\s\S]*?(?=\n      - name: Workflow summary)/)?.[0];
 		assert.ok(publishStep, "expected publish-only step");
 		assert.match(publishStep, /node scripts\/publish\.mjs/);
-		// Every non-best-effort target is required; win32-arm64 stays best-effort.
-		assert.match(publishStep, /--require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64/);
-		assert.doesNotMatch(publishStep, /win32-arm64/);
+		// Every non-best-effort PTY target is required; win32-arm64 stays best-effort for the PTY (pipe fallback).
+		assert.match(publishStep, /--require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64(?=\s)/);
+		assert.doesNotMatch(publishStep, /--require-native-prebuilds=[^\s]*win32-arm64/);
+		// The socket-secret bridge has no fallback (sisyphuslabs/omo-desktop-app#4199): both Windows targets are required.
+		assert.match(publishStep, /--require-socket-secret-bridge=win32-x64,win32-arm64/);
 		assert.doesNotMatch(publishStep, /npm run check|npm test/);
 	});
 

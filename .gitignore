@@ -17,6 +17,9 @@ target/
 # the crate dir; host copies are staged under coding-agent at publish time.
 packages/coding-agent/native/prebuilds/
 crates/senpi-grep/*.node
+# The Windows socket-secret bridge is built by native-prebuilds.yml and staged at publish time only.
+packages/coding-agent/native/socket-secret/prebuilds/
+crates/senpi-socket-secret/*.node
 
 # Rust workspace
 target/
