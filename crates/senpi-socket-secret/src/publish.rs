@@ -153,9 +153,9 @@ mod windows_publish {
             .and_then(|()| rename_no_replace(&writer, final_path));
         let staging_left_behind = match result {
             Ok(PublishOutcome::Published) => {
-                // senpi#4362: close the writer (GENERIC_WRITE, share read only) the moment the rename
-                // lands, so a reader of the final name that does not grant FILE_SHARE_WRITE is refused
-                // only between the rename call and this close, never afterwards.
+                // senpi#4362: close the writer (GENERIC_WRITE | DELETE, share read only) the moment the
+                // rename lands, so a reader of the final name that does not grant both FILE_SHARE_WRITE
+                // and FILE_SHARE_DELETE is refused only between the rename call and this close.
                 drop(writer);
                 published();
                 None
@@ -284,8 +284,8 @@ mod windows_publish {
         }
 
         /// senpi#4362: once the rename publishes the secret, a reader of the final name that does not
-        /// grant FILE_SHARE_WRITE (any non-Node, non-std reader) must not hit a sharing violation
-        /// from the staging handle.
+        /// grant both FILE_SHARE_WRITE and FILE_SHARE_DELETE (libuv and Rust std grant both) must not
+        /// hit a sharing violation from the staging handle.
         #[test]
         fn a_reader_granting_only_share_read_opens_the_secret_right_after_the_rename() {
             use windows_sys::Win32::Foundation::GENERIC_READ;
