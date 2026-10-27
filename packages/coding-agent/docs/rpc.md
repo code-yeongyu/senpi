@@ -920,6 +920,28 @@ claims nothing. The supervisor allows the host claim, and the host its grant wai
 the listener. A reservation read blocked by another writer reports `store_busy`; claim, grant and intent waits retry
 that read within their original deadline rather than aborting startup. Other reservation errors still propagate.
 
+The reservation store is at schema 3 and refuses an older store with `schema_unsupported`. The process that reserves a
+generation resolves its presence root once and records it in the reservation. If the store's directory classifies `local`
+from its opened handle, the root is the private sibling directory `<endpoint lock target>.presence`. Otherwise the root is
+`senpi\rpc-presence\<endpoint key>` under `FOLDERID_LocalAppData`, and that directory must classify `local` too.
+The record holds the root's canonical path, its volume serial and file ID, the placement (`beside_store` or `relocated`),
+the classification and file system, and the reserving process's kernel-session identity (`unverified` when it cannot be
+read). Without a local root the reservation records `presence_unavailable` with a reason (`unsupported_platform`,
+`native_unavailable`, `native_abi_mismatch`, `local_app_data_unavailable`, `root_unavailable` or `root_not_local`), and
+startup goes on.
+
+Every offer creates its role's presence object in the recorded root and flushes it before the offer commits, so before
+the role's process is spawned. The object is `<root>\<presence id>.presence`, created new with an owner-only DACL. Its
+whole content is an immutable header with a random tag, the schema and a creation time. The role row records the
+object's path, header, volume serial and file ID, classification, the creating issuer's kernel session and a host label.
+The store refuses an offer whose object is not inside the recorded root with `presence_not_predeclared`. The supervisor
+and every claimant open the recorded path and never resolve a root again. A directory there that is not the recorded
+physical directory, or that no longer classifies `local`, fails with `presence-placement-rejected`. The reasons are
+`presence_root_mismatch`, `presence_root_not_local`, `presence_root_unreadable` and `presence_root_unverifiable` (no
+usable Windows bridge). Creating the object can also fail with `presence_object_exists`, `presence_object_failed` or
+`presence_object_not_local`. A refused claim consumes no nonce. A presence object is never renamed, truncated or
+replaced.
+
 ### Generation handoff (`handoffHost`, `probeHost`, `stopHost`)
 
 An engine upgrade must not end the work the running daemon is doing: one machine-wide host holds every

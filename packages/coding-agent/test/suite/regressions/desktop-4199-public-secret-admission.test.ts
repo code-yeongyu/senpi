@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { openEndpointReservationStore } from "../../../src/modes/rpc/endpoint-reservation-store.ts";
+import {
+	openEndpointReservationStore,
+	type PresenceObjectRecord,
+	type ReservationPresence,
+} from "../../../src/modes/rpc/endpoint-reservation-store.ts";
 import { HostEnsureRefusedError } from "../../../src/modes/rpc/host-decision.ts";
 import { createHostDaemonPaths, ensureHost, hostEnsureLockTarget } from "../../../src/modes/rpc/host-ensure.ts";
 import { reservationFile } from "../../../src/modes/rpc/host-reservations.ts";
@@ -103,6 +107,12 @@ async function reservationStore(socket: string) {
 
 const identityKey = (identity: Identity) => JSON.stringify(identity);
 const COMMITMENT = createHash("sha256").update("established").digest();
+/** A reservation without a presence root: the census reads identities, and this suite runs where presence is unsupported. */
+const NO_PRESENCE: ReservationPresence = {
+	root: { status: "presence_unavailable", reason: "unsupported_platform", detail: null },
+	ownerKernelSession: { status: "unverified", reason: "unsupported_platform" },
+};
+const NO_OBJECT: PresenceObjectRecord = { status: "presence_unavailable" };
 
 async function liveOwner(): Promise<ChildProcess> {
 	const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], { stdio: "ignore" });
@@ -237,8 +247,8 @@ describe.skipIf(process.platform === "win32")("public secret admission before mu
 			const { agentDir, socket, secretPath } = await endpoint();
 			const owner = await identity();
 			const store = await reservationStore(socket);
-			const generation = store.reserve(socket, identityKey(owner), ["supervisor", "host"]);
-			store.offer(generation, "supervisor", identityKey(owner));
+			const generation = store.reserve(socket, identityKey(owner), ["supervisor", "host"], NO_PRESENCE);
+			store.offer(generation, "supervisor", identityKey(owner), NO_OBJECT);
 			store.close();
 
 			const failure = await ensureOnWindows(agentDir, socket);
@@ -274,8 +284,8 @@ describe.skipIf(process.platform === "win32")("public secret admission before mu
 	it("refuses typed while the reservation store is held by another writer", async () => {
 		const { agentDir, socket, secretPath } = await endpoint();
 		const store = await reservationStore(socket);
-		const generation = store.reserve(socket, identityKey(await goneIdentity()), ["supervisor", "host"]);
-		store.offer(generation, "supervisor", identityKey({ pid: 1, processStartTime: null }));
+		const generation = store.reserve(socket, identityKey(await goneIdentity()), ["supervisor", "host"], NO_PRESENCE);
+		store.offer(generation, "supervisor", identityKey({ pid: 1, processStartTime: null }), NO_OBJECT);
 		store.close();
 		const writer = new DatabaseSync(`${hostEnsureLockTarget(socket)}.reservation.db`);
 		try {
@@ -309,12 +319,12 @@ describe.skipIf(process.platform === "win32")("public secret admission before mu
 		await writeClaim(agentDir, socket, instanceId, host);
 		const store = await reservationStore(socket);
 		const launcher = await goneIdentity();
-		const generation = store.reserve(socket, identityKey(launcher), ["supervisor", "host"]);
+		const generation = store.reserve(socket, identityKey(launcher), ["supervisor", "host"], NO_PRESENCE);
 		for (const [role, issuer, participant] of [
 			["supervisor", launcher, supervisor],
 			["host", supervisor, host],
 		] as const) {
-			store.offer(generation, role, identityKey(issuer));
+			store.offer(generation, role, identityKey(issuer), NO_OBJECT);
 			const locator = { endpoint: socket, generation, role };
 			store.claim(locator, store.readOffer(locator), identityKey(participant));
 			store.grant(generation, role, identityKey(issuer), identityKey(participant), COMMITMENT);

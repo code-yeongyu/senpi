@@ -11,12 +11,17 @@
  * Schema 3 (design 4.2a step 4): a granted role records its participant's pre-listen intent, committed in a short
  * transaction that revalidates the generation, role, grant and commitment, so a cancellation fenced after the grant is
  * seen before the bind and the intent stays on record across it for the recovery census.
+ *
+ * Schema 4 (design 4.2a "Lifetime object and binding", "Placement."): a reservation records the presence root its
+ * owner resolved once (canonical path, physical identity, classification) and the owner's kernel-session identity, and
+ * every offered role records the presence object predeclared for it in that root. An older record has no presence
+ * binding and is refused, never read as protected.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 
-export const ENDPOINT_RESERVATION_SCHEMA = 3;
+export const ENDPOINT_RESERVATION_SCHEMA = 4;
 
 export type ReservationRole = "supervisor" | "host";
 export type ReservationState = "pending" | "cancelling" | "serving";
@@ -44,7 +49,81 @@ export type ReservationRejection =
 	| "commitment_invalid"
 	| "commitment_mismatch"
 	| "roles_not_granted"
+	| "presence_not_predeclared"
 	| "row_malformed";
+
+/** Why a reservation has no local presence root. Startup is never refused for that alone. */
+export type PresenceUnavailableReason =
+	| "unsupported_platform"
+	| "native_unavailable"
+	| "native_abi_mismatch"
+	| "local_app_data_unavailable"
+	| "root_unavailable"
+	| "root_not_local";
+
+const PRESENCE_UNAVAILABLE_REASONS: ReadonlySet<string> = new Set<PresenceUnavailableReason>([
+	"unsupported_platform",
+	"native_unavailable",
+	"native_abi_mismatch",
+	"local_app_data_unavailable",
+	"root_unavailable",
+	"root_not_local",
+]);
+
+/** The presence root the reserving owner resolved once. `placed` roots classified `local` from their opened handle. */
+export type PresenceRootRecord =
+	| {
+			readonly status: "placed";
+			/** Beside a store that classified local, or relocated to the per-user root of a not_local store. */
+			readonly placement: "beside_store" | "relocated";
+			/** The canonical path of the opened directory; issuers, participants and probers open exactly this. */
+			readonly path: string;
+			readonly volumeSerial: string;
+			readonly fileId: string;
+			readonly classification: "local";
+			readonly fileSystem: string | null;
+	  }
+	| {
+			readonly status: "presence_unavailable";
+			readonly reason: PresenceUnavailableReason;
+			/** The failed native step and its code, or the not_local reason, for diagnostics only. */
+			readonly detail: string | null;
+	  };
+
+/** A Windows kernel-session identity (System process creation FILETIME); `unverified` equals nothing. */
+export type KernelSessionRecord =
+	| { readonly status: "verified"; readonly value: string }
+	| { readonly status: "unverified"; readonly reason: string };
+
+export interface ReservationPresence {
+	readonly root: PresenceRootRecord;
+	readonly ownerKernelSession: KernelSessionRecord;
+}
+
+/** The presence object an offer predeclared for its role, created and flushed before the offer committed. */
+export type PresenceObjectRecord =
+	| {
+			readonly status: "predeclared";
+			readonly presenceId: string;
+			/** `<root path>\\<presenceId>.presence`. */
+			readonly path: string;
+			/** The object's whole immutable content (random tag, schema, creation time), hex. */
+			readonly header: string;
+			readonly volumeSerial: string;
+			readonly fileId: string;
+			readonly classification: "local";
+			readonly fileSystem: string | null;
+			/** The creating issuer's kernel session. */
+			readonly kernelSession: KernelSessionRecord;
+			/** For display only. */
+			readonly hostLabel: string;
+	  }
+	| { readonly status: "presence_unavailable" };
+
+/** The only path a predeclared object may have under a placed root. */
+export function presenceObjectPath(root: string, presenceId: string): string {
+	return `${root}\\${presenceId}.presence`;
+}
 
 /** A typed refusal; `reason` is machine-readable and the message never carries a nonce. */
 export class EndpointReservationError extends Error {
@@ -71,6 +150,7 @@ export interface ReservationRow {
 	readonly state: ReservationState;
 	readonly revision: number;
 	readonly owner: string;
+	readonly presence: ReservationPresence;
 }
 
 export interface RoleRow {
@@ -80,6 +160,7 @@ export interface RoleRow {
 	readonly participant: string | null;
 	/** Whether the granted participant committed its pre-listen intent (design 4.2a step 4). */
 	readonly listenIntent: boolean;
+	readonly presence: PresenceObjectRecord;
 }
 
 /** One reservation in a state this schema writes, with every recorded authority entry, as an admission census reads it. */
@@ -172,7 +253,17 @@ CREATE TABLE IF NOT EXISTS reservations (
 	state TEXT NOT NULL,
 	revision INTEGER NOT NULL,
 	owner TEXT NOT NULL,
-	expected_roles TEXT NOT NULL
+	expected_roles TEXT NOT NULL,
+	presence_placement TEXT NOT NULL,
+	presence_unavailable_reason TEXT,
+	presence_unavailable_detail TEXT,
+	presence_root_path TEXT,
+	presence_root_volume_serial TEXT,
+	presence_root_file_id TEXT,
+	presence_root_classification TEXT,
+	presence_root_file_system TEXT,
+	owner_kernel_session TEXT,
+	owner_kernel_session_reason TEXT
 );
 CREATE TABLE IF NOT EXISTS roles (
 	generation TEXT NOT NULL REFERENCES reservations(generation),
@@ -183,8 +274,36 @@ CREATE TABLE IF NOT EXISTS roles (
 	participant TEXT,
 	commitment TEXT,
 	listen_intent INTEGER NOT NULL DEFAULT 0,
+	presence_status TEXT NOT NULL,
+	presence_id TEXT,
+	presence_path TEXT,
+	presence_header TEXT,
+	presence_volume_serial TEXT,
+	presence_file_id TEXT,
+	presence_classification TEXT,
+	presence_file_system TEXT,
+	presence_kernel_session TEXT,
+	presence_kernel_session_reason TEXT,
+	presence_host_label TEXT,
 	PRIMARY KEY (generation, role)
 );`;
+
+interface ReservationColumns {
+	generation: string;
+	endpoint: string;
+	state: ReservationState;
+	revision: number | bigint;
+	owner: string;
+	presence_placement: string;
+	presence_unavailable_reason: string | null;
+	presence_unavailable_detail: string | null;
+	presence_root_path: string | null;
+	presence_root_volume_serial: string | null;
+	presence_root_file_id: string | null;
+	presence_root_file_system: string | null;
+	owner_kernel_session: string | null;
+	owner_kernel_session_reason: string | null;
+}
 
 interface RoleColumns {
 	status: RoleStatus;
@@ -193,6 +312,112 @@ interface RoleColumns {
 	participant: string | null;
 	commitment: string | null;
 	listen_intent: number | bigint;
+	presence_status: string;
+	presence_id: string | null;
+	presence_path: string | null;
+	presence_header: string | null;
+	presence_volume_serial: string | null;
+	presence_file_id: string | null;
+	presence_file_system: string | null;
+	presence_kernel_session: string | null;
+	presence_kernel_session_reason: string | null;
+	presence_host_label: string | null;
+}
+
+function kernelSessionColumns(session: KernelSessionRecord): [string | null, string | null] {
+	return session.status === "verified" ? [session.value, null] : [null, session.reason];
+}
+
+function kernelSessionOf(value: string | null, reason: string | null): KernelSessionRecord {
+	return value !== null ? { status: "verified", value } : { status: "unverified", reason: reason ?? "unrecorded" };
+}
+
+/**
+ * A row that names a placed root or a predeclared object but lacks one of its columns, or names a placement or reason
+ * this schema does not write, is unreadable evidence (design 4.2a Revision 6, "Missing/replaced/unverifiable objects
+ * are unknown"). It is never read as a row that recorded no presence: the read refuses typed, and nothing repairs it.
+ */
+function malformed(generation: string, what: string): EndpointReservationError {
+	return new EndpointReservationError("row_malformed", `${what} in ${generation}`);
+}
+
+function reservationPresenceOf(row: ReservationColumns): ReservationPresence {
+	const ownerKernelSession = kernelSessionOf(row.owner_kernel_session, row.owner_kernel_session_reason);
+	if (row.presence_placement === "beside_store" || row.presence_placement === "relocated") {
+		if (
+			row.presence_root_path === null ||
+			row.presence_root_volume_serial === null ||
+			row.presence_root_file_id === null
+		) {
+			throw malformed(row.generation, `${row.presence_placement} root missing a column`);
+		}
+		return {
+			root: {
+				status: "placed",
+				placement: row.presence_placement,
+				path: row.presence_root_path,
+				volumeSerial: row.presence_root_volume_serial,
+				fileId: row.presence_root_file_id,
+				classification: "local",
+				fileSystem: row.presence_root_file_system,
+			},
+			ownerKernelSession,
+		};
+	}
+	if (row.presence_placement !== "presence_unavailable") {
+		throw malformed(row.generation, `placement ${JSON.stringify(row.presence_placement)}`);
+	}
+	const reason = row.presence_unavailable_reason;
+	if (reason === null || !PRESENCE_UNAVAILABLE_REASONS.has(reason)) {
+		throw malformed(row.generation, `unavailable reason ${JSON.stringify(reason)}`);
+	}
+	return {
+		root: {
+			status: "presence_unavailable",
+			reason: reason as PresenceUnavailableReason,
+			detail: row.presence_unavailable_detail,
+		},
+		ownerKernelSession,
+	};
+}
+
+function presenceObjectOf(row: RoleColumns, generation: string): PresenceObjectRecord {
+	if (row.presence_status === "presence_unavailable") return { status: "presence_unavailable" };
+	if (row.presence_status !== "predeclared") {
+		throw malformed(generation, `presence status ${JSON.stringify(row.presence_status)}`);
+	}
+	if (
+		row.presence_id === null ||
+		row.presence_path === null ||
+		row.presence_header === null ||
+		row.presence_volume_serial === null ||
+		row.presence_file_id === null
+	) {
+		throw malformed(generation, "predeclared object missing a column");
+	}
+	return {
+		status: "predeclared",
+		presenceId: row.presence_id,
+		path: row.presence_path,
+		header: row.presence_header,
+		volumeSerial: row.presence_volume_serial,
+		fileId: row.presence_file_id,
+		classification: "local",
+		fileSystem: row.presence_file_system,
+		kernelSession: kernelSessionOf(row.presence_kernel_session, row.presence_kernel_session_reason),
+		hostLabel: row.presence_host_label ?? "",
+	};
+}
+
+/** A placed root takes only an object predeclared inside it; a root without presence takes none. */
+function presenceMatchesRoot(root: PresenceRootRecord, object: PresenceObjectRecord): boolean {
+	if (root.status !== "placed") return object.status === "presence_unavailable";
+	return (
+		object.status === "predeclared" &&
+		/^[0-9a-f]{32}$/.test(object.presenceId) &&
+		object.path === presenceObjectPath(root.path, object.presenceId) &&
+		object.volumeSerial === root.volumeSerial
+	);
 }
 
 export async function openEndpointReservationStore(path: string): Promise<EndpointReservationStore> {
@@ -242,25 +467,54 @@ export class EndpointReservationStore {
 	 * child; a standalone public host, reserving itself with no child hop, expects (and self-offers) only "host". Unknown
 	 * or absent roles are refused. The caller holds the endpoint lock.
 	 */
-	reserve(endpoint: string, owner: string, expectedRoles: readonly ReservationRole[]): string {
+	reserve(
+		endpoint: string,
+		owner: string,
+		expectedRoles: readonly ReservationRole[],
+		presence: ReservationPresence,
+	): string {
 		const roles = [...new Set(expectedRoles)].sort();
 		if (roles.length === 0) throw new EndpointReservationError("role_not_expected", "a reservation expects no role");
 		const unknown = roles.filter((role) => role !== "supervisor" && role !== "host");
 		if (unknown.length > 0)
 			throw new EndpointReservationError("role_not_expected", `unknown role ${unknown.join(",")}`);
 		const generation = randomBytes(16).toString("hex");
+		const { root } = presence;
+		const placed = root.status === "placed" ? root : undefined;
+		const unavailable = root.status === "presence_unavailable" ? root : undefined;
 		this.#transaction(() => {
 			this.#database
 				.prepare(
-					"INSERT INTO reservations (generation, endpoint, state, revision, owner, expected_roles) VALUES (?, ?, 'pending', 1, ?, ?)",
+					`INSERT INTO reservations (generation, endpoint, state, revision, owner, expected_roles, presence_placement,
+					presence_unavailable_reason, presence_unavailable_detail, presence_root_path, presence_root_volume_serial,
+					presence_root_file_id, presence_root_classification, presence_root_file_system, owner_kernel_session,
+					owner_kernel_session_reason) VALUES (?, ?, 'pending', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				)
-				.run(generation, endpoint, owner, roles.join(","));
+				.run(
+					generation,
+					endpoint,
+					owner,
+					roles.join(","),
+					placed?.placement ?? "presence_unavailable",
+					unavailable?.reason ?? null,
+					unavailable?.detail ?? null,
+					placed?.path ?? null,
+					placed?.volumeSerial ?? null,
+					placed?.fileId ?? null,
+					placed?.classification ?? null,
+					placed?.fileSystem ?? null,
+					...kernelSessionColumns(presence.ownerKernelSession),
+				);
 		});
 		return generation;
 	}
 
-	/** Offers `role` with a fresh nonce, issued by `issuer`, before the launcher spawns it. */
-	offer(generation: string, role: ReservationRole, issuer: string): void {
+	/**
+	 * Offers `role` with a fresh nonce, issued by `issuer`, before the launcher spawns it. `presence` is the role's object,
+	 * already created and flushed in the reservation's recorded root (or `presence_unavailable` when the reservation has
+	 * no local root); anything else is refused.
+	 */
+	offer(generation: string, role: ReservationRole, issuer: string, presence: PresenceObjectRecord): void {
 		this.#transaction(() => {
 			this.#pending(generation);
 			if (!this.#expectedRoles(generation)?.includes(role)) {
@@ -269,9 +523,35 @@ export class EndpointReservationStore {
 			if (this.#role(generation, role)) {
 				throw new EndpointReservationError("role_already_offered", `${role} in ${generation}`);
 			}
+			if (!presenceMatchesRoot(this.#reservation(generation).presence.root, presence)) {
+				throw new EndpointReservationError("presence_not_predeclared", `${role} in ${generation}`);
+			}
+			const object = presence.status === "predeclared" ? presence : undefined;
+			const [session, sessionReason] = object ? kernelSessionColumns(object.kernelSession) : [null, null];
 			this.#database
-				.prepare("INSERT INTO roles (generation, role, nonce, issuer, status) VALUES (?, ?, ?, ?, 'offered')")
-				.run(generation, role, randomBytes(32).toString("hex"), issuer);
+				.prepare(
+					`INSERT INTO roles (generation, role, nonce, issuer, status, presence_status, presence_id, presence_path,
+					presence_header, presence_volume_serial, presence_file_id, presence_classification, presence_file_system,
+					presence_kernel_session, presence_kernel_session_reason, presence_host_label)
+					VALUES (?, ?, ?, ?, 'offered', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.run(
+					generation,
+					role,
+					randomBytes(32).toString("hex"),
+					issuer,
+					presence.status,
+					object?.presenceId ?? null,
+					object?.path ?? null,
+					object?.header ?? null,
+					object?.volumeSerial ?? null,
+					object?.fileId ?? null,
+					object?.classification ?? null,
+					object?.fileSystem ?? null,
+					session,
+					sessionReason,
+					object?.hostLabel ?? null,
+				);
 			this.#bump(generation);
 		});
 	}
@@ -447,6 +727,7 @@ export class EndpointReservationStore {
 				issuer: row.issuer,
 				participant: row.participant,
 				listenIntent: Number(row.listen_intent) === 1,
+				presence: presenceObjectOf(row, locator.generation),
 			}
 		);
 	}
@@ -540,10 +821,17 @@ export class EndpointReservationStore {
 	#reservation(generation: string): ReservationRow {
 		return this.#read(() => {
 			const row = this.#database.prepare("SELECT * FROM reservations WHERE generation = ?").get(generation) as
-				| ReservationRow
+				| ReservationColumns
 				| undefined;
 			if (!row) throw new EndpointReservationError("generation_unknown", generation);
-			return { ...row, revision: Number(row.revision) };
+			return {
+				endpoint: row.endpoint,
+				generation: row.generation,
+				state: row.state,
+				revision: Number(row.revision),
+				owner: row.owner,
+				presence: reservationPresenceOf(row),
+			};
 		});
 	}
 

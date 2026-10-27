@@ -365,6 +365,7 @@ async function offerReservedHost(
 		await import("./host-launch-reservation.ts");
 	const store = await openEndpointReservationStore(reservation.storePath);
 	try {
+		// The host's presence object is predeclared in the root the reserving owner recorded, before the spawn.
 		offerHostRole(store, reservation.generation, issuer);
 	} finally {
 		store.close();

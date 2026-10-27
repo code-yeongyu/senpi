@@ -17,6 +17,8 @@ import {
 	reservationStorePath,
 	waitForClaim,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
+import { resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
+import { loadPresencePlacement } from "../../../src/modes/rpc/socket-secret-native.ts";
 import { socketSecretPath } from "../../../src/modes/rpc/socket-transport.ts";
 import { admitReservedHostArgs } from "../../../src/modes/rpc/supervisor-route.ts";
 
@@ -59,7 +61,10 @@ describe("supervisor admission through a reservation", () => {
 		roots.push(root);
 		lockRoot.dir = root;
 		const store = await openEndpointReservationStore(reservationStorePath(ENDPOINT));
-		const { generation, args } = offerSupervisorLaunch(store, ENDPOINT, OWNER);
+		// Off Windows the presence root is typed unavailable; placement has its own suite.
+		const native = loadPresencePlacement({ platform: "linux" });
+		const reservation = resolvePresenceRoot({ coordinationTarget: store.path, endpointKey: "endpoint", native });
+		const { generation, args } = offerSupervisorLaunch(store, ENDPOINT, OWNER, { reservation, native });
 		return { store, generation, args, locator: locatorOf(args) };
 	}
 

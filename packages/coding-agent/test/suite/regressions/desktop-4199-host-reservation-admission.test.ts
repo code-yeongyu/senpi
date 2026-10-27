@@ -51,8 +51,12 @@ describe.skipIf(process.platform === "win32")("reserved host admission before li
 		const store = await openEndpointReservationStore(storePath);
 		stores.push(store);
 		const issuer = { pid: process.pid, processStartTime: (await readProcessStartTime(process.pid)) ?? null };
-		const generation = store.reserve(endpoint, JSON.stringify(issuer), ["supervisor", "host"]);
-		store.offer(generation, role, JSON.stringify(issuer));
+		// POSIX has no presence placement (#4199 Revision 7 scope): the row records presence_unavailable, as startHost's would.
+		const generation = store.reserve(endpoint, JSON.stringify(issuer), ["supervisor", "host"], {
+			root: { status: "presence_unavailable", reason: "unsupported_platform", detail: null },
+			ownerKernelSession: { status: "unverified", reason: "unsupported_platform" },
+		});
+		store.offer(generation, role, JSON.stringify(issuer), { status: "presence_unavailable" });
 		const locator = { storePath: store.path, endpoint, generation, role };
 		const args = [
 			LOCATOR_FLAGS.storePath,
