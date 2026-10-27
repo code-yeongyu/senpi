@@ -383,8 +383,7 @@ async function offerReservedHost(
 		offerHostRole,
 		ownLaunchRoute,
 		selectLaunchRoute,
-	} =
-		await import("./host-launch-reservation.ts");
+	} = await import("./host-launch-reservation.ts");
 	const store = await openEndpointReservationStore(reservation.storePath);
 	try {
 		// An unreadable expected set is not a legacy classification: the offer below refuses it.
