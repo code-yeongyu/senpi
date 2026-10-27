@@ -51,8 +51,10 @@ export interface CompactionSummaryMessage {
 	tokensBefore: number;
 	details?: unknown;
 	timestamp: number;
-	/** The non-Latin language of the user's own messages before the compaction (omo#11527). */
+	/** The reply language the user's messages before the compaction established (omo#11527). */
 	userLanguage?: string;
+	/** Whether the user explicitly asked for userLanguage, rather than writing in it. */
+	userLanguageRequested?: boolean;
 }
 
 declare module "../types.ts" {

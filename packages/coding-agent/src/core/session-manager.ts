@@ -118,7 +118,7 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
-import { latestReplyLanguage } from "./user-language.ts";
+import { replyLanguageOf } from "./user-language.ts";
 
 /**
  * Whether `value` is plain JSON: null, booleans, finite numbers, strings, arrays of those, and objects
@@ -862,8 +862,8 @@ function contextEntriesOfPath(path: SessionEntry[]): SessionEntry[] {
 }
 
 /**
- * The summary replaces the user's own turns, so it carries the language they were written in,
- * read from the user messages before the compaction (omo#11527).
+ * The summary replaces the user's own turns, so it carries the reply language they established:
+ * the one the user asked for, else the one they wrote in (omo#11527).
  */
 function annotateCompactionUserLanguage(head: ProjectedSessionEntry | undefined, path: SessionEntry[]): void {
 	if (head?.sourceEntry.type !== "compaction") return;
@@ -871,10 +871,12 @@ function annotateCompactionUserLanguage(head: ProjectedSessionEntry | undefined,
 	const userMessages = path
 		.slice(0, Math.max(end, 0))
 		.flatMap((entry) => (entry.type === "message" && entry.message.role === "user" ? [entry.message] : []));
-	const userLanguage = latestReplyLanguage(userMessages);
-	if (userLanguage === undefined) return;
+	const replyLanguage = replyLanguageOf(userMessages);
+	if (replyLanguage === undefined) return;
 	for (const message of head.messages) {
-		if (message.role === "compactionSummary") message.userLanguage = userLanguage;
+		if (message.role !== "compactionSummary") continue;
+		message.userLanguage = replyLanguage.language;
+		message.userLanguageRequested = replyLanguage.requested;
 	}
 }
 

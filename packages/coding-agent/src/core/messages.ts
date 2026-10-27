@@ -99,8 +99,10 @@ export interface CompactionSummaryMessage {
 	tokensBefore: number;
 	details?: unknown;
 	timestamp: number;
-	/** The non-Latin language of the user's own messages before the compaction (omo#11527). */
+	/** The reply language the user's messages before the compaction established (omo#11527). */
 	userLanguage?: string;
+	/** Whether the user explicitly asked for userLanguage, rather than writing in it. */
+	userLanguageRequested?: boolean;
 }
 
 export interface ConfigurationUpdateMessage {
@@ -197,7 +199,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 	// Continuations are append-only here too: the transport array must extend the
 	// previous request verbatim to keep the provider's cache prefix valid.
 	const environmentMessages = new Set<Message>();
-	// omo#11527: a reply-language note follows long stretches of tool output and summaries.
+	// omo#11527: a reply-language note follows long stretches of tool output.
 	const converted = insertReplyLanguageNotes(messages)
 		.map((m): Message | undefined => {
 			switch (m.role) {
@@ -241,7 +243,9 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 									COMPACTION_SUMMARY_PREFIX +
 									m.summary +
 									COMPACTION_SUMMARY_SUFFIX +
-									(m.userLanguage === undefined ? "" : `\n\n${replyLanguageNote(m.userLanguage)}`),
+									(m.userLanguage === undefined
+										? ""
+										: `\n\n${replyLanguageNote({ language: m.userLanguage, requested: m.userLanguageRequested === true })}`),
 							},
 						],
 						timestamp: m.timestamp,
