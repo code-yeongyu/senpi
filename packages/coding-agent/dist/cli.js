@@ -18,6 +18,7 @@ import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-
 import { enableStartupCompileCache } from "./compile-cache.js";
 import { APP_NAME, DISPLAY_VERSION, findNodePackageDir, getAgentDir, getInstallPackageDir, isBundledNode, } from "./config.js";
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.js";
+import { launchCapabilityProbeAnswer } from "./modes/rpc/launch-capabilities.js";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.js";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
 /** Only a presenter-enabled launch may carry its reserved private channel through CLI re-execution. */
@@ -157,6 +158,11 @@ async function spawnFullCli() {
             resolve(code ?? 1);
         });
     });
+}
+// A launcher's side-effect-free launch-capability probe (#4199) carries `--version` too, so it is answered first.
+const launchCapabilityAnswer = isRootCommand(args) ? launchCapabilityProbeAnswer(args) : undefined;
+if (launchCapabilityAnswer !== undefined) {
+    await printThenExit(() => console.log(launchCapabilityAnswer));
 }
 if (isRootCommand(args) && (args.includes("--version") || args.includes("-v"))) {
     await printThenExit(() => console.log(DISPLAY_VERSION));

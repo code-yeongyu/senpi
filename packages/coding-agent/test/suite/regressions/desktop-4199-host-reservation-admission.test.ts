@@ -250,19 +250,45 @@ describe.skipIf(process.platform === "win32")("reserved host admission before li
 		return observed;
 	}
 
+	// This build reports no launch capability off Windows, so the supervisor would hand its default host no locator
+	// (design section 5): the claiming host is the real CLI behind a wrapper that answers the probe as a Windows build.
+	const capableHostArgs = () => [
+		"--child-command",
+		process.execPath,
+		"--child-args",
+		JSON.stringify([
+			resolve("test/fixtures/launch-capability-target.mjs"),
+			"capable-wrapper",
+			"--import",
+			"tsx",
+			resolve("src/cli.ts"),
+			"--mode",
+			"rpc",
+			"--multi-session",
+			"--no-extensions",
+		]),
+	];
+
 	it.each([true, false])(
 		"the supervisor grants its host or stops an unclaimed child (claims: %s)",
 		async (claims) => {
 			const context = await offered("supervisor");
+			// The unclaimed child reports both launch capabilities and then never participates: design section 5 makes that a
+			// launch failure, never permission to retry unsafely.
 			const childArgs = claims
-				? []
+				? capableHostArgs()
 				: [
 						"--child-command",
 						process.execPath,
 						"--child-args",
 						JSON.stringify([
 							"-e",
-							'console.error("unclaimed-host-pid=" + process.pid); setInterval(() => {}, 1000)',
+							[
+								'if (process.argv.includes("--launch-capabilities")) {',
+								'console.log(\'{"launch_capabilities":["socket_secret_reservation_v1","participant_lifetime_locks_v1"]}\');',
+								"process.exit(0); }",
+								'console.error("unclaimed-host-pid=" + process.pid); setInterval(() => {}, 1000)',
+							].join(" "),
 							"--",
 						]),
 					];
@@ -308,7 +334,7 @@ describe.skipIf(process.platform === "win32")("reserved host admission before li
 	// internal readiness probe, so the cancel precedes that intent and the supervisor's start fails unbound.
 	it("a cancellation after the host grant leaves the public endpoint unbound", async () => {
 		const context = await offered("supervisor");
-		const supervisor = spawnSupervisor(context, []);
+		const supervisor = spawnSupervisor(context, capableHostArgs());
 		await grantSupervisor(context, supervisor);
 		const hostLocator = { ...context.locator, role: "host" as const };
 		await Promise.race([

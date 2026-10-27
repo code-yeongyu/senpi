@@ -122,6 +122,7 @@ import { runPrintMode } from "./modes/print-mode.ts";
 import { startHostChildReaper } from "./modes/rpc/child-reaper.ts";
 import { AUTO_TITLE_SESSIONS_CAPABILITY, parseClientCapabilities } from "./modes/rpc/custom-capability.ts";
 import type { PreparableRuntimeFactory, PrepareRuntimeOptions } from "./modes/rpc/host-warm.ts";
+import { launchCapabilityProbeAnswer } from "./modes/rpc/launch-capabilities.ts";
 import { admitReservedHostArgs, dispatchInternalSupervisor } from "./modes/rpc/supervisor-route.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { readPipedStdin } from "./utils/piped-stdin.ts";
@@ -1119,6 +1120,12 @@ export function createCliRuntimeFactory(
 }
 
 export async function main(args: string[], options?: MainOptions) {
+	// The compiled binary and a direct cli-main run reach the launch-capability probe (#4199) here, before any work.
+	const launchCapabilityAnswer = launchCapabilityProbeAnswer(args);
+	if (launchCapabilityAnswer !== undefined) {
+		await printThenExit(() => console.log(launchCapabilityAnswer), 0);
+		return;
+	}
 	resetTimings();
 	// The pre-main phase - runtime boot, cli.js, and this module's static import graph - is already
 	// over when the first statement runs, so it is read from the process clock rather than measured.

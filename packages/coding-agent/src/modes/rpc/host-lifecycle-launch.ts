@@ -71,6 +71,8 @@ export type LaunchReservationRejection =
 	| "claim_deadline"
 	| "presence_occupied"
 	| "presence_unknown"
+	| "launch_capability_missing"
+	| "launch_capability_unknown"
 	| "presence_pre_action_failed";
 
 export class LaunchReservationError extends Error {
@@ -117,6 +119,14 @@ export function parseReservationLocatorArgs(argv: readonly string[]): StoreLocat
  * (measured: a tsx-started host missed a 10 s claim deadline at load average ~210).
  */
 export const HOST_STARTUP_BUDGET_MS = 30_000;
+/**
+ * How long an ensure waits for the supervisor it granted to answer readiness (`DEFAULT_READINESS_TIMEOUT_MS` in
+ * host-ensure-start.ts re-exports it). A supervisor's own bounded waits before its bind must end inside this window, so
+ * that their typed refusals are reported instead of a readiness timeout.
+ */
+export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
+/** The supervisor's launch-capability probe of an explicit host command ends typed well inside the readiness window. */
+export const HOST_CAPABILITY_PROBE_DEADLINE_MS = DEFAULT_READINESS_TIMEOUT_MS / 2;
 
 export const INTERNAL_SUPERVISOR_FLAG = "--internal-rpc-host-supervisor";
 

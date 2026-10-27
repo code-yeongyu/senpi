@@ -25,7 +25,12 @@ import {
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
-import { keepOwnerPipe, OWNER_WATCH_FD } from "./host-lifecycle-launch.ts";
+import {
+	DEFAULT_READINESS_TIMEOUT_MS,
+	keepOwnerPipe,
+	OWNER_WATCH_FD,
+	parseSupervisorArgs,
+} from "./host-lifecycle-launch.ts";
 import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
 import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
@@ -39,14 +44,17 @@ import {
 	type HeldPresence,
 	IDENTITY_OBSERVATION_PROBE_MS,
 	type LaunchIdentity,
+	type LaunchRoute,
 	offerSupervisorLaunch,
+	ownLaunchRoute,
 	releaseReservingOwner,
 	reservationStorePath,
+	selectLaunchRoute,
 } from "./host-launch-reservation.ts";
 import { resolvePresenceRoot } from "./presence-placement.ts";
 import { loadPresencePlacement } from "./socket-secret-native.ts";
 
-export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
+export { DEFAULT_READINESS_TIMEOUT_MS } from "./host-lifecycle-launch.ts";
 export { DEFAULT_STOP_TIMEOUT_MS };
 
 /**
@@ -73,8 +81,12 @@ export async function startHost(
 	});
 	// A Windows public endpoint launches its supervisor through a reservation (#4199 design 4.2a), and its reserving
 	// owner holds its own presence lock before it mutates the credential and before it persists the reservation
-	// ("Acquire before authority"). A busy or unknown acquisition ends the start here.
-	const owner = process.platform === "win32" ? acquireReservingOwner(socket) : undefined;
+	// ("Acquire before authority"). A busy or unknown acquisition ends the start here. The supervisor is this build, which
+	// reports both launch capabilities on Windows only; the route of an explicit host command is settled first, before
+	// anything is locked, mutated or reserved (design section 5, "Mixed versions").
+	const reserving = ownLaunchRoute() === "reservation";
+	const hostRoute = reserving ? await hostLaunchRoute(socket, options.hostArgs ?? []) : undefined;
+	const owner = reserving ? acquireReservingOwner(socket) : undefined;
 	// The settings file must exist before the supervisor reads it at boot, so it
 	// records the policy before the spawn instead of beside the pidfile. A valid public
 	// secret belongs to the endpoint, not to this start: clients that already read it
@@ -111,7 +123,14 @@ export async function startHost(
 		// The supervisor claims its role and starts only once this process, the issuer, has verified and granted it.
 		// Reserved inside this try, so every failure after it, up to and including readiness, fences the generation it
 		// left behind; a start that fails after the reservation persisted keeps the owner's lock until this process exits.
-		reservation = owner && publicSecret ? await reserveSupervisorLaunch(socket, owner) : undefined;
+		reservation =
+			owner && publicSecret
+				? await reserveSupervisorLaunch(
+						socket,
+						owner,
+						hostRoute === "reservation" ? ["supervisor", "host"] : ["supervisor"],
+					)
+				: undefined;
 		const supervisorArgs = [
 			"--socket",
 			socket,
@@ -371,11 +390,26 @@ function acquireReservingOwner(socket: string) {
 }
 
 /**
+ * The host hop's route (#4199 design section 5, "Mixed versions"): the default host is this build, and an explicit
+ * `--child-command` is another runtime whose own launch-capability result decides. A legacy host keeps its legacy launch
+ * under a parent-admitted supervisor, so the generation does not expect its role; an unreadable result fails the start.
+ */
+async function hostLaunchRoute(socket: string, hostArgs: readonly string[]): Promise<LaunchRoute> {
+	const launch = parseSupervisorArgs(["--socket", socket, ...hostArgs]);
+	if (!launch?.childCommand) return ownLaunchRoute();
+	return selectLaunchRoute({ command: launch.childCommand, args: launch.childArgs ?? [] });
+}
+
+/**
  * Opens the endpoint's reservation store beside its lock, reserves a generation recording the presence root and the
  * owner's held object, and offers the supervisor role with its presence object predeclared, all before the supervisor
  * is spawned.
  */
-async function reserveSupervisorLaunch(socket: string, owner: ReturnType<typeof acquireReservingOwner>) {
+async function reserveSupervisorLaunch(
+	socket: string,
+	owner: ReturnType<typeof acquireReservingOwner>,
+	expectedRoles: readonly ("supervisor" | "host")[],
+) {
 	const store = await openEndpointReservationStore(reservationStorePath(socket)).catch((error: unknown) => {
 		owner.presence.release();
 		throw error;
@@ -386,11 +420,17 @@ async function reserveSupervisorLaunch(socket: string, owner: ReturnType<typeof 
 		processStartTime: (await readProcessStartTime(process.pid).catch(() => undefined)) ?? null,
 	};
 	try {
-		const { generation, args } = offerSupervisorLaunch(store, socket, issuer, {
-			reservation: owner.reservation,
-			native: owner.native,
-			ownerPresence: owner.presence,
-		});
+		const { generation, args } = offerSupervisorLaunch(
+			store,
+			socket,
+			issuer,
+			{
+				reservation: owner.reservation,
+				native: owner.native,
+				ownerPresence: owner.presence,
+			},
+			expectedRoles,
+		);
 		return { store, issuer, generation, args, presence: owner.presence };
 	} catch (error: unknown) {
 		// Nothing was offered to anyone (a failed reservation or predeclaration released or fenced its own authority):

@@ -844,6 +844,11 @@ export class EndpointReservationStore {
 		);
 	}
 
+	/** The roles the reserving owner expects in `generation`; `undefined` when the record is absent or unreadable. */
+	expectedRoles(generation: string): readonly ReservationRole[] | undefined {
+		return this.#read(() => this.#expectedRoles(generation));
+	}
+
 	/**
 	 * Every reservation of this store, with its role rows, for the owner census an admission takes before public-secret
 	 * recovery (design 4.2a "Admission BEFORE mutation"). Every state this schema writes (`RESERVATION_STATES`) is listed;

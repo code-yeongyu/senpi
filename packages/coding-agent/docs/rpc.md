@@ -920,6 +920,28 @@ claims nothing. The supervisor allows the host claim, and the host its grant wai
 the listener. A reservation read blocked by another writer reports `store_busy`; claim, grant and intent waits retry
 that read within their original deadline rather than aborting startup. Other reservation errors still propagate.
 
+A launcher chooses this reservation route for a selected command only after that command, wrapper included, reports
+the launch capabilities. The probe runs `<command> <args...> --launch-capabilities --version`. This build answers with
+one JSON line, `{"launch_capabilities":[...]}`, and exits 0 before it loads anything else. On Windows the list is
+`socket_secret_reservation_v1` and `participant_lifetime_locks_v1`. On other platforms it is empty: public endpoints
+there have no secret file, and participant lifetime locks are not implemented. An older runtime ignores the unknown flag
+and prints its version, which counts as its legacy answer only in a positively recognized form: a version
+(`1.2.3`, `v1.2.3`, `2026.10.1`, with an optional pre-release or build), or the brand label an `omo` distribution
+prints as its display version (`omo@c6e7dd7 2026-09-04 10:17 +09:00`). Only a list that names both capabilities
+selects the reservation route. A recognized version line, or a list missing either name, keeps the legacy launch with
+no reservation flag and no claim wait. A spawn failure, a non-zero exit, no answer within the deadline (10 seconds for
+the reserving owner's probe; 5 seconds for the supervisor's probe of an explicit host, so that it ends inside the
+ensure's 10-second readiness window), a free-form line, more than one line or any other output fails with
+`launch-reservation-rejected` reason `launch_capability_unknown`; it is never read as a legacy answer. A probe that
+outlives its deadline is ended with its whole process tree (its process group on POSIX, `taskkill /t` on Windows).
+
+The supervisor `startHost` launches is this build, so it is not probed. When `hostArgs` select an explicit
+`--child-command`, `startHost` probes that command before it takes a lock, touches the secret or reserves anything.
+The generation expects a host role only when that command reports both capabilities; otherwise the supervisor launches
+the host the legacy way. A supervisor launched with a reservation probes its own explicit child command before it
+offers the host role. If the generation expects a host and that command did not report both capabilities, the
+supervisor fails with `launch_capability_missing` before the host is spawned, and the host never receives the locator.
+
 The reservation store is at schema 4 and refuses an older store with `schema_unsupported`. The process that reserves a
 generation resolves its presence root once and records it in the reservation. If the store's directory classifies `local`
 from its opened handle, the root is the private sibling directory `<endpoint lock target>.presence`. Otherwise the root is

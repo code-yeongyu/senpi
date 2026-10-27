@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, Server } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	EndpointReservationError,
@@ -518,10 +518,14 @@ describe("#4199 participant presence: acquire before authority, release after qu
 		const listen = vi.spyOn(Server.prototype, "listen");
 		const spawned = vi.mocked(childProcess.spawn);
 		spawned.mockClear();
+		// The generation expects a host: an explicit child that reports both capabilities keeps the reservation route (S16),
+		// so the check before the spawn is what ends this start. The capability probe itself spawns that child.
 		const supervisor = runHostSupervisor({
 			socket,
 			agentDir: join(root, "agent"),
 			hostArgs: [],
+			childCommand: process.execPath,
+			childArgs: [resolve("test/fixtures/launch-capability-target.mjs"), "both"],
 			reservation: locator,
 		});
 		const claim = await waitForClaim(store, generation, "supervisor", { deadlineMs: 10_000 });
@@ -536,7 +540,8 @@ describe("#4199 participant presence: acquire before authority, release after qu
 			credentialCommitment(secret, "supervisor", socketSecretPath(ENDPOINT)),
 		);
 		await expect(supervisor).rejects.toMatchObject({ reason: "presence_pre_action_failed" });
-		expect(spawned).not.toHaveBeenCalled();
+		const launches = spawned.mock.calls.filter(([, args]) => !(args as string[]).includes("--launch-capabilities"));
+		expect(launches).toEqual([]);
 		expect(listen).not.toHaveBeenCalled();
 		expect(store.reservation(generation).state).toBe("cancelling");
 	}, 20_000);
