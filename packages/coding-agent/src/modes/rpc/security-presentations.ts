@@ -134,7 +134,8 @@ export class RpcSecurityPresentations {
 			(connection !== undefined && !this.fanout.connectionHas(connection, "grant_select"))
 		)
 			return false;
-		state?.grants.delete(requestId);
+		// The entry stays until the worker reports the grant settled (settleGrant): a frame the worker
+		// refuses leaves the grant pending, and it must stay answerable only by its recipient.
 		return true;
 	}
 	settleGrant(sessionId: string, requestId: string): void {

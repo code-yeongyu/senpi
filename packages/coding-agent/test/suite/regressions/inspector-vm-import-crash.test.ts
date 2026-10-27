@@ -64,6 +64,8 @@ function createCrashContext(): UncaughtCrashThis {
 
 interface ChildRun {
 	readonly status: number | null;
+	readonly stdout: string;
+	readonly stderr: string;
 	readonly output: string;
 }
 
@@ -72,8 +74,8 @@ interface ChildRun {
  * delays the answer instead of killing a child that is still making progress. If the test times
  * out first, its whole process group (launcher and cli-main child) is killed.
  */
-function runUntilClose(args: readonly string[], env: NodeJS.ProcessEnv): Promise<ChildRun> {
-	const child = spawn(process.execPath, args, {
+function runUntilClose(command: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<ChildRun> {
+	const child = spawn(command, args, {
 		detached: process.platform !== "win32",
 		env,
 		stdio: ["ignore", "pipe", "pipe"],
@@ -101,7 +103,7 @@ function runUntilClose(args: readonly string[], env: NodeJS.ProcessEnv): Promise
 	});
 	return new Promise((resolve, reject) => {
 		child.once("error", reject);
-		child.once("close", (status) => resolve({ status, output: `${stdout}${stderr}` }));
+		child.once("close", (status) => resolve({ status, stdout, stderr, output: `${stdout}${stderr}` }));
 	});
 }
 
@@ -110,6 +112,9 @@ function runUntilClose(args: readonly string[], env: NodeJS.ProcessEnv): Promise
 // time (worst of 70 samples; a third exceeded the old 30 s spawn limit). This bound only catches a
 // hung child and matches the sibling inspector-endpoint-handoff test, which drives the same child.
 const CLI_MAIN_CHILD_BUDGET_MS = 180_000;
+// The policy fixtures import a few modules, not the engine; this bound also only catches a hung child.
+const FIXTURE_CHILD_BUDGET_MS = 120_000;
+const fixturePathFor = (name: string) => fileURLToPath(new URL(`../../fixtures/${name}.ts`, import.meta.url));
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -129,11 +134,15 @@ describe("Inspector VM dynamic import crash handling", () => {
 		async () => {
 			const fixturePath = fileURLToPath(new URL("../../fixtures/inspector-fixed-port.ts", import.meta.url));
 			const cliPath = fileURLToPath(new URL("../../../src/cli.ts", import.meta.url));
-			const { status, output } = await runUntilClose(["--import", "tsx", fixturePath, cliPath, "--help"], {
-				...process.env,
-				NODE_OPTIONS: "--inspect=127.0.0.1:0",
-				PI_OFFLINE: "1",
-			});
+			const { status, output } = await runUntilClose(
+				process.execPath,
+				["--import", "tsx", fixturePath, cliPath, "--help"],
+				{
+					...process.env,
+					NODE_OPTIONS: "--inspect=127.0.0.1:0",
+					PI_OFFLINE: "1",
+				},
+			);
 			const endpoints = [...output.matchAll(/Debugger listening on ws:\/\/127\.0\.0\.1:(\d+)\//g)].map(
 				(match) => match[1],
 			);
@@ -187,76 +196,83 @@ describe("Inspector VM dynamic import crash handling", () => {
 		}
 	});
 
-	test("does not enable recovery when the environment changes after policy import", () => {
-		const fixturePath = fileURLToPath(new URL("../../fixtures/inspector-recovery-env.ts", import.meta.url));
-		const env = { ...process.env };
-		delete env.SENPI_RECOVER_INSPECTOR_VM_IMPORT;
-		const result = spawnSync(process.execPath, ["--import", "tsx", fixturePath], {
-			encoding: "utf8",
-			env,
-			timeout: 30_000,
-		});
+	test(
+		"does not enable recovery when the environment changes after policy import",
+		async () => {
+			const env = { ...process.env };
+			delete env.SENPI_RECOVER_INSPECTOR_VM_IMPORT;
+			const args = ["--import", "tsx", fixturePathFor("inspector-recovery-env")];
+			const result = await runUntilClose(process.execPath, args, env);
 
-		expect(result.status).toBe(0);
-		expect(result.stdout.trim()).toBe("false");
-	});
+			expect(result.status).toBe(0);
+			expect(result.stdout.trim()).toBe("false");
+		},
+		FIXTURE_CHILD_BUDGET_MS,
+	);
 
-	test("recovers the exact Inspector rejection during early bootstrap before the TUI exists", () => {
-		const fixturePath = fileURLToPath(new URL("../../fixtures/inspector-early-recovery.ts", import.meta.url));
-		const result = spawnSync(process.execPath, ["--import", "tsx", fixturePath, "recoverable"], {
-			encoding: "utf8",
-			env: { ...process.env, SENPI_RECOVER_INSPECTOR_VM_IMPORT: "1" },
-			timeout: 30_000,
-		});
+	const recoveryEnv = { ...process.env, SENPI_RECOVER_INSPECTOR_VM_IMPORT: "1" };
+	const earlyRecoveryArgs = (mode: "recoverable" | "fatal") => [fixturePathFor("inspector-early-recovery"), mode];
 
-		expect(result.status).toBe(0);
-		expect(result.stdout).toContain("recovered:1");
-	});
+	test(
+		"recovers the exact Inspector rejection during early bootstrap before the TUI exists",
+		async () => {
+			const args = ["--import", "tsx", ...earlyRecoveryArgs("recoverable")];
+			const result = await runUntilClose(process.execPath, args, recoveryEnv);
 
-	test("keeps non-matching bootstrap crashes fatal with the early seam installed", () => {
-		const fixturePath = fileURLToPath(new URL("../../fixtures/inspector-early-recovery.ts", import.meta.url));
-		const result = spawnSync(process.execPath, ["--import", "tsx", fixturePath, "fatal"], {
-			encoding: "utf8",
-			env: { ...process.env, SENPI_RECOVER_INSPECTOR_VM_IMPORT: "1" },
-			timeout: 30_000,
-		});
+			expect(result.status).toBe(0);
+			expect(result.stdout).toContain("recovered:1");
+		},
+		FIXTURE_CHILD_BUDGET_MS,
+	);
 
-		expect(result.status).toBe(1);
-		expect(result.stdout).not.toContain("recovered:");
-		expect(result.stderr).toContain("ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING");
-	});
+	test(
+		"keeps non-matching bootstrap crashes fatal with the early seam installed",
+		async () => {
+			const result = await runUntilClose(
+				process.execPath,
+				["--import", "tsx", ...earlyRecoveryArgs("fatal")],
+				recoveryEnv,
+			);
+
+			expect(result.status).toBe(1);
+			expect(result.stdout).not.toContain("recovered:");
+			expect(result.stderr).toContain("ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING");
+		},
+		FIXTURE_CHILD_BUDGET_MS,
+	);
 
 	for (const runtime of ["node", "bun"] as const) {
-		const command = runtime === "node" ? [process.execPath, "--import", "tsx"] : ["bun"];
+		const [command, ...prefix] =
+			runtime === "node" ? ([process.execPath, "--import", "tsx"] as const) : (["bun"] as const);
 		const runFixture = (mode: "recoverable" | "fatal") =>
-			spawnSync(
-				command[0] as string,
-				[
-					...command.slice(1),
-					fileURLToPath(new URL("../../fixtures/inspector-early-recovery.ts", import.meta.url)),
-					mode,
-					"with-containment",
-				],
-				{ encoding: "utf8", env: { ...process.env, SENPI_RECOVER_INSPECTOR_VM_IMPORT: "1" }, timeout: 30_000 },
-			);
+			runUntilClose(command, [...prefix, ...earlyRecoveryArgs(mode), "with-containment"], recoveryEnv);
 
 		// Recovery is a Node Inspector feature: Bun never routes the rejection to `uncaughtException`, and even
 		// with the early seam alone it exits 1 there (checked at the base commit). Only the fatal half applies.
 		if (runtime === "node") {
-			test(`${runtime}: with the cli-main stale-ctx seam installed too, the Inspector rejection is still recovered`, () => {
-				const result = runFixture("recoverable");
+			test(
+				`${runtime}: with the cli-main stale-ctx seam installed too, the Inspector rejection is still recovered`,
+				async () => {
+					const result = await runFixture("recoverable");
 
-				expect(result.status, result.stderr).toBe(0);
-				expect(result.stdout).toContain("recovered:1");
-			});
+					expect(result.status, result.stderr).toBe(0);
+					expect(result.stdout).toContain("recovered:1");
+				},
+				FIXTURE_CHILD_BUDGET_MS,
+			);
 		}
 
-		test(`${runtime}: with the cli-main stale-ctx seam installed too, a non-matching bootstrap crash stays fatal`, () => {
-			const result = runFixture("fatal");
+		test(
+			`${runtime}: with the cli-main stale-ctx seam installed too, a non-matching bootstrap crash stays fatal`,
+			async () => {
+				const result = await runFixture("fatal");
 
-			expect(result.status).toBe(1);
-			expect(result.stdout).not.toContain("recovered:");
-		});
+				expect(result.status, result.output).toBe(1);
+				expect(result.stdout).not.toContain("recovered:");
+				expect(result.stderr).toContain("ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING");
+			},
+			FIXTURE_CHILD_BUDGET_MS,
+		);
 	}
 
 	test("classifies hostile rejection values without throwing", () => {

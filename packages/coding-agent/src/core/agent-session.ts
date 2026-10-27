@@ -29,6 +29,7 @@ import type {
 	AgentToolCallOutcome,
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	InternalAgentChannel,
 	PreparedAgentToolCall,
 	PrepareNextTurnContext,
 	ThinkingLevel,
@@ -110,6 +111,8 @@ import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth
 import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
+import { compactUpdatesEnabled } from "./engine-socket-flag.ts";
+import { carryRecovery, recoveryCarrier, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
 import {
 	type ClientMessageIdentity,
@@ -324,7 +327,13 @@ import { PROMPT_CACHE_SAFE_WAIT_ENV, resolvePromptCacheSafeWaitSeconds } from ".
 import { PromptCachePrefixBuilds } from "./prompt-cache-prefix-request.ts";
 import type { PromptSizeInventory } from "./prompt-size-startup.ts";
 import { expandPromptTemplateWithMetadata, type PromptTemplate } from "./prompt-templates.ts";
-import { type ProviderFailure, providerFailureOf } from "./provider-failure.ts";
+import {
+	isRequestLevelRefusal,
+	type ProviderFailure,
+	providerFailureOf,
+	type SelectedModel,
+	selectedModelOf,
+} from "./provider-failure.ts";
 import { rejectedImageSources } from "./provider-rejected-images.ts";
 import { createProviderTimeoutRetryPlan, runBoundedRetryContinuation } from "./provider-timeout-retry.ts";
 import { QueuedInputAges } from "./queued-input-age.ts";
@@ -350,6 +359,12 @@ import {
 	probeBackSchedule,
 } from "./retry-fallback/hint-policy.ts";
 import { createFallbackLogger } from "./retry-fallback/log.ts";
+import {
+	createModelConfigErrorReporter,
+	isModelConfigFailure,
+	type ModelConfigErrorEvent,
+	type ModelConfigErrorReporter,
+} from "./retry-fallback/model-config-error.ts";
 import { ProbeBackScheduler } from "./retry-fallback/probe-scheduler.ts";
 import {
 	REQUEST_SHAPE_FAILURE_TEXT,
@@ -384,6 +399,7 @@ import {
 	getSessionContextEntryId,
 	type SessionHeader,
 	SessionManager,
+	type SessionRecoveryCause,
 } from "./session-manager.ts";
 import { SessionThinkingMemory, type ThinkingLevelSource } from "./session-thinking-memory.ts";
 import { restoreMovedState } from "./session-move/extension-state.ts";
@@ -410,6 +426,7 @@ import { BUILTIN_SLASH_COMMANDS } from "./slash-commands.ts";
 import type { Skill } from "./skills.ts";
 import { BUILTIN_PATH_PREFIX, createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { stopResumeDirective } from "./stop-resume-directive.ts";
+import { type AgentSessionStructuredRecord, StructuredSessionLane } from "./structured-session-lane.ts";
 import {
 	type ClampedThinkingSelection,
 	clampThinkingSelection,
@@ -536,8 +553,11 @@ type AgentSessionAgentEndEvent = Extract<AgentEvent, { type: "agent_end" }> & {
 	abortCause?: AgentAbortCause;
 };
 
-function withProviderFailure(event: AgentSessionAgentEndEvent): AgentSessionAgentEndEvent {
-	const failure = providerFailureOf(event.messages);
+function withProviderFailure(
+	event: AgentSessionAgentEndEvent,
+	selected: SelectedModel | undefined,
+): AgentSessionAgentEndEvent {
+	const failure = providerFailureOf(event.messages, selected);
 	return failure === undefined ? event : { ...event, failure };
 }
 
@@ -567,6 +587,18 @@ export type AgentSessionEvent =
 			tokensBefore: number;
 			tokensAfter: number;
 			droppedEntries: number;
+			notice: string;
+	  }
+	/**
+	 * The session file's tail was torn by an interrupted write (a full disk) and was set aside in `backupPath`; every
+	 * complete record is kept (senpi#4295). Emitted live once, and replayed to each surface that attaches before the
+	 * next prompt, so the person is told once wherever they look.
+	 */
+	| {
+			type: "session_recovered";
+			cause: SessionRecoveryCause;
+			backupPath: string;
+			droppedBytes: number;
 			notice: string;
 	  }
 	| { type: "continuation_error"; errorMessage: string }
@@ -725,6 +757,7 @@ export type AgentSessionEvent =
 			cause?: "fallback-unusable";
 	  }
 	| { type: "retry_fallback_exhausted"; chainKey: string; lastError: string }
+	| ModelConfigErrorEvent
 	| {
 			type: "server_fallback_aborted";
 			from: string;
@@ -736,6 +769,11 @@ export type AgentSessionEvent =
 	// terminal result arrive here, because an interactive browser round-trip
 	// cannot fit inside the request timeout.
 	| { type: "auth_login_url"; provider: string; url: string }
+	/**
+	 * A login progress line, such as a `provider_login_start` handler's download status (senpi#4436). The line is
+	 * `text`, not `message`: event consumers detect chat-message events with `"message" in event`.
+	 */
+	| { type: "auth_login_progress"; provider: string; text: string }
 	| {
 			type: "auth_login_end";
 			provider: string;
@@ -789,6 +827,8 @@ function withoutDeletedHeaders(headers: ProviderHeaders | undefined): Record<str
 
 export interface AgentSessionConfig {
 	agent: Agent;
+	/** @internal Construction channel for senpi's session layer only; absent for externally supplied Agents. */
+	internalChannel?: InternalAgentChannel;
 	/** Explicit service tier for the initial model. */
 	serviceTier?: ServiceTier;
 	sessionManager: SessionManager;
@@ -1322,11 +1362,15 @@ export class AgentSession {
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
+	/** The last repair of the session file, replayed to surfaces that attach before the next prompt (senpi#4295). */
+	private _standingRecovery: Extract<AgentSessionEvent, { type: "session_recovered" }> | undefined;
+	private _unsubscribeRecovery: (() => void) | undefined;
 	readonly securityNotices = new SecurityNoticeSnapshot();
 	private _unsubscribeSecurityNotices?: () => void;
 	private _unsubscribeSettingsSource?: () => void;
 	private _unregisterMemoryReport: () => void = () => {};
 	private _eventListeners: AgentSessionEventListener[] = [];
+	private readonly _structuredLane: StructuredSessionLane;
 	private _agentEventQueue: Promise<void> = Promise.resolve();
 	/**
 	 * Exact message objects whose message_end persistence is still queued.
@@ -1493,6 +1537,7 @@ export class AgentSession {
 	// prompt-owned run's prompt throws the first one once the queue settles; any other run reports it
 	// as a continuation error when it happens.
 	private readonly _transcriptWriteFailures = new TranscriptWriteFailures();
+	private readonly _recoveryIdentity = compactUpdatesEnabled() ? new SessionRecoveryIdentity(undefined, this) : undefined;
 	private _promptOwnsRun = false;
 	// Preserve provenance across agent-core's conversion of our admission error
 	// into an assistant error message. Matching provider text alone is not proof
@@ -1646,6 +1691,7 @@ export class AgentSession {
 	private readonly _fallbackValidationWarnings: readonly string[];
 	private _providerRequiredNoticed = false;
 	private readonly _retryFallback: RetryFallbackController;
+	private readonly _modelConfigErrors: ModelConfigErrorReporter;
 	private readonly _selectorCooldowns: SelectorCooldowns;
 	private readonly _fallbackCircuits: FallbackCircuitAccess;
 	private readonly _fallbackCircuitsLease: ReturnType<typeof acquireFallbackCircuits>;
@@ -1699,7 +1745,15 @@ export class AgentSession {
 		this._promptSurface = config.promptSurface;
 		this._browserEngine = config.browserEngine;
 		this.agent = config.agent;
+		this._structuredLane = new StructuredSessionLane(config.internalChannel, (deliver) => {
+			if (!this._unsubscribeAgent) return;
+			this._agentEventQueue = this._agentEventQueue.then(deliver, deliver);
+		});
 		this.sessionManager = config.sessionManager;
+		this._unsubscribeRecovery = this.sessionManager.onRecovery((recovery) => {
+			this._standingRecovery = { type: "session_recovered", ...recovery };
+			this._emit(this._standingRecovery);
+		});
 		this._sessionThinkingMemory = new SessionThinkingMemory(config.sessionManager);
 		this._thinkingLevelSource = config.initialThinkingLevelSource ?? "default";
 		this._pendingInputs = new SessionPendingInputs({
@@ -1746,6 +1800,7 @@ export class AgentSession {
 		this._modelRegistry = config.modelRegistry ?? new ModelRegistry(modelRuntime);
 		this._agentDir = config.agentDir ?? getAgentDir();
 		const fallbackLogger = createFallbackLogger(this._agentDir);
+		this._modelConfigErrors = createModelConfigErrorReporter(fallbackLogger, (event) => this._emit(event));
 		this._sessionLogger = createSessionLogger(this._agentDir, {
 			context: () => ({
 				sessionId: this.sessionManager.getSessionId(),
@@ -2425,6 +2480,11 @@ export class AgentSession {
 			this._failedResponse = undefined;
 			const previous = (await previousPrepareRequest?.(request, signal)) ?? undefined;
 			const model = previous?.model ?? this.agent.state.model;
+			this._requestSelectedModel = selectedModelOf(
+				this._retryFallback.activeState?.originalSelector,
+				this._modelRegistry,
+				model,
+			);
 			const thinkingLevel = previous?.thinkingLevel ?? this.agent.state.thinkingLevel;
 			if (!isVirtualModel(model)) {
 				// A request after a routed one in the same run still names the routed model.
@@ -2836,7 +2896,9 @@ export class AgentSession {
 		this._emitEntryAppended(entry.id);
 	}
 
-	private _emit(event: AgentSessionEvent): void {
+	private _emit(event: AgentSessionEvent, captureSource: object = event): void {
+		this._recoveryIdentity?.observe(event);
+		const produced = event;
 		if (
 			event.type === "session_paused" ||
 			event.type === "session_resumed" ||
@@ -2882,9 +2944,11 @@ export class AgentSession {
 						}
 					: { ...event, message };
 		}
+		carryRecovery(produced, event);
 		for (const l of [...this._eventListeners]) {
 			l(event);
 		}
+		if (this._structuredLane.active) this._structuredLane.emitEvent(event, captureSource);
 	}
 
 	private async _emitSessionCompactFailed(event: Omit<SessionCompactFailedEvent, "type">): Promise<void> {
@@ -3396,12 +3460,23 @@ export class AgentSession {
 
 	// Track last assistant message for auto-compaction check
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
+	private _requestSelectedModel: SelectedModel | undefined;
+	private readonly _endSelectedModels = new WeakMap<AgentEvent, SelectedModel>();
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent, signal: AbortSignal): void => {
-		if (event.type === "agent_start") this._lifecycleBinding.startRun();
+		this._recoveryIdentity?.observe(event);
+		if (event.type === "agent_start") {
+			this._lifecycleBinding.startRun();
+			this._requestSelectedModel = undefined;
+		}
 		// Bound at emission: the core can start the next run before the queue reaches this end (senpi#3864).
-		if (event.type === "agent_end") this._lifecycleBinding.bindTurnEnd(event);
+		if (event.type === "agent_end") {
+			this._lifecycleBinding.bindTurnEnd(event);
+			// Freeze before async delivery or a queued run can replace the dispatched selection.
+			if (this._requestSelectedModel) this._endSelectedModels.set(event, this._requestSelectedModel);
+		}
+		this._lifecycleBinding.controller.observeActivity(event);
 		if (event.type === "message_start") {
 			try {
 				const entryId = this._lifecycleBinding.consume(event.message);
@@ -3872,18 +3947,30 @@ export class AgentSession {
 		// Notify all listeners
 		const sessionEvent =
 			event.type === "agent_end"
-				? withProviderFailure({
-						...event,
-						willRetry: agentEndWillRetry,
-						...(this._deadlineTracker.current !== undefined
-							? { aborted: true, abortSource: "system" as const, deadline: this._deadlineTracker.current }
-							: {}),
-						...(abortCause === undefined ? {} : { abortCause }),
-					})
+				? withProviderFailure(
+						{
+							...event,
+							willRetry: agentEndWillRetry,
+							...(this._deadlineTracker.current !== undefined
+								? { aborted: true, abortSource: "system" as const, deadline: this._deadlineTracker.current }
+								: {}),
+							...(abortCause === undefined ? {} : { abortCause }),
+						},
+						this._endSelectedModels.get(event),
+					)
 				: event.type === "message_update"
 					? withResolvedToolName(event, (name) => this.resolveToolCallName(name))
 					: event;
-		this._emit(sessionEvent);
+		let consumedEntry: string | undefined;
+		if (event.type === "message_end") {
+			try {
+				consumedEntry = this._lifecycleBinding.consumedEntry(event.message);
+			} catch (error) {
+				this._transcriptWriteFailures.record(event.message, error);
+			}
+		}
+		this._recoveryIdentity?.hint(event, consumedEntry);
+		this._emit(carryRecovery(event, sessionEvent), event);
 		if (event.type === "agent_end") {
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 		}
@@ -3903,12 +3990,13 @@ export class AgentSession {
 				if (event.message.role === "custom") {
 					// Persist as CustomMessageEntry
 					entryId =
-						this._lifecycleBinding.consumedEntry(event.message) ??
+						consumedEntry ??
 						this.sessionManager.appendCustomMessageEntry(
 							event.message.customType,
 							event.message.content,
 							event.message.display,
 							event.message.details,
+							{ recoveryOwner: recoveryCarrier(event) },
 						);
 					this._incrementMessageRevision();
 					this.externalAdmission.observePersisted(event.message);
@@ -3922,6 +4010,7 @@ export class AgentSession {
 					// Regular LLM message - persist as SessionMessageEntry
 					entryId = this.sessionManager.appendOwnedMessage(event.message, {
 						inputSource: this._userInputSources.get(event.message),
+						recoveryOwner: recoveryCarrier(event),
 					});
 					this._emitEntryAppended(entryId);
 					this._incrementMessageRevision();
@@ -3935,7 +4024,7 @@ export class AgentSession {
 				this._takePersistWatcher(event.message)?.failed(error);
 				this._sessionLogger.warn("transcript_write_failed", { role: event.message.role, error: errorMessage });
 				this._transcriptWriteFailures.record(event.message, error);
-				this._emit({ type: "transcript_write_failed", role: event.message.role, errorMessage });
+				this._emit(carryRecovery(event, { type: "transcript_write_failed", role: event.message.role, errorMessage }));
 				if (!this._promptOwnsRun) this._reportContinuationTranscriptFailure();
 			}
 			if (entryId) this._entryIdsByMessage.set(event.message, entryId);
@@ -4101,6 +4190,9 @@ export class AgentSession {
 				retryOutcome === "not-handled" &&
 				(msg.stopReason === "error" || msg.stopReason === "aborted");
 
+			if (retryOutcome === "not-handled" && msg.errorCause?.type === "model_config") {
+				this._modelConfigErrors.report(msg, this.sessionManager.getSessionId());
+			}
 			if (retryOutcome === "not-handled" && cursorQuotaRe && msg.errorMessage) {
 				msg.errorMessage = `${msg.errorMessage} (likely provider usage/quota exhaustion: conversation is well below the model context window)`;
 			}
@@ -4565,6 +4657,7 @@ export class AgentSession {
 		if (this._resumeSlice !== undefined) {
 			listener(this._resumeSliceEvent(this._resumeSlice));
 		}
+		if (this._standingRecovery !== undefined) listener(this._standingRecovery);
 		for (const source of this.settingsManager.getSelectedSettingsSources()) {
 			listener({ type: "settings_source_selected", ...source });
 		}
@@ -4576,6 +4669,15 @@ export class AgentSession {
 				this._eventListeners.splice(index, 1);
 			}
 		};
+	}
+
+	/**
+	 * The internal structured lane (senpi#4272): every session event in `_emit` order with its provider capture, plus
+	 * block controls at their position. Attach before a turn's first provider push; a stream already pushing keeps
+	 * its decision and yields no capture.
+	 */
+	subscribeStructured(listener: (record: AgentSessionStructuredRecord) => void): () => void {
+		return this._structuredLane.subscribe(listener);
 	}
 
 	/**
@@ -4648,7 +4750,10 @@ export class AgentSession {
 		this._unsubscribeWakeSources?.();
 		this._unsubscribeWakeSources = undefined;
 		this._lifecycleBinding.dispose();
+		this._unsubscribeRecovery?.();
+		this._unsubscribeRecovery = undefined;
 		this._eventListeners = [];
+		this._structuredLane.dispose();
 		cleanupSessionResources(this.sessionId);
 		// Nothing reads or writes this manager once its session is gone: it releases
 		// its writer grant and its disposable blob directory here.
@@ -5587,6 +5692,7 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		this._standingRecovery = undefined;
 		const barrierError = options?.toolBarrier === undefined ? undefined : toolBarrierSpecError(options.toolBarrier);
 		if (barrierError !== undefined) throw new Error(barrierError);
 		if (isHumanInput(options) && options?.humanInputReported !== true) this._humanInputAdmitted(promptKind(options));
@@ -7965,17 +8071,20 @@ export class AgentSession {
 
 	private _appendCustomMessage(appMessage: CustomMessage): void {
 		this.agent.state.messages.push(appMessage);
+		const start = { type: "message_start" as const, message: appMessage };
+		this._recoveryIdentity?.observe(start);
 		const entryId = this.sessionManager.appendCustomMessageEntry(
 			appMessage.customType,
 			appMessage.content,
 			appMessage.display,
 			appMessage.details,
+			{ recoveryOwner: recoveryCarrier(start) },
 		);
 		this._emitEntryAppended(entryId);
 		this._recordWrittenTicket(appMessage, entryId);
 		this._takePersistWatcher(appMessage)?.persisted(entryId);
 		this._incrementMessageRevision();
-		this._emit({ type: "message_start", message: appMessage });
+		this._emit(start);
 		this._emit({ type: "message_end", message: appMessage });
 	}
 
@@ -11874,12 +11983,12 @@ export class AgentSession {
 				getCallableTools: () => this._getCallableTools(),
 			},
 			{
-				registerProvider: (name, config) => {
-					this._modelRuntime.registerProvider(name, config);
+				registerProvider: (name, config, extensionPath) => {
+					this._modelRuntime.registerProvider(name, config, { extensionPath });
 					this._refreshCurrentModelFromRegistry();
 				},
-				registerNativeProvider: (provider) => {
-					this._modelRuntime.registerNativeProvider(provider);
+				registerNativeProvider: (provider, extensionPath) => {
+					this._modelRuntime.registerNativeProvider(provider, { extensionPath });
 					this._refreshCurrentModelFromRegistry();
 				},
 				unregisterProvider: (name) => {
@@ -12144,6 +12253,7 @@ export class AgentSession {
 					// (senpi#3566 todo 9), while truncation and rendering stay on the server.
 					bash: {
 						commandPrefix: shellCommandPrefix,
+						redactSecretsInOutput: this.settingsManager.getBashRedactSecretsInOutput(),
 						shellPath,
 						operations: this._toolDispatcher.bashOperations({ shellPath }),
 					},
@@ -12410,6 +12520,8 @@ export class AgentSession {
 		// Providers mark post-delta failures to prevent replaying visible text/tool calls.
 		if (message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX)) return false;
 		if (this._isLocalFailure(message)) return false;
+		// A route that does not serve the model fails the same way on every attempt, whatever status wraps it.
+		if (isModelConfigFailure(message)) return false;
 
 		// Context overflow is handled by compaction, not retry.
 		if (isContextOverflow(message, (this._modelForMessage(message) ?? this.model)?.contextWindow ?? 0)) return false;
@@ -12494,6 +12606,7 @@ export class AgentSession {
 		return (
 			!message.errorMessage?.startsWith(TURN_RETRY_SUPPRESSION_PREFIX) &&
 			!this._isLocalFailure(message) &&
+			!isModelConfigFailure(message) &&
 			!this._isClaudeSdkAuthMissError(message) &&
 			!this._isClaudeSdkSameModelRemintError(message) &&
 			message.stopReason === "error" &&
@@ -12503,7 +12616,7 @@ export class AgentSession {
 			!isCursorZeroTokenResourceExhausted(message) &&
 			!isClassifierRefusal(message) &&
 			!message.content.some((content) => content.type === "toolCall") &&
-			this._retryFallback.canTryFallback()
+			this._retryFallback.canTryFallback(isRequestLevelRefusal(message) ? message.provider : undefined)
 		);
 	}
 
@@ -12649,9 +12762,17 @@ export class AgentSession {
 		);
 		if (degraded.kind === "fail") {
 			const waitSeconds = Math.ceil(degraded.hintMs / 1000);
+			const until = new Date(Date.now() + degraded.hintMs).toLocaleString("en-US", {
+				year: "numeric",
+				month: "short",
+				day: "numeric",
+				hour: "numeric",
+				minute: "2-digit",
+				timeZoneName: "short",
+			});
 			finishRetryAttempt(
 				this._retryAttempt,
-				`Provider requested a ${waitSeconds}s wait before retrying and no usable fallback model is available. ${message.errorMessage ?? ""}`,
+				`The provider asked to wait ${waitSeconds}s (until ${until}) before the next request, and no fallback model can take the turn. Wait until then, or choose another model. Provider error: ${message.errorMessage ?? "none"}`,
 			);
 			return undefined;
 		}
@@ -12766,7 +12887,10 @@ export class AgentSession {
 				// Billing-class failures never recover on this account, so the fallback
 				// switch pins as the session model instead of reverting after the cooldown.
 				const reason = isBillingErrorMessage(errorMessage) ? "billing" : "hard-error";
-				switchedFallback = await tryFallback(reason, { errorMessage });
+				switchedFallback = await tryFallback(reason, {
+					errorMessage,
+					...(isRequestLevelRefusal(message) ? { refusedProvider: message.provider } : {}),
+				});
 				if (!switchedFallback) {
 					const exhaustedChainKey = this._retryFallback.exhaustedChainKey;
 					if (exhaustedChainKey) {
@@ -13306,6 +13430,7 @@ export class AgentSession {
 						return callbackResult;
 					},
 					signal: abortController.signal,
+					redactSecretsInOutput: this.settingsManager.getBashRedactSecretsInOutput(),
 				},
 			);
 

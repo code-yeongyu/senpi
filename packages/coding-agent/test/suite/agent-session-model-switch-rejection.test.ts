@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { ModelUsabilityBudgetError } from "../../src/core/extensions/builtin/compaction/model-usability-budget.ts";
+import { ModelSwitchAuthError } from "../../src/core/model-switch-auth-error.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import { buildRpcSessionState } from "../../src/modes/rpc/connection-handler.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -230,18 +231,21 @@ describe("rejected model switch", () => {
 		harnesses.push(harness);
 		const target = modelOf(harness, "faux-spacious");
 
-		await expect(harness.session.setModel(target)).rejects.toThrow(`No API key for ${target.provider}/${target.id}`);
+		const refusal = await harness.session.setModel(target).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(refusal).toBeInstanceOf(ModelSwitchAuthError);
+		const refusalMessage = (refusal as Error).message;
 
 		const rejections = harness.sessionManager.getBranch().filter((entry) => entry.type === "model_change_rejected");
 		expect(rejections).toHaveLength(1);
 		expect(rejections[0]).toMatchObject({ provider: target.provider, modelId: target.id, reason: "auth" });
-		expect((rejections[0] as unknown as { detail: string }).detail).toBe(
-			`No API key for ${target.provider}/${target.id}`,
-		);
+		expect((rejections[0] as unknown as { detail: string }).detail).toBe(refusalMessage);
 		const observed = harness.eventsOfType("model_change_rejected");
 		expect(observed).toHaveLength(1);
 		expect(observed[0]).toMatchObject({ reason: "auth" });
-		expect(observed[0]?.detail).toBe(`No API key for ${target.provider}/${target.id}`);
+		expect(observed[0]?.detail).toBe(refusalMessage);
 		expect(harness.session.model?.id).toBe("faux-roomy");
 	});
 

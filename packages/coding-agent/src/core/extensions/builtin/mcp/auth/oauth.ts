@@ -8,6 +8,7 @@ import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { loadMcpSdkAuth } from "../sdk.lazy.ts";
 import { isInvalidGrant, OAuthFlowError } from "./oauth-errors.ts";
 import { oauthFetch } from "./oauth-fetch.ts";
+import { validatedAuthorizationServerIssuer } from "./oauth-issuer.ts";
 import type { McpOAuthProvider } from "./oauth-provider.ts";
 import { assertS256Supported } from "./oauth-refresh.ts";
 
@@ -51,7 +52,7 @@ export async function completeAuthorization(
 	redirectInput: string,
 	options: OAuthFlowOptions = {},
 ): Promise<void> {
-	const { code, state, iss } = parseRedirect(redirectInput, provider.serverName);
+	const { code, state, iss } = parseRedirect(redirectInput, provider);
 	if (!provider.consumeState(state)) {
 		throw new OAuthFlowError(
 			"state_mismatch",
@@ -101,14 +102,23 @@ export async function finishAuthorization(
 // RFC 9207: an authorization response that names another authorization server, or that omits `iss`
 // although this server promises to send it, may have been injected by a mix-up attack; never exchange its code.
 function assertAuthorizationResponseIssuer(provider: McpOAuthProvider, iss: string | undefined): void {
-	const metadata = provider.discoveryState()?.authorizationServerMetadata;
-	if (metadata === undefined) return;
+	const discovery = provider.discoveryState();
+	if (discovery === undefined) {
+		throw new OAuthFlowError(
+			"needs_auth",
+			`MCP server ${provider.serverName} has no trusted authorization discovery; restart with /mcp auth-start ${provider.serverName}.`,
+			{ serverName: provider.serverName },
+		);
+	}
+	const metadata = discovery.authorizationServerMetadata;
+	const issuer = validatedAuthorizationServerIssuer(discovery, provider.serverName);
 	// The SDK keeps unknown metadata fields (loose schema) but does not type this RFC 9207 one.
 	const promised =
-		(metadata as { authorization_response_iss_parameter_supported?: unknown })
-			.authorization_response_iss_parameter_supported === true;
+		metadata !== undefined &&
+		"authorization_response_iss_parameter_supported" in metadata &&
+		metadata.authorization_response_iss_parameter_supported === true;
 	if (iss === undefined && !promised) return;
-	if (iss !== undefined && iss === metadata.issuer) return;
+	if (iss !== undefined && iss === issuer) return;
 	throw new OAuthFlowError(
 		"needs_auth",
 		iss === undefined
@@ -165,7 +175,7 @@ export async function clientCredentialsGrant(
 		resource: new URL(provider.serverUrl),
 		fetchFn: oauthFetch(options.fetchFn),
 	});
-	await provider.saveTokens({ ...tokens, issuer: String(info.authorizationServerUrl) });
+	await provider.saveTokens({ ...tokens, issuer: validatedAuthorizationServerIssuer(info, provider.serverName) });
 }
 
 export async function logout(provider: McpOAuthProvider): Promise<void> {
@@ -173,11 +183,13 @@ export async function logout(provider: McpOAuthProvider): Promise<void> {
 }
 
 async function discover(provider: McpOAuthProvider, options: OAuthFlowOptions): Promise<OAuthServerInfo> {
-	if (options.discover !== undefined) return options.discover(provider.serverUrl);
 	const cached = provider.discoveryState();
 	if (cached !== undefined) return cached;
 	const { discoverOAuthServerInfo } = await loadMcpSdkAuth();
-	const info = await discoverOAuthServerInfo(provider.serverUrl, { fetchFn: oauthFetch(options.fetchFn) });
+	const info =
+		options.discover !== undefined
+			? await options.discover(provider.serverUrl)
+			: await discoverOAuthServerInfo(provider.serverUrl, { fetchFn: oauthFetch(options.fetchFn) });
 	await provider.saveDiscoveryState(toDiscoveryState(info));
 	return info;
 }
@@ -192,8 +204,9 @@ function toDiscoveryState(info: OAuthServerInfo): OAuthDiscoveryState {
 
 function parseRedirect(
 	input: string,
-	serverName: string,
+	provider: McpOAuthProvider,
 ): { code: string; state: string | undefined; iss: string | undefined } {
+	const serverName = provider.serverName;
 	let url: URL;
 	try {
 		url = new URL(input.trim());
@@ -204,6 +217,7 @@ function parseRedirect(
 			{ serverName },
 		);
 	}
+	assertAuthorizationResponseIssuer(provider, url.searchParams.get("iss") ?? undefined);
 	const error = url.searchParams.get("error");
 	if (error !== null) {
 		throw new OAuthFlowError("needs_auth", `MCP server ${serverName} authorization failed: ${error}`, { serverName });

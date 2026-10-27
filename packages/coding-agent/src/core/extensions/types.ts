@@ -1853,6 +1853,22 @@ export interface ToolExecutionEndEvent {
 
 export type ModelSelectSource = "set" | "cycle" | "restore" | "fallback" | "fallback-revert";
 
+/**
+ * Fired when an extension-registered provider's OAuth login starts, before the provider's own login code runs.
+ * Every handler is awaited in order, so a host can acquire what the login needs first (for example download and
+ * pin the Claude Code binary and set `CLAUDE_CODE_EXECUTABLE`). A handler that throws is reported and the login
+ * still runs. There is no handler budget: the login's own cancel and idle timeout bound it, through `signal`.
+ */
+export interface ProviderLoginStartEvent {
+	type: "provider_login_start";
+	/** The provider id passed to `pi.registerProvider`. */
+	provider: string;
+	/** Aborts when the login is cancelled. */
+	signal: AbortSignal;
+	/** Shows a progress line in the login UI. */
+	progress: (message: string) => void;
+}
+
 /** Fired when a new model is selected */
 export interface ModelSelectEvent {
 	type: "model_select";
@@ -2197,6 +2213,7 @@ export type ExtensionEvent =
 	| ToolExecutionUpdateEvent
 	| ToolExecutionEndEvent
 	| ModelSelectEvent
+	| ProviderLoginStartEvent
 	| SystemPromptChangeEvent
 	| ThinkingLevelSelectEvent
 	| ToolActivatedEvent
@@ -2556,6 +2573,7 @@ export interface ExtensionAPI {
 	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): () => void;
 	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): () => void;
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>): () => void;
+	on(event: "provider_login_start", handler: ExtensionHandler<ProviderLoginStartEvent>): () => void;
 	on(event: "system_prompt_change", handler: ExtensionHandler<SystemPromptChangeEvent>): () => void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): () => void;
 	on(event: "tool_activated", handler: ExtensionHandler<ToolActivatedEvent>): () => void;
@@ -2996,7 +3014,12 @@ export interface ProviderConfig {
 		 * supplies no credential, so the provider stays unavailable. A returned
 		 * result should carry `ambient: true`.
 		 */
-		resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
+		resolve(input: {
+			ctx: AuthContext;
+			signal: AbortSignal;
+			/** Read-only env of another provider's stored credential; routing metadata only, never keys. */
+			storedProviderEnv?(providerId: string): Promise<Record<string, string> | undefined>;
+		}): Promise<AuthResult | undefined>;
 	};
 	/** OAuth provider for /login support. The `id` is set automatically from the provider name. */
 	oauth?: {
@@ -3352,6 +3375,8 @@ export interface ExtensionRuntimeState {
 	registerRemovedToolHint: RegisterRemovedToolHintHandler;
 	registerVirtualModel: (definition: VirtualModelDefinition, extensionPath?: string) => void;
 	unregisterVirtualModel: (provider: string, id: string) => void;
+	/** Awaits every `provider_login_start` handler. Resolves at once until a runner owns this runtime. */
+	emitProviderLoginStart: (event: ProviderLoginStartEvent) => Promise<void>;
 	/** The session's eval handle host, set by `pi.provideEvalHandleHost`; cleared when the runtime is invalidated. */
 	evalHandleHost?: EvalHandleHost;
 }

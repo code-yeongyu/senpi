@@ -76,7 +76,7 @@ export async function openMicro(options: OpenMicroOptions = {}): Promise<OpenMic
 		const env = new NodeExecutionEnv({ cwd: location.cwd });
 		executionEnv = env;
 		const microTools = createMicroTools(env);
-		const picoModels = createPicoModels(modelRuntime, microTools.modelMetadata);
+		const picoModels = createPicoModels(modelRuntime, microTools.modelMetadata, location.cwd);
 		const selectedTools = microTools.declarations.map((tool) => tool.name);
 		const preferredModel = modelRuntime.getModel(DEFAULT_MODEL.provider, DEFAULT_MODEL.modelId);
 		const initial = location.created

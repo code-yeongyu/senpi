@@ -58,6 +58,7 @@ export async function materializeNegotiatedTransport(
 					clientInfo,
 					clientCapabilities: {},
 					protocolVersion: outcome.version,
+					logger,
 				}),
 				outcome.discovery,
 				outcome.version,

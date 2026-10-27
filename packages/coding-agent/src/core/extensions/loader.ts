@@ -53,6 +53,7 @@ import {
 	rememberExtensionFactory,
 } from "./extension-module-cache.ts";
 import { createLifecycleApi } from "./lifecycle-api.ts";
+import { withProviderLoginStart } from "./provider-login-start.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AppendEntryOptions,
@@ -356,6 +357,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 				({ definition }) => definition.provider !== provider || definition.id !== id,
 			);
 		},
+		emitProviderLoginStart: async () => {},
 	};
 
 	return runtime;
@@ -785,7 +787,10 @@ function createExtensionAPI(
 			assertActive();
 			if (typeof providerOrName === "string") {
 				if (!config) throw new Error("Provider config is required when registering by name");
-				applyRuntimeChange(() => runtime.registerProvider(providerOrName, config, extension.path));
+				const wrapped = withProviderLoginStart(providerOrName, config, (event) =>
+					runtime.emitProviderLoginStart(event),
+				);
+				applyRuntimeChange(() => runtime.registerProvider(providerOrName, wrapped, extension.path));
 				return;
 			}
 			applyRuntimeChange(() => runtime.registerNativeProvider(providerOrName, extension.path));

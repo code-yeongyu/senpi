@@ -52,15 +52,14 @@ if (mode === "host" || mode === "host-term") {
 	const timeout = globalThis.setTimeout;
 	const waits = new Map<number, () => void>();
 	let sequence = 0;
-	if (mode !== "honour-term")
-		mock.method(globalThis, "setTimeout", (run: () => void, ms: number) => {
-			if (![2_000, 5_000, 30_000].includes(ms)) return timeout(run, ms);
-			const timer = timeout(() => {}, 2_147_483_647);
-			const id = ++sequence;
-			waits.set(id, run);
-			process.send?.({ type: "wait", id, ms });
-			return timer;
-		});
+	mock.method(globalThis, "setTimeout", (run: () => void, ms: number) => {
+		if (![2_000, 5_000, 30_000].includes(ms)) return timeout(run, ms);
+		const timer = timeout(() => {}, 2_147_483_647);
+		const id = ++sequence;
+		waits.set(id, run);
+		process.send?.({ type: "wait", id, ms });
+		return timer;
+	});
 	const spawn = childProcess.spawn;
 	let child: childProcess.ChildProcess | undefined;
 	let releaseExit: (() => void) | undefined;
@@ -110,10 +109,10 @@ if (mode === "host" || mode === "host-term") {
 		child.once("exit", (code, signal) => process.send?.({ type: "reaped", pid: child?.pid, code, signal }));
 		return child;
 	});
-	if (mode === "held-kill" || mode === "throw-before-term") {
+	{
 		const kill = process.kill;
 		mock.method(process, "kill", (pid: number, signal?: NodeJS.Signals | number) => {
-			if (pid === child?.pid && mode === "throw-before-term" && (signal === "SIGTERM" || signal === "SIGKILL"))
+			if (pid === child?.pid && (signal === "SIGTERM" || signal === "SIGKILL"))
 				process.send?.({ type: "child-signal", signal });
 			if (mode === "held-kill" && pid === child?.pid && signal === "SIGKILL") {
 				// A live child past the breaker cannot be manufactured with a real SIGKILL.
@@ -123,12 +122,6 @@ if (mode === "host" || mode === "host-term") {
 			return kill(pid, signal);
 		});
 	}
-	const createServer = net.createServer;
-	mock.method(net, "createServer", (...args: Parameters<typeof net.createServer>) => {
-		const server = createServer(...args);
-		server.once("listening", () => process.send?.({ type: "ready" }));
-		return server;
-	});
 	syncBuiltinESMExports();
 	process.on("message", (message: unknown) => {
 		if (typeof message !== "object" || message === null || !("type" in message)) throw new Error("bad control");
