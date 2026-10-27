@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { oauthErrorHtml, oauthSuccessHtml } from "@earendil-works/pi-ai/utils/oauth-page";
 import type { McpLogger } from "../log.ts";
 import { type McpAsyncErrorSink, safeTimer } from "../wrap.ts";
 import { OAuthFlowError } from "./oauth-errors.ts";
@@ -63,8 +64,6 @@ export async function openCallbackChannel(
 }
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
-const SUCCESS_HTML = "<!doctype html><title>senpi</title><p>Authorization complete. You can close this tab.</p>";
-const FAILURE_HTML = "<!doctype html><title>senpi</title><p>Authorization failed. Return to senpi and retry.</p>";
 
 // Lazily-bound 127.0.0.1 listener that exists only for the duration of one
 // OAuth authorization. The handle is unref'd so it never keeps the process
@@ -170,7 +169,9 @@ export class LoopbackCallbackServer {
 		const state = url.searchParams.get("state") ?? undefined;
 		const error = url.searchParams.get("error");
 		if (error !== null || code === null || state === undefined || !this.#options.validateState(state)) {
-			res.writeHead(400, { "content-type": "text/html" }).end(FAILURE_HTML);
+			res.writeHead(400, { "content-type": "text/html" }).end(
+				oauthErrorHtml("MCP server authorization failed. Return to the app and start the sign-in again."),
+			);
 			void this.#fail(
 				new OAuthFlowError(
 					"state_mismatch",
@@ -180,7 +181,9 @@ export class LoopbackCallbackServer {
 			);
 			return;
 		}
-		res.writeHead(200, { "content-type": "text/html" }).end(SUCCESS_HTML);
+		res.writeHead(200, { "content-type": "text/html" }).end(
+			oauthSuccessHtml("MCP server authorization complete. You can close this tab."),
+		);
 		this.#succeed({ code, state, iss: url.searchParams.get("iss") ?? undefined });
 	}
 

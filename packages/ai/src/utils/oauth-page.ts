@@ -31,11 +31,6 @@ export function setOAuthPageBrand(brand: OAuthPageBrand | undefined): void {
 	brandSlot.current = logo ? { name, logo } : { name };
 }
 
-/** exported for tests only */
-export function resetOAuthPageBrandForTests(): void {
-	brandSlot.current = undefined;
-}
-
 function escapeHtml(value: string): string {
 	return value
 		.replaceAll("&", "&amp;")

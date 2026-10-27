@@ -1,11 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import {
-	type OAuthPageBrand,
-	oauthErrorHtml,
-	oauthSuccessHtml,
-	resetOAuthPageBrandForTests,
-	setOAuthPageBrand,
-} from "../src/utils/oauth-page.ts";
+import { type OAuthPageBrand, oauthErrorHtml, oauthSuccessHtml, setOAuthPageBrand } from "../src/utils/oauth-page.ts";
 
 // Path data and colors of the inherited upstream pi mark; none of them may ever reach the page.
 const PI_LOGO_FRAGMENTS = ["M165.29 165.29H517.36", "#F09082", "#4D9ABF", "#F1BE58"];
@@ -33,7 +27,7 @@ const cases = pages.flatMap((page) => brands.map((brand) => ({ ...page, ...brand
 
 describe("OAuth result page brand (#4432)", () => {
 	afterEach(() => {
-		resetOAuthPageBrandForTests();
+		setOAuthPageBrand(undefined);
 	});
 
 	test.each(cases)(
