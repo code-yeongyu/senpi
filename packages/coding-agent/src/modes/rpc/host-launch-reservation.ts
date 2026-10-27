@@ -194,10 +194,35 @@ export function ownLaunchRoute(): LaunchRoute {
 	return routeOf(launchCapabilities(process.platform));
 }
 
-/** What an old runtime's root `--version` prints: one version, optionally `v`-prefixed, with a pre-release or build. */
-const VERSION_LINE = /^v?\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z.+-]*)?$/;
+/**
+ * What an old runtime's root `--version` prints (`DISPLAY_VERSION` in config.ts), each form positively recognized: one
+ * version, optionally `v`-prefixed, with a pre-release or build (the engine's `VERSION` and a brand's semver or CalVer
+ * `displayVersion`); or the brand label an `omo` distribution injects as its `displayVersion`,
+ * `<brand>@<commit> <date> <time> <zone>` (for example `omo@c6e7dd7 2026-09-04 10:17 +09:00`). Any other line is not a
+ * legacy answer: it is unrecognized and fails closed.
+ */
+const VERSION_LINES: readonly RegExp[] = [
+	/^v?\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z.+-]*)?$/,
+	/^[A-Za-z][A-Za-z0-9._-]*@[0-9a-f]{7,40} \d{4}-\d{2}-\d{2} \d{2}:\d{2} [+-]\d{2}:\d{2}$/,
+];
 const PROBE_OUTPUT_LIMIT = 4096;
 const LAUNCH_CAPABILITY_PROBE_DEADLINE_MS = 10_000;
+
+/**
+ * How a probe that outlived its deadline is ended. A POSIX probe runs in its own process group, so the group signal
+ * also ends what a wrapper started. Windows has no group signal, and killing only the direct child leaves the runtime a
+ * `.cmd`/`.bat` wrapper started running: the whole tree is ended by pid through `taskkill /t`.
+ */
+export function probeDeadlineKill(
+	pid: number,
+	platform: NodeJS.Platform,
+):
+	| { readonly command: string; readonly args: readonly string[] }
+	| { readonly signal: "SIGKILL"; readonly target: number } {
+	return platform === "win32"
+		? { command: "taskkill", args: ["/pid", String(pid), "/t", "/f"] }
+		: { signal: "SIGKILL", target: -pid };
+}
 
 /**
  * Runs the selected command, wrapper included, as `<command> <args...> --launch-capabilities --version` and classifies
@@ -229,8 +254,13 @@ export async function selectLaunchRoute(
 		});
 		const timer = setTimeout(() => {
 			try {
-				if (detached && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-				else child.kill("SIGKILL");
+				if (child.pid === undefined) {
+					child.kill("SIGKILL");
+				} else {
+					const kill = probeDeadlineKill(child.pid, process.platform);
+					if ("signal" in kill) process.kill(kill.target, kill.signal);
+					else spawn(kill.command, [...kill.args], { stdio: "ignore", windowsHide: true }).once("error", () => {});
+				}
 			} catch {}
 			reject(
 				unknown(
@@ -250,7 +280,7 @@ export async function selectLaunchRoute(
 	});
 	const lines = output.split(/\r?\n/).filter((line) => line.trim() !== "");
 	const answer = lines.length === 1 ? (lines[0] ?? "").trim() : undefined;
-	if (answer !== undefined && VERSION_LINE.test(answer)) return "legacy";
+	if (answer !== undefined && VERSION_LINES.some((form) => form.test(answer))) return "legacy";
 	let record: unknown;
 	try {
 		record = answer === undefined ? undefined : JSON.parse(answer);

@@ -25,7 +25,12 @@ import {
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
-import { keepOwnerPipe, OWNER_WATCH_FD, parseSupervisorArgs } from "./host-lifecycle-launch.ts";
+import {
+	DEFAULT_READINESS_TIMEOUT_MS,
+	keepOwnerPipe,
+	OWNER_WATCH_FD,
+	parseSupervisorArgs,
+} from "./host-lifecycle-launch.ts";
 import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
 import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
@@ -47,7 +52,7 @@ import {
 import { resolvePresenceRoot } from "./presence-placement.ts";
 import { loadPresencePlacement } from "./socket-secret-native.ts";
 
-export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
+export { DEFAULT_READINESS_TIMEOUT_MS } from "./host-lifecycle-launch.ts";
 export { DEFAULT_STOP_TIMEOUT_MS };
 
 /**

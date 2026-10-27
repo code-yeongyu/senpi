@@ -35,6 +35,21 @@ switch (behavior) {
 		// An old runtime ignores the unknown flag and answers its root `--version` fast path.
 		process.stdout.write("0.84.4\n");
 		break;
+	case "branded-legacy":
+		// An old branded runtime prints its brand's displayVersion label (config.ts DISPLAY_VERSION) instead of a version.
+		process.stdout.write("omo@c6e7dd7 2026-09-04 10:17 +09:00\n");
+		break;
+	case "free-form":
+		// A line nothing recognizes: neither a version nor a capability record.
+		process.stdout.write("Some Runtime, build 7\n");
+		break;
+	case "multiline":
+		process.stdout.write("0.84.4\nwarning: deprecated flag\n");
+		break;
+	case "hang":
+		// Never answers: a launcher's deadline, not this runtime, must end the probe.
+		setInterval(() => {}, 1_000);
+		break;
 	case "malformed":
 		process.stdout.write('{"launch_capabilities":\n');
 		break;
