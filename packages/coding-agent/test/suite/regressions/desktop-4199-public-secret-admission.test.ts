@@ -284,8 +284,8 @@ describe.skipIf(process.platform === "win32")("public secret admission before mu
 	it("refuses typed while the reservation store is held by another writer", async () => {
 		const { agentDir, socket, secretPath } = await endpoint();
 		const store = await reservationStore(socket);
-		const generation = store.reserve(socket, identityKey(await goneIdentity()), ["supervisor", "host"]);
-		store.offer(generation, "supervisor", identityKey({ pid: 1, processStartTime: null }));
+		const generation = store.reserve(socket, identityKey(await goneIdentity()), ["supervisor", "host"], NO_PRESENCE);
+		store.offer(generation, "supervisor", identityKey({ pid: 1, processStartTime: null }), NO_OBJECT);
 		store.close();
 		const writer = new DatabaseSync(`${hostEnsureLockTarget(socket)}.reservation.db`);
 		try {
