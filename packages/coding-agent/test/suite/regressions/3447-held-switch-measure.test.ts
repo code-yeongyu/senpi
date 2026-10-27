@@ -98,7 +98,7 @@ describe("#3447 a held switch re-checks the target with the measure it was admit
 						if (!lastReply) throw new Error("missing short-tail fixture");
 						return {
 							compaction: {
-								summary: Array.from({ length: 10_000 }, (_, index) => `fact${index}`).join(" "),
+								summary: Array.from({ length: 18_000 }, (_, index) => `fact${index}`).join(" "),
 								firstKeptEntryId: lastReply.id,
 								tokensBefore: event.preparation.tokensBefore,
 							},
@@ -108,7 +108,7 @@ describe("#3447 a held switch re-checks the target with the measure it was admit
 			],
 		});
 		harnesses.push(harness);
-		seedUndercountedContext(harness, 200);
+		seedUndercountedContext(harness);
 		const target = harness.getModel("372k");
 		if (!target) throw new Error("missing held switch target fixture");
 		await harness.session.setModel(target);
