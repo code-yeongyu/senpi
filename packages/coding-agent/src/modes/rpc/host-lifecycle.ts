@@ -153,16 +153,28 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// Nothing is ever written; the pipe exists purely so its EOF is a reliable
 	// death notification. Errors on it must not crash the supervisor.
 	child.stdio[HOST_CHILD_WATCH_FD]?.on("error", () => {});
-	// The CHILD's own identity, so a reader can tell "supervisor gone, child still running" apart.
+	// The CHILD's own identity, so a reader can tell "supervisor gone, child still running" apart. A reservation-admitted
+	// supervisor records it through the bridge (creation FILETIME and SID on one handle), the domain the recovery census
+	// observes in (#4199 design 4.2a "OS identity").
 	if (child.pid !== undefined)
 		void recordChildPid(
 			generation.childPidFile,
 			child.pid,
 			() => child.exitCode === null && child.signalCode === null,
+			admittedLaunch?.identity,
 		);
 	/** The granted host's handle (Revision 8 clause (ii)), retained while this supervisor observes its child. */
 	let grantedHost: GrantedParticipant | undefined;
-	child.once("exit", (code, signal) => {
+	let childExitSeen = false;
+	/**
+	 * The host's end, recorded once, from whichever observation comes first: on Windows the granted host's process object
+	 * (design 4.2a: "process-object signalling for exit ... not wrapper exit"), armed below once the host is granted and
+	 * answering with the object's exit code; everywhere the ChildProcess exit event, the only signal off the bridge and a
+	 * secondary one on it.
+	 */
+	const onChildExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+		if (childExitSeen) return;
+		childExitSeen = true;
 		grantedHost?.release();
 		// Recorded BEFORE any shutdown it triggers: `shutdown` ends in `process.exit`. A stop the
 		// supervisor is performing itself is recorded too, as the engine stop it is.
@@ -181,7 +193,8 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		if (state.shuttingDown) return;
 		const verdict = classifyChildExit(code, signal);
 		void state.childExitRecorded.then(() => shutdown(verdict.reason, verdict.exitCode));
-	});
+	};
+	child.once("exit", onChildExit);
 
 	const admission = new HostAdmission({ protocolVersion: 1, serverVersion: VERSION, capabilities: [], instanceId });
 	const drain = new SupervisorDrain(
@@ -249,6 +262,15 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	registerSupervisorSignals(shutdown, () => drain.drain());
 	try {
 		grantedHost = await grantHost?.();
+		if (grantedHost) {
+			// The authority on the host's death: its process object, waited on through the retained handle. The wait ends
+			// with the shutdown's watcher stop or the handle's release; a cancelled or unavailable wait decides nothing.
+			const watch = new AbortController();
+			watchers.push(() => watch.abort());
+			void grantedHost.waitExit(watch.signal).then((wait) => {
+				if (wait.kind === "exited") onChildExit(wait.exitCode, null);
+			});
+		}
 		// Direct supervisor launches predate owner records and may have no generation directory.
 		// Ensured starts create it before spawning and always carry an explicit owner/null record.
 		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
@@ -319,9 +341,15 @@ const HOST_STARTUP_BUDGET_MS = 30_000;
 async function admitReservedLaunch(
 	reservation: StoreLocator,
 	publicSocket: string,
-): Promise<{ credential: Buffer | undefined; self: LaunchIdentity; presence: ParticipantRelease | undefined }> {
+): Promise<{
+	credential: Buffer | undefined;
+	self: LaunchIdentity;
+	presence: ParticipantRelease | undefined;
+	/** The bridge's read of a pid on one handle, for the host child's record; absent off the bridge (the reader records). */
+	identity: ((pid: number) => Promise<LaunchIdentity | undefined>) | undefined;
+}> {
 	const { admitClaimedParticipant, LaunchReservationError } = await import("./host-launch-reservation.ts");
-	const { ownProcessIdentity } = await import("./process-evidence.ts");
+	const { bridgeProcessIdentity, ownProcessIdentity } = await import("./process-evidence.ts");
 	const { loadPresencePlacement } = await import("./socket-secret-native.ts");
 	if (reservation.role !== "supervisor") {
 		throw new LaunchReservationError("locator_incomplete", "the supervisor entry requires a supervisor reservation");
@@ -335,7 +363,12 @@ async function admitReservedLaunch(
 		deadlineMs: SUPERVISOR_GRANT_DEADLINE_MS,
 		presence: native,
 	});
-	return { credential, self, presence };
+	return {
+		credential,
+		self,
+		presence,
+		identity: native.status === "available" ? (pid) => bridgeProcessIdentity(native, pid) : undefined,
+	};
 }
 
 /**

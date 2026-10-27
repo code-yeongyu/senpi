@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
 import { basename, win32 } from "node:path";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
-import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../../utils/process-identity.ts";
+import { readProcessStartTime, waitForStartTime } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { clearHostRegistration, writeHostRegistration } from "./host-daemon-registration.ts";
 import { callerHostOwner, writeHostOwner, writeHostSettings } from "./host-daemon-state.ts";
@@ -46,7 +46,7 @@ import {
 } from "./host-launch-reservation.ts";
 import { sweepPresenceObjects } from "./presence-cleanup.ts";
 import { resolvePresenceRoot } from "./presence-placement.ts";
-import { ownProcessIdentity, processEvidence } from "./process-evidence.ts";
+import { ownProcessIdentity, processEvidence, type ProcessRecord } from "./process-evidence.ts";
 import { loadPresencePlacement } from "./socket-secret-native.ts";
 
 export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
@@ -124,7 +124,7 @@ export async function startHost(
 	await writeHostOwner(generationPaths(paths, instanceId).dir, lifetimeOwner);
 	// A stranded generation is still writing its diagnostics here; only a fresh endpoint starts over.
 	const stderr = await open(paths.stderrLog, generation === 0 ? "w" : "a", 0o600);
-	let pidFile: DaemonPidFile | undefined;
+	let pidFile: ProcessRecord | undefined;
 	let child: ReturnType<typeof spawn> | undefined;
 	let exitedEarly: ChildExit | undefined;
 	let childExit: Promise<ChildExit> | undefined;
@@ -201,7 +201,10 @@ export async function startHost(
 				throw error;
 			});
 		}
-		pidFile = { pid: child.pid, processStartTime: processStartTime ?? null };
+		// The generation record names the process the issuer verified on its retained handle (its PID, creation FILETIME
+		// and SID through the bridge), so the recovery census reads it in the domain it observes in; off the reservation
+		// path it names the spawned pid by the start-time probe, as before.
+		pidFile = grantedSupervisor?.identity ?? { pid: child.pid, processStartTime: processStartTime ?? null };
 		await testOptions?.beforePidFileWrite?.();
 		await writeHostRegistration(paths, {
 			record: pidFile,

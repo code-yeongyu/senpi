@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { readProcessIdentity, readProcessStartTime, waitForStartTime } from "../../utils/process-identity.ts";
 import { writeJsonAtomic } from "./host-state-json.ts";
 import { errorMessage, supervisorLog } from "./host-supervisor-log.ts";
+import type { ProcessRecord } from "./process-evidence.ts";
 import { MAX_SOCKET_PATH_BYTES } from "./socket-ownership.ts";
 
 export const INTERNAL_HOST_DIR_PREFIX = "senpi-rpc-host-internal-";
@@ -102,23 +103,47 @@ async function readChildStartTime(pid: number, timeoutMs: number): Promise<strin
  * record is (`host-ensure-start.ts`): a bounded wait of 1 s probes, then one unhurried read. A single
  * 1 s CIM probe fired right after spawn came back empty on every Windows generation (#3658). An identity
  * read after the child exited is never recorded: its pid may already name an unrelated process.
+ *
+ * A reservation-admitted supervisor passes `identity`, the bridge's read of the pid on one process handle
+ * (`bridgeProcessIdentity`): the record then carries the creation FILETIME and the `TokenUser` SID the
+ * recovery census compares exactly (sisyphuslabs/omo-desktop-app#4199). The supervisor's startup graph
+ * never loads that module; the reader arrives as a function from the lazy reservation path.
  */
-export async function recordChildPid(file: string, pid: number, running: () => boolean): Promise<void> {
+export async function recordChildPid(
+	file: string,
+	pid: number,
+	running: () => boolean,
+	identity?: (pid: number) => Promise<ProcessRecord | undefined>,
+): Promise<void> {
 	try {
 		await writeJsonAtomic(file, { pid, processStartTime: null });
-		const processStartTime =
-			(await waitForStartTime(pid, CHILD_START_TIME_WAIT_MS, (p) => readChildStartTime(p, 1_000)).catch(
-				() => undefined,
-			)) ?? (await readChildStartTime(pid, CHILD_START_TIME_UNHURRIED_MS).catch(() => undefined));
-		if (processStartTime === undefined) {
+		const record: ProcessRecord | undefined = identity
+			? await identity(pid).catch(() => undefined)
+			: await readChildRecord(pid).then((processStartTime) =>
+					processStartTime === undefined ? undefined : { pid, processStartTime },
+				);
+		if (record === undefined) {
 			supervisorLog(`host child pid ${pid} start time unreadable at recording`);
 			return;
 		}
 		if (!running()) return;
-		await writeJsonAtomic(file, { pid, processStartTime });
+		await writeJsonAtomic(file, {
+			pid,
+			processStartTime: record.processStartTime,
+			...(typeof record.userSid === "string" && { userSid: record.userSid }),
+		});
 	} catch (cause) {
 		supervisorLog(`could not record the host child pid: ${errorMessage(cause)}`);
 	}
+}
+
+/** The start-time reader's record of the child: the bounded wait of 1 s probes, then one unhurried read. */
+async function readChildRecord(pid: number): Promise<string | undefined> {
+	return (
+		(await waitForStartTime(pid, CHILD_START_TIME_WAIT_MS, (p) => readChildStartTime(p, 1_000)).catch(
+			() => undefined,
+		)) ?? (await readChildStartTime(pid, CHILD_START_TIME_UNHURRIED_MS).catch(() => undefined))
+	);
 }
 
 export async function readSettingsFile(settingsFile: string): Promise<unknown> {

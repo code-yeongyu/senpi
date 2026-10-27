@@ -319,6 +319,8 @@ export interface FakeProcess {
 	readonly userSid: string | null;
 	/** Whether the process object is signalled; `null` is a failed wait. */
 	readonly exited?: boolean | null;
+	/** `GetExitCodeProcess` of a signalled object. */
+	readonly exitCode?: number;
 }
 
 /**
@@ -328,12 +330,28 @@ export interface FakeProcess {
  * until `processClose`; `processObserve` rereads the same handle. The table is explicit, never real PID recycling: a PID
  * not in it is `no_such_process`, a denied one is `access_denied`, and a test installs a replacement under a recorded PID
  * with its own creation FILETIME or SID. Nothing here classifies: live, gone and unknown are the caller's rule.
+ *
+ * The exit wait (`processWaitExit`, design 4.2a "process-object signalling for exit ... not wrapper exit"): a wait on a
+ * retained handle parks until the process object is signalled (`signal`), the wait is cancelled, or the handle is closed;
+ * it never polls and no ChildProcess is involved.
  */
 export function fakeProcessIdentity() {
 	const table = new Map<number, FakeProcess | "denied" | "failed">();
 	/** Retained handle ID -> the PID it was opened on. A handle keeps the process object: its facts stay readable. */
 	const handles = new Map<string, number>();
+	/** Wait ID -> the parked exit wait, settled by the object's signal, a cancellation or the handle's close. */
+	const exitWaits = new Map<
+		string,
+		{ readonly handleId: string; readonly pid: number; readonly settle: (result: NativeProcessObservation) => void }
+	>();
 	const calls: string[] = [];
+	const settleExit = (pid: number, exitCode: number) => {
+		for (const [waitId, wait] of exitWaits) {
+			if (wait.pid !== pid) continue;
+			exitWaits.delete(waitId);
+			wait.settle({ status: "exited", exitCode });
+		}
+	};
 	const facts = (pid: number, process: FakeProcess): NativeProcessObservation => ({
 		status: "opened",
 		handlePid: process.handlePid === undefined ? pid : process.handlePid,
@@ -370,12 +388,39 @@ export function fakeProcessIdentity() {
 		processClose: (handleId) => {
 			calls.push(`processClose ${handles.get(handleId) ?? "?"}`);
 			if (!handles.delete(handleId)) return { status: "not_held" };
+			// A closed handle ends its pending wait: the duplicated wait handle is released, the waiter answers cancelled.
+			for (const [waitId, wait] of exitWaits) {
+				if (wait.handleId !== handleId) continue;
+				exitWaits.delete(waitId);
+				wait.settle({ status: "cancelled" });
+			}
 			return { status: "closed" };
+		},
+		processWaitExit: (handleId, waitId) => {
+			const pid = handles.get(handleId);
+			calls.push(`processWaitExit ${pid ?? "?"}`);
+			if (pid === undefined) return Promise.resolve({ status: "not_held" });
+			if (exitWaits.has(waitId)) return Promise.resolve({ status: "held", reason: "wait_pending" });
+			const process = table.get(pid);
+			if (typeof process === "object" && process.exited === true) {
+				return Promise.resolve({ status: "exited", exitCode: process.exitCode ?? 0 });
+			}
+			return new Promise<NativeProcessObservation>((settle) => {
+				exitWaits.set(waitId, { handleId, pid, settle });
+			});
+		},
+		processCancelWaitExit: (waitId) => {
+			calls.push(`processCancelWaitExit`);
+			const wait = exitWaits.get(waitId);
+			if (!wait) return;
+			exitWaits.delete(waitId);
+			wait.settle({ status: "cancelled" });
 		},
 	};
 	return {
 		table,
 		handles,
+		exitWaits,
 		calls,
 		native,
 		live(pid: number, creationTime: string, userSid: string) {
@@ -383,6 +428,12 @@ export function fakeProcessIdentity() {
 		},
 		exited(pid: number, creationTime: string, userSid: string) {
 			table.set(pid, { creationTime, userSid, exited: true });
+		},
+		/** The process exits: its object is signalled with `exitCode`, and every wait parked on it answers `exited`. */
+		signal(pid: number, exitCode = 0) {
+			const process = table.get(pid);
+			if (typeof process === "object") table.set(pid, { ...process, exited: true, exitCode });
+			settleExit(pid, exitCode);
 		},
 		denied(pid: number) {
 			table.set(pid, "denied");

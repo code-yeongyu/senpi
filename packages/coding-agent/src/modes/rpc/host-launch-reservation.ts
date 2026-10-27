@@ -51,7 +51,12 @@ import {
 } from "./endpoint-reservation-store.ts";
 import { deletePresenceObject, type PresenceDeletion, presenceObjectMissing } from "./presence-cleanup.ts";
 import { predeclarePresenceObject, PresencePlacementError, verifyRecordedPresenceRoot } from "./presence-placement.ts";
-import { classifyObservation, type ProcessEvidence, type ProcessRecord } from "./process-evidence.ts";
+import {
+	classifyObservation,
+	type ProcessEvidence,
+	type ProcessExitWait,
+	type ProcessRecord,
+} from "./process-evidence.ts";
 import { loadPresencePlacement, type PresencePlacementLoad } from "./socket-secret-native.ts";
 
 export { LaunchReservationError, parseReservationLocatorArgs, type StoreLocator } from "./host-lifecycle-launch.ts";
@@ -529,6 +534,12 @@ export async function admitClaimedParticipant(
 /** A granted participant as the issuer observed it, and the handle the issuer keeps open on it. */
 export interface GrantedParticipant {
 	readonly identity: LaunchIdentity;
+	/**
+	 * The participant's exit as its process object signals it (design 4.2a: "process-object signalling for exit ... not
+	 * wrapper exit"), through the retained handle: the issuer's authority on that participant's death. `cancelled` when
+	 * `signal` aborts or `release` runs first; `unavailable` off the bridge, where nothing is retained.
+	 */
+	waitExit(signal?: AbortSignal): Promise<ProcessExitWait>;
 	/** Closes the retained handle once the issuer stops observing the participant. Idempotent. */
 	release(): void;
 }
@@ -577,7 +588,11 @@ export async function grantClaimedParticipant(
 				: { pid, processStartTime: observation.kind === "present" ? observation.identity : null };
 		// The store's compare-and-grant checks the observed identity against the claim once more, atomically.
 		grantVerifiedParticipant(store, generation, role, issuer, observed, createHash("sha256").update(secret).digest());
-		return { identity: observed, release: () => retained.close() };
+		return {
+			identity: observed,
+			waitExit: (signal) => retained.waitExit(signal),
+			release: () => retained.close(),
+		};
 	} catch (error: unknown) {
 		retained.close();
 		throw error;

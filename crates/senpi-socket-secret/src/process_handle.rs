@@ -1,7 +1,11 @@
 //! The Windows process-identity adapter of the #4199 design (4.2a "OS identity"): one retained,
 //! non-inheritable handle from `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE)`, and
 //! `GetProcessId`, the creation FILETIME, the `TokenUser` SID and the exit state all read on that same
-//! handle. Exit is observed by waiting on the process object, never by a wrapper's exit.
+//! handle. Exit is observed by waiting on the process object, never by a wrapper's exit: a blocking
+//! wait runs on a `DuplicateHandle` of the retained handle (the same process object), beside a cancel
+//! event, so the wait holds no registry lock and ends with the object's signal, a cancellation, or the
+//! close of the retained handle ("process-object signalling for exit, `RegisterWaitForSingleObject` or
+//! equivalent, not wrapper exit").
 
 use crate::process_identity::{Observation, ProcessFacts};
 
@@ -21,6 +25,18 @@ pub enum ExitWait {
     Failed(u32),
 }
 
+/// What a blocking wait on the process object ended with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExitSignal {
+    /// The process object is signalled; `GetExitCodeProcess` read on the wait handle, `None` when it failed.
+    Exited {
+        exit_code: Option<u32>,
+    },
+    /// The cancel event was signalled first.
+    Cancelled,
+    Failed(u32),
+}
+
 /// Reopens `pid` once and reports what it observed; the handle is closed before returning.
 pub fn observe_pid(pid: u32) -> Observation {
     match RetainedProcess::open(pid) {
@@ -33,6 +49,8 @@ pub fn observe_pid(pid: u32) -> Observation {
 }
 
 pub use imp::RetainedProcess;
+#[cfg(windows)]
+pub use imp::{CancelEvent, ProcessWaitHandle};
 
 #[cfg(not(windows))]
 mod imp {
@@ -59,15 +77,16 @@ mod imp {
 
 #[cfg(windows)]
 mod imp {
-    use super::{ExitWait, OpenError, ProcessFacts};
+    use super::{ExitSignal, ExitWait, OpenError, ProcessFacts};
     use windows_sys::Win32::Foundation::{
-        CloseHandle, GetLastError, LocalFree, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, FILETIME, HANDLE,
-        WAIT_OBJECT_0, WAIT_TIMEOUT,
+        CloseHandle, DuplicateHandle, GetLastError, LocalFree, DUPLICATE_SAME_ACCESS, ERROR_ACCESS_DENIED,
+        ERROR_INVALID_PARAMETER, FILETIME, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
     use windows_sys::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
     use windows_sys::Win32::System::Threading::{
-        GetProcessId, GetProcessTimes, OpenProcess, OpenProcessToken, WaitForSingleObject,
+        CreateEventW, GetCurrentProcess, GetExitCodeProcess, GetProcessId, GetProcessTimes, OpenProcess,
+        OpenProcessToken, SetEvent, WaitForMultipleObjects, WaitForSingleObject, INFINITE,
         PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
     };
 
@@ -76,6 +95,9 @@ mod imp {
     // SAFETY: a process handle is valid on every thread of the process that opened it; the registry that
     // retains it (`process_binding.rs`) serializes every use behind its mutex.
     unsafe impl Send for OwnedHandle {}
+    // SAFETY: the kernel calls made through these handles (`WaitForMultipleObjects`, `SetEvent`,
+    // `GetExitCodeProcess`) are thread-safe; the handle value itself is never mutated after creation.
+    unsafe impl Sync for OwnedHandle {}
 
     impl Drop for OwnedHandle {
         fn drop(&mut self) {
@@ -137,6 +159,75 @@ mod imp {
                 WAIT_TIMEOUT => ExitWait::TimedOut,
                 // SAFETY: reads this thread's last-error value after a failed wait.
                 _ => ExitWait::Failed(unsafe { GetLastError() }),
+            }
+        }
+
+        /// A second, non-inheritable handle on the same process object with the same access, for a blocking
+        /// wait that must not hold the registry: closing the retained handle does not end the object.
+        pub fn duplicate_for_wait(&self) -> Result<ProcessWaitHandle, u32> {
+            let mut raw: HANDLE = std::ptr::null_mut();
+            // SAFETY: both process handles are the current process's pseudo-handle; the out-pointer names a
+            // writable HANDLE local; `0` asks for a non-inheritable duplicate.
+            let ok = unsafe {
+                DuplicateHandle(
+                    GetCurrentProcess(),
+                    self.handle.0,
+                    GetCurrentProcess(),
+                    &mut raw,
+                    0,
+                    0,
+                    DUPLICATE_SAME_ACCESS,
+                )
+            };
+            if ok == 0 || raw.is_null() {
+                // SAFETY: reads this thread's last-error value after the failed duplication.
+                return Err(unsafe { GetLastError() });
+            }
+            Ok(ProcessWaitHandle(OwnedHandle(raw)))
+        }
+    }
+
+    /// A manual-reset event a pending exit wait is parked beside; `set` ends that wait as `Cancelled`.
+    pub struct CancelEvent(OwnedHandle);
+
+    impl CancelEvent {
+        pub fn new() -> Result<Self, u32> {
+            // SAFETY: a manual-reset, initially unsignalled, unnamed, non-inheritable event.
+            let raw = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+            if raw.is_null() {
+                // SAFETY: reads this thread's last-error value after the failed creation.
+                return Err(unsafe { GetLastError() });
+            }
+            Ok(Self(OwnedHandle(raw)))
+        }
+
+        pub fn set(&self) {
+            // SAFETY: `self` owns a live event handle.
+            unsafe { SetEvent(self.0 .0) };
+        }
+    }
+
+    /// The duplicated handle a blocking exit wait runs on.
+    pub struct ProcessWaitHandle(OwnedHandle);
+
+    impl ProcessWaitHandle {
+        /// Blocks until the process object is signalled, or `cancel` is. The object comes first in the wait
+        /// list, so an exit that races a cancellation reads as the exit.
+        pub fn wait_exit_or(&self, cancel: &CancelEvent) -> ExitSignal {
+            let handles = [self.0 .0, cancel.0 .0];
+            // SAFETY: both handles are live and owned for the duration of the call; wait-any, no timeout.
+            match unsafe { WaitForMultipleObjects(2, handles.as_ptr(), 0, INFINITE) } {
+                WAIT_OBJECT_0 => {
+                    let mut code = 0u32;
+                    // SAFETY: the out-pointer names a writable u32 local; the handle has query access.
+                    let read = unsafe { GetExitCodeProcess(self.0 .0, &mut code) };
+                    ExitSignal::Exited {
+                        exit_code: (read != 0).then_some(code),
+                    }
+                }
+                status if status == WAIT_OBJECT_0 + 1 => ExitSignal::Cancelled,
+                // SAFETY: reads this thread's last-error value after a failed wait.
+                _ => ExitSignal::Failed(unsafe { GetLastError() }),
             }
         }
     }

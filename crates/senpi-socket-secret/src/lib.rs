@@ -23,7 +23,7 @@ pub use answers::{
 pub use classify::{
     classify, DriverPath, Locality, NotLocalReason, RemoteDevice, RemoteProtocol, VolumeFacts,
 };
-pub use process_handle::{observe_pid, ExitWait, OpenError, RetainedProcess};
+pub use process_handle::{observe_pid, ExitSignal, ExitWait, OpenError, RetainedProcess};
 pub use process_identity::{
     observe, GoneReason, Liveness, Observation, ProcessFacts, ProcessRecord, UnknownReason,
 };

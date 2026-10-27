@@ -13,7 +13,10 @@
  * you did not start), and each exists because a specific mistake is otherwise unprovable:
  *
  * - `processStartTime` - a pid alone is recycled by the OS, so a stale record would authorize a
- *   signal to an unrelated process.
+ *   signal to an unrelated process. With `userSid` beside it (a record read on a Windows process
+ *   handle, sisyphuslabs/omo-desktop-app#4199), the pair is the complete creation FILETIME and the
+ *   `TokenUser` SID the reservation recovery census compares exactly; a record without a SID was
+ *   read by the platform's start-time reader and is compared by that reader's tolerance only.
  * - `writer` - the identity of the process that WROTE the record. Only that process may stop the
  *   host it names; anyone else attaches or refuses.
  * - `instance_id` - which generation the pointer is about, so a predecessor draining after a handoff
@@ -46,6 +49,7 @@ import { isRecord, parseJson, readFileOrUndefined, writeStateFile } from "./host
 import { endClaimsOfEndedGenerations, pruneDeadGenerations } from "./host-generations.ts";
 import { hostChildAlive } from "./host-stalled-evidence.ts";
 import { logUnknownHostIdentity } from "./host-supervisor-log.ts";
+import type { ProcessRecord } from "./process-evidence.ts";
 
 /** Who wrote a registration: the process identity a later stop must match to be allowed. */
 export interface HostPidFileWriter {
@@ -55,7 +59,8 @@ export interface HostPidFileWriter {
 
 /** What an ensure knows about the generation it just spawned. */
 export interface HostRegistration {
-	readonly record: DaemonPidFile;
+	/** The serving process: its pid, start discriminator and, when read on a process handle, its `TokenUser` SID. */
+	readonly record: ProcessRecord;
 	readonly socket: string;
 	readonly instanceId: string;
 	readonly generation: number;
@@ -151,10 +156,12 @@ export async function writeGenerationRecord(
 ): Promise<{ generation: HostGenerationPaths; writer: HostPidFileWriter }> {
 	const generation = generationPaths(paths, registration.instanceId);
 	const writer: HostPidFileWriter = { pid: process.pid, startTime: await thisProcessStartTime() };
-	const { build } = registration;
+	const { build, record } = registration;
 	await createGenerationDirectory(generation);
 	await writeStateFile(generation.pidFile, {
-		...registration.record,
+		pid: record.pid,
+		processStartTime: record.processStartTime,
+		...(typeof record.userSid === "string" && { userSid: record.userSid }),
 		instance_id: registration.instanceId,
 		generation: registration.generation,
 		...(build && { engineVersion: build.text, engineOrdinal: build.ordinal }),

@@ -10,6 +10,14 @@
  * same SID. Reject its stale claim/grant and never signal or adopt the replacement. A matching creation time with
  * unexpected SID, access denial, unreadable fields or inconsistent handle/PID is unknown." An account mismatch with the
  * same birth identity "is an unresolved inconsistency, not permission to reclaim."
+ *
+ * Two observation domains, never compared against each other. A record that carries a `userSid` was read on a process
+ * handle (`GetProcessTimes`, the complete FILETIME); one without was read by the platform's start-time reader, on Windows
+ * the CIM table, whose `CreationDate` keeps microseconds only and so differs from the handle's FILETIME in its last digit.
+ * A gone verdict from a different creation time needs a "verified common observation domain", so a handle observation of
+ * a SID-less record and a reader observation of a SID-bearing record are both `incomplete`: the old two-field rows stay
+ * readable and stay unknown, and a daemon record written through the bridge (`bridgeProcessIdentity`) reads live or
+ * gone exactly.
  */
 import { randomUUID } from "node:crypto";
 import { type ProcessIdentityResult, readProcessIdentity, readProcessStartTime } from "../../utils/process-identity.ts";
@@ -55,7 +63,10 @@ export type ProcessLiveness =
 
 const FILETIME = /^\d+$/;
 
-/** The design's observation table over one observation of `record`; a FILETIME is compared exactly, as an integer. */
+/**
+ * The design's observation table over one observation of `record`; a FILETIME is compared exactly, as an integer, and
+ * only within one observation domain (a SID marks the handle domain, see above).
+ */
 export function classifyObservation(record: ProcessRecord, observation: ProcessObservation): ProcessLiveness {
 	if (!Number.isInteger(record.pid) || record.pid <= 0) {
 		return { kind: "unknown", reason: "incomplete", detail: "no recorded identity" };
@@ -66,7 +77,11 @@ export function classifyObservation(record: ProcessRecord, observation: ProcessO
 		return { kind: "unknown", reason: "unreadable", detail: cause };
 	}
 	const recorded = record.processStartTime;
+	const userSid = record.userSid ?? null;
 	if (observation.kind === "present") {
+		if (userSid !== null) {
+			return { kind: "unknown", reason: "incomplete", detail: "handle-domain record, start-time reader" };
+		}
 		if (recorded === null || !FILETIME.test(recorded) || !FILETIME.test(observation.identity)) {
 			return { kind: "unknown", reason: "incomplete", detail: "noncomparable identity" };
 		}
@@ -75,6 +90,7 @@ export function classifyObservation(record: ProcessRecord, observation: ProcessO
 			: { kind: "gone", reason: "birth_mismatch" };
 	}
 	const { facts } = observation;
+	if (userSid === null) return { kind: "unknown", reason: "incomplete", detail: "no recorded SID" };
 	if (facts.handlePid !== record.pid) {
 		return { kind: "unknown", reason: "inconsistent", detail: `GetProcessId ${facts.handlePid ?? "unreadable"}` };
 	}
@@ -85,19 +101,32 @@ export function classifyObservation(record: ProcessRecord, observation: ProcessO
 		return { kind: "unknown", reason: "incomplete", detail: "noncomparable identity" };
 	}
 	if (BigInt(recorded) !== BigInt(facts.creationTime)) return { kind: "gone", reason: "birth_mismatch" };
-	const userSid = record.userSid ?? null;
-	if (userSid === null) return { kind: "unknown", reason: "incomplete", detail: "no recorded SID" };
 	if (facts.userSid === null) return { kind: "unknown", reason: "unreadable", detail: "SID unreadable" };
 	if (facts.userSid !== userSid) return { kind: "unknown", reason: "inconsistent", detail: "SID mismatch" };
 	if (facts.exited === null) return { kind: "unknown", reason: "unreadable", detail: "exit state unreadable" };
 	return facts.exited ? { kind: "gone", reason: "exited" } : { kind: "live" };
 }
 
+/**
+ * How a wait on a retained process object ended: `exited` once the object is signalled (with `GetExitCodeProcess`,
+ * `null` when unreadable), `cancelled` by the caller's signal or the handle's close, `unavailable` when nothing is
+ * retained to wait on (the start-time reader, a closed handle, a failed wait).
+ */
+export type ProcessExitWait =
+	| { readonly kind: "exited"; readonly exitCode: number | null }
+	| { readonly kind: "cancelled" }
+	| { readonly kind: "unavailable"; readonly reason: string };
+
 /** A process handle this process holds: the observation read on it, a reread of it, and its one release. */
 export interface RetainedProcess {
 	readonly observation: ProcessObservation;
 	/** A fresh observation on the same handle: the facts of that exact instance, its exit state included. */
 	observe(): ProcessObservation;
+	/**
+	 * Resolves when the retained process object is signalled (design 4.2a: "process-object signalling for exit
+	 * (`RegisterWaitForSingleObject` or equivalent), not wrapper exit"), or when `signal` aborts or `close` runs first.
+	 */
+	waitExit(signal?: AbortSignal): Promise<ProcessExitWait>;
 	/** Closes the handle. Idempotent. */
 	close(): void;
 }
@@ -129,6 +158,17 @@ function fromNative(result: NativeProcessObservation): ProcessObservation {
 	}
 }
 
+function fromNativeWait(result: NativeProcessObservation): ProcessExitWait {
+	switch (result.status) {
+		case "exited":
+			return { kind: "exited", exitCode: result.exitCode ?? null };
+		case "cancelled":
+			return { kind: "cancelled" };
+		default:
+			return { kind: "unavailable", reason: `${result.status}${result.reason ? ` ${result.reason}` : ""}` };
+	}
+}
+
 /** Evidence through the bridge: one `OpenProcess` per `open`, retained until `close`. */
 export function nativeProcessEvidence(native: NativeProcessBinding): ProcessEvidence {
 	return {
@@ -139,6 +179,20 @@ export function nativeProcessEvidence(native: NativeProcessBinding): ProcessEvid
 			return {
 				observation: fromNative(first),
 				observe: () => (open ? fromNative(native.processObserve(handleId)) : fromNative(first)),
+				async waitExit(signal) {
+					if (!open) return { kind: "unavailable", reason: "not_held" };
+					if (signal?.aborted) return { kind: "cancelled" };
+					// The bridge registers the wait ID synchronously, before its thread starts, so a cancel can never miss it.
+					const waitId = randomUUID();
+					const waiting = native.processWaitExit(handleId, waitId);
+					const cancel = () => native.processCancelWaitExit(waitId);
+					signal?.addEventListener("abort", cancel, { once: true });
+					try {
+						return fromNativeWait(await waiting);
+					} finally {
+						signal?.removeEventListener("abort", cancel);
+					}
+				},
 				close: () => {
 					if (!open) return;
 					open = false;
@@ -148,6 +202,9 @@ export function nativeProcessEvidence(native: NativeProcessBinding): ProcessEvid
 		},
 	};
 }
+
+/** Nothing retained: no object to wait on. The ChildProcess exit event stays the only exit signal off the bridge. */
+const noExitWait = async (): Promise<ProcessExitWait> => ({ kind: "unavailable", reason: "no retained handle" });
 
 /**
  * Evidence from a start-time reader (`readProcessStartTime` and the probes tests inject): `undefined` is an absent PID,
@@ -161,7 +218,7 @@ export function startTimeEvidence(read: (pid: number) => Promise<string | undefi
 					identity === undefined ? { kind: "absent" } : { kind: "present", identity },
 				(error: unknown): ProcessObservation => ({ kind: "error", error }),
 			);
-			return { observation, observe: () => observation, close: () => {} };
+			return { observation, observe: () => observation, waitExit: noExitWait, close: () => {} };
 		},
 	};
 }
@@ -171,7 +228,7 @@ export function identityReaderEvidence(budgetMs: number): ProcessEvidence {
 	return {
 		async open(pid) {
 			const observation = await readProcessIdentity(pid, process.platform, budgetMs);
-			return { observation, observe: () => observation, close: () => {} };
+			return { observation, observe: () => observation, waitExit: noExitWait, close: () => {} };
 		},
 	};
 }
@@ -188,23 +245,36 @@ export function processEvidence(
 }
 
 /**
+ * The identity of `pid` as the bridge reads it on one handle of it, closed at once: PID, the complete creation FILETIME
+ * and the `TokenUser` SID, the handle domain. `undefined` when the bridge is unavailable or the handle answers no
+ * creation time; the caller then records through its platform reader, as before. The daemon's own records (the
+ * generation record, `host-child.pid`, the session claims) are written this way so the recovery census compares them
+ * in the domain it observes in.
+ */
+export async function bridgeProcessIdentity(
+	native: PresencePlacementLoad,
+	pid: number,
+): Promise<ProcessRecord | undefined> {
+	if (native.status !== "available") return undefined;
+	const retained = await nativeProcessEvidence(native.native).open(pid);
+	try {
+		const { observation } = retained;
+		if (observation.kind !== "opened" || observation.facts.creationTime === null) return undefined;
+		return { pid, processStartTime: observation.facts.creationTime, userSid: observation.facts.userSid };
+	} finally {
+		retained.close();
+	}
+}
+
+/**
  * This process's own recorded identity (the claimant's `self`, the issuer's identity): through the bridge, its PID,
  * creation FILETIME and SID read on one handle of itself, closed at once; otherwise its PID and start time, with an
  * unreadable start time recorded as unverified (`null`) as before.
  */
 export async function ownProcessIdentity(native: PresencePlacementLoad): Promise<ProcessRecord> {
 	const pid = process.pid;
-	if (native.status === "available") {
-		const retained = await nativeProcessEvidence(native.native).open(pid);
-		try {
-			const { observation } = retained;
-			if (observation.kind === "opened" && observation.facts.creationTime !== null) {
-				return { pid, processStartTime: observation.facts.creationTime, userSid: observation.facts.userSid };
-			}
-		} finally {
-			retained.close();
-		}
-	}
+	const own = await bridgeProcessIdentity(native, pid);
+	if (own) return own;
 	const processStartTime = (await readProcessStartTime(pid).catch(() => undefined)) ?? null;
 	return { pid, processStartTime, userSid: null };
 }

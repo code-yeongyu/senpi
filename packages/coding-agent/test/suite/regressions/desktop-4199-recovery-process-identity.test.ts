@@ -1,5 +1,6 @@
+import * as childProcess from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +9,12 @@ import {
 	openEndpointReservationStore,
 } from "../../../src/modes/rpc/endpoint-reservation-store.ts";
 import { recoverEndpointReservations, recoveryProber } from "../../../src/modes/rpc/endpoint-recovery.ts";
-import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import {
+	createGenerationDirectory,
+	createHostDaemonPaths,
+	generationPaths,
+} from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { startHost } from "../../../src/modes/rpc/host-ensure-start.ts";
 import {
 	acquireOwnerPresence,
 	claimLaunchRole,
@@ -18,15 +24,38 @@ import {
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
+import { recordChildPid } from "../../../src/modes/rpc/host-lifecycle-scratch.ts";
+import { createSessionPathReservations, readSessionPathClaims } from "../../../src/modes/rpc/host-reservations.ts";
 import { resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
-import { ownProcessIdentity, processEvidence, startTimeEvidence } from "../../../src/modes/rpc/process-evidence.ts";
+import {
+	bridgeProcessIdentity,
+	classifyObservation,
+	ownProcessIdentity,
+	processEvidence,
+	startTimeEvidence,
+} from "../../../src/modes/rpc/process-evidence.ts";
+import { createSocketSecret, socketSecretPath } from "../../../src/modes/rpc/socket-transport.ts";
 import { fakeWindows } from "../../helpers/fake-windows-presence.ts";
+
+const mocked = vi.hoisted(() => ({ lockDir: "", placement: undefined as unknown, spawn: undefined as unknown }));
 
 vi.mock("../../../src/modes/rpc/socket-secret-native.ts", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../../../src/modes/rpc/socket-secret-native.ts")>()),
-	// Every bridge in this file is passed explicitly; a default load would be the real (absent) one.
-	loadPresencePlacement: () => ({ status: "unavailable", reason: "native_unavailable" }),
+	// Every bridge in this file is passed explicitly, or installed as `mocked.placement` for a startHost that loads one;
+	// a default load would be the real (absent) one.
+	loadPresencePlacement: () => mocked.placement ?? { status: "unavailable", reason: "native_unavailable" },
 }));
+
+vi.mock("../../../src/modes/rpc/host-ensure-lock.ts", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../../../src/modes/rpc/host-ensure-lock.ts")>()),
+	hostEnsureLockTarget: () => join(mocked.lockDir, "endpoint"),
+}));
+
+vi.mock("node:child_process", async (importOriginal) => {
+	const actual = await importOriginal<typeof childProcess>();
+	mocked.spawn = actual.spawn;
+	return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 // Regression coverage for https://github.com/sisyphuslabs/omo-desktop-app/issues/4199 (design 4.2a "OS identity" and
 // "Process evidence and the kernel-session gate (Revision 8)", clause (ii); Revision 3/4 identity paragraphs). Security
@@ -59,6 +88,8 @@ describe("#4199 process evidence through the retained handle: PID, creation FILE
 
 	afterEach(async () => {
 		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+		mocked.placement = undefined;
 		for (const store of stores.splice(0)) store.close();
 		for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 	});
@@ -215,7 +246,9 @@ describe("#4199 process evidence through the retained handle: PID, creation FILE
 
 		it("a recorded identity without a SID cannot be confirmed live through the handle: owner_identity_incomplete at once", async () => {
 			// The record is "PID + full creation FILETIME + TokenUser SID read on ONE handle"; an identity "that cannot be
-			// compared" is `owner_identity_incomplete`. A different creation time still proves it gone.
+			// compared" is `owner_identity_incomplete`. A SID-less row was read by the start-time reader (the CIM table, which
+			// truncates the FILETIME to microseconds), so its creation time is never compared against a handle's: a different
+			// one is not a "verified common observation domain" mismatch and does not prove the row gone either.
 			const machine = fakeWindows();
 			const launch = await crashedWithoutOwnerObject(machine, LEGACY_OWNER);
 			machine.processes.live(OWNER.pid, CREATED, SID);
@@ -227,7 +260,210 @@ describe("#4199 process evidence through the retained handle: PID, creation FILE
 			const replaced = fakeWindows();
 			const second = await crashedWithoutOwnerObject(replaced, LEGACY_OWNER);
 			replaced.processes.live(OWNER.pid, "134000000010000000", SID);
-			expect(await recover(second, replaced)).toEqual({ status: "recovered", generations: [second.generation] });
+			expect(await recover(second, replaced)).toMatchObject({
+				status: "refused",
+				reason: "authority_unknown",
+				escalation: { reason: "owner_identity_incomplete", observations: 1 },
+			});
+		});
+
+		it("the observation table never compares across domains: a SID marks a handle-domain record", () => {
+			// "Verified common boot/PID/clock domain and units ... different exact creation/start discriminator" is gone; a
+			// record and an observation from different readers are "noncomparable", unknown. A record carries `userSid` only
+			// when it was read on a process handle; the start-time reader's identity carries none.
+			const opened = (creationTime: string) => ({
+				kind: "opened" as const,
+				facts: { handlePid: 100, creationTime, userSid: SID, exited: false },
+			});
+			expect(classifyObservation(LEGACY_OWNER, opened("134000000010000000"))).toMatchObject({
+				kind: "unknown",
+				reason: "incomplete",
+			});
+			expect(classifyObservation(LEGACY_OWNER, opened(CREATED))).toMatchObject({
+				kind: "unknown",
+				reason: "incomplete",
+			});
+			expect(classifyObservation(OWNER, { kind: "present", identity: "134000000010000000" })).toMatchObject({
+				kind: "unknown",
+				reason: "incomplete",
+			});
+			expect(classifyObservation(OWNER, { kind: "present", identity: CREATED })).toMatchObject({
+				kind: "unknown",
+				reason: "incomplete",
+			});
+			// Same domain, each way: exact.
+			expect(classifyObservation(OWNER, opened("134000000010000000"))).toEqual({
+				kind: "gone",
+				reason: "birth_mismatch",
+			});
+			expect(classifyObservation(OWNER, opened(CREATED))).toEqual({ kind: "live" });
+			expect(classifyObservation(LEGACY_OWNER, { kind: "present", identity: "134000000010000000" })).toEqual({
+				kind: "gone",
+				reason: "birth_mismatch",
+			});
+			expect(classifyObservation(LEGACY_OWNER, { kind: "present", identity: CREATED })).toEqual({ kind: "live" });
+		});
+	});
+
+	describe("the daemon's own records carry the handle-domain identity (design 4.2a 'OS identity', the census)", () => {
+		const CHILD_PID = 7001;
+		const CHILD_CREATED = "134000000000000007";
+
+		/** An abandoned generation whose owner is gone, so only the daemon's own records can keep it from retiring. */
+		async function abandoned(machine: Machine) {
+			const launch = await crashedWithoutOwnerObject(machine);
+			const generation = generationPaths(launch.paths, "gen-a");
+			await createGenerationDirectory(generation);
+			return { ...launch, generationDir: generation };
+		}
+
+		it("host-child.pid recorded through the bridge carries the child's creation FILETIME and SID, and its live entry answers drain_owner", async () => {
+			// Before: the supervisor recorded its child from the CIM table, SID-less, so a live child read
+			// `owner_identity_incomplete` and routed to Repair instead of `drain_owner`.
+			const machine = fakeWindows();
+			const launch = await abandoned(machine);
+			machine.processes.live(CHILD_PID, CHILD_CREATED, SID);
+			const identity = (pid: number) => bridgeProcessIdentity(machine.load, pid);
+			await recordChildPid(launch.generationDir.childPidFile, CHILD_PID, () => true, identity);
+			expect(JSON.parse(await readFile(launch.generationDir.childPidFile, "utf8"))).toEqual({
+				pid: CHILD_PID,
+				processStartTime: CHILD_CREATED,
+				userSid: SID,
+			});
+			expect(machine.processes.handles.size).toBe(0);
+			expect(await recover(launch, machine)).toMatchObject({
+				status: "refused",
+				reason: "census_live",
+				action: "drain_owner",
+				detail: expect.stringContaining(`host child (pid ${CHILD_PID}) is live`),
+			});
+			expect(launch.store.reservation(launch.generation).escalation).toBeNull();
+		});
+
+		it("an identity read after the child exited is never recorded, through the bridge as before", async () => {
+			const machine = fakeWindows();
+			const launch = await abandoned(machine);
+			machine.processes.live(CHILD_PID, CHILD_CREATED, SID);
+			const identity = (pid: number) => bridgeProcessIdentity(machine.load, pid);
+			await recordChildPid(launch.generationDir.childPidFile, CHILD_PID, () => false, identity);
+			expect(JSON.parse(await readFile(launch.generationDir.childPidFile, "utf8"))).toEqual({
+				pid: CHILD_PID,
+				processStartTime: null,
+			});
+		});
+
+		it("a session claim published with the host's own handle identity carries its SID, reads back with it, and its live owner answers drain_owner", async () => {
+			const machine = fakeWindows();
+			const launch = await abandoned(machine);
+			machine.processes.live(process.pid, "134000000000000008", SID);
+			const reservations = createSessionPathReservations({
+				daemonDir: launch.paths.dir,
+				instanceId: "gen-a",
+				identity: () => ownProcessIdentity(machine.load),
+			});
+			expect(await reservations.claim(join(launch.root, "sessions", "a.jsonl"))).toBeUndefined();
+			const claims = await readSessionPathClaims(launch.paths.reservationsDir);
+			expect(claims.map(({ owner }) => owner)).toEqual([
+				expect.objectContaining({
+					instanceId: "gen-a",
+					pid: process.pid,
+					processStartTime: "134000000000000008",
+					userSid: SID,
+				}),
+			]);
+			expect(await recover(launch, machine)).toMatchObject({
+				status: "refused",
+				reason: "census_live",
+				action: "drain_owner",
+				detail: expect.stringContaining(`session claim of generation gen-a (pid ${process.pid}) is live`),
+			});
+		});
+
+		it("host.pid: startHost registers the granted supervisor's handle identity (creation FILETIME and SID), not the CIM probe's", async () => {
+			// The reserving owner verified its supervisor on a retained handle; the generation record names that process by
+			// the same three facts, so a later recovery census reads it in the handle domain.
+			const machine = fakeWindows();
+			const root = await tempRoot();
+			mocked.lockDir = root;
+			mocked.placement = machine.load;
+			const socket = join(root, "rpc.sock");
+			const agentDir = join(root, "agent");
+			await createSocketSecret(socketSecretPath(socket));
+			const paths = await createHostDaemonPaths({ agentDir, socket });
+			const storePath = `${join(root, "endpoint")}.reservation.db`;
+			const HANDLE_CREATED = "134000000000000019";
+			/** What the CIM table says for the same instant: microsecond precision, the last digit lost. */
+			const CIM_CREATED = "134000000000000010";
+			let sleeper: childProcess.ChildProcess | undefined;
+			let recorded: unknown;
+			let claimed: Promise<unknown> | undefined;
+			vi.stubGlobal("process", Object.create(process, { platform: { value: "win32" } }));
+			let outcome: unknown;
+			try {
+				const actualSpawn = mocked.spawn as typeof childProcess.spawn;
+				await vi.mocked(childProcess.spawn).withImplementation(
+					() => {
+						// The supervisor process: a live child this test owns, under the spawned PID the issuer verifies.
+						sleeper = actualSpawn(process.execPath, ["-e", "setInterval(() => {}, 1_000_000)"], {
+							stdio: "ignore",
+						});
+						return sleeper;
+					},
+					async () => {
+						outcome = await startHost(paths, socket, {
+							agentDir,
+							socket,
+							_test: {
+								readinessTimeoutMs: 100,
+								stopTimeoutMs: 1_000,
+								readProcessStartTime: async (pid) => {
+									// The route is settled: the rest of the start runs on this host's own platform.
+									vi.unstubAllGlobals();
+									if (claimed === undefined) {
+										machine.processes.live(pid, HANDLE_CREATED, SID);
+										const store = await openStore(storePath);
+										const [generation] = store.activeGenerations(socket);
+										if (generation === undefined) throw new Error("no reserved generation");
+										// The supervisor claims with its own handle identity, as `admitReservedLaunch` does.
+										claimed = claimLaunchRole(
+											{ storePath, endpoint: socket, generation, role: "supervisor" },
+											{ pid, processStartTime: HANDLE_CREATED, userSid: SID },
+											machine.load,
+										);
+									}
+									return CIM_CREATED;
+								},
+								beforeReadinessTeardown: async () => {
+									const pointer = JSON.parse(await readFile(paths.pointerFile, "utf8")) as {
+										instance_id: string;
+									};
+									recorded = JSON.parse(
+										await readFile(generationPaths(paths, pointer.instance_id).pidFile, "utf8"),
+									);
+								},
+							},
+						}).catch((error: unknown) => error);
+					},
+				);
+			} finally {
+				vi.unstubAllGlobals();
+				await claimed?.catch(() => undefined);
+				if (sleeper && sleeper.exitCode === null && sleeper.signalCode === null) {
+					const exited = new Promise<void>((resolve) => sleeper?.once("exit", () => resolve()));
+					sleeper.kill("SIGKILL");
+					await exited;
+				}
+			}
+			// No host answered on the socket, so the start failed after its registration; the record it wrote is the evidence.
+			expect(outcome).toBeInstanceOf(Error);
+			expect(recorded).toMatchObject({
+				pid: sleeper?.pid,
+				processStartTime: HANDLE_CREATED,
+				userSid: SID,
+				socket,
+			});
+			// The issuer's handle on the supervisor ends with its readiness verdict.
+			expect(machine.processes.handles.size).toBe(0);
 		});
 	});
 
@@ -329,6 +565,39 @@ describe("#4199 process evidence through the retained handle: PID, creation FILE
 			}
 		});
 
+		it("the issuer learns the participant's exit from its process object, never from a ChildProcess event", async () => {
+			// "use process-object signalling for exit (`RegisterWaitForSingleObject` or equivalent), not wrapper exit": the wait
+			// is on the retained handle, resolves with the object's exit code once it is signalled, and is cancellable; the
+			// release of the handle ends it too.
+			const machine = fakeWindows();
+			const launch = await claimed(machine);
+			machine.processes.live(SELF.pid, SELF.processStartTime ?? "", SID);
+			const granted = await grant(launch, machine);
+			const waiting = granted.waitExit();
+			expect(machine.processes.exitWaits.size).toBe(1);
+			machine.processes.signal(SELF.pid, 3221225477);
+			expect(await waiting).toEqual({ kind: "exited", exitCode: 3221225477 });
+			// The handle is still the issuer's until it releases it; a wait on an exited object answers at once.
+			expect(machine.processes.handles.size).toBe(1);
+			expect(await granted.waitExit()).toEqual({ kind: "exited", exitCode: 3221225477 });
+			granted.release();
+			expect(machine.processes.handles.size).toBe(0);
+
+			const aborted = fakeWindows();
+			const second = await claimed(aborted);
+			aborted.processes.live(SELF.pid, SELF.processStartTime ?? "", SID);
+			const participant = await grant(second, aborted);
+			const controller = new AbortController();
+			const cancellable = participant.waitExit(controller.signal);
+			controller.abort();
+			expect(await cancellable).toEqual({ kind: "cancelled" });
+			expect(aborted.processes.exitWaits.size).toBe(0);
+			const untilRelease = participant.waitExit();
+			participant.release();
+			expect(await untilRelease).toEqual({ kind: "cancelled" });
+			expect(aborted.processes.calls.filter((call) => call.startsWith("processWaitExit"))).toHaveLength(2);
+		});
+
 		it("a claimant records its own PID, creation FILETIME and SID read on one handle of itself, then closes it", async () => {
 			// "Verify each actual Windows target using `OpenProcess(...)`, `GetProcessId`, `GetProcessTimes` creation `FILETIME`,
 			// and ... `GetTokenInformation(TokenUser)` on that same process handle."
@@ -365,6 +634,8 @@ describe("#4199 process evidence through the retained handle: PID, creation FILE
 				status: "granted",
 				participant: JSON.stringify({ pid: 200, processStartTime: "134000000000000002" }),
 			});
+			// No handle is retained off the bridge: the ChildProcess exit event stays the supervisor's only signal there.
+			expect(await granted.waitExit()).toMatchObject({ kind: "unavailable" });
 			granted.release();
 		});
 	});

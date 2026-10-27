@@ -904,8 +904,15 @@ PID through the native bridge and requires `GetProcessId`, the exact creation FI
 on that one handle, which it keeps open while it grants and observes the participant; a same-birth SID mismatch or a
 handle whose PID is not the claimed one refuses `identity_inconsistent`, a different creation time or an exited process
 `participant_mismatch`, an unreadable one `identity_unverified`. Each participant records its own PID, creation FILETIME
-and SID read on one handle of itself (`userSid` in its recorded identity). That supervisor then offers the host role in
-the same generation and forwards a non-secret store locator through the child argv, including through runtime wrappers.
+and SID read on one handle of itself (`userSid` in its recorded identity). The daemon's own records are written the same
+way on that path: the generation record (`generations/<instanceId>/host.pid`) names the supervisor by the identity its
+issuer verified on the retained handle, the supervisor records its host child (`host-child.pid`) through the bridge, and
+a host's session-path claims carry its own handle identity; each adds `userSid` beside `processStartTime`, which is
+then the complete creation FILETIME. A record without `userSid` was read by the platform's start-time reader and keeps
+its two fields. The supervisor learns its host's death from the host's process object, waited on through the retained
+handle (never from a wrapper's exit; the child's exit event stays a secondary signal). That supervisor then offers the
+host role in the same generation and forwards a non-secret store locator through the child argv, including through
+runtime wrappers.
 The host consumes the locator before public CLI parsing, claims with its own process identity and waits for the
 supervisor's verified grant before listening. Both grants carry the SHA-256 commitment of the established public secret,
 not the private hop credential. Cancellation, a claim or grant deadline, an unreadable or changed process
@@ -1004,7 +1011,10 @@ and the object's directory still classifies `local`, and, for an object in the p
 machine's kernel-session identities are both verified and equal. A busy object always refuses. An entry without such an
 acquisition is discharged only when its recorded PID, reopened now through the native bridge, is absent, has a different
 creation FILETIME (compared exactly) or is a signalled process object with the recorded identity; the same PID, creation
-FILETIME and `TokenUser` SID on one handle is live. That observation counts only when the store recorded `local` and
+FILETIME and `TokenUser` SID on one handle is live. A recorded identity without `userSid` (one the start-time reader
+wrote, whose CIM creation time differs from the handle's FILETIME in its last digit) is never compared against the
+handle's reading: it is `owner_identity_incomplete`, never gone by a different creation time. That observation counts
+only when the store recorded `local` and
 still classifies `local`, or when the row's and this machine's kernel-session identities are both verified and equal; an
 `unverified` identity equals nothing. On a store recorded and still classified `local`, a verified kernel-session
 identity that differs from the one the generation recorded, with every probed object acquired, proves every process of
