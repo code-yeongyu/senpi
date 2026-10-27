@@ -2,6 +2,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
 import { type DaemonPidFile, readProcessStartTime, waitForStartTime } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
@@ -33,6 +34,8 @@ import { relayPresenterBootstrap } from "./mcp-presenter-bootstrap.ts";
 import { openEndpointReservationStore } from "./endpoint-reservation-store.ts";
 import { hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import { grantClaimedParticipant, offerSupervisorLaunch } from "./host-launch-reservation.ts";
+import { resolvePresenceRoot } from "./presence-placement.ts";
+import { loadPresencePlacement } from "./socket-secret-native.ts";
 
 export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
 export { DEFAULT_STOP_TIMEOUT_MS };
@@ -264,14 +267,22 @@ export async function appendStderr(paths: HostDaemonPaths, message: string): Pro
 /** How long the issuer waits for the launched supervisor to claim its role. */
 const SUPERVISOR_CLAIM_DEADLINE_MS = 10_000;
 
-/** Opens the endpoint's reservation store beside its lock, reserves a generation and offers the supervisor role. */
+/**
+ * Opens the endpoint's reservation store beside its lock, resolves the presence root once (#4199 design 4.2a
+ * "Placement."), reserves a generation recording it, and offers the supervisor role with its presence object
+ * predeclared, all before the supervisor is spawned.
+ */
 async function reserveSupervisorLaunch(socket: string) {
-	const store = await openEndpointReservationStore(`${hostEnsureLockTarget(socket)}.reservation.db`);
+	const target = hostEnsureLockTarget(socket);
+	const store = await openEndpointReservationStore(`${target}.reservation.db`);
 	// An unreadable own start time is recorded as unverified; it never decides a grant, which checks the claimant.
 	const issuer = {
 		pid: process.pid,
 		processStartTime: (await readProcessStartTime(process.pid).catch(() => undefined)) ?? null,
 	};
-	const { generation, args } = offerSupervisorLaunch(store, socket, issuer);
+	const native = loadPresencePlacement();
+	// The lock target is named by the canonical endpoint identity, which also keys a relocated per-user root.
+	const reservation = resolvePresenceRoot({ coordinationTarget: target, endpointKey: basename(target), native });
+	const { generation, args } = offerSupervisorLaunch(store, socket, issuer, { reservation, native });
 	return { store, issuer, generation, args };
 }

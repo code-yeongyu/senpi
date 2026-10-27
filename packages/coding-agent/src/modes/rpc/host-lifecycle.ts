@@ -330,10 +330,11 @@ async function offerReservedHost(
 	issuer: LaunchIdentity,
 ): Promise<() => Promise<void>> {
 	const { openEndpointReservationStore } = await import("./endpoint-reservation-store.ts");
-	const { grantClaimedParticipant } = await import("./host-launch-reservation.ts");
+	const { grantClaimedParticipant, offerHostRole } = await import("./host-launch-reservation.ts");
 	const store = await openEndpointReservationStore(reservation.storePath);
 	try {
-		store.offer(reservation.generation, "host", JSON.stringify(issuer));
+		// The host's presence object is predeclared in the root the reserving owner recorded, before the spawn.
+		offerHostRole(store, reservation.generation, issuer);
 	} finally {
 		store.close();
 	}

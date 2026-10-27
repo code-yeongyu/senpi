@@ -5,6 +5,10 @@
  * finally becomes opens the store itself, reads its role's nonce there and claims with its own identity. The issuer
  * grants only when the claimed identity equals what it observed through the OS for the process it launched, bound to
  * the credential commitment. Nothing in argv, environment or an inherited channel grants anything.
+ *
+ * Every offer predeclares its role's presence object in the root the reserving owner recorded, before the offer commits
+ * and so before any spawn; a claimant first checks that root is the recorded, still-local physical directory (design
+ * 4.2a "Placement.").
  */
 import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -13,8 +17,11 @@ import {
 	EndpointReservationError,
 	type EndpointReservationStore,
 	openEndpointReservationStore,
+	type ReservationPresence,
 	type ReservationRole,
 } from "./endpoint-reservation-store.ts";
+import { predeclarePresenceObject, verifyRecordedPresenceRoot } from "./presence-placement.ts";
+import { loadPresencePlacement, type PresencePlacementLoad } from "./socket-secret-native.ts";
 
 export { LaunchReservationError, parseReservationLocatorArgs, type StoreLocator } from "./host-lifecycle-launch.ts";
 
@@ -29,14 +36,29 @@ function identityKey(identity: LaunchIdentity): string {
 	return JSON.stringify({ pid: identity.pid, processStartTime: identity.processStartTime });
 }
 
-/** Reserves a generation, offers the supervisor role and returns the argv that carries the locator. */
+/**
+ * Reserves a generation with the presence root the owner resolved, predeclares the supervisor's presence object in it,
+ * offers the supervisor role and returns the argv that carries the locator. A predeclaration that fails fences the
+ * generation it left without an offer.
+ */
 export function offerSupervisorLaunch(
 	store: EndpointReservationStore,
 	endpoint: string,
 	owner: LaunchIdentity,
+	presence: { readonly reservation: ReservationPresence; readonly native: PresencePlacementLoad },
 ): { generation: string; args: readonly string[] } {
-	const generation = store.reserve(endpoint, identityKey(owner), ["supervisor", "host"]);
-	store.offer(generation, "supervisor", identityKey(owner));
+	const generation = store.reserve(endpoint, identityKey(owner), ["supervisor", "host"], presence.reservation);
+	try {
+		store.offer(
+			generation,
+			"supervisor",
+			identityKey(owner),
+			predeclarePresenceObject(presence.reservation.root, presence.native),
+		);
+	} catch (error: unknown) {
+		store.cancel(generation);
+		throw error;
+	}
 	return {
 		generation,
 		args: [
@@ -52,13 +74,33 @@ export function offerSupervisorLaunch(
 	};
 }
 
-/** The claimant opens the store named by the locator, reads its nonce there and claims with its own identity. */
+/**
+ * The issuer's offer of the host role in an existing generation: it predeclares the host's presence object in the
+ * RECORDED root, never a re-resolved one, then commits the offer.
+ */
+export function offerHostRole(
+	store: EndpointReservationStore,
+	generation: string,
+	issuer: LaunchIdentity,
+	native: PresencePlacementLoad = loadPresencePlacement(),
+): void {
+	const { root } = store.reservation(generation).presence;
+	store.offer(generation, "host", identityKey(issuer), predeclarePresenceObject(root, native));
+}
+
+/**
+ * The claimant opens the store named by the locator, checks that the recorded presence root is the same still-local
+ * physical directory from where it runs, reads its nonce there and claims with its own identity. A different physical
+ * directory (another profile, packaged-app virtualization) fails the claim typed and consumes nothing.
+ */
 export async function claimLaunchRole(
 	locator: StoreLocator,
 	self: LaunchIdentity,
+	native: PresencePlacementLoad = loadPresencePlacement(),
 ): Promise<"claimed" | "already_claimed_by_caller"> {
 	const store = await openEndpointReservationStore(locator.storePath);
 	try {
+		verifyRecordedPresenceRoot(store.reservation(locator.generation).presence.root, native);
 		return store.claim(locator, store.readOffer(locator), identityKey(self));
 	} finally {
 		store.close();
@@ -173,9 +215,9 @@ export async function admitClaimedParticipant(
 	locator: StoreLocator,
 	self: LaunchIdentity,
 	credential: Buffer | undefined,
-	options: { readonly deadlineMs: number },
+	options: { readonly deadlineMs: number; readonly presence?: PresencePlacementLoad },
 ): Promise<void> {
-	await claimLaunchRole(locator, self);
+	await claimLaunchRole(locator, self, options.presence);
 	const grant = await waitForGrant(locator, self, options);
 	if (!grant.granted) throw new LaunchReservationError(grant.reason, `${locator.role} in ${locator.generation}`);
 	const established = credential ? createHash("sha256").update(credential).digest("hex") : undefined;

@@ -96,6 +96,97 @@ export interface SocketSecretPresence {
 	releaseAfterQuiescence(receipt: PresenceReleasedReceipt): NativePresenceResult;
 }
 
+/** A presence root as one opened directory handle describes it (`presenceRootOpen`). */
+export interface NativePresenceRoot {
+	readonly status: "opened" | "insecure" | "failed" | "unavailable";
+	/** The canonical path of the opened directory. */
+	readonly path?: string | null;
+	readonly volumeSerial?: string | null;
+	readonly fileId?: string | null;
+	readonly locality?: "local" | "not_local" | null;
+	readonly reason?: string | null;
+	readonly reportedFileSystem?: string | null;
+	readonly step?: string | null;
+	readonly code?: number | null;
+}
+
+export interface NativePresenceObjectRequest {
+	readonly rootPath: string;
+	readonly rootVolumeSerial: string;
+	readonly rootFileId: string;
+	readonly name: string;
+	readonly header: Buffer;
+}
+
+/** `presenceObjectCreate`: the object is created new, or not at all; an existing name is `exists`, never replaced. */
+export interface NativePresenceObject {
+	readonly status: "created" | "exists" | "root_mismatch" | "root_not_local" | "insecure" | "failed" | "unavailable";
+	readonly volumeSerial?: string | null;
+	readonly fileId?: string | null;
+	readonly locality?: "local" | "not_local" | null;
+	readonly reason?: string | null;
+	readonly reportedFileSystem?: string | null;
+	readonly step?: string | null;
+	readonly code?: number | null;
+}
+
+/** FOLDERID_LocalAppData. */
+export interface NativeKnownFolder {
+	readonly status: "found" | "failed" | "unavailable";
+	readonly path?: string | null;
+	readonly code?: number | null;
+	readonly reason?: string | null;
+}
+
+/** What presence placement needs from the bridge (#4199 design 4.2a "Placement."). */
+export interface NativePresencePlacementBinding extends NativeSocketSecretBinding, NativePresenceBinding {
+	localAppDataPath(): NativeKnownFolder;
+	presenceRootOpen(path: string, create: boolean): NativePresenceRoot;
+	presenceObjectCreate(request: NativePresenceObjectRequest): NativePresenceObject;
+}
+
+export type PresencePlacementUnavailableReason = "unsupported_platform" | "native_unavailable" | "native_abi_mismatch";
+
+export type PresencePlacementLoad =
+	| { readonly status: "available"; readonly native: NativePresencePlacementBinding }
+	| { readonly status: "unavailable"; readonly reason: PresencePlacementUnavailableReason };
+
+/**
+ * The placement natives, or why they are unavailable. Off Windows nothing is loaded. On Windows a bridge that cannot be
+ * loaded, or lacks an export, cannot classify anything, and an unclassifiable root is not a local one: the caller records
+ * `presence_unavailable` rather than refusing startup, and a recorded root it cannot open fails typed instead.
+ */
+export function loadPresencePlacement(options: SocketSecretNativeOptions = {}): PresencePlacementLoad {
+	if ((options.platform ?? process.platform) !== "win32")
+		return { status: "unavailable", reason: "unsupported_platform" };
+	let binding: NativeSocketSecretBinding;
+	try {
+		binding = loadSocketSecretNative(options);
+	} catch (error: unknown) {
+		if (error instanceof SocketSecretNativeUnavailableError)
+			return { status: "unavailable", reason: "native_unavailable" };
+		if (error instanceof SocketSecretNativeAbiMismatchError) {
+			return { status: "unavailable", reason: "native_abi_mismatch" };
+		}
+		throw error;
+	}
+	const exports = binding as unknown as Record<string, unknown>;
+	const complete = [
+		"localAppDataPath",
+		"presenceRootOpen",
+		"presenceObjectCreate",
+		"presenceAcquire",
+		"presenceProbe",
+		"presencePreActionCheck",
+		"presenceWaitAndAcquire",
+		"presenceCancelWait",
+		"presenceReleaseAfterQuiescence",
+	].every((name) => typeof exports[name] === "function");
+	return complete
+		? { status: "available", native: binding as NativePresencePlacementBinding }
+		: { status: "unavailable", reason: "native_abi_mismatch" };
+}
+
 /** POSIX endpoints have no public-secret presence contract. Do not load a Windows bridge there. */
 export function loadSocketSecretPresence(
 	options: SocketSecretNativeOptions = {},

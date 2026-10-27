@@ -17,6 +17,8 @@ import {
 	waitForClaim,
 	waitForGrant,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
+import { resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
+import { loadPresencePlacement } from "../../../src/modes/rpc/socket-secret-native.ts";
 
 // Regression coverage for https://github.com/sisyphuslabs/omo-desktop-app/issues/4199 (design 4.2a "Wrapper-safe
 // discovery and one-time claim", tests 6 and 10 at the supervisor hop). Security contract: the launcher forwards only a
@@ -46,7 +48,10 @@ describe("supervisor launch reservation", () => {
 		roots.push(root);
 		const storePath = join(root, "endpoint.reservation.db");
 		const store = await openEndpointReservationStore(storePath);
-		const offer = offerSupervisorLaunch(store, ENDPOINT, OWNER);
+		// Off Windows the presence root is typed unavailable; placement has its own suite.
+		const native = loadPresencePlacement({ platform: "linux" });
+		const reservation = resolvePresenceRoot({ coordinationTarget: storePath, endpointKey: "endpoint", native });
+		const offer = offerSupervisorLaunch(store, ENDPOINT, OWNER, { reservation, native });
 		return { storePath, store, ...offer };
 	}
 

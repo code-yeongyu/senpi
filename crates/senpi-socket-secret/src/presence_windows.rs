@@ -78,7 +78,7 @@ fn open(path: &str, access: u32, share: u32, flags: u32) -> Result<OwnedHandle, 
     }
 }
 
-fn identity(handle: HANDLE) -> Result<FileIdentity, u32> {
+pub(crate) fn identity(handle: HANDLE) -> Result<FileIdentity, u32> {
     // SAFETY: FILE_ID_INFO is plain data; zero is a valid bit pattern.
     let mut info: FILE_ID_INFO = unsafe { std::mem::zeroed() };
     // SAFETY: `info` is writable and its exact size is passed.

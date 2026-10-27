@@ -4,6 +4,8 @@
 
 #[cfg(windows)]
 pub use windows_dacl::OwnerOnlyDescriptor;
+#[cfg(windows)]
+pub(crate) use windows_dacl::{current_user_sid_string, sid_string};
 
 #[cfg(windows)]
 mod windows_dacl {
@@ -12,7 +14,7 @@ mod windows_dacl {
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
     };
     use windows_sys::Win32::Security::{
-        GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, TOKEN_QUERY, TOKEN_USER,
+        GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, PSID, TOKEN_QUERY, TOKEN_USER,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -65,7 +67,7 @@ mod windows_dacl {
     }
 
     /// The process token's user SID in `S-1-...` form.
-    fn current_user_sid_string() -> Result<String, u32> {
+    pub(crate) fn current_user_sid_string() -> Result<String, u32> {
         let mut raw: HANDLE = std::ptr::null_mut();
         // SAFETY: GetCurrentProcess returns a pseudo-handle; `raw` is a writable HANDLE slot.
         if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw) } == 0 {
@@ -91,6 +93,11 @@ mod windows_dacl {
         }
         // SAFETY: on success the buffer starts with a TOKEN_USER whose SID points into the same buffer.
         let sid = unsafe { (*buffer.as_ptr().cast::<TOKEN_USER>()).User.Sid };
+        sid_string(sid)
+    }
+
+    /// A SID in `S-1-...` form. `sid` must stay valid for the call.
+    pub(crate) fn sid_string(sid: PSID) -> Result<String, u32> {
         let mut text: *mut u16 = std::ptr::null_mut();
         // SAFETY: `sid` is valid while `buffer` lives; `text` receives a LocalAlloc'd string freed below.
         if unsafe { ConvertSidToStringSidW(sid, &mut text) } == 0 {

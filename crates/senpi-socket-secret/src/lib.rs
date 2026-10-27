@@ -5,6 +5,7 @@ pub mod classify;
 mod owner_dacl;
 pub mod presence;
 pub mod presence_binding;
+pub mod presence_placement;
 #[cfg(windows)]
 pub mod presence_windows;
 pub mod publish;
@@ -90,7 +91,7 @@ fn not_local(reason: &str, reported_file_system: Option<String>) -> VolumeLocali
     }
 }
 
-const fn reason_code(reason: NotLocalReason) -> &'static str {
+pub(crate) const fn reason_code(reason: NotLocalReason) -> &'static str {
     match reason {
         NotLocalReason::RemoteDevice => "remote_device",
         NotLocalReason::RemoteProtocol => "remote_protocol",

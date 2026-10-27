@@ -8,6 +8,8 @@ import {
 	ENDPOINT_RESERVATION_SCHEMA,
 	EndpointReservationError,
 	openEndpointReservationStore,
+	type PresenceObjectRecord,
+	type ReservationPresence,
 } from "../../../src/modes/rpc/endpoint-reservation-store.ts";
 
 // Regression coverage for https://github.com/sisyphuslabs/omo-desktop-app/issues/4199 (design 4.2a "Reservation through
@@ -21,6 +23,12 @@ const SUPERVISOR = '{"pid":200,"creationTime":"133000000000000002","userSid":"S-
 const INTRUDER = '{"pid":201,"creationTime":"133000000000000003","userSid":"S-1-5-21-1"}';
 const ENDPOINT = "C:\\Users\\u\\.senpi\\agent\\rpc\\rpc.sock";
 const COMMITMENT = createHash("sha256").update(randomBytes(32)).digest();
+// Presence placement has its own coverage (desktop-4199-presence-placement.test.ts); these rows record none.
+const NO_PRESENCE: ReservationPresence = {
+	root: { status: "presence_unavailable", reason: "unsupported_platform", detail: null },
+	ownerKernelSession: { status: "unverified", reason: "unsupported_platform" },
+};
+const NO_OBJECT: PresenceObjectRecord = { status: "presence_unavailable" };
 
 describe("endpoint reservation store", () => {
 	const roots: string[] = [];
@@ -38,8 +46,8 @@ describe("endpoint reservation store", () => {
 
 	async function offered() {
 		const opened = await store();
-		const generation = opened.store.reserve(ENDPOINT, OWNER, ["supervisor", "host"]);
-		opened.store.offer(generation, "supervisor", OWNER);
+		const generation = opened.store.reserve(ENDPOINT, OWNER, ["supervisor", "host"], NO_PRESENCE);
+		opened.store.offer(generation, "supervisor", OWNER, NO_OBJECT);
 		const locator = { endpoint: ENDPOINT, generation, role: "supervisor" as const };
 		return { ...opened, generation, locator, nonce: opened.store.readOffer(locator) };
 	}
@@ -69,7 +77,7 @@ describe("endpoint reservation store", () => {
 	it("gives every role offer a fresh 256-bit nonce that is never the generation", async () => {
 		const { store: s, generation, nonce } = await offered();
 		expect(nonce).toHaveLength(32);
-		s.offer(generation, "host", SUPERVISOR);
+		s.offer(generation, "host", SUPERVISOR, NO_OBJECT);
 		const host = s.readOffer({ endpoint: ENDPOINT, generation, role: "host" });
 		expect(host).toHaveLength(32);
 		expect(host.equals(nonce)).toBe(false);
@@ -119,7 +127,7 @@ describe("endpoint reservation store", () => {
 
 	it("revokes outstanding offers on cancellation and keeps claimed identities", async () => {
 		const { store: s, generation, locator, nonce } = await offered();
-		s.offer(generation, "host", SUPERVISOR);
+		s.offer(generation, "host", SUPERVISOR, NO_OBJECT);
 		const hostLocator = { endpoint: ENDPOINT, generation, role: "host" as const };
 		const hostNonce = s.readOffer(hostLocator);
 		s.claim(locator, nonce, SUPERVISOR);
@@ -158,7 +166,7 @@ describe("endpoint reservation store", () => {
 
 	it("commits serving only after every offered role is granted", async () => {
 		const { store: s, generation, locator, nonce } = await offered();
-		s.offer(generation, "host", SUPERVISOR);
+		s.offer(generation, "host", SUPERVISOR, NO_OBJECT);
 		s.claim(locator, nonce, SUPERVISOR);
 		s.grant(generation, "supervisor", OWNER, SUPERVISOR, COMMITMENT);
 		expect(rejection(() => s.markServing(generation))).toBe("roles_not_granted");
@@ -181,8 +189,8 @@ describe("endpoint reservation store", () => {
 	// supervisor or standalone public host expects only the role of the child it admits.
 	it("commits serving for a generation that expects only the host role once the host is granted", async () => {
 		const { store: s } = await store();
-		const generation = s.reserve(ENDPOINT, OWNER, ["host"]);
-		s.offer(generation, "host", OWNER);
+		const generation = s.reserve(ENDPOINT, OWNER, ["host"], NO_PRESENCE);
+		s.offer(generation, "host", OWNER, NO_OBJECT);
 		const hostLocator = { endpoint: ENDPOINT, generation, role: "host" as const };
 		s.claim(hostLocator, s.readOffer(hostLocator), SUPERVISOR);
 		s.grant(generation, "host", OWNER, SUPERVISOR, COMMITMENT);
@@ -192,8 +200,8 @@ describe("endpoint reservation store", () => {
 
 	it("refuses to offer a role the generation does not expect", async () => {
 		const { store: s } = await store();
-		const generation = s.reserve(ENDPOINT, OWNER, ["host"]);
-		expect(rejection(() => s.offer(generation, "supervisor", OWNER))).toBe("role_not_expected");
+		const generation = s.reserve(ENDPOINT, OWNER, ["host"], NO_PRESENCE);
+		expect(rejection(() => s.offer(generation, "supervisor", OWNER, NO_OBJECT))).toBe("role_not_expected");
 	});
 
 	it("answers opening a store held by an exclusive writer as store_busy", async () => {
@@ -212,12 +220,12 @@ describe("endpoint reservation store", () => {
 	it("refuses a reservation that names a role it does not know", async () => {
 		const { store: s } = await store();
 		const bogus = ["bogus"] as unknown as ("supervisor" | "host")[];
-		expect(rejection(() => s.reserve(ENDPOINT, OWNER, bogus))).toBe("role_not_expected");
+		expect(rejection(() => s.reserve(ENDPOINT, OWNER, bogus, NO_PRESENCE))).toBe("role_not_expected");
 	});
 
 	it("never commits serving from an expected set it cannot read", async () => {
 		const { path, store: s } = await store();
-		const generation = s.reserve(ENDPOINT, OWNER, ["host"]);
+		const generation = s.reserve(ENDPOINT, OWNER, ["host"], NO_PRESENCE);
 		const raw = new DatabaseSync(path);
 		raw.prepare("UPDATE reservations SET expected_roles = 'bogus' WHERE generation = ?").run(generation);
 		raw.close();
@@ -265,10 +273,10 @@ describe("endpoint reservation store", () => {
 
 	it("answers a commit blocked by another connection's read as store_busy and writes nothing", async () => {
 		const { path, store: s } = await store();
-		const generation = s.reserve(ENDPOINT, OWNER, ["supervisor", "host"]);
+		const generation = s.reserve(ENDPOINT, OWNER, ["supervisor", "host"], NO_PRESENCE);
 		const reader = new DatabaseSync(path);
 		reader.exec("BEGIN; SELECT * FROM roles;");
-		expect(rejection(() => s.offer(generation, "supervisor", OWNER))).toBe("store_busy");
+		expect(rejection(() => s.offer(generation, "supervisor", OWNER, NO_OBJECT))).toBe("store_busy");
 		reader.exec("COMMIT;");
 		reader.close();
 		expect(s.roleRow({ endpoint: ENDPOINT, generation, role: "supervisor" })).toBeUndefined();
