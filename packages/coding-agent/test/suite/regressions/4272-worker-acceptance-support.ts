@@ -14,13 +14,13 @@ import { WorkerSessionRegistry } from "../../../src/modes/rpc/worker-session-reg
 const fauxPath = fileURLToPath(new URL("../../../../ai/src/providers/faux.ts", import.meta.url));
 /** The isolate's own build of the faux provider, so its provider capture is the one the isolate's session reads. */
 export const builtFauxPath = fileURLToPath(new URL("../../../../ai/dist/providers/faux.js", import.meta.url));
-const extensionSource = (faux: string, prelude: string) => `
-import { fauxProvider, fauxAssistantMessage } from ${JSON.stringify(faux)};
+const extensionSource = (faux: string, prelude: string, responses: string) => `
+import { fauxProvider, fauxAssistantMessage, fauxToolCall } from ${JSON.stringify(faux)};
 ${prelude}
 export default function (pi) {
 	const faux = fauxProvider({ tokenSize: { min: 4, max: 4 } });
 	const answer = () => fauxAssistantMessage("an answer streamed in a few deltas", { timestamp: 1 });
-	faux.setResponses([answer(), answer(), answer()]);
+	faux.setResponses(${responses});
 	pi.registerProvider(faux.provider);
 }`;
 
@@ -56,10 +56,15 @@ export async function creditOf(signal: SharedArrayBuffer): Promise<number> {
  * Real session workers, the production router and writer, and the registry's own reconcile callback, which a
  * test may hold for one frame through `holdReconcile`. Only the connection sink is in memory.
  */
-export async function workerAcceptanceHost(fauxModule = fauxPath, isolatePrelude = "") {
+export async function workerAcceptanceHost(
+	fauxModule = fauxPath,
+	isolatePrelude = "",
+	/** The isolate's faux responses, as source: `answer`, `fauxAssistantMessage` and `fauxToolCall` are in scope. */
+	responses = "[answer(), answer(), answer()]",
+) {
 	const dir = await mkdtemp(join(tmpdir(), "senpi-4272-worker-"));
 	const extensionPath = join(dir, "faux-extension.ts");
-	await writeFile(extensionPath, extensionSource(fauxModule, isolatePrelude));
+	await writeFile(extensionPath, extensionSource(fauxModule, isolatePrelude, responses));
 	const writer = new SessionEventWriter(() => {});
 	const workers: SessionWorkerClient[] = [];
 	const frames: ObservedFrame[] = [];

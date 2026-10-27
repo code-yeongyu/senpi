@@ -19,11 +19,14 @@ export type LeafId = number;
 
 export class CompactWriteError extends Error {
 	readonly reason: "size_limit" | "storage_unavailable" | "cycle" | "unsupported_value";
+	/** Set only on a record refused at the protocol depth limit (`compact-protocol-depth.ts`): that limit. */
+	readonly limit: number | undefined;
 
-	constructor(reason: CompactWriteError["reason"]) {
-		super(`compact write refused (${reason})`);
+	constructor(reason: CompactWriteError["reason"], limit?: number) {
+		super(`compact write refused (${reason}${limit === undefined ? "" : `: depth above ${limit}`})`);
 		this.name = "CompactWriteError";
 		this.reason = reason;
+		this.limit = limit;
 	}
 }
 
