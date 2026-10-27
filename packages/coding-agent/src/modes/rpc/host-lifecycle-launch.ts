@@ -47,6 +47,11 @@ export interface SupervisorLaunch {
 	 * somebody else now, and replacing it would unlink an endpoint this process cannot prove it owns.
 	 */
 	readonly replaceIdentity?: SocketFileIdentity;
+	/**
+	 * The one-shot token the handoff that launched this generation authorizes its publication with: consumed
+	 * right before the rename, and never renamed over once the handoff has withdrawn it (`host-publish-token.ts`).
+	 */
+	readonly publishToken?: string;
 }
 
 export { resolveCliMainPath } from "./host-cli-entry.ts";
@@ -97,6 +102,7 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 	let presenterBootstrapFd: number | undefined;
 	let bindSocket: string | undefined;
 	let replaceIdentity: SocketFileIdentity | undefined;
+	let publishToken: string | undefined;
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index];
 		if (arg === "--mcp-presenter-fd" && argv[index + 1] === "4") {
@@ -138,6 +144,10 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 			replaceIdentity = parseSocketIdentity(argv[++index]);
 			continue;
 		}
+		if (arg === "--publish-token" && index + 1 < argv.length) {
+			publishToken = argv[++index];
+			continue;
+		}
 		hostArgs.push(arg);
 	}
 	return socket === undefined
@@ -154,6 +164,7 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 					bindSocket,
 					replaceIdentity,
 					presenterBootstrapFd,
+					publishToken,
 				};
 }
 

@@ -117,6 +117,8 @@ export type HandoffResult =
 			readonly socket: string;
 			readonly generation: number;
 			readonly instanceId: string;
+			/** A step after publication that failed and was repaired forward (the successor kept serving). */
+			readonly repair?: string;
 	  }
 	| {
 			readonly action: "refuse";

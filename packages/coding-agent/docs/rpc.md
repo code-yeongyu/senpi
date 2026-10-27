@@ -925,6 +925,13 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    path still refers to the exact socket the handoff was decided against (`--replace <dev>:<ino>`). A path
    taken over by anything else aborts the handoff: nothing is renamed, nothing is unlinked, and the
    running host keeps serving.
+   The rename is also the handoff's COMMIT POINT (code-yeongyu/oh-my-openagent#10091). The handoff writes a
+   one-shot publication token into the successor's generation directory, and the successor consumes it
+   (`--publish-token <path>`) as the last step before the rename. A handoff whose readiness window closes
+   revokes the token before it stops the successor; a successor that consumed it first is followed for up
+   to 5 s instead of being stopped. Once the successor answers on the public socket nothing stops it: a
+   registration, presenter-enrollment or drain step that fails afterwards is reported as the result's
+   `repair` (and one stderr line), and the handoff still completes.
 3. `handoffHost` then registers the successor (its own `generations/<instanceId>/host.pid`, the pointer
    moved onto it, and `settings.json { socket, generation }`) and sends
    the predecessor SIGUSR1 = DRAIN: stop accepting, announce `host_superseded` to every connection,
