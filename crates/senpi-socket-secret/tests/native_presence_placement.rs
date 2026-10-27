@@ -114,7 +114,7 @@ mod windows {
         let probe = PresenceProbe {
             presence_id: "placement-probe".into(),
             path: object,
-            tag: b"header-one".to_vec().into(),
+            header: b"header-one".to_vec().into(),
             volume_serial: identity.volume_serial.to_string(),
             file_id: identity.file_id.to_string(),
             created_local: true,

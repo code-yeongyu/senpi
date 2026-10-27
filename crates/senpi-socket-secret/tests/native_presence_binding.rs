@@ -117,7 +117,16 @@ mod windows {
     fn only_the_whole_immutable_header_matches() {
         let header = b"{\"tag\":\"c0ffee\",\"schema\":1,\"createdAt\":\"2026-10-27T00:00:00.000Z\"}\n";
         let dir = std::env::temp_dir().join(format!("senpi-binding-header-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        // Removed at the end of the test once every handle on the object is closed.
+        struct Scratch(std::path::PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _scratch = Scratch(dir.clone());
         let path = dir.join("presence.lock");
         std::fs::write(&path, header).unwrap();
         let path = path.to_str().unwrap().to_string();

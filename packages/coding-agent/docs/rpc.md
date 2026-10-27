@@ -925,10 +925,15 @@ the launch capabilities. The probe runs `<command> <args...> --launch-capabiliti
 one JSON line, `{"launch_capabilities":[...]}`, and exits 0 before it loads anything else. On Windows the list is
 `socket_secret_reservation_v1` and `participant_lifetime_locks_v1`. On other platforms it is empty: public endpoints
 there have no secret file, and participant lifetime locks are not implemented. An older runtime ignores the unknown flag
-and prints its version, which counts as its legacy answer. Only a list that names both capabilities selects the
-reservation route. A version line, or a list missing either name, keeps the legacy launch with no reservation flag and
-no claim wait. A spawn failure, a non-zero exit, no answer within 10 seconds or any other output fails with
-`launch-reservation-rejected` reason `launch_capability_unknown`; it is never read as a legacy answer.
+and prints its version, which counts as its legacy answer only in a positively recognized form: a version
+(`1.2.3`, `v1.2.3`, `2026.10.1`, with an optional pre-release or build), or the brand label an `omo` distribution
+prints as its display version (`omo@c6e7dd7 2026-09-04 10:17 +09:00`). Only a list that names both capabilities
+selects the reservation route. A recognized version line, or a list missing either name, keeps the legacy launch with
+no reservation flag and no claim wait. A spawn failure, a non-zero exit, no answer within the deadline (10 seconds for
+the reserving owner's probe; 5 seconds for the supervisor's probe of an explicit host, so that it ends inside the
+ensure's 10-second readiness window), a free-form line, more than one line or any other output fails with
+`launch-reservation-rejected` reason `launch_capability_unknown`; it is never read as a legacy answer. A probe that
+outlives its deadline is ended with its whole process tree (its process group on POSIX, `taskkill /t` on Windows).
 
 The supervisor `startHost` launches is this build, so it is not probed. When `hostArgs` select an explicit
 `--child-command`, `startHost` probes that command before it takes a lock, touches the secret or reserves anything.
@@ -967,11 +972,22 @@ and locality match the record. The claim then requires the reservation to still 
 acquisition (`revision_changed` otherwise), requires that object (`presence_not_bound`), and records the binding. A busy
 lock fails the start with `launch-reservation-rejected` reason `presence_occupied`; any other failure is
 `presence_unknown`. Neither claims, spawns or listens, and a busy lock is never read as proof of who holds it. A
-participant that fails before it may act, or whose claim is refused, closes that unused handle. A granted supervisor
-keeps its lock through every spawn and bind. Once its shutdown has observed the host's exit and closed its listener, it
-commits `released` and only then closes the lock. The host keeps its lock until its process exits. The reserving process
-commits its own `released` once the generation is serving, then closes its lock. A row without a local presence root
-takes no lock.
+participant that fails before it may act, or whose claim is refused, closes that unused handle; one refused after its
+grant (a commitment mismatch) first commits its `released`, then closes the lock, and keeps the lock held when that
+commit fails. A granted supervisor keeps its lock through every spawn and bind. Once its shutdown has observed the host's
+exit and closed its listener, it commits `released` and only then closes the lock; a drained supervisor keeps its
+listening handle open until it exits, so it commits no `released` and leaves the lock to the kernel. The host keeps its
+lock until its process exits. The reserving process commits its own `released` once the generation is serving, then
+closes its lock; a `released` commit that fails there does not fail the serving start, and the lock stays held until the
+process exits. A start that fails after the reservation persisted cancels the generation, commits the owner's
+`released` and closes its lock. A row without a local presence root takes no lock.
+
+Before each authorized action, the holder runs the pre-action check on its lock handle: the reserving process before it
+provisions or repairs the public secret and before it spawns the supervisor, the supervisor before it spawns the host
+and before it binds the public listener, the host before it binds. The check compares the handle's physical identity
+with the recorded one, reads through it and reclassifies the volume. A failed check is terminal: it fails with
+`launch-reservation-rejected` reason `presence_pre_action_failed`, the actor performs no further action (the
+reserving process and the supervisor cancel the generation they offered a role in), and the lock is never re-acquired.
 
 An endpoint has at most one generation that is not retired: reserving another while one is pending, serving or
 cancelling fails with `generation_active`. Recovery retires an abandoned generation in two transitions. The fence
