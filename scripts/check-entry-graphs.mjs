@@ -28,7 +28,8 @@ const WORKSPACE = {
 
 /**
  * Budgets are deliberate. `.` and `./node` are batteries-included entries and stay unbounded; every
- * narrow entry states the graph it is allowed to reach.
+ * narrow entry states the graph it is allowed to reach. A wildcard entry may name one expanded export in
+ * `overrides` with its own `maxFiles`, so one justified chain does not raise the budget of every sibling.
  */
 const BUDGETS = {
 	"packages/ai": {
@@ -39,10 +40,22 @@ const BUDGETS = {
 			// +1 (senpi#3378): model-cost.ts, the type-only leaf that picks the cost card in force for a request.
 			// +1 (senpi#3858): auth/credential-read.ts, the credential-store read auth/resolve.ts wraps in ModelsError.
 			// +1 (senpi#3858): utils/config-reference-error.ts, the typebox-free error a slot read raises for an unresolved reference.
-			maxFiles: 26,
+			// +1 (senpi#4272): utils/assistant-capture.ts, the type-only capture leaf utils/event-stream.ts imports (via api/lazy.ts).
+			// +1 (senpi#4282): utils/provider-error.ts, the redaction every provider stream applies at its boundary.
+			// +3 (senpi#4283): the one-pass token-wise redactor provider-error.ts runs, split by responsibility to stay under
+			// 250 pure LOC per file: utils/secret-redaction.ts (the state machine), utils/secret-classifier.ts (credential
+			// words, key prefixes, JWTs) and utils/secret-lexer.ts (token and delimiter units). Measured: 31 files.
+			maxFiles: 31,
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
 		},
-		"./utils/*": { maxFiles: 3, forbid: ["providers/", "api/", "index.ts"] },
+		"./utils/*": {
+			maxFiles: 3,
+			// senpi#4283: every provider stream redacts its error at the boundary, so event-stream.ts reaches
+			// provider-error.ts and the three redactor modules (secret-redaction, secret-classifier, secret-lexer).
+			// Measured: event-stream 6 files (including assistant-capture), provider-error 4; every other ./utils/* entry stays at 3.
+			overrides: { "./utils/event-stream": 6, "./utils/provider-error": 4 },
+			forbid: ["providers/", "api/", "index.ts"],
+		},
 	},
 	"packages/agent": {
 		"./harness/runtime/reducer": { maxFiles: 1 },
@@ -126,10 +139,11 @@ for (const [pkgDir, budgets] of Object.entries(BUDGETS)) {
 				continue;
 			}
 			const graph = [...walk(source)].map((file) => relative(ROOT, file));
-			console.log(`${pkgDir} export "${name}": ${graph.length} files (budget ${budget.maxFiles})`);
-			if (graph.length > budget.maxFiles) {
+			const maxFiles = budget.overrides?.[name] ?? budget.maxFiles;
+			console.log(`${pkgDir} export "${name}": ${graph.length} files (budget ${maxFiles})`);
+			if (graph.length > maxFiles) {
 				console.error(
-					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${budget.maxFiles}\n` +
+					`${pkgDir} export "${name}" reaches ${graph.length} files, budget ${maxFiles}\n` +
 						graph.map((file) => `    ${file}`).join("\n"),
 				);
 				failures += 1;

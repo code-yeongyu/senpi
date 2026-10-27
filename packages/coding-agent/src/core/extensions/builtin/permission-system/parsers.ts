@@ -3,10 +3,12 @@ import { realpathWithoutOpen } from "../../../../utils/paths.ts";
 import type { ToolInfo } from "../../types.ts";
 import { extractPatchedPaths } from "../gpt-apply-patch/index.ts";
 import { BashArity } from "../permission-system/arity.ts";
+import { analyzeBashCommand, bestEffortCommandLines } from "../permission-system/bash-command-segments.ts";
 import {
 	type AlwaysScope,
+	expandHome,
 	extractExternalPaths,
-	isExternalPath,
+	resolveExternalPath,
 	toParentDirectoryPattern,
 } from "../permission-system/external-dir.ts";
 import type { Request } from "../permission-system/types.ts";
@@ -15,8 +17,12 @@ import { urlOriginAlias, widerAlwaysScope } from "./always-scope.ts";
 import { parseReadPermission } from "./read-permission.ts";
 
 /** Simplified permission request without ID/session metadata */
-export type PermissionRequest = Pick<Request, "permission" | "patterns" | "always" | "widerAlways"> & {
+export type PermissionRequest = Pick<
+	Request,
+	"permission" | "patterns" | "always" | "widerAlways" | "originalPaths"
+> & {
 	readonly autoApproveAsk?: true;
+	/** Absolute external lexical spellings restrict the resolved decision; other aliases share rule order. */
 	readonly ruleAliases?: readonly string[];
 };
 
@@ -89,17 +95,75 @@ function withExternalDirectoryRequests(
 	cwd: string,
 	scope: AlwaysScope,
 ): PermissionRequest[] {
-	const externalPaths = paths.filter((inputPath) => isExternalPath(inputPath, cwd));
+	const externalPaths = paths.flatMap((inputPath) => {
+		const target = resolveExternalPath(inputPath, cwd);
+		return target === undefined ? [] : [{ inputPath, target }];
+	});
 	if (externalPaths.length === 0) {
 		return requests;
 	}
+	const ruleAliases = externalPaths.flatMap(({ inputPath, target }) => {
+		const lexical = resolve(cwd, expandHome(inputPath));
+		return lexical === target ? [] : [lexical];
+	});
 
 	return [
 		...requests,
 		{
 			permission: "external_directory",
-			patterns: externalPaths,
-			always: externalPaths.map((externalPath) => toParentDirectoryPattern(externalPath, scope)),
+			patterns: externalPaths.map(({ target }) => target),
+			always: externalPaths.map(({ inputPath, target }) => toParentDirectoryPattern(target, scope, inputPath)),
+			...(ruleAliases.length ? { ruleAliases } : {}),
+			...(externalPaths.some(({ inputPath, target }) => inputPath !== target)
+				? { originalPaths: externalPaths.map(({ inputPath }) => inputPath) }
+				: {}),
+		},
+	];
+}
+
+const uniq = (values: readonly string[]): string[] => [...new Set(values)];
+
+/**
+ * The targets an "Allow always" answer may store. Stored rules are matched as globs, so a target holding
+ * its own `*` or `?` would be remembered as a wildcard that matches other commands; such a target is
+ * allowed once and never stored. Request patterns stay raw, so existing rules match exactly as before.
+ */
+const rememberable = (targets: readonly string[]): string[] => targets.filter((target) => !/[*?]/.test(target));
+
+/** Marks a bash request target that no command-specific rule can match: only a `*` rule decides it. */
+export const UNPARSED_BASH_PREFIX = "(unparsed) ";
+
+/**
+ * The `bash` requests for one command. Every simple command it runs is decided, so the call is as
+ * strict as its strictest command: one pattern per command (its arity prefix), all of which must be
+ * allowed, and "Allow always" stores exactly those prefixes. A command the lexer cannot parse is one
+ * target only a `*` rule (a preset, a blanket setting) can decide, so no grant for one command can
+ * allow it; its plain words are still checked against deny rules.
+ */
+function bashCommandRequests(command: string): PermissionRequest[] {
+	const analysis = analyzeBashCommand(command);
+	if (analysis.kind === "unparsed") {
+		const target = `${UNPARSED_BASH_PREFIX}${command}`;
+		const candidates = uniq(
+			bestEffortCommandLines(command)
+				.map((words) => BashArity.prefix(words).join(" "))
+				.filter(Boolean),
+		);
+		// The deny-only check runs first, so a denied call is refused before anyone is asked.
+		return [
+			...(candidates.length === 0
+				? []
+				: [{ permission: "bash", patterns: candidates, always: [], autoApproveAsk: true as const }]),
+			{ permission: "bash", patterns: [target], always: rememberable([target]) },
+		];
+	}
+	const prefixes = uniq(analysis.segments.map((words) => BashArity.prefix([...words]).join(" ")).filter(Boolean));
+	if (prefixes.length === 0) return [{ permission: "bash", patterns: [command], always: rememberable([command]) }];
+	return [
+		{
+			permission: "bash",
+			patterns: prefixes,
+			always: rememberable(prefixes).flatMap((prefix) => [prefix, `${prefix} *`]),
 		},
 	];
 }
@@ -186,27 +250,9 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 				return [fallbackPermissionRequest("bash")];
 			}
 
-			const tokens = command.split(/\s+/).filter(Boolean);
-			const prefix = BashArity.prefix(tokens).join(" ");
-			const always = prefix ? [prefix, `${prefix} *`] : ["*"];
-			const requests: PermissionRequest[] = [
-				{
-					permission: "bash",
-					patterns: [prefix || command],
-					always,
-				},
-			];
-
+			const requests = bashCommandRequests(command);
 			const externalPaths = extractExternalPaths(command, cwd);
-			if (externalPaths.length > 0) {
-				requests.push({
-					permission: "external_directory",
-					patterns: externalPaths,
-					always: externalPaths.map((externalPath) => toParentDirectoryPattern(externalPath, "file")),
-				});
-			}
-
-			return requests;
+			return withExternalDirectoryRequests(requests, externalPaths, cwd, "file");
 		};
 
 	registry.register("bash", parseBashLikePermission("command"));

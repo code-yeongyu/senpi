@@ -1,3 +1,40 @@
+## 2026-10-25 - Make MRTR presentation lifetime explicitly optional (#4226)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` declares `mcpMrtrPresentationLifetime` optional, creates it when UI is requested, replaces it on rebind, and aborts it on shutdown only if a presentation exists. UI requested during disposal receives an aborted lifetime rather than reviving presentation authority.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: shutdown and rebind can precede presentation creation. The optional aborts and lazy UI initialization are required, not dead code; removing them prevented session disposal, signal cleanup, and stderr restoration. The proposed guard removal in issue #4226 is declined on this evidence.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the terminal host owns its presentation lifetime.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: extension rebind, UI context construction, and shutdown lifetime handling.
+
+## 2026-10-25 - Terminal snapshot cursors and answer receipts (#4266)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`: answers `get_snapshot` through the shared synchronous capture and connection FIFO marker path.
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: advertises snapshot and UI-answer receipt support and settles named answers through the session-local receipt ledger.
+
+### Why
+
+- Both endpoints must identify snapshot cuts by source order and distinguish a retried answer from another answer to an already settled request.
+
+### Why an extension could not handle it
+
+- The control endpoint owns command replies and its connection FIFO; an extension cannot insert a cursor atomically with state capture.
+
+### Expected merge conflict zones
+
+- Additive imports, capability names, snapshot dispatch, and answer receipt handling in the two named control-command files.
+
 ## 2026-10-25 - Terminal control endpoints: host drive set and every platform (senpi#4267)
 
 ### What changed

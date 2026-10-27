@@ -1,5 +1,6 @@
 import { bindToProviderScope, runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
+import { recoveryCarrier } from "../../core/session-recovery-identity.ts";
 import {
 	createRpcConnectionHandler,
 	type RpcConnectionHandler,
@@ -9,6 +10,7 @@ import {
 import { createToolAttributionSpans } from "./session-attribution.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
+import { structuredLaneEnabled } from "./structured-session-records.ts";
 
 /** A session-owned adapter around the classic command and extension-UI wiring. */
 export interface RpcSessionBinding {
@@ -38,13 +40,21 @@ export async function createRpcSessionBinding(
 	// session is inside is what the loop-lag watchdog blames for a stall. The record
 	// stream already carries that transition; no extra subscription is needed.
 	const toolSpans = createToolAttributionSpans(sessionId);
-	const enqueueRecords = (chunk: string): void => {
-		for (const line of chunk.split("\n")) {
-			if (!line) continue;
-			const record = JSON.parse(line) as object;
-			toolSpans.observe(record);
-			writer.enqueue(sessionId, record);
+	const lane = entry.acceptance;
+	if (lane) writer.registerAcceptance(sessionId, lane);
+	// The manager whose journal the lane follows; a replacement's bootstrap moves the lane to the new one.
+	let journaled = lane ? entry.runtime.session.sessionManager : undefined;
+	const enqueueRecord = (record: object): void => {
+		toolSpans.observe(record);
+		// Accepted before the writer serializes or routes it; a replacement is the next incarnation's bootstrap.
+		if (lane && "type" in record && record.type === "session_replaced") {
+			journaled = entry.runtime?.session.sessionManager;
+			lane.bootstrap({ transcript: journaled?.beginTranscriptJournal() ?? [] });
+		} else if (lane) {
+			lane.applyTranscript(journaled?.drainTranscript() ?? []);
+			lane.accept(record, recoveryCarrier(record));
 		}
+		writer.enqueue(sessionId, record);
 	};
 	// Attachments share one entry, so resolve the host from the live runtime. In
 	// particular, switch_session must use the entry's replacement-aware method
@@ -69,18 +79,35 @@ export async function createRpcSessionBinding(
 	// an unawaited prompt (senpi#2871).
 	let droppedAfterClose = false;
 	const handler: RpcConnectionHandler = await runWithProviderScope(entry.scope, async () => {
-		const writeInScope = bindToProviderScope(enqueueRecords);
+		const writeInScope = bindToProviderScope(enqueueRecord);
+		const dropAfterClose = (): void => {
+			if (!droppedAfterClose)
+				process.stderr.write(
+					`senpi rpc host: dropped a record for closed session ${sessionId} at ${new Date().toISOString()}\n`,
+				);
+			droppedAfterClose = true;
+		};
+		const writeRecord = (record: object): void => {
+			if (entry.scope.state === "closed") return dropAfterClose();
+			writeInScope(record);
+		};
+		const writeStructuredInScope = bindToProviderScope((record: object) =>
+			writer.structuredLanes.accept(sessionId, record),
+		);
 		const taggedSink: RpcConnectionSink = {
-			writeRaw: (chunk) => {
-				if (entry.scope.state === "closed") {
-					if (!droppedAfterClose)
-						process.stderr.write(
-							`senpi rpc host: dropped a record for closed session ${sessionId} at ${new Date().toISOString()}\n`,
-						);
-					droppedAfterClose = true;
-					return;
-				}
-				writeInScope(chunk);
+			writeRecord,
+			...(structuredLaneEnabled()
+				? {
+						writeStructured: (record: object) => {
+							if (entry.scope.state !== "closed") writeStructuredInScope(record);
+						},
+					}
+				: {}),
+			// A late raw reply after the scope closed is dropped like any record (senpi#2871); while the scope is
+			// open, records arrive only through writeRecord, so a raw write is a wiring bug.
+			writeRaw: () => {
+				if (entry.scope.state === "closed") return dropAfterClose();
+				throw new Error("Shared session bindings deliver records through writeRecord, never writeRaw");
 			},
 			waitForBackpressure: bindToProviderScope(async () => {}),
 		};
@@ -88,7 +115,6 @@ export async function createRpcSessionBinding(
 			sessionId,
 			shutdownHandler: bindToProviderScope(requestClose),
 			disposeRuntime: false,
-			eventFlushScheduler: (flush) => flush(),
 			publishLoadedSurfacesChanged: (previous, digest) => {
 				if (entry.scope.state !== "closed") writer.publishLoadedSurfacesChanged(sessionId, previous, digest);
 			},

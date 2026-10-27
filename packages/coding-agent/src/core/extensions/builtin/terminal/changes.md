@@ -1,3 +1,21 @@
+## 2026-10-25 - Name monitor wake items by their stable id (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension-state.ts`: the `terminal-monitors` `wake_source_state` item ids use the stable `mon_` monitor id instead of the runtime session id; the legacy `terminal_monitor_state` payload is unchanged.
+
+### Why
+
+- Item ids feed the lifecycle custody signature, so runtime id churn on an unchanged monitor set republished the obligation.
+
+### Why an extension could not handle it
+
+- The terminal extension is the producer of this wake source; the id it emits is the fix.
+
+### Expected merge conflict zones
+
+- LOW: `extension-state.ts` `onMonitorState` wake-source emission.
+
 ## 2026-10-24 - RPC monitors authenticate public POSIX hosts before subscribing (senpi#3815)
 
 ### What changed

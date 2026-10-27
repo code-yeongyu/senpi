@@ -1,3 +1,46 @@
+## 2026-10-26 - Opt-in seeded projection in toJsonEvent (senpi#4349, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/json-event.ts`: adds the `toJsonEvent(event, { blockSeeds: 1 })` overload. It projects
+  `message_update` from the producer-time capture only (S02a): start seeds (`seed.block`, `coveredCodeUnits`, tool
+  `rawArgumentPrefix`/`parsedThrough`), deltas with `offset` (and `parsedThrough` for tool arguments), ends with the frozen
+  block, `done`/`error` with the terminal message, plus frozen `usage` and changed `messageMetadata`. Assistant
+  `message_start`/`message_end` take the capture's frozen message. A record with no capture has no seeded form
+  (`undefined`), so no seed is ever read from the live partial; identity fields are passed through, never minted.
+  The no-options call is unchanged byte for byte; `print-mode.ts` and `rpc-mode.ts` keep it.
+
+### Why
+
+- R3.C6.2: a seed read from the shared live partial at serialization time can already contain later bytes, and an
+  ordinary delta must not copy or reserialize a growing block.
+
+### Why an extension could not handle it
+
+- The capture carriers are internal to the provider/agent pipeline and are not exposed to extension events.
+
+### Expected merge conflict zones
+
+- LOW: the `toJsonEvent` overload list in `json-event.ts`.
+
+## 2026-10-25 - Keep presenter bootstrap through CLI re-execution (senpi#4247)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: explicitly preserves the live reserved presenter descriptor through runtime selection and isolated CLI re-execution, keeping the lifetime descriptor separate.
+
+### Why
+
+- `packages/coding-agent/src/cli.ts`: inheriting only standard I/O dropped fd 4 before the public host command could enroll its caller.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli.ts`: runtime re-execution precedes extension loading and owns descriptor inheritance.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli.ts`: the runtime-selection and isolated-process spawn options.
+
 ## 2026-10-25 - Host-owned MCP presenter deployment options (#4197)
 
 ### What changed

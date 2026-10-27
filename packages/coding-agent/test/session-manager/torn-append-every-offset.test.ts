@@ -2,7 +2,7 @@ import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
 
 const fault = vi.hoisted(() => ({ keepBytes: undefined as number | undefined }));
@@ -48,11 +48,13 @@ function assistant(text: string): AssistantMessage {
 	};
 }
 
-function transcript(): { root: string; file: string; manager: SessionManager } {
+function transcript(register = true): { root: string; file: string; manager: SessionManager } {
 	const root = mkdtempSync(join(tmpdir(), "senpi-every-offset-"));
-	roots.push(root);
 	const manager = SessionManager.create(root, join(root, "sessions"));
-	managers.push(manager);
+	if (register) {
+		roots.push(root);
+		managers.push(manager);
+	}
 	manager.appendMessage({ role: "user", content: "u1", timestamp: 1 });
 	manager.appendMessage(assistant("a1"));
 	manager.appendMessage({ role: "user", content: "u2", timestamp: 3 });
@@ -69,20 +71,30 @@ function reopen(file: string): SessionManager {
 }
 
 describe("torn transcript byte boundaries (senpi#4295)", () => {
-	it("opens every byte-offset prefix of a four-message transcript and appends without losing whole entries", () => {
-		const { root, file } = transcript();
-		const bytes = readFileSync(file);
-		let end = 0;
-		const entryEnds = bytes
-			.toString("utf8")
-			.trimEnd()
-			.split("\n")
-			.map((line) => {
-				end += Buffer.byteLength(line) + 1;
-				return { end: end - 1, entry: JSON.parse(line) as { type: string; id: string } };
-			})
-			.filter(({ entry }) => entry.type !== "session");
-		for (let cut = 0; cut <= bytes.length; cut++) {
+	// Every cut through a line is set aside through the fsynced backup writer, so the offsets are separate cases: one
+	// loop over all of them paid every backup inside a single test's time budget.
+	const fixture = transcript(false);
+	const bytes = readFileSync(fixture.file);
+	let end = 0;
+	const entryEnds = bytes
+		.toString("utf8")
+		.trimEnd()
+		.split("\n")
+		.map((line) => {
+			end += Buffer.byteLength(line) + 1;
+			return { end: end - 1, entry: JSON.parse(line) as { type: string; id: string } };
+		})
+		.filter(({ entry }) => entry.type !== "session");
+	afterAll(() => {
+		fixture.manager.dispose();
+		rmSync(fixture.root, { recursive: true, force: true });
+	});
+
+	it.each(Array.from({ length: bytes.length + 1 }, (_, cut) => cut))(
+		"opens the %i-byte prefix of a four-message transcript and appends without losing whole entries",
+		(cut) => {
+			const root = mkdtempSync(join(tmpdir(), "senpi-every-offset-cut-"));
+			roots.push(root);
 			const path = join(root, `cut-${cut}.jsonl`);
 			writeFileSync(path, bytes.subarray(0, cut));
 			const expected = entryEnds.filter(({ end: entryEnd }) => entryEnd <= cut).map(({ entry }) => entry.id);
@@ -98,8 +110,8 @@ describe("torn transcript byte boundaries (senpi#4295)", () => {
 					.map((entry) => entry.id),
 				`cut ${cut} after append`,
 			).toEqual([...expected, next]);
-		}
-	});
+		},
+	);
 
 	it.each(Array.from({ length: 159 }, (_, offset) => offset))(
 		"retries in the same process after an ENOSPC append at byte %i",

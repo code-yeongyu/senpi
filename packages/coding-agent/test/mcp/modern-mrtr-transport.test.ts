@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createMcpLogger } from "../../src/core/extensions/builtin/mcp/log.ts";
 import { probeStdioTransport } from "../../src/core/extensions/builtin/mcp/modern/stdio-probe.ts";
 import { ModernHttpTransport } from "../../src/core/extensions/builtin/mcp/modern/transport.ts";
+import { materializeMcpTransport } from "../../src/core/extensions/builtin/mcp/transport-sdk.ts";
 import { MrtrScript } from "./fixtures/mrtr-2026-server.ts";
 import { makeRoot } from "./fixtures/service-lifecycle.ts";
 
@@ -24,6 +25,37 @@ const cancel = (id: number) => ({
 });
 
 describe("MRTR transport correlation", () => {
+	it.each([false, true])(
+		"preserves complete and trailing stderr when an unclassified child exits (project=%s)",
+		async (projectPolicy) => {
+			const root = makeRoot("mrtr-stdio-startup-crash", cleanup);
+			const logger = createMcpLogger("fixture", { logDir: root.agentDir });
+			const spec = {
+				kind: "stdio" as const,
+				command: process.execPath,
+				args: ["-e", 'process.stderr.write("startup failure\\ntrailing diagnostic"); process.exitCode = 1;'],
+				cwd: undefined,
+				env: {},
+				authProvider: undefined,
+				projectPolicy,
+			};
+			const materialized = await materializeMcpTransport({
+				spec: { ...spec, resolveBeforeStart: async () => spec },
+				logger,
+				sink: { logger },
+				elicitationUiProvider: undefined,
+				onStart: () => {},
+			});
+			cleanup.push(() => materialized.close());
+			const closed = Promise.withResolvers<void>();
+			materialized.transport.onclose = () => closed.resolve();
+			await materialized.transport.start();
+			await closed.promise;
+			const diagnostics = logger.getRingBuffer().join("\n");
+			expect(diagnostics).toContain("startup failure");
+			expect(diagnostics).toContain("trailing diagnostic");
+		},
+	);
 	it("an HTTP reply cannot settle a different in-flight request identifier", async () => {
 		const replies = new Map([
 			[1, Promise.withResolvers<Response>()],

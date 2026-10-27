@@ -12,6 +12,68 @@
 
 ### Removed
 
+## [2026.10.27-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Preserve startup diagnostics when an MCP stdio child exits before protocol classification, and follow the SDK's default timeout for modern multi-round requests ([#4226](https://github.com/code-yeongyu/senpi/issues/4226)).
+- Claude subscription billing errors identify the attempted account and source and offer effective account-switch or top-up actions. Attempt-open logs include store and account provenance as salted digests, without account names or absolute paths ([#4364](https://github.com/code-yeongyu/senpi/pull/4364)).
+
+### Removed
+
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Session lifecycle waits include bounded named child sources, background items, and child reports, preserving producer labels and timestamps through restoration while aggregate counts remain authoritative ([#4228](https://github.com/code-yeongyu/senpi/pull/4228)).
+
+### Changed
+
+### Fixed
+
+- MCP OAuth validates metadata and response issuers before using credentials, discards registrations and tokens bound to another issuer, and declares native loopback registration. Metadata and callback issuers remain exact identifiers; credential stamps tolerate only the final slash of an origin-only URL, preserving existing root-fallback sign-ins and grants without AS metadata. Configured client IDs remain reusable configuration ([#4211](https://github.com/code-yeongyu/senpi/pull/4211)).
+- Warn when rejecting MCP tools with invalid parameter-header annotations, reject mismatched argument types before HTTP dispatch, and detect annotations under unknown schema keywords ([#4246](https://github.com/code-yeongyu/senpi/issues/4246)).
+- Supervised RPC lifecycle tests subscribe to generation-file events before startup and wait for the drain channel before stopping or freezing the host, without missing files published before the first read (senpi#4260).
+- A Windows RPC host start no longer replaces an existing valid socket secret, so clients that already read it keep reaching the host ([#4292](https://github.com/code-yeongyu/senpi/pull/4292))
+- vertex-garden requests resolve the target project from process env or the stored google-vertex profile before falling back to ADC quota project discovery, instead of failing with "Vertex AI requires a project ID" ([#4339](https://github.com/code-yeongyu/senpi/pull/4339))
+- compaction with a dead summarizer model degrades through the deterministic fallback instead of rejecting the compaction and failing the prompt ([#4340](https://github.com/code-yeongyu/senpi/pull/4340))
+- websearch Google grounding defaults to `gemini-flash-latest` instead of the retired `gemini-2.5-flash` ([#4340](https://github.com/code-yeongyu/senpi/pull/4340))
+- Grant answers are now matched by the request they answer ([#4359](https://github.com/code-yeongyu/senpi/pull/4359))
+- A worker-session grant now stays guarded until the session settles it ([#4366](https://github.com/code-yeongyu/senpi/pull/4366))
+
+### Removed
+
+## [2026.10.26-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- RPC atomic snapshot cursors, UI-answer receipts, and opt-in dialog observation without attaching observers or exposing command replies ([#4266](https://github.com/code-yeongyu/senpi/issues/4266)).
+
+### Changed
+
+- Shared RPC host sessions hand records to the session event writer through a structured sink instead of serializing and re-parsing every record, including each growing `message_update` partial; socket and stdout bytes are unchanged ([#4276](https://github.com/code-yeongyu/senpi/pull/4276))
+
+### Fixed
+
+- Modern MCP tools accept JSON Schema 2020-12 definitions and non-object structured results, preserve schema constraints, and validate output without coercion ([#4191](https://github.com/code-yeongyu/senpi/issues/4191)).
+- Invalid or unsupported modern tool schemas no longer hide valid sibling tools or crash cached registration; validation failures identify the argument path and failed constraint ([#4232](https://github.com/code-yeongyu/senpi/pull/4232)).
+- Keep modern MCP tool, prompt, and resource catalogs current through capability-gated subscription streams, with resource update filters and connection-owned cancellation and reconnect backoff ([#4234](https://github.com/code-yeongyu/senpi/pull/4234)).
+- End subscription streams cleanly on matching results, enforce accepted resource URIs, hand over filters after acknowledgment, retry malformed acknowledgments with increasing disconnect backoff, and isolate concurrent resource-list sweeps ([#4234](https://github.com/code-yeongyu/senpi/pull/4234)).
+- Public `host ensure` and `host handoff` now accept explicit MCP presenter enforcement and preserve it through initial launch, immediate replacement and deferred idle handover. Private enrollment survives CLI runtime re-execution; reuse never enrolls the caller or upgrades a busy foreign host merely to enable forms ([#4247](https://github.com/code-yeongyu/senpi/issues/4247)).
+- The bash permission check now decides every command a call runs: each command in a list, pipeline, subshell or substitution, and the command behind a wrapper such as `env`, `sudo`, `xargs` or `sh -c`. A rule or an "Allow always" answer for one command applies to that command only. A command the checker cannot parse is decided only by the preset or a blanket rule ([#4317](https://github.com/code-yeongyu/senpi/pull/4317))
+
+### Removed
+
 ## [2026.10.25-4] - 2026-10-25
 
 ### Breaking Changes

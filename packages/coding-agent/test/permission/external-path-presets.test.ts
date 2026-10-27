@@ -1,3 +1,6 @@
+import { realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, parse } from "node:path";
 import { describe, expect, it } from "vitest";
 import { rulesForPreset } from "../../src/core/extensions/builtin/permission-system/config.ts";
 import { evaluate } from "../../src/core/extensions/builtin/permission-system/evaluate.ts";
@@ -30,11 +33,13 @@ describe("permission presets for external paths", () => {
 
 	it("does not broaden root-level external path approvals to the filesystem root", () => {
 		// given
+		const temp = realpathSync.native(tmpdir());
+		const root = parse(temp).root;
 		const cases = [
-			{ toolName: "ls", input: { path: "/tmp" }, always: ["/tmp/*"] },
-			{ toolName: "read", input: { path: "/tmp/file.txt" }, always: ["/tmp/*"] },
-			{ toolName: "read", input: { path: "/secret.txt" }, always: ["/secret.txt"] },
-			{ toolName: "read", input: { path: "/secret" }, always: ["/secret"] },
+			{ toolName: "ls", input: { path: temp }, always: [`${temp}/*`] },
+			{ toolName: "read", input: { path: join(temp, "file.txt") }, always: [`${temp}/*`] },
+			{ toolName: "read", input: { path: join(root, "secret.txt") }, always: [join(root, "secret.txt")] },
+			{ toolName: "read", input: { path: join(root, "secret") }, always: [join(root, "secret")] },
 		];
 
 		for (const testCase of cases) {

@@ -31,6 +31,8 @@ export class LifecycleLedger {
 	private runCompleted: string | undefined;
 	private admissionWriteFailed = false;
 	private unwritten = false;
+	private writeFailed = false;
+	private readonly activityInstanceId: string = crypto.randomUUID();
 	runId: string | undefined;
 	runActive = false;
 	interrupted = false;
@@ -62,6 +64,7 @@ export class LifecycleLedger {
 					rootSessionId: spawnedBy?.rootSessionId ?? persistence.sessionId,
 					...(spawnedBy ? { parentSessionId: spawnedBy.parentSessionId, taskId: spawnedBy.taskId } : {}),
 				};
+		this.current = { ...this.current, activityRevision: { instanceId: this.activityInstanceId, revision: 0 } };
 		this.attention = new LifecycleAttention(persistence.sessionId, restored);
 		this.sealed = restored?.epochSealed ?? false;
 		this.runId = restored?.runId;
@@ -172,6 +175,7 @@ export class LifecycleLedger {
 		readonly holds: readonly LifecycleHold[];
 		readonly failure?: SessionLifecycle["failure"];
 		readonly lastStop?: SessionLifecycle["lastStop"];
+		readonly activity?: SessionLifecycle["activity"];
 	}): void {
 		if (input.holds.length > 0 || input.state === "failed") this.request = undefined;
 		const terminal = input.state === "done" || input.state === "failed";
@@ -181,6 +185,7 @@ export class LifecycleLedger {
 			failure: _failure,
 			settleDecision: _decision,
 			lastStop: _lastStop,
+			activity: _activity,
 			...base
 		} = this.current;
 		const now = new Date().toISOString();
@@ -215,6 +220,7 @@ export class LifecycleLedger {
 				: {}),
 			...(input.state === "failed" && input.failure ? { failure: input.failure } : {}),
 			...(input.lastStop ? { lastStop: input.lastStop } : {}),
+			...(input.activity ? { activity: input.activity } : {}),
 			...(input.state === "done" && standingRequest
 				? {
 						settleDecision: this.current.settleDecision ?? { decisionId: crypto.randomUUID() },
@@ -229,7 +235,26 @@ export class LifecycleLedger {
 			// Input changes during session_start are collected, but cannot publish.
 			return;
 		}
-		if (this.current.persisted && equivalent(this.current, next)) return;
+		const sameActivity = JSON.stringify(this.current.activity) === JSON.stringify(next.activity);
+		// An unchanged lifecycle writes nothing; an unwritten revision waits for the record that carries it (senpi#3980).
+		if (this.current.persisted && sameActivity && equivalent(this.current, next)) return;
+		// Activity alone only emits, also while custody writes fail. Pending run/epoch state and a failed
+		// lifecycle write retain the ordinary durable path: activity cannot consume or clear that work.
+		if (!sameActivity && !this.unwritten && !this.writeFailed && equivalent(this.current, next)) {
+			this.current = {
+				...next,
+				activityRevision: {
+					instanceId: this.activityInstanceId,
+					revision: (this.current.activityRevision?.revision ?? 0) + 1,
+				},
+			};
+			this.persistence.emit({
+				type: "session_lifecycle",
+				sessionId: this.persistence.sessionId,
+				lifecycle: this.current,
+			});
+			return;
+		}
 		// A brand-new idle session has no completed work epoch to announce.
 		if (terminal && base.epoch === 0) {
 			this.current = next;
@@ -248,9 +273,15 @@ export class LifecycleLedger {
 	}
 
 	private write(snapshot: SessionLifecycle, emit: boolean): boolean {
-		const next = { ...snapshot, seq: this.current.seq + 1, persisted: true };
+		const next = {
+			...snapshot,
+			seq: this.current.seq + 1,
+			persisted: true,
+			activityRevision: { instanceId: this.activityInstanceId, revision: 0 },
+		};
+		const { activity: _activity, activityRevision: _activityRevision, ...durable } = next;
 		const record: LifecycleRecord = {
-			...next,
+			...durable,
 			sessionId: this.persistence.sessionId,
 			attentionSeq: this.attention.attentionSeq,
 			synthetic: this.attention.synthetic,
@@ -267,9 +298,11 @@ export class LifecycleLedger {
 		try {
 			this.persistence.append(record);
 			this.current = next;
+			this.writeFailed = false;
 		} catch (error) {
 			if (!(error instanceof Error)) throw error;
 			this.current = { ...next, persisted: false, selfSettleEligible: false };
+			this.writeFailed = true;
 		}
 		if (emit && !this.current.restoring)
 			this.persistence.emit({

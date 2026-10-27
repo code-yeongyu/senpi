@@ -1,3 +1,21 @@
+## 2026-10-26 - Remove the internal channel subpath (senpi#4349, part of #4272)
+
+### What changed
+
+- `packages/agent/package.json`: removes the internal-events export from the manifest used by pack and publish.
+
+### Why
+
+- `packages/agent/package.json`: every exports entry is public npm API; the session now uses a construction capability.
+
+### Why an extension could not handle it
+
+- `packages/agent/package.json`: the package loader resolves exports before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: `packages/agent/package.json` exports map.
+
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
 ### What changed
