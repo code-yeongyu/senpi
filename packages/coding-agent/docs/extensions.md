@@ -3549,6 +3549,7 @@ See [examples/extensions/timed-confirm.ts](../examples/extensions/timed-confirm.
 // Status in footer (persistent until cleared)
 ctx.ui.setStatus("my-ext", "Processing...");
 ctx.ui.setStatus("my-ext", undefined);  // Clear
+// The TUI reserves the "session-lifecycle" key for the session lifecycle status; setStatus ignores it.
 
 // Subagent tree spend, shown after the session's own cost: "$0.380 (+1.270)"
 ctx.ui.setSubagentCost(1.27);

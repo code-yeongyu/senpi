@@ -1,5 +1,4 @@
 import {
-	type AssistantMessage,
 	type AssistantMessageEvent,
 	carryAssistantCapture,
 	subscribeAssistantCapture,
@@ -12,37 +11,7 @@ import { toJsonEvent } from "../../../src/modes/json-event.ts";
 
 // Part of #4272 (R3.C6.2 / T6): the opt-in seeded projection reads producer-time capture, never the live partial.
 
-const usage = {
-	input: 1,
-	output: 2,
-	cacheRead: 0,
-	cacheWrite: 0,
-	totalTokens: 3,
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
-
-function assistant(): AssistantMessage {
-	return {
-		role: "assistant",
-		api: "faux",
-		provider: "faux",
-		model: "fixture",
-		content: [],
-		timestamp: 1,
-		stopReason: "stop",
-		usage: { ...usage, cost: { ...usage.cost } },
-	};
-}
-
-function update(event: AssistantMessageEvent, outer: object = {}): AgentSessionEvent {
-	const message = "partial" in event ? event.partial : event.type === "done" ? event.message : event.error;
-	return carryAssistantCapture(event, {
-		type: "message_update",
-		assistantMessageEvent: event,
-		message: { ...message },
-		...outer,
-	}) as AgentSessionEvent;
-}
+import { assistant, update, usage } from "./4272-seeded-json-fixtures.ts";
 
 const SEEDS = { blockSeeds: 1 } as const;
 let release: () => void = () => {};
@@ -113,7 +82,7 @@ describe("T6 seeded toJsonEvent", () => {
 			assistantMessageEvent: {
 				type: "text_start",
 				contentIndex: 0,
-				seed: { block: { type: "text", text: "Hé" }, coveredCodeUnits: 2 },
+				seed: { block: { type: "text", text: "Hé" }, coveredCodeUnits: 2, nextOffset: 2 },
 			},
 		});
 		expect(
@@ -156,6 +125,7 @@ describe("T6 seeded toJsonEvent", () => {
 					rawArgumentPrefix: raw,
 					parsedThrough: 0,
 					coveredCodeUnits: raw.length,
+					nextOffset: raw.length,
 				},
 			},
 		});

@@ -8,6 +8,7 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
 export type CompactStorageOperation =
 	| "spool_create"
 	| "spill_write"
+	| "value_write"
 	| "page_write"
 	| "leaf_read"
 	| "page_read"

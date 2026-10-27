@@ -11,6 +11,7 @@ import type { AgentSession, AgentSessionEventListener } from "../../core/agent-s
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { ClientMessageEvents } from "./client-message-events.ts";
+import { observeLifecycle } from "./lifecycle-delivery.ts";
 import type { RpcCommandInvocationEvent, RpcSkillInvocationEvent } from "./rpc-types.ts";
 
 /** Subscribes `output` to the session's records (from `source`, by default `session.subscribe`); returns the unsubscribe. */
@@ -25,7 +26,7 @@ export function subscribeSessionRecords(
 		if (event.type === "session_lifecycle") {
 			// The connection adds the routing handle; classic stdio has no envelope.
 			const { sessionId: _sessionId, ...record } = event;
-			output(record);
+			output({ ...record, lifecycle: observeLifecycle(event.lifecycle) });
 			return;
 		}
 		if (event.type === "skill_invocation") {

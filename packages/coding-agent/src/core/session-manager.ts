@@ -33,6 +33,7 @@ import { EventLoopSlicer, mapInSlices } from "./event-loop-slicer.ts";
 import { projectRetainedMessages } from "./extensions/builtin/compaction/retained-message-projection.ts";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import type { InputSource } from "./extensions/types.ts";
+import type { RecoveryCarrier } from "./session-recovery-identity.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
 import type { RepositoryIdentity } from "./repository-identity.ts";
@@ -1923,7 +1924,7 @@ export class SessionManager {
 		return bytes;
 	}
 
-	private _appendEntry(entry: SessionEntry, shareable?: object): void {
+	private _appendEntry(entry: SessionEntry, shareable?: object, recoveryOwner?: RecoveryCarrier): void {
 		const residentEntry = this.residentStore.externalize(entry);
 		const bytes = this._persist(residentEntry);
 		const committed = this._shareMessage(residentEntry, shareable);
@@ -1937,6 +1938,7 @@ export class SessionManager {
 				id: residentEntry.id,
 				entry: serialized,
 				persistence: this._transcriptPersistence(),
+				...(recoveryOwner ? { owningMessageId: recoveryOwner.messageId, recoveryEpoch: recoveryOwner.epoch } : {}),
 			});
 		}
 	}
@@ -2059,15 +2061,16 @@ export class SessionManager {
 	 */
 	appendOwnedMessage(
 		message: Message | CustomMessage | BashExecutionMessage,
-		options?: { readonly inputSource?: InputSource | undefined },
+		options?: { readonly inputSource?: InputSource | undefined; readonly recoveryOwner?: RecoveryCarrier },
 	): string {
-		return this._appendMessage(message, true, options?.inputSource);
+		return this._appendMessage(message, true, options?.inputSource, options?.recoveryOwner);
 	}
 
 	private _appendMessage(
 		message: Message | CustomMessage | BashExecutionMessage,
 		owned: boolean,
 		inputSource?: InputSource,
+		recoveryOwner?: RecoveryCarrier,
 	): string {
 		const entry: SessionMessageEntry = {
 			type: "message",
@@ -2077,7 +2080,7 @@ export class SessionManager {
 			message,
 			...(inputSource === undefined ? {} : { inputSource }),
 		};
-		this._appendEntry(entry, owned ? message : undefined);
+		this._appendEntry(entry, owned ? message : undefined, recoveryOwner);
 		const order = this.entryOrdersById.get(entry.id);
 		if (order !== undefined) {
 			this.messageEntryPositions.set(message, { entryId: entry.id, order });
@@ -2341,6 +2344,7 @@ export class SessionManager {
 		content: string | (TextContent | ImageContent)[],
 		display: boolean,
 		details?: T,
+		options?: { readonly recoveryOwner?: RecoveryCarrier },
 	): string {
 		const entry: CustomMessageEntry<T> = {
 			type: "custom_message",
@@ -2352,7 +2356,7 @@ export class SessionManager {
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 		};
-		this._appendEntry(entry);
+		this._appendEntry(entry, undefined, options?.recoveryOwner);
 		return entry.id;
 	}
 

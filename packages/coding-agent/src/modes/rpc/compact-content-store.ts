@@ -17,7 +17,24 @@ export const COMPACT_LEAF_CODE_UNITS = 32_768;
 
 export type LeafId = number;
 
+export class CompactWriteError extends Error {
+	readonly reason:
+		| "size_limit"
+		| "storage_unavailable"
+		| "depth_limit"
+		| "count_limit"
+		| "cycle"
+		| "unsupported_value";
+
+	constructor(reason: CompactWriteError["reason"]) {
+		super(`compact write refused (${reason})`);
+		this.name = "CompactWriteError";
+		this.reason = reason;
+	}
+}
+
 export interface CompactStorageStatus {
+	readonly structuredBytes: { readonly resident: number; readonly spilled: number; readonly pinned: number };
 	readonly residentPayloadBytes: number;
 	readonly pendingIoCopyBytes: number;
 	readonly pinnedOnlyBytes: number;
@@ -40,12 +57,14 @@ export interface CompactContentStoreOptions {
 }
 
 interface Leaf {
+	readonly value: boolean;
 	text: string | undefined;
 	readonly units: number;
 	live: number;
 	pins: number;
 	state: "ram" | "pending" | "committed";
 	path?: string;
+	file?: { readonly path: string; readonly bytes: number };
 }
 
 export class CompactContentStore extends CompactSpoolStorage {
@@ -54,6 +73,9 @@ export class CompactContentStore extends CompactSpoolStorage {
 	private readonly leaves = new Map<LeafId, Leaf>();
 	/** Resident leaves in creation order, so each spill takes the oldest without rescanning committed ones. */
 	private readonly ramLeaves = new Set<LeafId>();
+	private readonly ramValues = new Set<LeafId>();
+	private valueQueued = false;
+	private readonly structuredBytes = { resident: 0, spilled: 0, pinned: 0 };
 	private nextLeafId = 1;
 	private residentPayloadBytes = 0;
 	private pinnedOnlyBytes = 0;
@@ -82,14 +104,24 @@ export class CompactContentStore extends CompactSpoolStorage {
 	}
 
 	/** Takes ownership of an immutable value with one live reference. */
-	createLeaf(text: string): LeafId {
+	createLeaf(text: string, value = false): LeafId {
 		this.assertReadable();
-		if (text.length > COMPACT_LEAF_CODE_UNITS) throw new CompactReadError("size_limit");
+		if (text.length > COMPACT_LEAF_CODE_UNITS) throw new CompactWriteError("size_limit");
 		const id = this.nextLeafId++;
-		this.leaves.set(id, { text, units: text.length, live: 1, pins: 0, state: "ram" });
-		this.ramLeaves.add(id);
-		this.residentPayloadBytes += text.length * 2;
+		this.leaves.set(id, { text, units: text.length, value, live: 1, pins: 0, state: "ram" });
+		(value ? this.ramValues : this.ramLeaves).add(id);
+		if (value) this.structuredBytes.resident += text.length * 2;
+		else this.residentPayloadBytes += text.length * 2;
 		this.scheduleSpill();
+		return id;
+	}
+
+	/** A committed index file participates in the same ownership graph as its descriptors. */
+	ownFile(path: string, bytes: number): LeafId {
+		const id = this.createLeaf("", true);
+		const leaf = this.leaves.get(id);
+		if (!leaf) throw new CompactReadError("ownership");
+		leaf.file = { path, bytes };
 		return id;
 	}
 
@@ -102,16 +134,23 @@ export class CompactContentStore extends CompactSpoolStorage {
 		const pinnedOnly = leaf.live === 0 && leaf.pins > 0;
 		leaf.live += live;
 		leaf.pins += pins;
-		if (pinnedOnly !== (leaf.live === 0 && leaf.pins > 0)) this.pinnedOnlyBytes += (pinnedOnly ? -2 : 2) * leaf.units;
+		if (pinnedOnly !== (leaf.live === 0 && leaf.pins > 0)) {
+			const bytes = (pinnedOnly ? -2 : 2) * leaf.units;
+			if (leaf.value) this.structuredBytes.pinned += bytes;
+			else this.pinnedOnlyBytes += bytes;
+		}
 		if (leaf.live > 0 || leaf.pins > 0) return;
 		this.leaves.delete(id);
-		this.ramLeaves.delete(id);
+		if (leaf.file) this.discard(leaf.file.path, leaf.file.bytes);
+		(leaf.value ? this.ramValues : this.ramLeaves).delete(id);
 		if (leaf.state === "committed" && leaf.path) {
-			this.spilledLiveBytes -= leaf.units * 2;
+			if (leaf.value) this.structuredBytes.spilled -= leaf.units * 2;
+			else this.spilledLiveBytes -= leaf.units * 2;
 			this.discard(leaf.path, leaf.units * 2);
 			return;
 		}
-		this.residentPayloadBytes -= leaf.units * 2;
+		if (leaf.value) this.structuredBytes.resident -= leaf.units * 2;
+		else this.residentPayloadBytes -= leaf.units * 2;
 	}
 
 	isCommitted(id: LeafId): boolean {
@@ -135,6 +174,7 @@ export class CompactContentStore extends CompactSpoolStorage {
 
 	status(): CompactStorageStatus {
 		return {
+			structuredBytes: { ...this.structuredBytes },
 			residentPayloadBytes: this.residentPayloadBytes,
 			pendingIoCopyBytes: this.pendingIoCopyBytes,
 			pinnedOnlyBytes: this.pinnedOnlyBytes,
@@ -150,6 +190,23 @@ export class CompactContentStore extends CompactSpoolStorage {
 	}
 
 	protected scheduleSpill(): void {
+		if (
+			!this.valueQueued &&
+			this.spillAllowed &&
+			this.ramValues.size &&
+			this.reclaimDebtBytes <= RECLAIM_WORK_ALLOWANCE_BYTES
+		) {
+			this.valueQueued = true;
+			this.enqueue("value_write", async () => {
+				const [id] = this.ramValues;
+				try {
+					if (id !== undefined) await this.flushLeaf(id);
+				} finally {
+					this.valueQueued = false;
+				}
+				this.scheduleSpill();
+			});
+		}
 		if (this.spillQueued || !this.spillAllowed || this.residentPayloadBytes <= this.spillAboveBytes) return;
 		if (this.reclaimDebtBytes > RECLAIM_WORK_ALLOWANCE_BYTES) return;
 		this.spillQueued = true;
@@ -159,22 +216,44 @@ export class CompactContentStore extends CompactSpoolStorage {
 	/** Spills one oldest resident leaf per job, so other storage work interleaves fairly. */
 	private async spillNext(): Promise<void> {
 		const [id] = this.ramLeaves;
-		const leaf = id === undefined ? undefined : this.leaves.get(id);
-		if (id === undefined || !leaf || leaf.text === undefined || !this.spillAllowed) {
-			this.spillQueued = false;
-			return;
+		if (id !== undefined) await this.flushLeaf(id);
+		this.spillQueued = false;
+		if (this.residentPayloadBytes > this.spillTargetBytes) {
+			this.spillQueued = this.spillAllowed && this.ramLeaves.size > 0;
+			if (this.spillQueued) this.enqueue("spill_write", () => this.spillNext());
 		}
+	}
+
+	/** Commit at most one batch of structural leaves ahead of a cold-index rewrite. */
+	async flushValues(): Promise<void> {
+		// Amortize a cold-index rewrite across a bounded batch, without waiting for every pending owner.
+		for (let n = 0; n < 128 && !this.spillStopped; n++) {
+			const [id] = this.ramValues;
+			if (id === undefined) break;
+			await this.flushLeaf(id);
+		}
+	}
+
+	/** Serial storage jobs can flush one newly built structural page without waiting on their own queue. */
+	async flushLeaf(id: LeafId): Promise<void> {
+		const leaf = this.leaves.get(id);
+		if (!leaf || leaf.state !== "ram" || leaf.text === undefined || !this.spillAllowed) return;
 		const bytes = leaf.units * 2;
 		leaf.state = "pending";
-		this.ramLeaves.delete(id);
+		const ram = leaf.value ? this.ramValues : this.ramLeaves;
+		ram.delete(id);
 		let path: string | undefined;
 		try {
-			path = await this.writeFile(Buffer.from(leaf.text, "utf16le"), "spill_write", bytes);
+			path = await this.writeFile(
+				Buffer.from(leaf.text, "utf16le"),
+				leaf.value ? "value_write" : "spill_write",
+				bytes,
+			);
 		} finally {
 			// A failed write, or a failure report that threw, keeps the leaf resident and spillable.
 			if (path === undefined) {
 				leaf.state = "ram";
-				if (this.leaves.get(id) === leaf) this.ramLeaves.add(id);
+				if (this.leaves.get(id) === leaf) ram.add(id);
 			}
 		}
 		const owned = this.leaves.get(id) === leaf;
@@ -184,14 +263,14 @@ export class CompactContentStore extends CompactSpoolStorage {
 			leaf.state = "committed";
 			leaf.path = path;
 			leaf.text = undefined;
-			this.residentPayloadBytes -= bytes;
-			this.spilledLiveBytes += bytes;
+			if (leaf.value) {
+				this.structuredBytes.resident -= bytes;
+				this.structuredBytes.spilled += bytes;
+			} else {
+				this.residentPayloadBytes -= bytes;
+				this.spilledLiveBytes += bytes;
+			}
 			this.committed(id);
-		}
-		this.spillQueued = false;
-		if (this.residentPayloadBytes > this.spillTargetBytes) {
-			this.spillQueued = this.spillAllowed;
-			if (this.spillQueued) this.enqueue("spill_write", () => this.spillNext());
 		}
 	}
 }

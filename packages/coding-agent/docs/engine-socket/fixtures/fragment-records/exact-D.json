@@ -1,0 +1,39 @@
+{
+	"caseId": "exact-D",
+	"kind": "valid",
+	"contractIds": [
+		"R4.B3"
+	],
+	"description": "Exactly D raw bytes: one complete record, no empty trailing record.",
+	"digestAlgorithm": "sha256",
+	"limits": {
+		"D": 131072,
+		"F": 262144,
+		"H": 16384
+	},
+	"source": {
+		"generator": {
+			"kind": "segments",
+			"params": {
+				"segments": [
+					{
+						"kind": "repeat",
+						"patternBase64": "ZXhhY3QtRCA=",
+						"length": 131072
+					}
+				]
+			}
+		}
+	},
+	"sourceLength": 131072,
+	"sourceDigest": "7ced1c970b9b104cb4824b27839b71fbde7814925a55d759a23dec376c780a0e",
+	"expectedRecords": [
+		{
+			"offset": 0,
+			"length": 131072,
+			"digest": "7ced1c970b9b104cb4824b27839b71fbde7814925a55d759a23dec376c780a0e",
+			"next": null,
+			"complete": true
+		}
+	]
+}

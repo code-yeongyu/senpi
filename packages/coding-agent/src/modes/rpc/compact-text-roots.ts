@@ -7,6 +7,7 @@ interface Node {
 	readonly right: LeafId;
 	readonly units: number;
 	readonly height: number;
+	readonly full: boolean;
 	live: number;
 	pins: number;
 }
@@ -27,6 +28,25 @@ export class CompactTextRoots {
 		return this.nodes.size;
 	}
 
+	/** One owned dependency root; callers retain their existing references. */
+	own(refs: readonly LeafId[]): LeafId {
+		if (refs.length === 0) return 0;
+		if (refs.length === 1) {
+			const [ref] = refs;
+			this.store.adjust(ref, 1, 0);
+			return ref;
+		}
+		const middle = Math.floor(refs.length / 2);
+		const left = this.own(refs.slice(0, middle));
+		const right = this.own(refs.slice(middle));
+		if (left === 0) return right;
+		if (right === 0) return left;
+		const root = this.join(left, right);
+		this.store.adjust(left, -1, 0);
+		this.store.adjust(right, -1, 0);
+		return root;
+	}
+
 	units(id: LeafId): number {
 		return id === 0 ? 0 : id > 0 ? this.store.leafUnits(id) : this.node(id).units;
 	}
@@ -36,9 +56,9 @@ export class CompactTextRoots {
 	}
 
 	/** Transfers one live root and one newly owned bounded leaf into the new root. */
-	append(root: LeafId, text: string): LeafId {
+	append(root: LeafId, text: string, structured = false): LeafId {
 		this.units(root);
-		const leaf = this.store.createLeaf(text);
+		const leaf = this.store.createLeaf(text, structured);
 		if (root === 0) return leaf;
 		const result = this.appendLeaf(root, leaf);
 		this.store.adjust(root, -1, 0);
@@ -127,9 +147,24 @@ export class CompactTextRoots {
 		return node;
 	}
 
+	/** Compatibility assembly visits actual leaves, including short append-only delta leaves. */
+	async *chunks(root: LeafId, valid: () => void): AsyncGenerator<string> {
+		valid();
+		if (root === 0) return;
+		if (root > 0) {
+			const text = await this.read(root, "", 0, this.units(root), 1, valid);
+			valid();
+			yield text;
+		} else {
+			const node = this.node(root);
+			yield* this.chunks(node.left, valid);
+			yield* this.chunks(node.right, valid);
+		}
+	}
+
 	private appendLeaf(root: LeafId, leaf: LeafId): LeafId {
 		const node = this.nodes.get(root);
-		if (!node || this.height(node.left) === this.height(node.right)) return this.join(root, leaf);
+		if (!node || node.full) return this.join(root, leaf);
 		const right = this.appendLeaf(node.right, leaf);
 		const result = this.join(node.left, right);
 		this.store.adjust(right, -1, 0);
@@ -147,6 +182,10 @@ export class CompactTextRoots {
 			right,
 			units: this.units(left) + this.units(right),
 			height: 1 + Math.max(this.height(left), this.height(right)),
+			full:
+				this.height(left) === this.height(right) &&
+				(this.nodes.get(left)?.full ?? true) &&
+				(this.nodes.get(right)?.full ?? true),
 			live: 1,
 			pins: 0,
 		});
