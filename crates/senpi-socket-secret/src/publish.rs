@@ -102,17 +102,19 @@ mod windows_publish {
     }
 
     pub fn publish_no_replace(staging: &str, final_path: &str, bytes: &[u8]) -> Publication {
-        publish_with(staging, final_path, bytes, mark_for_deletion)
+        publish_with(staging, final_path, bytes, mark_for_deletion, || {})
     }
 
     /// `delete` is `mark_for_deletion` in production; tests inject a failing disposition.
+    /// `published` runs once a `Published` rename returns; tests open the final name from it.
     fn publish_with(
         staging: &str,
         final_path: &str,
         bytes: &[u8],
         delete: impl FnOnce(&OwnedHandle) -> Result<(), u32>,
+        published: impl FnOnce(),
     ) -> Publication {
-        match publish_through_staging(staging, final_path, bytes, delete) {
+        match publish_through_staging(staging, final_path, bytes, delete, published) {
             Ok(publication) => publication,
             Err(error) => Publication {
                 result: Err(error),
@@ -127,6 +129,7 @@ mod windows_publish {
         final_path: &str,
         bytes: &[u8],
         delete: impl FnOnce(&OwnedHandle) -> Result<(), u32>,
+        published: impl FnOnce(),
     ) -> Result<Publication, PublishError> {
         let descriptor = OwnerOnlyDescriptor::for_current_user()
             .map_err(|code| PublishError::Os { step: "dacl", code })?;
@@ -149,7 +152,14 @@ mod windows_publish {
             .and_then(|()| flush(&writer))
             .and_then(|()| rename_no_replace(&writer, final_path));
         let staging_left_behind = match result {
-            Ok(PublishOutcome::Published) => None,
+            Ok(PublishOutcome::Published) => {
+                // senpi#4362: close the writer (GENERIC_WRITE, share read only) the moment the rename
+                // lands, so a reader of the final name that does not grant FILE_SHARE_WRITE is refused
+                // only between the rename call and this close, never afterwards.
+                drop(writer);
+                published();
+                None
+            }
             _ => delete(&writer).err(),
         };
         Ok(Publication {
@@ -263,12 +273,52 @@ mod windows_publish {
                 final_path.to_str().expect("utf-8"),
                 &[2u8; 32],
                 |_| Err(5),
+                || {},
             );
             println!("RECEIPT_PUBLISH delete_disposition_failed report={report:?}");
             assert_eq!(report.result, Ok(PublishOutcome::Collision));
             assert_eq!(report.staging_left_behind, Some(5));
             assert!(staging.exists(), "the undeleted staging file is the one reported");
             assert_eq!(std::fs::read(&final_path).expect("winner kept"), [1u8; 32]);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        /// senpi#4362: once the rename publishes the secret, a reader of the final name that does not
+        /// grant FILE_SHARE_WRITE (any non-Node, non-std reader) must not hit a sharing violation
+        /// from the staging handle.
+        #[test]
+        fn a_reader_granting_only_share_read_opens_the_secret_right_after_the_rename() {
+            use windows_sys::Win32::Foundation::GENERIC_READ;
+            use windows_sys::Win32::Storage::FileSystem::OPEN_EXISTING;
+
+            let dir = scratch("share-window");
+            let final_path = dir.join("rpc.sock.secret");
+            let staging = dir.join("rpc.sock.secret.stage-w");
+            let mut reader: Option<Result<(), u32>> = None;
+            let report = publish_with(
+                staging.to_str().expect("utf-8"),
+                final_path.to_str().expect("utf-8"),
+                &[3u8; 32],
+                mark_for_deletion,
+                || {
+                    let opened = open(
+                        &wide(final_path.to_str().expect("utf-8")),
+                        GENERIC_READ,
+                        FILE_SHARE_READ,
+                        OPEN_EXISTING,
+                        std::ptr::null(),
+                    );
+                    // SAFETY: reads this thread's last-error value, set by a failed open just above.
+                    reader = Some(opened.map(drop).ok_or_else(|| unsafe { GetLastError() }));
+                },
+            );
+            println!("RECEIPT_PUBLISH share_read_reader_after_rename reader={reader:?}");
+            assert_eq!(report.result, Ok(PublishOutcome::Published));
+            assert_eq!(
+                reader,
+                Some(Ok(())),
+                "32 = ERROR_SHARING_VIOLATION from the open staging handle"
+            );
             let _ = std::fs::remove_dir_all(&dir);
         }
     }
