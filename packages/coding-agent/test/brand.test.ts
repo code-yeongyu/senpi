@@ -64,6 +64,13 @@ describe("parseBrandProfile", () => {
 		});
 	});
 
+	test("carries the product logo for the sign-in result pages (#4432)", () => {
+		const logo = "data:image/svg+xml;base64,PHN2Zy8+";
+
+		expect(parseBrandProfile(JSON.stringify({ name: "OmO", logo }))?.logo).toBe(logo);
+		expect(parseBrandProfile('{"name":"OmO"}')?.logo).toBeUndefined();
+	});
+
 	test("keeps every field of a complete profile", () => {
 		expect(parseBrandProfile(OMO_PROFILE)).toEqual({
 			name: "omo",

@@ -50,6 +50,8 @@ export interface BrandProfile {
 	readonly userAgent: string;
 	/** Product token used as the provider-side originator, when the distribution overrides it. */
 	readonly originator?: string;
+	/** Product logo for the sign-in result pages, as a base64 image data URI. */
+	readonly logo?: string;
 	/** Update channel of the branded product; absent means the product manages updates itself. */
 	readonly update?: BrandUpdateChannel;
 	readonly changelog?: BrandChangelog;
@@ -140,6 +142,7 @@ export function parseBrandProfile(raw: string | undefined): BrandProfile | undef
 		envPrefix: (readString(source, "envPrefix") || name).toUpperCase(),
 		userAgent: readString(source, "userAgent") || name,
 		originator: readString(source, "originator"),
+		logo: readString(source, "logo"),
 		update: readUpdateChannel(source),
 		...(changelog ? { changelog } : {}),
 	};
