@@ -635,8 +635,14 @@ export class AuthStorage implements CredentialStore {
 			return "loaded";
 		} catch (rawError) {
 			const error = failureAfterRead(rawError, load);
-			// Preserve the last valid in-memory snapshot.
-			if (!this.noteLoadFailure(error)) return "failed";
+			const recorded = this.noteLoadFailure(error);
+			// auth.json parsed and only a later step failed (a write-back or a lost lock): its parsed
+			// credentials stand, as on the async path. A failure before the parse keeps the last snapshot.
+			if (load.parsed) {
+				this.updateReadState(data, revision);
+				this.loadError = describeAuthStoreLoadFailure(error);
+			}
+			if (!recorded) return "failed";
 			if (!(error instanceof CredentialStoreBusyError)) return "failed";
 			if (!this.dataLoaded) {
 				this.busyReads++;

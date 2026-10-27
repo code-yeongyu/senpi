@@ -37,7 +37,8 @@ export interface RpcAuthProvider {
 
 /**
  * `get_auth_providers` `storeError`: auth.json exists but could not be loaded, so stored sign-ins read
- * as unconfigured; every write is refused until it is repaired, except after `write_back_failed` (senpi#4413).
+ * as unconfigured and every write is refused until it is repaired. `write_back_failed` is the exception:
+ * the file was read, so its sign-ins stay configured and writes are not refused (senpi#4413).
  * Never a path or contents.
  */
 export interface RpcAuthStoreError {

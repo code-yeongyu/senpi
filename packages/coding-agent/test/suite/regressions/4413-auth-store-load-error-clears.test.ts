@@ -129,16 +129,31 @@ describe("an auth.json load error clears on every path that reads or writes the 
 	const LEGACY = JSON.stringify({ "openai-codex": { type: "api_key", key: "sk-legacy-4413-not-a-key" } }, null, 2);
 	const failure = (code: string) => Object.assign(new Error(`simulated ${code}`), { code });
 
-	/** A backend that fails at one stage, in the sync or the async lock only; the other one works without saving. */
-	function failingBackend(content: string, mode: "sync" | "async", stage: Stage, error: Error): AuthStorageBackend {
+	/**
+	 * A backend that fails at one stage, in the sync or the async lock only. The other lock works without
+	 * saving, or with `otherLock: "fails"` fails before the read, so only the tested lock can load anything.
+	 */
+	function failingBackend(
+		content: string,
+		mode: "sync" | "async",
+		stage: Stage,
+		error: Error,
+		otherLock: "works" | "fails" = "works",
+	): AuthStorageBackend {
+		const otherFails = () => {
+			if (otherLock === "fails") throw failure("EACCES");
+		};
 		return {
 			withLock(fn) {
+				if (mode === "async") otherFails();
 				if (mode === "sync" && stage === "before read") throw error;
 				const { result, next } = fn(content);
 				if (mode === "sync" && stage === "write back" && next !== undefined) throw error;
+				if (mode === "sync" && stage === "lock lost after read") throw error;
 				return result;
 			},
 			async withLockAsync(fn) {
+				if (mode === "sync") otherFails();
 				if (mode === "async" && stage === "before read") throw error;
 				const { result, next } = await fn(content);
 				if (mode === "async" && stage === "write back" && next !== undefined) throw error;
@@ -171,6 +186,14 @@ describe("an auth.json load error clears on every path that reads or writes the 
 			stage: "write back",
 			error: failure("EROFS"),
 			kind: "write_back_failed",
+		},
+		{
+			name: "sync: the lock is lost after a clean read",
+			content: ORIGINAL,
+			mode: "sync",
+			stage: "lock lost after read",
+			error: new Error("simulated lock compromised"),
+			kind: undefined,
 		},
 		{
 			name: "async: the file cannot be opened",
@@ -207,6 +230,31 @@ describe("an auth.json load error clears on every path that reads or writes the 
 
 			expect(storage.getLoadError()?.kind).toBe(scenario.kind);
 			expect(storage.drainErrors().length).toBeGreaterThan(0);
+		});
+	}
+
+	/** What a backend that never fails loads from `content`: the parsed (and migrated) credentials. */
+	function parsedCredentials(content: string) {
+		return AuthStorage.fromStorage({
+			withLock: (fn) => fn(content).result,
+			withLockAsync: async (fn) => (await fn(content)).result,
+		}).getAll();
+	}
+
+	// auth.json was read and parsed; only a later step failed, so the sync and async paths both keep
+	// the parsed credentials in memory. The other lock fails, so only the tested path can load them.
+	const afterRead = classified.filter((scenario) => scenario.stage !== "before read");
+	for (const scenario of afterRead) {
+		it(`keeps the parsed credentials: ${scenario.name}`, async () => {
+			const expected = parsedCredentials(scenario.content);
+			expect(Object.keys(expected).length).toBeGreaterThan(0);
+			const storage = AuthStorage.fromStorage(
+				failingBackend(scenario.content, scenario.mode, scenario.stage, scenario.error, "fails"),
+			);
+			if (scenario.mode === "async") await storage.list();
+
+			expect(storage.getLoadError()?.kind).toBe(scenario.kind);
+			expect(storage.getAll()).toEqual(expected);
 		});
 	}
 });
