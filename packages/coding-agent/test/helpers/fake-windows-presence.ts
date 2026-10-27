@@ -41,6 +41,8 @@ export interface FakeWindowsOptions {
 	readonly onCreate?: () => void;
 	/** Answers every probe with this verdict instead of the lock table. */
 	readonly probeOutcome?: NativePresenceResult;
+	/** Answers every pre-action check with this verdict instead of the registry; `undefined` from the function keeps the model. */
+	readonly preActionOutcome?: NativePresenceResult | ((call: number) => NativePresenceResult | undefined);
 	/** Runs once the lock is taken, before the probe returns. */
 	readonly onAcquire?: (request: NativePresenceProbe) => void;
 	readonly onRelease?: (receipt: PresenceReleasedReceipt) => void;
@@ -97,12 +99,17 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 	const control: {
 		probeOutcome?: NativePresenceResult;
 		holdOutcome?: NativePresenceHold;
+		preActionOutcome?: FakeWindowsOptions["preActionOutcome"];
 		storeLocality: "local" | "not_local";
 		kernelSession: NativeKernelSessionIdentity;
+		/** How one directory classifies NOW, by exact path, where it differs from `storeLocality` (another volume). */
+		directoryLocality: Map<string, "local" | "not_local">;
 	} = {
 		probeOutcome: options.probeOutcome,
+		preActionOutcome: options.preActionOutcome,
 		storeLocality: options.storeLocality ?? "local",
 		kernelSession: sessionOf(options.kernelSession === undefined ? FAKE_KERNEL_SESSION : options.kernelSession),
+		directoryLocality: new Map(),
 	};
 	const heldExclusively = (path: string) => [...holds.values()].includes(path);
 	/** The kernel released the lock on `path`: the first parked wait for it acquires, as a `LockFileEx` completion. */
@@ -133,6 +140,7 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 		);
 	};
 	const nameOf = (path: string) => path.slice(path.lastIndexOf("\\") + 1);
+	let preActionCalls = 0;
 	let nextId = 1000 + objects.size + directories.size;
 	const canonical = (path: string) => (path.startsWith("\\\\?\\") ? path : `\\\\?\\${path}`);
 	const native: NativePresencePlacementBinding = {
@@ -146,7 +154,8 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 		},
 		classifyVolume: (path) => {
 			calls.push(`classifyVolume ${path}`);
-			return { locality: control.storeLocality, reason: null, reportedFileSystem: "NTFS" };
+			const locality = control.directoryLocality.get(path) ?? control.storeLocality;
+			return { locality, reason: null, reportedFileSystem: "NTFS" };
 		},
 		localAppDataPath: () => {
 			calls.push("localAppDataPath");
@@ -219,7 +228,22 @@ export function fakeWindows(options: FakeWindowsOptions = {}) {
 			}
 			return { status: "acquired" };
 		},
-		presencePreActionCheck: () => ({ status: "unknown", reason: "not_modelled" }),
+		// The Revision 7 pre-action check on the holding handle: valid while this registry holds the ID and the object it
+		// opened still exists; a lost or unknown guard is fenced. A test's `preActionOutcome` overrides one or every call.
+		presencePreActionCheck: (presenceId) => {
+			calls.push(`presencePreActionCheck ${presenceId}`);
+			preActionCalls += 1;
+			const forced =
+				typeof control.preActionOutcome === "function"
+					? control.preActionOutcome(preActionCalls)
+					: control.preActionOutcome;
+			if (forced) return forced;
+			for (const [path, id] of held) {
+				if (id !== presenceId) continue;
+				return objects.has(path) ? { status: "valid" } : { status: "fenced", reason: "handle_lost", code: 2 };
+			}
+			return { status: "fenced", reason: "not_held" };
+		},
 		presenceWaitAndAcquire: (presenceId, path, waitId) => {
 			calls.push(`presenceWaitAndAcquire ${presenceId}`);
 			if (!objects.has(path)) return Promise.resolve({ status: "unknown", reason: "os_error", code: 2 });

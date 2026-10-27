@@ -17,6 +17,7 @@ import {
 } from "../../../src/modes/rpc/endpoint-recovery.ts";
 import { repairEndpointReservations } from "../../../src/modes/rpc/endpoint-repair.ts";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { recordLaunchProvenance } from "../../../src/modes/rpc/launch-provenance.ts";
 import {
 	acquireOwnerPresence,
 	claimLaunchRole,
@@ -203,9 +204,26 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 		machine.objects.delete(launch.objects.owner.path);
 	}
 
-	async function censusEntry(launch: Launch, pid: number, processStartTime = "134000000000000005") {
+	/**
+	 * A census row of an earlier generation, with the launch provenance its reserving owner recorded beside it (senpi#4479
+	 * fold): `session` is that owner's kernel session at the launch (`null` = unverified), on the local daemon directory.
+	 */
+	async function censusEntry(
+		launch: Launch,
+		pid: number,
+		processStartTime = "134000000000000005",
+		session: string | null = FAKE_KERNEL_SESSION,
+	) {
 		const instance = generationPaths(launch.paths, "old-generation");
 		await mkdir(instance.dir, { recursive: true });
+		await recordLaunchProvenance(instance.launchProvenanceFile, {
+			generation: launch.generation,
+			kernelSession:
+				session === null
+					? { status: "unverified", reason: "access_denied" }
+					: { status: "verified", value: session },
+			directoryLocal: true,
+		});
 		await writeFile(instance.pidFile, JSON.stringify({ pid, processStartTime }));
 	}
 
@@ -219,7 +237,11 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			launch.store,
 			ENDPOINT,
 			launch.paths,
-			recoveryProber(STORE_DIR, machine.load, { observe: processes.observe, ...options }),
+			recoveryProber(STORE_DIR, machine.load, {
+				observe: processes.observe,
+				daemonDirectory: launch.paths.dir,
+				...options,
+			}),
 		);
 	}
 
@@ -284,7 +306,7 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 				launch.store,
 				ENDPOINT,
 				launch.paths,
-				recoveryProber(STORE_DIR, machine.load, { observe, clock, remainingMs }),
+				recoveryProber(STORE_DIR, machine.load, { observe, clock, remainingMs, daemonDirectory: launch.paths.dir }),
 			);
 			await armed();
 			fire();
@@ -460,7 +482,8 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 
 		it("HIGH: a proven prior boot never marks a census entry gone without observing it; a live entry blocks", async () => {
 			const { machine, launch } = await rebooted();
-			await censusEntry(launch, 4343, "134000000000000005");
+			// A row of the prior boot (session S1), as the generation's own rows are.
+			await censusEntry(launch, 4343, "134000000000000005", S1);
 			const processes = fakeProcessTable();
 			// A current-boot process at that PID with the recorded creation time: it is live, whatever the reboot proved.
 			processes.live(4343, "134000000000000005");
@@ -473,7 +496,7 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			const machine = fakeWindows({ kernelSession: null });
 			const launch = await launched(machine);
 			crash(machine);
-			await censusEntry(launch, 4343, "134000000000000005");
+			await censusEntry(launch, 4343, "134000000000000005", null);
 			const processes = fakeProcessTable();
 			processes.denied(4343);
 			machine.control.kernelSession = { status: "verified", creationTime: S1, reason: null };
@@ -481,7 +504,10 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 				store: launch.store,
 				endpoint: ENDPOINT,
 				paths: launch.paths,
-				prober: recoveryProber(STORE_DIR, machine.load, { observe: processes.observe }),
+				prober: recoveryProber(STORE_DIR, machine.load, {
+					observe: processes.observe,
+					daemonDirectory: launch.paths.dir,
+				}),
 				withEndpointLock: (run) => run(),
 				confirmRestart: true,
 			});
@@ -591,7 +617,7 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			const machine = fakeWindows({ kernelSession: null });
 			const launch = await launched(machine);
 			crash(machine);
-			await censusEntry(launch, 4242);
+			await censusEntry(launch, 4242, "134000000000000005", null);
 			const processes = fakeProcessTable();
 			processes.denied(4242);
 			machine.control.kernelSession = { status: "verified", creationTime: S1, reason: null };
@@ -599,7 +625,10 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 				store: launch.store,
 				endpoint: ENDPOINT,
 				paths: launch.paths,
-				prober: recoveryProber(STORE_DIR, machine.load, { observe: processes.observe }),
+				prober: recoveryProber(STORE_DIR, machine.load, {
+					observe: processes.observe,
+					daemonDirectory: launch.paths.dir,
+				}),
 				withEndpointLock: (run) => run(),
 				confirmRestart: true,
 			});
@@ -634,14 +663,17 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			const unverified = fakeWindows({ kernelSession: null });
 			const launchUnverified = await launched(unverified);
 			crash(unverified);
-			await censusEntry(launchUnverified, 4242);
+			await censusEntry(launchUnverified, 4242, "134000000000000005", null);
 			const processes = fakeProcessTable();
 			processes.denied(4242);
 			const refusedUnverified = await repairEndpointReservations({
 				store: launchUnverified.store,
 				endpoint: ENDPOINT,
 				paths: launchUnverified.paths,
-				prober: recoveryProber(STORE_DIR, unverified.load, { observe: processes.observe }),
+				prober: recoveryProber(STORE_DIR, unverified.load, {
+					observe: processes.observe,
+					daemonDirectory: launchUnverified.paths.dir,
+				}),
 				withEndpointLock: (run) => run(),
 				confirmRestart: true,
 			});
@@ -651,13 +683,16 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			const stale = fakeWindows({ kernelSession: null });
 			const launchStale = await launched(stale);
 			crash(stale);
-			await censusEntry(launchStale, 4242);
+			await censusEntry(launchStale, 4242, "134000000000000005", null);
 			stale.control.kernelSession = { status: "verified", creationTime: S1, reason: null };
 			await repairEndpointReservations({
 				store: launchStale.store,
 				endpoint: ENDPOINT,
 				paths: launchStale.paths,
-				prober: recoveryProber(STORE_DIR, stale.load, { observe: processes.observe }),
+				prober: recoveryProber(STORE_DIR, stale.load, {
+					observe: processes.observe,
+					daemonDirectory: launchStale.paths.dir,
+				}),
 				withEndpointLock: (run) => run(),
 				confirmRestart: true,
 			});

@@ -25,7 +25,12 @@ import {
 import type { EnsuredHost, EnsureHostOptions } from "./host-ensure-types.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
-import { keepOwnerPipe, OWNER_WATCH_FD, parseSupervisorArgs } from "./host-lifecycle-launch.ts";
+import {
+	DEFAULT_READINESS_TIMEOUT_MS,
+	keepOwnerPipe,
+	OWNER_WATCH_FD,
+	parseSupervisorArgs,
+} from "./host-lifecycle-launch.ts";
 import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
 import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
@@ -34,10 +39,13 @@ import { relayPresenterBootstrap } from "./mcp-presenter-bootstrap.ts";
 import { type EndpointReservationStore, openEndpointReservationStore } from "./endpoint-reservation-store.ts";
 import { recoverEndpointReservations, recoveryProber } from "./endpoint-recovery.ts";
 import { hostEnsureLockTarget } from "./host-ensure-lock.ts";
+import { recordLaunchProvenance } from "./launch-provenance.ts";
 import {
 	acquireOwnerPresence,
 	grantClaimedParticipant,
+	type HeldPresence,
 	IDENTITY_OBSERVATION_PROBE_MS,
+	type LaunchIdentity,
 	type LaunchRoute,
 	offerSupervisorLaunch,
 	ownLaunchRoute,
@@ -49,7 +57,7 @@ import { sweepPresenceObjects } from "./presence-cleanup.ts";
 import { resolvePresenceRoot } from "./presence-placement.ts";
 import { loadPresencePlacement } from "./socket-secret-native.ts";
 
-export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
+export { DEFAULT_READINESS_TIMEOUT_MS } from "./host-lifecycle-launch.ts";
 export { DEFAULT_STOP_TIMEOUT_MS };
 
 /**
@@ -89,7 +97,7 @@ export async function startHost(
 		await recoverBeforeSuccessor(socket, paths, testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS);
 	}
 	const placement = reserving ? resolveReservingPlacement(socket) : undefined;
-	if (placement) await sweepBeforeSuccessor(placement);
+	if (placement) await sweepBeforeSuccessor(placement, paths);
 	const owner = placement ? acquireReservingOwner(placement) : undefined;
 	// The settings file must exist before the supervisor reads it at boot, so it
 	// records the policy before the spawn instead of beside the pidfile. A valid public
@@ -97,6 +105,9 @@ export async function startHost(
 	// derive the pipe name from it, so a start reuses it and never rotates it.
 	let publicSecret: Buffer | undefined;
 	try {
+		// The Revision 7 pre-action check before the credential mutation ("Descriptor-loss detection"): a failed check ends
+		// the start before anything is published or repaired.
+		owner?.presence.preActionCheck();
 		publicSecret = owner ? await ensureSocketSecret(socketSecretPath(socket)) : undefined;
 	} catch (error: unknown) {
 		// No reservation names the owner's object yet: its handle is unused.
@@ -132,6 +143,18 @@ export async function startHost(
 						hostRoute === "reservation" ? ["supervisor", "host"] : ["supervisor"],
 					)
 				: undefined;
+		// The provenance of every row this launch writes under its generation directory (launch-provenance.ts): the
+		// owner's kernel session and the daemon directory's classification from its opened handle, recorded before the
+		// spawn so no row of this launch can exist without it.
+		if (reservation && owner) {
+			await recordLaunchProvenance(generationPaths(paths, instanceId).launchProvenanceFile, {
+				generation: reservation.generation,
+				kernelSession: owner.reservation.ownerKernelSession,
+				directoryLocal:
+					owner.native.status === "available" &&
+					owner.native.native.classifyVolume(paths.dir).locality === "local",
+			});
+		}
 		const supervisorArgs = [
 			"--socket",
 			socket,
@@ -142,6 +165,9 @@ export async function startHost(
 			...(reservation?.args ?? []),
 		];
 		const launch = testOptions?.spawn ?? testOptions?.launch?.(supervisorArgs) ?? defaultHostLaunch(supervisorArgs);
+		// The pre-action check before the spawn: a failed check lands in the catch below, which fences the generation and
+		// commits the owner's `released` before this process performs any further action.
+		owner?.presence.preActionCheck();
 		child = spawn(launch.command, [...launch.args], {
 			detached: true,
 			windowsHide: true,
@@ -248,7 +274,21 @@ export async function startHost(
 			try {
 				reservation.store.markServing(reservation.generation);
 				// Serving is the owner's last action in this generation: it commits its `released`, then closes its guard.
-				releaseReservingOwner(reservation.store, reservation.generation, reservation.issuer, reservation.presence);
+				// A `released` commit that fails (a busy store) does not fail the serving start: the guard stays held until
+				// this process exits, and a later recovery's admissible acquisition of it is its release evidence.
+				try {
+					releaseReservingOwner(
+						reservation.store,
+						reservation.generation,
+						reservation.issuer,
+						reservation.presence,
+					);
+				} catch (error: unknown) {
+					await appendStderr(
+						paths,
+						`reserving owner's released commit failed after serving; its presence guard stays held until this process exits: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
 			} finally {
 				reservation.store.close();
 			}
@@ -339,7 +379,10 @@ async function recoverBeforeSuccessor(socket: string, paths: HostDaemonPaths, re
 	const store = await openEndpointReservationStore(reservationStorePath(socket));
 	try {
 		if (store.activeGenerations(socket).length === 0) return;
-		const prober = recoveryProber(win32.dirname(target), loadPresencePlacement(), { remainingMs });
+		const prober = recoveryProber(win32.dirname(target), loadPresencePlacement(), {
+			remainingMs,
+			daemonDirectory: paths.dir,
+		});
 		const outcome = await recoverEndpointReservations(store, socket, paths, prober);
 		if (outcome.status === "refused") {
 			const { status: _status, detail, occupied: _occupied, ...recovery } = outcome;
@@ -358,21 +401,31 @@ async function recoverBeforeSuccessor(socket: string, paths: HostDaemonPaths, re
 }
 
 /**
- * Cancels the generation of a failed start and closes its store. Returns the fence's own failure as text, for the
- * caller to report beside the start's diagnostic; it never throws, so no fence failure replaces the original error.
+ * Cancels the generation of a failed start, commits the owner's `released` (its terminal state is the fence, and it
+ * performs no further action in this generation), closes its guard and closes its store. Returns the fence's or the
+ * release's own failure as text, for the caller to report beside the start's diagnostic; it never throws, so no such
+ * failure replaces the original error. A `released` commit that fails keeps the guard held until this process exits.
  */
 async function fenceFailedStart(reservation: {
 	readonly store: EndpointReservationStore;
 	readonly generation: string;
+	readonly issuer: LaunchIdentity;
+	readonly presence: HeldPresence;
 }): Promise<string | undefined> {
+	const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+	const notes: string[] = [];
 	try {
 		reservation.store.cancel(reservation.generation);
-		return undefined;
 	} catch (error: unknown) {
-		return `reservation fence also failed: ${error instanceof Error ? error.message : String(error)}`;
-	} finally {
-		reservation.store.close();
+		notes.push(`reservation fence also failed: ${message(error)}`);
 	}
+	try {
+		releaseReservingOwner(reservation.store, reservation.generation, reservation.issuer, reservation.presence);
+	} catch (error: unknown) {
+		notes.push(`reserving owner's released commit also failed (its guard stays held): ${message(error)}`);
+	}
+	reservation.store.close();
+	return notes.length === 0 ? undefined : notes.join("; ");
 }
 
 /** The original error, with a failed fence noted on its message; the error object itself is what callers compare. */
@@ -395,13 +448,24 @@ function resolveReservingPlacement(socket: string) {
  * invocation's endpoint lock: it deletes only objects it holds exclusively whose row is `released` or retired, or that
  * no row names and that are older than the age filter. Its outcome never decides the start.
  */
-async function sweepBeforeSuccessor(placement: ReturnType<typeof resolveReservingPlacement>): Promise<void> {
+async function sweepBeforeSuccessor(
+	placement: ReturnType<typeof resolveReservingPlacement>,
+	paths: HostDaemonPaths,
+): Promise<void> {
 	if (placement.reservation.root.status !== "placed") return;
-	const store = await openEndpointReservationStore(`${placement.target}.reservation.db`);
 	try {
-		sweepPresenceObjects(store, placement.reservation.root, placement.native);
-	} finally {
-		store.close();
+		const store = await openEndpointReservationStore(`${placement.target}.reservation.db`);
+		try {
+			sweepPresenceObjects(store, placement.reservation.root, placement.native);
+		} finally {
+			store.close();
+		}
+	} catch (error: unknown) {
+		// A failed sweep leaves objects for the next endpoint-locked invocation; it is reported, never a failed start.
+		await appendStderr(
+			paths,
+			`presence sweep skipped: ${error instanceof Error ? error.message : String(error)}`,
+		).catch(() => undefined);
 	}
 }
 

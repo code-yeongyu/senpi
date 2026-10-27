@@ -45,6 +45,13 @@ export const ENDPOINT_RESERVATION_SCHEMA = 6;
 
 export type ReservationRole = "supervisor" | "host";
 export type ReservationState = "pending" | "cancelling" | "serving" | "retired";
+/** The states this schema writes; a census lists exactly these (a retired tombstone is listed too, as retired). */
+const RESERVATION_STATES: ReadonlySet<string> = new Set<ReservationState>([
+	"pending",
+	"cancelling",
+	"serving",
+	"retired",
+]);
 export type RoleStatus = "offered" | "claimed" | "granted" | "released" | "revoked";
 
 /** An actor that may have held authority in a generation: its reserving owner or one of its roles. */
@@ -85,6 +92,7 @@ export type ReservationRejection =
 	| "commitment_mismatch"
 	| "roles_not_granted"
 	| "presence_not_predeclared"
+	| "row_malformed"
 	| "presence_not_bound"
 	| "revision_changed"
 	| "owner_mismatch"
@@ -136,6 +144,15 @@ export type PresenceUnavailableReason =
 	| "local_app_data_unavailable"
 	| "root_unavailable"
 	| "root_not_local";
+
+const PRESENCE_UNAVAILABLE_REASONS: ReadonlySet<string> = new Set<PresenceUnavailableReason>([
+	"unsupported_platform",
+	"native_unavailable",
+	"native_abi_mismatch",
+	"local_app_data_unavailable",
+	"root_unavailable",
+	"root_not_local",
+]);
 
 /** The presence root the reserving owner resolved once. `placed` roots classified `local` from their opened handle. */
 export type PresenceRootRecord =
@@ -212,6 +229,13 @@ export class EndpointReservationError extends Error {
  */
 export type PresenceObjectDisposition = "referenced" | "released" | "retired" | "unreferenced";
 
+/** The disposition of an object at a path, with the identity its row recorded, for a sweep to compare through its hold. */
+export interface PresenceObjectDispositionRow {
+	readonly disposition: PresenceObjectDisposition;
+	/** The recorded volume serial, file ID and header of the row(s) naming the path; absent for `unreferenced`. */
+	readonly recorded: { readonly volumeSerial: string; readonly fileId: string; readonly header: string } | undefined;
+}
+
 /** What a wrapper may forward: no nonce, no credential. */
 export interface ReservationLocator {
 	readonly endpoint: string;
@@ -256,7 +280,7 @@ export interface ClaimPresenceBinding {
 	readonly presenceId: string;
 }
 
-/** One reservation that is not retired, with every recorded authority entry, as an admission census reads it. */
+/** One reservation in a state this schema writes, with every recorded authority entry, as an admission census reads it. */
 export interface ReservationCensusRow {
 	readonly generation: string;
 	readonly state: ReservationState;
@@ -460,14 +484,25 @@ function kernelSessionOf(value: string | null, reason: string | null): KernelSes
 	return value !== null ? { status: "verified", value } : { status: "unverified", reason: reason ?? "unrecorded" };
 }
 
+/**
+ * A row that names a placed root or a predeclared object but lacks one of its columns, or names a placement or reason
+ * this schema does not write, is unreadable evidence (design 4.2a Revision 6, "Missing/replaced/unverifiable objects
+ * are unknown"). It is never read as a row that recorded no presence: the read refuses typed, and nothing repairs it.
+ */
+function malformed(generation: string, what: string): EndpointReservationError {
+	return new EndpointReservationError("row_malformed", `${what} in ${generation}`);
+}
+
 function reservationPresenceOf(row: ReservationColumns): ReservationPresence {
 	const ownerKernelSession = kernelSessionOf(row.owner_kernel_session, row.owner_kernel_session_reason);
-	if (
-		(row.presence_placement === "beside_store" || row.presence_placement === "relocated") &&
-		row.presence_root_path !== null &&
-		row.presence_root_volume_serial !== null &&
-		row.presence_root_file_id !== null
-	) {
+	if (row.presence_placement === "beside_store" || row.presence_placement === "relocated") {
+		if (
+			row.presence_root_path === null ||
+			row.presence_root_volume_serial === null ||
+			row.presence_root_file_id === null
+		) {
+			throw malformed(row.generation, `${row.presence_placement} root missing a column`);
+		}
 		return {
 			root: {
 				status: "placed",
@@ -481,26 +516,36 @@ function reservationPresenceOf(row: ReservationColumns): ReservationPresence {
 			ownerKernelSession,
 		};
 	}
+	if (row.presence_placement !== "presence_unavailable") {
+		throw malformed(row.generation, `placement ${JSON.stringify(row.presence_placement)}`);
+	}
+	const reason = row.presence_unavailable_reason;
+	if (reason === null || !PRESENCE_UNAVAILABLE_REASONS.has(reason)) {
+		throw malformed(row.generation, `unavailable reason ${JSON.stringify(reason)}`);
+	}
 	return {
 		root: {
 			status: "presence_unavailable",
-			reason: (row.presence_unavailable_reason ?? "root_unavailable") as PresenceUnavailableReason,
+			reason: reason as PresenceUnavailableReason,
 			detail: row.presence_unavailable_detail,
 		},
 		ownerKernelSession,
 	};
 }
 
-function presenceObjectOf(row: PresenceColumns): PresenceObjectRecord {
+function presenceObjectOf(row: PresenceColumns, generation: string): PresenceObjectRecord {
+	if (row.presence_status === "presence_unavailable") return { status: "presence_unavailable" };
+	if (row.presence_status !== "predeclared") {
+		throw malformed(generation, `presence status ${JSON.stringify(row.presence_status)}`);
+	}
 	if (
-		row.presence_status !== "predeclared" ||
 		row.presence_id === null ||
 		row.presence_path === null ||
 		row.presence_header === null ||
 		row.presence_volume_serial === null ||
 		row.presence_file_id === null
 	) {
-		return { status: "presence_unavailable" };
+		throw malformed(generation, "predeclared object missing a column");
 	}
 	return {
 		status: "predeclared",
@@ -517,18 +562,21 @@ function presenceObjectOf(row: PresenceColumns): PresenceObjectRecord {
 }
 
 function ownerPresenceOf(row: ReservationColumns): PresenceObjectRecord {
-	return presenceObjectOf({
-		presence_status: row.owner_presence_status,
-		presence_id: row.owner_presence_id,
-		presence_path: row.owner_presence_path,
-		presence_header: row.owner_presence_header,
-		presence_volume_serial: row.owner_presence_volume_serial,
-		presence_file_id: row.owner_presence_file_id,
-		presence_file_system: row.owner_presence_file_system,
-		presence_kernel_session: row.owner_presence_kernel_session,
-		presence_kernel_session_reason: row.owner_presence_kernel_session_reason,
-		presence_host_label: row.owner_presence_host_label,
-	});
+	return presenceObjectOf(
+		{
+			presence_status: row.owner_presence_status,
+			presence_id: row.owner_presence_id,
+			presence_path: row.owner_presence_path,
+			presence_header: row.owner_presence_header,
+			presence_volume_serial: row.owner_presence_volume_serial,
+			presence_file_id: row.owner_presence_file_id,
+			presence_file_system: row.owner_presence_file_system,
+			presence_kernel_session: row.owner_presence_kernel_session,
+			presence_kernel_session_reason: row.owner_presence_kernel_session_reason,
+			presence_host_label: row.owner_presence_host_label,
+		},
+		row.generation,
+	);
 }
 
 /** A marker or anchor persisted at an earlier revision describes a record that has since changed: it is discarded. */
@@ -941,6 +989,10 @@ export class EndpointReservationStore {
 	/** A granted participant's own `released` commit: its authority ended. */
 	release(generation: string, role: ReservationRole, participant: string): void {
 		this.#transaction(() => {
+			// The tombstone is immutable: a late commit cannot change a retired generation's recorded discharge.
+			if (this.#reservation(generation).state === "retired") {
+				throw new EndpointReservationError("generation_retired", generation);
+			}
 			const row = this.#role(generation, role);
 			if (!row || row.status !== "granted") throw new EndpointReservationError("role_not_granted", `${role}`);
 			if (row.participant !== participant) throw new EndpointReservationError("participant_mismatch", `${role}`);
@@ -1014,6 +1066,7 @@ export class EndpointReservationStore {
 	releaseOwner(generation: string, owner: string): void {
 		this.#transaction(() => {
 			const reservation = this.#reservation(generation);
+			if (reservation.state === "retired") throw new EndpointReservationError("generation_retired", generation);
 			if (reservation.owner !== owner) throw new EndpointReservationError("owner_mismatch", generation);
 			if (reservation.state === "pending") throw new EndpointReservationError("owner_not_terminal", generation);
 			this.#database
@@ -1028,22 +1081,49 @@ export class EndpointReservationStore {
 	}
 
 	/**
-	 * Whether the database still needs the presence object at `path`, read in one short `BEGIN IMMEDIATE` transaction so
-	 * a cleanup sweep that holds the object sees the rows as committed, serialized against every writer.
+	 * Whether the database still needs the presence object at `path`, with the identity the row recorded for it, read
+	 * in one short `BEGIN IMMEDIATE` transaction so a cleanup sweep that holds the object sees the rows as committed,
+	 * serialized against every writer. Rows naming one path that disagree on its identity are malformed (`row_malformed`).
 	 */
-	presenceObjectDisposition(path: string): PresenceObjectDisposition {
+	presenceObjectDisposition(path: string): PresenceObjectDispositionRow {
 		return this.#transaction(() => {
 			const rows = this.#database
 				.prepare(
-					`SELECT state, owner_status AS status FROM reservations WHERE owner_presence_path = ?
+					`SELECT state, owner_status AS status, owner_presence_volume_serial AS volume_serial,
+					owner_presence_file_id AS file_id, owner_presence_header AS header
+					FROM reservations WHERE owner_presence_path = ?
 					UNION ALL
-					SELECT r.state, ro.status FROM roles ro JOIN reservations r ON r.generation = ro.generation
-					WHERE ro.presence_path = ?`,
+					SELECT r.state, ro.status, ro.presence_volume_serial, ro.presence_file_id, ro.presence_header
+					FROM roles ro JOIN reservations r ON r.generation = ro.generation WHERE ro.presence_path = ?`,
 				)
-				.all(path, path) as { state: ReservationState; status: string }[];
-			if (rows.length === 0) return "unreferenced";
-			if (rows.some(({ state, status }) => state !== "retired" && status !== "released")) return "referenced";
-			return rows.every(({ state }) => state === "retired") ? "retired" : "released";
+				.all(path, path) as {
+				state: ReservationState;
+				status: string;
+				volume_serial: string | null;
+				file_id: string | null;
+				header: string | null;
+			}[];
+			if (rows.length === 0) return { disposition: "unreferenced", recorded: undefined };
+			const [first] = rows;
+			if (
+				!first ||
+				first.volume_serial === null ||
+				first.file_id === null ||
+				first.header === null ||
+				rows.some(
+					(row) =>
+						row.volume_serial !== first.volume_serial ||
+						row.file_id !== first.file_id ||
+						row.header !== first.header,
+				)
+			) {
+				throw new EndpointReservationError("row_malformed", `presence object ${path}`);
+			}
+			const recorded = { volumeSerial: first.volume_serial, fileId: first.file_id, header: first.header };
+			if (rows.some(({ state, status }) => state !== "retired" && status !== "released")) {
+				return { disposition: "referenced", recorded };
+			}
+			return { disposition: rows.every(({ state }) => state === "retired") ? "retired" : "released", recorded };
 		});
 	}
 
@@ -1056,7 +1136,7 @@ export class EndpointReservationStore {
 				issuer: row.issuer,
 				participant: row.participant,
 				listenIntent: Number(row.listen_intent) === 1,
-				presence: presenceObjectOf(row),
+				presence: presenceObjectOf(row, locator.generation),
 				presenceBound: Number(row.presence_bound) === 1,
 			}
 		);
@@ -1069,14 +1149,25 @@ export class EndpointReservationStore {
 
 	/**
 	 * Every reservation of this store that is not retired, with its role rows, for the owner census an admission takes
-	 * before public-secret recovery (design 4.2a "Admission BEFORE mutation"). The store is keyed by the physical endpoint,
+	 * before public-secret recovery (design 4.2a "Admission BEFORE mutation"). Every other state this schema writes
+	 * (`RESERVATION_STATES`) is listed; a row in a state this build does not know is unreadable evidence and refuses
+	 * with `row_malformed`, never listed as one of them and never dropped. The store is keyed by the physical endpoint,
 	 * so no endpoint filter is applied: a spelling the reserving writer chose must not hide its generation. Read-only.
 	 */
 	census(): readonly ReservationCensusRow[] {
 		return this.#read(() => {
-			const reservations = this.#database
+			const rows = this.#database
 				.prepare("SELECT generation, state, owner FROM reservations WHERE state != 'retired' ORDER BY rowid")
-				.all() as { generation: string; state: ReservationState; owner: string }[];
+				.all() as { generation: string; state: string; owner: string }[];
+			const reservations = rows.map((row) => {
+				if (!RESERVATION_STATES.has(row.state)) {
+					throw new EndpointReservationError(
+						"row_malformed",
+						`state ${JSON.stringify(row.state)} in ${row.generation}`,
+					);
+				}
+				return { ...row, state: row.state as ReservationState };
+			});
 			const roles = this.#database.prepare(
 				"SELECT role, status, participant FROM roles WHERE generation = ? ORDER BY role",
 			);

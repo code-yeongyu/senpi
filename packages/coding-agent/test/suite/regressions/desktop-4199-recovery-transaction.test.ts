@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,6 +10,7 @@ import {
 } from "../../../src/modes/rpc/endpoint-reservation-store.ts";
 import { recoverEndpointReservations, recoveryProber } from "../../../src/modes/rpc/endpoint-recovery.ts";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { recordLaunchProvenance } from "../../../src/modes/rpc/launch-provenance.ts";
 import {
 	acquireOwnerPresence,
 	claimLaunchRole,
@@ -20,7 +21,12 @@ import {
 	reservationStorePath,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import { resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
-import { cloneMachine, fakeProcessTable, fakeWindows } from "../../helpers/fake-windows-presence.ts";
+import {
+	cloneMachine,
+	FAKE_KERNEL_SESSION,
+	fakeProcessTable,
+	fakeWindows,
+} from "../../helpers/fake-windows-presence.ts";
 
 const mocked = vi.hoisted(() => ({ lockDir: "" }));
 
@@ -131,8 +137,38 @@ describe("#4199 recovery transaction: probe set, admissibility, kernel-session g
 			store,
 			ENDPOINT,
 			launch.paths,
-			recoveryProber(STORE_DIR, machine.load, { observe: processes.observe, fresh }),
+			recoveryProber(STORE_DIR, machine.load, {
+				observe: processes.observe,
+				fresh,
+				daemonDirectory: launch.paths.dir,
+			}),
 		);
+	}
+
+	/**
+	 * A generation directory with the launch provenance the reserving owner writes beside the rows its launch produces
+	 * (the reservation generation, the owner's kernel session, the daemon directory's classification at the write).
+	 */
+	async function provenanced(
+		launch: Awaited<ReturnType<typeof launched>>,
+		instanceId: string,
+		provenance: {
+			readonly kernelSession: string | null;
+			readonly directoryLocal: boolean;
+			readonly generation?: string;
+		},
+	) {
+		const instance = generationPaths(launch.paths, instanceId);
+		await mkdir(instance.dir, { recursive: true });
+		await recordLaunchProvenance(instance.launchProvenanceFile, {
+			generation: provenance.generation ?? launch.generation,
+			kernelSession:
+				provenance.kernelSession === null
+					? { status: "unverified", reason: "access_denied" }
+					: { status: "verified", value: provenance.kernelSession },
+			directoryLocal: provenance.directoryLocal,
+		});
+		return instance;
 	}
 
 	function probes(machine: Machine) {
@@ -263,8 +299,10 @@ describe("#4199 recovery transaction: probe set, admissibility, kernel-session g
 		const machine = fakeWindows();
 		const launch = await launched(machine);
 		crash(machine);
-		const instance = generationPaths(launch.paths, "old-generation");
-		await mkdir(instance.dir, { recursive: true });
+		const instance = await provenanced(launch, "old-generation", {
+			kernelSession: FAKE_KERNEL_SESSION,
+			directoryLocal: true,
+		});
 		await writeFile(instance.pidFile, JSON.stringify({ pid: 5151, processStartTime: "134000000000000005" }));
 		const other = await openStore(launch.storePath);
 		const processes = fakeProcessTable();
@@ -310,8 +348,10 @@ describe("#4199 recovery transaction: probe set, admissibility, kernel-session g
 		const machine = fakeWindows();
 		const launch = await launched(machine);
 		crash(machine);
-		const instance = generationPaths(launch.paths, "old-generation");
-		await mkdir(instance.dir, { recursive: true });
+		const instance = await provenanced(launch, "old-generation", {
+			kernelSession: FAKE_KERNEL_SESSION,
+			directoryLocal: true,
+		});
 		await writeFile(instance.pidFile, JSON.stringify({ pid: 4242, processStartTime: "134000000000000000" }));
 		await writeFile(instance.childPidFile, JSON.stringify({ pid: 4343, processStartTime: "134000000000000002" }));
 		await mkdir(launch.paths.reservationsDir, { recursive: true });
@@ -326,6 +366,8 @@ describe("#4199 recovery transaction: probe set, admissibility, kernel-session g
 		);
 		const processes = fakeProcessTable();
 		// An unrelated live replacement at the supervisor's PID, created one second later: a 3 s tolerance would match it.
+		// The row names the supervisor's exact recorded identity, so it is the supervisor's own entry, discharged by its
+		// admissible acquisition (step 3) and never observed; the replacement is neither signalled nor adopted.
 		processes.live(4242, "134000000010000000");
 		processes.live(4343, "134000000000000002");
 		expect(await recover(launch, machine, processes)).toMatchObject({ status: "refused", reason: "census_live" });
@@ -336,7 +378,8 @@ describe("#4199 recovery transaction: probe set, admissibility, kernel-session g
 		// The unchanged escalated record answers an automatic caller from its marker; the explicit repair observes again.
 		expect(await recover(launch, machine, processes)).toMatchObject({ status: "refused", reason: "census_unknown" });
 		expect(await recover(launch, machine, processes, launch.store, true)).toMatchObject({ status: "recovered" });
-		expect(processes.observed).toEqual(expect.arrayContaining([4242, 4343, 4444]));
+		expect(processes.observed).toEqual(expect.arrayContaining([4343, 4444]));
+		expect(processes.observed).not.toContain(4242);
 	});
 
 	describe("network-root rows (relocated presence)", () => {
@@ -428,13 +471,50 @@ describe("#4199 recovery transaction: probe set, admissibility, kernel-session g
 				options.prober === null
 					? { status: "unverified", creationTime: null, reason: "access_denied" }
 					: { status: "verified", creationTime: options.prober, reason: null };
-			const instance = generationPaths(launch.paths, "old-generation");
-			await mkdir(instance.dir, { recursive: true });
-			await writeFile(instance.pidFile, JSON.stringify({ pid: 4242, processStartTime: "134000000000000000" }));
+			// A row the prior boot's launch wrote on the local daemon directory, with its provenance beside it: an earlier
+			// generation's supervisor, not one of this generation's recorded actors.
+			const instance = await provenanced(launch, "old-generation", { kernelSession: S1, directoryLocal: true });
+			await writeFile(instance.pidFile, JSON.stringify({ pid: 4545, processStartTime: "134000000000000045" }));
 			const processes = fakeProcessTable();
-			processes.denied(4242);
+			processes.denied(4545);
 			return { machine, launch, processes };
 		}
+
+		// senpi#4479 LOW / senpi#4481 HIGH: the prior-boot proof resolves only entries provably from that boot; every other
+		// entry is observed as usual, and one without provenance stays unknown.
+		it.each([
+			[
+				"a current-boot entry whose process is live",
+				{ kernelSession: S2, directoryLocal: true },
+				(processes: ReturnType<typeof fakeProcessTable>) => processes.live(5252, "134000000000000050"),
+				"census_live",
+			],
+			[
+				"an entry whose session is unverified and whose identity is denied",
+				{ kernelSession: null, directoryLocal: true },
+				(processes: ReturnType<typeof fakeProcessTable>) => processes.denied(5252),
+				"census_unknown",
+			],
+			[
+				"an entry with no recorded provenance (a legacy writer)",
+				undefined,
+				(processes: ReturnType<typeof fakeProcessTable>) => processes.denied(5252),
+				"census_unknown",
+			],
+		] as const)(
+			"after a proven reboot, %s is not resolved by the reboot",
+			async (_label, provenance, table, reason) => {
+				const { machine, launch, processes } = await rebooted({ prober: S2 });
+				const instance = provenance
+					? await provenanced(launch, "other-generation", provenance)
+					: generationPaths(launch.paths, "other-generation");
+				await mkdir(instance.dir, { recursive: true });
+				await writeFile(instance.pidFile, JSON.stringify({ pid: 5252, processStartTime: "134000000000000050" }));
+				table(processes);
+				expect(await recover(launch, machine, processes)).toMatchObject({ status: "refused", reason });
+				expect(launch.store.reservation(launch.generation).state).toBe("cancelling");
+			},
+		);
 
 		it("prior-boot entries resolve gone after the presence census, and exactly one successor can be reserved", async () => {
 			const { machine, launch, processes } = await rebooted({ prober: S2 });
@@ -466,6 +546,113 @@ describe("#4199 recovery transaction: probe set, admissibility, kernel-session g
 				reason: "presence_occupied",
 			});
 		});
+	});
+
+	// senpi#4479 MEDIUM 1: a census row carries only the provenance its own launch recorded beside it, never the
+	// reservation store's locality or the owner's kernel session by default (clauses i, iii and iv).
+	it.each([
+		["no recorded provenance (a legacy or foreign writer)", undefined, "census_unknown"],
+		[
+			"a verified session of another kernel on a non-local daemon directory",
+			{ kernelSession: S2, directoryLocal: false },
+			"census_unknown",
+		],
+		[
+			"an unverified session on a non-local daemon directory",
+			{ kernelSession: null, directoryLocal: false },
+			"census_unknown",
+		],
+		[
+			"its own verified session equal to the prober's",
+			{ kernelSession: FAKE_KERNEL_SESSION, directoryLocal: false },
+			"recovered",
+		],
+		[
+			"an unverified session on a daemon directory recorded local and local now",
+			{ kernelSession: null, directoryLocal: true },
+			"recovered",
+		],
+	] as const)("census rows: an absent PID in a row with %s", async (_label, provenance, expected) => {
+		const machine = fakeWindows();
+		const launch = await launched(machine);
+		crash(machine);
+		const instance = provenance
+			? await provenanced(launch, "other-generation", provenance)
+			: generationPaths(launch.paths, "other-generation");
+		await mkdir(instance.dir, { recursive: true });
+		await writeFile(instance.pidFile, JSON.stringify({ pid: 6262, processStartTime: "134000000000000060" }));
+		const outcome = await recover(launch, machine);
+		expect(outcome.status === "refused" ? outcome.reason : outcome.status).toBe(expected);
+	});
+
+	it("census rows: a daemon directory recorded local but not local now keeps its rows gated", async () => {
+		const machine = fakeWindows({ kernelSession: null });
+		const launch = await launched(machine);
+		crash(machine);
+		const instance = await provenanced(launch, "other-generation", { kernelSession: null, directoryLocal: true });
+		await writeFile(instance.pidFile, JSON.stringify({ pid: 6262, processStartTime: "134000000000000060" }));
+		machine.control.directoryLocality.set(launch.paths.dir, "not_local");
+		expect(await recover(launch, machine)).toMatchObject({ status: "refused", reason: "census_unknown" });
+	});
+
+	it("census rows: the generation's own supervisor row is discharged by the supervisor's released commit even while that process lives on", async () => {
+		const machine = fakeWindows();
+		const launch = await launched(machine);
+		// The row the reserving owner wrote for the supervisor it spawned, under the generation it launched.
+		const instance = await provenanced(launch, "this-generation", {
+			kernelSession: FAKE_KERNEL_SESSION,
+			directoryLocal: true,
+		});
+		await writeFile(instance.pidFile, JSON.stringify(SUPERVISOR));
+		// The supervisor quiesced: it committed its released and closed its guard, and stays alive doing unrelated work.
+		launch.store.release(launch.generation, "supervisor", JSON.stringify(SUPERVISOR));
+		crash(machine);
+		const processes = fakeProcessTable();
+		processes.live(SUPERVISOR.pid, SUPERVISOR.processStartTime);
+		expect(await recover(launch, machine, processes)).toMatchObject({ status: "recovered" });
+		expect(processes.observed).not.toContain(SUPERVISOR.pid);
+	});
+
+	// senpi#4479 MEDIUM 2: incomplete discovery remains unknown (design 4.2a).
+	it.each([
+		[
+			"an unreadable generations directory",
+			async (launch: Awaited<ReturnType<typeof launched>>) => {
+				await rm(launch.paths.generationsDir, { recursive: true, force: true });
+				await mkdir(launch.paths.dir, { recursive: true });
+				await writeFile(launch.paths.generationsDir, "not a directory");
+			},
+		],
+		[
+			"an unreadable generation pidfile",
+			async (launch: Awaited<ReturnType<typeof launched>>) => {
+				const instance = generationPaths(launch.paths, "other-generation");
+				await mkdir(instance.dir, { recursive: true });
+				await writeFile(instance.pidFile, JSON.stringify({ pid: 6262, processStartTime: "134000000000000060" }));
+				await chmod(instance.pidFile, 0o000);
+			},
+		],
+		[
+			"a half-written session claim",
+			async (launch: Awaited<ReturnType<typeof launched>>) => {
+				await mkdir(launch.paths.reservationsDir, { recursive: true });
+				await writeFile(join(launch.paths.reservationsDir, "claim.json"), '{"instanceId":"x","pid":');
+			},
+		],
+		[
+			"an unreadable reservations directory",
+			async (launch: Awaited<ReturnType<typeof launched>>) => {
+				await mkdir(launch.paths.dir, { recursive: true });
+				await writeFile(launch.paths.reservationsDir, "not a directory");
+			},
+		],
+	] as const)("incomplete discovery: %s is unknown, never nothing to find", async (_label, damage) => {
+		const machine = fakeWindows();
+		const launch = await launched(machine);
+		crash(machine);
+		await damage(launch);
+		expect(await recover(launch, machine)).toMatchObject({ status: "refused", reason: "census_unknown" });
+		expect(launch.store.activeGenerations(ENDPOINT)).toEqual([launch.generation]);
 	});
 
 	it("test 29 clause (iii): a local-store row needs no kernel session; reopened-PID absence is gone there", async () => {

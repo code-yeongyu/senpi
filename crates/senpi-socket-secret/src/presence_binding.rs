@@ -368,12 +368,24 @@ mod tests {
 
     const HEADER: &[u8] = b"{\"tag\":\"c0ffee\",\"schema\":1,\"createdAt\":\"2026-10-27T00:00:00.000Z\"}\n";
 
+    /// Removes the test's lock file once every handle on it is closed (a file still held stays until
+    /// the process exits; the next run's name differs by pid).
+    struct TempObject(String);
+
+    impl Drop for TempObject {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
     /// A presence object in the temp directory holding the design's immutable header, and the
     /// admissibility binding that names it: its header, its identity, created local and not relocated.
-    fn presence_object(label: &str) -> (String, impl Fn(&str, &[u8]) -> PresenceProbe) {
+    /// The returned guard removes the file when the test ends.
+    fn presence_object(label: &str) -> (String, impl Fn(&str, &[u8]) -> PresenceProbe, TempObject) {
         let path = std::env::temp_dir().join(format!("binding-{label}-{}.lock", std::process::id()));
         std::fs::write(&path, HEADER).unwrap();
         let path = path.to_str().unwrap().to_string();
+        let cleanup = TempObject(path.clone());
         let mut backend = WindowsPresenceBackend;
         let handle = backend.open(&path).unwrap();
         let identity = backend.handle_identity(&handle).unwrap();
@@ -389,7 +401,7 @@ mod tests {
             relocated: false,
             kernel_session: None,
         };
-        (path, probe)
+        (path, probe, cleanup)
     }
 
     /// Runs the wait worker for `id` on `path` while `holder` holds the lock, releases the holder once
@@ -434,7 +446,7 @@ mod tests {
     #[test]
     fn the_wait_handle_is_probed_in_place_and_an_inadmissible_one_is_released_at_once() {
         let id = "binding-wait-inadmissible";
-        let (path, probe) = presence_object(id);
+        let (path, probe, _cleanup) = presence_object(id);
         let mut holder = PresenceRegistry::new(WindowsPresenceBackend);
         assert_eq!(holder.acquire("holder", &path), LockAttempt::Acquired);
         assert_eq!(wait_through_worker(id, &path, &mut holder).status, "acquired");
@@ -454,7 +466,7 @@ mod tests {
     #[test]
     fn the_wait_handle_that_passes_the_rules_stays_the_retained_recovery_guard() {
         let id = "binding-wait-admissible";
-        let (path, probe) = presence_object(id);
+        let (path, probe, _cleanup) = presence_object(id);
         let mut holder = PresenceRegistry::new(WindowsPresenceBackend);
         assert_eq!(holder.acquire("holder", &path), LockAttempt::Acquired);
         assert_eq!(wait_through_worker(id, &path, &mut holder).status, "acquired");
@@ -479,7 +491,7 @@ mod tests {
     #[test]
     fn probe_retained_without_a_retained_guard_is_not_held() {
         let id = "binding-retained-not-held";
-        let (_, probe) = presence_object(id);
+        let (_, probe, _cleanup) = presence_object(id);
         let verdict = presence_probe_retained(probe(id, HEADER));
         assert_eq!(verdict.status, "unknown");
         assert_eq!(verdict.reason.as_deref(), Some("not_held"));
@@ -489,7 +501,7 @@ mod tests {
     #[test]
     fn every_release_point_of_the_recovery_order_releases_and_anything_else_is_refused() {
         let id = "binding-release-reasons";
-        let (path, _) = presence_object(id);
+        let (path, _, _cleanup) = presence_object(id);
         for state in ["released", "recovery_abandoned", "discharged", "retired"] {
             assert_eq!(presence_acquire(id.into(), path.clone()).status, "acquired");
             for refused in ["active", "quiescent", ""] {

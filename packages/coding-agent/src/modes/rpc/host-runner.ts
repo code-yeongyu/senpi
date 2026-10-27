@@ -207,7 +207,7 @@ async function repairOutcome(target: HostTarget, confirmRestart: boolean, signal
 			store,
 			endpoint: socket,
 			paths,
-			prober: recoveryProber(win32.dirname(lockTarget), loadPresencePlacement()),
+			prober: recoveryProber(win32.dirname(lockTarget), loadPresencePlacement(), { daemonDirectory: paths.dir }),
 			withEndpointLock: async (run) => {
 				const release = await acquireHostEnsureLock(socket, REPAIR_LOCK_WAIT_MS);
 				try {

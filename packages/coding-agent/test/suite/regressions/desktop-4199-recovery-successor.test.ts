@@ -1,6 +1,6 @@
 import * as childProcess from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +8,7 @@ import {
 	EndpointReservationStore,
 	openEndpointReservationStore,
 } from "../../../src/modes/rpc/endpoint-reservation-store.ts";
-import { createHostDaemonPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
+import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { HostEnsureRefusedError } from "../../../src/modes/rpc/host-decision.ts";
 import { startHost } from "../../../src/modes/rpc/host-ensure-start.ts";
 import { DEFAULT_HOST_LAUNCH_SPEC } from "../../../src/modes/rpc/host-launch-spec.ts";
@@ -20,9 +20,10 @@ import {
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
+import { readLaunchProvenance } from "../../../src/modes/rpc/launch-provenance.ts";
 import { resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
 import { createSocketSecret, socketSecretPath } from "../../../src/modes/rpc/socket-transport.ts";
-import { fakeWindows } from "../../helpers/fake-windows-presence.ts";
+import { FAKE_KERNEL_SESSION, fakeWindows } from "../../helpers/fake-windows-presence.ts";
 
 const mocked = vi.hoisted(() => ({
 	lockDir: "",
@@ -204,6 +205,28 @@ describe("#4199 recovery before exactly one successor at startHost", () => {
 		const [successor, ...others] = endpoint.store.activeGenerations(endpoint.socket);
 		expect(others).toEqual([]);
 		expect(successor).not.toBe(endpoint.generation);
+	});
+
+	// senpi#4479 MEDIUM 1: the rows a launch writes under its generation directory carry the provenance the reserving
+	// owner records beside them, so a later census can apply clauses (i) and (iii) to them.
+	it("startHost records the launch provenance (reservation generation, owner kernel session, daemon directory classification) before the spawn", async () => {
+		const fake = fakeWindows();
+		const endpoint = await endpointWithEarlierLaunch(fake);
+		fake.held.clear();
+		const { outcome, reachedSpawn } = await startUntilSpawn(fake, endpoint);
+		expect(outcome).toBe(reachedSpawn);
+		const [successor] = endpoint.store.activeGenerations(endpoint.socket);
+		const [instanceId, ...others] = await readdir(endpoint.paths.generationsDir);
+		expect(others).toEqual([]);
+		const provenance = await readLaunchProvenance(
+			generationPaths(endpoint.paths, instanceId ?? "").launchProvenanceFile,
+		);
+		expect(provenance).toEqual({
+			generation: successor,
+			kernelSession: { status: "verified", value: FAKE_KERNEL_SESSION },
+			directoryLocal: true,
+		});
+		expect(fake.calls).toContain(`classifyVolume ${endpoint.paths.dir}`);
 	});
 
 	it("test 11: a granted participant still holding its object refuses the start typed, with no credential mutation, reservation or spawn", async () => {

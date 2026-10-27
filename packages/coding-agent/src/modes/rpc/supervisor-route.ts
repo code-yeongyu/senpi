@@ -96,7 +96,9 @@ export async function admitReservedHostArgs(args: string[]): Promise<ReservedHos
 	// the session dispose and the listener close by timers (multi-session-host.ts), so it cannot prove the quiescence a
 	// `released` commit asserts; it commits none, the kernel releases the guard at process exit, and its object is deleted
 	// at retirement or by the sweep (presence-cleanup.ts).
-	await admitClaimedParticipant(locator, self, credential, { deadlineMs: Math.max(0, until - Date.now()) });
+	const presence = await admitClaimedParticipant(locator, self, credential, {
+		deadlineMs: Math.max(0, until - Date.now()),
+	});
 	const flags = new Set<string>(Object.values(LOCATOR_FLAGS));
 	const remaining: string[] = [];
 	for (let index = 0; index < args.length; index++) {
@@ -107,6 +109,9 @@ export async function admitReservedHostArgs(args: string[]): Promise<ReservedHos
 		args: remaining,
 		beforeListen: async () => {
 			if (!credential) throw new LaunchReservationError("commitment_mismatch", "no established public secret");
+			// The Revision 7 pre-action check before the bind (design 4.2a "Descriptor-loss detection"): a failed check is
+			// terminal, so no listen intent is recorded for a bind that will not happen.
+			presence?.preActionCheck();
 			await commitListenIntent(locator, self, credential);
 		},
 	};
