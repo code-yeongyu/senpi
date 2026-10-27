@@ -69,6 +69,25 @@ it("RULING-61 Q3 only a registry whose every producer is complete narrows to a c
 	);
 });
 
+it("RULING-61 Q3 the compiler refuses an un-narrowed registry and a hand-written complete one where a complete assembly is required", () => {
+	const registry: FamilyRegistry = familyRegistry(FAMILY_PRODUCERS);
+	const forged = {
+		format: "senpi-recovery-families",
+		version: 1,
+		families: registry.families,
+		assembly: "complete",
+	} as const;
+	// @ts-expect-error TS2345: an un-narrowed registry may be incomplete; only completeAssembly narrows it
+	const unchecked = enumerated(registry);
+	// @ts-expect-error TS2345: a literal lacks the brand only the registry module's constructors set
+	const handWritten = enumerated(forged);
+	expect([unchecked, handWritten], "the run time cannot tell; the types refuse both").toEqual([
+		CATALOG_FAMILIES.length,
+		CATALOG_FAMILIES.length,
+	]);
+	expect(completeAssembly(registry)).toBeUndefined();
+});
+
 it("RULING-61 Q1 an unavailable transcript leaves opaque uncounted: partial, never an explicit empty", async () => {
 	// Given: an epoch whose transcript became unavailable
 	const rig = recoveryRig();

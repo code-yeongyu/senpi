@@ -78,19 +78,11 @@ export async function* transcriptComponents(
 		yield* textComponent(store, TRANSCRIPT, BASE, JSON.stringify(base));
 	}
 	let opaque = 0;
-	for (let index = 0; index < transcript.count; index++) {
+	for (const { index, id, kind, parentId } of transcript.accepted) {
 		valid();
 		const text = transcript.tail.entries.get(index);
-		const kind = transcript.kinds[index];
 		const family = entryFamily(kind);
-		const row: AncestryRow = {
-			index,
-			id: transcript.entryIds[index],
-			source: text === undefined ? "file" : "tail",
-			parentId: transcript.parents[index],
-			kind,
-			family,
-		};
+		const row: AncestryRow = { index, id, source: text === undefined ? "file" : "tail", parentId, kind, family };
 		const line = JSON.stringify(row);
 		yield* textComponent(store, TRANSCRIPT, memberId("entry", index), line);
 		if (family !== "opaque") continue;
