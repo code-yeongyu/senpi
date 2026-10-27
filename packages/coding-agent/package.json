@@ -51,6 +51,7 @@
 		"!dist/experimental",
 		"!dist/cli/experimental",
 		"docs",
+		"docs/engine-socket/fixtures/**",
 		"examples",
 		"containerization.md",
 		"CHANGELOG.md"
