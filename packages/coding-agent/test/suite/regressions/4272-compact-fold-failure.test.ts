@@ -151,6 +151,31 @@ it("worker: a canonical_unavailable frame carrying the depth limit keeps the epo
 	}
 }, 60_000);
 
+// senpi#4557 review round 2, LOW-2, worker half: a depth refusal framed after a real loss is still counted by the host.
+it("worker: a depth-limit frame after a real loss is counted and the state stays ended", async () => {
+	const { host, lane, ordinal, deliver } = await workerLane();
+	vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+	try {
+		const limit = COMPACT_PROTOCOL_MAX_DEPTH;
+		const loss = (frame: { reason: string; limit?: number }): Extract<SessionWorkerToHost, { signal: unknown }> => ({
+			type: "canonical_unavailable",
+			ordinal: ordinal(),
+			...frame,
+			signal: new SharedArrayBuffer(4),
+		});
+		expect(await deliver(loss({ reason: "a real loss" }))).toBe(WORKER_CREDIT_CODES.granted);
+		const reason = `compact write refused (unsupported_value: depth above ${limit})`;
+		expect(await deliver(loss({ reason, limit }))).toBe(WORKER_CREDIT_CODES.granted);
+		expect(host.failures).toEqual([]);
+		expect(lane.storageStatus().refusedRecords).toBe(1);
+		const root = lane.freeze();
+		expect(root.current).toBeUndefined();
+		lane.release(root);
+	} finally {
+		await host.dispose();
+	}
+}, 60_000);
+
 // senpi#4557 review LOW-2, worker half: the output frame of an event whose canonical record the isolate refused says
 // so, and its legacy record (a terminal too deep for the settled store) folds nothing and is not counted again.
 it("worker: an event refused on both projections is counted once and its terminal is not settled", async () => {

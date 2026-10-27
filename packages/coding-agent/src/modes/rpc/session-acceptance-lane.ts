@@ -204,7 +204,7 @@ export class SessionAcceptanceLane {
 
 	/**
 	 * A canonical record of this epoch was lost before folding, so its compact state can no longer be complete; one refused
-	 * at the protocol depth limit is counted instead and the state stays (RULING-59 C).
+	 * at the protocol depth limit is counted instead, live state or not, and a live state stays (RULING-59 C).
 	 */
 	compactUnavailable(cause: unknown): void {
 		if (!this.retired) this.current.fail(cause);

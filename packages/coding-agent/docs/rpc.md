@@ -527,7 +527,8 @@ compact fold, both projections of it: the session's compact state stays availabl
 delivered, the refusal is counted once per session event in the lane's `refusedRecords` status (however many of
 the event's projections exceed the limit) and the host reports it once on stderr as
 `senpi rpc acceptance: compact record refused: unsupported_value (depth above 1024)`. Any other loss of a record
-still ends that session epoch's compact state.
+still ends that session epoch's compact state. Every refused record of the session is counted the same way whether
+or not the compact state is still live: after such a loss, refusals on either projection keep counting.
 
 #### interactive_user
 

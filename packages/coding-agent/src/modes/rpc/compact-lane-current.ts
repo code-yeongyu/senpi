@@ -24,7 +24,11 @@ export class CompactLaneCurrent {
 	private readonly owners = new WeakMap<FrozenCompactState, CompactSessionState>();
 	private refused = 0;
 
-	/** Records refused at the protocol depth limit while a compact state was live, over this lane's lifetime. */
+	/**
+	 * Records refused at the protocol depth limit over this lane's lifetime, one per session event, whether or not the
+	 * epoch's compact state is still live: a real loss ends the state, never the count. The legacy path (`admits`) and
+	 * the canonical path (`fail`) follow this one rule (RULING-59 C).
+	 */
 	get refusedRecords(): number {
 		return this.refused;
 	}
@@ -42,8 +46,8 @@ export class CompactLaneCurrent {
 	/**
 	 * The one protocol depth check of a legacy record a compact fold would clone or serialize (the call and component
 	 * folds, the settled terminal of a `message_end`), run before any of them (RULING-59 C). A refused record is counted
-	 * and reported here, once, whether or not the current state is still live; a cycle ends the current state. Either
-	 * way the record must change no compact component.
+	 * and reported here, once, under the `refusedRecords` rule (live or retired state alike); a cycle ends the current
+	 * state. Either way the record must change no compact component.
 	 */
 	admits(record: object, type: string): boolean {
 		if (type !== "message_end" && !CALL_RECORDS.has(type) && !COMPONENT_RECORDS.has(type)) return true;
@@ -186,12 +190,12 @@ export class CompactLaneCurrent {
 	/**
 	 * The epoch's compact component stops here: a fold failed, or a canonical record never reached this lane. A record
 	 * refused at the protocol depth limit is the exception (RULING-59 C): it was refused before anything was cloned or
-	 * folded, so it is counted and reported and the state stays available.
+	 * folded, so it is counted and reported, also once the state is already gone, and a live state stays available.
 	 */
 	fail(cause: unknown): void {
-		if (!this.state) return;
 		const limit = protocolDepthLimitOf(cause);
 		if (limit !== undefined) return this.refuse(limit);
+		if (!this.state) return;
 		const reason = cause instanceof Error && "reason" in cause ? String(cause.reason) : String(cause);
 		process.stderr.write(`senpi rpc acceptance: compact current state unavailable: ${reason}\n`);
 		this.retire();

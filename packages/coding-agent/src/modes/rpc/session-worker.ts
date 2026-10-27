@@ -165,11 +165,11 @@ class WorkerEventWriter extends SessionEventWriter {
 		exchange((signal) => ({ type: "canonical", ordinal, firstOrdinal, recovery, record, signal }));
 	}
 	override canonicalUnavailable(_sessionId: string, cause: unknown): void {
-		// The host's compact state for this epoch is already gone after the first; later ones would only cost exchanges.
-		// A depth refusal leaves it available (RULING-59 C), so it never counts as that first loss.
-		if (!ordered || canonicalLost) return;
+		// The host's compact state for this epoch is already gone after the first real loss; later losses would only cost
+		// exchanges. A depth refusal is never that loss and is always sent: the host counts it, live state or not (RULING-59 C).
 		const limit = protocolDepthLimitOf(cause);
-		canonicalLost = limit === undefined;
+		if (!ordered || (canonicalLost && limit === undefined)) return;
+		canonicalLost ||= limit === undefined;
 		const { ordinal } = stamp.stamp(undefined, undefined);
 		const reason = cause instanceof Error ? cause.message : String(cause);
 		exchange((signal) => ({ type: "canonical_unavailable", ordinal, reason, limit, signal }));

@@ -189,3 +189,30 @@ it("a canonical record over the limit is refused typed at the pairing, and the l
 		await rig.close();
 	}
 });
+
+// senpi#4557 review round 2, LOW-2: one counting rule. A real loss ends the compact state, never the count: a record
+// refused at the limit afterwards is counted on the canonical path and on the legacy path alike.
+it("after a real loss, a refusal on either path is still counted once", async () => {
+	const rig = await callsRig();
+	const lines = reports();
+	try {
+		rig.lane.compactUnavailable(new Error("lost"));
+		const root = rig.lane.freeze();
+		expect(root.current, "the real loss ended the epoch's compact state").toBeUndefined();
+		rig.lane.release(root);
+		const deep = { type: "message_start", message: { role: "assistant", content: nested(LIMIT) } };
+		rig.producer.observe(deep);
+		rig.lane.compactUnavailable(refusal(() => new CanonicalPairing().structured(deep)));
+		expect(rig.lane.storageStatus().refusedRecords, "the canonical path").toBe(1);
+		rig.record(lifecycle(LIMIT + 1));
+		expect(rig.lane.storageStatus().refusedRecords, "the legacy path").toBe(2);
+		const refused = `senpi rpc acceptance: compact record refused: unsupported_value (depth above ${LIMIT})\n`;
+		expect(lines()).toEqual([
+			"senpi rpc acceptance: compact current state unavailable: Error: lost\n",
+			refused,
+			refused,
+		]);
+	} finally {
+		await rig.close();
+	}
+});
