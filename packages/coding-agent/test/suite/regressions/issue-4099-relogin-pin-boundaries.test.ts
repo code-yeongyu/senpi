@@ -20,7 +20,10 @@ function createController() {
 	let current: { model: Model<Api> } = { model: original };
 	const login = { id: "login-a", reads: 0 };
 	const controller = new RetryFallbackController({
-		getSettings: () => ({ modelFallback: true, chains: { "anthropic-subscription/claude-fable-5-1": ["kimi-coding/kimi-k3"] } }),
+		getSettings: () => ({
+			modelFallback: true,
+			chains: { "anthropic-subscription/claude-fable-5-1": ["kimi-coding/kimi-k3"] },
+		}),
 		registry: {
 			find: (provider, id) => models.find((entry) => entry.provider === provider && entry.id === id),
 			getAll: () => models,
@@ -87,7 +90,12 @@ describe("the senpi#4099 pin release fires only on a sign-in at a turn boundary"
 describe("credentialRecoveryRevision", () => {
 	it("moves on a sign-in and holds across a token refresh of the same account", async () => {
 		const storage = AuthStorage.inMemory();
-		const oauth = (access: string, expires: number) => ({ type: "oauth" as const, access, refresh: `${access}-r`, expires });
+		const oauth = (access: string, expires: number) => ({
+			type: "oauth" as const,
+			access,
+			refresh: `${access}-r`,
+			expires,
+		});
 		storage.set("synthetic", oauth("first", 1));
 		storage.set("synthetic", oauth("second", 1));
 		const signedIn = await credentialRecoveryRevision(storage, "synthetic");
