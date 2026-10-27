@@ -18,13 +18,7 @@ export const COMPACT_LEAF_CODE_UNITS = 32_768;
 export type LeafId = number;
 
 export class CompactWriteError extends Error {
-	readonly reason:
-		| "size_limit"
-		| "storage_unavailable"
-		| "depth_limit"
-		| "count_limit"
-		| "cycle"
-		| "unsupported_value";
+	readonly reason: "size_limit" | "storage_unavailable" | "cycle" | "unsupported_value";
 
 	constructor(reason: CompactWriteError["reason"]) {
 		super(`compact write refused (${reason})`);

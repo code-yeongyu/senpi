@@ -27,7 +27,7 @@ interface Owner {
 /** Whole-view assembly of the calls at a cut; a streaming call's raw prefix is read through the active message. */
 export async function readCalls(frozen: FrozenCompactState, owner: Owner, valid: () => void): Promise<CallsView> {
 	const values = new CompactValues(owner.store);
-	const slot = async (ref: ValueRef | null) => (ref ? await values.read(ref) : null);
+	const slot = async (ref: ValueRef | null) => (ref ? await values.read(ref, valid) : null);
 	const raw = async (address: CallRaw | null): Promise<string | null> => {
 		if (!address) return null;
 		if (address.kind === "owned") {
