@@ -144,6 +144,20 @@ jobs:
             cp "${prebuild}" "packages/pty/native/prebuilds/${target}/senpi_pty.${target}.node"
           done
 
+      # sisyphuslabs/omo-desktop-app#4199: the socket-secret bridge has no fallback, so BOTH Windows targets must
+      # be present; a missing one (the arm64 row is best-effort in native-prebuilds.yml) blocks the publish.
+      - name: Stage the socket-secret bridge into the coding-agent package
+        if: inputs.publish-only == true
+        run: |
+          set -euo pipefail
+          artifacts="packages/pty/.native-prebuild-artifacts"
+          for target in win32-x64 win32-arm64; do
+            prebuild="${artifacts}/native/socket-secret/prebuilds/${target}/senpi_socket_secret.${target}.node"
+            test -f "${prebuild}" || { echo "::error::missing socket-secret bridge for ${target}"; exit 1; }
+            mkdir -p "packages/coding-agent/native/socket-secret/prebuilds/${target}"
+            cp "${prebuild}" "packages/coding-agent/native/socket-secret/prebuilds/${target}/"
+          done
+
       # coding-agent tool tests resolve rg/fd via system binaries first and only
       # download from GitHub releases as a fallback. Unauthenticated downloads
       # are rate-limited on shared runner egress IPs, which flakes the release
@@ -231,7 +245,8 @@ jobs:
             PUBLISH_ARGS+=(--dry-run)
           fi
           node scripts/publish.mjs "${PUBLISH_ARGS[@]}" \
-            --require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64
+            --require-native-prebuilds=darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64 \
+            --require-socket-secret-bridge=win32-x64,win32-arm64
 
       - name: Workflow summary
         if: always()

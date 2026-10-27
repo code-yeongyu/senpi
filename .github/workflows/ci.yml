@@ -518,6 +518,119 @@ jobs:
         run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
 
 
+  # sisyphuslabs/omo-desktop-app#4199: native receipts 27 (PID-4 kernel-session identity) and 28
+  # (FileFsDriverPathInformation locality) need a real Windows kernel; this job's RECEIPT_ lines are
+  # the receipt. Fixture-dependent cases are #[ignore] elsewhere and run here with --ignored.
+  socket-secret-native-windows:
+    name: Socket-secret native receipts (Windows)
+    needs: platform-scope
+    if: needs.platform-scope.outputs.full == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: socket-secret-native-windows
+
+      - name: Classifier tests and fixture-free receipts
+        shell: bash
+        run: cargo test -p senpi-socket-secret --locked -- --nocapture 2>&1 | tee "$RUNNER_TEMP/receipts-base.log"
+
+      - name: Install WinFsp and Dokany
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tmp = $env:RUNNER_TEMP
+          # Exact versioned release assets, each pinned by its SHA-256 (equal to the digest GitHub
+          # publishes for the asset). A mismatch fails the job before anything is installed.
+          $assets = @(
+            @{ Url = 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi'; File = "$tmp\winfsp.msi"; Sha256 = '073A70E00F77423E34BED98B86E600DEF93393BA5822204FAC57A29324DB9F7A' },
+            @{ Url = 'https://github.com/dokan-dev/dokany/releases/download/v2.3.1.1000/Dokan_x64.msi'; File = "$tmp\dokan.msi"; Sha256 = '69FF8CB37BFEC3A75921C85FFD1C6370B50A9EC4ECEF2CF3A009D488DCBF5465' },
+            @{ Url = 'https://github.com/dokan-dev/dokany/releases/download/v2.3.1.1000/dokan.zip'; File = "$tmp\dokan.zip"; Sha256 = 'CBFB89718D4E671F8DD65187912C1141FDE0E5197F40AC2979B3216753D42C7C' }
+          )
+          foreach ($asset in $assets) {
+            Invoke-WebRequest $asset.Url -OutFile $asset.File
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset.File).Hash
+            if ($actual -ne $asset.Sha256) {
+              throw "SHA-256 mismatch for $($asset.Url): expected $($asset.Sha256), got $actual; refusing to install"
+            }
+            Write-Host "verified $($asset.Url) sha256=$actual"
+          }
+          foreach ($msi in @("$tmp\winfsp.msi", "$tmp\dokan.msi")) {
+            $install = Start-Process msiexec -ArgumentList '/i', $msi, '/qn', '/norestart', 'INSTALLLEVEL=1000' -Wait -PassThru
+            if ($install.ExitCode -ne 0) { throw "$msi exited $($install.ExitCode)" }
+          }
+          Expand-Archive "$tmp\dokan.zip" "$tmp\dokan"
+
+      - name: Mount receipt fixtures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tmp = $env:RUNNER_TEMP
+          $memfs = "${env:ProgramFiles(x86)}\WinFsp\bin\memfs-x64.exe"
+          # A disk-type WinFsp volume that reports NTFS, and a network-type one.
+          Start-Process $memfs -ArgumentList '-i', '-F', 'NTFS', '-m', 'M:'
+          Start-Process $memfs -ArgumentList '-i', '-u', '\memfs\receipt', '-m', 'N:'
+          # A disk-type Dokany mirror of an NTFS directory (the mirror sample reports the mirrored name).
+          New-Item -ItemType Directory "$tmp\mirror-source" | Out-Null
+          Start-Process "$tmp\dokan\x64\Release\mirror.exe" -ArgumentList '/r', "$tmp\mirror-source", '/l', 'O:'
+          # A local SMB share, mapped and by UNC path.
+          New-Item -ItemType Directory "$tmp\share" | Out-Null
+          New-SmbShare -Name receipt -Path "$tmp\share" -FullAccess Everyone | Out-Null
+          net use S: \\localhost\receipt
+          if ($LASTEXITCODE -ne 0) { throw "net use exited $LASTEXITCODE" }
+          # A VHDX-mounted NTFS volume (positive control).
+          @(
+            "create vdisk file=`"$tmp\receipt.vhdx`" maximum=64 type=expandable",
+            "select vdisk file=`"$tmp\receipt.vhdx`"",
+            'attach vdisk',
+            'create partition primary',
+            'format fs=ntfs quick label=receipt',
+            'assign letter=V'
+          ) | Set-Content "$tmp\vhdx.txt"
+          diskpart /s "$tmp\vhdx.txt"
+          if ($LASTEXITCODE -ne 0) { throw "diskpart exited $LASTEXITCODE" }
+          foreach ($drive in @('M:\', 'N:\', 'O:\', 'S:\', 'V:\')) {
+            $deadline = (Get-Date).AddSeconds(60)
+            while (-not (Test-Path $drive)) {
+              if ((Get-Date) -gt $deadline) { throw "$drive did not mount" }
+              Start-Sleep -Milliseconds 500
+            }
+          }
+          @(
+            'RECEIPT_WINFSP_DISK_NTFS=M:\',
+            'RECEIPT_WINFSP_NETWORK=N:\',
+            'RECEIPT_DOKANY_DISK_MIRROR=O:\',
+            'RECEIPT_SMB_MAPPED_DRIVE=S:\',
+            'RECEIPT_SMB_UNC=\\localhost\receipt\',
+            'RECEIPT_VHDX_NTFS=V:\'
+          ) | Add-Content $env:GITHUB_ENV
+
+      - name: Fixture receipts
+        shell: bash
+        run: cargo test -p senpi-socket-secret --locked --test native_receipts -- --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/receipts-fixtures.log"
+
+      - name: Receipt summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Socket-secret native receipts (Windows)"
+            echo '```'
+            grep -h '^RECEIPT_' "$RUNNER_TEMP"/receipts-*.log || echo "no receipt lines"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   rpc-windows:
     name: RPC named pipes (Windows)
     needs: platform-scope
@@ -1213,6 +1326,7 @@ jobs:
         tui-mouse-windows,
         schedule-windows,
         rpc-windows,
+        socket-secret-native-windows,
         tool-child-windows,
         compiled-extensions-windows,
         claude-executable-windows,

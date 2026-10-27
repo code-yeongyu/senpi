@@ -52,6 +52,7 @@
 		"!dist/cli/experimental",
 		"docs",
 		"examples",
+		"native/socket-secret",
 		"containerization.md",
 		"CHANGELOG.md"
 	],
