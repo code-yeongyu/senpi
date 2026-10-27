@@ -281,6 +281,38 @@ describe("endpoint reservation store", () => {
 		expect(s.reservation(generation).revision).toBe(before + 1);
 	});
 
+	// senpi#4473 review LOW: a row whose placement names a placed root or a predeclared object but lacks a column is
+	// unreadable evidence (design 4.2a Revision 6 "Missing/replaced/unverifiable objects are unknown"), never a row that
+	// recorded no presence; the read refuses typed instead of answering presence_unavailable.
+	it.each([
+		[
+			"a placed root missing its path",
+			"UPDATE reservations SET presence_placement = 'beside_store', presence_root_path = NULL",
+		],
+		[
+			"a relocated root missing its file ID",
+			"UPDATE reservations SET presence_placement = 'relocated', presence_root_file_id = NULL",
+		],
+		["an unknown placement", "UPDATE reservations SET presence_placement = 'elsewhere'"],
+		["an unknown unavailable reason", "UPDATE reservations SET presence_unavailable_reason = 'bogus'"],
+	])("refuses to read %s as presence_unavailable", async (_name, sql) => {
+		const { path, store: s, generation } = await offered();
+		const raw = new DatabaseSync(path);
+		raw.prepare(`${sql} WHERE generation = ?`).run(generation);
+		raw.close();
+		expect(rejection(() => s.reservation(generation))).toBe("row_malformed");
+	});
+
+	it("refuses to read a predeclared object missing a column as presence_unavailable", async () => {
+		const { path, store: s, generation, locator } = await offered();
+		const raw = new DatabaseSync(path);
+		raw.prepare("UPDATE roles SET presence_status = 'predeclared', presence_id = NULL WHERE generation = ?").run(
+			generation,
+		);
+		raw.close();
+		expect(rejection(() => s.roleRow(locator))).toBe("row_malformed");
+	});
+
 	it("rejects a store written by an unsupported schema", async () => {
 		const { path, store: s } = await store();
 		s.close();

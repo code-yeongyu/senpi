@@ -47,7 +47,8 @@ export type ReservationRejection =
 	| "commitment_invalid"
 	| "commitment_mismatch"
 	| "roles_not_granted"
-	| "presence_not_predeclared";
+	| "presence_not_predeclared"
+	| "row_malformed";
 
 /** Why a reservation has no local presence root. Startup is never refused for that alone. */
 export type PresenceUnavailableReason =
@@ -57,6 +58,15 @@ export type PresenceUnavailableReason =
 	| "local_app_data_unavailable"
 	| "root_unavailable"
 	| "root_not_local";
+
+const PRESENCE_UNAVAILABLE_REASONS: ReadonlySet<string> = new Set<PresenceUnavailableReason>([
+	"unsupported_platform",
+	"native_unavailable",
+	"native_abi_mismatch",
+	"local_app_data_unavailable",
+	"root_unavailable",
+	"root_not_local",
+]);
 
 /** The presence root the reserving owner resolved once. `placed` roots classified `local` from their opened handle. */
 export type PresenceRootRecord =
@@ -320,14 +330,25 @@ function kernelSessionOf(value: string | null, reason: string | null): KernelSes
 	return value !== null ? { status: "verified", value } : { status: "unverified", reason: reason ?? "unrecorded" };
 }
 
+/**
+ * A row that names a placed root or a predeclared object but lacks one of its columns, or names a placement or reason
+ * this schema does not write, is unreadable evidence (design 4.2a Revision 6, "Missing/replaced/unverifiable objects
+ * are unknown"). It is never read as a row that recorded no presence: the read refuses typed, and nothing repairs it.
+ */
+function malformed(generation: string, what: string): EndpointReservationError {
+	return new EndpointReservationError("row_malformed", `${what} in ${generation}`);
+}
+
 function reservationPresenceOf(row: ReservationColumns): ReservationPresence {
 	const ownerKernelSession = kernelSessionOf(row.owner_kernel_session, row.owner_kernel_session_reason);
-	if (
-		(row.presence_placement === "beside_store" || row.presence_placement === "relocated") &&
-		row.presence_root_path !== null &&
-		row.presence_root_volume_serial !== null &&
-		row.presence_root_file_id !== null
-	) {
+	if (row.presence_placement === "beside_store" || row.presence_placement === "relocated") {
+		if (
+			row.presence_root_path === null ||
+			row.presence_root_volume_serial === null ||
+			row.presence_root_file_id === null
+		) {
+			throw malformed(row.generation, `${row.presence_placement} root missing a column`);
+		}
 		return {
 			root: {
 				status: "placed",
@@ -341,26 +362,36 @@ function reservationPresenceOf(row: ReservationColumns): ReservationPresence {
 			ownerKernelSession,
 		};
 	}
+	if (row.presence_placement !== "presence_unavailable") {
+		throw malformed(row.generation, `placement ${JSON.stringify(row.presence_placement)}`);
+	}
+	const reason = row.presence_unavailable_reason;
+	if (reason === null || !PRESENCE_UNAVAILABLE_REASONS.has(reason)) {
+		throw malformed(row.generation, `unavailable reason ${JSON.stringify(reason)}`);
+	}
 	return {
 		root: {
 			status: "presence_unavailable",
-			reason: (row.presence_unavailable_reason ?? "root_unavailable") as PresenceUnavailableReason,
+			reason: reason as PresenceUnavailableReason,
 			detail: row.presence_unavailable_detail,
 		},
 		ownerKernelSession,
 	};
 }
 
-function presenceObjectOf(row: RoleColumns): PresenceObjectRecord {
+function presenceObjectOf(row: RoleColumns, generation: string): PresenceObjectRecord {
+	if (row.presence_status === "presence_unavailable") return { status: "presence_unavailable" };
+	if (row.presence_status !== "predeclared") {
+		throw malformed(generation, `presence status ${JSON.stringify(row.presence_status)}`);
+	}
 	if (
-		row.presence_status !== "predeclared" ||
 		row.presence_id === null ||
 		row.presence_path === null ||
 		row.presence_header === null ||
 		row.presence_volume_serial === null ||
 		row.presence_file_id === null
 	) {
-		return { status: "presence_unavailable" };
+		throw malformed(generation, "predeclared object missing a column");
 	}
 	return {
 		status: "predeclared",
@@ -694,7 +725,7 @@ export class EndpointReservationStore {
 				issuer: row.issuer,
 				participant: row.participant,
 				listenIntent: Number(row.listen_intent) === 1,
-				presence: presenceObjectOf(row),
+				presence: presenceObjectOf(row, locator.generation),
 			}
 		);
 	}
