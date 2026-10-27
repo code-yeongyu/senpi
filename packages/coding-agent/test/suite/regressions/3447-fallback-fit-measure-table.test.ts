@@ -76,17 +76,25 @@ async function gapWindow(shape: Seed): Promise<number> {
 	const probe = await createHarness({ models: [{ id: "faux-roomy", contextWindow: 400_000, maxTokens: 32_000 }] });
 	try {
 		seed(probe, shape);
-		const projection = projectModelUsabilityBudget({
-			model: { ...probe.getModel(), contextWindow: 10_000_000, maxTokens: reportMaxTokens },
-			systemPrompt: probe.session.agent.state.systemPrompt,
-			tools: probe.session.agent.state.tools,
-			liveContextTokens: contextEstimate(probe),
-			compaction: probe.settingsManager.getCompactionSettings(),
-			includeSpeculationLead: false,
-			admission: "switch",
-		});
-		const prefix = projection.systemPromptTokens + projection.activeToolSchemaTokens;
-		return projection.requiredTokens - Math.floor(prefix / 2);
+		const project = (contextWindow: number) =>
+			projectModelUsabilityBudget({
+				model: { ...probe.getModel(), contextWindow, maxTokens: reportMaxTokens },
+				systemPrompt: probe.session.agent.state.systemPrompt,
+				tools: probe.session.agent.state.tools,
+				liveContextTokens: contextEstimate(probe),
+				compaction: probe.settingsManager.getCompactionSettings(),
+				includeSpeculationLead: false,
+				admission: "switch",
+			});
+		let window = 1_000_000;
+		for (let round = 0; round < 6; round++) {
+			const projection = project(window);
+			const prefix = projection.systemPromptTokens + projection.activeToolSchemaTokens;
+			window = projection.requiredTokens - Math.floor(prefix / 2);
+		}
+		const atWindow = project(window);
+		if (atWindow.usable) throw new Error(`gap fixture: ${window} already fits ${atWindow.requiredTokens}`);
+		return window;
 	} finally {
 		probe.cleanup();
 	}
