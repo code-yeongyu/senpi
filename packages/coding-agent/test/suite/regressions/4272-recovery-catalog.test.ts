@@ -5,6 +5,7 @@ import { CompactContentStore, CompactWriteError } from "../../../src/modes/rpc/c
 import { CompactReadError } from "../../../src/modes/rpc/compact-read-lease.ts";
 import {
 	type CatalogComponent,
+	type CatalogRead,
 	type CatalogRoot,
 	CompactRecoveryCatalog,
 } from "../../../src/modes/rpc/compact-recovery-catalog.ts";
@@ -18,6 +19,9 @@ import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
 afterEach(() => {
 	vi.restoreAllMocks();
 });
+
+const component = (read: CatalogRead) =>
+	read.kind === "component" ? read : expect.unreachable("expected a component");
 
 /** The written spec of `compact-catalog-codec.ts` for a leaf digest, restated so no expected value comes from the encoder. */
 const specLeafDigest = (bytes: Buffer): string => {
@@ -244,11 +248,10 @@ it("RULING-58 (1) a surrogate pair split across a leaf boundary is hashed exactl
 		for (const leaf of leaves) fixture.store.adjust(leaf, -1, 0);
 		await fixture.store.idle();
 		for (const leaf of leaves) expect(fixture.store.isCommitted(leaf), "read from the stored file").toBe(true);
-		const component: CatalogComponent = { kind: protocolId("row"), id: protocolId("split"), leaves, owner };
-		const root = await catalogs.build(fixture.store, catalogRootRef(8), [component]);
+		const split: CatalogComponent = { kind: protocolId("row"), id: protocolId("split"), leaves, owner };
+		const root = await catalogs.build(fixture.store, catalogRootRef(8), [split]);
 		fixture.store.adjust(owner, -1, 0);
-		const read = await catalogs.read(fixture.store, root, childRef(root.ref, 0));
-		if (read.kind !== "component") throw new Error("expected a component");
+		const read = component(await catalogs.read(fixture.store, root, childRef(root.ref, 0)));
 		expect(read.text).toBe(text);
 		expect(storedBytes(read.text).equals(Buffer.from(text, "utf16le"))).toBe(true);
 		expect(read.entry.length).toBe(8);
