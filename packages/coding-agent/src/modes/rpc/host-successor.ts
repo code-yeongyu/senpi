@@ -140,7 +140,10 @@ export async function startSuccessor(context: {
 					: ["ignore", "ignore", stderr.fd],
 		});
 		const presenterEnrollment = options.presenterBootstrap
-			? relayPresenterBootstrap(options.presenterBootstrap, spawned)
+			? relayPresenterBootstrap(options.presenterBootstrap, spawned, {
+					kind: "replacement",
+					predecessorHostInstance: host.instanceId,
+				})
 			: undefined;
 		child = spawned;
 		exited = new Promise<void>((resolve) => spawned.once("exit", () => resolve()));

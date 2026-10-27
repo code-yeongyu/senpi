@@ -1,6 +1,7 @@
 import {
 	type AssistantMessage,
 	getAssistantCapture,
+	seedNextOffset,
 	type TextContent,
 	type ThinkingContent,
 	type ToolCall,
@@ -33,14 +34,28 @@ export interface BlockSeedOptions {
 
 type SeededAssistantEvent =
 	| { type: "start"; seed: { message: AssistantMessage } }
-	| { type: "text_start"; contentIndex: number; seed: { block: TextContent; coveredCodeUnits: number } }
-	| { type: "thinking_start"; contentIndex: number; seed: { block: ThinkingContent; coveredCodeUnits: number } }
+	| {
+			type: "text_start";
+			contentIndex: number;
+			seed: { block: TextContent; coveredCodeUnits: number; nextOffset: number };
+	  }
+	| {
+			type: "thinking_start";
+			contentIndex: number;
+			seed: { block: ThinkingContent; coveredCodeUnits: number; nextOffset: number };
+	  }
 	| {
 			type: "toolcall_start";
 			contentIndex: number;
 			id: string;
 			toolName: string;
-			seed: { block: ToolCall; rawArgumentPrefix: string; parsedThrough: number; coveredCodeUnits: number };
+			seed: {
+				block: ToolCall;
+				rawArgumentPrefix: string;
+				parsedThrough: number;
+				coveredCodeUnits: number;
+				nextOffset: number;
+			};
 	  }
 	| { type: "text_delta" | "thinking_delta"; contentIndex: number; delta: string; offset: number }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string; offset: number; parsedThrough: number }
@@ -106,11 +121,20 @@ function toSeededAssistantEvent(
 	if (event.type === "thinking_end")
 		return block?.type === "thinking" ? { type: event.type, contentIndex, content: event.content, block } : undefined;
 	if (coveredCodeUnits === undefined) return undefined;
+	const seedLength =
+		block?.type === "text"
+			? block.text.length
+			: block?.type === "thinking"
+				? block.thinking.length
+				: (capture.rawArgumentPrefix?.length ?? 0);
+	const nextOffset = seedNextOffset(capture.nextOffset, seedLength);
 	if (event.type === "text_start")
-		return block?.type === "text" ? { type: event.type, contentIndex, seed: { block, coveredCodeUnits } } : undefined;
+		return block?.type === "text"
+			? { type: event.type, contentIndex, seed: { block, coveredCodeUnits, nextOffset } }
+			: undefined;
 	if (event.type === "thinking_start")
 		return block?.type === "thinking"
-			? { type: event.type, contentIndex, seed: { block, coveredCodeUnits } }
+			? { type: event.type, contentIndex, seed: { block, coveredCodeUnits, nextOffset } }
 			: undefined;
 	const { rawArgumentPrefix, parsedThrough } = capture;
 	if (block?.type !== "toolCall" || rawArgumentPrefix === undefined || parsedThrough === undefined) return undefined;
@@ -119,7 +143,7 @@ function toSeededAssistantEvent(
 		contentIndex,
 		id: block.id,
 		toolName: block.name,
-		seed: { block, rawArgumentPrefix, parsedThrough, coveredCodeUnits },
+		seed: { block, rawArgumentPrefix, parsedThrough, coveredCodeUnits, nextOffset },
 	};
 }
 

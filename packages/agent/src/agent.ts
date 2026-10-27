@@ -6,6 +6,7 @@ import {
 	readProviderDiagnostic,
 	type SimpleStreamOptions,
 	sanitizeProviderDiagnostic,
+	sanitizeProviderErrorMessage,
 	type TextContent,
 	type ThinkingBudgets,
 	type TranscriptContext,
@@ -921,6 +922,8 @@ export class Agent {
 			...(!aborted && isLocalFailure(error) ? { failureSource: "local" as const } : {}),
 			timestamp: Date.now(),
 		} satisfies AgentMessage;
+		// A thrown provider error never passed the stream boundary: classify and redact it the same way (senpi#4282).
+		sanitizeProviderErrorMessage(failureMessage);
 		await this.processEvents({ type: "message_start", message: failureMessage });
 		await this.processEvents({ type: "message_end", message: failureMessage });
 		await this.processEvents({ type: "turn_end", message: failureMessage, toolResults: [] });

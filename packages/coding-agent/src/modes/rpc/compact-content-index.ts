@@ -1,5 +1,7 @@
 import type { CompactContentStore, LeafId } from "./compact-content-store.ts";
+import { CompactCommitDependencies } from "./compact-commit-dependencies.ts";
 import { isSmallPage, packPages } from "./compact-index-pages.ts";
+import { CompactReadError } from "./compact-read-lease.ts";
 
 /**
  * A spillable keyed collection: an immutable paged disk base plus one resident override slot per key
@@ -48,17 +50,17 @@ export class CompactContentIndex<Row extends object> {
 	private base: IndexBase = { pages: [], pageOf: new Map() };
 	private readonly overrides = new Map<string, Override<Row>>();
 	/** Uncommitted leaves per row override; only overrides absent here are eligible to fold. */
-	private readonly unsettledLeaves = new Map<string, number>();
-	private readonly leafKey = new Map<LeafId, string>();
+	private readonly unsettledLeaves: CompactCommitDependencies<string>;
 	private compacting = false;
 	private tombstones = 0;
 	private tombstoneKeyUnits = 0;
+	private readonly frozen = new WeakSet<FrozenIndex<Row>>();
 
 	constructor(store: CompactContentStore, leavesOf: (row: Row) => readonly LeafId[], compactAboveRows: number) {
 		this.store = store;
 		this.leavesOf = leavesOf;
 		this.compactAboveRows = compactAboveRows;
-		store.onCommitted = (id) => this.committed(id);
+		this.unsettledLeaves = new CompactCommitDependencies(store, () => this.maybeCompact());
 	}
 
 	has(key: string): boolean {
@@ -86,10 +88,13 @@ export class CompactContentIndex<Row extends object> {
 	freeze(): FrozenIndex<Row> {
 		for (const page of this.base.pages) page.pins++;
 		for (const override of this.overrides.values()) this.pinRow(override, 1);
-		return { base: this.base, overrides: new Map(this.overrides) };
+		const frozen = { base: this.base, overrides: new Map(this.overrides) };
+		this.frozen.add(frozen);
+		return frozen;
 	}
 
 	release(frozen: FrozenIndex<Row>): void {
+		if (!this.frozen.delete(frozen)) return;
 		for (const override of frozen.overrides.values()) this.pinRow(override, -1);
 		for (const page of frozen.base.pages) {
 			page.pins--;
@@ -99,6 +104,7 @@ export class CompactContentIndex<Row extends object> {
 
 	/** Every row visible at a frozen root, reading only that root's own pages. */
 	async entries(frozen: FrozenIndex<Row>): Promise<Map<string, Row>> {
+		if (!this.frozen.has(frozen)) throw new CompactReadError("released");
 		const rows = new Map<string, Row>();
 		for (const page of frozen.base.pages) for (const [key, row] of await this.readPage(page)) rows.set(key, row);
 		applyOverrides(rows, frozen.overrides);
@@ -129,16 +135,6 @@ export class CompactContentIndex<Row extends object> {
 			}
 			if (progressed) this.maybeCompact();
 		});
-	}
-
-	private committed(id: LeafId): void {
-		const key = this.leafKey.get(id);
-		if (key === undefined) return;
-		this.leafKey.delete(id);
-		const left = (this.unsettledLeaves.get(key) ?? 0) - 1;
-		if (left > 0) this.unsettledLeaves.set(key, left);
-		else this.unsettledLeaves.delete(key);
-		this.maybeCompact();
 	}
 
 	/** Folds eligible overrides and every small base page; false leaves the previous base untouched. */
@@ -234,9 +230,7 @@ export class CompactContentIndex<Row extends object> {
 		for (const id of leaves) this.store.adjust(id, 1, 0);
 		this.drop(key);
 		this.overrides.set(key, override);
-		const unsettled = leaves.filter((id) => !this.store.isCommitted(id));
-		for (const id of unsettled) this.leafKey.set(id, key);
-		if (unsettled.length > 0) this.unsettledLeaves.set(key, unsettled.length);
+		this.unsettledLeaves.set(key, leaves);
 		if (override.kind === "tombstone") this.countTombstone(key, 1);
 		this.maybeCompact();
 	}
@@ -248,7 +242,6 @@ export class CompactContentIndex<Row extends object> {
 		this.unsettledLeaves.delete(key);
 		if (old.kind === "row") {
 			for (const id of this.leavesOf(old.row)) {
-				this.leafKey.delete(id);
 				this.store.adjust(id, -1, 0);
 			}
 		}

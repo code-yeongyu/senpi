@@ -1,3 +1,44 @@
+## 2026-10-26 - Reader note on the capture index (senpi#4349, part of #4272)
+
+### What changed
+
+- `packages/ai/src/utils/assistant-capture.ts`: a doc line on `getAssistantCapture` says internal readers address a
+  block by `capture.contentIndex ?? event.contentIndex` (#4285 review L1/L2). No code change.
+
+### Why
+
+- The Google/Vertex public `contentIndex` drifts after natively inserted parts; readers that use it name a foreign block.
+
+### Why an extension could not handle it
+
+- The capture carrier is internal to the provider pipeline.
+
+### Expected merge conflict zones
+
+- LOW: the doc comment above `getAssistantCapture`.
+
+## 2026-10-26 - Root exports for wrappers that relay capture records (senpi#4307, part of #4272)
+
+### What changed
+
+- `packages/ai/src/index.ts`: also exports `assistantEvents` (read a stream's events while its ordered progress records
+  go to a callback, without forcing capture on) and `pushAssistantProgress`, next to the capture accessors S02a-1 and
+  the fold already export.
+
+### Why
+
+- The agent's empty-assistant recovery wrapper (packages/agent) re-emits a provider stream; to keep the provider's
+  capture records it reads them with `assistantEvents` and forwards progress with `pushAssistantProgress`, through the
+  package root it already imports from.
+
+### Why an extension could not handle it
+
+- The wrapper is internal to the agent loop and must forward records in the same order as the events it buffers.
+
+### Expected merge conflict zones
+
+- LOW: the `./utils/assistant-capture.ts` export block in `index.ts`.
+
 ## 2026-10-25 - Root exports the assistant capture accessors (senpi#4277, part of #4272)
 
 ### What changed

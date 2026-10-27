@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { CompactReadError } from "./compact-read-lease.ts";
 import { createSpoolDir, removeSpoolDir } from "./compact-spool-dir.ts";
 import {
 	type CompactStorageFailure,
@@ -33,6 +34,27 @@ export abstract class CompactSpoolStorage {
 	protected pendingIoCopyBytes = 0;
 	protected spillBytesWritten = 0;
 	protected reclaimDebtBytes = 0;
+	private reads = 0;
+	private reading: ReturnType<typeof Promise.withResolvers<void>> | undefined;
+
+	assertReadable(): void {
+		if (this.retired) throw new CompactReadError("retired");
+	}
+
+	beginRead(): () => void {
+		this.assertReadable();
+		this.reads++;
+		this.reading ??= Promise.withResolvers<void>();
+		let done = false;
+		return () => {
+			if (done) return;
+			done = true;
+			if (--this.reads === 0) {
+				this.reading?.resolve();
+				this.reading = undefined;
+			}
+		};
+	}
 
 	constructor(dir: string, io: CompactStorageIo) {
 		this.dir = dir;
@@ -50,6 +72,7 @@ export abstract class CompactSpoolStorage {
 	 */
 	async retire(): Promise<void> {
 		this.retired = true;
+		await this.reading?.promise;
 		await this.idle();
 		const token = this.spoolToken;
 		this.spoolToken = undefined;
@@ -58,6 +81,17 @@ export abstract class CompactSpoolStorage {
 
 	/** Reads a committed file and rejects a missing, unreadable or short one. */
 	async readFile(path: string, bytes: number, operation: CompactStorageOperation): Promise<Buffer> {
+		const done = this.beginRead();
+		try {
+			const result = await this.readCommittedFile(path, bytes, operation);
+			this.assertReadable();
+			return result;
+		} finally {
+			done();
+		}
+	}
+
+	private async readCommittedFile(path: string, bytes: number, operation: CompactStorageOperation): Promise<Buffer> {
 		let data: Buffer;
 		try {
 			data = await this.io.readFile(path);

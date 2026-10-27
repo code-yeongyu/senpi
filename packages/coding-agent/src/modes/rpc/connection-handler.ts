@@ -62,6 +62,7 @@ import type {
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
+import { carryRecovery } from "../../core/session-recovery-identity.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
@@ -398,7 +399,7 @@ export function createRpcConnectionHandler(
 	});
 
 	const tagSessionRecord = <T extends object>(value: T): T | (T & { sessionId: string }) =>
-		routingSessionId === undefined ? value : { ...value, sessionId: routingSessionId };
+		routingSessionId === undefined ? value : carryRecovery(value, { ...value, sessionId: routingSessionId });
 
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
 		const record = tagSessionRecord(obj);
@@ -2023,13 +2024,17 @@ export function createRpcConnectionHandler(
 				const modelRegistry = session.modelRegistry;
 				const oauthInfos = buildLoginProviderInfos(modelRegistry, "oauth");
 				const apiKeyInfos = buildLoginProviderInfos(modelRegistry, "api_key");
-				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => ({
-					id: info.id,
-					name: info.name,
-					authType: info.authType,
-					status: authMethodStatus(modelRegistry, info),
-					...storedKeyHint(modelRegistry, info),
-				}));
+				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => {
+					const origin = modelRegistry.getProviderOrigin(info.id);
+					return {
+						id: info.id,
+						name: info.name,
+						authType: info.authType,
+						status: authMethodStatus(modelRegistry, info),
+						...storedKeyHint(modelRegistry, info),
+						...(origin === undefined ? {} : { origin }),
+					};
+				});
 				return success(id, "get_auth_providers", { providers });
 			}
 

@@ -41,6 +41,14 @@ Use `/trust` in interactive mode to save a project trust decision for future ses
 
 Senpi includes a built-in permission system for tool calls. It evaluates a preset first, then applies explicit rules from global settings, project settings, and CLI flags. The last matching rule wins.
 
+For `external_directory`, this order applies separately to each path spelling: the absolute lexical path, the physical prefix plus unresolved components at each symlink followed, the final physical path, and their on-disk case spellings for existing components. The most restrictive result wins across spellings (`deny` > `ask` > `allow`). Thus a blanket deny followed by an allow for a shared directory still allows that directory, but an allow on a symlink's destination cannot override a deny on an intermediate path. Resolution uses metadata and link targets without opening path components; case recovery may list directories, but unavailable listings do not invalidate component identities proven by metadata. Missing path components retain their supplied case. More than 16 distinct spellings, 40 symlink hops, or a loop yields `ask`, even with a remembered approval.
+
+"Allow always" scopes remain tied to the resolved directory and cannot override a deny. An explicit allow for only the resolved directory can still leave an unmatched alias at `ask`; a remembered "Always" approval covers that same resolved target across its aliases.
+
+Resolution follows a kernel-style component queue. A name is inspected at the current physical directory; a symlink prepends its target components, and an absolute target resets the position to its filesystem root. `.` is skipped and `..` moves to the physical parent, after preceding symlinks have been followed. Neither the request nor a link target has dot segments collapsed before this walk. Relative targets are never joined to an unresolved lexical parent, so the walk cannot invent a route such as `a/d` when `a/L1` actually points to `b/c` and `L2` points to `../d`.
+
+A genuine intermediate spelling can still match only a blanket deny even when specific rules allow both the original path and the final destination. For example, if `entry` links to `proj` and `proj/x/secret` links to `outside`, allowing `entry/*` and `outside/*` does not override a blanket deny on the intermediate `proj/x/secret/file.txt`. Allow that intermediate route explicitly if it should be accessible.
+
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `permissionPreset` | string | `"full-access"` | Permission preset: `"full-access"`, `"workspace"`, `"accept-edits"`, `"auto"`, `"read-only"`, or `"ask"` |
@@ -503,7 +511,53 @@ run.
 |---------|------|---------|-------------|
 | `shellPath` | string | - | Custom shell path (e.g., for Cygwin on Windows); supports a leading `~` for the home directory |
 | `shellCommandPrefix` | string | - | Prefix for every bash command (e.g., `"shopt -s expand_aliases"`) |
+| `tools.bash.redactSecretsInOutput` | boolean | `false` | Redact credential-shaped bash stdout and stderr before streaming, retaining output, or writing output spill files |
 | `npmCommand` | string[] | - | Command argv used for npm package lookup/install operations (e.g., `["mise", "exec", "node@20", "--", "npm"]`) |
+
+To opt in, set:
+
+```json
+{
+  "tools": {
+    "bash": {
+      "redactSecretsInOutput": true
+    }
+  }
+}
+```
+
+The default is off. When enabled, bash replaces GitHub, Slack, OpenAI/Anthropic,
+AWS access-key, Google API-key and JWT-shaped tokens, PEM private-key blocks,
+Bearer credentials, and secret-named `KEY=VALUE` values with `<redacted>`.
+Assignment names are retained; `AUTH` and `AUTHORIZATION` match complete name
+segments, not `AUTHOR`. Quoted assignment values end at their closing quote or
+the next newline. Bearer values must be token-shaped (at least eight characters,
+including a digit or token punctuation), so ordinary prose is retained when
+its word delimiter arrives.
+This applies to core bash, user `!cmd`/`!!cmd`, and persistent terminal
+bash, including streamed updates, background completion notices, terminal screen
+reads, structured results, output spill files and resulting transcript entries.
+The tool-child runtime uses the same setting.
+Credential prefixes are recognized after non-alphanumeric boundaries inside
+URLs, paths and compound tokens. ANSI styling and charset designations do not
+split credential detection; hidden OSC payloads (such as
+terminal titles and hyperlink targets) are omitted while redaction is enabled.
+
+An incomplete token is held until its delimiter or process exit. Persistent
+terminals also flush after 50 ms without output so idle prompts and complete
+cursor-control sequences reach screen reads. Once a token contains a full known
+public credential prefix (including `AKIA`, `AIza`, or `eyJ`), or a Bearer value
+has begun, idle flushes withhold it until a delimiter or process exit. Secret-named
+assignment values remain masked from their first character. Mere prefix fragments
+such as `I`, `e.g.`, `git`, `sk`, and `AI` are published verbatim at idle.
+At a delimiter, withheld tokens are redacted if they match a complete credential
+shape, otherwise released verbatim. At process exit, incomplete started shapes
+are replaced by their public prefix plus `<redacted>`; already published prefix
+characters are not repeated. Tokens longer than 8,192 characters are
+conservatively redacted to bound memory. Enabling the setting affects newly
+started commands; it does not rewrite existing terminal sessions, transcripts,
+command arguments, or files created by commands. This is shape detection, not a
+guarantee that arbitrary encoded or unrecognized credentials will be removed.
 
 Windows paths in JSON must use forward slashes or escaped backslashes:
 

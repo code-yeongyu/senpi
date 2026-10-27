@@ -1,3 +1,6 @@
+import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	createBuiltinParserRegistry,
@@ -127,7 +130,7 @@ describe("permission parsers", () => {
 				]);
 			});
 
-			it("keeps home-based external paths in the permission request", () => {
+			it("resolves home-based external paths and retains their original spelling", () => {
 				// given
 				const input = { command: "cat ~/other-project/file.txt" };
 
@@ -139,8 +142,9 @@ describe("permission parsers", () => {
 					{ permission: "bash", patterns: ["cat"], always: ["cat", "cat *"] },
 					{
 						permission: "external_directory",
-						patterns: ["~/other-project/file.txt"],
-						always: ["~/other-project/*"],
+						patterns: [join(realpathSync.native(homedir()), "other-project", "file.txt")],
+						always: [`${join(realpathSync.native(homedir()), "other-project")}/*`],
+						originalPaths: ["~/other-project/file.txt"],
 					},
 				]);
 			});

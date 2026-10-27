@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { processBunRuntimeOptions, resolveBunReexec } from "./bun-runtime.ts";
 import { captureStdout, exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
+import { dispatchAgentDirectoryCommand } from "./cli/agent-dir-command.ts";
 import { enableStartupCompileCache } from "./compile-cache.ts";
 import {
 	APP_NAME,
@@ -83,6 +84,9 @@ if (reexecUnderBunIfNeeded()) {
 	process.exit();
 }
 
+const args = process.argv.slice(2);
+await dispatchAgentDirectoryCommand(args);
+
 // Must run before cli-main is loaded, by either path: it caches the engine graph this process
 // imports on the fast path below, and it publishes NODE_COMPILE_CACHE so a spawned cli-main child
 // inherits this process's cache directory instead of resolving and re-filling its own.
@@ -93,7 +97,6 @@ process.env.PI_CODING_AGENT = "true";
 process.env.AI_AGENT = APP_NAME;
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
-const args = process.argv.slice(2);
 const PACKAGE_COMMANDS = new Set(["install", "remove", "uninstall", "update", "list", "config"]);
 
 function isRootCommand(args: readonly string[]): boolean {

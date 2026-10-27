@@ -4,6 +4,7 @@ import { isBunBinary } from "../../config.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { ownProcessStartedAtMs } from "../../core/extensions/builtin/terminal/process-identity.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { isSecurityNoticeState } from "../../core/security-notices.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
@@ -12,6 +13,7 @@ import { roleConnection } from "./connection-roles.ts";
 import { answeredUiRequestId } from "./extension-ui-response.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
+import { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
 import type {
@@ -81,6 +83,9 @@ export class SessionWorkerClient {
 	private cancelUiPending = false;
 	private terminalFailure?: string;
 	private stopLimitMirror: () => void = () => {};
+	/** The host's ordered acceptance lane for this worker incarnation, present only while the flag is on. */
+	readonly acceptance = compactUpdatesEnabled() ? new SessionAcceptanceLane() : undefined;
+	private expectedOrdinal = 0;
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
@@ -152,8 +157,13 @@ export class SessionWorkerClient {
 	}
 
 	async commit(): Promise<WorkerSnapshot> {
-		const result = await this.request({ type: "commit" });
+		const result = await this.request({ type: "commit", ...(this.acceptance ? { acceptance: true } : {}) });
 		if (result.type !== "ready") throw new Error("Invalid worker commit response");
+		if (this.acceptance) {
+			// Accepted before the open resolves, so the entry is admitted only after its baseline (R3.C1.1).
+			if (!result.bootstrap) throw new Error("Invalid worker commit response");
+			this.acceptance.bootstrap(result.bootstrap);
+		}
 		this.snapshot = result.snapshot;
 		return result.snapshot;
 	}
@@ -166,6 +176,7 @@ export class SessionWorkerClient {
 	): Promise<RpcSessionBinding> {
 		this.sessionId = sessionId;
 		this.writer = writer;
+		if (this.acceptance) writer.registerAcceptance(sessionId, this.acceptance);
 		this.requestClose = requestClose;
 		this.options = options;
 		await this.request({
@@ -368,6 +379,18 @@ export class SessionWorkerClient {
 					acknowledge(message.signal, false);
 					return;
 				}
+				const lane = this.acceptance;
+				if (lane) {
+					// A gap, duplicate or reordered frame is denied and ends this incarnation before any mutation.
+					if (message.ordinal !== this.expectedOrdinal) {
+						acknowledge(message.signal, false);
+						const kind =
+							(message.ordinal ?? Number.POSITIVE_INFINITY) < this.expectedOrdinal ? "duplicate" : "gap";
+						this.fail(`session_worker_frame_${kind}`);
+						return;
+					}
+					this.expectedOrdinal += 1;
+				}
 				// Identity and activity commit before publication; clients may attach or disconnect on that event.
 				if (message.snapshot) {
 					this.snapshot = message.snapshot;
@@ -424,6 +447,12 @@ export class SessionWorkerClient {
 					outputConnection = target.connection;
 				}
 				const enqueue = () => {
+					// Applied before routing, and so before this frame's credit returns.
+					if (message.bootstrap) lane?.bootstrap(message.bootstrap);
+					else {
+						lane?.applyTranscript(message.transitions ?? []);
+						lane?.accept(message.record, message.recovery);
+					}
 					if (!writer.enqueue(sessionId, message.record)) {
 						acknowledge(message.signal, false);
 						this.fail("session_output_overflow_or_closed");
@@ -484,6 +513,7 @@ export class SessionWorkerClient {
 
 	private fail(error: string): void {
 		if (this.stopped) return;
+		this.acceptance?.retire("worker_failed");
 		this.callbacks.failure(error);
 		this.terminalFailure = error;
 		if (this.writer && this.sessionId) {

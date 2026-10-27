@@ -8,7 +8,8 @@ import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import type { SecurityNoticeSnapshot } from "../../core/security-notices.ts";
-import { getDefaultSessionDir } from "../../core/session-manager.ts";
+import { recoveryCarrier } from "../../core/session-recovery-identity.ts";
+import { getDefaultSessionDir, type SessionManager } from "../../core/session-manager.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
@@ -29,6 +30,7 @@ import {
 	SESSION_WORKER_LIMITS,
 	type SessionWorkerToHost,
 	type WorkerSnapshot,
+	withinFrameLimit,
 } from "./session-worker-protocol.ts";
 import { createSessionWorkerRegistry } from "./session-worker-registry.ts";
 import { McpFormWorker } from "./mcp-form-worker.ts";
@@ -112,7 +114,21 @@ class WorkerEventWriter extends SessionEventWriter {
 				: undefined;
 		if (replacement && Buffer.byteLength(JSON.stringify(replacement)) > SESSION_WORKER_LIMITS.outputBytes)
 			failWorker("session_worker_snapshot_limit");
+		const replaced = "type" in record && record.type === "session_replaced";
+		if (ordered && replaced) journaled = session.sessionManager;
+		const transitions = ordered && !replaced ? (journaled?.drainTranscript() ?? []) : [];
+		const order = ordered
+			? {
+					ordinal: outputOrdinal++,
+					recovery: recoveryCarrier(record),
+					...(replaced
+						? { bootstrap: { transcript: withinFrameLimit(session.sessionManager.beginTranscriptJournal()) } }
+						: {}),
+					...(transitions.length > 0 ? { transitions: withinFrameLimit(transitions) } : {}),
+				}
+			: {};
 		exchange((signal) => ({
+			...order,
 			type: "output",
 			// Keep one JSON-normal transfer format, including toJSON and non-cloneable fields.
 			// S12 replaces this whole-record serialization with compact records and permits.
@@ -134,6 +150,11 @@ let registry: RpcSessionRegistry | undefined;
 let entry: RpcSessionEntry | undefined;
 let binding: RpcSessionBinding | undefined;
 let closing = false;
+/** Set by `commit` when the host owns an acceptance lane; each output frame then carries the next ordinal. */
+let ordered = false;
+let outputOrdinal = 0;
+/** The manager whose committed transcript changes ride the next output frame; replaced with the session. */
+let journaled: SessionManager | undefined;
 let unsubscribe: (() => void) | undefined;
 let unsubscribeWake: (() => void) | undefined;
 
@@ -201,7 +222,16 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			registry = createSessionWorkerRegistry(prepared.configuration.agentDir, factory);
 			const opened = await registry.openSession(prepared.profile);
 			entry = registry.getForCommand(opened.sessionId, "open_session");
-			send({ type: "ready", request: message.request, snapshot: snapshot() });
+			ordered = message.acceptance === true;
+			journaled = ordered ? entry.runtime?.session.sessionManager : undefined;
+			send({
+				type: "ready",
+				request: message.request,
+				snapshot: snapshot(),
+				...(ordered
+					? { bootstrap: { transcript: withinFrameLimit(journaled?.beginTranscriptJournal() ?? []) } }
+					: {}),
+			});
 			return;
 		}
 		case "bind": {

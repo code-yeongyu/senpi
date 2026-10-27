@@ -74,6 +74,21 @@ export interface SpawnedBy {
 	readonly taskId: string;
 }
 
+/**
+ * Known live activity only. A tool represents the oldest outstanding top-level operation, including waits.
+ * `since` is when the session observed the start boundary (tool execution start, assistant stream start),
+ * not a timestamp carried by the core event, so it approximates the real start; it stays stable while selected.
+ */
+export type LifecycleActivity =
+	| {
+			readonly kind: "tool";
+			readonly toolName: string;
+			readonly toolCallId: string;
+			readonly since: string;
+			readonly outstanding: number;
+	  }
+	| { readonly kind: "model"; readonly since: string };
+
 export interface SessionLifecycle {
 	readonly state: SessionLifecycleState;
 	readonly seq: number;
@@ -94,6 +109,10 @@ export interface SessionLifecycle {
 	readonly waitingOn?: LifecycleWaits;
 	readonly holds?: readonly LifecycleHold[];
 	readonly lastStop?: LifecycleStop;
+	/** In-memory and wire-only; absent outside running or when the activity is unknown. */
+	readonly activity?: LifecycleActivity;
+	/** Owner-scoped, wire-only activity ordering, including explicit absence. */
+	readonly activityRevision?: { readonly instanceId: string; readonly revision: number };
 	readonly completion?: {
 		readonly kind: "goal" | "run" | "agent" | "reply";
 		readonly at: string;

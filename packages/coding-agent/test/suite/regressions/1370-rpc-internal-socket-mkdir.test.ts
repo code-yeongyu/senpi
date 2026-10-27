@@ -20,7 +20,8 @@ import { hermeticProviderEnv } from "../../helpers/rpc-hermetic.ts";
 
 vi.mock("node:child_process", async (importOriginal) => {
 	const actual = await importOriginal<typeof childProcess>();
-	return { ...actual, spawn: vi.fn(actual.spawn) };
+	const spawn = vi.fn(actual.spawn);
+	return { ...actual, spawn, default: { ...actual, spawn } };
 });
 
 // Regression coverage for https://github.com/code-yeongyu/senpi/issues/1370

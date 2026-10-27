@@ -1,3 +1,107 @@
+## 2026-10-26 - Shared bounded text ownership for compact current state (S03b-1a, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-content-store.ts`: shared commit subscribers, validated reference counts and leased leaf reads.
+- `packages/coding-agent/src/modes/rpc/compact-commit-dependencies.ts`: one-to-many commit dependencies for indexes and text roots.
+- `packages/coding-agent/src/modes/rpc/compact-content-index.ts`: multi-key dependencies and idempotent frozen-index release.
+- `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`: retirement joins in-flight reads before deleting owned storage.
+- `packages/coding-agent/src/modes/rpc/compact-read-lease.ts`: typed read refusals and operation-scoped ownership.
+- `packages/coding-agent/src/modes/rpc/compact-text-roots.ts`: counted persistent text trees and bounded UTF-16 range reads.
+- `packages/coding-agent/src/modes/rpc/compact-text-view.ts`: sequential bounded text reads for the existing compatibility view.
+- `packages/coding-agent/src/modes/rpc/compact-session-state.ts`: replaces leaf vectors with persistent text roots and invalidates released cuts.
+
+### Why
+
+- The compact store must retain content shared by multiple keys, subscribers and frozen readers without losing commit notifications, copying leaf vectors, or reclaiming in-flight reads. Range reads reject excess size/count rather than silently truncating. Structured values, collection roots and bounded index pages remain S03b-1b work.
+
+### Why an extension could not handle it
+
+- These internal storage and current-state ownership paths run below RPC delivery. Extensions cannot own their reference lifetimes or join spool retirement.
+
+### Expected merge conflict zones
+
+- Fork-only compact storage and consumer modules listed above. S03b-1b will replace collection/page materialization; S03b-2/3 will add reducer and lane integration. No capability or rollout default changes.
+
+## 2026-10-26 - Structured lane into the shared binding behind the compact-updates flag (senpi#4349, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/structured-session-records.ts` (new): `structuredLaneEnabled()` reads
+  `<brand>_ENGINE_SOCKET_COMPACT_UPDATES` (explicit `1`/`true` only). `subscribeStructuredSessionRecords` correlates the
+  lane like legacy records and gates blocks: a block's records are admitted only after its own seed or insert reached
+  this subscriber (a late attach gets nothing for that message); a block whose seed was seen but whose next record or
+  end has no capture is invalid, and the assistant `message_end` lists it in `invalidatedBlocks`. A terminal capture's
+  `rewrittenFrom` (#4307 fold) invalidates every admitted block at or above that index, and a `message_end` with no
+  interpretable terminal capture (cancel, idle timeout, a stream that ended without a terminal event, or a capture
+  with no terminal message) invalidates every block of
+  the message. Blocks are addressed by `capture.contentIndex ?? event.contentIndex`, never a drifted public index.
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: optional `RpcConnectionSink.writeStructured`; when present
+  the handler subscribes the structured lane next to the legacy subscription and tears it down with it.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`: supplies `writeStructured` only while the flag is on, into
+  `SessionEventWriter.structuredLanes` within the provider scope; closed scopes drop it.
+- `packages/coding-agent/src/modes/rpc/session-structured-lanes.ts` (new), `session-event-writer.ts`: per-session
+  receivers for the structured lane; legacy sockets, stdout and the replay snapshot never read it.
+- `packages/coding-agent/src/modes/rpc/session-record-stream.ts`: `subscribeSessionRecords` takes an optional event source
+  so both lanes share one correlation implementation.
+
+### Why
+
+- R3.C6.2 / ruling 05 D4: the three internal controls travel on the same ordered lane as ordinary records and never
+  reach a legacy destination; flag off is byte-identical.
+
+### Why an extension could not handle it
+
+- The binding and writer are host internals below extension delivery.
+
+### Expected merge conflict zones
+
+- LOW: `installSessionSubscriptions` and `dispose` in `connection-handler.ts`; the `taggedSink` literal in
+  `session-binding.ts`; the `subscribeSessionRecords` signature.
+
+## 2026-10-26 - Spillable settled-row index for compact current state (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-content-index.ts`: a keyed collection with an immutable paged disk base plus one resident override slot per key. Updates coalesce into that slot (N status updates to one row hold one slot), and a removal of a committed row is a tombstone mask until compaction folds it in. The index tracks which row overrides still reference uncommitted leaves, so acceptance only checks a count and compaction runs only when enough overrides are eligible. Background compaction folds eligible overrides (and any small base pages) into copy-on-write pages sized in UTF-8 bytes, and publishes them in one synchronous swap that never removes an override newer than the one it read. A row removed or wholly replaced while compaction ran is skipped at publication, so every published leaf is still owned; a failed page write or read leaves the previous index in place and the next compaction free to run; nothing is published after retirement started. A cut keeps the pages and overrides it froze. Pages are internal storage only, never a wire record.
+- `packages/coding-agent/src/modes/rpc/compact-index-pages.ts`: page packing (at most 128 rows and 64 KiB of UTF-8 per page) and the small-page test that lets the next compaction merge pages shrunk by deletions.
+- `packages/coding-agent/src/modes/rpc/compact-session-state.ts`: settled message rows move from the resident map to that index (`compactAboveRows`, one page by default); `storageStatus` reports override slots, deletion masks and base pages/rows.
+- `packages/coding-agent/src/modes/rpc/compact-content-store.ts`, `packages/coding-agent/src/modes/rpc/compact-storage-io.ts`: page write/read operations, a committed-leaf query, and a per-leaf commit hook for index compaction. A failed page write is reported without halting leaf spilling.
+- `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`: the spool file path moved out of `compact-content-store.ts` unchanged (the serial job chain, the epoch directory, spool file write/read/reclaim, the failure ledger) as the `CompactSpoolStorage` base class the store extends, keeping the store within the 250-line file rule.
+- `packages/coding-agent/src/modes/rpc/compact-spool-dir.ts`: when the ownership marker cannot be written into a directory the store just created, the store unlinks the marker its own exclusive create made and removes that now-empty directory (`rmdir`, never recursive), then reports a typed `marker_write_failed` spool failure, so a restart creates the directory fresh instead of refusing it as pre-existing. Retiring a store whose epoch directory is already gone is a no-op instead of a raw `ENOENT` rejection.
+- `packages/coding-agent/src/modes/rpc/compact-storage-io.ts`, `packages/coding-agent/src/modes/rpc/compact-spool-storage.ts`, `packages/coding-agent/src/modes/rpc/compact-content-store.ts`: describing a failure cause never throws, so a failed spill write whose host-supplied cause cannot be described is still recorded against its own file with the bytes it keeps resident; discarding the partial file and returning the leaf to the resident, spillable set now run in `finally` blocks, so a throwing failure report can no longer strand the leaf pending with its partial file on disk.
+- `packages/coding-agent/src/modes/rpc/compact-transition.ts`: the transition contract (`CompactTransition`, its block kinds, persistence states and block address) and the typed `CompactTransitionError` moved out of `compact-session-state.ts` unchanged, keeping the owner within the 250-line file rule.
+
+### Why
+
+- senpi#4272 (contract R3.C6.4, S03 design section 4): settled row headers must be able to leave RAM; with a paged base, a status update or removal must not need the spilled row, and a stale compaction must never erase a newer update or resurrect a removed row.
+
+### Why an extension could not handle it
+
+- The index is internal storage of the RPC host's current-state owner, below extension delivery.
+
+### Expected merge conflict zones
+
+- None upstream: every file named here is fork-only.
+
+## 2026-10-26 - A Windows host start keeps the endpoint's valid socket secret (senpi#4292)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-ensure-start.ts`: `startHost` provisions the public Windows socket secret through `ensureSocketSecret` instead of `createSocketSecret`, so an existing valid 32-byte secret is reused byte for byte.
+
+### Why
+
+- Every start rotated the secret. The pipe name and the raw handshake derive from it, so a client or desktop that read it before the start dialed a name the new host never listened on (sisyphuslabs/omo-desktop-app#4199, design test 3).
+
+### Why an extension could not handle it
+
+- The host start path provisions the credential before any extension is loaded.
+
+### Expected merge conflict zones
+
+- LOW: the secret-provisioning line and the `socket-transport.ts` import in `host-ensure-start.ts`.
+
 ## 2026-10-26 - Spillable compact content storage for current session state (part of #4272)
 
 ### What changed
