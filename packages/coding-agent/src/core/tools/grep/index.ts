@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "typebox";
+import { isBlockingAutomountPath } from "../../../utils/paths.ts";
 import type { FilesystemPolicyChecker, ToolDefinition } from "../../extensions/types.ts";
 import { canonicalizeFilesystemPath } from "../filesystem-policy.ts";
 import { resolveToCwd } from "../path-utils.ts";
@@ -111,6 +112,12 @@ export function createGrepToolDefinition(
 			let singleFile = false;
 			for (const raw of requested) {
 				let path = resolveToCwd(raw, workingCwd);
+				// The macOS /home automount trigger must not be stat-ed either: a stat of a wedged trigger
+				// blocks this thread exactly like realpath, so the path is reported missing before any I/O.
+				if (isBlockingAutomountPath(path)) {
+					missingPaths.push(path);
+					continue;
+				}
 				let info = await pathStat(path);
 				if (!info) {
 					const selector = /^(.*):L(\d+)-L?(\d+)$/.exec(path);

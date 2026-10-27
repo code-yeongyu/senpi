@@ -210,3 +210,38 @@ describe("grep root resolution on a wedged automounter", () => {
 		expect(realpath).not.toHaveBeenCalled();
 	});
 });
+
+describe("the real grep tool on a wedged automounter", () => {
+	it("refuses a /home search path before any stat or realpath reaches it", async () => {
+		setPlatform("darwin");
+		const blocked = (target: string) => target.startsWith("/home") || target.startsWith("/Home");
+		const stat = vi.fn(async (target: string) => {
+			if (blocked(target)) throw new Error("stat must not be called for an automount trigger path");
+			throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+		});
+		const realpath = vi.fn(async (target: string) => {
+			if (blocked(target)) throw new Error("realpath must not be called for an automount trigger path");
+			return target;
+		});
+		vi.doMock("node:fs/promises", async () => {
+			const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+			return { ...actual, stat, realpath };
+		});
+		const { createGrepToolDefinition } = await import("../src/core/tools/grep/index.ts");
+		const grep = createGrepToolDefinition("/Users/person/project");
+
+		await expect(
+			grep.execute(
+				"call-1",
+				{ pattern: "needle", path: "/home/other/work" },
+				new AbortController().signal,
+				() => {},
+				{
+					cwd: "/Users/person/project",
+				} as never,
+			),
+		).rejects.toThrow(/Path not found/);
+		expect(stat).not.toHaveBeenCalledWith("/home/other/work");
+		expect(realpath).not.toHaveBeenCalledWith("/home/other/work");
+	});
+});
