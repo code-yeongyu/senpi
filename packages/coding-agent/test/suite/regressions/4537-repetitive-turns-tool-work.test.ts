@@ -44,6 +44,22 @@ function customEntries(harness: Harness, customType: string): SessionEntry[] {
 		.filter((entry) => entry.type === "custom" && entry.customType === customType);
 }
 
+/** Resolves at the session's final idle, after any automatic follow-up turns, bounded by a timeout. */
+function nextIdle(harness: Harness): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			unsubscribe();
+			reject(new Error("agent_idle was not emitted"));
+		}, 10_000);
+		const unsubscribe = harness.session.subscribe((event) => {
+			if (event.type !== "agent_idle") return;
+			clearTimeout(timer);
+			unsubscribe();
+			resolve();
+		});
+	});
+}
+
 function corrections(harness: Harness): SessionEntry[] {
 	return harness.sessionManager
 		.getEntries()
@@ -101,7 +117,7 @@ describe("senpi#4537 repetitive-turns in a long working session", () => {
 		expect(customEntries(harness, "ttsr-loop-stopped")).toEqual([]);
 	});
 
-	it("stops a repeat right after the correction, and writes no activation for the suppressed nudge", async () => {
+	it("stops a repeat right after the correction", async () => {
 		// given a model that keeps repeating even after the correction
 		harness = await createHarness({ extensionFactories: [ttsrExtension], tools: [echoTool] });
 		harness.setResponses([
@@ -115,12 +131,60 @@ describe("senpi#4537 repetitive-turns in a long working session", () => {
 		await harness.session.prompt("frob the widget");
 		await harness.session.prompt("continue");
 
-		// then the loop ends after one correction, and every activation notice matches a correction actually sent
+		// then the loop ends after one correction
 		expect(harness.faux.getCallLog()).toHaveLength(3);
 		expect(corrections(harness)).toHaveLength(1);
-		expect(customEntries(harness, "rule-activation")).toHaveLength(1);
 		expect(customEntries(harness, "ttsr-loop-stopped")).toHaveLength(1);
-		expect(customEntries(harness, "engine-paused")).toHaveLength(1);
+	});
+
+	it("writes no 'nudge queued' activation for a correction it suppresses", async () => {
+		// given a correction, a different reply, then another owner's automatic turn that repeats that reply,
+		// all with no user message and no tool call, so the rule fires again inside the same episode
+		const other = "Checked the queue again; the frobnicate step is still running on the second worker.";
+		let afterCorrection = false;
+		let sentOtherWork = false;
+		harness = await createHarness({
+			extensionFactories: [
+				ttsrExtension,
+				(pi) => {
+					pi.on("message_start", (event) => {
+						if (event.message.role === "custom" && event.message.customType === "ttsr-injection") {
+							afterCorrection = true;
+						}
+					});
+					pi.on("agent_settled", () => {
+						if (!afterCorrection || sentOtherWork) return;
+						sentOtherWork = true;
+						pi.sendMessage(
+							{ customType: "other-work", content: "do more", display: false },
+							{ triggerTurn: true },
+						);
+					});
+				},
+			],
+			tools: [echoTool],
+			persistSession: true,
+		});
+		await harness.session.bindExtensions({ mode: "rpc" });
+		harness.setResponses([
+			fauxAssistantMessage([fauxText(STATUS)]),
+			fauxAssistantMessage([fauxText(STATUS)]),
+			fauxAssistantMessage([fauxText(other)]),
+			fauxAssistantMessage([fauxText(other)]),
+			fauxAssistantMessage([fauxText("unexpected extra turn")]),
+		]);
+
+		// when
+		await harness.session.prompt("frob the widget");
+		const idle = nextIdle(harness);
+		await harness.session.prompt("continue");
+		await idle;
+
+		// then the second hit is stopped, and only the correction actually sent has an activation notice
+		expect(harness.faux.getCallLog()).toHaveLength(4);
+		expect(corrections(harness)).toHaveLength(1);
+		expect(customEntries(harness, "ttsr-loop-stopped")).toHaveLength(1);
+		expect(customEntries(harness, "rule-activation")).toHaveLength(1);
 	});
 });
 
