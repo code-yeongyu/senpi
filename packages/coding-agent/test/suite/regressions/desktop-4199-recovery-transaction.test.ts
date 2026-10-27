@@ -17,9 +17,19 @@ import {
 	offerHostRole,
 	offerSupervisorLaunch,
 	parseReservationLocatorArgs,
+	reservationStorePath,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import { resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
 import { cloneMachine, fakeProcessTable, fakeWindows } from "../../helpers/fake-windows-presence.ts";
+
+const mocked = vi.hoisted(() => ({ lockDir: "" }));
+
+// The endpoint's fixed reservation store lives beside its ensure lock (design 4.2a step 1), whose win32 name comes from
+// the pipe-address formula; on a POSIX runner the lock target is pointed at each test's own directory instead.
+vi.mock("../../../src/modes/rpc/host-ensure-lock.ts", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../../../src/modes/rpc/host-ensure-lock.ts")>()),
+	hostEnsureLockTarget: () => join(mocked.lockDir, "endpoint"),
+}));
 
 vi.mock("../../../src/modes/rpc/socket-secret-native.ts", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../../../src/modes/rpc/socket-secret-native.ts")>()),
@@ -75,7 +85,8 @@ describe("#4199 recovery transaction: probe set, admissibility, kernel-session g
 	 */
 	async function launched(machine: Machine) {
 		const root = await tempRoot();
-		const storePath = join(root, "endpoint.reservation.db");
+		mocked.lockDir = root;
+		const storePath = reservationStorePath(ENDPOINT);
 		const store = await openStore(storePath);
 		const reservation = resolvePresenceRoot({
 			coordinationTarget: TARGET,

@@ -27,16 +27,21 @@ impl OwnedHandle {
         crate::classify(&crate::volume::probe_handle(self.0)) == crate::Locality::Local
     }
 
-    pub(crate) fn tag_matches(&self, tag: &[u8]) -> bool {
+    /// Whether the object's content is exactly `header`: the immutable header the row recorded (design
+    /// 4.2a: random tag, schema, creation timestamp). Read through the acquired handle, after the lock.
+    pub(crate) fn header_matches(&self, header: &[u8]) -> bool {
         use std::os::windows::{fs::FileExt, io::FromRawHandle};
         // SAFETY: this is a borrowed view of our live handle. ManuallyDrop prevents File from closing
-        // it. seek_read supplies its own OVERLAPPED, so it does not change the lock's file offset.
+        // it. seek_read issues ReadFile with its own OVERLAPPED carrying the byte offset and, on this
+        // overlapped handle, waits for that read on the file handle itself; that wait is unambiguous
+        // because the lock has completed and no other I/O is pending on the handle here. The lock's
+        // byte range is fixed in its own OVERLAPPED and the file position is never used.
         let file = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_handle(self.0) });
-        if file.metadata().map(|m| m.len()).ok() != Some(tag.len() as u64) {
+        if file.metadata().map(|m| m.len()).ok() != Some(header.len() as u64) {
             return false;
         }
-        let mut actual = vec![0; tag.len()];
-        file.seek_read(&mut actual, 0).ok() == Some(tag.len()) && actual == tag
+        let mut actual = vec![0; header.len()];
+        file.seek_read(&mut actual, 0).ok() == Some(header.len()) && actual == header
     }
 }
 
