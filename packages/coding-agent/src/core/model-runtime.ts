@@ -64,6 +64,7 @@ import {
 	type TranscriptContext,
 	wrapStreamWithModelRecovery,
 } from "@earendil-works/pi-ai";
+import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
 import { installClaudeCodeVersionFileStore } from "@earendil-works/pi-ai/utils/claude-code-version-cache";
 import {
@@ -853,6 +854,47 @@ export class ModelRuntime implements Models {
 				headers: mergeHeaders(resolution.auth.headers, configuredHeaders),
 			},
 		};
+	}
+
+	/**
+	 * Auth for a request a session sends outside the rotation stream (compaction, /btw, look-at,
+	 * cache keepalive). The key must belong to the account the session's own turns use, so a pooled
+	 * provider resolves the slot the stream would pick for this session; without a pool, or when
+	 * the stream would not rotate either, it is `getAuth(model)`.
+	 */
+	async getSessionAuth(model: Model<Api>, sessionId: string): Promise<AuthResult | undefined> {
+		return this.getAuth(model, (await this.sessionSlotAuth(model, sessionId)) ?? {});
+	}
+
+	private async sessionSlotAuth(
+		model: Model<Api>,
+		sessionId: string,
+	): Promise<{ apiKey?: string; slotName?: string } | undefined> {
+		// couldRotateCredentials' policy gates, without its snapshot fast path: a runtime that has not
+		// refreshed yet holds no snapshot, and these callers are not on the latency-sensitive path.
+		if (this.credentials.hasRuntimeApiKey(model.provider)) return undefined;
+		if (this.config.getProvider(model.provider)?.credentials?.rotation === false) return undefined;
+		if (this.ownsAccountSelection(model.provider)) return undefined;
+		const sources = await this.credentialRotationSources(model, undefined);
+		if (!sources) return undefined;
+		const { rotation } = await this.loadCredentialPool();
+		const slots = await rotation.listRotationSlots(sources, {
+			acquireLeases: false,
+			modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
+		});
+		const pooled: PooledCredential | undefined = sources.credential;
+		const slot = rotation.selectSessionSlot(
+			slots,
+			{
+				affinityKey: sessionId,
+				useAffinity: sources.policy?.affinity !== false,
+				hasher: rotation.sha256SlotHasher,
+				...(pooled?.order === undefined ? {} : { order: pooled.order }),
+			},
+			Date.now(),
+		);
+		if (!slot) return undefined;
+		return slot.lane === "env" ? { apiKey: slot.envKey } : { slotName: slot.name };
 	}
 
 	private enqueueCredentialOperation<T>(providerId: string, signal: AbortSignal, task: () => Promise<T>): Promise<T> {
