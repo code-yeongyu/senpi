@@ -17,16 +17,34 @@
  * reserving owner's own presence object, which the owner holds before it persists the reservation, and the owner's
  * `released` commit; a role claimed over a predeclared object records that the claimant bound it, and that claim
  * revalidates the revision its claimant read before acquiring. A schema-3 record is refused.
+ *
+ * Schema 5 (design 4.2a "Recovery transaction order" steps 2, 4 and 5): recovery fences an abandoned generation
+ * (`cancelling`) and retires it only at the revision it fenced, with a discharge for every recorded authority entry,
+ * persisted with the retired record. A retired generation is a tombstone that nothing revives, and no generation is
+ * reserved for an endpoint while an earlier one is not retired. A schema-4 record is refused.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 
-export const ENDPOINT_RESERVATION_SCHEMA = 4;
+export const ENDPOINT_RESERVATION_SCHEMA = 5;
 
 export type ReservationRole = "supervisor" | "host";
-export type ReservationState = "pending" | "cancelling" | "serving";
+export type ReservationState = "pending" | "cancelling" | "serving" | "retired";
 export type RoleStatus = "offered" | "claimed" | "granted" | "released" | "revoked";
+
+/** An actor that may have held authority in a generation: its reserving owner or one of its roles. */
+export type AuthorityEntry = "owner" | ReservationRole;
+/** The proofs recovery supplies for an entry whose state history does not discharge it (design 4.2a). */
+export type RecoveryProof = "presence_released" | "process_gone";
+/** How a retired generation's entry was discharged: a proof, its own `released` commit, or a role never granted. */
+export type Discharge = RecoveryProof | "released" | "never_granted";
+
+/** The census result persisted with a retired generation. */
+export interface RetirementRecord {
+	readonly fencedRevision: number;
+	readonly discharges: Partial<Record<AuthorityEntry, Discharge>>;
+}
 
 export type ReservationRejection =
 	| "store_insecure"
@@ -35,6 +53,10 @@ export type ReservationRejection =
 	| "generation_unknown"
 	| "generation_cancelled"
 	| "generation_not_pending"
+	| "generation_retired"
+	| "generation_active"
+	| "generation_not_fenced"
+	| "discharge_incomplete"
 	| "endpoint_mismatch"
 	| "role_not_offered"
 	| "role_already_offered"
@@ -147,6 +169,8 @@ export interface ReservationRow {
 	readonly ownerPresence: PresenceObjectRecord;
 	/** `released` once the owner committed that its authority over this generation ended. */
 	readonly ownerStatus: "reserving" | "released";
+	/** The census result recovery persisted when it retired this generation; `null` until then. */
+	readonly retirement: RetirementRecord | null;
 }
 
 export interface RoleRow {
@@ -269,7 +293,8 @@ CREATE TABLE IF NOT EXISTS reservations (
 	owner_presence_file_system TEXT,
 	owner_presence_kernel_session TEXT,
 	owner_presence_kernel_session_reason TEXT,
-	owner_presence_host_label TEXT
+	owner_presence_host_label TEXT,
+	retirement TEXT
 );
 CREATE TABLE IF NOT EXISTS roles (
 	generation TEXT NOT NULL REFERENCES reservations(generation),
@@ -320,6 +345,7 @@ interface ReservationColumns {
 	owner_presence_kernel_session: string | null;
 	owner_presence_kernel_session_reason: string | null;
 	owner_presence_host_label: string | null;
+	retirement: string | null;
 }
 
 /** One presence object's columns, as the roles table names them. */
@@ -521,6 +547,11 @@ export class EndpointReservationStore {
 		const placed = root.status === "placed" ? root : undefined;
 		const unavailable = root.status === "presence_unavailable" ? root : undefined;
 		this.#transaction(() => {
+			// Exactly one successor: an endpoint's earlier generation must be retired before another is reserved.
+			const active = this.#database
+				.prepare("SELECT generation FROM reservations WHERE endpoint = ? AND state != 'retired' LIMIT 1")
+				.get(endpoint) as { generation: string } | undefined;
+			if (active) throw new EndpointReservationError("generation_active", `${active.generation} is not retired`);
 			this.#database
 				.prepare(
 					`INSERT INTO reservations (generation, endpoint, state, revision, owner, expected_roles, presence_placement,
@@ -587,6 +618,7 @@ export class EndpointReservationStore {
 		if (reservation.state === "cancelling") {
 			throw new EndpointReservationError("generation_cancelled", locator.generation);
 		}
+		if (reservation.state === "retired") throw new EndpointReservationError("generation_retired", locator.generation);
 		const row = this.#role(locator.generation, locator.role);
 		if (!row || row.status !== "offered" || row.nonce === null) {
 			throw new EndpointReservationError("role_not_offered", `${locator.role} in ${locator.generation}`);
@@ -613,6 +645,9 @@ export class EndpointReservationStore {
 			const reservation = this.#locate(locator);
 			if (reservation.state === "cancelling") {
 				throw new EndpointReservationError("generation_cancelled", locator.generation);
+			}
+			if (reservation.state === "retired") {
+				throw new EndpointReservationError("generation_retired", locator.generation);
 			}
 			if (reservation.state !== "pending") {
 				throw new EndpointReservationError("generation_not_pending", locator.generation);
@@ -680,12 +715,84 @@ export class EndpointReservationStore {
 	 */
 	cancel(generation: string): void {
 		this.#transaction(() => {
-			this.#reservation(generation);
+			if (this.#reservation(generation).state === "retired") {
+				throw new EndpointReservationError("generation_retired", generation);
+			}
 			this.#database
 				.prepare("UPDATE roles SET status = 'revoked', nonce = NULL WHERE generation = ? AND status = 'offered'")
 				.run(generation);
 			this.#database.prepare("UPDATE reservations SET state = 'cancelling' WHERE generation = ?").run(generation);
 			this.#bump(generation);
+		});
+	}
+
+	/**
+	 * Retires a fenced generation (design 4.2a "Recovery transaction order" step 5). The generation must be `cancelling`
+	 * and still at `revision`, the revision the caller's census was taken at. `proofs` must name exactly the entries
+	 * whose state history does not discharge them: the reserving owner until its `released` commit and every granted role
+	 * without one. A released entry discharges itself and a role never granted is discharged by the fence. The retired
+	 * record keeps every identity and stores the discharges as its tombstone.
+	 */
+	retire(generation: string, revision: number, proofs: Partial<Record<AuthorityEntry, RecoveryProof>>): void {
+		this.#transaction(() => {
+			const reservation = this.#reservation(generation);
+			if (reservation.state === "retired") throw new EndpointReservationError("generation_retired", generation);
+			if (reservation.state !== "cancelling") {
+				throw new EndpointReservationError("generation_not_fenced", generation);
+			}
+			if (reservation.revision !== revision) throw new EndpointReservationError("revision_changed", generation);
+			const roles = this.#database
+				.prepare("SELECT role, status FROM roles WHERE generation = ? ORDER BY role")
+				.all(generation) as { role: ReservationRole; status: RoleStatus }[];
+			// The fence revoked every offer; an offer still open means this generation was never fenced.
+			if (roles.some(({ status }) => status === "offered")) {
+				throw new EndpointReservationError("generation_not_fenced", generation);
+			}
+			const discharges: Partial<Record<AuthorityEntry, Discharge>> = {};
+			const needed: AuthorityEntry[] = [];
+			if (reservation.ownerStatus === "released") discharges.owner = "released";
+			else needed.push("owner");
+			for (const { role, status } of roles) {
+				if (status === "released") discharges[role] = "released";
+				else if (status === "granted") needed.push(role);
+				else discharges[role] = "never_granted";
+			}
+			const supplied = Object.keys(proofs);
+			const exact =
+				supplied.length === needed.length &&
+				needed.every((entry) => proofs[entry] === "presence_released" || proofs[entry] === "process_gone");
+			if (!exact) {
+				throw new EndpointReservationError(
+					"discharge_incomplete",
+					`${generation} needs proofs for [${needed.join(",")}], got [${supplied.join(",")}]`,
+				);
+			}
+			for (const entry of needed) discharges[entry] = proofs[entry];
+			const record: RetirementRecord = { fencedRevision: revision, discharges };
+			this.#database
+				.prepare("UPDATE reservations SET state = 'retired', retirement = ? WHERE generation = ?")
+				.run(JSON.stringify(record), generation);
+			this.#bump(generation);
+		});
+	}
+
+	/** The endpoint's generations that are not retired, oldest first. */
+	activeGenerations(endpoint: string): readonly string[] {
+		return this.#read(() =>
+			(
+				this.#database
+					.prepare("SELECT generation FROM reservations WHERE endpoint = ? AND state != 'retired' ORDER BY rowid")
+					.all(endpoint) as { generation: string }[]
+			).map(({ generation }) => generation),
+		);
+	}
+
+	/** Every role row of `generation`, in role order. */
+	roleRows(generation: string): readonly RoleRow[] {
+		const endpoint = this.#reservation(generation).endpoint;
+		return (["host", "supervisor"] as const).flatMap((role) => {
+			const row = this.roleRow({ endpoint, generation, role });
+			return row ? [row] : [];
 		});
 	}
 
@@ -832,6 +939,7 @@ export class EndpointReservationStore {
 				presence: reservationPresenceOf(row),
 				ownerPresence: ownerPresenceOf(row),
 				ownerStatus: row.owner_status,
+				retirement: row.retirement === null ? null : (JSON.parse(row.retirement) as RetirementRecord),
 			};
 		});
 	}
@@ -847,6 +955,7 @@ export class EndpointReservationStore {
 	#pending(generation: string): void {
 		const { state } = this.#reservation(generation);
 		if (state === "cancelling") throw new EndpointReservationError("generation_cancelled", generation);
+		if (state === "retired") throw new EndpointReservationError("generation_retired", generation);
 		if (state !== "pending") throw new EndpointReservationError("generation_not_pending", generation);
 	}
 

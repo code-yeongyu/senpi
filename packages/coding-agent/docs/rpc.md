@@ -926,7 +926,7 @@ the host the legacy way. A supervisor launched with a reservation probes its own
 offers the host role. If the generation expects a host and that command did not report both capabilities, the
 supervisor fails with `launch_capability_missing` before the host is spawned, and the host never receives the locator.
 
-The reservation store is at schema 4 and refuses an older store with `schema_unsupported`. The process that reserves a
+The reservation store is at schema 5 and refuses an older store with `schema_unsupported`. The process that reserves a
 generation resolves its presence root once and records it in the reservation. If the store's directory classifies `local`
 from its opened handle, the root is the private sibling directory `<endpoint lock target>.presence`. Otherwise the root is
 `senpi\rpc-presence\<endpoint key>` under `FOLDERID_LocalAppData`, and that directory must classify `local` too.
@@ -961,6 +961,18 @@ keeps its lock through every spawn and bind. Once its shutdown has observed the 
 commits `released` and only then closes the lock. The host keeps its lock until its process exits. The reserving process
 commits its own `released` once the generation is serving, then closes its lock. A row without a local presence root
 takes no lock.
+
+An endpoint has at most one generation that is not retired: reserving another while one is pending, serving or
+cancelling fails with `generation_active`. Recovery retires an abandoned generation in two transitions. The fence
+(`cancelling`) revokes every outstanding offer and refuses later claims and grants with `generation_cancelled`.
+Retirement then requires that fence, the revision the recovery's census was taken at (`revision_changed` otherwise,
+for example after a role committed `released` in between) and a proof for exactly the entries whose history does not
+discharge them: the reserving owner until its `released` commit and every granted role without one. The proofs are
+`presence_released` (an admissible acquisition of the entry's presence object) and `process_gone`; a missing or extra
+proof fails with `discharge_incomplete`. A role that committed `released` is recorded `released`, and a role that was
+only offered or claimed is recorded `never_granted`. The retired record keeps every identity and stores these
+discharges with the fenced revision. It is a tombstone: every later claim, offer, grant, serving commit, fence or
+retirement of it fails with `generation_retired`.
 
 ### Generation handoff (`handoffHost`, `probeHost`, `stopHost`)
 
