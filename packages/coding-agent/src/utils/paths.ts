@@ -21,6 +21,37 @@ export interface PathInputOptions {
 }
 
 /**
+ * macOS ships an `auto_home` automounter map on `/home`: the directory is an autofs trigger, not a
+ * real directory. Bun's `fs.realpath*` (sync, native and the promise form alike) resolves a path by
+ * `open(2)`-ing its components, and opening the trigger forces the automount. When the map is wedged
+ * the open never returns, and because it blocks in the kernel on the calling thread the promise form
+ * cannot be raced to a deadline either: the thread, and with it the host loop, is parked forever.
+ *
+ * `/home` is a real directory on Linux, so the rule is darwin-only, and a user whose home directory
+ * genuinely lives under `/home` has already resolved the trigger, so their own subtree is allowed.
+ */
+const AUTOMOUNT_TRIGGER_ROOT = "/home";
+
+export interface AutomountPathOptions {
+	/** Platform to judge against. Defaults to the running platform. */
+	platform?: NodeJS.Platform;
+	/** Home directory of the current user. Defaults to `os.homedir()`. */
+	homeDir?: string;
+}
+
+/**
+ * True when resolving this path could block on a macOS automount trigger, so it must be treated as
+ * an opaque string instead of being handed to `realpath` or a stat traversal.
+ */
+export function isBlockingAutomountPath(inputPath: string, options?: AutomountPathOptions): boolean {
+	if ((options?.platform ?? process.platform) !== "darwin") return false;
+	if (inputPath !== AUTOMOUNT_TRIGGER_ROOT && !inputPath.startsWith(`${AUTOMOUNT_TRIGGER_ROOT}/`)) return false;
+	const home = options?.homeDir ?? homedir();
+	if (inputPath === home || inputPath.startsWith(home.endsWith("/") ? home : `${home}/`)) return false;
+	return true;
+}
+
+/**
  * Resolve a path to its canonical (real) form, following symlinks.
  * Falls back to the raw path if resolution fails (e.g. the target does
  * not exist yet), so that callers never crash on missing filesystem

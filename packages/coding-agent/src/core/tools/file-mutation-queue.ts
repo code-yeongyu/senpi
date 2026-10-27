@@ -1,6 +1,6 @@
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
-import { realpathWithoutOpenStrict } from "../../utils/paths.ts";
+import { isBlockingAutomountPath, realpathWithoutOpenStrict } from "../../utils/paths.ts";
 import {
 	foldPathForCaseInsensitiveFilesystem,
 	isMissingPathError,
@@ -21,6 +21,8 @@ let registrationQueue = Promise.resolve();
  */
 async function getMutationQueueKey(filePath: string): Promise<string> {
 	const resolvedPath = resolve(filePath);
+	// A macOS automount trigger blocks in open(2) on this thread, where no deadline can fire.
+	if (isBlockingAutomountPath(resolvedPath)) return foldPathForCaseInsensitiveFilesystem(resolvedPath);
 	const canonicalPath = await withResolutionDeadline(realpath(resolvedPath)).catch((error: unknown) => {
 		if (isMissingPathError(error)) return resolvedPath;
 		throw error;

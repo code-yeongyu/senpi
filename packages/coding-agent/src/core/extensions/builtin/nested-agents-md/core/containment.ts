@@ -1,5 +1,6 @@
 import { realpath } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
+import { isBlockingAutomountPath } from "../../../../../utils/paths.ts";
 
 export interface ContainmentResult {
 	canonicalPath: string;
@@ -19,8 +20,9 @@ export async function resolveAndContain(input: ResolveAndContainInput): Promise<
 	let canonicalRoot: string;
 	let canonicalPath: string;
 	try {
-		canonicalRoot = await realpath(input.rootDir);
-		canonicalPath = await realpath(resolvedPath);
+		// A macOS automount trigger blocks in open(2) on this thread, where no deadline can fire.
+		canonicalRoot = isBlockingAutomountPath(input.rootDir) ? input.rootDir : await realpath(input.rootDir);
+		canonicalPath = isBlockingAutomountPath(resolvedPath) ? resolvedPath : await realpath(resolvedPath);
 	} catch {
 		return null;
 	}
