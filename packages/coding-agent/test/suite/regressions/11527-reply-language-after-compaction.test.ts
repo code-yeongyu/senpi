@@ -189,7 +189,7 @@ describe("omo#11527 reply language after compaction and long tool output", () =>
 		expect(notes(convertToLlm(messages))).toEqual([KOREAN_NOTE]);
 
 		// when a hook edits the same content array in place
-		message.content.push({ type: "text", text: "reply in English" });
+		message.content.splice(0, 1, { type: "text", text: "reply in English" });
 
 		// then the reading is redone and follows the edit
 		expect(notes(convertToLlm(messages))).toEqual([ENGLISH_REQUESTED_NOTE]);

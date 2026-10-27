@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { readReplyLanguageRequest } from "../../../src/core/reply-language-request.ts";
 
-// omo#11527: a reply-language request is decided for the whole message: only a short message whose
-// first or last line is the user's own directive has one; any sign of reported speech or pasted
-// content anywhere in the message (quotes, attribution, speaker label, header, paste) means none.
+// omo#11527: only a one-line message that is the user's own directive has a reply-language request.
+// Every multi-line form from the four review rounds must stay without one (regression guard).
 
 const DIRECTIVES = [
 	["Korean directive", "영어로 답해줘"],
@@ -23,8 +22,9 @@ const QUOTE_STYLES = [
 
 describe("omo#11527 a reply-language request is the user's own directive only", () => {
 	describe.each(DIRECTIVES)("%s", (_name, directive) => {
-		it("counts on the user's own line (positive control)", () => {
-			expect(readReplyLanguageRequest(`이거 봐줘\n${directive}`)).toBe("English");
+		it("counts as a one-line message (positive control)", () => {
+			expect(readReplyLanguageRequest(directive)).toBe("English");
+			expect(readReplyLanguageRequest(`  ${directive}  \n\n`)).toBe("English");
 		});
 
 		it.each(QUOTE_STYLES)("does not count inside %s, alone or after the user's words", (_style, quote) => {
@@ -43,11 +43,17 @@ describe("omo#11527 a reply-language request is the user's own directive only", 
 			expect(readReplyLanguageRequest(`이거 봐줘\n${text}`)).toBeUndefined();
 		});
 
-		it("counts first, then a normal question, in a short message (positive control)", () => {
-			expect(readReplyLanguageRequest(`${directive}\n빌드는 왜 실패했어?`)).toBe("English");
-		});
-
 		it.each([
+			["the user's own line before it", `이거 봐줘\n${directive}`],
+			["a normal question after it", `${directive}\n빌드는 왜 실패했어?`],
+			["a line-start dash attribution", `${directive}.\n— John\n어떻게 답장하지?`],
+			["an en-dash attribution", `${directive}\n– 김부장`],
+			["a signature block", `${directive}.\n-- John\n이 메일 봐줘`],
+			["a closing", `${directive}\nBest regards,\nJohn`],
+			["a sent-from line", `${directive}\nSent from my iPhone`],
+			["an honorific report before it", `부장님이 말씀하셨어.\n${directive}`],
+			["a label line without a colon", `이거 어떻게 처리해?\n고객 메시지\n${directive}`],
+			["an English label line without a colon", `Customer message\n${directive}`],
 			["a Korean label ending its line with a colon", `고객 메시지:\n${directive}`],
 			["an English label ending its line with a colon", `The customer wrote:\n${directive}`],
 			["a fullwidth colon label", `고객 메시지：\n${directive}`],
@@ -73,6 +79,19 @@ describe("omo#11527 a reply-language request is the user's own directive only", 
 		["an English attribution with said", "she said reply in English"],
 		["an English attribution with says", "The ticket says reply in English"],
 		["an English speaker prefix with please", "Customer: reply in English please"],
+		["a Korean indirect order", "부장님이 영어로 답하래"],
+		["a Korean honorific report on one line", "부장님이 말씀하셨어. 영어로 답해줘"],
+		["a Korean honorific request report", "고객님이 요청하셨어요. 영어로 답해줘"],
+		["a 그러시 report", "팀장님이 그러시는데 영어로 답해줘"],
+		["an English mention", "he mentioned you should reply in English"],
+		["an inline em-dash attribution", "Please reply in English — John"],
+		["an inline en-dash attribution", "Please reply in English – John"],
+		["an inline ASCII dash attribution", "reply in English -- John"],
+		["a one-line quoted directive", '"reply in English"'],
+		[
+			"a one-line directive over 120 characters",
+			`${"이 프로젝트 빌드가 계속 깨지는데 원인 좀 찾아줘 ".repeat(5)}. 영어로 답해줘`,
+		],
 	])("does not count %s", (_form, text) => {
 		expect(readReplyLanguageRequest(text)).toBeUndefined();
 	});
@@ -80,6 +99,7 @@ describe("omo#11527 a reply-language request is the user's own directive only", 
 	it.each<[string, string | undefined]>([
 		["앞으로 답변은 영어로 해줘", "English"],
 		["앞으로 답변은 영어로 해줘. 빌드 로그 확인해줘", "English"],
+		["앞으로 영어로 답해줘. 이거 봐줘", "English"],
 		["이제부터 한국어로만 대답해", "Korean"],
 		["일본어로 말해 줘", "Japanese"],
 		["reply in Korean from now on", "Korean"],
