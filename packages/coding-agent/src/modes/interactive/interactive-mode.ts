@@ -269,6 +269,7 @@ import {
 	takeOverInteractiveStderr,
 } from "./interactive-stderr-guard.ts";
 import { applyKeybindingsFileEdit, seedKeybindingsFile } from "./keybindings-command.ts";
+import { LIFECYCLE_STATUS_KEY, LifecycleStatus } from "./lifecycle-status.ts";
 import {
 	buildResourceScopeGroups,
 	type DisplaySourceInfo,
@@ -344,6 +345,9 @@ import {
 	sanitizeWorkingStatusPlainText,
 	type WorkingStatusRgbColor,
 } from "./working-status.ts";
+
+/** Footer statuses the host owns: an extension UI reset (e.g. /reload) keeps them. */
+const HOST_STATUS_KEYS: ReadonlySet<string> = new Set([LIFECYCLE_STATUS_KEY]);
 
 export { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
 
@@ -1082,6 +1086,8 @@ export class InteractiveMode {
 
 	// Agent subscription unsubscribe function
 	private unsubscribe?: () => void;
+	private agentSubscriptionGeneration = 0;
+	private readonly lifecycleStatus = new LifecycleStatus();
 	private signalCleanupHandlers: Array<() => void> = [];
 
 	// Track if editor is in bash mode (text starts with !)
@@ -2902,6 +2908,7 @@ export class InteractiveMode {
 		this.externalOwnerCompactionNoticeShown = false;
 		this.footer?.setCompactionDelegated?.(false);
 		const session = this.session;
+		this.agentSubscriptionGeneration++;
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.applyRuntimeSettings();
@@ -3543,7 +3550,7 @@ export class InteractiveMode {
 		this.setExtensionFooter(undefined);
 		this.setExtensionHeader(undefined);
 		this.clearExtensionWidgets();
-		this.footerDataProvider.clearExtensionStatuses();
+		this.footerDataProvider.clearExtensionStatuses(HOST_STATUS_KEYS);
 		this.footer.invalidate();
 		this.autocompleteProviderWrappers = [];
 		this.setCustomEditorComponent(undefined);
@@ -3745,7 +3752,10 @@ export class InteractiveMode {
 				request.waitForAnswer ? this.showQuestionOverlay(request, opts) : this.showAsyncQuestion(request, opts),
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
-			setStatus: (key, text) => this.setExtensionStatus(key, text),
+			// The host owns the lifecycle status; an extension cannot overwrite or clear it.
+			setStatus: (key, text) => {
+				if (key !== LIFECYCLE_STATUS_KEY) this.setExtensionStatus(key, text);
+			},
 			setSubagentCost: (costUsd) => {
 				this.footerDataProvider.setSubagentCost(costUsd);
 				this.ui.requestRender();
@@ -5238,8 +5248,28 @@ export class InteractiveMode {
 		};
 	}
 
+	private showLifecycleStatus(session: AgentSession): void {
+		this.lifecycleStatus.bind(session.sessionId, session.lifecycle);
+		this.setExtensionStatus(LIFECYCLE_STATUS_KEY, this.lifecycleStatus.text());
+	}
+
 	private subscribeToAgent(): void {
-		this.unsubscribe = this.session.subscribe(async (event) => {
+		this.unsubscribe?.();
+		const session = this.session;
+		const generation = ++this.agentSubscriptionGeneration;
+		this.showLifecycleStatus(session);
+		this.unsubscribe = session.subscribe(async (event) => {
+			if (generation !== this.agentSubscriptionGeneration || session !== this.session) return;
+			if (event.type === "session_lifecycle") {
+				if (event.sessionId !== session.sessionId) return;
+				if (!this.lifecycleStatus.owns(event.lifecycle))
+					this.lifecycleStatus.bind(session.sessionId, session.lifecycle);
+				this.lifecycleStatus.accept(event.lifecycle);
+				const text = this.lifecycleStatus.text();
+				if (this.footerDataProvider.getExtensionStatuses().get(LIFECYCLE_STATUS_KEY) !== text)
+					this.setExtensionStatus(LIFECYCLE_STATUS_KEY, text);
+				return;
+			}
 			await this.handleEvent(event);
 		});
 	}
@@ -10326,6 +10356,9 @@ export class InteractiveMode {
 		this.clearExtensionTerminalInputListeners();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
+		this.agentSubscriptionGeneration++;
+		// The footer is disposed: clear the data without scheduling a frame.
+		this.footerDataProvider.setExtensionStatus(LIFECYCLE_STATUS_KEY, undefined);
 		if (this.unsubscribe) {
 			this.unsubscribe();
 		}

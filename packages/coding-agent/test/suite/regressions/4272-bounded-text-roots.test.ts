@@ -9,6 +9,24 @@ afterEach(async () => {
 	for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
+it("rejects an oversized leaf with a write-side error before changing ownership or accounting", async () => {
+	const root = await spoolRoot();
+	cleanups.push(root.cleanup);
+	const store = new CompactContentStore({ dir: root.dir });
+	const ref = store.createLeaf("x".repeat(LEAF));
+	try {
+		const before = store.status();
+		expect(() => store.createLeaf("x".repeat(LEAF + 1))).toThrow(
+			expect.objectContaining({ name: "CompactWriteError", reason: "size_limit" }),
+		);
+		expect(store.status()).toEqual(before);
+		expect(await store.readLeaf(ref)).toBe("x".repeat(LEAF));
+	} finally {
+		store.adjust(ref, -1, 0);
+		await store.retire();
+	}
+});
+
 it("reads exactly the size/count boundary and rejects either excess without reading", async () => {
 	const root = await spoolRoot();
 	cleanups.push(root.cleanup);
