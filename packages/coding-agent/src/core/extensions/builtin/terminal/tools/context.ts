@@ -7,6 +7,7 @@ import type { TimeoutAction } from "../settings.ts";
 
 /** Shared dependencies handed to every terminal tool factory. */
 export interface TerminalToolContext {
+	readonly redactSecretsInOutput?: boolean;
 	readonly manager: TerminalManager;
 	readonly cwd: string;
 	/** Explicit shell path from settings (settings-manager `shellPath`), if any. */

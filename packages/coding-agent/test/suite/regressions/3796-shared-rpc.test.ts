@@ -153,6 +153,57 @@ it("targets only grant_select and rejects another connection's answer", async ()
 	expect(await decision).toBe(true);
 });
 
+async function answer(connection: string, frame: Record<string, unknown>): Promise<void> {
+	await writer?.withConnection(connection, () =>
+		handler?.handleInputLine(
+			JSON.stringify({ type: "extension_ui_response", value: "Grant and save permanently", ...frame }),
+		),
+	);
+}
+
+async function pendingGrant(current: Harness) {
+	const delivered = nextSelect();
+	const decision = selectMcpGrant(getMcpGrantPresentation(current.session.sessionId), "synthetic grant");
+	const frame = await delivered;
+	const state = { settled: false };
+	void decision.then(() => {
+		state.settled = true;
+	});
+	return { frame, decision, state };
+}
+
+// #4348: grant answers are matched by the request they answer (uiRequestId ?? id).
+it("does not apply a long-form grant answer from a connection without grant_select", async () => {
+	const { frame, decision, state } = await pendingGrant(await setup());
+	await answer("question-only", { id: "synthetic-answer-a", uiRequestId: frame.id });
+	expect(state.settled).toBe(false);
+	await answer("grant-client", { id: frame.id });
+	expect(await decision).toBe(true);
+});
+
+it("does not apply a long-form grant answer from another grant_select connection that did not receive it", async () => {
+	const { frame, decision, state } = await pendingGrant(await setup());
+	connect("grant-other", ["grant_select"]);
+	await writer?.flushConnection("grant-other");
+	expect(frames.get("grant-other")?.some((record) => record.method === "select")).toBe(false);
+	await answer("grant-other", { id: "synthetic-answer-b", uiRequestId: frame.id });
+	expect(state.settled).toBe(false);
+	await answer("grant-client", { id: frame.id });
+	expect(await decision).toBe(true);
+});
+
+it("settles a grant from the short-form answer of the capable recipient", async () => {
+	const { frame, decision } = await pendingGrant(await setup());
+	await answer("grant-client", { id: frame.id });
+	expect(await decision).toBe(true);
+});
+
+it("settles a grant from the long-form answer of the capable recipient", async () => {
+	const { frame, decision } = await pendingGrant(await setup());
+	await answer("grant-client", { id: "synthetic-answer-d", uiRequestId: frame.id });
+	expect(await decision).toBe(true);
+});
+
 it("expires a capable client that never answers at 120 seconds", async () => {
 	const current = await setup();
 	vi.useFakeTimers();

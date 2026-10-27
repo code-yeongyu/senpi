@@ -62,6 +62,7 @@ import type {
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
+import { carryRecovery } from "../../core/session-recovery-identity.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
@@ -101,7 +102,7 @@ import {
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
-import { settleExtensionUiResponse } from "./extension-ui-response.ts";
+import { answeredUiRequestId, settleExtensionUiResponse } from "./extension-ui-response.ts";
 import { answerGetEntries } from "./get-entries-command.ts";
 import { runHoldInput } from "./held-input-commands.ts";
 import { HostSessionControl } from "./host-session-control.ts";
@@ -116,6 +117,9 @@ import {
 	sessionRetryFallbackError,
 } from "./rpc-input-validation.ts";
 import { buildRpcSessionState } from "./rpc-session-state.ts";
+import { getSnapshot } from "./get-snapshot.ts";
+import type { UiRequestChange } from "./snapshot-types.ts";
+import { sessionUiAnswerLedger } from "./ui-answer-ledger.ts";
 import type {
 	RpcAuthProvider,
 	RpcCommand,
@@ -143,6 +147,7 @@ import { runPauseForRun, runResumeForRun } from "./run-hold-commands.ts";
 import { availableModelsData, interruptRunningTurn } from "./session-control-actions-data.ts";
 import { SessionExtensionUiRequests, sessionDialogRequests } from "./session-extension-ui-requests.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
+import { subscribeStructuredSessionRecords } from "./structured-session-records.ts";
 import { RpcSessionRelocation } from "./session-relocation.ts";
 import {
 	answerHostResponse,
@@ -204,6 +209,10 @@ export interface RpcConnectionOptions {
  */
 export interface RpcConnectionSink {
 	writeRaw(chunk: string): void;
+	/** Shared bindings accept correlated records synchronously, before JSONL buffering. */
+	writeRecord?(record: object): void;
+	/** The internal structured lane (senpi#4272): seeded records and block controls, never a legacy destination. */
+	writeStructured?(record: object): void;
 	waitForBackpressure(): Promise<void>;
 	/** Tears the transport down once its event queue can no longer deliver (overflow, write failure). */
 	close?(): void;
@@ -369,6 +378,7 @@ export function createRpcConnectionHandler(
 	// Set by the first command that asks this session for a turn; `set_retry_fallback` is refused after it.
 	let turnRequested = false;
 	let unsubscribe: (() => void) | undefined;
+	let unsubscribeStructured: (() => void) | undefined;
 	let unsubscribeBackpressure: (() => void) | undefined;
 	let unsubscribeLoadedSurfaces: (() => void) | undefined;
 	let unsubscribeExtensionEvents: (() => void) | undefined;
@@ -378,7 +388,9 @@ export function createRpcConnectionHandler(
 	let loadedSurfacesDigest: string | undefined;
 	let rpcCommandsDigest: string | undefined;
 	let suppressLoadedSurfaceEvents = false;
-	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
+	const eventOutput = sink.writeRecord
+		? undefined
+		: createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
 
 	const effectContext = (): EffectCommandContext => ({
 		session,
@@ -387,14 +399,18 @@ export function createRpcConnectionHandler(
 	});
 
 	const tagSessionRecord = <T extends object>(value: T): T | (T & { sessionId: string }) =>
-		routingSessionId === undefined ? value : { ...value, sessionId: routingSessionId };
+		routingSessionId === undefined ? value : carryRecovery(value, { ...value, sessionId: routingSessionId });
 
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
-		eventOutput.writeImmediate(tagSessionRecord(obj));
+		const record = tagSessionRecord(obj);
+		if (sink.writeRecord) sink.writeRecord(record);
+		else eventOutput?.writeImmediate(record);
 	};
 
 	const outputEvent = (event: object) => {
-		eventOutput.enqueueEvent(tagSessionRecord(event));
+		const record = tagSessionRecord(event);
+		if (sink.writeRecord) sink.writeRecord(record);
+		else eventOutput?.enqueueEvent(record);
 	};
 
 	const currentLoadedSurfaces = (): {
@@ -462,7 +478,7 @@ export function createRpcConnectionHandler(
 	});
 
 	const waitForRpcBackpressure = async (): Promise<void> => {
-		eventOutput.flushEvents();
+		eventOutput?.flushEvents();
 		await sink.waitForBackpressure();
 	};
 
@@ -496,10 +512,14 @@ export function createRpcConnectionHandler(
 	};
 
 	// Pending extension UI requests waiting for response
-	const pendingExtensionRequests = new SessionExtensionUiRequests(() => session.refreshLifecycle());
+	const uiRequestChanged = (change?: UiRequestChange): void => {
+		session.refreshLifecycle();
+		if (change && routingSessionId !== undefined) output(change);
+	};
+	const pendingExtensionRequests = new SessionExtensionUiRequests(uiRequestChanged);
 	const grantRequests = new Map<string, string | undefined>();
 	sessionDialogRequests.set(session, pendingExtensionRequests);
-	const questions = new ConnectionQuestionBridge(output, () => session.refreshLifecycle());
+	const questions = new ConnectionQuestionBridge(output, uiRequestChanged);
 
 	let shutdownRequested = false;
 
@@ -1016,6 +1036,10 @@ export function createRpcConnectionHandler(
 			unsubscribe = subscribeSessionRecords(session, outputEvent, (abortSource) => {
 				lastAbortSource = abortSource;
 			});
+			unsubscribeStructured?.();
+			unsubscribeStructured = sink.writeStructured
+				? subscribeStructuredSessionRecords(session, (record) => sink.writeStructured?.(tagSessionRecord(record)))
+				: undefined;
 			unsubscribeBackpressure = session.agent.subscribe(async () => {
 				await waitForRpcBackpressure();
 			});
@@ -1046,7 +1070,9 @@ export function createRpcConnectionHandler(
 	 *
 	 * Reuses AuthStorage.login (the same callbacks the classic TUI uses). Only the
 	 * URL-based happy path is surfaced over RPC: onAuth emits an auth_login_url
-	 * event; success/failure/cancel emit a single auth_login_end event. Callbacks
+	 * event, onProgress (for example a `provider_login_start` handler's download
+	 * line) emits auth_login_progress, and success/failure/cancel emit a single
+	 * auth_login_end event. Callbacks
 	 * that need interactive mid-flow input (onPrompt/onSelect) are answered over
 	 * the extension UI dialog channel, so clients may either answer the dialog or
 	 * finish through the browser/callback-server path. An unanswered dialog never
@@ -1075,7 +1101,9 @@ export function createRpcConnectionHandler(
 					outputEvent({ type: "auth_login_url", provider, url: info.verificationUri });
 				},
 				...createRpcLoginPromptCallbacks(createExtensionUIContext(), loginSignal),
-				onProgress: () => {},
+				onProgress: (message) => {
+					outputEvent({ type: "auth_login_progress", provider, text: message });
+				},
 				signal: controller.signal,
 			});
 			session.modelRegistry.refresh();
@@ -1133,6 +1161,8 @@ export function createRpcConnectionHandler(
 						capabilities: [
 							...new Set([
 								"multi_session",
+								"snapshot_cursor",
+								"ui_answer_ledger",
 								"session_lifecycle",
 								AUTO_TITLE_SESSIONS_CAPABILITY,
 								MEDIA_PLACEHOLDERS_CAPABILITY,
@@ -1398,6 +1428,18 @@ export function createRpcConnectionHandler(
 				}
 				if (wasGrantCapable !== (clientCapabilities?.includes("grant_select") === true)) refreshGrantPresentation();
 				return success(id, "set_client_info");
+			}
+
+			case "get_snapshot": {
+				const snapshot = getSnapshot(session, command, {
+					lastAbortSource,
+					enqueue: (markerId) => {
+						if (routingSessionId !== undefined) output({ type: "snapshot_marker", markerId });
+					},
+				});
+				return "error" in snapshot
+					? error(id, "get_snapshot", snapshot.error, RPC_ERROR_INVALID_ARGUMENT)
+					: success(id, "get_snapshot", snapshot.data);
 			}
 
 			case "get_state":
@@ -1986,13 +2028,17 @@ export function createRpcConnectionHandler(
 				const modelRegistry = session.modelRegistry;
 				const oauthInfos = buildLoginProviderInfos(modelRegistry, "oauth");
 				const apiKeyInfos = buildLoginProviderInfos(modelRegistry, "api_key");
-				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => ({
-					id: info.id,
-					name: info.name,
-					authType: info.authType,
-					status: authMethodStatus(modelRegistry, info),
-					...storedKeyHint(modelRegistry, info),
-				}));
+				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => {
+					const origin = modelRegistry.getProviderOrigin(info.id);
+					return {
+						id: info.id,
+						name: info.name,
+						authType: info.authType,
+						status: authMethodStatus(modelRegistry, info),
+						...storedKeyHint(modelRegistry, info),
+						...(origin === undefined ? {} : { origin }),
+					};
+				});
 				return success(id, "get_auth_providers", { providers });
 			}
 
@@ -2117,23 +2163,20 @@ export function createRpcConnectionHandler(
 			"type" in parsed &&
 			parsed.type === "extension_ui_response"
 		) {
-			if (
-				!options.workerSecurityBridge &&
-				"id" in parsed &&
-				typeof parsed.id === "string" &&
-				grantRequests.has(parsed.id)
-			) {
+			const requestId = answeredUiRequestId(parsed as RpcExtensionUIResponse);
+			if (!options.workerSecurityBridge && requestId !== undefined && grantRequests.has(requestId)) {
 				const sender = options.clientInfo?.connectionId();
 				const capable =
 					sender === undefined
 						? clientCapabilities?.includes("grant_select") === true
 						: options.clientInfo?.hasCapability?.(sender, "grant_select") === true;
-				if (grantRequests.get(parsed.id) !== sender || !capable) return;
+				if (grantRequests.get(requestId) !== sender || !capable) return;
 			}
 			const reply = settleExtensionUiResponse(parsed as RpcExtensionUIResponse, {
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,
+				ledger: sessionUiAnswerLedger(session),
 				// An answer is a person's input by its entry point, whatever the connection role.
 				beforeAnswer: () => session.admitHumanAnswer(),
 			});
@@ -2175,9 +2218,7 @@ export function createRpcConnectionHandler(
 	// session's handler (it has a routing `sessionId`) does not: the host broadcasts the record once.
 	const stopLimitEvents =
 		options.sessionId === undefined
-			? subscriptionLimits.subscribe((limits) =>
-					eventOutput.enqueueEvent({ type: "subscription_limits", ...limits }),
-				)
+			? subscriptionLimits.subscribe((limits) => outputEvent({ type: "subscription_limits", ...limits }))
 			: () => {};
 	const dispose = async (disposeOptions: { readonly processExit?: boolean } = {}): Promise<void> => {
 		unbindMcpForms?.();
@@ -2193,10 +2234,12 @@ export function createRpcConnectionHandler(
 		pendingExtensionRequests.close();
 		unsubscribeProviderAccountEvents();
 		unsubscribe?.();
+		unsubscribeStructured?.();
 		unsubscribeBackpressure?.();
 		unsubscribeLoadedSurfaces?.();
 		unsubscribeExtensionEvents?.();
 		unsubscribe = undefined;
+		unsubscribeStructured = undefined;
 		unsubscribeBackpressure = undefined;
 		unsubscribeLoadedSurfaces = undefined;
 		unsubscribeExtensionEvents = undefined;

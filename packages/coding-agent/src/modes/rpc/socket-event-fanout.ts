@@ -1,6 +1,6 @@
 import { serializeJsonLine } from "./jsonl.ts";
 import { loopBlockedMark, loopBlockedMsSince } from "./loop-blocked-time.ts";
-import { type ResyncReason, SocketPeerRecovery } from "./socket-peer-recovery.ts";
+import { type ResyncCut, type ResyncReason, SocketPeerRecovery } from "./socket-peer-recovery.ts";
 
 type SocketSink = {
 	writeRaw(chunk: string): void;
@@ -103,7 +103,7 @@ export class SocketEventSinkActor {
 		this.stallMs = stallMs;
 	}
 
-	enableRecovery(snapshot: (reason: ResyncReason) => () => readonly object[]): void {
+	enableRecovery(snapshot: (reason: ResyncReason) => ResyncCut): void {
 		this.recoveryEnabled = true;
 		this.recovery ??= new SocketPeerRecovery((line) => this.sink.writeRaw(line), snapshot);
 		this.recovery.acknowledge();
@@ -199,6 +199,7 @@ export class SocketEventSinkActor {
 		this.closed = true;
 		this.queue.length = 0;
 		this.queuedBytes = 0;
+		this.recovery?.release();
 		this.stopped.abort();
 	}
 
@@ -306,6 +307,7 @@ export class SocketEventSinkActor {
 				this.closed = true;
 				this.queue.length = 0;
 				this.queuedBytes = 0;
+				this.recovery?.release();
 				this.onFailure(cause);
 			}
 		})().finally(() => {

@@ -19,9 +19,16 @@ import {
 	resolveHeadersOrThrow,
 } from "./resolve-config-value.ts";
 
+/** Reads another provider's stored credential env: routing metadata only, never keys. */
+export type StoredProviderEnvReader = (providerId: string) => Promise<Record<string, string> | undefined>;
+
 interface AmbientAuthExtensionInput {
 	name?: string;
-	resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
+	resolve(input: {
+		ctx: AuthContext;
+		signal: AbortSignal;
+		storedProviderEnv?: StoredProviderEnvReader;
+	}): Promise<AuthResult | undefined>;
 }
 
 interface ProviderAuthExtensionInput {
@@ -38,6 +45,7 @@ export function composeApiKeyAuth(
 	base: Provider | undefined,
 	config: ModelsJsonProvider | undefined,
 	extension: ProviderAuthExtensionInput | undefined,
+	options?: { storedProviderEnv?: StoredProviderEnvReader },
 ): ApiKeyAuth | undefined {
 	const inherited = base?.auth.apiKey;
 	const rawKey = configuredApiKey(config, extension);
@@ -51,7 +59,7 @@ export function composeApiKeyAuth(
 		// explicitly configured key, credential headers, or a base provider still
 		// win, and a resolution marked ambient never outranks a configured
 		// provider in automatic default selection (senpi#2327).
-		return ambientApiKeyAuth(providerId, ambient, rawHeaders, headerSource, authHeader);
+		return ambientApiKeyAuth(providerId, ambient, rawHeaders, headerSource, authHeader, options?.storedProviderEnv);
 	}
 	if (!inherited && rawKey === undefined && !headerSource && oauth) {
 		// An OAuth provider with no key, no credential headers and no base normally
@@ -168,15 +176,24 @@ function ambientApiKeyAuth(
 	rawHeaders: Record<string, ConfigValue> | undefined,
 	headerSource: string | undefined,
 	authHeader: boolean,
+	storedProviderEnv?: StoredProviderEnvReader,
 ): ApiKeyAuth {
 	const resolve = async (input: Parameters<ApiKeyAuth["resolve"]>[0]): Promise<AuthResult | undefined> => {
-		const result = await ambient.resolve({ ctx: input.ctx, signal: input.signal });
+		const result = await ambient.resolve({
+			ctx: input.ctx,
+			signal: input.signal,
+			...(storedProviderEnv ? { storedProviderEnv } : {}),
+		});
 		if (!result) return undefined;
 		const explicitEnv = { ...(input.credential?.env ?? {}), ...(result.env ?? {}) };
 		const headerEnv = await configContextEnv(Object.values(rawHeaders ?? {}), input.ctx, explicitEnv);
 		const headers = await resolveHeadersOrThrow(rawHeaders, `provider "${providerId}"`, headerEnv);
+		// Stored-then-env (helpers.ts invariant): the provider's own stored env wins over ambient-resolved env.
+		const env =
+			result.env || input.credential?.env ? { ...(result.env ?? {}), ...(input.credential?.env ?? {}) } : undefined;
 		return {
 			...result,
+			...(env ? { env } : {}),
 			auth: withConfiguredAuth(result.auth, headers, authHeader),
 			source: result.source ?? headerSource,
 		};

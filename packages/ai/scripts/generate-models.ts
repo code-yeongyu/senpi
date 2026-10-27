@@ -439,6 +439,24 @@ const KIMI_K3_COST = {
 	cacheRead: 0.3,
 	cacheWrite: 3,
 } as const;
+// Official Moonshot API prices for the K3 series per 1M tokens (platform.kimi.ai/docs/pricing/chat, checked
+// 2026-10-27). Both Moonshot providers bill these USD list prices; models.dev carries a currency-converted
+// price for moonshotai-cn that drifts daily. K3.1 Pro shares K3's request contract
+// (platform.kimi.ai/docs/api/models-overview: "the same parameter constraints as kimi-k3").
+const MOONSHOT_KIMI_K3_SERIES_COSTS: Record<string, Model<Api>["cost"]> = {
+	"kimi-k3": KIMI_K3_COST,
+	"kimi-k3.1-pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+	"kimi-k3.1-pro-highspeed": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 4 },
+};
+const MOONSHOT_KIMI_K3_SERIES_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: null,
+	low: "low",
+	medium: null,
+	high: "high",
+	xhigh: null,
+	max: "max",
+} as const;
 const KIMI_CODING_STABLE_MODELS = {
 	"kimi-for-coding": {
 		id: "kimi-for-coding",
@@ -1293,7 +1311,7 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 function applyOpenAICompletionsTranscriptMetadata(model: Model<Api>): void {
 	if (model.api !== "openai-completions") return;
 	const isKimiK3 =
-		(model.provider.startsWith("moonshot") && model.id === "kimi-k3") ||
+		(model.provider.startsWith("moonshot") && Object.hasOwn(MOONSHOT_KIMI_K3_SERIES_COSTS, model.id)) ||
 		(model.provider === "fireworks" && model.id.includes("kimi-k3")) ||
 		((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "kimi-k3");
 	const isMoonshotKimiK2 =
@@ -3077,7 +3095,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, m] of Object.entries(moonshotModels[key])) {
 				if (m.tool_call !== true) continue;
 
-				const isKimiK3 = modelId === "kimi-k3";
+				const kimiK3SeriesCost = MOONSHOT_KIMI_K3_SERIES_COSTS[modelId];
+				const isKimiK3 = kimiK3SeriesCost !== undefined;
 				const compat = isKimiK3 ? { ...moonshotCompat } : moonshotCompat;
 				if (isKimiK3) {
 					compat.requiresReasoningContentOnAssistantMessages = true;
@@ -3092,10 +3111,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl,
 					reasoning: isKimiK3 || m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
-					// Kimi K3 always bills at the official USD list price: models.dev carries a
-					// currency-converted price for moonshotai-cn (2.9879/14.9395) that drifts daily.
-					cost: isKimiK3
-						? { ...KIMI_K3_COST }
+					cost: kimiK3SeriesCost
+						? { ...kimiK3SeriesCost }
 						: {
 								input: m.cost?.input || 0,
 								output: m.cost?.output || 0,
@@ -3105,6 +3122,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 					compat,
+					...(isKimiK3 ? { thinkingLevelMap: { ...MOONSHOT_KIMI_K3_SERIES_THINKING_LEVEL_MAP } } : {}),
 				});
 				recordModelsDevReasoningOptions(provider, modelId, m);
 			}

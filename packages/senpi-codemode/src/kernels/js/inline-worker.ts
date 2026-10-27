@@ -4,6 +4,7 @@ import type { MessagePort } from "node:worker_threads";
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import type { JavaScriptKernelMode } from "./kernel-contract.ts";
+import type { KernelPermissionHost } from "./permission-host.ts";
 import { spawnNodeWorker } from "./worker-host.ts";
 
 export interface JavaScriptInlineWorkerEntryUrlOptions extends CodemodeRuntimeAssetEnvironment {
@@ -27,6 +28,10 @@ export interface WorkerLike {
 	terminate(): Promise<void>;
 }
 
-export function createInlineWorker(cwd: string, parallelPoolWidth: number): WorkerLike {
-	return spawnNodeWorker(resolveInlineWorkerEntryUrl(), cwd, parallelPoolWidth, "inline");
+export function createInlineWorker(
+	cwd: string,
+	parallelPoolWidth: number,
+	permissions?: KernelPermissionHost,
+): WorkerLike {
+	return spawnNodeWorker(resolveInlineWorkerEntryUrl(), cwd, parallelPoolWidth, "inline", permissions);
 }

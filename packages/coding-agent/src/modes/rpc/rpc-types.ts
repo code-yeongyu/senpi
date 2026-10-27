@@ -1,5 +1,7 @@
 /** Public RPC protocol surface. Definitions are grouped by responsibility. */
 
+export type { RpcSnapshot, RpcSnapshotMarker, RpcUiRequestEvent } from "./snapshot-types.ts";
+
 export type { SessionContext, SessionKind } from "../../core/extensions/types.ts";
 export type { RpcCommandInvocationEvent } from "./rpc-command-invocation.ts";
 export type { RpcCommandsChangedEvent, RpcSlashCommand } from "./rpc-command-surface.ts";
