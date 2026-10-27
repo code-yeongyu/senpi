@@ -13,8 +13,12 @@
  *
  * Process evidence of a row another invocation wrote counts only on a store that recorded `local` and still classifies
  * `local` (clause iii), or when the row's and this prober's kernel sessions are both verified and equal (clauses i, iv).
- * A FILETIME is compared exactly, as a decimal integer string, never through milliseconds or a tolerance. Nothing here
- * mutates the credential, signals a process, deletes a record, or waits for a lock.
+ * On Windows the evidence is the bridge's retained-handle adapter (design 4.2a "OS identity"): a reopened PID is the
+ * recorded process only when `GetProcessId`, the exact creation FILETIME and the `TokenUser` SID all match on that one
+ * handle; a different creation time is gone, a same-birth SID mismatch or handle/PID inconsistency is
+ * `owner_identity_inconsistent`, an unreadable answer stays unknown (`process-evidence.ts`). A FILETIME is compared
+ * exactly, as a decimal integer string, never through milliseconds or a tolerance. Nothing here mutates the credential,
+ * signals a process, deletes a record, or waits for a lock.
  *
  * Presence cleanup (Revision 7): a probe that finds no object rereads the row, because every deletion is preceded by
  * a `released` commit; an entry released meanwhile is discharged by that commit, and a missing object for an entry
@@ -31,7 +35,6 @@
  * ended is discarded. The guard a busy-owner wait acquired (`held`) is step 3's acquisition of that object.
  */
 import { readdir, readFile } from "node:fs/promises";
-import { type ProcessIdentityResult, readProcessIdentity } from "../../utils/process-identity.ts";
 import {
 	type AuthorityEntry,
 	EndpointReservationError,
@@ -53,6 +56,14 @@ import type {
 import { readSessionPathClaims } from "./host-reservations.ts";
 import { deletePresenceObject } from "./presence-cleanup.ts";
 import { kernelSession } from "./presence-placement.ts";
+import {
+	classifyObservation,
+	identityReaderEvidence,
+	nativeProcessEvidence,
+	type ProcessEvidence,
+	type ProcessObservation,
+	type ProcessRecord,
+} from "./process-evidence.ts";
 import type { PresencePlacementLoad } from "./socket-secret-native.ts";
 
 /** What recovery could not resolve; each is a typed refusal, never a deadline or a guess. */
@@ -87,7 +98,8 @@ export interface RecoveryProber {
 	readonly native: PresencePlacementLoad;
 	readonly session: KernelSessionRecord;
 	readonly storeLocalNow: boolean;
-	readonly observe: (pid: number) => Promise<ProcessIdentityResult>;
+	/** One new observation of a recorded PID: through the bridge's handle on Windows, the identity reader elsewhere. */
+	readonly observe: (pid: number) => Promise<ProcessObservation>;
 	readonly clock: RecoveryClock;
 	/** The caller's remaining startup deadline; the observation budget is the smaller of it and five seconds. */
 	readonly remainingMs: number;
@@ -97,7 +109,7 @@ export interface RecoveryProber {
 }
 
 export interface RecoveryProberOptions {
-	readonly observe?: (pid: number) => Promise<ProcessIdentityResult>;
+	readonly observe?: (pid: number) => Promise<ProcessObservation>;
 	readonly clock?: RecoveryClock;
 	readonly remainingMs?: number;
 	readonly fresh?: boolean;
@@ -107,8 +119,19 @@ export interface RecoveryProberOptions {
 /** The design's budget: at most two observations within five seconds, or the shorter caller deadline. */
 export const OBSERVATION_BUDGET_MS = 5_000;
 
-function observeProcess(pid: number): Promise<ProcessIdentityResult> {
-	return readProcessIdentity(pid, process.platform, OBSERVATION_BUDGET_MS);
+/**
+ * "Reopening a stored PID yields a new observation, not renewed authority": each observation opens the PID, reads its
+ * facts on that handle and closes it; nothing recovery observes is retained.
+ */
+function observeThrough(evidence: ProcessEvidence): (pid: number) => Promise<ProcessObservation> {
+	return async (pid) => {
+		const retained = await evidence.open(pid);
+		try {
+			return retained.observation;
+		} finally {
+			retained.close();
+		}
+	};
 }
 
 const realClock: RecoveryClock = {
@@ -127,7 +150,13 @@ export function recoveryProber(
 ): RecoveryProber {
 	const common = {
 		native,
-		observe: options.observe ?? observeProcess,
+		observe:
+			options.observe ??
+			observeThrough(
+				native.status === "available"
+					? nativeProcessEvidence(native.native)
+					: identityReaderEvidence(OBSERVATION_BUDGET_MS),
+			),
 		clock: options.clock ?? realClock,
 		remainingMs: options.remainingMs ?? OBSERVATION_BUDGET_MS,
 		fresh: options.fresh ?? false,
@@ -260,13 +289,11 @@ function acquire(object: PresenceObjectRecord, reservation: ReservationRow, prob
 
 type ProcessVerdict =
 	| { readonly kind: "live" }
-	| { readonly kind: "gone"; readonly reason: "absent" | "birth_mismatch" | "prior_boot" }
+	| { readonly kind: "gone"; readonly reason: "absent" | "birth_mismatch" | "exited" | "prior_boot" }
 	| { readonly kind: "unknown"; readonly reason: RecoveryEscalationReason; readonly detail: string };
 
-interface RecordedProcess {
-	readonly pid: number;
-	readonly processStartTime: string | null;
-}
+/** The recorded identity: `{"pid":..,"processStartTime":..}`, with `userSid` when it was read through the bridge. */
+type RecordedProcess = ProcessRecord;
 
 function parseRecorded(text: string): RecordedProcess | undefined {
 	try {
@@ -274,8 +301,13 @@ function parseRecorded(text: string): RecordedProcess | undefined {
 		if (typeof value !== "object" || value === null) return undefined;
 		const pid = Reflect.get(value, "pid");
 		const start = Reflect.get(value, "processStartTime");
+		const sid = Reflect.get(value, "userSid");
 		if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return undefined;
-		return { pid, processStartTime: typeof start === "string" ? start : null };
+		return {
+			pid,
+			processStartTime: typeof start === "string" ? start : null,
+			userSid: typeof sid === "string" ? sid : null,
+		};
 	} catch {
 		return undefined;
 	}
@@ -311,7 +343,7 @@ class ObservationBudget {
 	}
 
 	/** One observation of `pid` for `subject`, or `undefined` when the budget is spent. */
-	async observe(subject: string, pid: number): Promise<ProcessIdentityResult | undefined> {
+	async observe(subject: string, pid: number): Promise<ProcessObservation | undefined> {
 		if (this.expired || (this.counts.get(subject) ?? 0) >= 2) return undefined;
 		this.counts.set(subject, (this.counts.get(subject) ?? 0) + 1);
 		const result = await Promise.race([this.#prober.observe(pid), this.#expiry]);
@@ -321,11 +353,13 @@ class ObservationBudget {
 
 /**
  * Recovery-time observation of a PID another invocation recorded. The gate comes first: unless clause (iii) or (i)
- * admits it, absence, a different birth or an exit on this kernel says nothing about that row. Then only an absent PID or
- * an exactly different creation FILETIME is `gone`; equal is `live`; an unreadable identity is requeried once inside
- * the budget and then `unknown`, a noncomparable one is `unknown` at once. A proven prior boot (the Revision 6 proof or
- * a repair anchor) ends every process of that boot without a query, and an unchanged escalated record answers from its
- * marker without one (`cached`).
+ * admits it, absence, a different birth or an exit on this kernel says nothing about that row. Then the observation
+ * table (`classifyObservation`): an absent PID, an exactly different creation FILETIME or a signalled process object is
+ * `gone`; the same PID, creation time and SID on one handle is `live`; an unreadable or inconsistent answer (denied,
+ * unreadable fields, a same-birth SID mismatch, a handle whose `GetProcessId` is not the opened PID) is requeried once
+ * inside the budget and then `unknown` with that reason, a noncomparable record is `unknown` at once. A proven prior
+ * boot (the Revision 6 proof or a repair anchor) ends every process of that boot without a query, and an unchanged
+ * escalated record answers from its marker without one (`cached`).
  */
 async function observeRecorded(
 	subject: string,
@@ -351,21 +385,24 @@ async function observeRecorded(
 	if (recorded === undefined || recorded.pid === 0) {
 		return { kind: "unknown", reason: "owner_identity_incomplete", detail: "no recorded identity" };
 	}
+	// What the last observation could not resolve; the escalated reason once the budget refuses another.
+	let unresolved: { readonly reason: RecoveryEscalationReason; readonly detail: string } = {
+		reason: "owner_identity_unreadable",
+		detail: "observation budget spent",
+	};
 	for (;;) {
 		const observed = await budget.observe(subject, recorded.pid);
-		if (observed === undefined) {
-			return { kind: "unknown", reason: "owner_identity_unreadable", detail: "observation budget spent" };
+		if (observed === undefined) return { kind: "unknown", ...unresolved };
+		const verdict = classifyObservation(recorded, observed);
+		if (verdict.kind !== "unknown") return verdict;
+		if (verdict.reason === "incomplete") {
+			return { kind: "unknown", reason: "owner_identity_incomplete", detail: verdict.detail };
 		}
-		if (observed.kind === "absent") return { kind: "gone", reason: "absent" };
-		// The design's one fresh reopen/requery; the budget refuses a third.
-		if (observed.kind === "error") continue;
-		const start = recorded.processStartTime;
-		if (start === null || !/^\d+$/.test(start) || !/^\d+$/.test(observed.identity)) {
-			return { kind: "unknown", reason: "owner_identity_incomplete", detail: "noncomparable identity" };
-		}
-		return BigInt(start) === BigInt(observed.identity)
-			? { kind: "live" }
-			: { kind: "gone", reason: "birth_mismatch" };
+		// Unreadable or inconsistent: the design's one fresh reopen/requery; the budget refuses a third.
+		unresolved = {
+			reason: verdict.reason === "inconsistent" ? "owner_identity_inconsistent" : "owner_identity_unreadable",
+			detail: `${verdict.detail}; observation budget spent`,
+		};
 	}
 }
 

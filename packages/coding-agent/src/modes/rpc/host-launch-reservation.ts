@@ -6,6 +6,12 @@
  * grants only when the claimed identity equals what it observed through the OS for the process it launched, bound to
  * the credential commitment. Nothing in argv, environment or an inherited channel grants anything.
  *
+ * On Windows that observation is the bridge's retained-handle adapter (design 4.2a "OS identity", Revision 8 clause
+ * (ii)): the issuer opens the claimant's recorded PID on its own kernel, requires `GetProcessId`, the exact creation
+ * FILETIME and the `TokenUser` SID to match on that handle, and retains the handle while it grants and observes that
+ * participant; a non-match only refuses the grant. A claimant records the same three read on one handle of itself.
+ * Elsewhere the identity is the PID and the platform's start-time discriminator, as before.
+ *
  * Every offer predeclares its role's presence object in the root the reserving owner recorded, before the offer commits
  * and so before any spawn; a claimant first checks that root is the recorded, still-local physical directory (design
  * 4.2a "Placement.").
@@ -45,19 +51,28 @@ import {
 } from "./endpoint-reservation-store.ts";
 import { deletePresenceObject, type PresenceDeletion, presenceObjectMissing } from "./presence-cleanup.ts";
 import { predeclarePresenceObject, PresencePlacementError, verifyRecordedPresenceRoot } from "./presence-placement.ts";
+import { classifyObservation, type ProcessEvidence, type ProcessRecord } from "./process-evidence.ts";
 import { loadPresencePlacement, type PresencePlacementLoad } from "./socket-secret-native.ts";
 
 export { LaunchReservationError, parseReservationLocatorArgs, type StoreLocator } from "./host-lifecycle-launch.ts";
 
-/** A process as the OS identifies it: PID and its exact start discriminator. */
-export interface LaunchIdentity {
-	readonly pid: number;
-	readonly processStartTime: string | null;
-}
+/**
+ * A process as the OS identifies it: PID, its exact start discriminator and, when read through the Windows bridge on one
+ * process handle, its `TokenUser` SID. An identity without a SID is one the platform's start-time reader produced.
+ */
+export type LaunchIdentity = ProcessRecord;
 
-/** Identities are stored as their canonical JSON, so equality is exact on PID and start discriminator. */
+/**
+ * Identities are stored as their canonical JSON, so equality is exact on PID, start discriminator and, when recorded, SID;
+ * an identity without a SID keeps the two-field encoding every earlier row has.
+ */
 function identityKey(identity: LaunchIdentity): string {
-	return JSON.stringify({ pid: identity.pid, processStartTime: identity.processStartTime });
+	const { pid, processStartTime } = identity;
+	return JSON.stringify(
+		typeof identity.userSid === "string"
+			? { pid, processStartTime, userSid: identity.userSid }
+			: { pid, processStartTime },
+	);
 }
 
 /**
@@ -454,10 +469,11 @@ function parseIdentity(text: string): LaunchIdentity {
 	const value: unknown = JSON.parse(text);
 	const pid = typeof value === "object" && value !== null ? Reflect.get(value, "pid") : undefined;
 	const start = typeof value === "object" && value !== null ? Reflect.get(value, "processStartTime") : undefined;
+	const sid = typeof value === "object" && value !== null ? Reflect.get(value, "userSid") : undefined;
 	if (typeof pid !== "number" || !(typeof start === "string" || start === null)) {
 		throw new LaunchReservationError("identity_unverified", "the recorded participant identity is malformed");
 	}
-	return { pid, processStartTime: start };
+	return typeof sid === "string" ? { pid, processStartTime: start, userSid: sid } : { pid, processStartTime: start };
 }
 
 /** How an admitted participant that holds a presence lock ends its authority, once it is quiescent. */
@@ -510,10 +526,22 @@ export async function admitClaimedParticipant(
 	};
 }
 
+/** A granted participant as the issuer observed it, and the handle the issuer keeps open on it. */
+export interface GrantedParticipant {
+	readonly identity: LaunchIdentity;
+	/** Closes the retained handle once the issuer stops observing the participant. Idempotent. */
+	release(): void;
+}
+
 /**
- * The issuer's half of either hop: wait (bounded) for the claim, read the claimed PID's start time through the
- * OS with `observe`, and grant only when it equals the claimed one, bound to the commitment of `secret`. The claimant
- * may be a wrapper's descendant, so the spawned PID is never assumed to be it.
+ * The issuer's half of either hop: wait (bounded) for the claim, open the claimed PID through `evidence` and grant only
+ * the process whose identity matches the claimed one on that handle, bound to the commitment of `secret`. The claimant
+ * may be a wrapper's descendant, so the spawned PID is never assumed to be it. Through the bridge the observation table
+ * decides: the match is `GetProcessId`, the exact creation FILETIME and the SID; a different creation time, an exited
+ * object or an absent PID refuses `participant_mismatch`, a same-birth SID mismatch or a handle whose PID is not the
+ * claimed one refuses `identity_inconsistent`, an unreadable or noncomparable observation refuses `identity_unverified`.
+ * A start-time reader's identity is compared exactly, as the platform encodes it, by the store's compare-and-grant, as
+ * before. A refused handle is closed at once; the granted handle stays open until `release`.
  */
 export async function grantClaimedParticipant(
 	store: EndpointReservationStore,
@@ -521,12 +549,37 @@ export async function grantClaimedParticipant(
 	role: ReservationRole,
 	issuer: LaunchIdentity,
 	secret: Buffer,
-	observe: (pid: number) => Promise<string | undefined>,
+	evidence: ProcessEvidence,
 	options: { readonly deadlineMs: number },
-): Promise<LaunchIdentity> {
+): Promise<GrantedParticipant> {
 	const claim = await waitForClaim(store, generation, role, options);
 	if (!claim.claimed) throw new LaunchReservationError(claim.reason, `${role} in ${generation}`);
-	const observed = { pid: claim.participant.pid, processStartTime: (await observe(claim.participant.pid)) ?? null };
-	grantVerifiedParticipant(store, generation, role, issuer, observed, createHash("sha256").update(secret).digest());
-	return observed;
+	const { pid } = claim.participant;
+	const retained = await evidence.open(pid);
+	try {
+		const { observation } = retained;
+		// A reader's identity is the store's to compare; every other observation goes through the table first.
+		const verdict = observation.kind === "present" ? undefined : classifyObservation(claim.participant, observation);
+		if (verdict?.kind === "gone") {
+			throw new LaunchReservationError("participant_mismatch", `pid ${pid} is not the claimant (${verdict.reason})`);
+		}
+		if (verdict?.kind === "unknown") {
+			throw new LaunchReservationError(
+				verdict.reason === "inconsistent" ? "identity_inconsistent" : "identity_unverified",
+				`pid ${pid}: ${verdict.detail}`,
+			);
+		}
+		// Live on the retained handle: the identity as that handle read it; the reader's: its start time. The table never
+		// answers live for an absent or unreadable PID, and a `null` start time grants nothing below either way.
+		const observed: LaunchIdentity =
+			observation.kind === "opened"
+				? { pid, processStartTime: observation.facts.creationTime, userSid: observation.facts.userSid }
+				: { pid, processStartTime: observation.kind === "present" ? observation.identity : null };
+		// The store's compare-and-grant checks the observed identity against the claim once more, atomically.
+		grantVerifiedParticipant(store, generation, role, issuer, observed, createHash("sha256").update(secret).digest());
+		return { identity: observed, release: () => retained.close() };
+	} catch (error: unknown) {
+		retained.close();
+		throw error;
+	}
 }

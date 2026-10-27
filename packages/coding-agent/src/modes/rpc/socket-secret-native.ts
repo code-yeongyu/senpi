@@ -182,8 +182,47 @@ export interface NativePresenceHoldRelease {
 	readonly code?: number | null;
 }
 
-/** What presence placement and cleanup need from the bridge (#4199 design 4.2a "Placement.", "Presence cleanup"). */
-export interface NativePresencePlacementBinding extends NativeSocketSecretBinding, NativePresenceBinding {
+/**
+ * What one opened process handle answered (`processOpen`, `processObserve`; crate `process_binding.rs`): `opened` carries
+ * `GetProcessId`, the complete creation FILETIME as a decimal string, the `TokenUser` SID and the exit state read on that
+ * one handle, each `null` when its query failed. napi-rs leaves an absent optional field `undefined`.
+ */
+export interface NativeProcessObservation {
+	readonly status:
+		| "opened"
+		| "no_such_process"
+		| "access_denied"
+		| "failed"
+		| "held"
+		| "not_held"
+		| "closed"
+		| "unavailable";
+	readonly reason?: string | null;
+	readonly code?: number | null;
+	readonly handlePid?: number | null;
+	readonly creationTime?: string | null;
+	readonly userSid?: string | null;
+	readonly exited?: boolean | null;
+}
+
+/**
+ * The Windows process-identity adapter (#4199 design 4.2a "OS identity", Revision 8 clause (ii)): `processOpen` opens a
+ * PID once with `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE)`, reads its facts on that handle and RETAINS
+ * it under `handleId` until `processClose`, so an issuer keeps the handle it verified on while it grants and observes the
+ * participant; `processObserve` rereads the retained handle. JS never owns the HANDLE.
+ */
+export interface NativeProcessBinding {
+	processOpen(handleId: string, pid: number): NativeProcessObservation;
+	processObserve(handleId: string): NativeProcessObservation;
+	processClose(handleId: string): NativeProcessObservation;
+}
+
+/**
+ * What presence placement, cleanup and process evidence need from the bridge (#4199 design 4.2a "Placement.", "Presence
+ * cleanup", "OS identity").
+ */
+export interface NativePresencePlacementBinding
+	extends NativeSocketSecretBinding, NativePresenceBinding, NativeProcessBinding {
 	localAppDataPath(): NativeKnownFolder;
 	presenceRootOpen(path: string, create: boolean): NativePresenceRoot;
 	presenceObjectCreate(request: NativePresenceObjectRequest): NativePresenceObject;
@@ -232,6 +271,9 @@ export function loadPresencePlacement(options: SocketSecretNativeOptions = {}): 
 		"presenceWaitAndAcquire",
 		"presenceCancelWait",
 		"presenceReleaseAfterQuiescence",
+		"processOpen",
+		"processObserve",
+		"processClose",
 	].every((name) => typeof exports[name] === "function");
 	return complete
 		? { status: "available", native: binding as NativePresencePlacementBinding }

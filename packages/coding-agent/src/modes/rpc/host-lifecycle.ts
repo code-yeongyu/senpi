@@ -2,14 +2,13 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { getAgentDir, isBundledNode, VERSION } from "../../config.ts";
-import { readProcessStartTime } from "../../utils/process-identity.ts";
 import { HostAdmission } from "./host-admission.ts";
 import { classifyChildExit, noteChildExit } from "./host-child-exit.ts";
 import { hostCrashCleanupPaths } from "./host-cleanup-paths.ts";
 import { isCliModuleEntry } from "./host-cli-entry.ts";
 import { createHostDaemonPaths, generationPaths } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
-import type { LaunchIdentity, ParticipantRelease } from "./host-launch-reservation.ts";
+import type { GrantedParticipant, LaunchIdentity, ParticipantRelease } from "./host-launch-reservation.ts";
 import { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 import { drainOnPublicSocketLoss, SupervisorDrain, watchWin32ChildIdentity } from "./host-lifecycle-drain.ts";
 import { prepareInternalHop } from "./host-lifecycle-internal-key.ts";
@@ -161,7 +160,10 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			child.pid,
 			() => child.exitCode === null && child.signalCode === null,
 		);
+	/** The granted host's handle (Revision 8 clause (ii)), retained while this supervisor observes its child. */
+	let grantedHost: GrantedParticipant | undefined;
 	child.once("exit", (code, signal) => {
+		grantedHost?.release();
 		// Recorded BEFORE any shutdown it triggers: `shutdown` ends in `process.exit`. A stop the
 		// supervisor is performing itself is recorded too, as the engine stop it is.
 		const reason = state.shutdownReason;
@@ -246,7 +248,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// default kill, which would leave that directory behind.
 	registerSupervisorSignals(shutdown, () => drain.drain());
 	try {
-		await grantHost?.();
+		grantedHost = await grantHost?.();
 		// Direct supervisor launches predate owner records and may have no generation directory.
 		// Ensured starts create it before spawning and always carry an explicit owner/null record.
 		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
@@ -319,13 +321,19 @@ async function admitReservedLaunch(
 	publicSocket: string,
 ): Promise<{ credential: Buffer | undefined; self: LaunchIdentity; presence: ParticipantRelease | undefined }> {
 	const { admitClaimedParticipant, LaunchReservationError } = await import("./host-launch-reservation.ts");
+	const { ownProcessIdentity } = await import("./process-evidence.ts");
+	const { loadPresencePlacement } = await import("./socket-secret-native.ts");
 	if (reservation.role !== "supervisor") {
 		throw new LaunchReservationError("locator_incomplete", "the supervisor entry requires a supervisor reservation");
 	}
 	const credential = await readSocketSecret(socketSecretPath(publicSocket)).catch(() => undefined);
-	const self = { pid: process.pid, processStartTime: (await readProcessStartTime(process.pid)) ?? null };
+	// The claimant's own identity as the issuer will verify it: PID, creation FILETIME and SID read on one handle of itself
+	// through the bridge; PID and start time elsewhere.
+	const native = loadPresencePlacement();
+	const self = await ownProcessIdentity(native);
 	const presence = await admitClaimedParticipant(reservation, self, credential, {
 		deadlineMs: SUPERVISOR_GRANT_DEADLINE_MS,
+		presence: native,
 	});
 	return { credential, self, presence };
 }
@@ -340,10 +348,13 @@ async function offerReservedHost(
 	reservation: StoreLocator,
 	secret: Buffer,
 	issuer: LaunchIdentity,
-): Promise<(() => Promise<void>) | undefined> {
+): Promise<(() => Promise<GrantedParticipant>) | undefined> {
 	const { openEndpointReservationStore } = await import("./endpoint-reservation-store.ts");
 	const { grantClaimedParticipant, LaunchReservationError, offerHostRole, ownLaunchRoute, selectLaunchRoute } =
 		await import("./host-launch-reservation.ts");
+	const { processEvidence } = await import("./process-evidence.ts");
+	const { loadPresencePlacement } = await import("./socket-secret-native.ts");
+	const native = loadPresencePlacement();
 	const store = await openEndpointReservationStore(reservation.storePath);
 	try {
 		// An unreadable expected set is not a legacy classification: the offer below refuses it.
@@ -361,16 +372,24 @@ async function offerReservedHost(
 			);
 		}
 		// The host's presence object is predeclared in the root the reserving owner recorded, before the spawn.
-		offerHostRole(store, reservation.generation, issuer);
+		offerHostRole(store, reservation.generation, issuer, native);
 	} finally {
 		store.close();
 	}
+	// The host is verified on one retained handle through the bridge (PID, creation FILETIME, SID), by its start time
+	// elsewhere; the handle stays open while this supervisor observes its child.
 	return async () => {
 		const store = await openEndpointReservationStore(reservation.storePath);
 		try {
-			await grantClaimedParticipant(store, reservation.generation, "host", issuer, secret, readProcessStartTime, {
-				deadlineMs: HOST_STARTUP_BUDGET_MS,
-			});
+			return await grantClaimedParticipant(
+				store,
+				reservation.generation,
+				"host",
+				issuer,
+				secret,
+				processEvidence(native),
+				{ deadlineMs: HOST_STARTUP_BUDGET_MS },
+			);
 		} finally {
 			store.close();
 		}

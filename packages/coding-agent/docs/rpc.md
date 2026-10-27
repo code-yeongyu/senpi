@@ -898,12 +898,17 @@ are what this decision encodes; the other two are what a client must not undo el
   asked for worker sessions sees a daemon serving hundreds of them exactly as it saw an empty one, so a task runner
   fanning out children cannot flood a desktop's session list.
 
-Windows public-endpoint startup uses a reservation generation for both the supervisor and host. The launcher grants
-the supervisor only after checking its claimed PID and process start time through the OS. That supervisor then offers
-the host role in the same generation and forwards a non-secret store locator through the child argv, including through
-runtime wrappers. The host consumes the locator before public CLI parsing, claims with its own process identity and
-waits for the supervisor's verified grant before listening. Both grants carry the SHA-256 commitment of the established
-public secret, not the private hop credential. Cancellation, a claim or grant deadline, an unreadable or changed process
+Windows public-endpoint startup uses a reservation generation for both the supervisor and host. The launcher grants the
+supervisor only after checking its claimed PID and process start time through the OS: on Windows it opens the claimed
+PID through the native bridge and requires `GetProcessId`, the exact creation FILETIME and the `TokenUser` SID to match
+on that one handle, which it keeps open while it grants and observes the participant; a same-birth SID mismatch or a
+handle whose PID is not the claimed one refuses `identity_inconsistent`, a different creation time or an exited process
+`participant_mismatch`, an unreadable one `identity_unverified`. Each participant records its own PID, creation FILETIME
+and SID read on one handle of itself (`userSid` in its recorded identity). That supervisor then offers the host role in
+the same generation and forwards a non-secret store locator through the child argv, including through runtime wrappers.
+The host consumes the locator before public CLI parsing, claims with its own process identity and waits for the
+supervisor's verified grant before listening. Both grants carry the SHA-256 commitment of the established public secret,
+not the private hop credential. Cancellation, a claim or grant deadline, an unreadable or changed process
 identity, or a mismatched commitment fails startup; a failed host admission stops the spawned child.
 The supervisor allows the host claim the same 30-second startup budget as its listener. A reservation read blocked by
 another writer reports `store_busy`; claim and grant waits retry that read within their original deadline rather than
@@ -997,11 +1002,13 @@ owner until its `released` commit and for every granted role without one. Offere
 not probed. An acquisition counts only when the object's tag and file identity match the row, the row recorded `local`
 and the object's directory still classifies `local`, and, for an object in the per-user root, the row's and this
 machine's kernel-session identities are both verified and equal. A busy object always refuses. An entry without such an
-acquisition is discharged only when its recorded PID, reopened now, is absent or has a different creation FILETIME
-(compared exactly). That observation counts only when the store recorded `local` and still classifies `local`, or when
-the row's and this machine's kernel-session identities are both verified and equal; an `unverified` identity equals
-nothing. On a store recorded and still classified `local`, a verified kernel-session identity that differs from the
-one the generation recorded, with every probed object acquired, proves every process of that earlier boot gone. Then
+acquisition is discharged only when its recorded PID, reopened now through the native bridge, is absent, has a different
+creation FILETIME (compared exactly) or is a signalled process object with the recorded identity; the same PID, creation
+FILETIME and `TokenUser` SID on one handle is live. That observation counts only when the store recorded `local` and
+still classifies `local`, or when the row's and this machine's kernel-session identities are both verified and equal; an
+`unverified` identity equals nothing. On a store recorded and still classified `local`, a verified kernel-session
+identity that differs from the one the generation recorded, with every probed object acquired, proves every process of
+that earlier boot gone. Then
 every recorded generation supervisor, host child and session-path claim of the endpoint must be gone under the same
 rules. Recovery retires at the revision it revalidated while it still holds the acquired locks, and releases them after
 the commit. A generation that served and whose actors committed `released` retires without any probe, so an ordinary
@@ -1034,13 +1041,15 @@ at most one requery, inside the smaller of the start's readiness deadline and fi
 that deadline passes is abandoned and its late answer is never read. What is still unknown then is persisted on the
 reservation as its escalated reason at the revision read (`escalation` in the record: `revision`, `subject`, `reason`,
 `observations`), and the refusal's `escalation: { reason, observations, cached }` names it. The reasons are
-`owner_identity_unreadable` (a denied or failed reopen), `owner_identity_incomplete` (no recorded identity, or one that
-cannot be compared), `owner_identity_domain_mismatch` (both kernel sessions verified and different) and
-`owner_identity_domain_unverified` (either unverified); `owner_identity_inconsistent` is reserved for the native
-identity adapter's same-birth account or handle inconsistency. An unchanged record (same revision) answers a later
-automatic ensure from that marker with `observations: 0, cached: true` and no new query, while its presence objects are
-still probed once and a verified different kernel session is still checked; a transition discards the marker, an
-explicit `host repair` opens one new bounded assessment, and a repair that resolves the record to `live` drops it.
+`owner_identity_unreadable` (a denied or failed reopen, or an unreadable creation time, SID or exit state),
+`owner_identity_inconsistent` (the recorded creation FILETIME under another SID, or a handle whose `GetProcessId` is not
+the reopened PID; it gets the same one requery), `owner_identity_incomplete` (no recorded identity, or one that cannot
+be compared, a recorded identity without a SID included), `owner_identity_domain_mismatch` (both kernel sessions
+verified and different) and `owner_identity_domain_unverified` (either unverified). An unchanged record (same revision)
+answers a later automatic ensure from that marker with `observations: 0, cached: true` and no new query, while its
+presence objects are still probed once and a verified different kernel session is still checked; a transition discards
+the marker, an explicit `host repair` opens one new bounded assessment, and a repair that resolves the record to `live`
+drops it.
 
 `host repair [--confirm-restart] [--socket <path>] --json` is the explicit Repair connection action, engine half. It
 refuses `unsupported_platform` off the reservation route. Otherwise it runs the recovery check once more under the

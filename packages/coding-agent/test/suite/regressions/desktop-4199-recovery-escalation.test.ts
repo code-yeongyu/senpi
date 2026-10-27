@@ -35,7 +35,6 @@ import { FAKE_KERNEL_SESSION, fakeProcessTable, fakeWindows } from "../../helper
 const mocked = vi.hoisted(() => ({
 	lockDir: "",
 	placement: undefined as unknown,
-	identities: new Map<number, ProcessIdentityResult>(),
 }));
 
 vi.mock("../../../src/modes/rpc/socket-secret-native.ts", async (importOriginal) => {
@@ -60,9 +59,9 @@ vi.mock("../../../src/utils/process-identity.ts", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../../../src/utils/process-identity.ts")>();
 	return {
 		...actual,
-		readProcessIdentity: vi.fn(
-			async (pid: number): Promise<ProcessIdentityResult> => mocked.identities.get(pid) ?? { kind: "absent" },
-		),
+		// The CLI case runs under a stubbed win32 platform, where the bridge is the evidence source; the start-time reader
+		// must never reach PowerShell there, and whatever still asks it sees no process.
+		readProcessIdentity: vi.fn(async (): Promise<ProcessIdentityResult> => ({ kind: "absent" })),
 	};
 });
 
@@ -130,7 +129,6 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 		vi.restoreAllMocks();
 		vi.unstubAllGlobals();
 		mocked.placement = undefined;
-		mocked.identities.clear();
 		for (const store of stores.splice(0)) store.close();
 		for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 	});
@@ -636,7 +634,8 @@ describe("#4199 bounded escalation and the Repair result (tests 12, 20 and 26, e
 			const owner = store.reservation(generation).ownerPresence;
 			if (owner.status !== "predeclared") throw new Error("expected an object");
 			machine.objects.delete(owner.path);
-			mocked.identities.set(OWNER.pid, { kind: "error", error: new Error("access denied") });
+			// On Windows the CLI's recovery observes through the bridge's retained-handle adapter: a denied `OpenProcess`.
+			machine.processes.denied(OWNER.pid);
 			vi.stubGlobal("process", Object.create(process, { platform: { value: "win32" } }));
 			const outcome = await runHostRequest({ action: "repair", target: { socket, agentDir }, confirmRestart: true });
 			vi.unstubAllGlobals();

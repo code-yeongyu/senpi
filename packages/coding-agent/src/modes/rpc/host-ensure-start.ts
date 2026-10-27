@@ -37,6 +37,7 @@ import { hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import {
 	acquireOwnerPresence,
 	grantClaimedParticipant,
+	type GrantedParticipant,
 	type LaunchRoute,
 	offerSupervisorLaunch,
 	ownLaunchRoute,
@@ -45,6 +46,7 @@ import {
 } from "./host-launch-reservation.ts";
 import { sweepPresenceObjects } from "./presence-cleanup.ts";
 import { resolvePresenceRoot } from "./presence-placement.ts";
+import { ownProcessIdentity, processEvidence } from "./process-evidence.ts";
 import { loadPresencePlacement } from "./socket-secret-native.ts";
 
 export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
@@ -127,6 +129,8 @@ export async function startHost(
 	let exitedEarly: ChildExit | undefined;
 	let childExit: Promise<ChildExit> | undefined;
 	let presenterEnrollment: Promise<void> | undefined;
+	/** The granted supervisor's handle (Revision 8 clause (ii)), kept while this issuer observes it for readiness. */
+	let grantedSupervisor: GrantedParticipant | undefined;
 	try {
 		const supervisorArgs = [
 			"--socket",
@@ -182,13 +186,15 @@ export async function startHost(
 		// guard-less record never claims ownership and never authorizes a signal - every later caller
 		// reads it as unknown - so the worst case is a fresh host next time, not a killed healthy one.
 		if (reservation && publicSecret) {
-			await grantClaimedParticipant(
+			// Through the bridge the claimant is verified on one retained handle (PID, creation FILETIME, SID); elsewhere by
+			// the same start-time probe that read the child above.
+			grantedSupervisor = await grantClaimedParticipant(
 				reservation.store,
 				reservation.generation,
 				"supervisor",
 				reservation.issuer,
 				publicSecret,
-				(pid) => probe(pid),
+				processEvidence(reservation.native, (pid) => probe(pid)),
 				{ deadlineMs: SUPERVISOR_CLAIM_DEADLINE_MS },
 			).catch((error: unknown) => {
 				reservation.store.cancel(reservation.generation);
@@ -212,6 +218,7 @@ export async function startHost(
 		// self-exit. Latch it before killing, or the catch reports the SIGTERM it is
 		// about to send and discards the actual startup failure.
 		const exitedBeforeCleanup = exitedEarly;
+		grantedSupervisor?.release();
 		// Keep the ChildProcess handle owned until registration succeeds. If startup
 		// fails before the pidfile is written, terminate this exact child through
 		// its still-attached handle rather than leaving an unmanaged daemon behind.
@@ -233,6 +240,8 @@ export async function startHost(
 	}
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, isCompatible, childExit);
+	// This issuer's observation of the supervisor ends with its readiness verdict; the supervisor is its own holder now.
+	grantedSupervisor?.release();
 	if (result.ready) {
 		if (reservation) {
 			reservation.store.markServing(reservation.generation);
@@ -397,11 +406,10 @@ async function reserveSupervisorLaunch(
 		owner.presence.release();
 		throw error;
 	});
-	// An unreadable own start time is recorded as unverified; it never decides a grant, which checks the claimant.
-	const issuer = {
-		pid: process.pid,
-		processStartTime: (await readProcessStartTime(process.pid).catch(() => undefined)) ?? null,
-	};
+	// The issuer's own identity, read on one handle of itself through the bridge (PID, creation FILETIME, SID) so recovery
+	// can verify this owner the same way; an unreadable own start time is recorded as unverified and never decides a grant,
+	// which checks the claimant.
+	const issuer = await ownProcessIdentity(owner.native);
 	const { generation, args } = offerSupervisorLaunch(
 		store,
 		socket,
@@ -413,5 +421,5 @@ async function reserveSupervisorLaunch(
 		},
 		expectedRoles,
 	);
-	return { store, issuer, generation, args, presence: owner.presence };
+	return { store, issuer, generation, args, presence: owner.presence, native: owner.native };
 }

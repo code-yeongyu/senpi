@@ -73,6 +73,10 @@ mod imp {
 
     struct OwnedHandle(HANDLE);
 
+    // SAFETY: a process handle is valid on every thread of the process that opened it; the registry that
+    // retains it (`process_binding.rs`) serializes every use behind its mutex.
+    unsafe impl Send for OwnedHandle {}
+
     impl Drop for OwnedHandle {
         fn drop(&mut self) {
             // SAFETY: the handle came from a successful open call and is closed exactly once here.

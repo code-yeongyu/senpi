@@ -88,8 +88,8 @@ export type ReservationRejection =
 
 /**
  * Why a recorded identity stayed unknown after the bounded observation budget (design 4.2a "Bounded unknown
- * escalation"). `owner_identity_inconsistent` is the design's same-birth-wrong-account or handle/PID inconsistency; the
- * observation adapter of this tree reads only the creation FILETIME, so nothing emits it yet.
+ * escalation"). `owner_identity_inconsistent` is the design's same-birth-wrong-account or handle/PID inconsistency, as
+ * the bridge's retained-handle adapter observes it (`process-evidence.ts`).
  */
 export type RecoveryEscalationReason =
 	| "owner_identity_unreadable"

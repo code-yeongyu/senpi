@@ -50,19 +50,23 @@ export async function admitReservedHostArgs(args: string[]): Promise<string[]> {
 	const { admitClaimedParticipant, parseReservationLocatorArgs, LaunchReservationError } =
 		await import("./host-launch-reservation.ts");
 	const { LOCATOR_FLAGS } = await import("./host-lifecycle-launch.ts");
-	const { readProcessStartTime } = await import("../../utils/process-identity.ts");
+	const { ownProcessIdentity } = await import("./process-evidence.ts");
+	const { loadPresencePlacement } = await import("./socket-secret-native.ts");
 	const { readSocketSecret, socketSecretPath } = await import("./socket-transport.ts");
 	const locator = parseReservationLocatorArgs(args);
 	if (!locator || locator.role !== "host") {
 		throw new LaunchReservationError("locator_incomplete", "the host entry requires a host reservation");
 	}
-	const self = { pid: process.pid, processStartTime: (await readProcessStartTime(process.pid)) ?? null };
+	// The host's own identity as its issuer verifies it: PID, creation FILETIME and SID on one handle of itself through
+	// the bridge (design 4.2a clause (ii)); PID and start time elsewhere.
+	const native = loadPresencePlacement();
+	const self = await ownProcessIdentity(native);
 	const credential = await readSocketSecret(socketSecretPath(locator.endpoint)).catch(() => undefined);
 	// The host holds its presence lock from before its claim for the life of this process: its win32 shutdown bounds
 	// the session dispose and the listener close by timers (multi-session-host.ts), so it cannot prove the quiescence a
 	// `released` commit asserts; it commits none, the kernel releases the guard at process exit, and its object is deleted
 	// at retirement or by the sweep (presence-cleanup.ts).
-	await admitClaimedParticipant(locator, self, credential, { deadlineMs: 10_000 });
+	await admitClaimedParticipant(locator, self, credential, { deadlineMs: 10_000, presence: native });
 	const flags = new Set<string>(Object.values(LOCATOR_FLAGS));
 	const remaining: string[] = [];
 	for (let index = 0; index < args.length; index++) {

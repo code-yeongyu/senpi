@@ -15,6 +15,7 @@ import {
 	waitForClaim,
 } from "../../../src/modes/rpc/host-launch-reservation.ts";
 import { resolvePresenceRoot } from "../../../src/modes/rpc/presence-placement.ts";
+import { startTimeEvidence } from "../../../src/modes/rpc/process-evidence.ts";
 import { loadPresencePlacement } from "../../../src/modes/rpc/socket-secret-native.ts";
 
 // Regression coverage for https://github.com/sisyphuslabs/omo-desktop-app/issues/4199 (design 4.2a "Wrapper-safe
@@ -103,7 +104,7 @@ describe("supervisor admission through a reservation", () => {
 	it("the issuer grants the claimant whose start time the OS confirms, bound to the secret's commitment", async () => {
 		const { store, generation, locator } = await offered();
 		const admitted = admitClaimedParticipant(locator, SELF, SECRET, { deadlineMs: 5_000 });
-		const observe = async (pid: number) => (pid === SELF.pid ? SELF.processStartTime : undefined);
+		const observe = startTimeEvidence(async (pid) => (pid === SELF.pid ? SELF.processStartTime : undefined));
 		await grantClaimedParticipant(store, generation, "supervisor", OWNER, SECRET, observe, { deadlineMs: 5_000 });
 		await expect(admitted).resolves.toBeUndefined();
 	});
@@ -111,7 +112,7 @@ describe("supervisor admission through a reservation", () => {
 	it("the issuer refuses a claimant the OS no longer sees with the claimed start time", async () => {
 		const { store, generation, locator } = await offered();
 		void admitClaimedParticipant(locator, SELF, SECRET, { deadlineMs: 100 }).catch(() => undefined);
-		const replaced = async () => "133000000000000099";
+		const replaced = startTimeEvidence(async () => "133000000000000099");
 		await expect(
 			grantClaimedParticipant(store, generation, "supervisor", OWNER, SECRET, replaced, { deadlineMs: 5_000 }),
 		).rejects.toMatchObject({ reason: "participant_mismatch" });
@@ -121,9 +122,17 @@ describe("supervisor admission through a reservation", () => {
 	it("the issuer gives up, bounded, when nothing claims the role", async () => {
 		const { store, generation } = await offered();
 		await expect(
-			grantClaimedParticipant(store, generation, "supervisor", OWNER, SECRET, async () => undefined, {
-				deadlineMs: 0,
-			}),
+			grantClaimedParticipant(
+				store,
+				generation,
+				"supervisor",
+				OWNER,
+				SECRET,
+				startTimeEvidence(async () => undefined),
+				{
+					deadlineMs: 0,
+				},
+			),
 		).rejects.toMatchObject({ reason: "claim_deadline" });
 	});
 });
