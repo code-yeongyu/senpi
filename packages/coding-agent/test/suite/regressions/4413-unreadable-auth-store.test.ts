@@ -19,7 +19,13 @@ describe("an auth.json that cannot be loaded (senpi#4413)", () => {
 	const cases = [
 		{ name: "malformed JSON", kind: "malformed_json", content: VALID.slice(0, -1), mode: 0o600, skip: false },
 		{ name: "a top-level null", kind: "invalid_format", content: "null", mode: 0o600, skip: false },
-		{ name: "a top-level array", kind: "invalid_format", content: JSON.stringify([STORED]), mode: 0o600, skip: false },
+		{
+			name: "a top-level array",
+			kind: "invalid_format",
+			content: JSON.stringify([STORED]),
+			mode: 0o600,
+			skip: false,
+		},
 		{ name: "a file it may not read", kind: "unreadable", content: VALID, mode: 0o000, skip: cannotChmod },
 	] as const;
 
@@ -63,18 +69,21 @@ describe("an auth.json that cannot be loaded (senpi#4413)", () => {
 		data.providers.find((row) => row.id === "openrouter" && row.authType === "api_key")?.status.configured;
 
 	for (const scenario of cases) {
-		it.skipIf(scenario.skip)(`${scenario.name}: reported as a typed load error, never as "not connected"`, async () => {
-			const { handler, providers } = open(scenario.content, scenario.mode);
+		it.skipIf(scenario.skip)(
+			`${scenario.name}: reported as a typed load error, never as "not connected"`,
+			async () => {
+				const { handler, providers } = open(scenario.content, scenario.mode);
 
-			const data = await providers();
+				const data = await providers();
 
-			expect(data.storeError?.kind).toBe(scenario.kind);
-			expect(typeof data.storeError?.reason).toBe("string");
-			// Path-free and content-free: the reason names the problem, never the file or a key.
-			expect(data.storeError?.reason).not.toContain(tempDir);
-			expect(data.storeError?.reason).not.toContain("sk-stored");
-			await handler.dispose();
-		});
+				expect(data.storeError?.kind).toBe(scenario.kind);
+				expect(typeof data.storeError?.reason).toBe("string");
+				// Path-free and content-free: the reason names the problem, never the file or a key.
+				expect(data.storeError?.reason).not.toContain(tempDir);
+				expect(data.storeError?.reason).not.toContain("sk-stored");
+				await handler.dispose();
+			},
+		);
 
 		it.skipIf(scenario.skip)(`${scenario.name}: a login is refused and the file keeps its bytes`, async () => {
 			const { authPath, handler, send } = open(scenario.content, scenario.mode);
