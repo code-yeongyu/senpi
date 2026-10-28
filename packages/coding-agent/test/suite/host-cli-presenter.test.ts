@@ -1,20 +1,36 @@
 import { randomUUID } from "node:crypto";
-import { once } from "node:events";
 import { readFile, writeFile } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHostDaemonPaths } from "../../src/modes/rpc/host-daemon-paths.ts";
 import { HeldAnthropicModel, openedSessionId } from "../helpers/rpc-generation-support.ts";
 import { MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "../helpers/rpc-hermetic.ts";
 import { enrollmentRequest } from "../mcp/fixtures/presenter-enrollment.ts";
-import { acknowledgedRequest, bootstrap, enroll, next, send, signature } from "./host-cli-presenter-support.ts";
+import {
+	acknowledgedRequest,
+	authenticated,
+	bootstrap,
+	connected,
+	enroll,
+	hostCloses,
+	next,
+	peerRecord,
+	send,
+	signature,
+} from "./host-cli-presenter-support.ts";
 import { hostCliSandbox, onlyJsonLine, runHostCli, sweepHostCliSandboxes } from "./host-cli-support.ts";
-import { authenticate, HOST_TEST_TIMEOUT_MS, Peer, type Wire } from "./rpc-public-auth-harness.ts";
+import { Peer, type Wire } from "./rpc-public-auth-harness.ts";
 
 const sockets: Socket[] = [];
 const models: HeldAnthropicModel[] = [];
 const enforcement = ["--mcp-presenter-enforcement", "--mcp-presenter-fd", "4"];
+/** The running test's own signal: every wait below ends on a host or channel event, or with the test (#4652). */
+let signal: AbortSignal;
+
+beforeEach((context) => {
+	signal = context.signal;
+});
 
 afterEach(async () => {
 	for (const socket of sockets.splice(0)) socket.destroy();
@@ -27,7 +43,7 @@ async function privateSocket(endpoint: unknown): Promise<Socket> {
 	if (typeof endpoint !== "string") throw new Error("missing management endpoint");
 	const socket = connect(endpoint);
 	sockets.push(socket);
-	await once(socket, "connect", { signal: AbortSignal.timeout(10_000) });
+	await connected(socket, "the management endpoint", signal);
 	return socket;
 }
 
@@ -38,7 +54,7 @@ async function launched(
 ) {
 	let enrolled: Wire | undefined;
 	const result = await runHostCli(qa, args, { SENPI_RUNTIME: options.runtime ?? "bun" }, async (socket) => {
-		enrolled = await bootstrap(socket, options.predecessor);
+		enrolled = await bootstrap(socket, signal, options.predecessor);
 	});
 	expect(result.exitCode, result.stderr).toBe(0);
 	expect(enrolled).toMatchObject({ type: "enrolled", backendGeneration: enroll.backendGeneration });
@@ -54,21 +70,19 @@ async function heldModel(qa: Awaited<ReturnType<typeof hostCliSandbox>>) {
 }
 
 async function busy(qa: Awaited<ReturnType<typeof hostCliSandbox>>) {
-	const peer = await Peer.connect(qa.socket, { deadlineMs: HOST_TEST_TIMEOUT_MS });
+	const peer = await Peer.connect(qa.socket);
 	sockets.push(peer.socket);
-	await authenticate(peer, qa.agentDir);
+	await authenticated(peer, qa.agentDir, signal);
 	const sessionId = openedSessionId(
-		await acknowledgedRequest(peer, {
-			id: "open",
-			type: "open_session",
-			cwd: qa.root,
-			provider: MOCK_PROVIDER,
-			modelId: MOCK_MODEL,
-		}),
+		await acknowledgedRequest(
+			peer,
+			{ id: "open", type: "open_session", cwd: qa.root, provider: MOCK_PROVIDER, modelId: MOCK_MODEL },
+			signal,
+		),
 	);
-	await acknowledgedRequest(peer, { id: "prompt", type: "prompt", sessionId, message: "hold this turn" });
-	// Armed after the accepted prompt, not before it: waitFor also matches records already received.
-	await peer.waitFor((record) => record.type === "agent_start");
+	const accepted = peer.records.length;
+	await acknowledgedRequest(peer, { id: "prompt", type: "prompt", sessionId, message: "hold this turn" }, signal);
+	await peerRecord(peer, (record) => record.type === "agent_start", "agent_start", signal, accepted);
 	return { peer, sessionId };
 }
 
@@ -100,7 +114,7 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 			expect(second.enrolled.hostInstance).not.toBe(first.enrolled.hostInstance);
 			expect(second.enrolled.principalId).not.toBe(first.enrolled.principalId);
 			const stale = await privateSocket(second.enrolled.endpoint);
-			const closed = once(stale, "close", { signal: AbortSignal.timeout(10_000) });
+			const closed = hostCloses(stale, "the stale management channel", signal);
 			send(stale, {
 				type: "challenge",
 				principalId: first.enrolled.principalId,
@@ -128,7 +142,7 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 			const frames: string[] = [];
 			const result = await runHostCli(qa, ["handoff", ...enforcement], {}, async (socket) => {
 				socket.on("data", (chunk) => frames.push(String(chunk)));
-				const closed = once(socket, "close", { signal: AbortSignal.timeout(60_000) });
+				const closed = hostCloses(socket, "the refused bootstrap channel", signal);
 				send(socket, enrollmentRequest({ launchKind: "replacement", predecessorHostInstance: claimed }));
 				await closed;
 			});
@@ -150,9 +164,10 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 			const { peer, sessionId } = await busy(qa);
 			let management: Socket | undefined;
 			if (first.enrolled) {
-				const context = await peer.request({ id: "context", type: "mcp_presenter_context", sessionId });
+				const context = peerRecord(peer, (record) => record.id === "context", "the presenter context", signal);
+				send(peer.socket, { id: "context", type: "mcp_presenter_context", sessionId });
 				management = await privateSocket(first.enrolled.endpoint);
-				const challenge = next(management, "challenge");
+				const challenge = next(management, "challenge", signal);
 				send(management, {
 					type: "challenge",
 					principalId: first.enrolled.principalId,
@@ -160,12 +175,12 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 					command: {
 						type: "mcp_presenter_assign",
 						sessionId,
-						bindingEpoch: (context.context as Wire).bindingEpoch,
+						bindingEpoch: ((await context).context as Wire).bindingEpoch,
 						purpose: "mcp_form",
 					},
 				});
 				const proof = signature((await challenge).transcript);
-				const assigned = next(management, "mcp_presenter_assigned");
+				const assigned = next(management, "mcp_presenter_assigned", signal);
 				send(management, { type: "proof", signature: proof });
 				await assigned;
 			}
@@ -199,8 +214,10 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 			]);
 			expect(pending.exitCode, pending.stderr).toBe(0);
 			expect(onlyJsonLine(pending).action).toBe("handover_pending");
-			const successorPrepare = management ? next(management, "mcp_presenter_successor_prepare") : undefined;
-			const superseded = next(peer.socket, "host_superseded");
+			const successorPrepare = management ? next(management, "mcp_presenter_successor_prepare", signal) : undefined;
+			// The handover was acknowledged (`handover_pending`): the host finishes the turn, starts and proves
+			// the successor within its own budgets, then announces. Read through the peer's own parser.
+			const superseded = peerRecord(peer, (record) => record.type === "host_superseded", "host_superseded", signal);
 			model.release();
 			if (successorPrepare && management && first.enrolled) {
 				const preparation = await successorPrepare;
@@ -210,7 +227,7 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 					predecessorHostInstance: first.enrolled.hostInstance,
 				});
 				expect(authorization.launchRequestNonce).not.toBe(first.enrolled.launchRequestNonce);
-				const successorChallenge = next(management, "mcp_presenter_successor_challenge");
+				const successorChallenge = next(management, "mcp_presenter_successor_challenge", signal);
 				send(management, {
 					type: "mcp_presenter_successor_authorize",
 					id: preparation.id,
@@ -225,7 +242,7 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 				expect(tuple[6]).toBe(first.enrolled.hostInstance);
 				expect(tuple[9]).toBe(fresh.hostInstance);
 				expect(tuple).toHaveLength(12);
-				const successorEnrolled = next(management, "mcp_presenter_successor_enrolled");
+				const successorEnrolled = next(management, "mcp_presenter_successor_enrolled", signal);
 				send(management, {
 					type: "mcp_presenter_successor_proof",
 					id: request.id,
@@ -278,7 +295,7 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 		});
 		expect(onlyJsonLine(reused).capabilities).not.toContain("mcp_form_presenter_v1");
 		expect(received).toEqual([]);
-		const ended = peer.waitFor((record) => record.type === "agent_end");
+		const ended = peerRecord(peer, (record) => record.type === "agent_end", "agent_end", signal);
 		model.release();
 		await ended;
 	}, 180_000);
