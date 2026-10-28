@@ -1,7 +1,7 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { watch } from "node:fs";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readHostCrashRecords } from "../../../src/modes/rpc/host-crash-record.ts";
@@ -16,13 +16,13 @@ import { writeHostSettings } from "../../../src/modes/rpc/host-daemon-state.ts";
 import { ensureHost } from "../../../src/modes/rpc/host-ensure.ts";
 import { DEFAULT_STOP_TIMEOUT_MS, stopSpawnedChild } from "../../../src/modes/rpc/host-ensure-stop.ts";
 import { anyGenerationLive } from "../../../src/modes/rpc/host-gc-evidence.ts";
-import { settledOpportunisticHostGc } from "../../../src/modes/rpc/host-gc-pass.ts";
 import { pruneDeadGenerations } from "../../../src/modes/rpc/host-generations.ts";
 import type { ChildExit } from "../../../src/modes/rpc/host-readiness.ts";
 import { hostChildAlive } from "../../../src/modes/rpc/host-stalled-evidence.ts";
 import { writeJsonAtomic } from "../../../src/modes/rpc/host-state-json.ts";
 import { CHILD_KILL_EXIT_TIMEOUT_MS } from "../../../src/modes/rpc/host-stop-intent.ts";
 import { processStartTimeMs, readProcessStartTime } from "../../../src/utils/process-identity.ts";
+import { removeHostScratch } from "../../helpers/host-scratch-removal.ts";
 import { processExitEvent } from "../../helpers/process-exit-event.ts";
 import { type GenerationScratch, generationEnv, generationScratch } from "../../helpers/rpc-generation-support.ts";
 import { processAlive } from "../../helpers/spawned-host-reaper.ts";
@@ -164,8 +164,7 @@ afterEach(async () => {
 				await exit.dispose();
 			}
 		}
-		await settledOpportunisticHostGc(r.qa.agentDir);
-		await rm(r.qa.root, { recursive: true, force: true });
+		await removeHostScratch(r.qa);
 	}
 });
 

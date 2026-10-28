@@ -21,7 +21,7 @@ authority and detaches it from subsequent rule reloads.
 `onCellEnforcementChange(sessionManager, callback)` subscribes to state changes
 and returns an unsubscribe function.
 
-`bashPermissionRequests(command, cwd)` exports the existing bash tool parse,
+`bashPermissionRequests(command, cwd)` in `parsers.ts` is the existing bash tool parse,
 including its external-directory requests, without changing the targets.
 
 Known limitation: reads performed by the runtime's native module resolver
