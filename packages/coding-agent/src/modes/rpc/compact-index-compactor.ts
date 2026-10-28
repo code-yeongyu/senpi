@@ -1,4 +1,11 @@
-import type { BaseRow, CompactContentIndex, IndexOverride, IndexPage, IndexRow } from "./compact-content-index.ts";
+import type {
+	BaseRow,
+	CompactContentIndex,
+	FrozenIndex,
+	IndexOverride,
+	IndexPage,
+	IndexRow,
+} from "./compact-content-index.ts";
 import type { LeafId } from "./compact-content-store.ts";
 import { packPages } from "./compact-index-pages.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
@@ -13,6 +20,7 @@ type Index = Pick<
 	| "overrides"
 	| "pages"
 	| "pending"
+	| "ready"
 	| "residentPages"
 	| "peakResidentPages"
 	| "readPage"
@@ -53,6 +61,14 @@ export class CompactIndexCompactor {
 		});
 	}
 
+	/** Ready keys only, oldest first: a pass never re-looks-up the still-pending backlog (senpi#4575). */
+	private *readyEntries(cut: FrozenIndex): Generator<readonly [string, IndexOverride]> {
+		for (const key of this.index.ready) {
+			const value = this.index.overlays.get(cut.overrides, key);
+			if (value) yield [key, value];
+		}
+	}
+
 	private async compact(): Promise<boolean> {
 		const i = this.index;
 		if (!i.store.spillAllowed) return false;
@@ -70,7 +86,7 @@ export class CompactIndexCompactor {
 		let draft = i.base;
 		i.bases.adjust(draft, 1, 0);
 		try {
-			const entries = i.overlays.entries(cut.overrides);
+			const entries = this.readyEntries(cut);
 			while (selected.size < 128) {
 				const batch: (readonly [string, IndexOverride])[] = [];
 				for (let n = 0; n < 128; n++) {
@@ -120,7 +136,8 @@ export class CompactIndexCompactor {
 					}
 				}
 			}
-			for (const [key, change] of selected) {
+			// Readiness order picks the rows; each pass still writes its folded rows in key order.
+			for (const [key, change] of [...selected].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
 				removed.add(key);
 				if (change.deleted) {
 					rows.delete(key);

@@ -3,6 +3,14 @@ import { CompactPagedBatch } from "./compact-paged-batch.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import { CompactValues, type ValueRef } from "./compact-values.ts";
 
+/**
+ * Decoded-node budget of one compaction round's LRU (senpi#4559). A round's 128 rows land on up to 128 separate
+ * tree paths, about 1,000 nodes of about 0.9 KiB each (as accounted below) at 8,000 rows. The selection lookup and the
+ * batched apply walk the same paths, so the cache must hold a whole round's paths for the apply to reuse them.
+ * Measured at 8,000 settled rows: 32 KiB re-read 67,509 nodes from the spool, 512 KiB 58,175, 1 MiB 31,543.
+ */
+export const ROUND_CACHE_BYTES = 1024 * 1024;
+
 export interface PagedRoot {
 	readonly ref: ValueRef;
 	readonly height: number;
@@ -35,7 +43,7 @@ export class CompactPagedTree<T> {
 		if (root) this.store.adjust(root.ref.owner, live, pins);
 	}
 
-	/** A round-local 32 KiB LRU retains reused upper paths, including newly built ones. */
+	/** A round-local `ROUND_CACHE_BYTES` LRU retains reused paths, including newly built ones; it ends with the round. */
 	async cached<R>(operation: () => Promise<R>): Promise<R> {
 		this.cache = new Map();
 		this.cacheBytes = 0;
@@ -66,8 +74,8 @@ export class CompactPagedTree<T> {
 		if (existing) return existing;
 		const bytes = (units + name.length) * 2 + 128;
 		const decoded = { node, name, bytes };
-		if (this.cache && bytes <= 32_768) {
-			while (this.cacheBytes + bytes > 32_768) {
+		if (this.cache && bytes <= ROUND_CACHE_BYTES) {
+			while (this.cacheBytes + bytes > ROUND_CACHE_BYTES) {
 				const oldest = this.cache.entries().next().value;
 				if (!oldest) break;
 				this.cache.delete(oldest[0]);
