@@ -3,8 +3,11 @@
  * blocked it must survive (the pool state rides along as context), and every block that is saved is
  * written to the log, from a turn's failover and from the usage poll alike.
  */
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { getAgentDir } from "../../../src/config.ts";
 import { AUTH_BLOCK_REPROBE_MS } from "../../../src/core/credential-pool/auth-reprobe.ts";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import {
@@ -26,6 +29,7 @@ import {
 	overrideContinuityObservabilityBoundary,
 	resetContinuityObservabilityBoundary,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/session-observability.ts";
+import { seatDigest } from "../../../src/core/extensions/builtin/anthropic-subscription/seat-digest.ts";
 import { withAuthGuidance } from "../../../src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts";
 import { listPollAccounts, SIGN_IN_NEEDED } from "../../../src/core/subscription-limits/usage-accounts.ts";
 
@@ -69,6 +73,39 @@ async function storeWith(accounts: readonly AccountSlot[]) {
 		),
 	);
 	return store;
+}
+
+/** The lines appended to the real session.log since `offset`, parsed. */
+function sessionLogLinesSince(offset: number): Array<Record<string, unknown>> {
+	const path = join(getAgentDir(), "logs", "session.log");
+	return readFileSync(path)
+		.subarray(offset)
+		.toString("utf8")
+		.split("\n")
+		.filter((line) => line.length > 0)
+		.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function sessionLogSize(): number {
+	const path = join(getAgentDir(), "logs", "session.log");
+	return existsSync(path) ? statSync(path).size : 0;
+}
+
+function failAlphaWhileBravoIsBlocked(store: Awaited<ReturnType<typeof storeWith>>) {
+	return drain(
+		runFailover({
+			accounts: [alpha, bravo],
+			selectFn: (pool) => selectAccount(pool, { sessionId: "pool-block-cause", now: NOW }),
+			runAttempt: async function* () {
+				yield* [];
+				throw new Error("authentication_failed: OAuth token has been revoked");
+			},
+			classify: classifySdkError,
+			store,
+			providerId: "anthropic-subscription",
+			now: () => NOW,
+		}),
+	).catch(() => undefined);
 }
 
 async function drain(iterable: AsyncIterable<unknown>): Promise<unknown[]> {
@@ -115,14 +152,34 @@ describe("an account block keeps the failure that caused it (senpi#4671)", () =>
 			{
 				event: "account_blocked",
 				data: {
-					account: "alpha",
+					seat: seatDigest("alpha"),
 					reason: "auth_error",
 					until: new Date(NOW + AUTH_BLOCK_REPROBE_MS).toISOString(),
 					shared: true,
-					detail: "authentication_failed: OAuth token has been revoked",
+					error: "authentication_failed: OAuth token has been revoked",
 				},
 			},
 		]);
+	});
+
+	it("writes every field of the block to the real session.log, naming the seat by digest only", async () => {
+		const offset = sessionLogSize();
+		await failAlphaWhileBravoIsBlocked(await storeWith([alpha, bravo]));
+
+		const written = sessionLogLinesSince(offset).filter((line) => line.event === "account_blocked");
+		expect(written).toEqual([
+			{
+				ts: expect.any(String),
+				level: "info",
+				event: "account_blocked",
+				seat: seatDigest("alpha"),
+				reason: "auth_error",
+				until: new Date(NOW + AUTH_BLOCK_REPROBE_MS).toISOString(),
+				shared: true,
+				error: "authentication_failed: OAuth token has been revoked",
+			},
+		]);
+		expect(JSON.stringify(written)).not.toContain("alpha");
 	});
 
 	it("lists every account's state and names the account that needs /login", () => {
@@ -183,11 +240,11 @@ describe("an account block keeps the failure that caused it (senpi#4671)", () =>
 			{
 				event: "account_blocked",
 				data: {
-					account: "work",
+					seat: seatDigest("work"),
 					reason: "auth_error",
 					until: new Date(NOW + AUTH_BLOCK_REPROBE_MS).toISOString(),
 					shared: true,
-					detail: "usage_poll_token_rejected",
+					error: "usage_poll_token_rejected",
 				},
 			},
 		]);
