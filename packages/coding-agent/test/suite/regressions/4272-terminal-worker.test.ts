@@ -76,8 +76,8 @@ it("T1 R24.1 R24.2 Q7 worker terminals join, failures survive, and replacement f
 		expect((await host.request({ type: "get_state", sessionId })).success).toBe(true);
 		await held.reached;
 		const deliver = async (record: object, recovery: OutputFrame["recovery"]) => {
-			const ordinal: unknown = Reflect.get(worker, "expectedOrdinal");
-			if (typeof ordinal !== "number") throw new Error("missing client ordinal seam");
+			const ordinal = worker.intake?.nextOrdinal;
+			if (ordinal === undefined) throw new Error("flag on: the worker client owns an intake");
 			const frame: OutputFrame = {
 				type: "output",
 				ordinal,

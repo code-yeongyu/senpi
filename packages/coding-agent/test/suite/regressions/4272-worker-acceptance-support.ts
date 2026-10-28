@@ -25,6 +25,8 @@ export default function (pi) {
 }`;
 
 export type WireRecord = Record<string, unknown>;
+/** How long an open (a worker spawn) or the final worker exits may take before the fixture fails typed. */
+const OPEN_MS = 75_000;
 export type OutputFrame = Extract<SessionWorkerToHost, { type: "output" }>;
 
 /** An output frame as the host received it, with the lane's root read as the frame arrived (before its own apply). */
@@ -144,9 +146,9 @@ export async function workerAcceptanceHost(
 		return within(name, found.promise, ms);
 	};
 	let serial = 0;
-	const request = (command: { readonly type: string } & WireRecord): Promise<WireRecord> => {
+	const request = (command: { readonly type: string } & WireRecord, ms?: number): Promise<WireRecord> => {
 		const id = `t-${++serial}`;
-		const response = next(`response ${command.type}`, (record) => record.type === "response" && record.id === id);
+		const response = next(`response ${command.type}`, (record) => record.type === "response" && record.id === id, ms);
 		void writer.withConnection("c", () => router.handle({ ...command, id } as RpcCommand));
 		return response;
 	};
@@ -174,13 +176,17 @@ export async function workerAcceptanceHost(
 			return { reached: within("reconcile held", reached.promise), release: () => release.resolve() };
 		},
 		async open(): Promise<{ sessionId: string; worker: SessionWorkerClient }> {
-			const opened = await request({
-				type: "open_session",
-				cwd: dir,
-				sessionPath: join(dir, `s-${serial}.jsonl`),
-				provider: "faux",
-				modelId: "faux-1",
-			});
+			// Carry 13: a worker spawn under heavy host load can take past 30 s; the open gets most of a test's own budget.
+			const opened = await request(
+				{
+					type: "open_session",
+					cwd: dir,
+					sessionPath: join(dir, `s-${serial}.jsonl`),
+					provider: "faux",
+					modelId: "faux-1",
+				},
+				OPEN_MS,
+			);
 			if (opened.success !== true) throw new Error(`open failed: ${JSON.stringify(opened)}`);
 			const sessionId = String((opened.data as { sessionId: string }).sessionId);
 			const worker = registry.peek(sessionId)?.worker;
@@ -189,7 +195,7 @@ export async function workerAcceptanceHost(
 		},
 		async dispose() {
 			for (const worker of workers) worker.quarantine();
-			await within("workers exit", Promise.all(workers.map((worker) => worker.exited)));
+			await within("workers exit", Promise.all(workers.map((worker) => worker.exited)), OPEN_MS);
 			await router.dispose();
 			writer.unregisterConnection("c");
 			await rm(dir, { recursive: true, force: true });

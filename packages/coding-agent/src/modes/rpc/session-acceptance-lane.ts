@@ -63,8 +63,11 @@ const RETIRED_SETTLED: SettledRoot = Object.freeze({ base: undefined, overrides:
 export class SessionAcceptanceLane extends AcceptedRootReads {
 	private epoch = "";
 	private sequence = 0;
-	/** The lane's one staging store: accepted transcript tails of every epoch, spilled like any payload leaf (S12a). */
-	private readonly staging: TransferStaging;
+	/**
+	 * The lane's one staging store: accepted transcript tails of every epoch, spilled like any payload leaf (S12a), and
+	 * its worker's fragments before their message is whole (S12b); retiring the lane aborts what is still staged.
+	 */
+	readonly staging: TransferStaging;
 	private transcript: AcceptedTranscript;
 	private activeMessageId: string | null = null;
 	private turnId: string | null = null;

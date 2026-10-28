@@ -27,6 +27,7 @@ import type {
 } from "./session-worker-protocol.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
+import { WorkerIntake } from "./session-worker-intake.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 import { randomUUID } from "node:crypto";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
@@ -88,7 +89,8 @@ export class SessionWorkerClient {
 	private stopLimitMirror: () => void = () => {};
 	/** The host's ordered acceptance lane for this worker incarnation, present only while the flag is on. */
 	readonly acceptance = compactUpdatesEnabled() ? new SessionAcceptanceLane() : undefined;
-	private expectedOrdinal = 0;
+	/** The host half of this incarnation's payload transport: permits, physical frame order, fragment staging (S12b). */
+	readonly intake = this.acceptance && new WorkerIntake(this.acceptance.staging, (error) => this.fail(error));
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
@@ -96,6 +98,7 @@ export class SessionWorkerClient {
 		this.callbacks = callbacks;
 		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
+				this.intake?.permits.close();
 				this.stopPrivateBinding?.();
 				this.privateBinding?.dispose();
 				for (const operation of this.privateOperations.values()) operation.operation.abort();
@@ -163,7 +166,7 @@ export class SessionWorkerClient {
 		const nonce = randomUUID();
 		const result = await this.request({
 			type: "commit",
-			...(this.acceptance ? { acceptance: true, recoveryEpoch: nonce } : {}),
+			...(this.intake ? { acceptance: true, recoveryEpoch: nonce, permits: this.intake.permits.block } : {}),
 		});
 		if (result.type !== "ready") throw new Error("Invalid worker commit response");
 		if (this.acceptance) {
@@ -243,6 +246,7 @@ export class SessionWorkerClient {
 	}
 
 	quarantine(): void {
+		this.intake?.permits.close();
 		this.stopped = true;
 		this.requests.close(new Error("session_closing"));
 		void this.worker.terminate();
@@ -263,9 +267,10 @@ export class SessionWorkerClient {
 
 	private receive(message: SessionWorkerToHost): void {
 		if (this.stopped) {
-			if ("signal" in message) acknowledge(message.signal, false);
+			if ("signal" in message && message.signal) acknowledge(message.signal, false);
 			return;
 		}
+		this.intake?.received(message);
 		switch (message.type) {
 			case "mcp_form_bind": {
 				this.stopPrivateBinding?.();
@@ -387,7 +392,7 @@ export class SessionWorkerClient {
 					return;
 				}
 				const lane = this.acceptance;
-				if (!this.inOrder(message)) return;
+				if (this.intake?.inOrder(message) === false) return;
 				// Identity and activity commit before publication; clients may attach or disconnect on that event.
 				if (message.snapshot) {
 					this.snapshot = message.snapshot;
@@ -478,7 +483,7 @@ export class SessionWorkerClient {
 					acknowledge(message.signal, false);
 					return;
 				}
-				if (!this.inOrder(message)) return;
+				if (this.intake?.inOrder(message) === false) return;
 				if (message.type === "canonical")
 					this.acceptance?.acceptControl(frameUnit({ ...message, canonical: message.record }));
 				else this.acceptance?.compactUnavailable(canonicalLoss(message));
@@ -509,6 +514,12 @@ export class SessionWorkerClient {
 				acknowledge(message.signal, true);
 				return;
 			}
+			case "fragment":
+				void this.intake?.fragment(message)?.then(
+					(whole) => this.receive(whole),
+					() => this.fail("session_worker_transfer_unreadable"),
+				);
+				return;
 			case "request_close":
 				this.requestClose?.();
 				return;
@@ -519,19 +530,6 @@ export class SessionWorkerClient {
 				this.fail(message.error);
 				return;
 		}
-	}
-
-	/** A gap, duplicate or reordered frame is denied and ends this incarnation before any mutation. */
-	private inOrder(message: { readonly ordinal?: number; readonly signal: SharedArrayBuffer }): boolean {
-		if (!this.acceptance) return true;
-		if (message.ordinal === this.expectedOrdinal) {
-			this.expectedOrdinal += 1;
-			return true;
-		}
-		acknowledge(message.signal, false);
-		const kind = (message.ordinal ?? Number.POSITIVE_INFINITY) < this.expectedOrdinal ? "duplicate" : "gap";
-		this.fail(`session_worker_frame_${kind}`);
-		return false;
 	}
 
 	private fail(error: string): void {
