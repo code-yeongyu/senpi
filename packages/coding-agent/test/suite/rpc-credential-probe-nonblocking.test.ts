@@ -9,8 +9,8 @@ import { startInProcessHost } from "./rpc-worker-host-support.ts";
  * A stored `!command` credential is resolved while a session starts. On an in-process
  * host every session shares one event loop, so resolving it synchronously freezes every
  * other session for as long as the credential helper runs - a real broker can take
- * seconds. The credential command here announces its pid the moment it starts and then
- * blocks opening a FIFO that only this test writes, so it cannot finish on its own.
+ * seconds. The credential command here opens a FIFO for reading, announces its pid, and
+ * then blocks reading that FIFO until this test writes it, so it cannot finish on its own.
  *
  * The property is asserted by ordering, not by a latency budget (senpi#4638): the
  * concurrent `get_state` must answer while the helper is still running. A host that
