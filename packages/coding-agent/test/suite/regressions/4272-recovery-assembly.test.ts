@@ -68,11 +68,13 @@ it("RULING-61 Q3 only a registry whose every producer is complete narrows to a c
 });
 
 it("RULING-61 Q3 the compiler refuses an un-narrowed registry and a hand-written complete one where a complete assembly is required", () => {
-	const registry: FamilyRegistry = familyRegistry(FAMILY_PRODUCERS);
+	// An incomplete registry (every producer complete since S10b, so one is made partial) and a literal whose every row
+	// is complete: the brand is the only thing the forged one lacks.
+	const registry: FamilyRegistry = familyRegistry({ ...FAMILY_PRODUCERS, source: "partial" });
 	const forged = {
 		format: "senpi-recovery-families",
 		version: 1,
-		families: registry.families,
+		families: familyRegistry(FAMILY_PRODUCERS).families,
 		assembly: "complete",
 	} as const;
 	// @ts-expect-error TS2345: an un-narrowed registry may be incomplete; only completeAssembly narrows it

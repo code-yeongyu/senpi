@@ -21,13 +21,12 @@ export async function* sourceComponents(
 	settled: SettledReader,
 ): AsyncGenerator<CatalogComponent> {
 	let count = 0;
-	for (let index = 0; transcript.unavailable === null && index < transcript.count; index++) {
+	const accepted = transcript.unavailable === null ? transcript.accepted : [];
+	for (const { index, id, kind, parentId } of accepted) {
 		reader.valid();
-		const kind = transcript.kinds[index];
 		if (entryFamily(kind) !== "source") continue;
-		const id = transcript.entryIds[index];
 		const line = transcript.tail.entries.get(index);
-		const head = { index, id, parentId: transcript.parents[index], kind, messageId: await settled.messageOf(id) };
+		const head = { index, id, parentId, kind, messageId: await settled.messageOf(id) };
 		const steps = objectSteps([
 			...literalFields(head),
 			["entry", line === undefined ? literalSteps(null) : [{ kind: "raw", text: line, more: false } as const]],

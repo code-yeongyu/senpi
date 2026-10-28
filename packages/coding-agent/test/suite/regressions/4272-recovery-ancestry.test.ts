@@ -161,10 +161,15 @@ it("RULING-61 Q1 a root frozen at N entries keeps exactly N while the lane accep
 });
 
 it("RULING-61 Q1 a cut frozen at N entries is cataloged with exactly N rows after the lane accepts more", async () => {
-	// Given: one accepted entry, then a cut, then two more entries (one of an unknown kind) accepted after it
+	// Given: one accepted entry, then a cut, then three more entries (an unknown kind, a message, a source kind)
+	// accepted after it
 	const rig = recoveryRig();
 	rig.lane.applyTranscript([appended(message)]);
-	const later = [appended(unknown), appended({ ...message, id: "e2", parentId: "e1" })];
+	const later = [
+		appended(unknown),
+		appended({ ...message, id: "e2", parentId: "e1" }),
+		appended({ type: "label", id: "e3", parentId: "e2" }),
+	];
 	// When: the frozen cut is cataloged after the later entries arrived
 	const catalog = await catalogOf(rig, () => rig.lane.applyTranscript(later));
 	// Then: exactly the cut's one row, its count, and an opaque family with no member from after the cut
@@ -174,6 +179,10 @@ it("RULING-61 Q1 a cut frozen at N entries is cataloged with exactly N rows afte
 		["opaque", "opaque"],
 	]);
 	expect(await catalog.json("transcript", "transcript")).toMatchObject({ count: 1, leafId: "e0" });
+	expect(
+		catalog.entries.filter(([kind]) => kind === "source"),
+		"no source member from after the cut",
+	).toEqual([["source", "source"]]);
 	catalog.release();
 	await rig.lane.idle();
 });
