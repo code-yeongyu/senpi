@@ -70,6 +70,9 @@ export {
 } from "./host-lifecycle-policy.ts";
 export { createInternalSocketPath } from "./host-lifecycle-scratch.ts";
 
+/** How long the supervisor waits for its host child to start listening; it exits when the child misses this. */
+export const HOST_CHILD_LISTEN_MS = 30_000;
+
 export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void> {
 	const paths = createHostDaemonPaths({ socket: launch.socket, agentDir: launch.agentDir ?? getAgentDir() });
 	// Which generation this supervisor is: the ensure that spawned it says so, and a DIRECT launch
@@ -230,7 +233,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		if (launch.ownerFd !== undefined || (await readSettingsFile(generation.settingsFile))) {
 			await owner.start(launch.ownerFd);
 		}
-		await waitForListener(internalSocket, 30_000, internalSecret, internalKey);
+		await waitForListener(internalSocket, HOST_CHILD_LISTEN_MS, internalSecret, internalKey);
 		await activity.openObserver();
 		if (state.shuttingDown) return;
 		// Shutdown stops the child immediately, but joins these writes before removing their directories.
