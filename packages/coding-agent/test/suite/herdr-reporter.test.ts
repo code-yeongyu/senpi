@@ -31,7 +31,7 @@ describe("herdr lifecycle reporter (senpi#1645)", () => {
 			"pane.report_agent",
 			"pane.report_agent_session",
 		]);
-		expect(f.requests[0]?.params).toMatchObject({ title: "Reporter QA", display_agent: "Reporter QA" });
+		expect(f.requests[0]?.params).toMatchObject({ title: "Reporter QA" });
 		expect(f.requests[1]?.params).toMatchObject({ agent_session_path: "/sessions/root.jsonl" });
 		f.setIdle(false);
 		await f.emit("agent_start");
