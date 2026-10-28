@@ -5,6 +5,11 @@ import type { ContentDigest } from "./compact-recovery-ids.ts";
 
 /** D (R4.B3): the most raw bytes one fragment carries; its base64 (174,764) plus H (16,384) fits F (262,144). */
 export const FRAGMENT_MAX_BYTES = 131_072;
+/**
+ * The page budget on the wire (RULING-69 (1)): the base64 envelope of a full fragment, derived from D (four characters
+ * per three raw bytes, the last group padded); S12's initial worker credit is one such envelope (RULING-63).
+ */
+export const FRAGMENT_ENVELOPE_MAX_BYTES = Math.ceil(FRAGMENT_MAX_BYTES / 3) * 4;
 
 /**
  * One frozen component as the byte stream the recovery pages address (S11a, RULING-46 item 2: the one byte
