@@ -235,11 +235,14 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		if (this.retired) return root;
 		this.rootOwners.set(root, this.settled);
 		this.live.add(root);
+		// The cut keeps the tail segments it names until it is released (RULING-78 (1)).
+		root.transcript.tail.retainCut(root.transcript.count);
 		return root;
 	}
 
 	release(root: FrozenAcceptedRoot): void {
 		if (!this.live.delete(root)) return;
+		root.transcript.tail.releaseCut(root.transcript.count);
 		this.rootOwners.get(root)?.release(root.settled);
 		this.current.release(root.current);
 		if (this.retired) this.retireStorage();

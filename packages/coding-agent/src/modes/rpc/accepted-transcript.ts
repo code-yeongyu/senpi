@@ -8,8 +8,8 @@ import {
 	type TranscriptUnavailableReason,
 	type TranscriptPersistence,
 } from "../../core/session-transcript-journal.ts";
-import { stageBootstrap, TranscriptTail } from "./accepted-transcript-tail.ts";
-import type { StagedContent, TransferStaging } from "./compact-transfer-staging.ts";
+import { stageBootstrap, type TailReadFailure, TranscriptTail } from "./accepted-transcript-tail.ts";
+import { type StagedContent, StagedReadError, type TransferStaging } from "./compact-transfer-staging.ts";
 
 /**
  * What an epoch keeps of every accepted entry after persistence released its text: its id, kind and parent link
@@ -82,7 +82,7 @@ export interface TranscriptRoot {
 
 export type TranscriptRead =
 	| { readonly ok: true; readonly entries: readonly FileEntry[] }
-	| { readonly ok: false; readonly error: PersistedBaseError | TranscriptUnavailableReason };
+	| { readonly ok: false; readonly error: PersistedBaseError | TranscriptUnavailableReason | TailReadFailure };
 
 /** The transcript component of one epoch, changed only by accepted transitions (R3.C1.1). */
 export class AcceptedTranscript {
@@ -222,8 +222,9 @@ export class AcceptedTranscript {
 }
 
 /**
- * The root's entries: its base read only through the captured identity, then its own accepted values from the tail,
- * held for the whole read so a persistence report during it cannot drop what it reads.
+ * The root's entries: its base read only through the captured identity, then its own accepted values from its own
+ * segments, held for the whole read so a persistence report during it cannot drop what it reads. A segment read by
+ * identity that is gone or holds other bytes is typed, never other content (RULING-78 (2)).
  */
 export async function readTranscriptRoot(root: TranscriptRoot): Promise<TranscriptRead> {
 	if (root.unavailable !== null) return { ok: false, error: root.unavailable };
@@ -232,23 +233,27 @@ export async function readTranscriptRoot(root: TranscriptRoot): Promise<Transcri
 		const persistence = hold.persistence;
 		const base =
 			root.base ??
-			(persistence && {
-				fileIdentity: persistence.fileIdentity,
-				count: 0,
-				idFingerprint: createHash("sha256").digest("hex"),
-			});
+			(persistence &&
+				hold.fileCount > 0 && {
+					fileIdentity: persistence.fileIdentity,
+					count: 0,
+					idFingerprint: createHash("sha256").digest("hex"),
+				});
 		const persisted = base
-			? readPersistedBase(base, root.accepted.idsBefore(hold.persistedCount))
+			? readPersistedBase(base, root.accepted.idsBefore(hold.fileCount))
 			: { ok: true as const, entries: [] };
 		if (!persisted.ok) return persisted;
 		const entries = [...persisted.entries];
-		for (let index = hold.persistedCount; index < root.count; index++) {
+		for (let index = hold.fileCount; index < root.count; index++) {
 			if (!hold.has(index)) return { ok: false, error: "transcript_tail_trimmed" };
 			let text = "";
 			for await (const chunk of hold.chunks(index)) text += chunk;
 			entries.push(JSON.parse(text) as FileEntry);
 		}
 		return { ok: true, entries };
+	} catch (cause) {
+		if (cause instanceof StagedReadError) return { ok: false, error: `transcript_${cause.reason}` };
+		throw cause;
 	} finally {
 		hold.release();
 	}

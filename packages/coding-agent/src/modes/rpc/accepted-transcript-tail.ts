@@ -65,9 +65,15 @@ export function stageBootstrap(
 	}
 }
 
-/** A reader's consistent cut of one tail: what the file covers, and pins on every tail entry after it. */
+/** What a read by identity of a tail entry can fail with (RULING-78 (2)), never returning other bytes. */
+export type TailReadFailure = "transcript_segment_missing" | "transcript_segment_mismatch";
+
+/**
+ * A reader's consistent cut of one tail: the first `fileCount` entries come from the file through its identity, every
+ * later one from its own segments, pinned until `release`.
+ */
 export interface TailHold {
-	readonly persistedCount: number;
+	readonly fileCount: number;
 	readonly persistence: TranscriptPersistence | null;
 	has(index: number): boolean;
 	chunks(index: number, valid?: () => void): AsyncGenerator<string>;
@@ -76,14 +82,18 @@ export interface TailHold {
 
 /**
  * The unpersisted entries of one epoch as staged content in the lane's store, shared by every root frozen from it: a
- * persistence report releases the entries it covers, held cuts included (RULING-21 (4)); only a reader's hold keeps
- * their leaves until it ends. Persistence moves the source of those exact entries, never the accepted count.
+ * persistence report releases the entries it covers from the tail, held cuts included (RULING-21 (4)), and moves them
+ * to the spool. An entry a live cut still names stays there, `kept`, until the last such cut is released (RULING-78
+ * (1)): a held cut reads its own segments, whatever later happens to the file. Persistence never changes a count.
  */
 export class TranscriptTail {
 	readonly entries = new Map<number, StagedContent>();
+	readonly kept = new Map<number, StagedContent>();
 	retainedBytes = 0;
 	persistence: TranscriptPersistence | null;
 	readonly #staging: TransferStaging;
+	/** Live cuts by their entry count: a cut of count `n` names every entry below `n`. */
+	readonly #cuts = new Map<number, number>();
 
 	constructor(staging: TransferStaging, persistence: TranscriptPersistence | null) {
 		this.#staging = staging;
@@ -100,31 +110,61 @@ export class TranscriptTail {
 		this.retainedBytes += content.ref.entry.length;
 	}
 
+	retainCut(count: number): void {
+		this.#cuts.set(count, (this.#cuts.get(count) ?? 0) + 1);
+	}
+
+	/** The last live cut naming a kept entry releases its segments. */
+	releaseCut(count: number): void {
+		const left = (this.#cuts.get(count) ?? 0) - 1;
+		if (left > 0) this.#cuts.set(count, left);
+		else this.#cuts.delete(count);
+		const reach = this.reach();
+		for (const [index, content] of this.kept) {
+			if (index < reach) continue;
+			this.kept.delete(index);
+			this.#staging.release(content);
+		}
+	}
+
 	/** `baseCount` entries precede this tail's index 0 in the file. */
 	persisted(persistence: TranscriptPersistence, baseCount: number): void {
 		this.persistence = persistence;
+		const reach = this.reach();
 		for (const [index, content] of this.entries) {
 			if (index + baseCount >= persistence.count) break;
-			this.drop(index, content);
+			this.entries.delete(index);
+			this.retainedBytes -= content.ref.entry.length;
+			if (index >= reach) {
+				this.#staging.release(content);
+				continue;
+			}
+			this.kept.set(index, content);
+			this.#staging.spill(content);
 		}
 	}
 
 	releaseAll(): void {
-		for (const [index, content] of this.entries) this.drop(index, content);
+		for (const content of [...this.entries.values(), ...this.kept.values()]) this.#staging.release(content);
+		this.entries.clear();
+		this.kept.clear();
+		this.retainedBytes = 0;
 	}
 
 	hold(count: number, baseCount: number): TailHold {
 		const staging = this.#staging;
-		const persistedCount = Math.min(count, Math.max(0, (this.persistence?.count ?? 0) - baseCount));
+		const own = (index: number) => this.entries.get(index) ?? this.kept.get(index);
+		let fileCount = Math.min(count, Math.max(0, (this.persistence?.count ?? 0) - baseCount));
+		while (fileCount > 0 && own(fileCount - 1)) fileCount -= 1;
 		const held = new Map<number, StagedContent>();
-		for (let index = persistedCount; index < count; index++) {
-			const content = this.entries.get(index);
+		for (let index = fileCount; index < count; index++) {
+			const content = own(index);
 			if (content) held.set(index, content);
 		}
 		for (const content of held.values()) staging.pin(content, 1);
 		let released = false;
 		return {
-			persistedCount,
+			fileCount,
 			persistence: this.persistence,
 			has: (index) => held.has(index),
 			chunks: (index, valid) => {
@@ -140,9 +180,9 @@ export class TranscriptTail {
 		};
 	}
 
-	private drop(index: number, content: StagedContent): void {
-		this.entries.delete(index);
-		this.retainedBytes -= content.ref.entry.length;
-		this.#staging.release(content);
+	private reach(): number {
+		let reach = 0;
+		for (const count of this.#cuts.keys()) reach = Math.max(reach, count);
+		return reach;
 	}
 }

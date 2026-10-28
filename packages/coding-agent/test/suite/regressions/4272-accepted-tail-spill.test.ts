@@ -85,6 +85,8 @@ it("S12a T5 X03 X04: a tail past the old 16 MiB limit spills and stays whole; a 
 	const fromFile = await linesOf(held.transcript);
 	expect(fingerprint(fromTail), "the held read completed from the tail").toEqual(fingerprint(fromFile));
 	expect(fingerprint(Buffer.from(fromFile))).toEqual(fingerprint(readFileSync(String(manager.getSessionFile()))));
+	// RULING-78 (1): the held cut keeps its spool segments until it is released.
+	lane.release(held);
 	await lane.idle();
 	expect(lane.storageStatus().transcript).toMatchObject({
 		residentPayloadBytes: 0,

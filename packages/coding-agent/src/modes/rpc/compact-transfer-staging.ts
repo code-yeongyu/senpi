@@ -1,4 +1,4 @@
-import { type CatalogEntry, catalogDigester, storedBytes } from "./compact-catalog-codec.ts";
+import { type CatalogEntry, catalogDigest, catalogDigester, storedBytes } from "./compact-catalog-codec.ts";
 import {
 	COMPACT_LEAF_CODE_UNITS,
 	type CompactContentStore,
@@ -7,7 +7,8 @@ import {
 } from "./compact-content-store.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import { FRAGMENT_MAX_BYTES, type FrozenBytes, openFrozenBytes } from "./compact-recovery-bytes.ts";
-import type { BoundedId } from "./compact-recovery-ids.ts";
+import type { BoundedId, ContentDigest } from "./compact-recovery-ids.ts";
+import { CompactStorageReadError } from "./compact-storage-io.ts";
 
 /**
  * The stored bytes one staging owner may hold staged and not yet adopted: B_worker (S12 design section 3), the host's
@@ -30,6 +31,17 @@ export class TransferStagingError extends Error {
 	}
 }
 
+/** A read by identity found its segment gone (`segment_missing`) or holding other bytes (`segment_mismatch`). */
+export class StagedReadError extends Error {
+	readonly reason: "segment_missing" | "segment_mismatch";
+
+	constructor(reason: StagedReadError["reason"], options?: ErrorOptions) {
+		super(`staged read refused (${reason})`, options);
+		this.name = "StagedReadError";
+		this.reason = reason;
+	}
+}
+
 /**
  * A frozen reference (RULING-46 item 2, RULING-63 Q2): content named by an S11a catalog entry, encoded only by that
  * codec (`CatalogNodeWriter` / `decodeCatalogNode`); `length` and `digest` are those of its exact stored UTF-16LE
@@ -38,10 +50,14 @@ export class TransferStagingError extends Error {
  */
 export type FrozenRef = { readonly variant: "staged"; readonly entry: CatalogEntry };
 
-/** Committed staged content: its frozen ref and the immutable leaves holding it, one live reference owned. */
+/**
+ * Committed staged content: its frozen ref and the immutable leaves holding it, one live reference owned, with each
+ * leaf's codec `leaf` digest so every read verifies a leaf before returning any of it (RULING-78 (2)).
+ */
 export interface StagedContent {
 	readonly ref: FrozenRef;
 	readonly leaves: readonly LeafId[];
+	readonly leafDigests: readonly ContentDigest[];
 }
 
 export interface StagingStatus extends CompactStorageStatus {
@@ -60,6 +76,7 @@ class StagedTransfer {
 	private readonly settle: (content: StagedContent | undefined) => void;
 	private readonly digester: ReturnType<typeof catalogDigester>;
 	private readonly leaves: LeafId[] = [];
+	private readonly leafDigests: ContentDigest[] = [];
 	private fed = 0;
 	private open = true;
 
@@ -80,8 +97,11 @@ class StagedTransfer {
 		if (bytes > FRAGMENT_MAX_BYTES) this.refuse("fragment_over_limit");
 		if (this.fed + bytes > this.entry.length) this.refuse("length_mismatch");
 		try {
-			for (let at = 0; at < text.length; at += COMPACT_LEAF_CODE_UNITS)
-				this.leaves.push(this.store.createLeaf(text.slice(at, at + COMPACT_LEAF_CODE_UNITS)));
+			for (let at = 0; at < text.length; at += COMPACT_LEAF_CODE_UNITS) {
+				const piece = text.slice(at, at + COMPACT_LEAF_CODE_UNITS);
+				this.leaves.push(this.store.createLeaf(piece));
+				this.leafDigests.push(catalogDigest("leaf", storedBytes(piece)));
+			}
 		} catch (cause) {
 			this.abort();
 			throw cause;
@@ -97,6 +117,7 @@ class StagedTransfer {
 		const content: StagedContent = {
 			ref: { variant: "staged", entry: { ...this.entry, digest: this.digester.finish() } },
 			leaves: [...this.leaves],
+			leafDigests: [...this.leafDigests],
 		};
 		this.settle(content);
 		return content;
@@ -209,11 +230,33 @@ export class TransferStaging {
 		return openFrozenBytes(content.ref.entry, content.leaves, (leaf) => this.store.readLeaf(leaf), valid);
 	}
 
-	/** The content's text in verified pieces of at most D stored bytes, one fragment resident beside one leaf. */
-	async *chunks(content: StagedContent, valid?: () => void): AsyncGenerator<string> {
-		const bytes = await this.open(content, valid);
-		for (let at = 0; at < bytes.length; at += FRAGMENT_MAX_BYTES)
-			yield (await bytes.range(at, Math.min(FRAGMENT_MAX_BYTES, bytes.length - at), valid)).toString("utf16le");
+	/**
+	 * The content's text leaf by leaf (at most 64 KiB stored, under D), each leaf verified against its digest before it
+	 * is yielded: a missing or changed segment is a typed `StagedReadError` and no other bytes are ever returned.
+	 */
+	async *chunks(content: StagedContent, valid: () => void = () => {}): AsyncGenerator<string> {
+		let length = 0;
+		for (const [index, leaf] of content.leaves.entries()) {
+			let text: string;
+			try {
+				text = await this.store.readLeaf(leaf);
+			} catch (cause) {
+				if (cause instanceof CompactStorageReadError || cause instanceof CompactReadError)
+					throw new StagedReadError("segment_missing", { cause });
+				throw cause;
+			}
+			valid();
+			if (catalogDigest("leaf", storedBytes(text)) !== content.leafDigests[index])
+				throw new StagedReadError("segment_mismatch");
+			length += text.length * 2;
+			yield text;
+		}
+		if (length !== content.ref.entry.length) throw new StagedReadError("segment_mismatch");
+	}
+
+	/** Moves the content's resident leaves to the spool, so content kept only for readers holds no RAM. */
+	spill(content: StagedContent): void {
+		for (const leaf of content.leaves) this.store.enqueue("spill_write", () => this.store.flushLeaf(leaf));
 	}
 
 	status(): StagingStatus {
