@@ -1,5 +1,5 @@
 import { isBigIntObject, isBooleanObject, isNumberObject, isStringObject } from "node:util/types";
-import { legacyJsonText } from "./legacy-record-depth.ts";
+import { legacyJsonText } from "./jsonl.ts";
 
 /** JSON.stringify's value semantics, without serializing or parsing a record. */
 export function normalizeJsonValue(input: unknown): { value: unknown; changed: boolean } {

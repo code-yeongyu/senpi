@@ -27,7 +27,8 @@ import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
 import { type CanonicalControl, carriedCanonical, carriedRefusal } from "./compact-canonical-pairing.ts";
 import { COMPACT_PROTOCOL_MAX_DEPTH, protocolDepthLimitOf } from "./compact-protocol-depth.ts";
-import { jsonTextDeeperThan, legacyJsonText } from "./legacy-record-depth.ts";
+import { legacyJsonText } from "./jsonl.ts";
+import { jsonTextDeeperThan } from "./legacy-record-depth.ts";
 import { CompactProducerStamp } from "./compact-producer-stamp.ts";
 import {
 	type HostToSessionWorker,
