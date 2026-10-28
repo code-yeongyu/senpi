@@ -133,7 +133,7 @@ export async function workerAcceptanceHost(
 		},
 		waitForBackpressure: async () => {},
 	});
-	const next = (name: string, predicate: (record: WireRecord) => boolean): Promise<WireRecord> => {
+	const next = (name: string, predicate: (record: WireRecord) => boolean, ms?: number): Promise<WireRecord> => {
 		const found = Promise.withResolvers<WireRecord>();
 		const listener = (record: WireRecord) => {
 			if (!predicate(record)) return;
@@ -141,7 +141,7 @@ export async function workerAcceptanceHost(
 			found.resolve(record);
 		};
 		listeners.add(listener);
-		return within(name, found.promise);
+		return within(name, found.promise, ms);
 	};
 	let serial = 0;
 	const request = (command: { readonly type: string } & WireRecord): Promise<WireRecord> => {
