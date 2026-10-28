@@ -6,7 +6,8 @@ import { DsmlEnvelopeFilter, stripDsmlEnvelopes } from "../src/utils/dsml-envelo
 
 // senpi#4621: DeepSeek V4.1 Flash at thinking `max` emits DSML tool-call envelopes inside `reasoning_content`.
 // The fixture reproduces the reported shape (fullwidth bars, a space after the marker, a degenerate `calls`
-// envelope closed by `parameter`) with synthetic text.
+// envelope closed by `parameter`) with synthetic text. Nesting is strict, so the degenerate `calls` never closes
+// and its text is released rather than dropped on suspicion (senpi#4623 review).
 const BAR = "\uFF5C";
 const open = (rest: string): string => `<${BAR}DSML${BAR}${rest}>`;
 const close = (rest: string): string => `</${BAR}DSML${BAR}${rest}>`;
@@ -22,7 +23,7 @@ const REASONING_WITH_DSML = [
 ].join("");
 
 const REASONING_WITHOUT_DSML =
-	"I need to confirm the build output before editing.\n\nThe output should say done; then I will patch the parser.\n\nNext I read the test file.";
+	"I need to confirm the build output before editing.\n\nThe output should say done; then I will patch the parser.\n \u8b77\nNext I read the test file.";
 
 const activeServers: Server[] = [];
 
@@ -72,11 +73,6 @@ describe("DSML envelope filter (senpi#4621)", () => {
 			name: "a tool argument longer than the hold limit",
 			input: `before ${open(' invoke name="write"')}${open(' parameter name="content"')}${"x".repeat(5000)}${close(" parameter")}${close(" invoke")} after`,
 			expected: "before  after",
-		},
-		{
-			name: "a parameter that never closes inside an invoke envelope",
-			input: `before ${open(' invoke name="write"')}${open(' parameter name="content"')}${"y".repeat(5000)}`,
-			expected: "before ",
 		},
 		{
 			name: "a lone parameter that closes after a 5000-char argument",
@@ -189,6 +185,45 @@ const CLASS_TABLE = (["parameter", "invoke", "other"] as const).flatMap((tag) =>
 	),
 );
 const LONE_HOLD_LIMIT = 64 * 1024;
+const NEVER_CLOSED_NEST = `${open(' invoke name="x"')}\n${open(' parameter name="y"')} I keep thinking about the loader.`;
+const PROBE_QUOTED_NEST = `Format: ${open(" function_calls")} ${open(' invoke name="x"')} etc. Then I reason a lot more here.`;
+const PROBE_OUTER_CLOSE_IN_VALUE = `pre ${open(" function_calls")}${open(' invoke name="x"')}${open(' parameter name="code"')}code ${close(" function_calls")} SECRETPAY${close(" parameter")}${close(" invoke")}${close(" function_calls")}`;
+const EVERY_CLOSE_IN_VALUE = `pre ${open(" function_calls")}\n${open(' invoke name="write"')}\n${open(' parameter name="content"')}a ${close(" function_calls")} b ${close(" invoke")} c ${close(" calls")} d ${close(" tool_call")} e </|DSML|invoke> f </|DSML|function_calls> g ${open(' invoke name="inner"')} SECRET${close(" parameter")}\n${close(" invoke")}\n${close(" function_calls")}`;
+for (const where of ["at stream end", "mid-stream"] as const) {
+	const tail = where === "mid-stream" ? LATER : "";
+	CLASS_TABLE.push(
+		{
+			name: `two whitespace-separated quoted tags, never closed (review probe 1), ${where}`,
+			input: `${PROBE_QUOTED_NEST}${tail}`,
+			expected: `Format:   etc. Then I reason a lot more here.${tail}`,
+			visibleBeforeEnd: 0,
+		},
+		{
+			name: `a parameter value quoting an outer closing tag (review probe 2), ${where}`,
+			input: `${PROBE_OUTER_CLOSE_IN_VALUE}${tail}`,
+			expected: `pre ${tail}`,
+			visibleBeforeEnd: 0,
+		},
+		{
+			name: `a parameter value containing every DSML closing tag, ${where}`,
+			input: `${EVERY_CLOSE_IN_VALUE}${tail}`,
+			expected: `pre ${tail}`,
+			visibleBeforeEnd: 0,
+		},
+		{
+			name: `two nested tags that never close, ${where}`,
+			input: `Plan: ${NEVER_CLOSED_NEST}${tail}`,
+			expected: `Plan: \n I keep thinking about the loader.${tail}`,
+			visibleBeforeEnd: 0,
+		},
+		{
+			name: `a parameter that never closes inside an invoke envelope, ${where}`,
+			input: `before ${open(' invoke name="write"')}${open(' parameter name="content"')}${"y".repeat(5000)}${tail}`,
+			expected: `before ${"y".repeat(5000)}${tail}`,
+			visibleBeforeEnd: 0,
+		},
+	);
+}
 const LONG_PROSE = "word ".repeat(14_000);
 for (const tag of ["parameter", "invoke", "other"] as const) {
 	CLASS_TABLE.push({

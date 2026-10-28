@@ -5,18 +5,17 @@
  * (senpi#4621). This filter removes the envelopes from a reasoning stream as it arrives and keeps every
  * character outside them: prose next to DSML-shaped text is never lost and never held without bound.
  *
- * - A lone opening tag (none open yet) may be prose that quotes a tag. The text after it is held until the
- *   tag is decided: a closing tag that empties the envelope makes it an envelope (held text dropped); the
- *   stream ending, or the hold passing `LONE_HOLD_CHARS`, makes it a quotation (held text released, the tag
- *   itself dropped); another opening tag decides by what lies between them.
- * - Another opening tag after only whitespace nests: the envelope is tool syntax (`invoke` > `parameter`), so
- *   its text is payload and is dropped however long it runs, until the envelope closes or the stream ends.
- * - Another opening tag after real prose means the first tag was quoted: the held prose is released at once
+ * - Envelope text is dropped only when the envelope's own outermost closing tag arrives; nothing is dropped on
+ *   suspicion. An envelope still open when the stream ends was quoted: its held text is released, tags removed. A
+ *   hold that passes `LONE_HOLD_CHARS` is released the same way, so the display never stalls without bound.
+ * - Nesting is strict: a closing tag pops only the innermost open tag of the same name; any other closing tag is
+ *   ignored. Inside a confirmed envelope's `parameter` value every DSML tag is value text, not structure, so a
+ *   quoted tag in a tool argument can neither close the envelope early nor keep it open.
+ * - A second opening tag after only whitespace nests (`invoke` > `parameter`): the envelope is confirmed tool
+ *   syntax. A second opening tag after real prose means the first tag was quoted: that prose is released at once
  *   and the new tag becomes the lone tag.
- * - A closing tag pops back to the innermost open tag of the same name (so a tag quoted inside an argument
- *   cannot keep the envelope open), or pops one level when no open tag has that name (a degenerate stream
- *   closes `calls` with `parameter`). A closing tag with nothing open is dropped.
- * - An opening tag that never completes at the end of the stream is released as text.
+ * - A closing tag with nothing open is dropped; an opening tag that never completes at the end of the stream is
+ *   released as text.
  */
 
 const MARKER_BODY = "DSML";
@@ -26,8 +25,10 @@ const CLOSE_MARKERS = BARS.map((bar) => `</${bar}${MARKER_BODY}${bar}`);
 const ALL_MARKERS = [...OPEN_MARKERS, ...CLOSE_MARKERS];
 /** A DSML tag longer than this without a closing `>` is not a tag; its text is kept. */
 const MAX_TAG_CHARS = 512;
-/** Text held after a lone opening tag; past this the tag counts as quoted and the text is released. */
+/** Text held inside an open envelope; past this the envelope counts as quoted and the text is released. */
 export const LONE_HOLD_CHARS = 64 * 1024;
+/** The DSML tag whose body is a tool argument value. */
+const PAYLOAD_TAG = "parameter";
 const TAG_NAME = /^\s*([A-Za-z_]+)/;
 const NON_WHITESPACE = /\S/;
 
@@ -53,10 +54,10 @@ export class DsmlEnvelopeFilter {
 	#pending = "";
 	/** Names of the open tags, outermost first; empty outside an envelope. */
 	#open: string[] = [];
-	/** Text after a lone opening tag, waiting for the tag to be decided. */
+	/** Text inside the open envelope, dropped when it closes and released if it never does. */
 	#held = "";
-	/** The open envelope is confirmed tool syntax: its text is dropped. */
-	#payload = false;
+	/** The open envelope nests tags, so it is tool syntax and its `parameter` values are opaque. */
+	#confirmed = false;
 
 	/** Feed one stream delta; returns the reasoning text that is safe to show and store now. */
 	push(delta: string): string {
@@ -64,7 +65,7 @@ export class DsmlEnvelopeFilter {
 		return this.#drain(false);
 	}
 
-	/** End of the stream: a lone tag still undecided was quoted, so its held text is released. */
+	/** End of the stream: an envelope still open was quoted, so its held text is released. */
 	finish(): string {
 		const out = this.#drain(true);
 		const released = out + this.#held;
@@ -75,7 +76,7 @@ export class DsmlEnvelopeFilter {
 	#reset(): void {
 		this.#open = [];
 		this.#held = "";
-		this.#payload = false;
+		this.#confirmed = false;
 	}
 
 	#emit(out: string[], text: string): void {
@@ -84,7 +85,6 @@ export class DsmlEnvelopeFilter {
 			out.push(text);
 			return;
 		}
-		if (this.#payload) return;
 		this.#held += text;
 		if (this.#held.length > LONE_HOLD_CHARS) {
 			out.push(this.#held);
@@ -93,25 +93,25 @@ export class DsmlEnvelopeFilter {
 	}
 
 	#openTag(out: string[], name: string): void {
-		if (this.#open.length === 0) {
+		const innermost = this.#open.at(-1);
+		if (innermost === undefined) {
 			this.#open = [name];
 			return;
 		}
-		if (this.#payload || !NON_WHITESPACE.test(this.#held)) {
-			this.#payload = true;
+		if (this.#confirmed && innermost === PAYLOAD_TAG) return;
+		if (!this.#confirmed && this.#open.length === 1 && NON_WHITESPACE.test(this.#held)) {
+			out.push(this.#held);
 			this.#held = "";
-			this.#open.push(name);
+			this.#open = [name];
 			return;
 		}
-		out.push(this.#held);
-		this.#held = "";
-		this.#open = [name];
+		this.#confirmed = true;
+		this.#open.push(name);
 	}
 
 	#closeTag(name: string): void {
-		if (this.#open.length === 0) return;
-		const index = this.#open.lastIndexOf(name);
-		this.#open.length = index >= 0 ? index : this.#open.length - 1;
+		if (this.#open.at(-1) !== name) return;
+		this.#open.pop();
 		if (this.#open.length === 0) this.#reset();
 	}
 
