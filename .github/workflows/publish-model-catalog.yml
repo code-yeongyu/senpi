@@ -32,6 +32,13 @@ on:
         default: false
         type: boolean
 
+# Only a pull_request run is superseded by a newer head of the same PR; cancelling it frees a runner for a
+# result that still matters. workflow_run, schedule and workflow_dispatch runs each serve one event and key on
+# their own run id, so they are never grouped together and never cancelled (senpi#4609).
+concurrency:
+  group: publish-model-catalog-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
