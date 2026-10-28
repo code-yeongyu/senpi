@@ -1285,6 +1285,7 @@ pi.on("input", async (event, ctx) => {
   // event.text - raw input (before skill/template expansion)
   // event.images - attached images, if any
   // event.source - "interactive" (typed), "rpc" (API), or "extension" (via sendUserMessage)
+  // event.attribution - "user" (a person sent it) or "agent" (an extension, tool, subagent, another agent's RPC client, or the session)
   // event.streamingBehavior - "steer" | "followUp" | undefined
   //   undefined when idle, "steer" for mid-stream interrupts,
   //   "followUp" for messages queued until the agent finishes
@@ -1311,10 +1312,23 @@ pi.on("input", async (event, ctx) => {
 });
 ```
 
+`source` names the channel the input arrived on; `attribution` names who sent it. Typed input is `"user"`. An RPC client's `prompt`, `steer` and `follow_up` are `"user"` only when that connection declared the `interactive_user` role with `set_client_info`; from any other RPC client (for example a parent agent driving a child session) they are `"agent"`. Input an extension sends with `sendUserMessage` is `"agent"`, except a person's answer to a question that the extension delivers through it, which stays `"user"` with `source: "extension"`. React to `attribution === "user"` when only the person's own messages should count, for example to lift a stop the user set.
+
 **Results:**
 - `continue` - pass through unchanged (default if handler returns nothing)
 - `transform` - modify text/images, then continue to expansion
 - `handled` - skip agent entirely (first handler to return this wins)
+
+#### input_disposition
+
+Fired once the session has decided what happens to an input an `input` handler saw. `event.inputId` matches that `input` event; `event.disposition` is `"handled"` (a handler or command consumed it), `"rejected"`, `"started"` (it began a turn) or `"queued"` (it waits as a steer or follow-up). An input queued while a turn runs gets `"queued"` when it is queued and then `"started"` when its message is delivered into a turn, always in that order.
+
+```typescript
+pi.on("input_disposition", async (event, ctx) => {
+  // event.inputId - the id of the matching input event
+  // event.disposition - "handled" | "rejected" | "started" | "queued"
+});
+```
 
 Transforms chain across handlers. See [input-transform.ts](../examples/extensions/input-transform.ts) and [input-transform-streaming.ts](../examples/extensions/input-transform-streaming.ts) for `streamingBehavior`-aware routing.
 

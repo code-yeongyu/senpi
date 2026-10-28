@@ -1956,6 +1956,12 @@ export interface UserBashEvent {
 /** Source of user input */
 export type InputSource = "interactive" | "rpc" | "extension";
 
+/**
+ * Who the input came from: `"user"` for a person (typed in the TUI, sent by an RPC client, or a person's answer
+ * delivered through the extension API); `"agent"` for input an extension, tool, subagent or the session itself sends.
+ */
+export type InputAttribution = "user" | "agent";
+
 /** Fired when user input is received, before agent processing */
 export interface InputEvent {
 	type: "input";
@@ -1967,6 +1973,8 @@ export interface InputEvent {
 	images?: ImageContent[];
 	/** Where the input came from */
 	source: InputSource;
+	/** Whether a person or an agent sent the input; `source` says only which channel it arrived on. */
+	attribution: InputAttribution;
 	/** How the input will be delivered during streaming, or undefined when idle */
 	streamingBehavior?: "steer" | "followUp";
 }
