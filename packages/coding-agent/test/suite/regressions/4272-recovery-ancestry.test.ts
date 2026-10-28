@@ -6,8 +6,8 @@ import { recoveryRig } from "./4272-recovery-support.ts";
 
 // Part of #4272 (S10a fold, RULING-61 Q1 = C): the lane retains {parentId, type} per accepted entry of its epoch, so
 // every transcript row of the epoch carries its kind and family and the opaque family is counted exactly, whether or
-// not persistence already released the entry's text; the loaded base stays a file range the catalog reports as
-// partial, never as complete or empty; a root frozen at N entries names exactly those N while the lane accepts more.
+// not persistence already released the entry's text; the loaded base is a file range S11c streams, named by every
+// family it feeds (never an explicit empty); a root frozen at N entries names exactly those N while the lane accepts more.
 // The retained ancestry's bound is 4272-recovery-ancestry-bound.test.ts.
 
 afterEach(() => {
@@ -99,7 +99,7 @@ it("RULING-61 Q1 (a) an entry accepted already persisted (no text ever retained)
 	await rig.lane.idle();
 });
 
-it("RULING-61 Q1 (b) a loaded base is a file range: transcript and opaque are partial and opaque is never complete or empty", async () => {
+it("RULING-61 Q1 (b) a loaded base is a file range S11c streams: transcript and opaque are complete and each names the stream, opaque never explicitly empty", async () => {
 	// Given: an epoch bootstrapped on a loaded base of three entries whose kinds the lane never saw
 	const rig = recoveryRig();
 	const base = { fileIdentity, count: 3, idFingerprint: "ab".repeat(32) };
@@ -111,22 +111,21 @@ it("RULING-61 Q1 (b) a loaded base is a file range: transcript and opaque are pa
 	});
 	// When: the cut is cataloged
 	const catalog = await catalogOf(rig);
-	// Then: the base is one file-range row, both producers are partial, and no opaque component claims emptiness
+	// Then: the base is one file-range row in each family it feeds, both producers are complete, and no opaque
+	// component claims emptiness
 	expect(catalog.entries.filter(([kind]) => kind === "transcript" || kind === "opaque")).toEqual([
 		["transcript", "transcript"],
 		["transcript", "base"],
+		["opaque", "base"],
 	]);
-	expect(await catalog.json("transcript", "base")).toEqual({
-		source: "file",
-		first: 0,
-		count: 3,
-		idFingerprint: base.idFingerprint,
-	});
+	const row = { source: "file", first: 0, count: 3, idFingerprint: base.idFingerprint };
+	expect(await catalog.json("transcript", "base")).toEqual(row);
+	expect(await catalog.json("opaque", "base")).toEqual(row);
 	expect(await catalog.json("families", "families")).toMatchObject({
-		assembly: "incomplete",
+		assembly: "complete",
 		families: expect.arrayContaining([
-			{ family: "transcript", producer: "partial" },
-			{ family: "opaque", producer: "partial" },
+			{ family: "transcript", producer: "complete" },
+			{ family: "opaque", producer: "complete" },
 		]),
 	});
 	catalog.release();
@@ -134,10 +133,13 @@ it("RULING-61 Q1 (b) a loaded base is a file range: transcript and opaque are pa
 	rig.lane.applyTranscript([appended({ ...unknown, parentId: "b2" })]);
 	// When: the cut is cataloged again
 	const after = await catalogOf(rig);
-	// Then: this epoch's member is exact while the family stays partial
-	expect(after.entries.filter(([kind]) => kind === "opaque")).toEqual([["opaque", entryMember(0)]]);
+	// Then: this epoch's member is exact beside the base row, and the family stays complete
+	expect(after.entries.filter(([kind]) => kind === "opaque")).toEqual([
+		["opaque", entryMember(0)],
+		["opaque", "base"],
+	]);
 	expect(await after.json("families", "families")).toMatchObject({
-		families: expect.arrayContaining([{ family: "opaque", producer: "partial" }]),
+		families: expect.arrayContaining([{ family: "opaque", producer: "complete" }]),
 	});
 	after.release();
 	await rig.lane.idle();

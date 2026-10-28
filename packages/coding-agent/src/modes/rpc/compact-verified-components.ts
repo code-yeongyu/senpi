@@ -1,5 +1,5 @@
 import type { FrozenBytes } from "./compact-recovery-bytes.ts";
-import type { ContentRef } from "./compact-recovery-ids.ts";
+import type { PageRef } from "./compact-recovery-ids.ts";
 import type { FrozenAcceptedRoot } from "./session-acceptance-lane.ts";
 
 /**
@@ -18,9 +18,10 @@ export class FrozenRootPinnedError extends Error {
 	}
 }
 
+/** Keyed by the ref the page route resolved: a catalog component's, or the cut's reserved base ref (S11c). */
 interface PinnedRoot {
 	readonly token: string;
-	readonly components: Map<ContentRef, FrozenBytes>;
+	readonly components: Map<PageRef["ref"], FrozenBytes>;
 }
 
 /**
@@ -35,7 +36,8 @@ interface PinnedRoot {
  * `retain()` hands a root to a non-token consumer under the same token's lease (compact-recovery-state.ts:139). A
  * second peer on the same session therefore never shares an entry; it verifies its own root once. `pin` enforces the
  * invariant with `FrozenRootPinnedError` instead of serving or overwriting another token's entries.
- * An entry holds leaf positions only, never bytes: at most one number per stored leaf of the root's catalog.
+ * An entry holds positions only, never bytes: at most one number per stored leaf of a component, or per row of the
+ * base stream (`compact-recovery-base.ts`).
  */
 export class VerifiedComponents {
 	private readonly roots = new Map<FrozenAcceptedRoot, PinnedRoot>();
@@ -58,12 +60,12 @@ export class VerifiedComponents {
 		this.pinned.set(tokenId, root);
 	}
 
-	get(root: FrozenAcceptedRoot, ref: ContentRef): FrozenBytes | undefined {
+	get(root: FrozenAcceptedRoot, ref: PageRef["ref"]): FrozenBytes | undefined {
 		return this.roots.get(root)?.components.get(ref);
 	}
 
 	/** Cached only while `tokenId` still pins `root`; once its lease dropped the entry, a late open caches nothing. */
-	set(tokenId: string, root: FrozenAcceptedRoot, ref: ContentRef, bytes: FrozenBytes): void {
+	set(tokenId: string, root: FrozenAcceptedRoot, ref: PageRef["ref"], bytes: FrozenBytes): void {
 		const held = this.roots.get(root);
 		if (!held) return;
 		if (held.token !== tokenId) throw new FrozenRootPinnedError(tokenId, held.token);

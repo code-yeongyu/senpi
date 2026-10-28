@@ -74,7 +74,7 @@ it("X03 omitting any complete-producer family in turn refuses the assembly; an e
 	expect(completeAssembly(partial)).toBeUndefined();
 });
 
-it("RULING-61 Q2 the source family enumerates every this-epoch source entry with its retained line and settled join; a loaded base keeps it partial", async () => {
+it("RULING-61 Q2 the source family enumerates every this-epoch source entry with its retained line and settled join; a loaded base is named by its base member", async () => {
 	// Given: a toolResult message settled and joined to a custom_message entry, plus a compaction entry and a label
 	const rig = await callsRig();
 	try {
@@ -148,11 +148,17 @@ it("RULING-61 Q2 the source family enumerates every this-epoch source entry with
 			],
 		});
 		const loaded = rig.lane.freeze();
-		// Then: source is partial like transcript and opaque, never explicitly empty, and the assembly is incomplete
+		// Then: source names the base stream S11c pages (like transcript and opaque), is never explicitly empty, and the
+		// assembly is complete
 		const base = await produced(rig.lane, loaded);
 		expect(base.texts.has("source/source")).toBe(false);
-		const partial = readFamilyRegistry(base.texts.get("families/families") ?? "");
-		expect(partial.assembly === "incomplete" ? partial.incomplete : []).toEqual(["transcript", "opaque", "source"]);
+		expect(JSON.parse(base.texts.get("source/base") ?? "")).toEqual({
+			source: "file",
+			first: 0,
+			count: 2,
+			idFingerprint: "f",
+		});
+		expect(readFamilyRegistry(base.texts.get("families/families") ?? "").assembly).toBe("complete");
 		rig.lane.release(loaded);
 	} finally {
 		await rig.close();

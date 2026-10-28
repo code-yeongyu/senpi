@@ -584,6 +584,19 @@ Behind the same flag, one bounded page of a frozen checkpoint component, through
   `reason: "superseded_token"` and `newerGeneration` while an operation still holds it, and `unknown_token` once
   it is reclaimed. The owner's other typed failures arrive as `recovery_repair_needed` or
   `recovery_storage_unavailable` with `errorData` carrying the failure. Every refusal happens before any byte is read.
+- The loaded transcript base (the entries a session was opened with, named by the catalog's `transcript/base`,
+  `opaque/base` and `source/base` members as `{source: "file", first: 0, count, idFingerprint}`) is paged under the
+  reserved ref `<catalogRoot>:base` (the manifest's `catalogRoot` with the `base` step; it is cut-scoped like every
+  ref, and it is pages only, never a catalog node or component read). Its bytes are one stamped row per base entry in
+  file order,
+  `{index, id, source: "file", parentId, kind, family}` followed by a newline, UTF-16LE like every component, so a
+  page of it is verified exactly like any other page. A client anchors the join to the catalog: the SHA-256 over
+  `kind NUL id LF` of every row, in order, is the catalog's `idFingerprint`. The host opens the session file only for
+  this route, asynchronously, verifies its identity, count and fingerprint before the first page, and re-checks the
+  identity on every page: a file replaced, truncated, missing, or rewritten since the cut is
+  `recovery_storage_unavailable` with `reason` `base_file_replaced`, `base_file_truncated`, `base_file_missing` or
+  `base_fingerprint_mismatch`, never stale rows. With a base present, the transcript, opaque and source families are
+  complete: their members are the catalog's rows of this epoch plus the base stream's rows of their family.
 
 #### interactive_user
 

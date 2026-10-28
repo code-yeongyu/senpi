@@ -1,4 +1,4 @@
-import type { TranscriptUnavailableReason } from "../../core/session-transcript-journal.ts";
+import type { PersistedBaseError, TranscriptUnavailableReason } from "../../core/session-transcript-journal.ts";
 
 /** How a peer reaches a routing session: its own attachment, or (S16) a mirror of another destination's stream. */
 export type RecoveryRouteKind = "ordinary" | "mirror";
@@ -63,13 +63,15 @@ export interface SupersededToken {
 /**
  * Why the host could not serve a pinned cut: a closed union (RULING-58 (2)), never a free string. `integrity` is the
  * corruption signal (stored bytes no longer match their recorded digest, refused before any decode) and `range` a
- * ref that names nothing under the token; the owner counts each detail apart. The rest are the cut's own store
- * reasons and the transcript component's. A refusal carries this detail and nothing else: no stored bytes, no
- * partial decode.
+ * ref that names nothing under the token; the owner counts each detail apart. A `PersistedBaseError` is the loaded
+ * base's file no longer being, or holding, what the cut captured (S11c: replaced, truncated, missing, or rewritten so
+ * its rows no longer fingerprint). The rest are the cut's own store reasons and the transcript component's. A
+ * refusal carries this detail and nothing else: no stored bytes, no partial decode.
  */
 export type StorageUnavailableReason =
 	| "compact_state_unavailable"
 	| TranscriptUnavailableReason
+	| PersistedBaseError
 	| "retired"
 	| "range"
 	| "size_limit"

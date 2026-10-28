@@ -40,6 +40,25 @@ type ReadLeaf = (leaf: LeafId) => Promise<string>;
 
 const isIndex = (value: number): boolean => Number.isSafeInteger(value) && value >= 0;
 
+/** The checks every `FrozenBytes.range` makes before touching a byte: shape, the D bound, then the stream's end. */
+export function assertRange(offset: number, length: number, total: number): void {
+	if (!isIndex(offset) || !isIndex(length)) throw new CompactReadError("range");
+	if (length > FRAGMENT_MAX_BYTES) throw new CompactReadError("size_limit");
+	if (offset + length > total) throw new CompactReadError("range");
+}
+
+/** The index of the last of `count` ascending starts at or before `offset`: the unit whose byte range holds it. */
+export function startAtOrBefore(starts: ArrayLike<number>, count: number, offset: number): number {
+	let low = 0;
+	let high = count - 1;
+	while (low < high) {
+		const middle = (low + high + 1) >> 1;
+		if ((starts[middle] ?? Number.POSITIVE_INFINITY) <= offset) low = middle;
+		else high = middle - 1;
+	}
+	return low;
+}
+
 class FrozenLeafBytes implements FrozenBytes {
 	readonly length: number;
 	readonly digest: ContentDigest;
@@ -59,12 +78,10 @@ class FrozenLeafBytes implements FrozenBytes {
 	}
 
 	async range(offset: number, length: number, valid?: () => void): Promise<Buffer> {
-		if (!isIndex(offset) || !isIndex(length)) throw new CompactReadError("range");
-		if (length > FRAGMENT_MAX_BYTES) throw new CompactReadError("size_limit");
-		if (offset + length > this.length) throw new CompactReadError("range");
+		assertRange(offset, length, this.length);
 		const out = Buffer.allocUnsafe(length);
 		let written = 0;
-		for (let index = this.leafAt(offset); written < length; index++) {
+		for (let index = startAtOrBefore(this.starts, this.leaves.length, offset); written < length; index++) {
 			const leaf = this.leaves[index];
 			const start = this.starts[index];
 			if (leaf === undefined || start === undefined) throw new CompactReadError("integrity");
@@ -79,18 +96,6 @@ class FrozenLeafBytes implements FrozenBytes {
 			}
 		}
 		return out;
-	}
-
-	/** The leaf whose byte range holds `offset`: the last start at or before it. */
-	private leafAt(offset: number): number {
-		let low = 0;
-		let high = this.leaves.length - 1;
-		while (low < high) {
-			const middle = (low + high + 1) >> 1;
-			if ((this.starts[middle] ?? Number.POSITIVE_INFINITY) <= offset) low = middle;
-			else high = middle - 1;
-		}
-		return low;
 	}
 }
 
