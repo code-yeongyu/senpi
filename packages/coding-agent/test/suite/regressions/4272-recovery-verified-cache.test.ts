@@ -6,6 +6,7 @@ import { FRAGMENT_MAX_BYTES, openFrozenBytes } from "../../../src/modes/rpc/comp
 import { CompactRecoveryCatalog } from "../../../src/modes/rpc/compact-recovery-catalog.ts";
 import type { RecoveryRoute } from "../../../src/modes/rpc/compact-recovery-state.ts";
 import type { RecoveryOutcome } from "../../../src/modes/rpc/compact-recovery-types.ts";
+import { FrozenRootPinnedError, VerifiedComponents } from "../../../src/modes/rpc/compact-verified-components.ts";
 import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
 import { recoveryRig } from "./4272-recovery-support.ts";
 
@@ -90,6 +91,53 @@ it("RULING-69 (2) a superseding freeze reclaims the root and drops its verified 
 	const next = unwrap(rig.checkpoints.freeze(route(huge), rig.lane)).token;
 	expect(rig.checkpoints.verifiedComponents, "the superseded root's lease ended").toBe(0);
 	rig.checkpoints.release(next);
+	await rig.lane.idle();
+});
+
+it("RULING-69 (2) two peers and a re-attach on one session each pin their own root; the cache never trips", async () => {
+	const { rig, token, caller, session, page } = await tokenOf();
+	const first = rig.checkpoints.tokens().length;
+	expect(first).toBe(1);
+	unwrap(await page(session.ref, 0));
+	const other = { socketEpoch: "socket-2", sessionId: huge };
+	const second = unwrap(rig.checkpoints.freeze({ ...route(huge), socketEpoch: "socket-2", peer: "peer-2" }, rig.lane));
+	const otherManifest = unwrap(await rig.checkpoints.catalog(second.token, other));
+	if (!("ref" in otherManifest.session)) throw new Error("the huge session id must be a ref");
+	unwrap(await rig.checkpoints.readCatalogPage(second.token, other, otherManifest.session.ref, 0));
+	expect(rig.checkpoints.verifiedComponents, "one verified component per peer's own root").toBe(2);
+	const reattach = unwrap(rig.checkpoints.freeze({ ...route(huge), admissionId: "attach-2" }, rig.lane));
+	expect(rig.checkpoints.verifiedComponents, "the re-attach superseded the first token's root").toBe(1);
+	const again = unwrap(await rig.checkpoints.catalog(reattach.token, caller));
+	if (!("ref" in again.session)) throw new Error("the huge session id must be a ref");
+	unwrap(await rig.checkpoints.readCatalogPage(reattach.token, caller, again.session.ref, 0));
+	expect(rig.checkpoints.verifiedComponents).toBe(2);
+	expect(second.root, "a second peer's freeze is a root of its own").not.toBe(reattach.root);
+	for (const held of [token, second.token, reattach.token]) rig.checkpoints.release(held);
+	expect(rig.checkpoints.verifiedComponents, "every root's entries went with its lease").toBe(0);
+	expect(rig.lane.liveRoots).toBe(0);
+	await rig.lane.idle();
+});
+
+it("RULING-69 (2) a second token pinning a root another live token pins is a typed internal error", async () => {
+	const rig = recoveryRig();
+	await rig.lane.idle();
+	const held = unwrap(rig.checkpoints.freeze(route("s"), rig.lane));
+	const freeze = vi.spyOn(rig.lane, "freeze").mockReturnValueOnce(held.root);
+	expect(() => rig.checkpoints.freeze({ ...route("s"), socketEpoch: "socket-2" }, rig.lane)).toThrow(
+		FrozenRootPinnedError,
+	);
+	freeze.mockRestore();
+	expect(rig.checkpoints.open, "the violating freeze minted no token").toBe(1);
+	expect(rig.checkpoints.tokens()).toEqual([held.token]);
+	expect(rig.lane.liveRoots, "the holder's root is still live").toBe(1);
+	const direct = new VerifiedComponents();
+	direct.pin("token-a", held.root);
+	direct.pin("token-a", held.root);
+	expect(() => direct.pin("token-b", held.root)).toThrow(new FrozenRootPinnedError("token-b", "token-a"));
+	direct.drop("token-a");
+	direct.pin("token-b", held.root);
+	rig.checkpoints.release(held.token);
+	expect(rig.lane.liveRoots).toBe(0);
 	await rig.lane.idle();
 });
 
