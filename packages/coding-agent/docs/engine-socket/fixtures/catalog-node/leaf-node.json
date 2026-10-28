@@ -1,0 +1,50 @@
+{
+	"caseId": "leaf-node",
+	"kind": "node",
+	"contractIds": [
+		"R4.B2",
+		"RULING-57",
+		"RULING-58",
+		"RULING-68a"
+	],
+	"description": "A node whose entries are two components (no node child); each entry's digest is the leaf digest of the component's stored bytes in input.components, a lone surrogate stored as its code unit.",
+	"input": {
+		"components": [
+			{
+				"kind": "lifecycle",
+				"id": "lifecycle",
+				"storedBytes": "ewAiAHMAdABhAHQAZQAiADoAIgBpAGQAbABlACIAfQA=",
+				"length": 32,
+				"digest": "812e450457c44c9352e983c5b616c4288d67d23612c43ae62a77b1d946b13a66"
+			},
+			{
+				"kind": "message",
+				"id": "m-0000000000000001",
+				"storedBytes": "aADpAGwAbABvACAAPdgA3iAAbABvAG4AZQAgAD3YIABlAG4AZAA=",
+				"length": 38,
+				"digest": "a00ecabca30f7295ae14289e9569911e875e42769f6ee7d7f6de10ccb2c148a1"
+			}
+		],
+		"entries": [
+			{
+				"kind": "lifecycle",
+				"id": "lifecycle",
+				"length": 32,
+				"digest": "812e450457c44c9352e983c5b616c4288d67d23612c43ae62a77b1d946b13a66"
+			},
+			{
+				"kind": "message",
+				"id": "m-0000000000000001",
+				"length": 38,
+				"digest": "a00ecabca30f7295ae14289e9569911e875e42769f6ee7d7f6de10ccb2c148a1"
+			}
+		]
+	},
+	"expected": {
+		"text": "{\"format\":\"senpi-recovery-catalog\",\"version\":1,\"entries\":[{\"kind\":\"lifecycle\",\"id\":\"lifecycle\",\"length\":32,\"digest\":\"812e450457c44c9352e983c5b616c4288d67d23612c43ae62a77b1d946b13a66\"},{\"kind\":\"message\",\"id\":\"m-0000000000000001\",\"length\":38,\"digest\":\"a00ecabca30f7295ae14289e9569911e875e42769f6ee7d7f6de10ccb2c148a1\"}]}",
+		"storedBytes": "ewAiAGYAbwByAG0AYQB0ACIAOgAiAHMAZQBuAHAAaQAtAHIAZQBjAG8AdgBlAHIAeQAtAGMAYQB0AGEAbABvAGcAIgAsACIAdgBlAHIAcwBpAG8AbgAiADoAMQAsACIAZQBuAHQAcgBpAGUAcwAiADoAWwB7ACIAawBpAG4AZAAiADoAIgBsAGkAZgBlAGMAeQBjAGwAZQAiACwAIgBpAGQAIgA6ACIAbABpAGYAZQBjAHkAYwBsAGUAIgAsACIAbABlAG4AZwB0AGgAIgA6ADMAMgAsACIAZABpAGcAZQBzAHQAIgA6ACIAOAAxADIAZQA0ADUAMAA0ADUANwBjADQANABjADkAMwA1ADIAZQA5ADgAMwBjADUAYgA2ADEANgBjADQAMgA4ADgAZAA2ADcAZAAyADMANgAxADIAYwA0ADMAYQBlADYAMgBhADcANwBiADEAZAA5ADQANgBiADEAMwBhADYANgAiAH0ALAB7ACIAawBpAG4AZAAiADoAIgBtAGUAcwBzAGEAZwBlACIALAAiAGkAZAAiADoAIgBtAC0AMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMQAiACwAIgBsAGUAbgBnAHQAaAAiADoAMwA4ACwAIgBkAGkAZwBlAHMAdAAiADoAIgBhADAAMABlAGMAYQBiAGMAYQAzADAAZgA3ADIAOQA1AGEAZQAxADQAMgA4ADkAZQA5ADUANgA5ADkAMQAxAGUAOAA3ADUAZQA0ADIANwA2ADkAZgA2AGUAZQA3AGQANwBmADYAZABlADEAMABjAGMAYgAyAGMAMQA0ADgAYQAxACIAfQBdAH0A",
+		"length": 636,
+		"digest": "07f03221fa46e9c989ce78b9bfc9516709f07d98eee359336677c8210133c924",
+		"rootDigest": "dcb22739be63a172443020ab2cfaa611be5895a88020541d07791c8e9a3937c1"
+	}
+}

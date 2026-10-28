@@ -1,0 +1,41 @@
+{
+	"caseId": "last-page",
+	"kind": "page",
+	"contractIds": [
+		"R4.B3",
+		"RULING-62",
+		"RULING-69"
+	],
+	"description": "The middle page's cursor: ordinal 3, offset 2D, the last 20 bytes, complete with a null cursor.",
+	"input": {
+		"command": {
+			"id": "page-3",
+			"type": "get_recovery_page",
+			"token": "socket-1:1",
+			"admissionId": "attach-1",
+			"componentRef": "c-0000000000000001:000",
+			"requestId": "r-3",
+			"cursor": "p1:2:262144:d3d00d91ecf54a7fa5127b8d981d0820"
+		},
+		"sessionId": "index.json session.idRule"
+	},
+	"expected": {
+		"id": "page-3",
+		"type": "response",
+		"command": "get_recovery_page",
+		"success": true,
+		"data": {
+			"requestId": "r-3",
+			"token": "socket-1:1",
+			"generation": 1,
+			"componentRef": "c-0000000000000001:000",
+			"ordinal": 3,
+			"offset": 262144,
+			"length": 20,
+			"digest": "3c84c61393777ddbbb500c30f85a0212617f9559b1f8133b2bbe6e95a7a6ee85",
+			"bytes": "AN44wVjBLwAuAC4AXABlAG4AZAA=",
+			"cursor": null,
+			"complete": true
+		}
+	}
+}

@@ -1,0 +1,79 @@
+{
+	"contract": "CONTRACT-r6",
+	"section": "B3",
+	"rulings": [
+		"RULING-57",
+		"RULING-58",
+		"RULING-62",
+		"RULING-68",
+		"RULING-69"
+	],
+	"encoding": "expected is the whole get_recovery_page response envelope. data.bytes is base64 of exactly data.length raw stored bytes at data.offset of the component (its UTF-16LE code units as stored); decode base64 first, then join pages by offset, then decode UTF-16LE.",
+	"digestRule": "data.digest is lowercase hex SHA-256(u8 tagLength || tag || u64be byteLength || bytes) over the raw page bytes with tag 'senpi-recovery-catalog/1/utf16le/fragment'; component.digest is the same rule over the whole component with domain 'leaf'.",
+	"limits": {
+		"D": 131072,
+		"envelope": 174764
+	},
+	"cursorRule": "data.cursor is opaque: present it unchanged as the next request's cursor; it is null once data.complete. Its authenticator is keyed per engine process, so these goldens fix that key in the generator; never parse or construct a cursor.",
+	"refusalRule": "A refusal is success false with error and errorCode 'recovery_<reason>' and errorData {kind, reason, hint}; hint restart_from_catalog means discard the component's pages and request it again without a cursor.",
+	"inputRule": "input.command is the request without sessionId; every case is sent in file order on one session whose id is session.idRule: prefix + repeat x count + suffix.",
+	"session": {
+		"socketEpoch": "socket-1",
+		"admissionId": "attach-1",
+		"idRule": {
+			"prefix": "golden/",
+			"repeat": "😀세션/..\\",
+			"count": 16384,
+			"suffix": "end"
+		},
+		"idCodeUnits": 131082
+	},
+	"component": {
+		"ref": "c-0000000000000001:000",
+		"length": 262164,
+		"digest": "439bc1447dd7645a8d537a07dd877191bb2d6afe8e7be3b99581757aca53b7b9"
+	},
+	"regenerate": "SENPI_WRITE_RECOVERY_GOLDENS=1 npx vitest run test/suite/regressions/4272-recovery-golden-pages.test.ts test/suite/regressions/4272-recovery-golden-nodes.test.ts (packages/coding-agent, senpi repository)",
+	"cases": [
+		{
+			"caseId": "first-page",
+			"file": "first-page.json",
+			"kind": "page",
+			"contractIds": [
+				"R4.B3",
+				"RULING-62",
+				"RULING-69"
+			]
+		},
+		{
+			"caseId": "middle-page",
+			"file": "middle-page.json",
+			"kind": "page",
+			"contractIds": [
+				"R4.B3",
+				"RULING-62",
+				"RULING-69"
+			]
+		},
+		{
+			"caseId": "last-page",
+			"file": "last-page.json",
+			"kind": "page",
+			"contractIds": [
+				"R4.B3",
+				"RULING-62",
+				"RULING-69"
+			]
+		},
+		{
+			"caseId": "cursor-out-of-range",
+			"file": "cursor-out-of-range.json",
+			"kind": "refusal",
+			"contractIds": [
+				"R4.B3",
+				"RULING-62",
+				"RULING-70"
+			]
+		}
+	]
+}
