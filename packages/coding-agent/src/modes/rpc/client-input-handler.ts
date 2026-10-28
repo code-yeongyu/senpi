@@ -27,11 +27,15 @@ type InputOutput = {
 	readonly promptCalls: Set<Promise<unknown>>;
 };
 
+/** The sending connection's declared role; a connection that never declared `interactive_user` is an agent's. */
+type InputClient = { readonly interactiveUser: boolean };
+
 /** The same admission path serves classic stdio, shared sessions, and worker sessions. */
 export async function handleClientInput(
 	session: AgentSession,
 	command: RpcClientInput,
 	io: InputOutput,
+	client: InputClient = { interactiveUser: false },
 ): Promise<void> {
 	try {
 		const admissions = ClientAdmissions.forSession(session);
@@ -69,6 +73,7 @@ export async function handleClientInput(
 							images: command.images,
 							...options,
 							source: "rpc",
+							interactiveUser: client.interactiveUser,
 							onQueuedInput: hooks.queued,
 							promptDisposition: (next) => {
 								disposition = next;
@@ -120,6 +125,7 @@ export async function handleClientInput(
 							...clientMessageIdentity(hooks.identity),
 							enqueueOrder: command.enqueueOrder,
 							source: "rpc" as const,
+							interactiveUser: client.interactiveUser,
 							onQueuedInput: hooks.queued,
 						};
 						disposition =
