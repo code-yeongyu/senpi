@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, test } from "vitest";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 /**
  * A shell whose cwd was deleted (a removed worktree or checkout) still starts our CLI: Node boots
@@ -36,7 +37,7 @@ function runChild(withGuard: boolean) {
 		return spawnSync(process.execPath, [driver], {
 			encoding: "utf8",
 			env: {
-				...process.env,
+				...hostSpawnEnv(),
 				WITH_GUARD: withGuard ? "1" : "0",
 				GUARD_URL: resolve(__dirname, "..", "src", "valid-cwd.ts"),
 				PROBE_URL: probe,

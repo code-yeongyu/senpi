@@ -16,6 +16,7 @@ import * as ownershipLock from "../../../src/modes/rpc/ownership-safe-lock.ts";
 import { RpcClient, RpcCommandError } from "../../../src/modes/rpc/rpc-client.ts";
 import { readProcessStartTime } from "../../../src/utils/process-identity.ts";
 import { generationEnv, generationScratch, JsonlPeer } from "../../helpers/rpc-generation-support.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 const fixture = join(import.meta.dirname, "../../fixtures/rpc-stopping-supervisor.ts");
 const cleanups: Array<() => Promise<void>> = [];
@@ -33,7 +34,7 @@ async function rig() {
 	});
 	const supervisor = spawn(process.execPath, [fixture, "controlled", qa.socket, qa.agentDir], {
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...generationEnv(qa),
 			SENPI_CODING_AGENT_DIR: qa.agentDir,
 			SENPI_RPC_HOST_INSTANCE_ID: "stopping-generation",

@@ -15,6 +15,7 @@ import {
 	JsonlPeer,
 	openedSessionId,
 } from "../../helpers/rpc-generation-support.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { RpcOwnerProcesses } from "../../helpers/rpc-owner-processes.ts";
 
@@ -53,7 +54,7 @@ export default function (pi) {
 
 async function caller(qa: GenerationScratch, ownership: "caller" | "none", extension: string, idleExitMs: number) {
 	const child = spawn(process.execPath, [fixture, qa.socket, qa.agentDir, ownership, extension, String(idleExitMs)], {
-		env: { ...process.env, ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
+		env: { ...hostSpawnEnv(), ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
 		stdio: ["ignore", "ignore", "inherit", "ipc"],
 	});
 	processes.owner(child);

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 /**
  * `cli.ts` historically ran the real agent (`cli-main.ts`) as a spawned child so that an
@@ -53,7 +54,7 @@ function runCli(args: readonly string[], nodeOptionsPrefix = ""): RunResult {
 	const result = spawnSync(process.execPath, [CLI_PATH, ...args], {
 		encoding: "utf8",
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			NODE_OPTIONS: nodeOptions,
 			SENPI_FAST_PATH_REPORT: reportPath,
 			PI_OFFLINE: "1",

@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const children: ChildProcess[] = [];
 afterEach(async () => {
@@ -22,7 +23,7 @@ function start(runtime: string, args: string[] = []) {
 			...args,
 		],
 		{
-			env: { ...process.env, SENPI_RPC_INTERNAL_KEY_STDIN: "1" },
+			env: { ...hostSpawnEnv(), SENPI_RPC_INTERNAL_KEY_STDIN: "1" },
 			stdio: ["pipe", "ignore", "pipe", "pipe", "ipc"],
 		},
 	);

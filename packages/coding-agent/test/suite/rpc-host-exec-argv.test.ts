@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { defaultHostLaunch } from "../../src/modes/rpc/host-launch.ts";
 import { INTERNAL_SUPERVISOR_FLAG, resolveHostChildLaunch } from "../../src/modes/rpc/host-lifecycle.ts";
 import { runtimeExecArgv } from "../../src/utils/runtime-exec-argv.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const bunAvailable = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0;
 const originalExecArgv = process.execArgv;
@@ -161,7 +162,7 @@ if (process.env.SENPI_EXEC_ARGV_CHILD === '1') {
 				const result = spawnSync(process.execPath, ["--import", "tsx", flag, ...(isModule ? ["-e"] : []), code], {
 					encoding: "utf8",
 					timeout: 15_000,
-					env: { ...process.env, SENPI_CODING_AGENT_DIR: dir },
+					env: { ...hostSpawnEnv(), SENPI_CODING_AGENT_DIR: dir },
 				});
 				expect(result.error).toBeUndefined();
 				expect(result.status, result.stderr).toBe(0);
@@ -203,7 +204,7 @@ if (process.env.SENPI_EXEC_ARGV_CHILD === '1') {
 				const result = spawnSync("bun", args, {
 					encoding: "utf8",
 					timeout: 15_000,
-					env: { ...process.env, SENPI_CODING_AGENT_DIR: dir },
+					env: { ...hostSpawnEnv(), SENPI_CODING_AGENT_DIR: dir },
 				});
 				expect(result.error).toBeUndefined();
 				expect(result.status, result.stderr).toBe(0);

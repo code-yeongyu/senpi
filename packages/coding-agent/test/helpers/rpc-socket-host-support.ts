@@ -8,6 +8,7 @@ import { afterEach } from "vitest";
 
 import { hermeticProviderEnv } from "./rpc-hermetic.ts";
 import { JsonlPeer, type RecordValue } from "./rpc-jsonl-peer.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 
@@ -48,7 +49,7 @@ export function spawnRpc(
 	const child = spawn(process.execPath, [join(import.meta.dirname, "..", "..", "src", "cli.ts"), ...args], {
 		cwd: qa.cwd,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...hermeticProviderEnv(),
 			PI_OFFLINE: "1",
 			PI_TELEMETRY: "0",

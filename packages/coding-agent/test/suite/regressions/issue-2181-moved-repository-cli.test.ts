@@ -13,6 +13,7 @@ import {
 } from "../../../src/core/repository-identity.ts";
 import { getDefaultSessionDir } from "../../../src/core/session-manager.ts";
 import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
@@ -42,7 +43,7 @@ function git(cwd: string, ...args: string[]): void {
 	execFileSync("git", args, {
 		cwd,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			GIT_AUTHOR_NAME: "t",
 			GIT_AUTHOR_EMAIL: "t@t",
 			GIT_COMMITTER_NAME: "t",
@@ -113,7 +114,7 @@ function interactiveArgs(parsed: Record<string, string>, cwd: string): string[] 
 async function runCli(args: string[], moved: Moved, stdin?: string): Promise<{ code: number | null; output: string }> {
 	const child = spawn(process.execPath, args, {
 		cwd: moved.newCwd,
-		env: { ...process.env, [ENV_AGENT_DIR]: moved.agentDir, PI_OFFLINE: "1", TSX_TSCONFIG_PATH: rootTsconfigPath },
+		env: { ...hostSpawnEnv(), [ENV_AGENT_DIR]: moved.agentDir, PI_OFFLINE: "1", TSX_TSCONFIG_PATH: rootTsconfigPath },
 		stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
 	});
 	liveChildren.add(child);

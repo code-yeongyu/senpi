@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { closeSync, constants, mkdtempSync, openSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 const writers: number[] = [];
@@ -43,7 +44,7 @@ describe.skipIf(process.platform === "win32")("lifetime event binding", () => {
 				],
 				{
 					env: {
-						...process.env,
+						...hostSpawnEnv(),
 						SENPI_RPC_HOST_WATCH_PPID: String(process.pid),
 						SENPI_RPC_HOST_LIFETIME_FIFO: fifo.path,
 					},

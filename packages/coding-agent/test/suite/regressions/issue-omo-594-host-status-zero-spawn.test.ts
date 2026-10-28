@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 /**
  * Fixes code-yeongyu/omo-desktop-app#594.
@@ -249,7 +250,7 @@ function runStatusMetricsFixture() {
 			encoding: "utf8",
 			timeout: 90_000,
 			env: {
-				...process.env,
+				...hostSpawnEnv(),
 				// The reaper's abandonment window, floored at its 5 s minimum, keeps the
 				// fixture's faked-clock ticks honest without a wall-clock wait.
 				SENPI_RPC_HOST_REAPER_MIN_WAITABLE_MS: "5000",
@@ -269,6 +270,7 @@ import { readHostProcessMetrics } from ${JSON.stringify(metricsModule)};
 import { loadProcessTableReader } from ${JSON.stringify(tableModule)};
 import { loadChildReaperSyscalls } from ${JSON.stringify(syscallsModule)};
 import { createChildReaper, resolveChildReaperConfig } from ${JSON.stringify(reaperModule)};
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 // Real orphans under this process: a terminated worker's children, the shape the reaper owns.
 if (!isMainThread) {

@@ -8,8 +8,10 @@
  * spawned host then believes a supervisor is handing it a key, runs the stdin bootstrap with stdin
  * ignored, reads zero bytes and exits `internal_key_unavailable` before its ready line (senpi#4528).
  *
- * The names come from the product modules that define them, so a new hand-off variable cannot be
- * added there and forgotten here.
+ * Every name below is imported from the module that declares it, and the list is checked against the
+ * one place that writes the lane - `spawnHostChild` in `host-lifecycle-launch.ts` - by
+ * `rpc-host-spawn-env.test.ts`, which fails when that function learns a variable this list does not
+ * carry. The list is not derived automatically: it is a literal, kept honest by that test.
  */
 import { INTERNAL_KEY_STDIN_ENV } from "../../src/modes/rpc/internal-key-env.ts";
 import { HOST_DAEMON_DIR_ENV } from "../../src/modes/rpc/host-daemon-paths.ts";

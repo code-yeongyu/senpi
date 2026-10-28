@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { MOCK_MODEL, MOCK_PROVIDER, startFakeModelServer } from "../../helpers/rpc-fake-model.ts";
 import { hermeticProviderEnv, writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../../../src/cli-main.ts", import.meta.url));
@@ -44,7 +45,7 @@ it.each([
 					"}",
 				].join("\n"),
 			);
-			const env = { ...process.env, ...hermeticProviderEnv() };
+			const env = { ...hostSpawnEnv(), ...hermeticProviderEnv() };
 			for (const key of Object.keys(env)) {
 				if (key === "SENPI_BRAND" || key.endsWith("_CODING_AGENT_DIR") || key.endsWith("_CODING_AGENT_SESSION_DIR"))
 					delete env[key];

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { APP_NAME, ENV_AGENT_DIR } from "../src/config.ts";
 import { assertWorkspaceBuildPrerequisite } from "./support/workspace-build-prerequisite.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
@@ -32,7 +33,7 @@ async function runCli(args: string[], cwd: string, agentDir: string): Promise<{ 
 		const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, ...args], {
 			cwd,
 			env: {
-				...process.env,
+				...hostSpawnEnv(),
 				[ENV_AGENT_DIR]: agentDir,
 				PI_OFFLINE: "1",
 			},
