@@ -96,7 +96,9 @@ it("keeps a concurrent session responsive while a !command credential is resolve
 				anthropic: {
 					type: "api_key",
 					// `$$` is the shell the host spawned for this command, the process its deadline kills.
-					key: `!mkfifo '${release}' && echo $$ > '${marker}.tmp' && mv '${marker}.tmp' '${marker}' && read _ < '${release}' && echo resolved-secret`,
+					// It holds the FIFO open (fd 3) before publishing the marker, so from then on a
+					// non-blocking release finds a reader for exactly as long as the helper lives.
+					key: `!mkfifo '${release}' && exec 3<> '${release}' && echo $$ > '${marker}.tmp' && mv '${marker}.tmp' '${marker}' && read _ <&3 && echo resolved-secret`,
 					env: { SENPI_CREDENTIAL_PROBE: "1" },
 				},
 			}),
@@ -114,7 +116,9 @@ it("keeps a concurrent session responsive while a !command credential is resolve
 		// Then the first session answers while the helper is still waiting for its release
 		expect(outcomeSchema.parse(state).success).toBe(true);
 		expect(isRunning(helperPid), "get_state answered only after the credential helper had exited").toBe(true);
-		// and the credential still resolves through its own command once released
+		// and, once released, the probing session finishes opening. Whether the key resolved is
+		// not observable here: no RPC response carries a resolved secret, and this offline host
+		// lists no models either way, so this checks only that the open is not left waiting.
 		expect(await releaseHelper(release), "the credential helper was gone before the test released it").toBe(true);
 		expect(sessionId(await probeOpen)).not.toBe(observerSession);
 	} finally {
