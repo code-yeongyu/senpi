@@ -168,13 +168,14 @@ export class CompactRecoveryCatalog {
 	/**
 	 * Verifies the stored bytes of every node on the path against its parent's digest before decoding it; a component
 	 * is verified the same way and returned as a byte source, never as its joined text (S11a, carry 43). `valid` runs
-	 * between the component's leaf reads.
+	 * between the component's leaf reads; `signal` stops the component's verification (RULING-69 (2)).
 	 */
 	async read(
 		store: CompactContentStore,
 		root: CatalogRoot,
 		ref: ContentRef,
 		valid: () => void = () => undefined,
+		signal?: AbortSignal,
 	): Promise<CatalogRead> {
 		if (ref !== root.ref && !ref.startsWith(`${root.ref}:`)) throw new CompactReadError("range");
 		const steps = refSteps(ref);
@@ -205,7 +206,13 @@ export class CompactRecoveryCatalog {
 			here = childRef(here, step);
 			if (pointer.kind === "component") {
 				if (depth + 1 !== steps.length) throw new CompactReadError("range");
-				const bytes = await openFrozenBytes(entry, pointer.leaves, (leaf) => this.stored(store, leaf), valid);
+				const bytes = await openFrozenBytes(
+					entry,
+					pointer.leaves,
+					(leaf) => this.stored(store, leaf),
+					valid,
+					signal,
+				);
 				return { kind: "component", ref: here, entry, bytes };
 			}
 			node = pointer.node;

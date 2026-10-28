@@ -76,7 +76,8 @@ export type StorageUnavailableReason =
 	| "count_limit"
 	| "ownership"
 	| "unavailable"
-	| "integrity";
+	| "integrity"
+	| "aborted";
 
 /**
  * The typed failure of every token operation (S14-Q2 shape): `repair_needed` when the consumer must admit again

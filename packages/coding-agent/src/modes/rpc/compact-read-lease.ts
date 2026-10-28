@@ -8,7 +8,9 @@ export class CompactReadError extends Error {
 		| "count_limit"
 		| "ownership"
 		| "unavailable"
-		| "integrity";
+		| "integrity"
+		/** `aborted`: the request that asked for this read gave up (its budget ran out) before the read finished. */
+		| "aborted";
 
 	constructor(reason: CompactReadError["reason"]) {
 		super(`compact read refused (${reason})`);

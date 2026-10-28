@@ -75,7 +75,7 @@ it("X03 X04 carry 43 a component pages back through the owner at raw byte offset
 	await rig.lane.idle();
 });
 
-it("RULING-62 Q1 (1) one open component per token: paging the same component reopens nothing, another replaces it, a release drops it", async () => {
+it("RULING-62 Q1 (1) RULING-69 (2) a component is verified once per root: paging it again or after another reopens nothing, a release drops it", async () => {
 	const rig = recoveryRig();
 	const { caller, token, manifest, session } = await tokenOf(rig);
 	const opened = vi.spyOn(CompactRecoveryCatalog.prototype, "read");
@@ -88,13 +88,13 @@ it("RULING-62 Q1 (1) one open component per token: paging the same component reo
 	expect((await page(activeRef, 0)).complete).toBe(true);
 	expect(opened).toHaveBeenCalledTimes(2);
 	expect((await page(session.ref, 2 * FRAGMENT_MAX_BYTES)).offset).toBe(2 * FRAGMENT_MAX_BYTES);
-	expect(opened, "the replaced component is opened and verified again").toHaveBeenCalledTimes(3);
+	expect(opened, "the component verified earlier on this root is not opened again").toHaveBeenCalledTimes(2);
 	rig.checkpoints.release(token);
 	expect(await rig.checkpoints.readCatalogPage(token, caller, session.ref, 0)).toMatchObject({
 		ok: false,
 		failure: { kind: "repair_needed" },
 	});
-	expect(opened, "no page is served after the release").toHaveBeenCalledTimes(3);
+	expect(opened, "no page is served after the release").toHaveBeenCalledTimes(2);
 	expect(rig.lane.liveRoots).toBe(0);
 	await rig.lane.idle();
 });
