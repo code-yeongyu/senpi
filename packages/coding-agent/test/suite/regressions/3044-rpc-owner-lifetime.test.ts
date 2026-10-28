@@ -6,6 +6,7 @@ import { Socket } from "node:net";
 import { join } from "node:path";
 import { mock } from "node:test";
 import { afterEach, describe, expect, it } from "vitest";
+import { hostCrashRecordFile } from "../../../src/modes/rpc/host-crash-record.ts";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { STOP_WAIT_BUDGET_MS } from "../../../src/modes/rpc/host-ensure-stop.ts";
@@ -65,6 +66,22 @@ async function caller(qa: GenerationScratch, ownership = "caller", failure?: str
 	return child;
 }
 
+/**
+ * Why the supervisor ended this endpoint's generation, in the product's own durable words
+ * (`<daemonDir>/crashes.jsonl`, written by `noteChildExit`): `owner_gone` is the owner-death path
+ * under test, `idle` is the policy #3044 forbids it from waiting out. A reason is a decision, not a
+ * duration, so a starved machine cannot inflate it the way it inflates wall-clock promptness.
+ */
+async function terminalExitReasons(qa: GenerationScratch): Promise<string[]> {
+	const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
+	const lines = (await readFile(hostCrashRecordFile(paths.dir), "utf8")).trim().split("\n");
+	return lines
+		.filter((line) => line !== "")
+		.map((line) => JSON.parse(line) as { kind?: string; detection?: string; reason?: string })
+		.filter((record) => record.kind === "rpc-host" && record.detection === "engine_stop")
+		.map((record) => record.reason ?? "<no reason>");
+}
+
 async function rememberHost(qa: GenerationScratch): Promise<void> {
 	const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
 	const registration = await readHostRegistration(paths);
@@ -119,7 +136,7 @@ async function survivesOwnerGrace(connection: JsonlPeer): Promise<void> {
 // POSIX process-table assertions follow the existing supervised lifecycle harness.
 describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 	it.each(["normal", "SIGKILL"] as const)(
-		"exits within the bound after owner %s exit",
+		"exits for the owner's death, not the idle policy, after owner %s exit",
 		async (exit) => {
 			const qa = generationScratch("owner");
 			roots.push(qa);
@@ -129,6 +146,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 			else owner.kill("SIGKILL");
 			await exited;
 			await processes.allGone(budget(CASE_TIMEOUT_MS));
+			expect(await terminalExitReasons(qa)).toEqual(["owner_gone"]);
 		},
 		CASE_TIMEOUT_MS,
 	);
