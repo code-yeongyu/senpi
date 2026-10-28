@@ -16,7 +16,7 @@ import { basename, dirname, join } from "node:path";
 import { VERSION } from "../../src/config.ts";
 import { ensureHost } from "../../src/modes/rpc/host-ensure.ts";
 import { readProcessStartTime, waitForStartTime } from "../../src/utils/process-identity.ts";
-import { killAndWait, reapProcessesUnder } from "./spawned-host-reaper.ts";
+import { collectSpawnedHosts, reapCollectedHosts } from "./spawned-host-reaper.ts";
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
@@ -52,12 +52,13 @@ export async function sandbox(label: string, options: { canonicalSocket?: boolea
 
 /** Kills every host these suites started - including the detached ones `ensureHost` spawned. */
 export async function sweepSandboxes(): Promise<void> {
-	for (const child of children.splice(0)) await killAndWait(child);
-	for (const root of roots.splice(0)) {
-		await chmod(root, 0o700).catch(() => undefined);
-		await reapProcessesUnder(root);
-		await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-	}
+	const spawned = children.splice(0);
+	const pending = roots.splice(0);
+	const scope = { children: spawned, roots: pending };
+	const collected = collectSpawnedHosts(scope);
+	for (const root of pending) await chmod(root, 0o700).catch(() => undefined);
+	await reapCollectedHosts(collected, scope);
+	for (const root of pending) await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 export function ensureFixtureHost(qa: Sandbox) {

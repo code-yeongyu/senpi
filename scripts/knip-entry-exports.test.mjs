@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { test } from "node:test";
@@ -20,9 +21,22 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_TOKEN = /[\w@./-]+\.(?:[cm]?[jt]s|tsx)(?![\w-])/g;
 const EXECUTOR_LINE = /\b(?:node|bun|bunx|tsx|npx|deno)\b/;
 
+// A gitignored path is a build output (e.g. `dist/bun/cli.js`, which `build:binary` compiles after `npm run build`), not
+// source: knip honors .gitignore, so it can never list one as an entry, and whether it exists on disk depends only on
+// whether a build ran first. The scan skips such paths so its result is the same on a clean and a built checkout.
+function gitIgnored(files) {
+	if (files.length === 0) return new Set();
+	const { status, stdout, stderr } = spawnSync("git", ["check-ignore", "--no-index", "--stdin"], { cwd: repo, input: files.join("\n"), encoding: "utf8" });
+	// git check-ignore exits 0 when some path is ignored, 1 when none is, and anything else on an error.
+	assert.ok(status === 0 || status === 1, `git check-ignore failed (${status}): ${stderr}`);
+	const out = stdout.trim();
+	return new Set(out === "" ? [] : out.split("\n"));
+}
+
 // Every source path that appears on a line that runs an executor, resolved against the line's package directory and
 // every workspace directory (a command may `cd`, pass `--cwd` or set working-directory). It over-matches on
-// purpose; paths that are not files are dropped, and nothing it finds ever removes a table entry.
+// purpose; paths that are not files or are gitignored build outputs are dropped, and nothing it finds ever removes a
+// table entry.
 function scannedRunByPath(workspaceDirs) {
 	const lines = [];
 	for (const dir of workspaceDirs) {
@@ -48,8 +62,16 @@ function scannedRunByPath(workspaceDirs) {
 			}
 		}
 	}
+	for (const file of gitIgnored([...found.keys()])) found.delete(file);
 	return found;
 }
+
+test("the run-by-path scan drops gitignored build outputs and keeps tracked source", () => {
+	const buildOutput = "packages/coding-agent/dist/bun/cli.js";
+	const source = "packages/coding-agent/src/cli.ts";
+	assert.deepEqual([...gitIgnored([buildOutput, source])], [buildOutput]);
+	assert.deepEqual([...gitIgnored([])], []);
+});
 
 test("knip export-checks every entry it resolves, and every file package.json scripts and CI workflows run by path", async () => {
 	const { table, entries, workspaceDirs } = await knipEntryTable(repo);
