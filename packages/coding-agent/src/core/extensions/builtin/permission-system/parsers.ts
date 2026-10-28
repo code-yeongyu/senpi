@@ -225,6 +225,13 @@ function bashCommandRequests(command: string): PermissionRequest[] {
 	];
 }
 
+/** The complete bash tool parse, including external-directory requests. */
+export function bashPermissionRequests(command: string, cwd: string): PermissionRequest[] {
+	const requests = bashCommandRequests(command);
+	const externalPaths = extractExternalPaths(command, cwd);
+	return withExternalDirectoryRequests(requests, externalPaths, cwd, "file", rawTarget);
+}
+
 /** The `eval` class a cell carries on its own, used when its tool-owned parser names anything narrower. */
 export function fallbackEvalPermissionRequest(): PermissionRequest {
 	return { permission: "eval", patterns: ["*"], always: ["*"] };
@@ -307,9 +314,7 @@ export function createBuiltinParserRegistry(): ParserRegistry {
 				return [fallbackPermissionRequest("bash")];
 			}
 
-			const requests = bashCommandRequests(command);
-			const externalPaths = extractExternalPaths(command, cwd);
-			return withExternalDirectoryRequests(requests, externalPaths, cwd, "file", rawTarget);
+			return bashPermissionRequests(command, cwd);
 		};
 
 	registry.register("bash", parseBashLikePermission("command"));

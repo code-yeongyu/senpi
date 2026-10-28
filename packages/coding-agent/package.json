@@ -43,6 +43,10 @@
 		"./prompt-presets": {
 			"types": "./dist/core/extensions/builtin/prompt-preset/public.d.ts",
 			"import": "./dist/core/extensions/builtin/prompt-preset/public.js"
+		},
+		"./engine-trust": {
+			"types": "./dist/engine-trust/index.d.ts",
+			"import": "./dist/engine-trust/index.js"
 		}
 	},
 	"files": [
