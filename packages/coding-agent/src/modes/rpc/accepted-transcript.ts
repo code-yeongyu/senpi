@@ -131,7 +131,7 @@ export class AcceptedTranscript {
 	apply(transition: TranscriptTransition, staged?: StagedContent): void {
 		this.version += 1;
 		if (transition.kind === "replace") {
-			this.tail.releaseAll();
+			this.tail.supersede();
 			this.base = transition.base;
 			this.entryIds = [];
 			this.kinds = [];
