@@ -146,12 +146,15 @@ function recoveryPageIndex(socketEpoch: string, sessionId: string, component: Re
 	return {
 		contract: "CONTRACT-r6",
 		section: "B3",
-		rulings: ["RULING-57", "RULING-58", "RULING-62", "RULING-68", "RULING-69"],
+		rulings: ["RULING-57", "RULING-58", "RULING-62", "RULING-68", "RULING-69", "RULING-70"],
 		encoding:
 			"expected is the whole get_recovery_page response envelope. data.bytes is base64 of exactly data.length raw stored bytes at data.offset of the component (its UTF-16LE code units as stored); decode base64 first, then join pages by offset, then decode UTF-16LE.",
+		digestAlgorithm: "sha256",
 		digestRule:
 			"data.digest is lowercase hex SHA-256(u8 tagLength || tag || u64be byteLength || bytes) over the raw page bytes with tag 'senpi-recovery-catalog/1/utf16le/fragment'; component.digest is the same rule over the whole component with domain 'leaf'.",
 		limits: { D: FRAGMENT_MAX_BYTES, envelope: FRAGMENT_ENVELOPE_MAX_BYTES },
+		limitsRule:
+			"limits.D is the most raw stored bytes one page carries (data.length <= D). limits.envelope is the most characters the base64 data.bytes string of one page can have, ceil(D / 3) * 4; it is NOT a cap on the whole response envelope.",
 		cursorRule:
 			"data.cursor is opaque: present it unchanged as the next request's cursor; it is null once data.complete. Its authenticator is keyed per engine process, so these goldens fix that key in the generator; never parse or construct a cursor.",
 		refusalRule:
