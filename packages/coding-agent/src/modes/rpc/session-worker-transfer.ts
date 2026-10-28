@@ -57,6 +57,7 @@ export class WorkerTransfer {
 			const last = index === count - 1;
 			this.post({
 				type: "fragment",
+				of: message.type,
 				length: text.length * 2,
 				offset: index * FRAGMENT_UNITS * 2,
 				text: text.slice(index * FRAGMENT_UNITS, (index + 1) * FRAGMENT_UNITS),

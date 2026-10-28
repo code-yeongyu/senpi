@@ -7,6 +7,8 @@ import { TRANSFER_STAGING_MAX_BYTES } from "./compact-transfer-staging.ts";
  * most D stored payload bytes, which the envelope always covers.
  */
 export const WORKER_PERMIT_BYTES = FRAGMENT_ENVELOPE_MAX_BYTES;
+/** Ledger slots kept for control progress: data permits never take them (S12 design section 3, RULING-80 (1)). */
+export const WORKER_CONTROL_SLOTS = 1;
 
 /**
  * The Int32 words of a permit block (RULING-63 Q3 (1)): `credit` bytes, which only the host adds to and only the worker
@@ -31,7 +33,7 @@ export class WorkerPermitLedger {
 	private readonly waiting = new Set<() => void>();
 
 	constructor(capacity = TRANSFER_STAGING_MAX_BYTES) {
-		this.ceiling = Math.floor(capacity / WORKER_PERMIT_BYTES) - 1;
+		this.ceiling = Math.floor(capacity / WORKER_PERMIT_BYTES) - WORKER_CONTROL_SLOTS;
 	}
 
 	request(grant: () => void): boolean {

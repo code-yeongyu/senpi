@@ -26,6 +26,7 @@ afterEach(() => {
 type Posted = SessionWorkerToHost & { readonly [key: string]: unknown };
 interface Fragment {
 	readonly type: "fragment";
+	readonly of: string;
 	readonly length: number;
 	readonly offset: number;
 	readonly text: string;
@@ -49,6 +50,7 @@ function fragmentsOf(message: OutputFrame, first: number, firstOrdinal: number |
 	const count = Math.ceil(text.length / UNITS);
 	return Array.from({ length: count }, (_unused, index) => ({
 		type: "fragment",
+		of: message.type,
 		length: text.length * 2,
 		offset: index * UNITS * 2,
 		text: text.slice(index * UNITS, (index + 1) * UNITS),

@@ -167,6 +167,8 @@ export type SessionWorkerToHost =
 	 */
 	| {
 			type: "fragment";
+			/** The type of the message the fragments carry, so a refused transfer names its event (RULING-80 (3a)). */
+			of: string;
 			length: number;
 			offset: number;
 			text: string;

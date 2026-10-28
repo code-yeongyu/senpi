@@ -87,3 +87,47 @@ it("S12b carry 66: a root held across a replace does not starve the new version'
 	lane.release(current);
 	manager.dispose();
 }, 120_000);
+
+// RULING-80 (4) = C: an append refused while the superseded tail is still spilling is a typed refusal, and the version it
+// refused becomes available again: the refused text is never kept outside the budget, so once the spill completed, the
+// root is released and the refused entry is durable, the version reads whole again and takes later appends.
+it("S12b RULING-80 (4): a version refused during the superseded tail's spill is available again once the spill completed and the root is released", async () => {
+	const manager = SessionManager.create(dir, dir);
+	const lane = new SessionAcceptanceLane({
+		dir: join(dir, "spool"),
+		spillAboveBytes: 64 * MIB,
+		spillTargetBytes: 32 * MIB,
+	});
+	lane.bootstrap({ transcript: manager.beginTranscriptJournal() });
+	manager.appendCustomEntry("old", { text: "o".repeat(10_000_000) });
+	lane.applyTranscript(manager.drainTranscript());
+	const held = lane.freeze();
+	manager.newSession();
+	lane.applyTranscript(manager.drainTranscript());
+	// Still inside the window: the superseded tail's spill is queued, not complete.
+	manager.appendCustomEntry("refused", { text: "r".repeat(10_000_000) });
+	lane.applyTranscript(manager.drainTranscript());
+	const refused = lane.freeze();
+	expect(refused.transcript.unavailable, "refused in the window, typed").toBe("transcript_tail_over_byte_limit");
+	lane.release(refused);
+	await lane.idle();
+	lane.release(held);
+	await lane.idle();
+	await manager.persistHeaderNow();
+	lane.applyTranscript(manager.drainTranscript());
+	manager.appendCustomEntry("later", { text: "after the window" });
+	lane.applyTranscript(manager.drainTranscript());
+	const recovered = lane.freeze();
+	try {
+		expect(recovered.transcript.unavailable, "the version is available again").toBeNull();
+		const read = await readTranscriptRoot(recovered.transcript);
+		if (!read.ok) throw new Error(read.error);
+		expect(read.entries.map((entry) => entry.type)).toEqual(["session", "custom", "custom"]);
+		const texts = read.entries.map((entry) => Reflect.get(Object(Reflect.get(entry, "data")), "text"));
+		expect(texts[1], "the refused entry reads whole").toHaveLength(10_000_000);
+		expect(texts[2], "a later append succeeds").toBe("after the window");
+	} finally {
+		lane.release(recovered);
+		manager.dispose();
+	}
+}, 120_000);

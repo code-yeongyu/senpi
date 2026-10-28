@@ -7,6 +7,7 @@ import {
 	HostPermits,
 	hostWorkerPermits,
 	PERMIT_TAG,
+	WORKER_CONTROL_SLOTS,
 	PERMIT_WORD,
 	WORKER_PERMIT_BYTES,
 	WorkerPermitLedger,
@@ -66,7 +67,11 @@ it("S12b RULING-63 initial credit: a fresh block holds exactly one S11 page enve
 // S12 design section 3 / X04: B_worker bounds the ledger; one slot stays protected for control progress.
 it("S12b X04: the ledger grants at most its data ceiling, refuses the next request before allocation and hands a release to it", () => {
 	const ledger = new WorkerPermitLedger();
-	expect(ledger.ceiling).toBe(Math.floor(TRANSFER_STAGING_MAX_BYTES / WORKER_PERMIT_BYTES) - 1);
+	// RULING-80 (1): the data ceiling is B_worker in whole S11 pages, less the protected control slot, from the constants.
+	expect(WORKER_CONTROL_SLOTS).toBe(1);
+	expect(ledger.ceiling).toBe(
+		Math.floor(TRANSFER_STAGING_MAX_BYTES / FRAGMENT_ENVELOPE_MAX_BYTES) - WORKER_CONTROL_SLOTS,
+	);
 	for (let index = 0; index < ledger.ceiling; index += 1) expect(ledger.request(noop)).toBe(true);
 	const allocate = vi.fn();
 	expect(ledger.request(allocate), "past the ceiling the request is refused").toBe(false);
