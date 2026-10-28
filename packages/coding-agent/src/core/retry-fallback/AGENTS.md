@@ -18,7 +18,8 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 | `cooldown.ts` | `SelectorCooldowns`: runtime-only selector suppression, injected `now`/`random`, honors `retryAfterMs` |
 | `billing.ts` | Billing-class failure detection — billing fallbacks are PINNED (never revert on cooldown expiry) when the billing hit the chain's original model or its account |
 | `pin.ts` | `pinAfterSwitch`: pin provenance after one switch (refusal pins; billing pins only when it hit the original or its account) |
-| `unusable.ts` | `UnusableEntries`: providers (account limit/billing) and entries (model-scoped exhaustion) this session saw refuse to serve, on the session cooldowns; the chain tries spent providers last and never rests on an unusable fallback |
+| `unusable.ts` | `UnusableEntries`: providers (account limit/billing), gateway upstreams (an account-scoped failure naming a vendor on a multi-vendor provider, senpi#4577) and entries (model-scoped exhaustion) this session saw refuse to serve, on the session cooldowns; a response the provider serves releases the holds it disproves; the chain tries spent providers last and never rests on an unusable fallback |
+| `upstream.ts` | `modelUpstream` / `failureUpstream`: the vendor behind a model id and the one vendor a failure names, used to scope a gateway hold to its failing upstream (senpi#4577) |
 | `settings.ts` | `RetrySettings` shape (chains, `fallbackRevertPolicy`, provider retry timeouts) resolved via `settings-manager.ts` |
 | `validate.ts` | Chain validation with per-selector warnings (unknown models, unsupported thinking levels) |
 | `log.ts` | `fallback.log` writer: 5 MiB cap, key allow/blocklists, secret scrubbing |

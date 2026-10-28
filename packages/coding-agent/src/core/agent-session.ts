@@ -2132,7 +2132,7 @@ export class AgentSession {
 			override && slash > 0
 				? this._modelRuntime.getModel(override.slice(0, slash), override.slice(slash + 1))
 				: undefined;
-		const usable = (model: Model<any>): boolean => !this._retryFallback.isProviderSpent(model.provider);
+		const usable = (model: Model<any>): boolean => !this._retryFallback.isSpent(model);
 		// Preserve the explicit override and original-model geometry on healthy sessions.
 		// A held downswitch uses its target only when the original account cannot serve.
 		if (usable(sessionModel)) {
@@ -2172,7 +2172,7 @@ export class AgentSession {
 					this._modelRuntime.hasConfiguredAuth(model.provider),
 			);
 		if (available) return available;
-		throw new AccountUsageLimitError(sessionModel.provider, this._retryFallback.accountError(sessionModel.provider));
+		throw new AccountUsageLimitError(sessionModel.provider, this._retryFallback.spentError(sessionModel));
 	}
 
 	private _logCompactionModelFallback(
@@ -5964,9 +5964,9 @@ export class AgentSession {
 			try {
 				await this._maybeRestoreFallbackPrimary();
 				const model = this.model;
-				if (model && !this._pendingModelSwitch && this._retryFallback.isProviderSpent(model.provider)) {
+				if (model && !this._pendingModelSwitch && this._retryFallback.isSpent(model)) {
 					this._retryFallback.resetTurn();
-					const errorMessage = this._retryFallback.accountError(model.provider);
+					const errorMessage = this._retryFallback.spentError(model);
 					// Routing around a remembered failure did not observe another provider failure.
 					if (!(await this._retryFallback.tryFallback("transient", { errorMessage }, false))) {
 						throw new AccountUsageLimitError(model.provider, errorMessage);
