@@ -19,7 +19,7 @@ export interface RefreshManagerOptions {
 	fetchFn?: FetchLike;
 	maxRetries?: number;
 	retryDelayMs?: number;
-	discover?: (serverUrl: string) => Promise<OAuthServerInfo>;
+	discover?: (serverUrl: string, signal?: AbortSignal) => Promise<OAuthServerInfo>;
 }
 
 export function isTokenStale(record: McpStoredAuth | undefined, now: number): boolean {
@@ -52,24 +52,30 @@ export class McpRefreshManager {
 		this.#options = options;
 	}
 
-	async ensureFresh(): Promise<OAuthTokens | undefined> {
+	/**
+	 * `signal` (senpi#4642): an aborted caller stops waiting at once. A refresh it started also stops its discovery
+	 * and token requests, releases the token-store lock and writes nothing; a later caller starts a fresh one.
+	 */
+	async ensureFresh(signal?: AbortSignal): Promise<OAuthTokens | undefined> {
+		signal?.throwIfAborted();
 		const record = await this.#provider.store.readAsync();
 		if (record?.accessToken === undefined) return undefined;
 		if (!isTokenStale(record, Date.now())) return storedAuthToTokens(record);
-		return this.refresh();
+		return this.refresh(signal);
 	}
 
-	refresh(): Promise<OAuthTokens> {
-		if (this.#inflight !== undefined) return this.#inflight;
-		const run = this.#refreshLocked().finally(() => {
+	refresh(signal?: AbortSignal): Promise<OAuthTokens> {
+		if (this.#inflight !== undefined) return untilAborted(this.#inflight, signal);
+		const run = this.#refreshLocked(signal).finally(() => {
 			this.#inflight = undefined;
 		});
 		this.#inflight = run;
-		return run;
+		return untilAborted(run, signal);
 	}
 
-	#refreshLocked(): Promise<OAuthTokens> {
+	#refreshLocked(signal: AbortSignal | undefined): Promise<OAuthTokens> {
 		return this.#provider.store.withLock(async () => {
+			signal?.throwIfAborted();
 			const current = this.#provider.store.readUnlocked();
 			if (current?.accessToken !== undefined && !isTokenStale(current, Date.now())) {
 				const tokens = storedAuthToTokens(current);
@@ -81,12 +87,17 @@ export class McpRefreshManager {
 					serverName: this.#provider.serverName,
 				});
 			}
-			return this.#doRefresh(current, refreshToken);
+			return this.#doRefresh(current, refreshToken, signal);
 		});
 	}
 
-	async #doRefresh(current: McpStoredAuth, refreshToken: string): Promise<OAuthTokens> {
-		const info = await this.#discover();
+	async #doRefresh(
+		current: McpStoredAuth,
+		refreshToken: string,
+		signal: AbortSignal | undefined,
+	): Promise<OAuthTokens> {
+		const info = await this.#discover(signal);
+		signal?.throwIfAborted();
 		// senpi#2940: a refresh token is presented only to the authorization server that issued it. A grant bound
 		// elsewhere, or one that cannot be attributed at all, is a continuity break: drop it and require a fresh
 		// sign-in rather than refreshing silently against whatever server discovery now names.
@@ -110,6 +121,7 @@ export class McpRefreshManager {
 		}
 		const resource = new URL(current.resource ?? this.#provider.serverUrl);
 		const { refreshAuthorization } = await loadMcpSdkAuth();
+		signal?.throwIfAborted();
 		const maxRetries = this.#options.maxRetries ?? 2;
 		for (let attempt = 0; ; attempt++) {
 			try {
@@ -118,13 +130,16 @@ export class McpRefreshManager {
 					clientInformation,
 					refreshToken,
 					resource,
-					fetchFn: oauthFetch(this.#options.fetchFn),
+					fetchFn: oauthFetch(this.#options.fetchFn, signal),
 				});
+				// An aborted refresh writes nothing, even when the server answered.
+				signal?.throwIfAborted();
 				this.#provider.store.writeUnlocked(
 					mergeTokensIntoStoredAuth(current, tokens, this.#provider.serverUrl, authorizationServer),
 				);
 				return { ...tokens, issuer: authorizationServer };
 			} catch (error) {
+				if (signal?.aborted) throw signal.reason;
 				if (isInvalidGrant(error)) {
 					// Terminal: drop credentials so the next use forces a clean re-auth.
 					this.#provider.store.writeUnlocked(undefined);
@@ -155,9 +170,20 @@ export class McpRefreshManager {
 		}
 	}
 
-	async #discover(): Promise<OAuthServerInfo> {
-		if (this.#options.discover !== undefined) return this.#options.discover(this.#provider.serverUrl);
+	async #discover(signal: AbortSignal | undefined): Promise<OAuthServerInfo> {
+		if (this.#options.discover !== undefined) return this.#options.discover(this.#provider.serverUrl, signal);
 		const { discoverOAuthServerInfo } = await loadMcpSdkAuth();
-		return discoverOAuthServerInfo(this.#provider.serverUrl, { fetchFn: oauthFetch(this.#options.fetchFn) });
+		return discoverOAuthServerInfo(this.#provider.serverUrl, { fetchFn: oauthFetch(this.#options.fetchFn, signal) });
 	}
+}
+
+/** The caller stops waiting when its own signal aborts; the shared work itself is left to its starter. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+	if (signal === undefined) return work;
+	if (signal.aborted) return Promise.reject(signal.reason);
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = () => reject(signal.reason);
+		signal.addEventListener("abort", onAbort, { once: true });
+		work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+	});
 }

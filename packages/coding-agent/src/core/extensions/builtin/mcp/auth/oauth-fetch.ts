@@ -29,9 +29,14 @@ function withoutAbsentOptionalFields(body: unknown): unknown {
 	return changed ? next : body;
 }
 
-export function oauthFetch(base: FetchLike = (input, init) => fetch(input, init)): FetchLike {
+export function oauthFetch(base: FetchLike = (input, init) => fetch(input, init), signal?: AbortSignal): FetchLike {
 	return async (input, init) => {
-		const response = await base(input, init);
+		const response = await base(
+			input,
+			signal === undefined
+				? init
+				: { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal },
+		);
 		if (!(response.headers.get("content-type") ?? "").includes("application/json")) return response;
 		const text = await response.text();
 		let body: unknown;

@@ -104,13 +104,14 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 	configureMcpReconnect({
 		connection,
 		logger,
-		reconnect: async () => {
+		reconnect: async (signal) => {
 			entry.counters.reconnectCount += 1;
 			entry.cacheRefreshedAfterConnect = false;
 			try {
-				await entry.authPlan?.refresh?.ensureFresh();
+				await entry.authPlan?.refresh?.ensureFresh(signal);
 			} catch (error) {
-				if (entry.connection.state === "disabled") return;
+				// Dispose aborted the refresh: not an auth failure, nothing to mark or log.
+				if (signal.aborted || entry.connection.state === "disabled") return;
 				const authError = markMcpConnectionNeedsAuth(entry.connection, error);
 				if (authError !== undefined) {
 					entry.logger.warn(authError.message);
@@ -118,6 +119,7 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 				}
 				throw error;
 			}
+			if (signal.aborted) return;
 			await entry.connection.renew();
 			await connectAndRefreshMcpCatalog(entry, config);
 		},
@@ -136,6 +138,7 @@ export async function disposeEntryConnection(
 	const reconnectSettled = disposeMcpReconnect(entry.connection);
 	disposeMcpConnectionLifecycle(entry.connection);
 	await registry.detach(entry.key, owner);
-	// Detach closed the connection, which ends an attempt in flight; wait for it so nothing it started writes later.
+	// Dispose aborted every attempt in flight and detach closed the connection; wait for them, bounded, so dispose
+	// stays short and nothing they started writes later.
 	await reconnectSettled;
 }
