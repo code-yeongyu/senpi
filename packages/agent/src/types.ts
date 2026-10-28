@@ -310,6 +310,12 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	prepareRequest?: PrepareRequest;
 
 	/**
+	 * Resolves, before each provider request, when the session last switched models (Unix ms). Passed as
+	 * `contextUsageNotBefore` so request-time context checks ignore usage another model reported (oh-my-openagent#11684).
+	 */
+	resolveContextUsageNotBefore?: () => number | undefined;
+
+	/**
 	 * Called after each completed assistant turn, including a normal stop response, before the loop decides whether another provider request starts.
 	 * A terminating-tool continuation emits its `turn_start` boundary first so queue owners can clear
 	 * or replace pending input before preparation finishes and the continuation is admitted.

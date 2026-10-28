@@ -125,6 +125,7 @@ import {
 	type CacheFriendlySummaryOptions,
 	type CompactionPreparation,
 	type CompactionResult,
+	type ContextEstimateOptions,
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
 	compact,
@@ -394,6 +395,7 @@ import { computeSessionFailureReport, type SessionFailureReport } from "./sessio
 import type { HistoryReducer } from "./session-history-reduce.ts";
 import type { ChildLifecycleReport, LifecycleApi, SessionLifecycleEvent } from "./session-lifecycle-types.ts";
 import { createSessionLogger, type SessionLogger } from "./session-log.ts";
+import { getLatestModelSwitchTime, modelSwitchEstimateOptions } from "./model-switch-usage.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionProjection } from "./session-manager.ts";
 import {
 	CURRENT_SESSION_VERSION,
@@ -2623,6 +2625,7 @@ export class AgentSession {
 			(this.agent.prepareNextTurn
 				? async (_turn: PrepareNextTurnContext, signal?: AbortSignal) => await this.agent.prepareNextTurn?.(signal)
 				: undefined);
+		this.agent.resolveContextUsageNotBefore = () => getLatestModelSwitchTime(this.sessionManager.getBranch());
 		const previousTransformContext = this.agent.transformContext;
 		this.agent.transformContext = async (messages, signal) => {
 			// The idle path tokenizes agent.state.messages in place; every provider
@@ -3719,14 +3722,17 @@ export class AgentSession {
 		}
 
 		let contextTokens: number;
-		const directContextTokens = message.usage ? calculateContextTokens(message.usage) : 0;
+		const estimateOptions = this._contextEstimateOptions();
+		const directContextTokens =
+			message.usage && estimateOptions.usageCounts?.(message) !== false ? calculateContextTokens(message.usage) : 0;
 		if (message.stopReason !== "error" && directContextTokens !== 0) {
 			contextTokens = this._resolveThresholdContextTokens(directContextTokens);
 		} else {
 			const messages = filterContextExcludedMessages(this._runtimeMessages());
-			const estimate = estimateContextTokens(messages);
+			const estimate = estimateContextTokens(messages, estimateOptions);
 			if (estimate.lastUsageIndex === null) {
-				if (!this._isRequiredCompactionError(message)) return undefined;
+				// Usage another model reported is replaced by the transcript estimate, which still gates.
+				if (!estimate.otherModelUsageIgnored && !this._isRequiredCompactionError(message)) return undefined;
 			} else {
 				const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
 				const usageMessage = messages[estimate.lastUsageIndex];
@@ -4535,6 +4541,13 @@ export class AgentSession {
 			this.agent.state.messages = this.agent.state.messages.slice(0, messageIndex);
 		}
 		this._incrementMessageRevision();
+	}
+
+	/** Usage reported before the latest model switch was counted by another model's tokenizer (oh-my-openagent#11684). */
+	private _contextEstimateOptions(branch: SessionEntry[] = this.sessionManager.getBranch()): ContextEstimateOptions {
+		return modelSwitchEstimateOptions(branch, this.sessionManager, (message) =>
+			this._messageEndsAwaitingPersistence.has(message),
+		);
 	}
 
 	private _isAssistantFromBeforeLatestCompaction(assistantMessage: AssistantMessage): boolean {
@@ -8862,9 +8875,11 @@ export class AgentSession {
 	): boolean {
 		// Kept assistant usage predates an accepted checkpoint. The projection
 		// estimates its summary and suffix until a fresh provider response supersedes it.
+		const branch = this.sessionManager.getBranch();
 		const currentContext = estimateProjectedContextTokens(
 			this.sessionManager.buildSessionProjection(),
-			this.sessionManager.getBranch(),
+			branch,
+			this._contextEstimateOptions(branch),
 		).tokens;
 		return !projectModelUsabilityBudget({
 			model,
@@ -10693,7 +10708,8 @@ export class AgentSession {
 	private _estimatePrePromptContextTokens(additions: readonly AgentMessage[] = []): number {
 		const branch = this.sessionManager.getBranch();
 		const messages = [...this.sessionManager.buildSessionContext().messages, ...additions];
-		const estimate = estimateContextTokens(messages);
+		const estimateOptions = this._contextEstimateOptions(branch);
+		const estimate = estimateContextTokens(messages, estimateOptions);
 		const usageMessage = estimate.lastUsageIndex === null ? undefined : messages[estimate.lastUsageIndex];
 		const usageEntryId = usageMessage ? getSessionContextEntryId(usageMessage) : undefined;
 		let needsProjection = false;
@@ -10711,8 +10727,11 @@ export class AgentSession {
 			this._prePromptProjection = { branch, projection: this.sessionManager.buildSessionProjection() };
 		}
 		const { projection } = this._prePromptProjection;
-		return estimateProjectedContextTokens({ ...projection, messages: [...projection.messages, ...additions] }, branch)
-			.tokens;
+		return estimateProjectedContextTokens(
+			{ ...projection, messages: [...projection.messages, ...additions] },
+			branch,
+			estimateOptions,
+		).tokens;
 	}
 
 	/**
@@ -10979,14 +10998,18 @@ export class AgentSession {
 		if (inlineReason) {
 			contextTokens = this._estimatePrePromptContextTokens();
 		} else {
-			const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
+			const estimateOptions = this._contextEstimateOptions(branch);
+			const directContextTokens =
+				assistantMessage.usage && estimateOptions.usageCounts?.(assistantMessage) !== false
+					? calculateContextTokens(assistantMessage.usage)
+					: 0;
 			if (!usageScope.usageMatchesProjection) {
-				contextTokens = estimateProjectedContextTokens(buildProjection(), branch).tokens;
+				contextTokens = estimateProjectedContextTokens(buildProjection(), branch, estimateOptions).tokens;
 			} else if (assistantMessage.stopReason !== "error" && directContextTokens !== 0) {
 				contextTokens = this._resolveThresholdContextTokens(directContextTokens);
 			} else {
 				const messages = filterContextExcludedMessages(this.agent.state.messages);
-				const estimate = estimateContextTokens(messages);
+				const estimate = estimateContextTokens(messages, estimateOptions);
 				if (estimate.lastUsageIndex !== null) {
 					// Verify the usage source is post-compaction. Kept pre-compaction messages
 					// have stale usage reflecting the old (larger) context and would falsely
@@ -14068,6 +14091,7 @@ export class AgentSession {
 			lastFingerprint: messageFingerprint(runtimeMessages.at(-1)),
 			leafId: this.sessionManager.getLeafId(),
 			contextWindow: model?.contextWindow,
+			modelKey: model ? `${model.provider}/${model.id}` : undefined,
 		};
 		const cached = this._contextUsageCache;
 		if (
@@ -14077,7 +14101,8 @@ export class AgentSession {
 			cached.key.last === key.last &&
 			cached.key.lastFingerprint === key.lastFingerprint &&
 			cached.key.leafId === key.leafId &&
-			cached.key.contextWindow === key.contextWindow
+			cached.key.contextWindow === key.contextWindow &&
+			cached.key.modelKey === key.modelKey
 		) {
 			return cached.usage;
 		}
@@ -14095,6 +14120,7 @@ export class AgentSession {
 					readonly lastFingerprint: string;
 					readonly leafId: string | null;
 					readonly contextWindow: number | undefined;
+					readonly modelKey: string | undefined;
 				};
 				readonly usage: ContextUsage | undefined;
 		  }
@@ -14113,11 +14139,12 @@ export class AgentSession {
 		// estimates so auto-compaction can still see current context pressure.
 		const branchEntries = this.sessionManager.getBranch();
 		const latestCompaction = getLatestCompactionEntry(branchEntries);
+		const estimateOptions = this._contextEstimateOptions(branchEntries);
 
 		if (latestCompaction) {
 			// Check if there's a valid assistant usage after the compaction boundary
 			const compactionIndex = branchEntries.lastIndexOf(latestCompaction);
-			let hasPostCompactionUsage = false;
+			let postCompactionUsage: "current-model" | "other-model" | undefined;
 			for (let i = branchEntries.length - 1; i > compactionIndex; i--) {
 				const entry = branchEntries[i];
 				if (entry.type === "message" && entry.message.role === "assistant") {
@@ -14125,19 +14152,21 @@ export class AgentSession {
 					if (assistant.stopReason !== "aborted" && assistant.stopReason !== "error") {
 						const contextTokens = calculateContextTokens(assistant.usage);
 						if (contextTokens > 0) {
-							hasPostCompactionUsage = true;
+							postCompactionUsage =
+								estimateOptions.usageCounts?.(assistant) === false ? "other-model" : "current-model";
 							break;
 						}
 					}
 				}
 			}
 
-			if (!hasPostCompactionUsage) {
+			if (postCompactionUsage !== "current-model") {
 				const tokens = messages.reduce((sum, message) => sum + estimateTokens(message), 0);
 				return {
 					tokens,
 					contextWindow,
 					percent: (tokens / contextWindow) * 100,
+					...(postCompactionUsage === "other-model" ? { estimated: true as const } : {}),
 				};
 			}
 		}
@@ -14145,14 +14174,15 @@ export class AgentSession {
 		// A context_edit omits or replaces what earlier provider usage measured, so that usage no longer
 		// describes the current context; estimate from the projection like the threshold check does.
 		const estimate = branchEntries.some((entry) => entry.type === "context_edit")
-			? estimateProjectedContextTokens(this.sessionManager.buildSessionProjection(), branchEntries)
-			: estimateContextTokens(messages);
+			? estimateProjectedContextTokens(this.sessionManager.buildSessionProjection(), branchEntries, estimateOptions)
+			: estimateContextTokens(messages, estimateOptions);
 		const percent = (estimate.tokens / contextWindow) * 100;
 
 		return {
 			tokens: estimate.tokens,
 			contextWindow,
 			percent,
+			...(estimate.otherModelUsageIgnored ? { estimated: true as const } : {}),
 		};
 	}
 

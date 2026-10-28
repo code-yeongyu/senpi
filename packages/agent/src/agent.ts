@@ -147,6 +147,8 @@ export interface AgentOptions {
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
 	finishTurn?: FinishTurn;
 	prepareRequest?: PrepareRequest;
+	/** See {@link AgentLoopConfig.resolveContextUsageNotBefore}. */
+	resolveContextUsageNotBefore?: () => number | undefined;
 	prepareNextTurn?: (
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
@@ -316,6 +318,8 @@ export class Agent {
 	public finishTurn?: FinishTurn;
 	public queuedInputPort?: QueuedInputPort;
 	public prepareRequest?: PrepareRequest;
+	/** See {@link AgentLoopConfig.resolveContextUsageNotBefore}. */
+	public resolveContextUsageNotBefore?: () => number | undefined;
 	public prepareNextTurn?: (
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
@@ -371,6 +375,7 @@ export class Agent {
 		this.finishTurn = runtimeOptions.finishTurn;
 		this.queuedInputPort = runtimeOptions.queuedInputPort;
 		this.prepareRequest = runtimeOptions.prepareRequest;
+		this.resolveContextUsageNotBefore = runtimeOptions.resolveContextUsageNotBefore;
 		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
 		this.prepareNextTurnWithContext = runtimeOptions.prepareNextTurnWithContext;
 		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
@@ -792,6 +797,7 @@ export class Agent {
 					}
 				: undefined,
 			prepareRequest: this.prepareRequest,
+			resolveContextUsageNotBefore: this.resolveContextUsageNotBefore,
 			prepareNextTurn:
 				this.prepareNextTurnWithContext || this.prepareNextTurn
 					? async (context) => {

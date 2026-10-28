@@ -1475,7 +1475,7 @@ pi.on("tool_call", (event, ctx) => {
 
 ### ctx.getContextUsage()
 
-Returns current context usage for the active model. Uses last assistant usage when available, then estimates tokens for trailing messages.
+Returns current context usage for the active model. Uses last assistant usage when available, then estimates tokens for trailing messages. Usage reported before the latest model switch was counted by the previous model's tokenizer, so it is not used: until the selected model responds, `tokens` is estimated from the transcript and `estimated` is `true`.
 
 ```typescript
 const usage = ctx.getContextUsage();

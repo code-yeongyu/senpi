@@ -4184,7 +4184,7 @@ Response:
 
 `tokens` and `cost` include assistant messages, usage reported by tools, and compaction/branch-summary generation across the full session. `contextUsage` contains the actual current context-window estimate used for compaction and footer display.
 
-`contextUsage` is omitted when no model or context window is available. `contextUsage.tokens` and `contextUsage.percent` are `null` immediately after compaction until a fresh post-compaction assistant response provides valid usage data.
+`contextUsage` is omitted when no model or context window is available. `contextUsage.tokens` and `contextUsage.percent` are `null` immediately after compaction until a fresh post-compaction assistant response provides valid usage data. After a model switch, usage the previous model reported is not used: `contextUsage.estimated` is `true` and `tokens` is a transcript estimate until the selected model's first response reports usage.
 
 #### resolve_path
 

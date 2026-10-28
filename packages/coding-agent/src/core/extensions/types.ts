@@ -447,6 +447,11 @@ export interface ContextUsage {
 	contextWindow: number;
 	/** Context usage as percentage of context window, or null if tokens is unknown. */
 	percent: number | null;
+	/**
+	 * `tokens` is a transcript estimate: the latest provider usage was reported before the session switched to the
+	 * current model, so another tokenizer counted it. The selected model's first response replaces it.
+	 */
+	estimated?: true;
 }
 
 export interface CompactOptions {
