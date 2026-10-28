@@ -1,5 +1,6 @@
 import childProcess, { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { Socket } from "node:net";
@@ -80,6 +81,30 @@ async function terminalExitRecords(qa: GenerationScratch): Promise<TerminalRecor
 		.filter((line) => line !== "")
 		.map((line) => JSON.parse(line) as TerminalRecord)
 		.filter((record) => record.kind === "rpc-host" && record.detection === "engine_stop");
+}
+
+/**
+ * Every exit wait in this file reports through the product's own evidence: an exit this harness
+ * never observed is either a generation that ended (its terminal record says when and why) or one
+ * that never decided to (no record, and the supervisor's log says what it was doing instead).
+ */
+async function allGone(qa: GenerationScratch, caseTimeoutMs: number): Promise<void> {
+	try {
+		await processes.allGone(budget(caseTimeoutMs));
+	} catch (cause) {
+		const records = await terminalExitRecords(qa).catch(() => []);
+		throw new Error(
+			`${cause instanceof Error ? cause.message : String(cause)}\n[terminal records]\n${JSON.stringify(records)}\n[supervisor stderr]\n${supervisorStderr(qa)}`,
+		);
+	}
+}
+
+function supervisorStderr(qa: GenerationScratch): string {
+	try {
+		return readFileSync(createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir }).stderrLog, "utf8");
+	} catch {
+		return "<no supervisor stderr log>";
+	}
 }
 
 interface TerminalRecord {
@@ -163,7 +188,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 			if (exit === "normal") owner.send("exit");
 			else owner.kill("SIGKILL");
 			await exited;
-			await processes.allGone(budget(CASE_TIMEOUT_MS));
+			await allGone(qa, CASE_TIMEOUT_MS);
 			const [record, ...rest] = await terminalExitRecords(qa);
 			expect([record?.reason, rest]).toEqual(["owner_gone", []]);
 			expect(record?.ownerGoneAt, JSON.stringify(record)).toBeTypeOf("string");
@@ -182,7 +207,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 			await exitOwner(owner);
 			await survivesOwnerGrace(attached);
 			attached.destroy();
-			await processes.allGone(budget(CASE_TIMEOUT_MS));
+			await allGone(qa, CASE_TIMEOUT_MS);
 		},
 		CASE_TIMEOUT_MS,
 	);
@@ -216,7 +241,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 		await exitOwner(owner, "SIGKILL");
 		await survivesOwnerGrace(observer);
 		model.release();
-		await processes.allGone(budget(CASE_TIMEOUT_MS));
+		await allGone(qa, CASE_TIMEOUT_MS);
 		const entries: unknown[] = (await readFile(sessionFile, "utf8"))
 			.trim()
 			.split("\n")
@@ -264,7 +289,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 			const observer = await peer(qa, true);
 			await survivesOwnerGrace(observer);
 			await exitOwner(replacement, "SIGKILL");
-			await processes.allGone(budget(CASE_TIMEOUT_MS));
+			await allGone(qa, CASE_TIMEOUT_MS);
 		},
 		CASE_TIMEOUT_MS,
 	);
@@ -308,7 +333,7 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 			const observer = await peer(qa, true);
 			await survivesOwnerGrace(observer);
 			await exitOwner(owner, undefined, HANDOFF_CASE_TIMEOUT_MS);
-			await processes.allGone(budget(HANDOFF_CASE_TIMEOUT_MS));
+			await allGone(qa, HANDOFF_CASE_TIMEOUT_MS);
 		},
 		HANDOFF_CASE_TIMEOUT_MS,
 	);
