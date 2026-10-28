@@ -14,7 +14,7 @@ export interface SessionAppendOrder {
 	getEntryOrder(entryId: string): number | undefined;
 }
 
-export function getLatestModelChangeEntry(branch: readonly SessionEntry[]): ModelChangeEntry | undefined {
+function getLatestModelChangeEntry(branch: readonly SessionEntry[]): ModelChangeEntry | undefined {
 	for (let index = branch.length - 1; index >= 0; index--) {
 		const entry = branch[index];
 		if (entry?.type === "model_change") return entry;
@@ -33,7 +33,7 @@ export function getLatestModelSwitchTime(branch: readonly SessionEntry[]): numbe
  * for such a switch. A response awaiting persistence otherwise started after the switch; a message with no runtime
  * identity (reconstructed) falls back to its timestamp.
  */
-export function usageFollowsModelSwitch(
+function usageFollowsModelSwitch(
 	message: AssistantMessage,
 	modelSwitch: ModelChangeEntry,
 	sessionOrder: SessionAppendOrder,
