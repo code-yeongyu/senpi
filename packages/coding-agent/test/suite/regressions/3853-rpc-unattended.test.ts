@@ -28,7 +28,23 @@ it("open_session attended:false holds an active goal, and a subsequent attach re
 		fauxAssistantMessage([fauxToolCall("create_goal", { objective: "Keep working" })], { stopReason: "toolUse" }),
 		fauxAssistantMessage([fauxText("Goal ready")]),
 	]);
+	// The state this test reopens is a goal-continuation delivery that a run consumed and never settled:
+	// LifecycleSessionBinding requires human continuation for exactly that record, which is what installs the
+	// interrupted-run hold. The continuation is not ordered against prompt() resolving, so waiting for that
+	// record is the only way to open the intended state; a loaded runner otherwise reopens a merely stalled
+	// goal and reports waitingOn stalled instead of interrupted_run (senpi#4636).
+	let consumedDelivery!: () => void;
+	const deliveryConsumed = new Promise<void>((resolve) => {
+		consumedDelivery = resolve;
+	});
+	const hasConsumedDelivery = () => a.session.workObligations.active.some((record) => record.state === "consumed");
+	const unsubscribeConsumed = a.session.subscribe(() => {
+		if (hasConsumedDelivery()) consumedDelivery();
+	});
+	if (hasConsumedDelivery()) consumedDelivery();
 	await a.session.prompt("set a goal");
+	await deliveryConsumed;
+	unsubscribeConsumed();
 	const sessionPath = a.sessionManager.getSessionFile()!;
 	a.session.dispose();
 	let resumed: Harness | undefined;
