@@ -88,23 +88,76 @@ it("rolls back a mid-publish ownership failure and runs the next compaction", as
 });
 
 // Since S03b-4 (S10-Q2, RULING-59 A) a string of any length is a legal value and index key, so the strict codec refuses
-// only non-JSON values and cycles: each write below makes a page for `a` before the codec refuses `b`.
-it.each(["key", "patch"])("releases partial %s writes when the strict codec refuses", async (kind) => {
+// only non-JSON values and cycles: each write below makes a page for the row value `a` before the codec refuses `b`
+// (`set` releases it in `ownValue`'s catch, `patch` in its own finally).
+it.each(["set", "patch"])(
+	"releases a partial row value on %s when the strict codec refuses a later field",
+	async (kind) => {
+		const root = await spoolRoot();
+		const store = new CompactContentStore({ dir: root.dir });
+		const index = new CompactContentIndex<{ a: unknown; b?: unknown }>(store, () => [], 1);
+		try {
+			index.set("row", { a: "stable" });
+			await store.idle();
+			const bytes = store.status().structuredBytes;
+			const nodes = store.text.residentNodes;
+			expect(() =>
+				kind === "set"
+					? index.set("new", { a: "new".repeat(500), b: undefined })
+					: index.patch("row", { a: "new".repeat(500), b: undefined }),
+			).toThrowError(expect.objectContaining({ name: "CompactWriteError" }));
+			await store.idle();
+			expect(store.status().structuredBytes).toEqual(bytes);
+			expect(store.text.residentNodes).toBe(nodes);
+			const cut = index.freeze();
+			try {
+				expect(await index.entries(cut)).toEqual(new Map([["row", { a: "stable" }]]));
+			} finally {
+				index.release(cut);
+			}
+		} finally {
+			await store.retire();
+			await root.cleanup();
+		}
+	},
+);
+
+// Carry 58 (#4557 review LOW 2): a string key can no longer fail to own, so `set`'s finally error path is driven by an
+// injected failure once `own(row)` and `own(key)` both returned: the payload ref (the next `store.text.own`) or the
+// publish's owner (the one after, before `put` takes anything). Either way every ref `set` took (row value, key,
+// payload) is released. Calls made while those values are still being owned pass through untouched.
+it.each([
+	["payload", 1],
+	["publish", 2],
+])("set releases the row value and key it owned when its %s step fails", async (_step, failingCall) => {
 	const root = await spoolRoot();
 	const store = new CompactContentStore({ dir: root.dir });
-	const index = new CompactContentIndex<{ a: unknown; b?: unknown }>(store, () => [], 1);
+	const index = new CompactContentIndex<{ a: string }>(store, () => [], 1);
 	try {
 		index.set("row", { a: "stable" });
 		await store.idle();
 		const bytes = store.status().structuredBytes;
 		const nodes = store.text.residentNodes;
-		expect(() =>
-			kind === "key"
-				? index.set("new", { a: "new".repeat(500), b: undefined })
-				: index.patch("row", { a: "new".repeat(500), b: undefined }),
-		).toThrowError(expect.objectContaining({ name: "CompactWriteError" }));
+		const ownValue = index.values.own.bind(index.values);
+		let ownedValues = 0;
+		const values = vi.spyOn(index.values, "own").mockImplementation((value) => {
+			const ref = ownValue(value);
+			ownedValues += 1;
+			return ref;
+		});
+		const own = store.text.own.bind(store.text);
+		const failure = new Error("injected failure after own(row) and own(key)");
+		let calls = 0;
+		const fail = vi.spyOn(store.text, "own").mockImplementation((refs) => {
+			if (ownedValues === 2 && ++calls === failingCall) throw failure;
+			return own(refs);
+		});
+		expect(() => index.set("k".repeat(500), { a: "new".repeat(500) })).toThrow(failure);
+		fail.mockRestore();
+		values.mockRestore();
+		expect({ ownedValues, calls }).toEqual({ ownedValues: 2, calls: failingCall });
 		await store.idle();
-		expect(store.status().structuredBytes).toEqual(bytes);
+		expect(store.status().structuredBytes, "the row value and the key went with the failed set").toEqual(bytes);
 		expect(store.text.residentNodes).toBe(nodes);
 		const cut = index.freeze();
 		try {

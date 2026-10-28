@@ -31,8 +31,8 @@ interface PinnedRoot {
  * Invariant: a frozen root is pinned by exactly one live token. `RecoveryCheckpoints.freeze` is the only place a token
  * is minted, and it pins the root its own `lane.freeze()` call just built; every freeze builds a new root object with
  * its own references (`SessionAcceptanceLane.freeze`, `CompactLaneCurrent.freeze`, `CompactSessionState.freeze`), so
- * two peers, a re-attach or a shed's resync each get a root of their own, and `RecoveryCheckpoints.retain` hands a root
- * to a non-token consumer under the same token's lease. A
+ * two peers, a re-attach or a shed's resync each get a root of their own, and `FrozenCheckpoint.retain` (on the
+ * checkpoint `RecoveryCheckpoints.freeze` builds) hands a root to a non-token consumer under the same token's lease. A
  * second peer on the same session therefore never shares an entry; it verifies its own root once. `pin` enforces the
  * invariant with `FrozenRootPinnedError` instead of serving or overwriting another token's entries.
  * An entry holds leaf positions only, never bytes: at most one number per stored leaf of the root's catalog.

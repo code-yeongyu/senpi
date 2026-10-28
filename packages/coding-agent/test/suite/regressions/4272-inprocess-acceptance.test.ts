@@ -203,9 +203,32 @@ const KIND_NAME_BYTES = 64;
 /** An ASCII string's heap: a 16-byte header and one byte per code unit, 8-aligned. */
 const asciiStringBytes = (value: string): number => (value === "" ? 0 : Math.ceil((16 + value.length) / 8) * 8);
 
+/**
+ * Every string reachable from `start` through own properties (symbol-keyed and non-enumerable ones included), array
+ * slots, Map keys/values and Set members: an outside-in view that trusts no accessor or iterator of the walked objects.
+ */
+function reachableStrings(start: unknown): string[] {
+	const seen = new Set<object>();
+	const strings: string[] = [];
+	const pending: unknown[] = [start];
+	while (pending.length > 0) {
+		const value = pending.pop();
+		if (typeof value === "string") strings.push(value);
+		if ((typeof value !== "object" && typeof value !== "function") || value === null || seen.has(value)) continue;
+		seen.add(value);
+		if (value instanceof Map) for (const [key, item] of value) pending.push(key, item);
+		if (value instanceof Set) for (const item of value) pending.push(item);
+		for (const key of Reflect.ownKeys(value)) {
+			const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+			if (descriptor && "value" in descriptor) pending.push(descriptor.value);
+		}
+	}
+	return strings;
+}
+
 // Part of #4272, review MEDIUM-2 + RULING-61 Q1 = C: the host keeps each accepted append's id, its interned kind and
 // its parent link (the previous entry's own id string), never a serialized copy of its content.
-it("R21.1 R21.2 keeps persisted host retention per accepted append bounded: entry ids only, no stringify on the host loop", async () => {
+it("R21.1 R21.2 keeps persisted host retention per accepted append bounded: entry ids, interned kinds and shared parent links only, no stringify on the host loop", async () => {
 	vi.stubEnv(FLAG, "1");
 	const dir = await mkdtemp(join(tmpdir(), "senpi-4272-ids-"));
 	const manager = SessionManager.create(dir, dir);
@@ -273,6 +296,14 @@ it("R21.1 R21.2 keeps persisted host retention per accepted append bounded: entr
 	expect(charged, "retention is the ids, kinds and parents, independent of entry size").toBe(expectedCharge);
 	expect(charged).toBeLessThanOrEqual(appends * (ANCESTRY_RECORD_BYTES + 24) + KIND_NAME_BYTES + 24);
 	expect(root.transcript.ancestryBytes).toBeLessThan(DEFAULT_TRANSCRIPT_ANCESTRY_BYTES);
+	// Outside in (carry 55): the checks above read production's own charge and the records `AcceptedEntries` builds
+	// fresh, so a hidden retained field would pass them. Walk what the frozen root itself holds instead: everything but
+	// the shared tail (its retained bytes are 0 above) is ids, kinds and parent links, never any entry content.
+	const { tail: _tail, ...retained } = root.transcript;
+	const strings = reachableStrings(retained);
+	const longest = strings.reduce((max, value) => Math.max(max, value.length), 0);
+	expect(longest, "no string reachable from the frozen root outside its tail is entry-sized").toBeLessThan(64);
+	expect(strings.filter((value) => value.includes(content.slice(0, 64)))).toEqual([]);
 	lane.release(root);
 	manager.dispose();
 	await rm(dir, { recursive: true, force: true });
