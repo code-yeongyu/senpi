@@ -13,6 +13,7 @@ import {
 } from "./4272-worker-acceptance-support.ts";
 
 const FLAG = "SENPI_ENGINE_SOCKET_COMPACT_UPDATES";
+const BUN_NO_STRUCTURED_FRAMES = process.versions.bun !== undefined; // Bun worker isolates send no structured frames to the host: senpi#4667
 /** Code units one fragment carries: D stored bytes, two per UTF-16 code unit. */
 const UNITS = FRAGMENT_MAX_BYTES / 2;
 /** A prompt several fragments long (and inside the faux context window): its user message records cannot cross in one frame. */
@@ -132,62 +133,74 @@ function assistantStart(posted: readonly Posted[]): OutputFrame {
 
 // RULING-64 (3) + RULING-40: a stale duplicate start, fragmented, reaches the start identity at its commit ordinal and
 // is rejected exactly; its fragment prefixes never move the high-water.
-it("S12b RULING-64 (3): a fragmented stale duplicate block start is rejected with exactly duplicate_or_stale_start", async () => {
-	vi.stubEnv(FLAG, "1");
-	const { host, worker, posted, lane } = await promptedWorker();
-	try {
-		const intake = worker.intake;
-		if (!lane || !intake) throw new Error("flag on: the worker client owns a lane and an intake");
-		const original = assistantStart(posted);
-		const causes: unknown[] = [];
-		const fail = CompactLaneCurrent.prototype.fail;
-		vi.spyOn(CompactLaneCurrent.prototype, "fail").mockImplementation(function (this: CompactLaneCurrent, cause) {
-			causes.push(cause);
-			return fail.call(this, cause);
-		});
-		const duplicate: OutputFrame = {
-			...original,
-			record: { ...original.record, padding: "x".repeat(300_000) },
-			signal: new SharedArrayBuffer(4),
-		};
-		const fragments = fragmentsOf(duplicate, intake.nextOrdinal, original.firstOrdinal);
-		expect(fragments.length).toBeGreaterThan(1);
-		for (const fragment of fragments) worker.worker.emit("message", fragment);
-		expect(await within("commit credit", creditOf(duplicate.signal)), "legacy delivery is unaffected").toBe(1);
-		expect(causes).toEqual([expect.objectContaining({ reason: "duplicate_or_stale_start" })]);
-		expect(intake.nextOrdinal, "every physical frame took its ordinal").toBe((fragments.at(-1)?.ordinal ?? 0) + 1);
-		expect(host.failures).toEqual([]);
-	} finally {
-		await host.dispose();
-	}
-}, 120_000);
+it.skipIf(BUN_NO_STRUCTURED_FRAMES)(
+	"S12b RULING-64 (3): a fragmented stale duplicate block start is rejected with exactly duplicate_or_stale_start",
+	async () => {
+		vi.stubEnv(FLAG, "1");
+		const { host, worker, posted, lane } = await promptedWorker();
+		try {
+			const intake = worker.intake;
+			if (!lane || !intake) throw new Error("flag on: the worker client owns a lane and an intake");
+			const original = assistantStart(posted);
+			const causes: unknown[] = [];
+			const fail = CompactLaneCurrent.prototype.fail;
+			vi.spyOn(CompactLaneCurrent.prototype, "fail").mockImplementation(function (this: CompactLaneCurrent, cause) {
+				causes.push(cause);
+				return fail.call(this, cause);
+			});
+			const duplicate: OutputFrame = {
+				...original,
+				record: { ...original.record, padding: "x".repeat(300_000) },
+				signal: new SharedArrayBuffer(4),
+			};
+			const fragments = fragmentsOf(duplicate, intake.nextOrdinal, original.firstOrdinal);
+			expect(fragments.length).toBeGreaterThan(1);
+			for (const fragment of fragments) worker.worker.emit("message", fragment);
+			expect(await within("commit credit", creditOf(duplicate.signal)), "legacy delivery is unaffected").toBe(1);
+			expect(causes).toEqual([expect.objectContaining({ reason: "duplicate_or_stale_start" })]);
+			expect(intake.nextOrdinal, "every physical frame took its ordinal").toBe((fragments.at(-1)?.ordinal ?? 0) + 1);
+			expect(host.failures).toEqual([]);
+		} finally {
+			await host.dispose();
+		}
+	},
+	120_000,
+);
 
 // RULING-64 (4) + RULING-39: a producer restarting its counter inside the same epoch is a typed reject, never accepted.
-it("S12b RULING-64 (4): a same-epoch reset (a fragment restarting the ordinal counter) is rejected typed and accepts nothing", async () => {
-	vi.stubEnv(FLAG, "1");
-	const { host, worker, posted, lane } = await promptedWorker();
-	try {
-		if (!lane) throw new Error("flag on: the worker client owns an acceptance lane");
-		const before = lane.freeze();
-		lane.release(before);
-		const original = assistantStart(posted);
-		const [reset] = fragmentsOf({ ...original, record: { ...original.record, padding: "x".repeat(300_000) } }, 0, 0);
-		if (!reset) throw new Error("no fragment");
-		worker.worker.emit("message", reset);
-		await within("worker incarnation exits", worker.exited);
-		expect(host.failures).toEqual(["session_worker_frame_duplicate"]);
-		expect(lane.retired).toBe(true);
-		const after = lane.freeze();
-		expect(after.sequence, "nothing was accepted").toBe(before.sequence);
-		expect(lane.storageStatus().transcript.openTransfers, "nothing was left staged").toBe(0);
-	} finally {
-		await host.dispose();
-	}
-}, 120_000);
+it.skipIf(BUN_NO_STRUCTURED_FRAMES)(
+	"S12b RULING-64 (4): a same-epoch reset (a fragment restarting the ordinal counter) is rejected typed and accepts nothing",
+	async () => {
+		vi.stubEnv(FLAG, "1");
+		const { host, worker, posted, lane } = await promptedWorker();
+		try {
+			if (!lane) throw new Error("flag on: the worker client owns an acceptance lane");
+			const before = lane.freeze();
+			lane.release(before);
+			const original = assistantStart(posted);
+			const [reset] = fragmentsOf(
+				{ ...original, record: { ...original.record, padding: "x".repeat(300_000) } },
+				0,
+				0,
+			);
+			if (!reset) throw new Error("no fragment");
+			worker.worker.emit("message", reset);
+			await within("worker incarnation exits", worker.exited);
+			expect(host.failures).toEqual(["session_worker_frame_duplicate"]);
+			expect(lane.retired).toBe(true);
+			const after = lane.freeze();
+			expect(after.sequence, "nothing was accepted").toBe(before.sequence);
+			expect(lane.storageStatus().transcript.openTransfers, "nothing was left staged").toBe(0);
+		} finally {
+			await host.dispose();
+		}
+	},
+	120_000,
+);
 
 // S12 design T5 X04: a gap or duplicate inside a transfer, or a worker ending mid-transfer, fails typed, accepts nothing
 // and releases what the transfer staged exactly once.
-it.each([
+it.skipIf(BUN_NO_STRUCTURED_FRAMES).each([
 	["gap", (fragments: Fragment[]) => [fragments[0], { ...fragments[1], offset: (fragments[1]?.offset ?? 0) + 2 }]],
 	["duplicate", (fragments: Fragment[]) => [fragments[0], { ...fragments[0], ordinal: fragments[1]?.ordinal }]],
 	["cancel", (fragments: Fragment[]) => [fragments[0]]],
