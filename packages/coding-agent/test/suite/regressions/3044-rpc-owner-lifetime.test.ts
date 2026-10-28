@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { mock } from "node:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { hostCrashRecordFile } from "../../../src/modes/rpc/host-crash-record.ts";
-import { OWNER_EXIT_GRACE_MS, OWNER_PROBE_MAX_INTERVAL_MS } from "../../../src/modes/rpc/host-lifecycle-activity.ts";
+import { OWNER_EXIT_GRACE_MS } from "../../../src/modes/rpc/host-lifecycle-activity.ts";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { STOP_WAIT_BUDGET_MS } from "../../../src/modes/rpc/host-ensure-stop.ts";
@@ -116,14 +116,16 @@ interface TerminalRecord {
 }
 
 /**
- * What the supervisor is allowed to spend between OBSERVING its owner gone and deciding to exit:
- * its continuous-quiet grace, plus one full probe interval (an observation can lag the death by at
- * most the backoff cap), plus a margin for the supervisor's own tick scheduling. The margin is
- * deliberately small: it covers tick granularity, NOT a machine's load, because the number being
- * checked is measured on the supervisor's own clock and never includes this test process's waiting.
+ * What the supervisor is allowed to spend between OBSERVING its owner gone and deciding to exit.
+ * `decisionDelayMs` is `decidedAtMs - observed.monotonicMs`, so it starts at the OBSERVATION and by
+ * construction never contains the death-to-observation lag: the probe backoff cap buys nothing here
+ * and is not in this bound. What the number can legitimately hold is the continuous-quiet grace plus
+ * the one decision tick and owner-record read that the grace's expiry is noticed on. The margin
+ * covers exactly that tick and read, NOT a machine's load, because the number is measured on the
+ * supervisor's own clock and never includes this test process's waiting.
  */
 const DECISION_TICK_MARGIN_MS = 3_000;
-const OWNER_EXIT_DECISION_BOUND_MS = OWNER_EXIT_GRACE_MS + OWNER_PROBE_MAX_INTERVAL_MS + DECISION_TICK_MARGIN_MS;
+const OWNER_EXIT_DECISION_BOUND_MS = OWNER_EXIT_GRACE_MS + DECISION_TICK_MARGIN_MS;
 
 async function rememberHost(qa: GenerationScratch): Promise<void> {
 	const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
