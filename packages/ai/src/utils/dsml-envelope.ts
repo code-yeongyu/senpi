@@ -30,7 +30,7 @@ const ALL_MARKERS = [...OPEN_MARKERS, ...CLOSE_MARKERS];
 /** A DSML tag longer than this without a closing `>` is not a tag; its text is kept. */
 const MAX_TAG_CHARS = 512;
 /** Text held after an unconfirmed lone tag; past this the tag counts as quoted and the text is released. */
-export const LONE_HOLD_CHARS = 64 * 1024;
+const LONE_HOLD_CHARS = 64 * 1024;
 /** The DSML tag whose body is a tool argument value. */
 const PAYLOAD_TAG = "parameter";
 const TAG_NAME = /^\s*([A-Za-z_]+)/;
@@ -171,7 +171,7 @@ export class DsmlEnvelopeFilter {
 }
 
 /** Whether `text` may carry a DSML envelope; a cheap guard before running the filter. */
-export function mayContainDsml(text: string): boolean {
+function mayContainDsml(text: string): boolean {
 	return text.includes(MARKER_BODY);
 }
 

@@ -46,7 +46,7 @@ export function isBar(value: string): boolean {
  * Matched case-insensitively, with or without the closing slash. Anything else in angle
  * brackets is markup, not a control token.
  */
-export const SGML_CONTROL_TOKEN_NAMES: ReadonlySet<string> = new Set([
+const SGML_CONTROL_TOKEN_NAMES: ReadonlySet<string> = new Set([
 	"s",
 	"pad",
 	"unk",
