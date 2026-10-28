@@ -266,9 +266,18 @@ export class SessionAcceptanceLane {
 	}
 
 	readSettled(root: FrozenAcceptedRoot) {
+		return this.settledOwner(root).read(root.settled);
+	}
+
+	/** The bounded settled reader of a live root (S10b catalog families); refused once the root is released. */
+	settledOf(root: FrozenAcceptedRoot) {
+		return this.settledOwner(root).reader(root.settled);
+	}
+
+	private settledOwner(root: FrozenAcceptedRoot): CompactSettledMessages {
 		const owner = this.rootOwners.get(root);
 		if (!owner || !this.live.has(root)) throw new Error("accepted root released");
-		return owner.read(root.settled);
+		return owner;
 	}
 
 	storageStatus() {

@@ -1,7 +1,7 @@
 import type { RecoveryCarrier } from "../../core/session-recovery-identity.ts";
 import type { TranscriptTransition } from "../../core/session-transcript-journal.ts";
 import type { CallProjection } from "./compact-call-model.ts";
-import { CompactContentIndex, type FrozenIndex } from "./compact-content-index.ts";
+import { CompactContentIndex, type FrozenIndex, type IndexCursor } from "./compact-content-index.ts";
 import {
 	COMPACT_LEAF_CODE_UNITS,
 	CompactContentStore,
@@ -9,6 +9,8 @@ import {
 	type LeafId,
 } from "./compact-content-store.ts";
 import { assertProtocolDepth } from "./compact-protocol-depth.ts";
+import { CompactReadError } from "./compact-read-lease.ts";
+import type { CompactValues, ValueRef } from "./compact-values.ts";
 
 export type SettledDiagnostic =
 	| "unknown_message"
@@ -29,6 +31,12 @@ export interface TerminalRow {
 	readonly status: "pending" | "failed";
 	readonly error: { readonly errorMessage: string } | null;
 	readonly payload: readonly LeafId[];
+	/**
+	 * The retired call's projection as paged value pages (RULING-60 Q3): every nested `calls` array is pages of at most
+	 * 128 child descriptors and 64 KiB, recursively, so no child count is ever truncated and a reader walks it with one
+	 * page resident.
+	 */
+	readonly call: ValueRef | null;
 }
 
 export interface OwnerRow {
@@ -39,6 +47,18 @@ export interface OwnerRow {
 
 type Row = TerminalRow | OwnerRow;
 export type SettledRoot = FrozenIndex;
+/** One row of a cut as the catalog enumerates it: a terminal with its paged call, or one message's entry join. */
+type SettledMember = { readonly kind: "terminal"; readonly row: TerminalRow } | OwnerRow;
+/** The bounded reads of one cut of this store (S10b): its rows a page at a time, its leaves, its values, its joins. */
+export interface SettledReader {
+	readonly store: CompactContentStore;
+	readonly values: CompactValues;
+	members(valid: () => void): AsyncGenerator<SettledMember>;
+	messageOf(entryId: string): Promise<string | null>;
+}
+
+const isProjection = (value: unknown): value is CallProjection =>
+	typeof value === "object" && value !== null && typeof Reflect.get(value, "runtimeItemKey") === "string";
 
 /** One spillable collection owns payloads, end markers and both directions of the durable join. */
 export class CompactSettledMessages {
@@ -60,7 +80,21 @@ export class CompactSettledMessages {
 		this.epoch = epoch;
 		this.diagnose = diagnose;
 		this.store = new CompactContentStore(options);
-		this.rows = new CompactContentIndex(this.store, (row) => (row.kind === "terminal" ? row.payload : []), 128);
+		this.rows = new CompactContentIndex(
+			this.store,
+			(row) => (row.kind === "terminal" ? [...row.payload, row.call?.owner ?? 0] : []),
+			128,
+		);
+	}
+
+	/** The catalog's reader of one cut: rows a page at a time, payload leaves, paged values and entry joins. */
+	reader(root: SettledRoot): SettledReader {
+		return {
+			store: this.store,
+			values: this.rows.values,
+			members: (valid) => this.members(root, valid),
+			messageOf: (entryId) => this.messageOf(root, entryId),
+		};
 	}
 
 	valid(carrier: RecoveryCarrier | undefined): carrier is RecoveryCarrier {
@@ -108,10 +142,10 @@ export class CompactSettledMessages {
 				clientTurnId: Reflect.get(record, "clientTurnId"),
 				clientMessages: Reflect.get(record, "clientMessages"),
 			},
-			...(call ? { call } : {}),
 		});
 		for (let offset = 0; offset < text.length; offset += COMPACT_LEAF_CODE_UNITS)
 			payload.push(this.store.createLeaf(text.slice(offset, offset + COMPACT_LEAF_CODE_UNITS)));
+		const projection = call ? this.rows.values.own(call) : null;
 		this.put(`terminal:${id}`, {
 			kind: "terminal",
 			messageId: id,
@@ -123,8 +157,10 @@ export class CompactSettledMessages {
 			status: "pending",
 			error: null,
 			payload,
+			call: projection,
 		});
 		for (const leaf of payload) this.store.adjust(leaf, -1, 0);
+		if (projection) this.store.adjust(projection.owner, -1, 0);
 		if (!["user", "assistant", "toolResult", "custom"].includes(role)) this.diagnose("unsupported_role");
 		return false;
 	}
@@ -176,11 +212,7 @@ export class CompactSettledMessages {
 		const cut = this.rows.freeze();
 		try {
 			const ids: (string | undefined)[] = [];
-			for (const entryId of entryIds) {
-				const row = await this.rows.lookup(cut, `entry:${entryId}`);
-				const owner: unknown = row && (await this.rows.values.read(row.value));
-				ids.push(owner ? String(Reflect.get(Object(owner), "messageId")) : undefined);
-			}
+			for (const entryId of entryIds) ids.push((await this.messageOf(cut, entryId)) ?? undefined);
 			return ids;
 		} finally {
 			this.rows.release(cut);
@@ -196,7 +228,7 @@ export class CompactSettledMessages {
 	}
 
 	async read(root: SettledRoot) {
-		const settledMessages: (Omit<TerminalRow, "kind" | "payload"> & {
+		const settledMessages: (Omit<TerminalRow, "kind" | "payload" | "call"> & {
 			terminal: unknown;
 			correlation: unknown;
 			call?: CallProjection;
@@ -205,12 +237,49 @@ export class CompactSettledMessages {
 		for (const [key, row] of await this.rows.entries(root)) {
 			if (row.kind === "owner" && key.startsWith("owner:")) owners.push(row);
 			if (row.kind !== "terminal") continue;
-			const { payload, kind: _kind, ...fields } = row;
+			const { payload, kind: _kind, call, ...fields } = row;
 			const bytes = (await Promise.all(payload.map((leaf) => this.store.readLeaf(leaf)))).join("");
-			const value: { terminal: unknown; correlation: unknown; call?: CallProjection } = JSON.parse(bytes);
-			settledMessages.push({ ...fields, ...value });
+			const value: { terminal: unknown; correlation: unknown } = JSON.parse(bytes);
+			const projection = call ? await this.rows.values.read(call) : undefined;
+			if (projection !== undefined && !isProjection(projection)) throw new CompactReadError("ownership");
+			settledMessages.push({ ...fields, ...value, ...(projection ? { call: projection } : {}) });
 		}
 		return { settledMessages, owners };
+	}
+
+	/**
+	 * The rows of one cut, a descriptor page (at most 128) at a time (S10b): each terminal row with its patched status
+	 * and the ref of its paged call, each `owner:` join once (its `entry:` twin is the same row). A reader of a terminal's
+	 * payload or call pages through `readLeaf` and `values.walk` under the same cut.
+	 */
+	private async *members(root: SettledRoot, valid: () => void): AsyncGenerator<SettledMember> {
+		let cursor: IndexCursor | undefined;
+		do {
+			const page = await this.rows.page(root, cursor);
+			for (const { row, patch } of page.rows) {
+				valid();
+				const key = await this.rows.values.read(row.key);
+				if (typeof key !== "string" || key.startsWith("entry:")) continue;
+				const stored: Row = JSON.parse(JSON.stringify(await this.rows.values.read(row.value)));
+				if (stored.kind === "owner") {
+					yield stored;
+					continue;
+				}
+				const patched: Partial<TerminalRow> = patch
+					? JSON.parse(JSON.stringify(await this.rows.values.read(patch)))
+					: {};
+				yield { kind: "terminal", row: { ...stored, ...patched } };
+			}
+			cursor = page.next;
+		} while (cursor);
+	}
+
+	/** The message an entry joined in this cut, if any (the `source` family's join). */
+	private async messageOf(root: SettledRoot, entryId: string): Promise<string | null> {
+		const row = await this.rows.lookup(root, `entry:${entryId}`);
+		const owner: unknown = row && (await this.rows.values.read(row.value));
+		const messageId: unknown = owner ? Reflect.get(Object(owner), "messageId") : null;
+		return typeof messageId === "string" ? messageId : null;
 	}
 
 	storageStatus() {

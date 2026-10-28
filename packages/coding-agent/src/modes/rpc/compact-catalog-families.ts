@@ -1,4 +1,7 @@
+import { callsComponents } from "./compact-catalog-calls.ts";
+import { activeComponents } from "./compact-catalog-messages.ts";
 import {
+	assertCoverage,
 	CATALOG_FAMILIES,
 	type CatalogFamily,
 	familyId,
@@ -6,15 +9,18 @@ import {
 	familyRegistry,
 	memberId,
 } from "./compact-catalog-registry.ts";
+import { identityComponents, settledComponents } from "./compact-catalog-settled.ts";
+import { sourceComponents } from "./compact-catalog-source.ts";
+import type { CatalogReader } from "./compact-catalog-steps.ts";
 import { textComponent, transcriptComponents } from "./compact-catalog-transcript.ts";
-import { encodeValueSteps, writtenComponent } from "./compact-catalog-writer.ts";
+import { emptyComponent, stepsComponent } from "./compact-catalog-writer.ts";
 import { CompactComponentRoots } from "./compact-component-roots.ts";
 import type { CompactContentStore } from "./compact-content-store.ts";
 import type { CompactDialog } from "./compact-current-components.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import type { CatalogComponent } from "./compact-recovery-catalog.ts";
-import { type BoundedId, protocolId } from "./compact-recovery-ids.ts";
-import type { FrozenCompactState } from "./compact-state-view.ts";
+import { protocolId } from "./compact-recovery-ids.ts";
+import type { SettledReader } from "./compact-settled-messages.ts";
 import type { CompactValues, ValueRef } from "./compact-values.ts";
 import type { FrozenAcceptedRoot } from "./session-acceptance-lane.ts";
 
@@ -23,93 +29,85 @@ const RUN = familyId("run");
 const LIFECYCLE = familyId("lifecycle");
 const DIALOGS = familyId("dialogs");
 
-const empty = (family: CatalogFamily): CatalogComponent => ({
-	kind: familyId(family),
-	id: familyId(family),
-	leaves: [],
-	owner: 0,
-});
-
-/** A walked value as one component: canonical JSON streamed into bounded leaves with one value page resident. */
-const walked = (
-	store: CompactContentStore,
-	values: CompactValues,
-	kind: BoundedId,
-	id: BoundedId,
-	ref: ValueRef,
-	valid: () => void,
-): AsyncGenerator<CatalogComponent> =>
-	writtenComponent(store, kind, id, async (writer) => {
-		for await (const fragment of encodeValueSteps(values.walk(ref, valid))) writer.push(fragment);
-	});
-
-/** The R4.B1 producers (S09): a collection's persistent root leaf; S10b enumerates its members. */
-const rootLeaf = (family: "active" | "calls" | "settled", current: FrozenCompactState): CatalogComponent => {
-	const ref = { active: current.active, calls: current.calls.ref, settled: current.settled.base?.ref }[family];
-	return ref && ref.node > 0
-		? { kind: familyId(family), id: familyId(family), leaves: [ref.node], owner: ref.owner }
-		: empty(family);
-};
+/** One frozen cut as its catalog reads it: the current store, a value reader over it, the root, the settled reader. */
+interface CatalogCut {
+	readonly store: CompactContentStore;
+	readonly values: CompactValues;
+	readonly root: FrozenAcceptedRoot;
+	readonly settled: SettledReader;
+}
 
 /**
  * Every component of one frozen root, in schema order (R4.B2): the family registry, then each family's members or
- * its explicit empty component. A family with a complete producer is never omitted; a `pending` one is never
- * emitted, and a `partial` one emits only the members it enumerated and never an explicit empty, so a reader can
- * tell "no members" from "no producer yet" (RULING-60 Q1, RULING-61 Q1). Members stream one at a time: a value goes
- * through `walk` into bounded leaves, a collection through `rows`, and each component's leaves are released once
- * the catalog has placed it. The producer assembly is incomplete until S10b (the registry's `assembly`).
+ * its explicit empty component. A family with a complete producer is never omitted, and a `partial` one emits only
+ * the members it enumerated and never an explicit empty, so a reader can tell "no members" from "not enumerated"
+ * (RULING-60 Q1, RULING-61 Q1). Members stream one at a time: a value goes through `walk` into bounded leaves, a
+ * collection through `rows`, and each component's leaves are released once the catalog has placed it. The
+ * completeness gate runs last: a complete producer that emitted nothing refuses the whole catalog (X03).
  */
-export async function* checkpointComponents(
-	store: CompactContentStore,
-	values: CompactValues,
-	root: FrozenAcceptedRoot,
-	valid: () => void,
-): AsyncGenerator<CatalogComponent> {
+export async function* checkpointComponents(cut: CatalogCut, valid: () => void): AsyncGenerator<CatalogComponent> {
+	const { store, values, root, settled } = cut;
 	const current = root.current;
 	if (!current) throw new CompactReadError("unavailable");
+	const reader: CatalogReader = { store, values, valid };
 	const producers = familyProducers(root.transcript);
-	yield* textComponent(store, FAMILIES, FAMILIES, JSON.stringify(familyRegistry(producers)));
-	for (const family of CATALOG_FAMILIES) {
-		if (producers[family] === "pending") continue;
-		switch (family) {
+	const registry = familyRegistry(producers);
+	yield* textComponent(store, FAMILIES, FAMILIES, JSON.stringify(registry));
+	const family = (name: CatalogFamily): AsyncGenerator<CatalogComponent> => {
+		switch (name) {
 			case "transcript":
-				yield* transcriptComponents(store, root.transcript, producers, valid);
-				break;
+				return transcriptComponents(store, root.transcript, producers, valid);
 			case "opaque":
-				break;
+				return none();
 			case "run": {
 				const { runState, dialogCounts } = current.components;
-				yield* textComponent(store, RUN, RUN, JSON.stringify({ runState, dialogCounts }));
-				break;
+				return textComponent(store, RUN, RUN, JSON.stringify({ runState, dialogCounts }));
 			}
 			case "lifecycle": {
 				const ref = current.components.lifecycle;
-				if (ref) yield* walked(store, values, LIFECYCLE, LIFECYCLE, ref, valid);
-				else yield empty(family);
-				break;
+				return ref ? stepsComponent(store, LIFECYCLE, LIFECYCLE, values.walk(ref, valid)) : one(name);
 			}
-			case "dialogs": {
-				const dialogs = new CompactComponentRoots<CompactDialog>(store, () => []);
-				let count = 0;
-				for await (const [order, ref] of dialogs.rows(current.components.dialogs, valid)) {
-					yield* walked(store, values, DIALOGS, memberId("dialog", Number(order)), ref, valid);
-					count += 1;
-				}
-				if (count === 0) yield empty(family);
-				break;
-			}
+			case "dialogs":
+				return dialogComponents(reader, current.components.dialogs);
 			case "active":
+				return activeComponents(reader, current.active);
 			case "calls":
+				return callsComponents(reader, current.calls);
 			case "settled":
-				yield rootLeaf(family, current);
-				break;
+				return settledComponents(reader, settled);
 			case "identity":
+				return identityComponents(reader, root, settled);
 			case "source":
-				break;
+				return sourceComponents(reader, root.transcript, producers, settled);
 			default:
-				return assertNever(family);
+				return assertNever(name);
 		}
+	};
+	const emitted = new Set<string>();
+	for (const name of CATALOG_FAMILIES)
+		for await (const component of family(name)) {
+			emitted.add(component.kind);
+			yield component;
+		}
+	assertCoverage(registry, emitted);
+}
+
+async function* dialogComponents(reader: CatalogReader, ref: ValueRef | undefined): AsyncGenerator<CatalogComponent> {
+	const dialogs = new CompactComponentRoots<CompactDialog>(reader.store, () => []);
+	let count = 0;
+	for await (const [order, value] of dialogs.rows(ref, reader.valid)) {
+		const steps = reader.values.walk(value, reader.valid);
+		yield* stepsComponent(reader.store, DIALOGS, memberId("dialog", Number(order)), steps);
+		count += 1;
 	}
+	if (count === 0) yield emptyComponent("dialogs");
+}
+
+/** The opaque family's members are emitted by the transcript adapter beside their ancestry rows. */
+async function* none(): AsyncGenerator<CatalogComponent> {}
+
+async function* one(family: CatalogFamily): AsyncGenerator<CatalogComponent> {
+	yield emptyComponent(family);
 }
 
 function assertNever(family: never): never {

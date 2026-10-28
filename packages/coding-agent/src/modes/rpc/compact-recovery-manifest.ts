@@ -159,9 +159,10 @@ export class RecoveryManifests {
 					cutValid();
 					valid();
 				};
+				const cut = { store, values: new CompactValues(store), root, settled: lane.settledOf(root) };
 				const components = async function* () {
 					yield* oversized.map(({ component }) => component);
-					yield* checkpointComponents(store, new CompactValues(store), root, check);
+					yield* checkpointComponents(cut, check);
 				};
 				const built = await this.catalogs.build(store, ref, components(), check);
 				return await this.assemble(store, token, ref, built, oversized, texts);

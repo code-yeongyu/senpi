@@ -1,7 +1,8 @@
+import { type CatalogFamily, familyId } from "./compact-catalog-registry.ts";
+import type { Steps } from "./compact-catalog-steps.ts";
 import { COMPACT_LEAF_CODE_UNITS, type CompactContentStore, type LeafId } from "./compact-content-store.ts";
 import type { CatalogComponent } from "./compact-recovery-catalog.ts";
 import type { BoundedId } from "./compact-recovery-ids.ts";
-import type { ValueStep } from "./compact-values.ts";
 
 /**
  * Writes one catalog component as bounded store leaves: text arrives in fragments of any size and leaves at most
@@ -75,6 +76,25 @@ export async function* writtenComponent(
 	}
 }
 
+/** A member whose value streams from steps: canonical JSON in bounded leaves with one value page resident. */
+export const stepsComponent = (
+	store: CompactContentStore,
+	kind: BoundedId,
+	id: BoundedId,
+	steps: Steps,
+): AsyncGenerator<CatalogComponent> =>
+	writtenComponent(store, kind, id, async (writer) => {
+		for await (const fragment of encodeValueSteps(steps)) writer.push(fragment);
+	});
+
+/** A family with no members: exactly one component `<family>/<family>` with no leaves (S09's explicit empty). */
+export const emptyComponent = (family: CatalogFamily): CatalogComponent => ({
+	kind: familyId(family),
+	id: familyId(family),
+	leaves: [],
+	owner: 0,
+});
+
 interface Frame {
 	readonly container: "array" | "object";
 	emitted: number;
@@ -86,12 +106,14 @@ const HIGH_SURROGATE = /[\uD800-\uDBFF]$/;
  * The canonical JSON text of a walked value, fragment by fragment: byte-identical to `JSON.stringify` of the value
  * read whole, with the walk's bounded residency. A string chunk is escaped as it arrives; a high surrogate ending a
  * chunk waits for its pair in the next one, so a pair split at a page edge is emitted raw exactly as a whole
- * `JSON.stringify` would, and only a truly lone surrogate is escaped.
+ * `JSON.stringify` would, and only a truly lone surrogate is escaped. A `raw` step is stored JSON text of one value,
+ * spliced in as is.
  */
-export async function* encodeValueSteps(steps: AsyncIterable<ValueStep>): AsyncGenerator<string> {
+async function* encodeValueSteps(steps: Steps): AsyncGenerator<string> {
 	const stack: Frame[] = [];
 	let carry = "";
 	let inString = false;
+	let inRaw = false;
 	const separator = (): string => {
 		const frame = stack[stack.length - 1];
 		if (!frame) return "";
@@ -116,6 +138,10 @@ export async function* encodeValueSteps(steps: AsyncIterable<ValueStep>): AsyncG
 				yield `${prefix}${JSON.stringify(text).slice(1, -1)}${step.more ? "" : '"'}`;
 				break;
 			}
+			case "raw":
+				yield `${inRaw ? "" : separator()}${step.text}`;
+				inRaw = step.more;
+				break;
 			case "open":
 				yield `${separator()}${step.container === "array" ? "[" : "{"}`;
 				stack.push({ container: step.container, emitted: 0 });

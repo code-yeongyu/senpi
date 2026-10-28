@@ -60,7 +60,11 @@ export interface CallProjection {
 	readonly startSequence: number | null;
 	readonly startedAtMs: number | null;
 	readonly outcome: CallOutcome | null;
-	/** `omitted` counts completed children left out at `NESTED_PROJECTION_LIMIT` (RULING-49); `complete` is false when it is not 0. */
+	/**
+	 * `omitted` counts completed children a projecting path left out (RULING-49): 0 everywhere since the settled store
+	 * pages the projection instead of capping it (RULING-60 Q3); a consumer that truncates for its own bound reports
+	 * its exact count here. `complete` is false when a child is still open, incomplete, or omitted.
+	 */
 	readonly nestedCalls: {
 		readonly calls: readonly CallProjection[];
 		readonly complete: boolean;
@@ -91,9 +95,6 @@ export interface CallScope {
 	readonly sessionEpoch: string;
 	readonly turnId: string | null;
 }
-
-/** Completed children carried on a parent projection: the same bound as the parent's nested-call record. */
-export const NESTED_PROJECTION_LIMIT = 256;
 
 export const TERMINAL_PHASE: CallPhase = "completed-awaiting-entry";
 

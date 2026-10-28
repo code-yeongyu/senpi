@@ -64,7 +64,7 @@ it("RULING-61 Q1 (a) an unknown-kind entry of this epoch whose text persistence 
 	);
 	const registry = await catalog.json("families", "families");
 	expect(registry).toMatchObject({
-		assembly: "incomplete",
+		assembly: "complete",
 		families: expect.arrayContaining([
 			{ family: "transcript", producer: "complete" },
 			{ family: "opaque", producer: "complete" },

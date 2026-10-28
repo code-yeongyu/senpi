@@ -95,9 +95,11 @@ it("T1 X03 X04 the manifest names the cut and its catalog root with bounded ids;
 		["run", "run"],
 		["lifecycle", "lifecycle"],
 		["dialogs", "dialogs"],
-		["active", "active"],
+		["active", "message-0000000000000000"],
 		["calls", "calls"],
 		["settled", "settled"],
+		["identity", "identity"],
+		["source", "source"],
 	]);
 	for (const entry of root.entries) expect(Buffer.byteLength(entry.id)).toBeLessThanOrEqual(128);
 	expect(manifest.checkpointDigest).toBe(specDigest("root", Buffer.from(specNode(root.entries), "utf16le")));
@@ -105,9 +107,11 @@ it("T1 X03 X04 the manifest names the cut and its catalog root with bounded ids;
 	expect(root.digest).toBe(manifest.checkpointDigest);
 	const active = component(unwrap(await rig.checkpoints.readCatalog(token, caller, `${manifest.catalogRoot}:007`)));
 	expect(active.entry.length).toBe(Buffer.byteLength(active.text, "utf16le"));
-	expect(JSON.parse(active.text), "the exact stored root page of the active-message index").toMatchObject({
-		key: { value: "0000000000000000" },
+	expect(JSON.parse(active.text), "the live message as canonical JSON, no storage id inside").toMatchObject({
+		messageId: "message-1",
+		blocks: [{ contentIndex: 0, kind: "text" }],
 	});
+	expect(active.text).not.toMatch(/"owner"/);
 	expect(unwrap(await rig.checkpoints.catalog(token, caller)), "built once per token").toBe(manifest);
 	rig.checkpoints.release(token);
 	expect(rig.lane.liveRoots).toBe(0);

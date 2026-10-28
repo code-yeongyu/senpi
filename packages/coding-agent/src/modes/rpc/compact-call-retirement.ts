@@ -1,10 +1,4 @@
-import {
-	type CallProjection,
-	NESTED_PROJECTION_LIMIT,
-	type OutstandingCall,
-	TERMINAL_PHASE,
-	terminal,
-} from "./compact-call-model.ts";
+import { type CallProjection, type OutstandingCall, TERMINAL_PHASE, terminal } from "./compact-call-model.ts";
 import type { CompactCallTable } from "./compact-call-table.ts";
 
 /** The reader fields a retired call leaves behind: everything but its phase, join and owned slots (RULING-13 Q2). */
@@ -14,9 +8,9 @@ function projectionOf(call: OutstandingCall): Omit<CallProjection, "nestedCalls"
 }
 
 /**
- * The carrier settled: the call and its completed descendants leave the table with one projection. Completed children
- * beyond `NESTED_PROJECTION_LIMIT` (the parent's own nested-call record bound, RULING-13 Q5) are counted in `omitted`
- * (RULING-49); they, a child still executing or an incomplete child mark the projection incomplete.
+ * The carrier settled: the call and its completed descendants leave the table with one projection carrying every
+ * completed child (RULING-60 Q3: the settled store pages it, nothing truncates it, so `omitted` is 0 on this path);
+ * a child still executing or an incomplete child marks the projection incomplete.
  */
 export function settleCall(table: CompactCallTable, call: OutstandingCall, isError: boolean): CallProjection {
 	const settled: OutstandingCall = terminal(call)
@@ -28,17 +22,14 @@ export function settleCall(table: CompactCallTable, call: OutstandingCall, isErr
 function retire(table: CompactCallTable, call: OutstandingCall): CallProjection {
 	const children = table.childrenOf(call.runtimeItemKey);
 	const completed = children.filter(terminal);
-	const nested = completed.map((child) => retire(table, child));
-	const calls = nested.slice(0, NESTED_PROJECTION_LIMIT);
-	const omitted = nested.length - calls.length;
+	const calls = completed.map((child) => retire(table, child));
 	table.remove(call.runtimeItemKey);
 	return {
 		...projectionOf(call),
 		nestedCalls: {
 			calls,
-			complete:
-				omitted === 0 && completed.length === children.length && calls.every((child) => child.nestedCalls.complete),
-			omitted,
+			complete: completed.length === children.length && calls.every((child) => child.nestedCalls.complete),
+			omitted: 0,
 		},
 	};
 }

@@ -1,5 +1,6 @@
 import type { FileEntry } from "../../core/session-manager.ts";
 import type { TranscriptRoot } from "./accepted-transcript.ts";
+import { CompactReadError } from "./compact-read-lease.ts";
 import { type BoundedId, protocolId } from "./compact-recovery-ids.ts";
 
 /**
@@ -24,11 +25,10 @@ const FAMILY_SET: ReadonlySet<string> = new Set(CATALOG_FAMILIES);
 
 /**
  * Who produces a family's members: `complete` enumerates every member, `partial` enumerates some and never declares
- * the rest absent (the loaded base S11 streams, the `source` members S10b produces), `root` is the R4.B1 persistent
- * root leaf only (members are S10b's), `pending` has no located producer and is never emitted, so it is never
- * declared empty for lack of one. The assembly is complete only when every family is `complete` (S10b's gate).
+ * the rest absent (the loaded base S11 streams: its transcript, opaque and source members). The assembly is complete
+ * only when every family is `complete`, and a complete producer that emitted nothing fails the gate (`assertCoverage`).
  */
-const PRODUCERS = ["complete", "partial", "root", "pending"] as const;
+const PRODUCERS = ["complete", "partial"] as const;
 type FamilyProducer = (typeof PRODUCERS)[number];
 const PRODUCER_SET: ReadonlySet<string> = new Set(PRODUCERS);
 export type FamilyProducers = Readonly<Record<CatalogFamily, FamilyProducer>>;
@@ -40,21 +40,23 @@ export const FAMILY_PRODUCERS: FamilyProducers = {
 	lifecycle: "complete",
 	dialogs: "complete",
 	opaque: "complete",
-	active: "root",
-	calls: "root",
-	settled: "root",
-	identity: "pending",
-	source: "partial",
+	active: "complete",
+	calls: "complete",
+	settled: "complete",
+	identity: "complete",
+	source: "complete",
 };
 
 /**
  * The producers at one root (RULING-61 Q1): a loaded base is a file range whose kinds this epoch never saw, and an
- * unavailable transcript enumerates nothing, so the transcript and opaque families are then `partial`, never
- * complete or empty.
+ * unavailable transcript enumerates nothing, so the families fed by entry kinds (transcript, opaque, source) are
+ * then `partial`, never complete or empty.
  */
 export function familyProducers(transcript: TranscriptRoot): FamilyProducers {
 	const exact = transcript.unavailable === null && (transcript.base?.count ?? 0) === 0;
-	return exact ? FAMILY_PRODUCERS : { ...FAMILY_PRODUCERS, transcript: "partial", opaque: "partial" };
+	return exact
+		? FAMILY_PRODUCERS
+		: { ...FAMILY_PRODUCERS, transcript: "partial", opaque: "partial", source: "partial" };
 }
 
 /**
@@ -86,8 +88,10 @@ export const entryFamily = (kind: string): CatalogFamily => KNOWN_KINDS.get(kind
 export const familyId = (family: CatalogFamily): BoundedId => protocolId(family);
 
 /** One member of a family: a fixed-width ordinal, so an arbitrary entry id or key never becomes a catalog id. */
-export const memberId = (prefix: "entry" | "dialog", ordinal: number): BoundedId =>
-	protocolId(`${prefix}-${String(ordinal).padStart(16, "0")}`);
+export const memberId = (
+	prefix: "entry" | "dialog" | "message" | "call" | "join",
+	ordinal: number | string,
+): BoundedId => protocolId(`${prefix}-${typeof ordinal === "number" ? String(ordinal).padStart(16, "0") : ordinal}`);
 
 interface FamilyRow {
 	readonly family: CatalogFamily;
@@ -120,6 +124,16 @@ export function familyRegistry(producers: FamilyProducers): FamilyRegistry {
 /** A registry that is complete only when every producer is; an incomplete one needs the consumer's own check. */
 export const completeAssembly = (registry: FamilyRegistry): CompleteFamilyRegistry | undefined =>
 	registry.assembly === "complete" ? registry : undefined;
+
+/**
+ * The completeness gate (X03): every family whose producer is `complete` must have emitted at least one component,
+ * an explicit empty included; a missing one is a construction error that refuses the whole catalog, never a
+ * registry that claims more than its components hold. A `partial` family may emit nothing.
+ */
+export function assertCoverage(registry: FamilyRegistry, emitted: ReadonlySet<string>): void {
+	const missing = registry.families.filter(({ family, producer }) => producer === "complete" && !emitted.has(family));
+	if (missing.length > 0) throw new CompactReadError("unavailable");
+}
 
 const field = (value: object, key: string): unknown => Reflect.get(value, key);
 const isFamily = (value: unknown): value is CatalogFamily => typeof value === "string" && FAMILY_SET.has(value);

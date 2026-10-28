@@ -68,7 +68,7 @@ const append = (entry: { type: string; id: string; parentId: string | null; time
 	entry: JSON.stringify(entry),
 });
 
-it("X03 T1 every family of the versioned schema has a registry row and an explicit component; the producer assembly is marked incomplete until S10b", async () => {
+it("X03 T1 every family of the versioned schema has a registry row and an explicit component; the producer assembly is complete once every family is", async () => {
 	const rig = recoveryRig();
 	rig.lane.accept({ type: "session_lifecycle", sessionId: "s", lifecycle: { phase: "ready" } }, undefined);
 	const { token, entries, text, manifest } = await catalogOf(rig);
@@ -79,34 +79,20 @@ it("X03 T1 every family of the versioned schema has a registry row and an explic
 		["run", "run"],
 		["lifecycle", "lifecycle"],
 		["dialogs", "dialogs"],
-		["active", "active"],
+		["active", "message-0000000000000000"],
 		["calls", "calls"],
 		["settled", "settled"],
+		["identity", "identity"],
+		["source", "source"],
 	]);
 	const registry = JSON.parse((await text("families", "families")).text);
 	expect(registry).toEqual({
 		format: "senpi-recovery-families",
 		version: 1,
-		assembly: "incomplete",
-		families: CATALOG_FAMILIES.map((family) => ({ family, producer: FAMILY_PRODUCERS[family] })),
-		incomplete: ["active", "calls", "settled", "identity", "source"],
+		assembly: "complete",
+		families: CATALOG_FAMILIES.map((family) => ({ family, producer: "complete" })),
 	});
-	expect(FAMILY_PRODUCERS).toEqual({
-		transcript: "complete",
-		run: "complete",
-		lifecycle: "complete",
-		dialogs: "complete",
-		opaque: "complete",
-		active: "root",
-		calls: "root",
-		settled: "root",
-		identity: "pending",
-		source: "partial",
-	});
-	expect(
-		entries.map(([kind]) => kind),
-		"a pending family is never declared empty",
-	).not.toContain("identity");
+	expect(FAMILY_PRODUCERS).toEqual(Object.fromEntries(CATALOG_FAMILIES.map((family) => [family, "complete"])));
 	expect(JSON.parse((await text("transcript", "transcript")).text)).toEqual({
 		historyVersion: 0,
 		leafId: null,
@@ -127,6 +113,9 @@ it("X03 T1 every family of the versioned schema has a registry row and an explic
 	for (const [kind, id] of [
 		["opaque", "opaque"],
 		["dialogs", "dialogs"],
+		["calls", "calls"],
+		["settled", "settled"],
+		["source", "source"],
 	] as const) {
 		const empty = await text(kind, id);
 		expect(empty.text, `${kind} is explicitly empty, never omitted`).toBe("");
@@ -154,8 +143,8 @@ it("RULING-60 carry 44: a cut differing only in run state, or only in dialog cou
 	const changed = running.root.entries.filter((entry, index) => entry.digest !== idle.root.entries[index]?.digest);
 	expect(
 		changed.map((entry) => entry.id),
-		"only the run component changed",
-	).toEqual(["run"]);
+		"only the run component and the identity's sequence changed",
+	).toEqual(["run", "identity"]);
 	rig.lane.accept(
 		{ type: "extension_ui_request", method: "select", id: "t1", title: "secret", options: [] },
 		undefined,
@@ -216,7 +205,10 @@ it("RULING-60 Q1 (1)(2) every accepted entry is cataloged under its engine kind'
 		["transcript", "entry-0000000000000004"],
 		["opaque", "entry-0000000000000004"],
 	]);
-	expect(entries.map(([kind]) => kind)).not.toContain("source");
+	expect(entries.filter(([kind]) => kind === "source").map(([, id]) => id)).toEqual([
+		"entry-0000000000000002",
+		"entry-0000000000000003",
+	]);
 	expect(JSON.parse((await text("transcript", "transcript")).text)).toEqual({
 		historyVersion: 6,
 		leafId: "e4",
@@ -311,6 +303,7 @@ it("RULING-59 X02 a broadcast question holding a 34 MiB string streams through t
 			deadlineAtMs: 10,
 			request,
 		});
+		const settled = lane.settledOf(probe);
 		const measured = await lane.cutStorage(probe, async (store, valid) => {
 			const values = new CompactValues(store);
 			const seen: string[] = [];
@@ -318,7 +311,7 @@ it("RULING-59 X02 a broadcast question holding a 34 MiB string streams through t
 			let maxUnits = 0;
 			let digest = "";
 			let length = 0;
-			for await (const part of checkpointComponents(store, values, probe, valid)) {
+			for await (const part of checkpointComponents({ store, values, root: probe, settled }, valid)) {
 				seen.push(`${part.kind}/${part.id}`);
 				if (part.kind !== "dialogs") continue;
 				const hash = createHash("sha256");
