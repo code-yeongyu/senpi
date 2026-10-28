@@ -48,6 +48,8 @@ export class CompactContentIndex<Row extends object> {
 	overrides: IndexNode<IndexOverride> | undefined;
 	readonly pages = new Set<IndexPage>();
 	readonly pending: CompactCommitDependencies<string>;
+	/** Overlay keys with no pending reference, oldest first: the compactor selects only from these. */
+	readonly ready = new Set<string>();
 	private readonly leavesOf: (row: Row) => readonly LeafId[];
 	private readonly compactor: CompactIndexCompactor;
 	private readonly cuts = new WeakMap<FrozenIndex, CompactReadLease>();
@@ -62,7 +64,10 @@ export class CompactContentIndex<Row extends object> {
 		this.values = new CompactValues(store);
 		this.bases = new CompactPagedTree(store, ({ page }) => [page.owner]);
 		this.overlays = new CompactIndexTree((value, live, pins) => store.adjust(value.owner, live, pins));
-		this.pending = new CompactCommitDependencies(store, () => this.maybeCompact());
+		this.pending = new CompactCommitDependencies(store, (key) => {
+			this.ready.add(key);
+			this.maybeCompact();
+		});
 		this.compactor = new CompactIndexCompactor(this, threshold);
 	}
 
@@ -194,6 +199,7 @@ export class CompactContentIndex<Row extends object> {
 		this.overlays.adjust(this.overrides, -1, 0);
 		this.overrides = next;
 		this.pending.delete(key);
+		this.ready.delete(key);
 	}
 
 	private put(key: string, row: IndexRow | undefined, patch: ReadonlyMap<string, ValueRef>, deleted: boolean): void {
@@ -212,6 +218,7 @@ export class CompactContentIndex<Row extends object> {
 			this.maskUnits += key.length;
 		}
 		this.pending.set(key, refs);
+		if (!this.pending.has(key)) this.ready.add(key);
 		this.maybeCompact();
 	}
 

@@ -1201,7 +1201,12 @@ export function createRpcConnectionHandler(
 				if (holdAutomaticInput(session, command, hasRole(INTERACTIVE_USER_CAPABILITY)))
 					return success(id, "prompt", { disposition: "handled", heldAsNotice: true });
 				turnRequested = true;
-				const admission = handleClientInput(session, command, { output, promptCalls });
+				const admission = handleClientInput(
+					session,
+					command,
+					{ output, promptCalls },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY) },
+				);
 				promptCalls.add(admission);
 				void admission.finally(() => promptCalls.delete(admission));
 				return undefined;
@@ -1278,7 +1283,12 @@ export function createRpcConnectionHandler(
 				if (holdAutomaticInput(session, command, hasRole(INTERACTIVE_USER_CAPABILITY)))
 					return success(id, command.type, { disposition: "handled", heldAsNotice: true });
 				turnRequested = true;
-				await handleClientInput(session, command, { output, promptCalls });
+				await handleClientInput(
+					session,
+					command,
+					{ output, promptCalls },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY) },
+				);
 				return undefined;
 			}
 
