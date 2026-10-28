@@ -1,5 +1,5 @@
-import { watch } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { constants, watch } from "node:fs";
+import { open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { z } from "zod";
@@ -50,6 +50,27 @@ function credentialCommandStarted(directory: string): Promise<number> {
 	});
 }
 
+/**
+ * Wakes a helper blocked on the release FIFO. The open never waits for a reader: with
+ * nobody left on the other end (the helper finished, or the host's command deadline
+ * killed it) it fails at once with ENXIO, and before the helper made the FIFO with ENOENT.
+ */
+async function releaseHelper(path: string): Promise<boolean> {
+	try {
+		const fifo = await open(path, constants.O_WRONLY | constants.O_NONBLOCK);
+		try {
+			await fifo.write("release\n");
+		} finally {
+			await fifo.close();
+		}
+		return true;
+	} catch (cause) {
+		const code = (cause as NodeJS.ErrnoException).code;
+		if (code === "ENXIO" || code === "ENOENT") return false;
+		throw cause;
+	}
+}
+
 function isRunning(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
@@ -62,12 +83,13 @@ function isRunning(pid: number): boolean {
 it("keeps a concurrent session responsive while a !command credential is resolved", async () => {
 	// Given a running host whose first session opened before any credential existed
 	const host = await startInProcessHost();
+	const release = join(host.agentDir, RELEASE_NAME);
+	let helperPid: number | undefined;
 	try {
 		const observer = await host.connect();
 		const observerSession = sessionId(await observer.request({ type: "open_session", cwd: host.cwd }));
 		const started = credentialCommandStarted(host.agentDir);
 		const marker = join(host.agentDir, MARKER_NAME);
-		const release = join(host.agentDir, RELEASE_NAME);
 		await writeFile(
 			join(host.agentDir, "auth.json"),
 			JSON.stringify({
@@ -86,16 +108,20 @@ it("keeps a concurrent session responsive while a !command credential is resolve
 		// Keep a failed measurement readable: the open is awaited below, this only stops the
 		// teardown rejection from being reported as an unhandled error instead of the assertion.
 		probeOpen.catch(() => {});
-		const helperPid = await started;
+		helperPid = await started;
 		const state = await observer.request({ type: "get_state", sessionId: observerSession }, 300_000);
 
 		// Then the first session answers while the helper is still waiting for its release
 		expect(outcomeSchema.parse(state).success).toBe(true);
 		expect(isRunning(helperPid), "get_state answered only after the credential helper had exited").toBe(true);
 		// and the credential still resolves through its own command once released
-		await writeFile(release, "release\n");
+		expect(await releaseHelper(release), "the credential helper was gone before the test released it").toBe(true);
 		expect(sessionId(await probeOpen)).not.toBe(observerSession);
 	} finally {
+		// A failure before the release must not strand the helper on a FIFO whose directory
+		// dispose deletes: wake it, and kill it if it is still there.
+		await releaseHelper(release);
+		if (helperPid !== undefined && isRunning(helperPid)) process.kill(helperPid, "SIGKILL");
 		await host.dispose();
 	}
 }, 600_000);
