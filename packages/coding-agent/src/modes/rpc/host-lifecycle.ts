@@ -34,7 +34,7 @@ import {
 	type SupervisorState,
 	supervisorSender,
 } from "./host-lifecycle-shutdown.ts";
-import { startSupervisorTicker } from "./host-lifecycle-ticker.ts";
+import { OWNER_GONE_SHUTDOWN_REASON, startSupervisorTicker } from "./host-lifecycle-ticker.ts";
 import { errorMessage, writeHostReady, writeStderrLine } from "./host-supervisor-log.ts";
 import { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import { PUBLIC_SOCKET_IDENTITY_FILE, statSocketIdentity, writeSocketIdentityFile } from "./socket-ownership.ts";
@@ -97,6 +97,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	const state: SupervisorState = {
 		shuttingDown: false,
 		shutdownReason: undefined,
+		shutdownDecidedAtMs: undefined,
 		childExitRecorded: Promise.resolve(),
 		startupComplete: Promise.resolve(),
 		publicSocketOwned: false,
@@ -156,7 +157,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			signal,
 			childStartedAt,
 			...(state.shuttingDown && reason !== undefined
-				? { shutdown: { reason, supervisor: supervisorSender(instanceId) } }
+				? { shutdown: { reason, supervisor: supervisorSender(instanceId), ...ownerDeathLatency(reason) } }
 				: {}),
 		});
 		if (state.shuttingDown) return;
@@ -216,8 +217,26 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	// Single-flight: concurrent triggers (listener error, child exit, signals) must not process.exit
 	// mid-cleanup. Late callers park on this promise while the first shutdown finishes and exits.
 	function shutdown(reason: string, exitCode: number): Promise<never> {
+		state.shutdownDecidedAtMs ??= performance.now();
 		shutdownPromise ??= performShutdown(teardown, reason, exitCode);
 		return shutdownPromise;
+	}
+
+	/**
+	 * How long this supervisor took to go from OBSERVING its owner gone to deciding to shut down, on
+	 * its own monotonic clock. Only the owner-death reason carries it; an idle or crash stop has no
+	 * owner-death instant to measure from.
+	 */
+	function ownerDeathLatency(reason: string): { ownerGone?: { at: string; decisionDelayMs: number } } {
+		const observed = owner.observedGoneAt();
+		const decidedAtMs = state.shutdownDecidedAtMs;
+		if (reason !== OWNER_GONE_SHUTDOWN_REASON || observed === undefined || decidedAtMs === undefined) return {};
+		return {
+			ownerGone: {
+				at: new Date(observed.wallMs).toISOString(),
+				decisionDelayMs: Math.max(0, Math.round(decidedAtMs - observed.monotonicMs)),
+			},
+		};
 	}
 
 	// Registered before the startup handshake, not after it: the private internal directory already

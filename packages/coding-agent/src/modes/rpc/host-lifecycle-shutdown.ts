@@ -33,6 +33,8 @@ const WINDOWS_SUPERVISOR_SHUTDOWN_HARD_EXIT_MS = 2_000;
 export interface SupervisorState {
 	shuttingDown: boolean;
 	shutdownReason: string | undefined;
+	/** The supervisor's own clock at the FIRST shutdown decision, for the owner-death latency record. */
+	shutdownDecidedAtMs: number | undefined;
 	/** Settles once the child's end is on record; replaced the moment the child exits. */
 	childExitRecorded: Promise<void>;
 	/** Startup may still publish ownership files after the public listener became reachable. */

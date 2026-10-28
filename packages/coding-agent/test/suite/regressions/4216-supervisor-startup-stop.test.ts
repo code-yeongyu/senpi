@@ -45,6 +45,7 @@ it.each(["completed", "failed"])("joins %s startup writes before removing the ge
 	const state: SupervisorState = {
 		shuttingDown: false,
 		shutdownReason: undefined,
+		shutdownDecidedAtMs: undefined,
 		childExitRecorded: Promise.resolve(),
 		startupComplete,
 		publicSocketOwned: false,

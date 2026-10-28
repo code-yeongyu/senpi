@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { mock } from "node:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { hostCrashRecordFile } from "../../../src/modes/rpc/host-crash-record.ts";
+import { OWNER_EXIT_GRACE_MS, OWNER_PROBE_MAX_INTERVAL_MS } from "../../../src/modes/rpc/host-lifecycle-activity.ts";
 import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { STOP_WAIT_BUDGET_MS } from "../../../src/modes/rpc/host-ensure-stop.ts";
@@ -72,15 +73,32 @@ async function caller(qa: GenerationScratch, ownership = "caller", failure?: str
  * under test, `idle` is the policy #3044 forbids it from waiting out. A reason is a decision, not a
  * duration, so a starved machine cannot inflate it the way it inflates wall-clock promptness.
  */
-async function terminalExitReasons(qa: GenerationScratch): Promise<string[]> {
+async function terminalExitRecords(qa: GenerationScratch): Promise<TerminalRecord[]> {
 	const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
 	const lines = (await readFile(hostCrashRecordFile(paths.dir), "utf8")).trim().split("\n");
 	return lines
 		.filter((line) => line !== "")
-		.map((line) => JSON.parse(line) as { kind?: string; detection?: string; reason?: string })
-		.filter((record) => record.kind === "rpc-host" && record.detection === "engine_stop")
-		.map((record) => record.reason ?? "<no reason>");
+		.map((line) => JSON.parse(line) as TerminalRecord)
+		.filter((record) => record.kind === "rpc-host" && record.detection === "engine_stop");
 }
+
+interface TerminalRecord {
+	readonly kind?: string;
+	readonly detection?: string;
+	readonly reason?: string;
+	readonly ownerGoneAt?: string;
+	readonly decisionDelayMs?: number;
+}
+
+/**
+ * What the supervisor is allowed to spend between OBSERVING its owner gone and deciding to exit:
+ * its continuous-quiet grace, plus one full probe interval (an observation can lag the death by at
+ * most the backoff cap), plus a margin for the supervisor's own tick scheduling. The margin is
+ * deliberately small: it covers tick granularity, NOT a machine's load, because the number being
+ * checked is measured on the supervisor's own clock and never includes this test process's waiting.
+ */
+const DECISION_TICK_MARGIN_MS = 3_000;
+const OWNER_EXIT_DECISION_BOUND_MS = OWNER_EXIT_GRACE_MS + OWNER_PROBE_MAX_INTERVAL_MS + DECISION_TICK_MARGIN_MS;
 
 async function rememberHost(qa: GenerationScratch): Promise<void> {
 	const paths = createHostDaemonPaths({ socket: qa.socket, agentDir: qa.agentDir });
@@ -146,7 +164,10 @@ describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
 			else owner.kill("SIGKILL");
 			await exited;
 			await processes.allGone(budget(CASE_TIMEOUT_MS));
-			expect(await terminalExitReasons(qa)).toEqual(["owner_gone"]);
+			const [record, ...rest] = await terminalExitRecords(qa);
+			expect([record?.reason, rest]).toEqual(["owner_gone", []]);
+			expect(record?.ownerGoneAt, JSON.stringify(record)).toBeTypeOf("string");
+			expect(record?.decisionDelayMs, JSON.stringify(record)).toBeLessThanOrEqual(OWNER_EXIT_DECISION_BOUND_MS);
 		},
 		CASE_TIMEOUT_MS,
 	);

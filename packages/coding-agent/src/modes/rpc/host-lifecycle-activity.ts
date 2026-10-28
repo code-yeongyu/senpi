@@ -142,7 +142,8 @@ export class SupervisorActivity {
 
 /** Continuous quiet time, in addition to attach holds and confirmed owner death (#3044). */
 export const OWNER_EXIT_GRACE_MS = 2_000;
-const OWNER_PROBE_MAX_INTERVAL_MS = 5_000;
+/** The owner-death probe backs off to this, so an observation can lag the death by at most one interval. */
+export const OWNER_PROBE_MAX_INTERVAL_MS = 5_000;
 
 /**
  * Fresh starts inherit an event-loop pipe on POSIX and Windows. An existing supervisor cannot
@@ -157,6 +158,8 @@ export class SupervisorOwner {
 	private nextProbeAt = 0;
 	private probeIntervalMs = 1_000;
 	private gone = false;
+	/** When this supervisor OBSERVED its owner gone: its own clocks, so a reader never mixes in a client's. */
+	private goneAt: { readonly monotonicMs: number; readonly wallMs: number } | undefined;
 	private revision = 0;
 	private stopped = false;
 	private readonly idle = new IdleExitDecider(OWNER_EXIT_GRACE_MS, () => performance.now());
@@ -175,7 +178,7 @@ export class SupervisorOwner {
 			const bound = this.owner;
 			let failed = false;
 			const eof = (): void => {
-				if (!failed && !this.stopped && sameHostOwner(this.owner, bound)) this.gone = true;
+				if (!failed && !this.stopped && sameHostOwner(this.owner, bound)) this.markGone();
 			};
 			pipe.once("end", eof);
 			// Windows may report a clean close without an end; an errored pipe remains unknown.
@@ -200,6 +203,7 @@ export class SupervisorOwner {
 			this.pipe?.destroy();
 			this.pipe = undefined;
 			this.gone = false;
+			this.goneAt = undefined;
 			this.nextProbeAt = 0;
 			this.probeIntervalMs = 1_000;
 			this.activity();
@@ -237,7 +241,8 @@ export class SupervisorOwner {
 		if (owner != null && !this.pipe && !this.gone && performance.now() >= this.nextProbeAt) {
 			const gone = await hostOwnerGone(owner);
 			if (this.stopped || revision !== this.revision) return false;
-			this.gone = gone;
+			if (gone) this.markGone();
+			else this.gone = false;
 			this.nextProbeAt = performance.now() + this.probeIntervalMs;
 			this.probeIntervalMs = Math.min(OWNER_PROBE_MAX_INTERVAL_MS, this.probeIntervalMs * 2);
 		}
@@ -257,6 +262,16 @@ export class SupervisorOwner {
 			return false;
 		}
 		return activity.quiescent();
+	}
+
+	/** First observation wins: a later probe confirming the same death must not restart the measurement. */
+	private markGone(): void {
+		this.gone = true;
+		this.goneAt ??= { monotonicMs: performance.now(), wallMs: Date.now() };
+	}
+
+	observedGoneAt(): { readonly monotonicMs: number; readonly wallMs: number } | undefined {
+		return this.goneAt;
 	}
 
 	stop(): void {
