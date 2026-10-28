@@ -82,7 +82,7 @@ const chunks = (value: string): string[] => {
 /**
  * One manifest and catalog per token, built once from the pinned root and released with the token. A component is
  * verified once per frozen root (RULING-69 (2)): every later page or re-open on that root reuses the verified source,
- * and the entry is dropped with the token's lease. A source holds leaf positions, never bytes; S11b owns the
+ * and the root's entries are dropped with the lease of the one token that pins it (`VerifiedComponents`). A source holds leaf positions, never bytes; S11b owns the
  * current-page retry cache.
  */
 export class RecoveryManifests {
@@ -122,6 +122,11 @@ export class RecoveryManifests {
 		return this.verified.size;
 	}
 
+	/** `tokenId` pins `root` for the cache; a root another live token pins is a `FrozenRootPinnedError`. */
+	pin(tokenId: string, root: FrozenAcceptedRoot): void {
+		this.verified.pin(tokenId, root);
+	}
+
 	/**
 	 * One page of a component's bytes at a raw byte offset; a ref that names a node or nothing is `range`. A first open
 	 * verifies the component inside this request under its `signal`; it is cached only while the token still holds it.
@@ -138,12 +143,12 @@ export class RecoveryManifests {
 		const built = this.ready.get(tokenId);
 		if (!parsed.ok || !built) throw new CompactReadError("range");
 		return lane.cutStorage(root, async (store, valid) => {
-			let bytes = this.verified.get(tokenId, parsed.value);
+			let bytes = this.verified.get(root, parsed.value);
 			if (!bytes) {
 				const read = await this.catalogs.read(store, built.root, parsed.value, valid, signal);
 				if (read.kind !== "component") throw new CompactReadError("range");
 				bytes = read.bytes;
-				if (this.ready.get(tokenId) === built) this.verified.set(tokenId, read.ref, bytes);
+				if (this.ready.get(tokenId) === built) this.verified.set(tokenId, root, read.ref, bytes);
 			}
 			return producePage(bytes, offset, valid);
 		});

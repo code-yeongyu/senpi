@@ -1,6 +1,39 @@
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
-import { legacyJsonText } from "./legacy-record-depth.ts";
+
+/**
+ * A legacy JSONL record nests deeper than this runtime's JSON engine can serialize (RULING-68). The legacy wire has no
+ * protocol depth limit of its own: a record is refused only where `JSON.stringify` (or the recursive normaliser before
+ * it) overflows the stack, and that refusal is this typed error instead of a `RangeError` that ends a worker or session.
+ * It lives beside the serializer the lifecycle supervisor already loads, so the supervisor's import graph stays unchanged
+ * (`test/supervisor-import-graph.test.ts`); the refusal bookkeeping stays in `legacy-record-depth.ts`.
+ */
+export class LegacyRecordDepthError extends Error {
+	override readonly name = "LegacyRecordDepthError";
+	readonly recordType: string;
+
+	constructor(record: unknown, cause: RangeError) {
+		const type = typeof record === "object" && record !== null ? Reflect.get(record, "type") : undefined;
+		const recordType = typeof type === "string" ? type : "record";
+		super(`${recordType} nests deeper than this runtime's JSON engine limit`, { cause });
+		this.recordType = recordType;
+	}
+}
+
+/** The engine's own stack overflow, as V8 and JavaScriptCore word it; any other `RangeError` is not a depth refusal. */
+function isStackOverflow(cause: unknown): cause is RangeError {
+	return cause instanceof RangeError && cause.message.startsWith("Maximum call stack size exceeded");
+}
+
+/** `JSON.stringify(value)` for the legacy wire: an engine stack overflow is a `LegacyRecordDepthError`. */
+export function legacyJsonText(value: unknown): string {
+	try {
+		return JSON.stringify(value);
+	} catch (cause) {
+		if (isStackOverflow(cause)) throw new LegacyRecordDepthError(value, cause);
+		throw cause;
+	}
+}
 
 /**
  * Serialize a single strict JSONL record.
