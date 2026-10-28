@@ -223,6 +223,14 @@ export class RecoveryCheckpoints {
 		return this.read(token, caller, (lane, root) => this.manifests.read(token.id, lane, root, ref));
 	}
 
+	/**
+	 * One bounded page (at most `FRAGMENT_MAX_BYTES` raw bytes) of a catalog component at a raw byte offset, under the
+	 * same claim and lease as every read (S11a; the cursor, ordinal and request limits around it are S11b).
+	 */
+	readCatalogPage(token: RecoveryToken, caller: RecoveryCaller, ref: string, offset: number) {
+		return this.read(token, caller, (lane, root) => this.manifests.page(token.id, lane, root, ref, offset));
+	}
+
 	private async read<T>(
 		token: RecoveryToken,
 		caller: RecoveryCaller,

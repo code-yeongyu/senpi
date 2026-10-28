@@ -9,6 +9,7 @@ import {
 import { CatalogPointerWriter, catalogPointer, type PointerHead } from "./compact-catalog-pointers.ts";
 import type { CompactContentStore, LeafId } from "./compact-content-store.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
+import { type FrozenBytes, openFrozenBytes } from "./compact-recovery-bytes.ts";
 import { childRef, type ContentDigest, type ContentRef, protocolId, refSteps } from "./compact-recovery-ids.ts";
 
 /** One component as a family adapter yields it: its stored leaves in order and the owner that keeps them pinned. */
@@ -41,7 +42,12 @@ export type CatalogRead =
 			readonly digest: ContentDigest;
 			readonly length: number;
 	  }
-	| { readonly kind: "component"; readonly ref: ContentRef; readonly entry: CatalogEntry; readonly text: string };
+	| {
+			readonly kind: "component";
+			readonly ref: ContentRef;
+			readonly entry: CatalogEntry;
+			readonly bytes: FrozenBytes;
+	  };
 
 /** One open node per level: its entries, its pointer leaves so far, and the owners the sealed node will share. */
 interface Level {
@@ -159,8 +165,17 @@ export class CompactRecoveryCatalog {
 		}
 	}
 
-	/** Verifies the stored bytes of every node on the path against its parent's digest before decoding it. */
-	async read(store: CompactContentStore, root: CatalogRoot, ref: ContentRef): Promise<CatalogRead> {
+	/**
+	 * Verifies the stored bytes of every node on the path against its parent's digest before decoding it; a component
+	 * is verified the same way and returned as a byte source, never as its joined text (S11a, carry 43). `valid` runs
+	 * between the component's leaf reads.
+	 */
+	async read(
+		store: CompactContentStore,
+		root: CatalogRoot,
+		ref: ContentRef,
+		valid: () => void = () => undefined,
+	): Promise<CatalogRead> {
 		if (ref !== root.ref && !ref.startsWith(`${root.ref}:`)) throw new CompactReadError("range");
 		const steps = refSteps(ref);
 		let node = root.node;
@@ -190,7 +205,8 @@ export class CompactRecoveryCatalog {
 			here = childRef(here, step);
 			if (pointer.kind === "component") {
 				if (depth + 1 !== steps.length) throw new CompactReadError("range");
-				return { kind: "component", ref: here, entry, text: await this.verify(store, entry, pointer.leaves) };
+				const bytes = await openFrozenBytes(entry, pointer.leaves, (leaf) => this.stored(store, leaf), valid);
+				return { kind: "component", ref: here, entry, bytes };
 			}
 			node = pointer.node;
 			head = pointer.head;
@@ -224,21 +240,6 @@ export class CompactRecoveryCatalog {
 			valid();
 		}
 		return { kind: component.kind, id: component.id, length, digest: digester.finish() };
-	}
-
-	private async verify(store: CompactContentStore, entry: CatalogEntry, leaves: readonly LeafId[]): Promise<string> {
-		const digester = catalogDigester("leaf", entry.length);
-		const chunks: string[] = [];
-		let fed = 0;
-		for (const leaf of leaves) {
-			const text = await this.stored(store, leaf);
-			fed += text.length * 2;
-			if (fed > entry.length) throw new CompactReadError("integrity");
-			digester.update(storedBytes(text));
-			chunks.push(text);
-		}
-		if (fed !== entry.length || digester.finish() !== entry.digest) throw new CompactReadError("integrity");
-		return chunks.join("");
 	}
 
 	private async root(

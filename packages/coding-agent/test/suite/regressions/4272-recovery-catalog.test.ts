@@ -11,6 +11,7 @@ import {
 } from "../../../src/modes/rpc/compact-recovery-catalog.ts";
 import { catalogRootRef, childRef, type ContentRef, protocolId } from "../../../src/modes/rpc/compact-recovery-ids.ts";
 import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
+import { componentBytes, componentText } from "./4272-frozen-bytes-support.ts";
 
 // Part of #4272 (S09, R4.B1, X03/X04): the catalog is an immutable tree of bounded nodes built bottom-up from a frozen
 // root with a bounded working set; every component is reachable without a root array of all descriptors, and no
@@ -77,7 +78,7 @@ async function walk(catalogs: CompactRecoveryCatalog, store: CompactContentStore
 		const read = await catalogs.read(store, root, ref);
 		if (read.kind === "component") {
 			seen.components++;
-			seen.texts.set(read.entry.id, read.text);
+			seen.texts.set(read.entry.id, await componentText(read));
 			return;
 		}
 		seen.nodes++;
@@ -252,8 +253,9 @@ it("RULING-58 (1) a surrogate pair split across a leaf boundary is hashed exactl
 		const root = await catalogs.build(fixture.store, catalogRootRef(8), [split]);
 		fixture.store.adjust(owner, -1, 0);
 		const read = component(await catalogs.read(fixture.store, root, childRef(root.ref, 0)));
-		expect(read.text).toBe(text);
-		expect(storedBytes(read.text).equals(Buffer.from(text, "utf16le"))).toBe(true);
+		const bytes = await componentBytes(read);
+		expect(bytes.toString("utf16le")).toBe(text);
+		expect(bytes.equals(Buffer.from(text, "utf16le"))).toBe(true);
 		expect(read.entry.length).toBe(8);
 		expect(read.entry.digest).toBe(specLeafDigest(Buffer.from(text, "utf16le")));
 		catalogs.release(fixture.store, root);

@@ -1,6 +1,7 @@
 import { checkpointComponents } from "./compact-catalog-families.ts";
 import { COMPACT_LEAF_CODE_UNITS, type CompactContentStore, type LeafId } from "./compact-content-store.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
+import { type FrozenBytes, producePage, type RecoveryPage } from "./compact-recovery-bytes.ts";
 import {
 	type CatalogComponent,
 	type CatalogRead,
@@ -69,6 +70,10 @@ interface Built {
 	readonly root: CatalogRoot;
 	readonly store: CompactContentStore;
 }
+interface Opened {
+	readonly ref: ContentRef;
+	readonly bytes: FrozenBytes;
+}
 
 const chunks = (value: string): string[] => {
 	const parts: string[] = [];
@@ -77,11 +82,16 @@ const chunks = (value: string): string[] => {
 	return parts;
 };
 
-/** One manifest and catalog per token, built once from the pinned root and released with the token. */
+/**
+ * One manifest and catalog per token, built once from the pinned root and released with the token; one open component
+ * per token while it pages (S11a, RULING-62 Q1 (1)): opened and verified once, replaced by the next component paged,
+ * dropped with the token. The open source holds leaf positions, never bytes; S11b owns the current-page retry cache.
+ */
 export class RecoveryManifests {
 	private readonly catalogs = new CompactRecoveryCatalog();
 	private readonly building = new Map<string, Promise<Built>>();
 	private readonly ready = new Map<string, Built>();
+	private readonly opened = new Map<string, Opened>();
 	private counter = 0;
 
 	manifest(
@@ -107,13 +117,37 @@ export class RecoveryManifests {
 		const parsed = parseContentRef(ref);
 		const built = this.ready.get(tokenId);
 		if (!parsed.ok || !built) throw new CompactReadError("range");
-		return lane.cutStorage(root, (store) => this.catalogs.read(store, built.root, parsed.value));
+		return lane.cutStorage(root, (store, valid) => this.catalogs.read(store, built.root, parsed.value, valid));
+	}
+
+	/** One page of a component's bytes at a raw byte offset; a ref that names a node or nothing is `range`. */
+	page(
+		tokenId: string,
+		lane: SessionAcceptanceLane,
+		root: FrozenAcceptedRoot,
+		ref: string,
+		offset: number,
+	): Promise<RecoveryPage> {
+		const parsed = parseContentRef(ref);
+		const built = this.ready.get(tokenId);
+		if (!parsed.ok || !built) throw new CompactReadError("range");
+		return lane.cutStorage(root, async (store, valid) => {
+			let open = this.opened.get(tokenId);
+			if (open?.ref !== parsed.value) {
+				const read = await this.catalogs.read(store, built.root, parsed.value, valid);
+				if (read.kind !== "component") throw new CompactReadError("range");
+				open = { ref: read.ref, bytes: read.bytes };
+				this.opened.set(tokenId, open);
+			}
+			return producePage(open.bytes, offset, valid);
+		});
 	}
 
 	release(tokenId: string): void {
 		const built = this.ready.get(tokenId);
 		this.ready.delete(tokenId);
 		this.building.delete(tokenId);
+		this.opened.delete(tokenId);
 		if (built) this.catalogs.release(built.store, built.root);
 	}
 

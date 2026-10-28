@@ -173,19 +173,42 @@ export class CompactValues {
 		return result;
 	}
 
-	async *fields(ref: ValueRef): AsyncGenerator<readonly [string, ValueRef, ValueRef]> {
+	/**
+	 * The fields of a stored object, one page resident (carry 45): each key is matched against `names` page by page and
+	 * never assembled past the longest of them, so a key of any size costs one page unless a name shares its prefix;
+	 * the match is the equal name, or undefined.
+	 */
+	async *fields(
+		ref: ValueRef,
+		names: ReadonlySet<string>,
+		valid?: () => void,
+	): AsyncGenerator<readonly [string | undefined, ValueRef, ValueRef]> {
 		let next: ValueRef | undefined = ref;
 		while (next) {
-			using held = await this.page(next);
-			const page = held.value;
-			if (page.kind !== "object") throw new CompactReadError("ownership");
-			for (const [key, value] of page.items) {
-				const name = await this.read(key);
-				if (typeof name !== "string") throw new CompactReadError("ownership");
-				yield [name, value, key];
-			}
+			const page = await this.objectPage(next, valid);
+			for (const [key, value] of page.items) yield [await this.matchKey(key, names, valid), value, key];
 			next = page.next;
 		}
+	}
+
+	private async objectPage(ref: ValueRef, valid?: () => void): Promise<Extract<ValuePage, { kind: "object" }>> {
+		using held = await this.page(ref);
+		valid?.();
+		if (held.value.kind !== "object") throw new CompactReadError("ownership");
+		return held.value;
+	}
+
+	private async matchKey(key: ValueRef, names: ReadonlySet<string>, valid?: () => void): Promise<string | undefined> {
+		let candidates = [...names];
+		let read = 0;
+		for await (const step of this.walk(key, valid)) {
+			if (step.kind !== "string") throw new CompactReadError("ownership");
+			candidates = candidates.filter((name) => name.startsWith(step.text, read));
+			read += step.text.length;
+			if (!step.more) return candidates.find((name) => name.length === read);
+			if (candidates.length === 0) return undefined;
+		}
+		throw new CompactReadError("ownership");
 	}
 
 	/** Patches are coalesced before this call; copy descriptors, never the fields' payloads. */
@@ -203,9 +226,9 @@ export class CompactValues {
 			if (!this.store.isCommitted(ref.node)) throw new CompactWriteError("storage_unavailable");
 		};
 		try {
-			for await (const [name, value, key] of this.fields(base)) {
-				if (patch.has(name)) seen.add(name);
-				buffer.push([key, patch.get(name) ?? value]);
+			for await (const [name, value, key] of this.fields(base, new Set(patch.keys()))) {
+				if (name !== undefined) seen.add(name);
+				buffer.push([key, name === undefined ? value : (patch.get(name) ?? value)]);
 				if (buffer.length === 128) await flush();
 			}
 			for (const [name, value] of patch) {

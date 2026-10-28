@@ -5,6 +5,7 @@ import type { RecoveryRoute } from "../../../src/modes/rpc/compact-recovery-stat
 import type { RecoveryOutcome } from "../../../src/modes/rpc/compact-recovery-types.ts";
 import { CompactValues } from "../../../src/modes/rpc/compact-values.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
+import { componentText } from "./4272-frozen-bytes-support.ts";
 import type { RecoveryRig } from "./4272-recovery-support.ts";
 
 const caller = { socketEpoch: "socket-1", sessionId: "s" };
@@ -41,7 +42,10 @@ export async function catalogOf(rig: RecoveryRig, afterFreeze?: () => void) {
 	const text = async (kind: string, id: string) => {
 		const index = entries.findIndex(([k, i]) => k === kind && i === id);
 		expect(index, `${kind}/${id} is cataloged`).toBeGreaterThanOrEqual(0);
-		return component(unwrap(await rig.checkpoints.readCatalog(token, caller, ref(manifest.catalogRoot, index))));
+		const read = component(
+			unwrap(await rig.checkpoints.readCatalog(token, caller, ref(manifest.catalogRoot, index))),
+		);
+		return { ...read, text: await componentText(read) };
 	};
 	const json = async (kind: string, id: string): Promise<unknown> => JSON.parse((await text(kind, id)).text);
 	const release = () => {

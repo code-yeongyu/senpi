@@ -10,6 +10,7 @@ import {
 import type { CompactStorageIo } from "../../../src/modes/rpc/compact-storage-io.ts";
 import { catalogRootRef, childRef, protocolId } from "../../../src/modes/rpc/compact-recovery-ids.ts";
 import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
+import { component, componentText } from "./4272-frozen-bytes-support.ts";
 
 // Part of #4272 (S09a review fold): a failed catalog build leaves nothing behind whichever leaf creation fails, a
 // component of any leaf count is cataloged with every stored leaf under 64 KiB, a pointer that names a missing leaf
@@ -158,7 +159,7 @@ it("X04 a component over 12,000 leaves is cataloged: its pointers span bounded s
 		expect(sizes.length, "the pointer list spans several side leaves").toBeGreaterThan(2);
 		expect(Math.max(...sizes)).toBeLessThanOrEqual(65_536);
 		const read = await catalogs.read(fixture.store, root, childRef(root.ref, 0));
-		expect(read.kind === "component" && read.text).toBe(wideText(12_000));
+		expect(await componentText(component(read))).toBe(wideText(12_000));
 		await fixture.store.idle();
 		expect(fixture.written.length, "the catalog leaves reached their files").toBeGreaterThan(0);
 		expect(Math.max(...fixture.written)).toBeLessThanOrEqual(65_536);
