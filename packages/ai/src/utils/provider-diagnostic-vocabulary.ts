@@ -17,9 +17,13 @@ export function categoryForProviderCode(code: string): ProviderDiagnosticCategor
 	switch (code) {
 		case "authentication_error":
 		case "invalid_api_key":
+		// A subscription account pool that refused the request locally: every account needs a new login.
+		case "account_pool_auth_blocked":
 			return "auth";
 		case "rate_limit_error":
 		case "rate_limit_exceeded":
+		// A subscription account pool that refused the request locally until its soonest reset (senpi#4672).
+		case "account_pool_blocked":
 			return "rate_limit";
 		case "insufficient_quota":
 		case "usage_limit_reached":
