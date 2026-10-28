@@ -34,6 +34,12 @@ const ALLOWED_RAW_ENV: readonly { readonly file: string; readonly reason: string
 		file: "helpers/rpc-host-spawn-env.test.ts",
 		reason: "this guard names the pattern it bans",
 	},
+	{
+		file: "suite/regressions/issue-omo-594-host-status-zero-spawn.test.ts",
+		reason: "the spread is inside a fixture written to a temp directory, which cannot resolve this helper",
+		// Same reason as rpc-host-exec-argv.test.ts: the generated child is run from
+		// outside the package, so it builds its environment inline.
+	},
 ];
 
 function filesUnder(dir: string): string[] {
