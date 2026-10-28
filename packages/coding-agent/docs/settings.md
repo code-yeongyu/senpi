@@ -505,6 +505,20 @@ run.
 | `handoffHint.minContextTokens` | number | `200000` | No hint below this context size |
 | `handoffHint.minSavingUsd` | number | `1` | No hint unless a fresh session saves at least this much on the next reply |
 
+### Job widgets
+
+A background command that keeps printing numbers (a render, a benchmark, a test run) gets a small live chart:
+once it has run for `authorAfterMs` and printed a few lines, a model reads the command and a redacted sample of
+its output once and writes a chart spec, and every update after that is computed locally from new output. Jobs
+whose output has nothing worth charting stay plain. It needs no setup; the views reach clients through the
+`job_widget_state` event ([RPC](rpc.md#job-widgets)).
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `jobWidgets.enabled` | boolean | `true` | Build widgets at all; `false` taps no output and never calls a model |
+| `jobWidgets.model` | string | - | `provider/model-id` that writes the specs; otherwise a model the host provides, else the session's model |
+| `jobWidgets.authorAfterMs` | number | `15000` | Job age in milliseconds before its spec is written |
+
 ### Shell
 
 | Setting | Type | Default | Description |
