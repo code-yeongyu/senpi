@@ -63,6 +63,15 @@ describe("a refused account pool is a classified failure (senpi#4672)", () => {
 		expect(failure).toMatchObject({ category: "auth", code: "account_pool_auth_blocked" });
 	});
 
+	it("does not report a pin to an account that is no longer configured as a rate limit", async () => {
+		const failure = await failedTurn(
+			new AllAccountsBlockedError(undefined, undefined, undefined, { name: "removed", configured: false }),
+		);
+
+		expect(failure?.code).toBeUndefined();
+		expect(failure?.category ?? "unknown").toBe("unknown");
+	});
+
 	it.each([
 		["authentication_failed", "auth"],
 		["rate_limit", "rate_limit"],

@@ -26,6 +26,8 @@ const SDK_KIND_DIAGNOSTICS: Partial<
  */
 export function anthropicSubscriptionDiagnostic(error: unknown): ProviderDiagnostic | undefined {
 	if (error instanceof AllAccountsBlockedError) {
+		// A pin to an account that is no longer configured is a configuration error, not a limit: no diagnostic.
+		if (error.unavailableAccount?.configured === false) return undefined;
 		const auth = error.blockReason === "auth_error";
 		return sanitizeProviderDiagnostic({
 			category: auth ? "auth" : "rate_limit",

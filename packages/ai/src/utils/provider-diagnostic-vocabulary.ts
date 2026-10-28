@@ -15,14 +15,14 @@ export const PROVIDER_DIAGNOSTIC_MAX_BYTES = 512;
  */
 export function categoryForProviderCode(code: string): ProviderDiagnosticCategory | undefined {
 	switch (code) {
+		// `account_pool_auth_blocked`: a subscription account pool that refused the request locally because every account needs a new login.
 		case "authentication_error":
 		case "invalid_api_key":
-		// A subscription account pool that refused the request locally: every account needs a new login.
 		case "account_pool_auth_blocked":
 			return "auth";
+		// `account_pool_blocked`: a subscription account pool that refused the request locally until its soonest reset (senpi#4672).
 		case "rate_limit_error":
 		case "rate_limit_exceeded":
-		// A subscription account pool that refused the request locally until its soonest reset (senpi#4672).
 		case "account_pool_blocked":
 			return "rate_limit";
 		case "insufficient_quota":
