@@ -1,23 +1,5 @@
 # Herdr builtin reporter changes
 
-## 2026-10-28 - Keep the sidebar agent label on the branded command (oh-my-openagent#11397)
-
-### What changed
-
-- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` reports `display_agent` as the existing `APP_COMMAND` brand command instead of the session name; `title` still carries the session name.
-
-### Why
-
-- Herdr renders `display_agent` as the pane's agent label in its sidebar. Reporting the session name there hid which agent owned the pane (other panes read `claude`, `hermes`, ...) and the label changed on every rename. OmO now reads `omo`, standalone Senpi reads `senpi`; the protocol agent stays `pi`.
-
-### Why an extension could not handle it
-
-- `packages/coding-agent/src/core/extensions/builtin/herdr/index.ts` is the builtin reporter that owns the metadata report. A user `herdr-*` reporter makes the builtin defer entirely, so it would have to reimplement all state reporting.
-
-### Expected merge conflict zones
-
-- LOW: the `pane.report_metadata` payload in `reportTitle`.
-
 ## 2026-10-21 - Restore the branded launcher after Herdr restart (senpi#3849)
 
 ### What changed
