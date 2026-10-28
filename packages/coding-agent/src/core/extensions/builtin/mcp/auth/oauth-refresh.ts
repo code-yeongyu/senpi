@@ -53,8 +53,10 @@ export class McpRefreshManager {
 	}
 
 	/**
-	 * `signal` (senpi#4642): an aborted caller stops waiting at once. A refresh it started also stops its discovery
-	 * and token requests, releases the token-store lock and writes nothing; a later caller starts a fresh one.
+	 * `signal` (senpi#4642): an aborted caller stops waiting at once. A refresh it started stops only at a step
+	 * before its token request is sent (the lock wait, discovery, a retry backoff): it then releases the lock and
+	 * writes nothing. Once the token request is sent the refresh is not aborted: it finishes detached and persists
+	 * the rotated tokens, because the server may already have invalidated the old refresh token.
 	 */
 	async ensureFresh(signal?: AbortSignal): Promise<OAuthTokens | undefined> {
 		signal?.throwIfAborted();
@@ -121,25 +123,24 @@ export class McpRefreshManager {
 		}
 		const resource = new URL(current.resource ?? this.#provider.serverUrl);
 		const { refreshAuthorization } = await loadMcpSdkAuth();
-		signal?.throwIfAborted();
 		const maxRetries = this.#options.maxRetries ?? 2;
 		for (let attempt = 0; ; attempt++) {
+			// The last point an abort may stop the refresh: nothing has been sent to the token endpoint yet.
+			signal?.throwIfAborted();
 			try {
+				// Sent without the signal: a rotated refresh token the server issues must reach the store.
 				const tokens = await refreshAuthorization(info.authorizationServerUrl, {
 					metadata: info.authorizationServerMetadata,
 					clientInformation,
 					refreshToken,
 					resource,
-					fetchFn: oauthFetch(this.#options.fetchFn, signal),
+					fetchFn: oauthFetch(this.#options.fetchFn),
 				});
-				// An aborted refresh writes nothing, even when the server answered.
-				signal?.throwIfAborted();
 				this.#provider.store.writeUnlocked(
 					mergeTokensIntoStoredAuth(current, tokens, this.#provider.serverUrl, authorizationServer),
 				);
 				return { ...tokens, issuer: authorizationServer };
 			} catch (error) {
-				if (signal?.aborted) throw signal.reason;
 				if (isInvalidGrant(error)) {
 					// Terminal: drop credentials so the next use forces a clean re-auth.
 					this.#provider.store.writeUnlocked(undefined);

@@ -39,7 +39,9 @@ interface McpReconnectState {
 const reconnectStates = new WeakMap<ServerConnection, McpReconnectState>();
 
 export function configureMcpReconnect(options: McpReconnectOptions): void {
-	void disposeMcpReconnect(options.connection);
+	// A reconfigure (a second attach of the same connection) is not a teardown: attempts the previous state started
+	// keep running under the new state, which inherits their abort signal and in-flight set (senpi#4642).
+	const previous = retireMcpReconnect(options.connection);
 	const state: McpReconnectState = {
 		attemptTimes: [],
 		backoffIndex: 0,
@@ -51,21 +53,38 @@ export function configureMcpReconnect(options: McpReconnectOptions): void {
 		shouldReconnect: options.shouldReconnect ?? (() => true),
 		timer: undefined,
 		timerGeneration: undefined,
-		abort: new AbortController(),
-		inflight: new Set(),
+		abort: previous?.state.abort ?? new AbortController(),
+		inflight: previous?.state.inflight ?? new Set(),
 		unsubscribe: options.connection.onStateChange((event) => {
 			if (event.state === "degraded") scheduleReconnect(state, event.generation, event.error);
 			if (event.state === "connected") state.backoffIndex = 0;
 		}),
 	};
 	reconnectStates.set(options.connection, state);
+	// A reconnect the previous state had waiting on its backoff timer is not dropped by the reconfigure.
+	if (previous?.hadTimer === true)
+		scheduleReconnect(state, options.connection.generation, options.connection.lastError);
+}
+
+/** Takes the previous state off the connection without aborting its attempts; reports a pending backoff timer. */
+function retireMcpReconnect(
+	connection: ServerConnection,
+): { readonly state: McpReconnectState; readonly hadTimer: boolean } | undefined {
+	const state = reconnectStates.get(connection);
+	if (state === undefined) return undefined;
+	reconnectStates.delete(connection);
+	state.unsubscribe();
+	const hadTimer = state.timer !== undefined;
+	clearReconnectTimer(state);
+	return { state, hadTimer };
 }
 
 /**
  * Stops reconnecting: a reconnect still waiting on its backoff timer never starts, none is scheduled later, and
  * every attempt already running is aborted (its OAuth refresh included). The returned promise settles once those
  * attempts have settled, or after `waitMs` at the latest: dispose stays bounded. An attempt still running then is
- * detached; it was aborted, so it marks, reschedules and writes nothing (senpi#4642).
+ * detached; it marks and reschedules nothing, and an OAuth refresh past its token request finishes and persists
+ * the rotated tokens (senpi#4642).
  */
 export function disposeMcpReconnect(
 	connection: ServerConnection,
@@ -173,15 +192,17 @@ async function attemptReconnect(state: McpReconnectState, generation: number, ma
 		state.backoffIndex = 0;
 	} catch (error) {
 		const failure = error instanceof Error ? error : new Error(String(error));
+		// The state now responsible for this connection: this one, or the one a reconfigure handed it to.
+		const live = reconnectStates.get(state.connection);
 		// An attempt that dispose overtook is not a server failure: nothing is marked or rescheduled.
-		if (state.disposed) return throwIfManual(manual, failure);
-		if (state.connection.state !== "suspended" && state.connection.state !== "needs_auth") {
+		if (live === undefined || live.disposed) return throwIfManual(manual, failure);
+		if (live.connection.state !== "suspended" && live.connection.state !== "needs_auth") {
 			const visibleFailure =
-				isGenericReconnectFailure(failure) && state.connection.lastError !== undefined
-					? state.connection.lastError
+				isGenericReconnectFailure(failure) && live.connection.lastError !== undefined
+					? live.connection.lastError
 					: failure;
-			state.connection.markDegraded(visibleFailure);
-			scheduleReconnect(state, state.connection.generation, visibleFailure);
+			live.connection.markDegraded(visibleFailure);
+			scheduleReconnect(live, live.connection.generation, visibleFailure);
 		}
 		throwIfManual(manual, failure);
 	}
