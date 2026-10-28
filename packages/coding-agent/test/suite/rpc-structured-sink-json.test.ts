@@ -202,23 +202,31 @@ it("snapshots getters once before later getters can mutate earlier properties", 
 // Part of #4272: deep nesting must succeed or fail exactly where native JSON.stringify does. A fresh
 // process keeps the walk cold: warmed-up code uses smaller frames and hides the earlier overflow.
 // RULING-68: under the engine limit the normalizer equals the JSON round trip exactly; past it (where the round trip
-// throws the engine's RangeError) it refuses with the typed LegacyRecordDepthError. 20,000 is under Bun's limit and past
-// Node's, so it lands on whichever side this runtime puts it.
+// throws the engine's RangeError) it refuses with the typed LegacyRecordDepthError. The boundary is searched with the
+// same input shape and call chain the samples use, but where (and whether) nested arrays hit a limit depends on the
+// engine: some serialize arrays without recursion and have no array limit at all. So no array sample assumes which
+// side it lands on; each is held to the invariant. The one sample that must refuse is an endless toJSON chain of
+// fresh objects: every engine serializes toJSON results by recursion, so its round trip throws RangeError everywhere.
 it("normalizes deeply nested arrays like the JSON round trip", async () => {
 	const source = new URL("../../src/modes/rpc/json-normal-value.ts", import.meta.url).href;
 	const script = `
 		const { normalizeJsonValue } = await import(${JSON.stringify(source)});
 		const deep = (depth) => { let nested = []; for (let level = 0; level < depth; level++) nested = [nested]; return nested; };
+		const record = (depth) => ({ type: "tool_execution_end", result: { content: [], details: deep(depth) } });
+		const outcome = (run) => { try { return JSON.stringify(run()); } catch (error) { return error.name; } };
+		const roundTrip = (input) => outcome(() => JSON.parse(JSON.stringify(input)));
 		let low = 1;
 		let high = 200000;
 		while (low < high) {
 			const middle = Math.ceil((low + high) / 2);
-			try { JSON.stringify(deep(middle)); low = middle; } catch { high = middle - 1; }
+			if (roundTrip(record(middle)) === "RangeError") high = middle - 1;
+			else low = middle;
 		}
-		const outcome = (run) => { try { return JSON.stringify(run()); } catch (error) { return error.name; } };
-		const results = [low - 16, low + 1, 20000].map((depth) => {
-			const input = { type: "tool_execution_end", result: { content: [], details: deep(depth) } };
-			const reference = outcome(() => JSON.parse(JSON.stringify(input)));
+		const level = () => ({ toJSON: () => ({ inner: level() }) });
+		const endless = { type: "tool_execution_end", result: { content: [], details: level() } };
+		const results = [low - 16, low, low + 1, 20000, -1].map((depth) => {
+			const input = depth < 0 ? endless : record(depth);
+			const reference = roundTrip(input);
 			const normalized = outcome(() => normalizeJsonValue(input).value);
 			return { depth, low, same: normalized === reference, reference: reference.slice(0, 48), normalized: normalized.slice(0, 48) };
 		});
@@ -227,10 +235,11 @@ it("normalizes deeply nested arrays like the JSON round trip", async () => {
 	const { stdout } = await promisify(execFile)(process.execPath, args, { timeout: 60_000 });
 	const results: { depth: number; low: number; same: boolean; reference: string; normalized: string }[] =
 		JSON.parse(stdout);
-	expect(results).toHaveLength(3);
-	const [underLimit, limitPlusOne] = results;
-	expect(underLimit.reference, "the record under the engine limit serializes").not.toBe("RangeError");
-	expect(limitPlusOne.reference, "the engine limit + 1 is past the engine limit").toBe("RangeError");
+	expect(results).toHaveLength(5);
+	const underLimit = results[0];
+	const endlessChain = results[4];
+	expect(underLimit?.reference, "the record under the engine limit serializes").not.toBe("RangeError");
+	expect(endlessChain?.reference, "an endless toJSON chain overflows every engine").toBe("RangeError");
 	for (const { depth, low, same, reference, normalized } of results) {
 		if (reference === "RangeError")
 			expect({ depth, low, normalized }).toEqual({ depth, low, normalized: "LegacyRecordDepthError" });
