@@ -4,7 +4,7 @@ import { connect, createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { hostCloses, next, peerRecord } from "./host-cli-presenter-support.ts";
+import { acknowledgedRequest, hostCloses, next, peerRecord } from "./host-cli-presenter-support.ts";
 import { Peer, type Wire } from "./rpc-public-auth-harness.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -62,6 +62,30 @@ describe.skipIf(process.platform === "win32")("presenter test waits end on event
 		test.abort();
 		await expect(waiting).rejects.toThrow(/still waiting for host_superseded when the test ended.*open/);
 		expect(client.destroyed).toBe(false);
+	});
+
+	const queued = { type: "queued", for_request: "open", position: 1, in_flight: 0 };
+	const answer = { type: "response", id: "open", command: "open_session", success: true };
+	it.each([
+		{ order: "queued, then the answer", records: [queued, answer], outcome: "resolves" },
+		{ order: "the answer alone", records: [answer], outcome: "rejects" },
+		{ order: "the answer, then queued", records: [answer, queued], outcome: "rejects" },
+		{
+			order: "another request's queued, then the answer",
+			records: [{ ...queued, for_request: "x" }, answer],
+			outcome: "rejects",
+		},
+	])("acknowledgedRequest $outcome for $order", async ({ records, outcome }) => {
+		const { host, client } = await channel();
+		const waiting = acknowledgedRequest(
+			new Peer(client),
+			{ id: "open", type: "open_session" },
+			new AbortController().signal,
+		);
+		host.write(records.map((record) => `${JSON.stringify(record)}\n`).join(""));
+		if (outcome === "resolves") await expect(waiting).resolves.toMatchObject(answer);
+		else
+			await expect(waiting).rejects.toThrow("open_session was answered without a queued acknowledgement before it");
 	});
 
 	it("hostCloses resolves on the host's close and reports a test that ends first", async () => {

@@ -114,14 +114,21 @@ describe.skipIf(process.platform === "win32")("public host presenter deployment 
 			expect(second.enrolled.hostInstance).not.toBe(first.enrolled.hostInstance);
 			expect(second.enrolled.principalId).not.toBe(first.enrolled.principalId);
 			const stale = await privateSocket(second.enrolled.endpoint);
+			const frames: string[] = [];
+			stale.on("data", (chunk) => frames.push(String(chunk)));
 			const closed = hostCloses(stale, "the stale management channel", signal);
-			send(stale, {
+			const challenge = (principalId: unknown) => ({
 				type: "challenge",
-				principalId: first.enrolled.principalId,
+				principalId,
 				backendGeneration: enroll.backendGeneration,
 				command: { type: "mcp_presenter_assign" },
 			});
+			// Promptness by order: the host refuses AT the stale record, so the current principal's challenge
+			// right behind it on the same channel is never answered (a host that let it pass would answer it).
+			send(stale, challenge(first.enrolled.principalId));
+			send(stale, challenge(second.enrolled.principalId));
 			await closed;
+			expect(frames).toEqual([]);
 		},
 		180_000,
 	);

@@ -87,7 +87,11 @@ export function hostCloses(socket: Socket, what: string, signal: AbortSignal): P
 	});
 }
 
-/** The channel's own `connect`, or its connection error. */
+/**
+ * The channel's own `connect`, or its connection error. A local-socket connect completes in the kernel's
+ * listen backlog without the host's loop, and a missing or refusing endpoint errors at once, so there is no
+ * host event a promptness bound could anchor to; the error is the failure.
+ */
 export function connected(socket: Socket, what: string, signal: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const finish = (error?: Error) => {
@@ -151,26 +155,32 @@ export function peerRecord(
 /**
  * Sends a request the host acknowledges with `queued` (`open_session`, senpi#1844; `prompt`) and waits for
  * its answer or a lost connection (senpi#4587). An acknowledged request has no wall-clock window, because a
- * loaded in-process host legitimately builds a session for close to a minute; the acknowledgement only
- * tells a "still waiting" failure whether the host ever admitted the request.
+ * loaded in-process host legitimately builds a session for close to a minute. The acknowledgement is
+ * asserted by order instead: the host writes `queued` for the request before it handles it
+ * (`session-router-open.ts`, `session-held.ts`), so an answer with no `queued` before it fails.
  */
-export function acknowledgedRequest(
+export async function acknowledgedRequest(
 	peer: Peer,
 	request: Wire & { readonly id: string },
 	signal: AbortSignal,
 ): Promise<Wire> {
-	const answer = peerRecord(
+	const since = peer.records.length;
+	const acknowledges = (record: Wire) => record.type === "queued" && record.for_request === request.id;
+	const answered = peerRecord(
 		peer,
 		(record) => record.type === "response" && record.id === request.id,
 		`the ${String(request.type)} answer`,
 		signal,
-		peer.records.length,
-		(fresh) =>
-			fresh.some((record) => record.type === "queued" && record.for_request === request.id)
-				? " (acknowledged)"
-				: " (never acknowledged)",
+		since,
+		(fresh) => (fresh.some(acknowledges) ? " (acknowledged)" : " (never acknowledged)"),
 	);
 	send(peer.socket, request);
+	const answer = await answered;
+	const beforeAnswer = peer.records.slice(since, peer.records.indexOf(answer));
+	if (!beforeAnswer.some(acknowledges))
+		throw new Error(
+			`${String(request.type)} was answered without a queued acknowledgement before it: ${JSON.stringify(beforeAnswer)}`,
+		);
 	return answer;
 }
 
