@@ -87,6 +87,7 @@ export class SessionEventFanout {
 					this.connectionCapabilities.delete(id);
 					this.connectionSessions.delete(id);
 					this.registeredCapabilityConnections.delete(id);
+					this.pages?.forgetPeer(socketEpoch);
 					this.checkpoints.forgetPeer(socketEpoch);
 					this.onConnectionClosed?.(id);
 				}
@@ -108,6 +109,7 @@ export class SessionEventFanout {
 		const registered = this.connections.get(id);
 		if (!registered) return;
 		registered.actor.close();
+		this.pages?.forgetPeer(registered.socketEpoch);
 		this.checkpoints.forgetPeer(registered.socketEpoch);
 		this.connections.delete(id);
 		this.connectionCapabilities.delete(id);

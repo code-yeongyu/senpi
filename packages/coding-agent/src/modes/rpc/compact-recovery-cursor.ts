@@ -23,8 +23,10 @@ export interface CursorPosition {
 /** The HMAC-SHA-256 authenticator is truncated to this many bytes (RULING-62 Q2 A). */
 const CURSOR_MAC_BYTES = 16;
 const CURSOR_VERSION = "p1";
-/** The whole grammar (RULING-57 validator shape): version, two bounded decimals, the hex authenticator. */
-const CURSOR = new RegExp(`^${CURSOR_VERSION}:[0-9]{1,16}:[0-9]{1,16}:[0-9a-f]{${CURSOR_MAC_BYTES * 2}}$`);
+/** A bounded decimal in its one canonical form (RULING-57): no leading zero, so `String(n)` is its only encoding. */
+const DECIMAL = "(?:0|[1-9][0-9]{0,15})";
+/** The whole grammar (RULING-57 validator shape): version, two canonical decimals, the hex authenticator. */
+const CURSOR = new RegExp(`^${CURSOR_VERSION}:${DECIMAL}:${DECIMAL}:[0-9a-f]{${CURSOR_MAC_BYTES * 2}}$`);
 const DOMAIN = "senpi-recovery-cursor/1";
 
 /**

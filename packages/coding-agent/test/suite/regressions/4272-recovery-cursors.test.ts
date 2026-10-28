@@ -98,6 +98,33 @@ it("RULING-62 Q2 (2) the grammar is checked before any MAC, the MAC compares in 
 	expect(cursors.open(cursor, binding)).toEqual({ ordinal: 3, offset: 262_144 });
 });
 
+it("RULING-57 every decimal field of a cursor has one canonical encoding: a leading-zero variant is refused before the MAC", () => {
+	const cursors = new RecoveryCursors();
+	const positions = [
+		{ ordinal: 0, offset: 0 },
+		{ ordinal: 1, offset: 0 },
+		{ ordinal: 3, offset: 131_072 },
+		{ ordinal: Number.MAX_SAFE_INTEGER, offset: 9_007_199_254_740_990 },
+	];
+	for (const position of positions) {
+		const cursor = cursors.mint(binding, position);
+		const [version, ordinal, offset, tag] = cursor.split(":");
+		calls.hmac = 0;
+		// Each decimal field (the ordinal and the offset) padded with one and with two leading zeros, alone and together.
+		const variants = [
+			[version, `0${ordinal}`, offset, tag],
+			[version, `00${ordinal}`, offset, tag],
+			[version, ordinal, `0${offset}`, tag],
+			[version, ordinal, `00${offset}`, tag],
+			[version, `0${ordinal}`, `0${offset}`, tag],
+		].map((fields) => fields.join(":"));
+		for (const variant of variants)
+			expect(cursors.open(variant, binding), `${variant} is a second encoding of ${cursor}`).toBeUndefined();
+		expect(calls.hmac, "a non-canonical decimal never reaches the MAC").toBe(0);
+		expect(cursors.open(cursor, binding), "the canonical encoding still opens").toEqual(position);
+	}
+});
+
 it("RULING-62 Q2 (4) a cursor minted under another process key (before a restart) is unknown here", () => {
 	const before = new RecoveryCursors();
 	const after = new RecoveryCursors();

@@ -565,7 +565,9 @@ Behind the same flag, one bounded page of a frozen checkpoint component, through
   53-bit bound the request is refused `recovery_ordinal_exhausted` (re-admit for a new token). One request is active
   per token at a time; a second concurrent one is refused `recovery_busy` (`hint: "retry"`), takes no slot and
   keeps no memory, and that includes a request whose component is still being verified. At most 8 page requests are
-  outstanding on one socket across its tokens; the ninth is refused `recovery_request_limit`.
+  outstanding on one socket across its tokens; the ninth is refused `recovery_request_limit`. A connection that
+  closes while a component is still being verified for it stops that verification at the next stored leaf: its slot
+  and its token are freed then, not when the verification would have ended, and nothing is kept.
 - An exact retry (same `requestId`, `token`, `componentRef` and `cursor`) of the token's current page answers the
   identical bytes from the one page the host keeps per token, without a read; that page is freed when the next
   request advances the token or the token ends. A different request under the same `requestId` is refused
@@ -573,7 +575,8 @@ Behind the same flag, one bounded page of a frozen checkpoint component, through
   no `cursor` (a component's first page); with a cursor behind the token's current ordinal it is refused
   `recovery_cursor_out_of_range`, never served as a fresh page.
 - A cursor is bound to the peer, routing session, token, generation and component it was minted for and
-  authenticated under a per-process key. Presented by another connection or session, altered, or minted by a previous
+  authenticated under a per-process key. It has exactly one encoding (its numbers carry no leading zero), so any
+  re-encoding is an altered cursor. Presented by another connection or session, altered, or minted by a previous
   host process, it is refused `recovery_invalid_cursor` with `hint: "restart_from_catalog"`; an authentic cursor
   whose ordinal is not the token's current one is refused `recovery_cursor_out_of_range` with the same hint. A token
   minted for another connection, session or admission is `recovery_repair_needed` with `reason: "unknown_token"`

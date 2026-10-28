@@ -1,5 +1,7 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
+import { CompactReadError } from "../../../src/modes/rpc/compact-read-lease.ts";
+import { CompactRecoveryCatalog } from "../../../src/modes/rpc/compact-recovery-catalog.ts";
 import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest.ts";
 import type { RecoveryCheckpoints } from "../../../src/modes/rpc/compact-recovery-state.ts";
 import type { RecoveryCaller } from "../../../src/modes/rpc/compact-recovery-types.ts";
@@ -157,6 +159,87 @@ async function pagesOverTheWire(
 		errorData: { reason: "unknown_token" },
 	});
 }
+
+it("RULING-69 (2) a peer that disconnects during a slow first open aborts it: the open stops typed aborted, its socket slot and the token are freed, nothing is cached", async () => {
+	vi.stubEnv(FLAG, "1");
+	await using host = await statusHost();
+	const opener = host.client("opener");
+	const opened = await opener.request({ type: "open_session", cwd: host.cwd });
+	const routing = String((opened.data as { sessionId: string }).sessionId);
+	host.faux.setResponses([fauxAssistantMessage("an answer the cut accepts", { timestamp: 1 })]);
+	const idle = opener.waitFor((record) => record.type === "agent_idle");
+	await opener.request({ type: "prompt", sessionId: routing, message: "first" });
+	await idle;
+	const held = heldConnection(host.writer, "held");
+	host.writer.attachConnectionToSession("held", routing);
+	const checkpoints = host.writer.recoveryCheckpoints;
+	const pages = host.writer.recoveryPages ?? expect.unreachable("the flag is on");
+	const token =
+		checkpoints.tokens().find((candidate) => candidate.admission.peer === "held") ??
+		expect.unreachable(`no token: ${JSON.stringify(checkpoints.status())}`);
+	const { ref } = await firstComponentRef(checkpoints, token, {
+		socketEpoch: token.admission.socketEpoch,
+		sessionId: routing,
+	});
+	// The first open is slow: its verification waits at the gate until the test lets it go.
+	const gate = Promise.withResolvers<void>();
+	const entered = Promise.withResolvers<AbortSignal | undefined>();
+	const settled: unknown[] = [];
+	const read = CompactRecoveryCatalog.prototype.read;
+	vi.spyOn(CompactRecoveryCatalog.prototype, "read").mockImplementation(async function (
+		this: CompactRecoveryCatalog,
+		...args: Parameters<CompactRecoveryCatalog["read"]>
+	) {
+		entered.resolve(args[4]);
+		await gate.promise;
+		try {
+			const opened = await read.apply(this, args);
+			settled.push(opened.kind);
+			return opened;
+		} catch (cause) {
+			settled.push(cause);
+			throw cause;
+		}
+	});
+	const answer = host.writer.withConnection("held", () =>
+		host.core.router.handle({
+			id: "held-page",
+			type: "get_recovery_page",
+			sessionId: routing,
+			token: token.id,
+			admissionId: token.admission.admissionId,
+			componentRef: ref,
+			requestId: "r-1",
+		} as RpcCommand),
+	);
+	try {
+		const signal = await entered.promise;
+		expect(pages.status().outstanding, "the slow open holds one socket slot").toBe(1);
+		expect(signal?.aborted, "the open runs under its connection's lifetime").toBe(false);
+		// The peer goes away the way the socket host drops it: the transport is unregistered at once, and its sessions
+		// are released on the command chain (after this connection's in-flight command), so that release is not awaited.
+		const dropped = host.drop("held");
+		expect(signal?.aborted, "the disconnect aborts the in-flight open").toBe(true);
+		gate.resolve();
+		await dropped;
+	} finally {
+		gate.resolve();
+		held.release();
+	}
+	const refused = await answer;
+	expect(refused).toMatchObject({ success: false, errorData: { kind: "repair_needed", reason: "peer_gone" } });
+	expect(settled, "the verification stopped typed aborted, before any component byte was read").toHaveLength(1);
+	expect(settled[0]).toBeInstanceOf(CompactReadError);
+	expect(settled[0]).toMatchObject({ reason: "aborted" });
+	expect(pages.status(), "the slot and the token's request state are freed; nothing is cached").toMatchObject({
+		tokens: 0,
+		outstanding: 0,
+		cachedBytes: 0,
+	});
+	expect(checkpoints.verifiedComponents, "an aborted open leaves no verified component").toBe(0);
+	held.release();
+	expect(checkpoints.open, "the disconnected peer's token is reclaimed").toBe(0);
+});
 
 it("golden: with the flag off, get_recovery_page and the legacy read commands answer exactly as before", async () => {
 	await using host = await statusHost();

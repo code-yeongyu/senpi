@@ -100,6 +100,8 @@ export class RecoveryPageRequests {
 	private readonly tokens = new Map<string, TokenRequests>();
 	private readonly outstanding = new Map<string, number>();
 	private readonly refusals = new Map<RequestRefusalReason, number>();
+	/** Per socket with a request in flight: its connection's lifetime, aborted when that peer's connection ends. */
+	private readonly lifetimes = new Map<string, AbortController>();
 
 	constructor(checkpoints: RecoveryCheckpoints, cursors = new RecoveryCursors()) {
 		this.checkpoints = checkpoints;
@@ -115,7 +117,19 @@ export class RecoveryPageRequests {
 		return { tokens: this.tokens.size, outstanding, cachedBytes, refused: Object.fromEntries(this.refusals) };
 	}
 
-	/** `signal` is the request's budget: a first open's verification is charged to it (RULING-69 (2)). */
+	/**
+	 * A peer incarnation's connection ended (closed, errored or cut): every open still verifying for it stops, typed
+	 * `aborted`, so its slots and its tokens are freed at the next leaf instead of when the verification ends.
+	 */
+	forgetPeer(socketEpoch: string): void {
+		this.lifetimes.get(socketEpoch)?.abort();
+		this.lifetimes.delete(socketEpoch);
+	}
+
+	/**
+	 * `signal` is the request's budget: a first open's verification is charged to it and to the asking connection's
+	 * lifetime, whichever ends first (RULING-69 (2)).
+	 */
 	async request(
 		caller: RecoveryCaller,
 		request: RecoveryPageRequest,
@@ -173,14 +187,20 @@ export class RecoveryPageRequests {
 	): Promise<RecoveryPageOutcome> {
 		state.active = true;
 		this.outstanding.set(caller.socketEpoch, (this.outstanding.get(caller.socketEpoch) ?? 0) + 1);
+		const lifetime = this.lifetimes.get(caller.socketEpoch) ?? new AbortController();
+		this.lifetimes.set(caller.socketEpoch, lifetime);
+		const budget = signal === undefined ? lifetime.signal : AbortSignal.any([signal, lifetime.signal]);
 		let page: RecoveryOutcome<RecoveryPage>;
 		try {
-			page = await this.checkpoints.readCatalogPage(token, caller, request.componentRef, offset, signal);
+			page = await this.checkpoints.readCatalogPage(token, caller, request.componentRef, offset, budget);
 		} finally {
 			state.active = false;
 			const left = (this.outstanding.get(caller.socketEpoch) ?? 1) - 1;
 			if (left > 0) this.outstanding.set(caller.socketEpoch, left);
-			else this.outstanding.delete(caller.socketEpoch);
+			else {
+				this.outstanding.delete(caller.socketEpoch);
+				if (this.lifetimes.get(caller.socketEpoch) === lifetime) this.lifetimes.delete(caller.socketEpoch);
+			}
 		}
 		if (!page.ok) return page;
 		if (!this.tokens.has(token.id)) return { ok: false, failure: repairNeeded("released") };
