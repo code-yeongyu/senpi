@@ -131,7 +131,8 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		disabledBy = config.disabledBy;
 		disabled = disabledBy !== null;
 		const disabledRules = [...config.disabledRules];
-		repetitiveTurns.configure(new Set(disabledRules));
+		// Off means every rule off, including the repetitive-turns lane that runs outside the manager.
+		repetitiveTurns.configure(new Set(disabled ? [...disabledRules, REPETITIVE_TURNS_RULE_NAME] : disabledRules));
 		const settings = { ...DEFAULT_TTSR_SETTINGS, enabled: !disabled, disabledRules };
 		manager = new TtsrManager(settings, (pattern) => compileRuleCondition(pattern).regex);
 		const injectedNames = ctx.sessionManager.getEntries().flatMap((entry) => {

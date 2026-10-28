@@ -67,6 +67,33 @@ describe("DSML envelope filter (senpi#4621)", () => {
 		expect(stripDsmlEnvelopes(input)).toBe(expected);
 	});
 
+	it.each([
+		{
+			name: "a tool argument longer than the hold limit",
+			input: `before ${open(' invoke name="write"')}${open(' parameter name="content"')}${"x".repeat(5000)}${close(" parameter")}${close(" invoke")} after`,
+			expected: "before  after",
+		},
+		{
+			name: "a parameter envelope that never closes",
+			input: `before ${open(' parameter name="content"')}${"y".repeat(5000)}`,
+			expected: "before ",
+		},
+	])("never releases $name as reasoning", ({ input, expected }) => {
+		expect(stripDsmlEnvelopes(input)).toBe(expected);
+		expect(
+			filterInPieces(
+				input,
+				Array.from({ length: input.length }, (_, index) => index),
+			),
+		).toBe(expected);
+	});
+
+	it("releases the text of an opening tag that never completes at the end of the stream", () => {
+		const input = `a <${BAR}DSML${BAR} invoke name=x and then the real thought`;
+		expect(stripDsmlEnvelopes(input)).toBe(input);
+		expect(filterInPieces(input, [5, 12])).toBe(input);
+	});
+
 	it("gives the same result for every way the stream is split", () => {
 		const expected = stripDsmlEnvelopes(REASONING_WITH_DSML);
 		const length = REASONING_WITH_DSML.length;
@@ -125,7 +152,59 @@ describe("openai-completions reasoning stream with DSML (senpi#4621)", () => {
 		expect(JSON.stringify(bodies[1])).not.toContain("DSML");
 		expect(JSON.stringify(bodies[1])).toContain(JSON.stringify(REASONING_WITHOUT_DSML).slice(1, -1));
 	});
+
+	it("replays OpenRouter reasoning_details without DSML, and a signed detail verbatim", async () => {
+		// given a stored OpenRouter-style reply whose reasoning_details carry DSML (DeepSeek via OpenRouter)
+		const bodies: unknown[] = [];
+		const baseUrl = await startServer(async (request, response) => {
+			bodies.push(JSON.parse(await readBody(request)));
+			streamReasoning(response, ["ok"]);
+		});
+		const model = testModel(baseUrl);
+		const signedText = `signed ${open(' invoke name="bash"')}x${close(" invoke")}`;
+		const details = [
+			{ type: "reasoning.text", text: REASONING_WITH_DSML, format: "unknown", index: 0 },
+			{ type: "reasoning.summary", summary: `sum ${open(" calls")}z${close(" calls")}`, index: 1 },
+			{ type: "reasoning.text", text: signedText, signature: "sig-1", index: 2 },
+		];
+		const first = await streamSimple(model, userContext(), { apiKey: "test", maxRetries: 0 }).result();
+		const stored: Context = {
+			messages: [
+				{ role: "user", content: "check the build", timestamp: 1 },
+				{
+					...first,
+					content: [
+						{ type: "thinking", thinking: REASONING_WITH_DSML, thinkingSignature: JSON.stringify(details) },
+						{ type: "text", text: "The build passes." },
+					],
+				},
+				{ role: "user", content: "go on", timestamp: 2 },
+			],
+		};
+
+		// when it is replayed
+		await streamSimple(model, stored, { apiKey: "test", maxRetries: 0, reasoning: "high" }).result();
+
+		// then the unsigned details lose the envelope and the signed one is sent exactly as signed
+		const replayed = replayedReasoningDetails(bodies[1]);
+		expect(replayed).toEqual([
+			{ type: "reasoning.text", text: REASONING_WITHOUT_DSML, format: "unknown" },
+			{ type: "reasoning.summary", summary: "sum " },
+			{ type: "reasoning.text", text: signedText, signature: "sig-1" },
+		]);
+	});
 });
+
+function replayedReasoningDetails(body: unknown): unknown {
+	if (typeof body !== "object" || body === null || !("messages" in body) || !Array.isArray(body.messages)) return [];
+	const assistant: unknown = body.messages.find(
+		(message: unknown) =>
+			typeof message === "object" && message !== null && "role" in message && message.role === "assistant",
+	);
+	return typeof assistant === "object" && assistant !== null && "reasoning_details" in assistant
+		? assistant.reasoning_details
+		: undefined;
+}
 
 function collectThinkingDelta(event: AssistantMessageEvent, deltas: string[]): void {
 	if (event.type === "thinking_delta") deltas.push(event.delta);

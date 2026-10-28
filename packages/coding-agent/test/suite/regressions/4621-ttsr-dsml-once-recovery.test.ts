@@ -123,6 +123,40 @@ describe("senpi#4621 DSML in thinking and the one-correction stop", () => {
 	});
 });
 
+const STATUS = "Still working on the frobnicate step. Pass 1 of 9 is done, queue drained here.";
+
+describe("senpi#4621 TTSR off turns every rule off, repetitive-turns included", () => {
+	let harness: Harness;
+
+	afterEach(() => {
+		harness.cleanup();
+	});
+
+	it.each([
+		{ name: "ttsr.enabled false in settings.json", settingsContent: JSON.stringify({ ttsr: { enabled: false } }) },
+		{ name: "the --ttsr-disabled flag", flags: new Map<string, boolean | string>([["ttsr-disabled", true]]) },
+	])("$name leaves a repeated text-only reply alone", async ({ settingsContent, flags }) => {
+		// given a model that repeats the same status with no work in between
+		harness = await createHarness({
+			extensionFactories: [ttsrExtension],
+			fileSettings: true,
+			settingsContent: settingsContent ?? "{}",
+			...(flags === undefined ? {} : { extensionFlagValues: flags }),
+		});
+		harness.setResponses([fauxAssistantMessage([fauxText(STATUS)]), fauxAssistantMessage([fauxText(STATUS)])]);
+
+		// when
+		await harness.session.prompt("frob the widget");
+		await harness.session.prompt("continue");
+
+		// then no rule fires: no activation, correction, stop or pause
+		expect(activationOwners(harness)).toEqual([]);
+		expect(corrections(harness)).toEqual([]);
+		expect(customEntries(harness, "ttsr-loop-stopped")).toEqual([]);
+		expect(customEntries(harness, "engine-paused")).toEqual([]);
+	});
+});
+
 describe("senpi#4621 TTSR settings for hosts that launch with fixed arguments", () => {
 	let harness: Harness;
 

@@ -466,6 +466,10 @@ function appendOpenAIReasoningDetail(details: OpenAIReasoningDetail[], detail: O
  * it validates inside them. `null` survives where the schema allows it, since the provider
  * sent it. The switch is exhaustive over the same union `isOpenAIReasoningDetail` validates,
  * so a new detail type or payload field fails to compile until both sides agree.
+ *
+ * Readable reasoning (`reasoning.text`, `reasoning.summary`) is replayed without DeepSeek DSML envelopes, as the
+ * thinking block is (senpi#4621). A signed `reasoning.text` is forwarded verbatim: the provider verifies the
+ * signature over that exact text, and changing it would reject the whole request.
  */
 function toReplayableReasoningDetail(detail: OpenAIReasoningDetail): OpenAIReasoningDetail {
 	const common: OpenAIReasoningDetailBase = {};
@@ -473,12 +477,14 @@ function toReplayableReasoningDetail(detail: OpenAIReasoningDetail): OpenAIReaso
 	if (detail.format !== undefined) common.format = detail.format;
 	switch (detail.type) {
 		case "reasoning.text": {
-			const replayable: OpenAIReasoningTextDetail = { ...common, type: "reasoning.text", text: detail.text };
+			const signed = typeof detail.signature === "string" && detail.signature.length > 0;
+			const text = signed ? detail.text : stripDsmlEnvelopes(detail.text);
+			const replayable: OpenAIReasoningTextDetail = { ...common, type: "reasoning.text", text };
 			if (detail.signature !== undefined) replayable.signature = detail.signature;
 			return replayable;
 		}
 		case "reasoning.summary":
-			return { ...common, type: "reasoning.summary", summary: detail.summary };
+			return { ...common, type: "reasoning.summary", summary: stripDsmlEnvelopes(detail.summary) };
 		case "reasoning.encrypted":
 			return { ...common, type: "reasoning.encrypted", data: detail.data };
 	}

@@ -1,4 +1,4 @@
-import { isUserDirectedTurn } from "../../../engine-turn-limit.ts";
+import { resetsEngineTurnHistory } from "../../../engine-turn-limit.ts";
 import type { SessionEntry } from "../../../session-manager.ts";
 import { hasToolCall } from "./repetitive-turns-lane.ts";
 import { TTSR_INJECTION_CUSTOM_TYPE } from "./types.ts";
@@ -37,10 +37,12 @@ function stoppedRules(entry: SessionEntry): readonly unknown[] {
  * A turn the person asked for: a typed message, or a `.` continue / continue-from-leaf / stop-resume, which are
  * recorded as hidden custom messages. After a stop the notice asks for "any message", so each of them must start a
  * fresh episode; counting only typed messages stopped a `.` continue at its first hit with no correction (senpi#4621).
+ * A stop-resume that recovers an interrupted run (`resumeCause: "interrupted"`) is the engine's recovery, not a
+ * new message, as for the engine turn budget, so it does not renew the correction.
  */
 function isPersonTurn(entry: SessionEntry): boolean {
 	if (entry.type === "message") return entry.message.role === "user";
-	return entry.type === "custom_message" && isUserDirectedTurn(entry.customType);
+	return entry.type === "custom_message" && resetsEngineTurnHistory(entry.customType, entry.details);
 }
 
 /**

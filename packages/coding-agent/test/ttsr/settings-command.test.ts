@@ -157,6 +157,15 @@ describe("/ttsr command", () => {
 		expect(output).toContain("USER RULES\n(none)");
 		expect(output).toContain("INJECTED\n(none)");
 	});
+
+	it.each([
+		{ disabledBy: "flag", line: "disabled (ttsr-disabled flag set)" },
+		{ disabledBy: "settings", line: "disabled (ttsr.enabled is false in settings)" },
+	] as const)("names the $disabledBy as what turned TTSR off (senpi#4621)", async ({ disabledBy, line }) => {
+		const output = await runTtsrCommand({ rules: [], injectedRuleNames: [], disabled: true, disabledBy });
+
+		expect(output).toContain(`STATUS\n${line}\n`);
+	});
 });
 
 describe("ttsr settings and flag gating", () => {
