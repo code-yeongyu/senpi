@@ -188,6 +188,15 @@ export class RecoveryCheckpoints {
 		}
 	}
 
+	/**
+	 * The caller's claim on a token it named by id, before any request state is touched: a token superseded while an
+	 * operation still holds it answers `superseded_token` with the newer generation (RULING-70 (3), RULING-50 (2)).
+	 */
+	check(token: RecoveryToken, caller: RecoveryCaller): RecoveryOutcome<RecoveryToken> {
+		const claimed = this.claim(token, caller);
+		return claimed.ok ? recovered(token) : claimed;
+	}
+
 	/** The pinned transcript root (version, leaf, accepted ids, base identity); its bytes are read by S11's page route. */
 	transcript(token: RecoveryToken, caller: RecoveryCaller): RecoveryOutcome<TranscriptRoot> {
 		const claimed = this.claim(token, caller);

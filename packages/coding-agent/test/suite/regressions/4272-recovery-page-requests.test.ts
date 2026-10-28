@@ -45,7 +45,8 @@ async function rigWithToken(cursors = new RecoveryCursors()) {
 	const rig = recoveryRig();
 	const caller: RecoveryCaller = { socketEpoch: "socket-1", sessionId: huge };
 	await rig.lane.idle();
-	const token = unwrap(rig.checkpoints.freeze(route(huge), rig.lane)).token;
+	const checkpoint = unwrap(rig.checkpoints.freeze(route(huge), rig.lane));
+	const { token } = checkpoint;
 	const manifest = unwrap(await rig.checkpoints.catalog(token, caller));
 	if (!("ref" in manifest.session)) throw new Error("the huge session id must be a ref");
 	const pages = new RecoveryPageRequests(rig.checkpoints, cursors);
@@ -57,7 +58,7 @@ async function rigWithToken(cursors = new RecoveryCursors()) {
 	};
 	const request = (fields: Partial<RecoveryPageRequest>, as: RecoveryCaller = caller) =>
 		pages.request(as, { ...base, ...fields });
-	return { rig, caller, token, manifest, pages, cursors, base, request, session: manifest.session };
+	return { rig, caller, checkpoint, token, manifest, pages, cursors, base, request, session: manifest.session };
 }
 
 const refusal = (outcome: RecoveryPageOutcome) => (outcome.ok ? undefined : outcome.failure);
@@ -367,6 +368,108 @@ it("T5 a malformed request, a node ref and an offset refusal are typed before an
 		kind: "storage_unavailable",
 		reason: "range",
 	});
+	rig.checkpoints.release(token);
+	await rig.lane.idle();
+});
+
+const superseded = { kind: "repair_needed", reason: "superseded_token", newerGeneration: 2 };
+const unknownToken = { kind: "repair_needed", reason: "unknown_token" };
+
+it("RULING-70 (3) RULING-50 (2) a superseded token its own in-flight page request still holds answers superseded_token with the newer generation, never busy; once reclaimed it is unknown_token", async () => {
+	const { request, rig, token, manifest } = await rigWithToken();
+	const first = unwrap(await request({ requestId: "r-1" }));
+	const opens = heldOpens();
+	const inFlight = request({ requestId: "r-2", componentRef: `${manifest.catalogRoot}:007` });
+	expect(opens.entered(), "the in-flight request is inside its open").toBe(1);
+	const newer = unwrap(rig.checkpoints.freeze(route(huge), rig.lane)).token;
+	expect(newer.admission.generation).toBe(2);
+	expect(
+		rig.checkpoints.tokens().map(({ id }) => id),
+		"carry 33: the in-flight read keeps the superseded token object",
+	).toContain(token.id);
+	const reads = vi.spyOn(RecoveryCheckpoints.prototype, "readCatalogPage");
+	expect(refusal(await request({ requestId: "r-3" })), "a new request on the held token").toEqual(superseded);
+	expect(
+		refusal(await request({ requestId: "r-2", componentRef: `${manifest.catalogRoot}:007` })),
+		"the in-flight request's own retry",
+	).toEqual(superseded);
+	expect(refusal(await request({ requestId: "r-4", cursor: first.cursor ?? undefined })), "a continuation").toEqual(
+		superseded,
+	);
+	expect(reads, "a superseded token is answered before any read").not.toHaveBeenCalled();
+	opens.release();
+	expect(refusal(await inFlight), "the in-flight request itself").toEqual(superseded);
+	expect(
+		rig.checkpoints.tokens().map(({ id }) => id),
+		"reclaimed once its last operation unwound",
+	).not.toContain(token.id);
+	expect(refusal(await request({ requestId: "r-5" })), "after the reclaim").toEqual(unknownToken);
+	rig.checkpoints.release(newer);
+	await rig.lane.idle();
+});
+
+it("RULING-70 (3) carry 33 a superseded token another operation still holds never serves its cached page: superseded_token while held, unknown_token after the reclaim", async () => {
+	const { request, rig, token, checkpoint, pages, manifest } = await rigWithToken();
+	const first = unwrap(await request({ requestId: "r-1" }));
+	const gate = Promise.withResolvers<void>();
+	const held = checkpoint.hold(() => gate.promise);
+	const newer = unwrap(rig.checkpoints.freeze(route(huge), rig.lane)).token;
+	expect(rig.checkpoints.tokens().map(({ id }) => id)).toContain(token.id);
+	expect(pages.status().cachedBytes, "the cached page still exists while the token is held").toBe(first.bytes.length);
+	expect(refusal(await request({ requestId: "r-1" })), "an exact retry of the cached page").toEqual(superseded);
+	expect(
+		refusal(await request({ requestId: "r-1", componentRef: `${manifest.catalogRoot}:007` })),
+		"a changed request under the cached id",
+	).toEqual(superseded);
+	expect(refusal(await request({ requestId: "r-2", cursor: first.cursor ?? undefined })), "a continuation").toEqual(
+		superseded,
+	);
+	gate.resolve();
+	await held;
+	expect(rig.checkpoints.tokens().map(({ id }) => id)).not.toContain(token.id);
+	expect(pages.status(), "the reclaim frees the cached page").toMatchObject({ cachedBytes: 0, tokens: 0 });
+	expect(refusal(await request({ requestId: "r-1" })), "after the reclaim").toEqual(unknownToken);
+	rig.checkpoints.release(newer);
+	await rig.lane.idle();
+});
+
+it("RULING-70 guard: an old request id is a fresh request only without a cursor; a cursor behind the token's ordinal is refused cursor_out_of_range before any read", async () => {
+	const { request, rig, token, pages } = await rigWithToken();
+	const p1 = unwrap(await request({ requestId: "r-1" }));
+	const p2 = unwrap(await request({ requestId: "r-2", cursor: p1.cursor ?? undefined }));
+	const p3 = unwrap(await request({ requestId: "r-3", cursor: p2.cursor ?? undefined }));
+	expect(p3.ordinal).toBe(3);
+	const reads = vi.spyOn(RecoveryCheckpoints.prototype, "readCatalogPage");
+	const stale = { kind: "request_refused", reason: "cursor_out_of_range", hint: "restart_from_catalog" };
+	expect(
+		refusal(await request({ requestId: "r-2", cursor: p1.cursor ?? undefined })),
+		"an old request replayed with its own cursor after the token advanced",
+	).toEqual(stale);
+	expect(
+		refusal(await request({ requestId: "r-1", cursor: p2.cursor ?? undefined })),
+		"an old id with a later but still behind cursor",
+	).toEqual(stale);
+	expect(reads, "a behind cursor is never served as a fresh page").not.toHaveBeenCalled();
+	expect(pages.status().cachedBytes, "the current page stays cached").toBe(p3.bytes.length);
+	const fresh = unwrap(await request({ requestId: "r-2" }));
+	expect([fresh.ordinal, fresh.offset], "an old id without a cursor is a fresh first-page request").toEqual([4, 0]);
+	rig.checkpoints.release(token);
+	await rig.lane.idle();
+});
+
+it("RULING-69 (2) a request's abort signal stops its first open's verification: typed aborted, its slot and the token's active flag freed, the ordinal not advanced", async () => {
+	const { pages, base, caller, rig, token } = await rigWithToken();
+	const opens = heldOpens();
+	const abort = new AbortController();
+	const aborted = pages.request(caller, { ...base, requestId: "r-1" }, abort.signal);
+	expect(opens.entered()).toBe(1);
+	abort.abort();
+	opens.release();
+	expect(refusal(await aborted)).toEqual({ kind: "storage_unavailable", reason: "aborted" });
+	expect(pages.status()).toMatchObject({ outstanding: 0, cachedBytes: 0 });
+	expect(rig.checkpoints.verifiedComponents, "an aborted verification leaves no cache entry").toBe(0);
+	const page = unwrap(await pages.request(caller, { ...base, requestId: "r-2" }));
+	expect([page.ordinal, page.offset], "the next request is served and takes the first ordinal").toEqual([1, 0]);
 	rig.checkpoints.release(token);
 	await rig.lane.idle();
 });

@@ -569,13 +569,17 @@ Behind the same flag, one bounded page of a frozen checkpoint component, through
 - An exact retry (same `requestId`, `token`, `componentRef` and `cursor`) of the token's current page answers the
   identical bytes from the one page the host keeps per token, without a read; that page is freed when the next
   request advances the token or the token ends. A different request under the same `requestId` is refused
-  `recovery_request_mismatch`.
+  `recovery_request_mismatch`. A `requestId` used before the token advanced is a new request only when it carries
+  no `cursor` (a component's first page); with a cursor behind the token's current ordinal it is refused
+  `recovery_cursor_out_of_range`, never served as a fresh page.
 - A cursor is bound to the peer, routing session, token, generation and component it was minted for and
   authenticated under a per-process key. Presented by another connection or session, altered, or minted by a previous
   host process, it is refused `recovery_invalid_cursor` with `hint: "restart_from_catalog"`; an authentic cursor
   whose ordinal is not the token's current one is refused `recovery_cursor_out_of_range` with the same hint. A token
   minted for another connection, session or admission is `recovery_repair_needed` with `reason: "unknown_token"`
-  and nothing else; the owner's other typed failures arrive as `recovery_repair_needed` or
+  and nothing else. A token superseded by a newer admission of its stream answers `recovery_repair_needed` with
+  `reason: "superseded_token"` and `newerGeneration` while an operation still holds it, and `unknown_token` once
+  it is reclaimed. The owner's other typed failures arrive as `recovery_repair_needed` or
   `recovery_storage_unavailable` with `errorData` carrying the failure. Every refusal happens before any byte is read.
 
 #### interactive_user

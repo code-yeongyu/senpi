@@ -115,7 +115,12 @@ export class RecoveryPageRequests {
 		return { tokens: this.tokens.size, outstanding, cachedBytes, refused: Object.fromEntries(this.refusals) };
 	}
 
-	async request(caller: RecoveryCaller, request: RecoveryPageRequest): Promise<RecoveryPageOutcome> {
+	/** `signal` is the request's budget: a first open's verification is charged to it (RULING-69 (2)). */
+	async request(
+		caller: RecoveryCaller,
+		request: RecoveryPageRequest,
+		signal?: AbortSignal,
+	): Promise<RecoveryPageOutcome> {
 		const fields = [request.requestId, request.admissionId, request.token, request.componentRef];
 		if (fields.some((field) => typeof field !== "string" || !parseBoundedId(field).ok))
 			return this.refuse("malformed_request");
@@ -132,6 +137,8 @@ export class RecoveryPageRequests {
 			token.admission.sessionId !== caller.sessionId
 		)
 			return { ok: false, failure: repairNeeded("unknown_token") };
+		const claimed = this.checkpoints.check(token, caller);
+		if (!claimed.ok) return claimed;
 		const state = this.tokens.get(token.id) ?? { active: false, ordinal: 0, current: undefined };
 		if (state.active) return this.refuse("busy");
 		if (state.current?.request.requestId === request.requestId)
@@ -151,7 +158,7 @@ export class RecoveryPageRequests {
 		if (!Number.isSafeInteger(last + 1)) return this.refuse("ordinal_exhausted");
 		if (position !== undefined && position.ordinal !== state.ordinal) return this.refuse("cursor_out_of_range");
 		this.tokens.set(token.id, state);
-		return this.serve(caller, token, request, state, binding, position?.offset ?? 0);
+		return this.serve(caller, token, request, state, binding, position?.offset ?? 0, signal);
 	}
 
 	/** Holds the token's active flag and one socket slot from before the read until the outcome is known. */
@@ -162,12 +169,13 @@ export class RecoveryPageRequests {
 		state: TokenRequests,
 		binding: CursorBinding,
 		offset: number,
+		signal: AbortSignal | undefined,
 	): Promise<RecoveryPageOutcome> {
 		state.active = true;
 		this.outstanding.set(caller.socketEpoch, (this.outstanding.get(caller.socketEpoch) ?? 0) + 1);
 		let page: RecoveryOutcome<RecoveryPage>;
 		try {
-			page = await this.checkpoints.readCatalogPage(token, caller, request.componentRef, offset);
+			page = await this.checkpoints.readCatalogPage(token, caller, request.componentRef, offset, signal);
 		} finally {
 			state.active = false;
 			const left = (this.outstanding.get(caller.socketEpoch) ?? 1) - 1;
