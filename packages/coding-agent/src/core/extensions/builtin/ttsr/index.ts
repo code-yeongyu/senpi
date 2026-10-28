@@ -11,9 +11,11 @@ import { claimAbort, createGenerationState, markUserCancelled } from "./coordina
 import { REPETITIVE_TURNS_RULE_NAME } from "./detectors/repetitive-turns.ts";
 import { discoverTtsrRulesSync } from "./discovery.ts";
 import {
+	loopStopAlreadyReported,
 	ruleAlreadyCorrected,
 	TTSR_LOOP_STOPPED_ENTRY_TYPE,
 	TTSR_LOOP_STOPPED_EVENT,
+	type TtsrLoopStopped,
 	ttsrLoopStoppedNotice,
 } from "./follow-up-limit.ts";
 import { TtsrManager } from "./manager.ts";
@@ -27,6 +29,7 @@ import {
 	readPersistedAssistantTexts,
 } from "./repetitive-turns-lane.ts";
 import { compileRuleCondition } from "./rule-condition.ts";
+import { resolveTtsrConfig, type TtsrDisabledBy } from "./settings.ts";
 import { buildStreamRemediation } from "./stream-remediation.ts";
 import {
 	DEFAULT_TTSR_SETTINGS,
@@ -56,15 +59,6 @@ function isInterruptKey(data: string): boolean {
 	}
 }
 
-function parseDisabledRules(raw: boolean | string | undefined): string[] {
-	return typeof raw === "string" && raw.length > 0
-		? raw
-				.split(",")
-				.map((name) => name.trim())
-				.filter((name) => name.length > 0)
-		: [];
-}
-
 export default function ttsrExtension(pi: ExtensionAPI): void {
 	registerRuleActivationRenderer(pi);
 	pi.registerFlag("ttsr-disabled", {
@@ -87,6 +81,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 	let pendingNudge: TtsrNudgeMessage | null = null;
 	let settlingAgentEnd: AgentEndEvent | null = null;
 	let disabled = false;
+	let disabledBy: TtsrDisabledBy | null = null;
 	const repetitiveTurns = new RepetitiveTurnsLane();
 
 	function cancelRemediation(): void {
@@ -128,8 +123,14 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 
 	function ensureInitialized(ctx: ExtensionContext): void {
 		if (manager !== null) return;
-		disabled = pi.getFlag("ttsr-disabled") === true;
-		const disabledRules = parseDisabledRules(pi.getFlag("ttsr-rules-disabled"));
+		const config = resolveTtsrConfig(
+			pi.getFlag("ttsr-disabled"),
+			pi.getFlag("ttsr-rules-disabled"),
+			pi.getSettings(),
+		);
+		disabledBy = config.disabledBy;
+		disabled = disabledBy !== null;
+		const disabledRules = [...config.disabledRules];
 		repetitiveTurns.configure(new Set(disabledRules));
 		const settings = { ...DEFAULT_TTSR_SETTINGS, enabled: !disabled, disabledRules };
 		manager = new TtsrManager(settings, (pattern) => compileRuleCondition(pattern).regex);
@@ -171,6 +172,7 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 			rules: manager?.getRules() ?? [],
 			injectedRuleNames: manager?.getInjectedRuleNames() ?? [],
 			disabled,
+			disabledBy,
 		};
 	}
 
@@ -283,9 +285,15 @@ export default function ttsrExtension(pi: ExtensionAPI): void {
 		pendingNudge = null;
 		const [rule] = nudge.details.rules;
 		if (rule !== undefined && ruleAlreadyCorrected(ctx.sessionManager.getEntries(), rule)) {
+			if (loopStopAlreadyReported(ctx.sessionManager.getEntries(), rule)) return;
 			const logger = createSessionLogger(ctx.agentDir);
-			pi.appendEntry(TTSR_LOOP_STOPPED_ENTRY_TYPE, { rules: nudge.details.rules, at: Date.now() });
-			pi.events.emit(TTSR_LOOP_STOPPED_EVENT, { rules: nudge.details.rules });
+			const stopped: TtsrLoopStopped = {
+				rules: nudge.details.rules,
+				reason: "repeated-after-correction",
+				at: Date.now(),
+			};
+			pi.appendEntry(TTSR_LOOP_STOPPED_ENTRY_TYPE, stopped);
+			pi.events.emit(TTSR_LOOP_STOPPED_EVENT, { rules: stopped.rules, reason: stopped.reason });
 			ctx.ui.notify(ttsrLoopStoppedNotice(rule), "warning");
 			try {
 				if (!enginePauseSinceLastTurn(ctx.sessionManager.getEntries())) {

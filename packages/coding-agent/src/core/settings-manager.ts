@@ -89,6 +89,7 @@ import {
 	type ThinkingBudgetsSettings,
 	type TodoFirstTurnPlan,
 	type TodoSettings,
+	type TtsrSettingsConfig,
 } from "./settings-shapes.ts";
 import {
 	logStateError,
@@ -252,6 +253,7 @@ export interface Settings {
 	askUser?: AskUserSettings;
 	/** Bounds on turns the engine starts without a user message (senpi#2967). */
 	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number; maxPerResumeWindow?: number };
+	ttsr?: TtsrSettingsConfig; // stream rules (TTSR); see docs/settings.md (senpi#4621)
 	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
 	turn_max_runtime_ms?: number; // default: 21_600_000, 0 disables
 	todo?: TodoSettings;

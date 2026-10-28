@@ -639,6 +639,23 @@ This is the default and has no setting. Tools may declare `exposure: "eval"` to 
 
 When a limit is reached the session pauses with a notice instead of starting another turn; any message you send continues it, because only turns since your last message count.
 
+### Stream Rules (TTSR)
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `ttsr.enabled` | boolean | `true` | `false` turns every stream rule off, the same as the `--ttsr-disabled` flag |
+| `ttsr.disabledRules` | string[] | `[]` | Rule names to turn off (for example `collapse-repetition`, `control-token-leak`, `repetitive-turns`); merged with `--ttsr-rules-disabled` |
+
+Hosts that start the runtime with fixed arguments, such as the desktop app, cannot pass the CLI flags; these settings are read by every session from `settings.json` (global or project), so they apply there too. A change applies to the next session the host starts. `/ttsr` shows whether the flag or the setting turned the rules off.
+
+A stream rule corrects a reply once per episode. If the reply breaks the same rule again right after the correction, the run stops with one `ttsr-loop-stopped` notice (`reason: "repeated-after-correction"`). The next turn you start, whether a typed message, a `.` continue or a resume, gets a fresh correction.
+
+```json
+{
+  "ttsr": { "disabledRules": ["collapse-repetition"] }
+}
+```
+
 ### Ask User
 
 | Setting | Type | Default | Description |

@@ -129,6 +129,7 @@ describe("/ttsr command", () => {
 			rules: sampleRules(),
 			injectedRuleNames: ["no-secrets"],
 			disabled: false,
+			disabledBy: null,
 		});
 
 		expect(output).toContain("STATUS");
@@ -150,7 +151,7 @@ describe("/ttsr command", () => {
 	});
 
 	it("reports disabled status and empty sections", async () => {
-		const output = await runTtsrCommand({ rules: [], injectedRuleNames: [], disabled: true });
+		const output = await runTtsrCommand({ rules: [], injectedRuleNames: [], disabled: true, disabledBy: "flag" });
 
 		expect(output).toContain("disabled");
 		expect(output).toContain("USER RULES\n(none)");
