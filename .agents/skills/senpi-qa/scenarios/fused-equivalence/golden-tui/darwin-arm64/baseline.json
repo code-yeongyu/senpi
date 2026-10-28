@@ -1,0 +1,20 @@
+{
+ "repo": {
+  "head": "8300e8189567b843998a4af7c2cc1599d6c5b457",
+  "dirty": true
+ },
+ "platform": "darwin-arm64",
+ "runtimes": {
+  "harness": "node@24.22.1",
+  "child": "bun@1.4.4"
+ },
+ "hashes": {
+  "harness": "sha256:922c308b863e50c65ac24a2283373b1dfec4e665b47a973b9a81c11debce4cee",
+  "normalizer": "sha256:7d676cd57a4ba44323a5997bb81b7ffb7e70b0d1df7de05d08325c6901ca2dd9",
+  "fakeModelServer": "sha256:cab5b6866b7854287218de51d1fafcc242a8602b2c83fb85572abe332f9f6560",
+  "cases": "sha256:e68ea9ebca5392d8d948d17cd2aa122d0215fbc9cc83e5fabe9f130cd20f43c8",
+  "fixtures": "sha256:40f9e14a19251c338614b3c0d2d2ecfce9f543aca9df5a389bd7bf5bd8f6b038",
+  "tuiCapture": "sha256:e342256c7aeabd915b94c19bcf60ce364cec6273d412025ee510941bda2a93df"
+ },
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --surface tui --repeat 2 --evidence p0-05c-record-final2"
+}
