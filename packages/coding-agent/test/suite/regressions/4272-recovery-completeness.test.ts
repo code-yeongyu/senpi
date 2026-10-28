@@ -1,5 +1,7 @@
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import type { FileEntry } from "../../../src/core/session-manager.ts";
+import { recoveryCarrier } from "../../../src/core/session-recovery-identity.ts";
 import {
 	assertCoverage,
 	CATALOG_FAMILIES,
@@ -181,8 +183,64 @@ it("carry 47: a correlated record refused at the protocol depth limit leaves the
 			activeMessageId: null,
 			turnId: null,
 			correlation: { sequence: 1, clientMessageId: "c1", clientTurnId: "t1" },
+			refusedCorrelations: 1,
 		});
 		expect(root.correlation?.sequence).toBeLessThan(root.sequence);
+		// And: a reader knows a correlation is missing: the identity family is partial (RULING-67 (4))
+		const registry = readFamilyRegistry(texts.get("families/families") ?? "");
+		expect(registry.assembly === "incomplete" ? registry.incomplete : []).toEqual(["identity"]);
+		rig.lane.release(root);
+	} finally {
+		await rig.close();
+	}
+});
+
+it("RULING-67 (4) the record after one refused at the protocol depth limit correlates to its own turn and message, never the refused one's", async () => {
+	// Given: a correlated turn with a live assistant message whose correlated end is refused at the protocol depth limit
+	const rig = await callsRig();
+	try {
+		const turn = rig.record({ type: "turn_start", clientMessageId: "c1", clientTurnId: "t1" });
+		const first = rig.start();
+		let deep: unknown = "leaf";
+		for (let depth = 0; depth < 1_100; depth++) deep = [deep];
+		const message = { ...fauxAssistantMessage("", { timestamp: 1 }), content: [{ type: "text", text: deep }] };
+		const refusedEnd = { type: "message_end", clientMessageId: "c2", clientTurnId: "t1", message };
+		const refused = rig.lane.accept(refusedEnd, first);
+		const stale = rig.lane.freeze();
+		// When: the next record of the same turn starts a second message with its own correlation
+		const next = {
+			type: "message_start",
+			message: fauxAssistantMessage("", { timestamp: 2 }),
+			clientMessageId: "c3",
+			clientTurnId: "t1",
+		};
+		rig.producer.observe(next);
+		const second = recoveryCarrier(next) ?? expect.unreachable("producer failed to mint");
+		const accepted = rig.lane.accept(next, second);
+		await rig.lane.idle();
+		const root = rig.lane.freeze();
+		// Then: the refused end kept its turn and left no stale active message or correlation behind
+		expect(rig.lane.storageStatus().refusedRecords).toBe(1);
+		expect(refused).toMatchObject({ turnId: turn?.turnId, messageId: first.messageId });
+		expect(stale).toMatchObject({ activeMessageId: null, correlation: { clientMessageId: "c1" } });
+		// And: the next record is its own message in the same turn, under its own correlation
+		expect(accepted).toMatchObject({ turnId: turn?.turnId, messageId: second.messageId });
+		expect(root).toMatchObject({
+			turnId: turn?.turnId,
+			activeMessageId: second.messageId,
+			correlation: { sequence: (accepted?.sequence ?? 0) - 1, clientMessageId: "c3", clientTurnId: "t1" },
+			refusedCorrelations: 1,
+		});
+		// And: the identity member says one correlation was refused and its family is partial
+		const { texts } = await produced(rig.lane, root);
+		expect(JSON.parse(texts.get("identity/identity") ?? "")).toMatchObject({
+			activeMessageId: second.messageId,
+			turnId: turn?.turnId,
+			refusedCorrelations: 1,
+		});
+		const registry = readFamilyRegistry(texts.get("families/families") ?? "");
+		expect(registry.assembly === "incomplete" ? registry.incomplete : []).toEqual(["identity"]);
+		rig.lane.release(stale);
 		rig.lane.release(root);
 	} finally {
 		await rig.close();

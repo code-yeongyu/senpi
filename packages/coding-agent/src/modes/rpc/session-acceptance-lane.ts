@@ -4,8 +4,6 @@ import { join } from "node:path";
 import type { RecoveryCarrier } from "../../core/session-recovery-identity.ts";
 import type { TranscriptTransition } from "../../core/session-transcript-journal.ts";
 import { AcceptedTranscript, type TranscriptRoot } from "./accepted-transcript.ts";
-import { CompactLaneCurrent } from "./compact-lane-current.ts";
-import type { CutStorageUse } from "./compact-session-state.ts";
 import type { CanonicalUnit } from "./compact-lane-transitions.ts";
 import { CompactSettledMessages, type SettledDiagnostic, type SettledRoot } from "./compact-settled-messages.ts";
 import type { FrozenCompactState } from "./compact-state-view.ts";
@@ -18,6 +16,7 @@ import {
 	SEQUENCED,
 } from "./session-acceptance-admission.ts";
 import { foldCompactRecord, foldCompactTransition } from "./session-acceptance-compact.ts";
+import { AcceptedRootReads } from "./session-acceptance-reads.ts";
 
 /** Where one accepted recovery record sits in its runtime incarnation (R3.C1.1). */
 interface AcceptedRef {
@@ -34,6 +33,11 @@ export interface FrozenAcceptedRoot {
 	readonly activeMessageId: string | null;
 	readonly turnId: string | null;
 	readonly correlation: AcceptedCorrelation | null;
+	/**
+	 * Client correlations this epoch refused at the protocol depth limit (RULING-67 (4)): the record took its sequence
+	 * but its correlation never became the standing one, so a reader knows one is missing.
+	 */
+	readonly refusedCorrelations: number;
 	readonly transcript: TranscriptRoot;
 	readonly settled: SettledRoot;
 	/** The compact current state at this root's sequence; absent once that component became unavailable. */
@@ -55,21 +59,19 @@ const RETIRED_SETTLED: SettledRoot = Object.freeze({ base: undefined, overrides:
  * the worker's credit returns. Each bootstrap starts a new `sessionEpoch` whose sequences are never compared
  * with another epoch's.
  */
-export class SessionAcceptanceLane {
+export class SessionAcceptanceLane extends AcceptedRootReads {
 	private epoch = "";
 	private sequence = 0;
 	private transcript = new AcceptedTranscript();
 	private activeMessageId: string | null = null;
 	private turnId: string | null = null;
 	private correlation: AcceptedCorrelation | null = null;
-	private readonly live = new Set<FrozenAcceptedRoot>();
+	private refusedCorrelations = 0;
 	private retiredAs: "close" | "worker_failed" | undefined;
 	private storageRetired = false;
 	private nonce: string = randomUUID();
 	private settled!: CompactSettledMessages;
-	private readonly rootOwners = new WeakMap<FrozenAcceptedRoot, CompactSettledMessages>();
 	private cleanup: Promise<void> = Promise.resolve();
-	private readonly current = new CompactLaneCurrent();
 	private readonly storage: CompactContentStoreOptions | undefined;
 	private readonly diagnose: (reason: SettledDiagnostic) => void;
 
@@ -78,6 +80,7 @@ export class SessionAcceptanceLane {
 		diagnose: (reason: SettledDiagnostic) => void = (reason) =>
 			process.stderr.write(`senpi rpc acceptance: settled transition: ${reason}\n`),
 	) {
+		super();
 		this.storage = storage;
 		this.diagnose = diagnose;
 	}
@@ -97,10 +100,6 @@ export class SessionAcceptanceLane {
 
 	get retirement(): "close" | "worker_failed" | undefined {
 		return this.retiredAs;
-	}
-
-	get liveRoots(): number {
-		return this.live.size;
 	}
 
 	/** Open broadcast questions now (a hot count for status); undefined when the compact state is unavailable. */
@@ -134,6 +133,7 @@ export class SessionAcceptanceLane {
 		this.activeMessageId = null;
 		this.turnId = null;
 		this.correlation = null;
+		this.refusedCorrelations = 0;
 	}
 
 	/** Transcript transitions committed before the record they arrive with; each takes its own sequence (C1.1). */
@@ -167,6 +167,7 @@ export class SessionAcceptanceLane {
 		const at = { sequence: this.sequence + (correlation ? 1 : 0), turnId: this.turnId };
 		const place = admitRecord(this.current, record, type, at, folds);
 		if (!place) return undefined;
+		if (!folds && correlationChange(this.correlation, this.turnId, record)) this.refusedCorrelations += 1;
 		if (correlation) this.correlation = Object.freeze({ sequence: place.sequence - 1, ...correlation });
 		const { turnId, call } = place;
 		this.turnId = turnId;
@@ -217,6 +218,7 @@ export class SessionAcceptanceLane {
 			activeMessageId: this.activeMessageId,
 			turnId: this.turnId,
 			correlation: this.correlation,
+			refusedCorrelations: this.refusedCorrelations,
 			transcript: this.transcript.freeze(),
 			// A retired lane's paged settled store refuses new cuts; its root is never live or readable.
 			settled: this.retired ? RETIRED_SETTLED : this.settled.freeze(),
@@ -233,51 +235,6 @@ export class SessionAcceptanceLane {
 		this.rootOwners.get(root)?.release(root.settled);
 		this.current.release(root.current);
 		if (this.retired) this.retireStorage();
-	}
-
-	/** True while `root` is readable: published by this lane and not released, by its holder or a retirement. */
-	holds(root: FrozenAcceptedRoot): boolean {
-		return this.live.has(root);
-	}
-
-	readCurrent(root: FrozenAcceptedRoot) {
-		if (!this.live.has(root)) throw new Error("accepted root released");
-		return this.current.read(root.current);
-	}
-
-	readCurrentComponents(root: FrozenAcceptedRoot) {
-		if (!this.live.has(root)) throw new Error("accepted root released");
-		return this.current.readComponents(root.current);
-	}
-
-	readCurrentActive(root: FrozenAcceptedRoot) {
-		if (!this.live.has(root)) throw new Error("accepted root released");
-		return this.current.readActive(root.current);
-	}
-
-	readCurrentCalls(root: FrozenAcceptedRoot) {
-		if (!this.live.has(root)) throw new Error("accepted root released");
-		return this.current.readCalls(root.current);
-	}
-
-	/** The cut's content store under its lease (S09 catalog build and reads). */
-	cutStorage<T>(root: FrozenAcceptedRoot, use: CutStorageUse<T>): Promise<T> {
-		return this.current.cutStorage(root.current, use);
-	}
-
-	readSettled(root: FrozenAcceptedRoot) {
-		return this.settledOwner(root).read(root.settled);
-	}
-
-	/** The bounded settled reader of a live root (S10b catalog families); refused once the root is released. */
-	settledOf(root: FrozenAcceptedRoot) {
-		return this.settledOwner(root).reader(root.settled);
-	}
-
-	private settledOwner(root: FrozenAcceptedRoot): CompactSettledMessages {
-		const owner = this.rootOwners.get(root);
-		if (!owner || !this.live.has(root)) throw new Error("accepted root released");
-		return owner;
 	}
 
 	storageStatus() {

@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { CompactValues } from "../../../src/modes/rpc/compact-values.ts";
 import { callsRig } from "./4272-calls-support.ts";
 import { memberOf, produced } from "./4272-catalog-read-support.ts";
 import { recoveryRig } from "./4272-recovery-support.ts";
@@ -36,7 +37,8 @@ it("T1 a failed terminal is a settled member with its status, error, payload and
 		const { texts, peak } = await produced(rig.lane, root);
 		// Then: the settled member is the terminal row as the whole-view reader sees it, call projection included
 		const row = whole.settledMessages[0];
-		expect(JSON.parse(texts.get(`settled/${memberOf("message", 0)}`) ?? "")).toEqual({
+		const settledId = memberOf("message", row?.terminalSequence ?? expect.unreachable());
+		expect(JSON.parse(texts.get(`settled/${settledId}`) ?? "")).toEqual({
 			messageId: carrier.messageId,
 			turnId: row?.turnId,
 			terminalSequence: row?.terminalSequence,
@@ -61,6 +63,39 @@ it("T1 a failed terminal is a settled member with its status, error, payload and
 		});
 		expect(texts.get(calls[0] ?? "")).not.toMatch(/"owner"/);
 		expect(peak, "one value page resident while a member streams").toBe(1);
+		rig.lane.release(root);
+	} finally {
+		await rig.close();
+	}
+});
+
+it("#4568 LOW 2 an outstanding call header streams through the catalog's value reader with one page resident; no header is assembled", async () => {
+	// Given: one executing call whose arguments are 200,000 code units, so its header spans many value pages
+	const rig = await callsRig();
+	try {
+		const big = "y".repeat(200_000);
+		rig.record({ type: "turn_start" });
+		rig.record({ type: "tool_execution_start", toolCallId: "big", toolName: "bash", args: { cmd: big } });
+		await rig.lane.idle();
+		const root = rig.lane.freeze();
+		const live = (await rig.lane.readCurrentCalls(root)).calls[0];
+		// When: the cut is cataloged while every whole-value read is recorded
+		const read = vi.spyOn(CompactValues.prototype, "read");
+		const { texts, peak } = await produced(rig.lane, root);
+		const assembled = await Promise.all(read.mock.results.map((result) => result.value));
+		read.mockRestore();
+		// Then: the member is the header with its arguments inline, and no read assembled a call header
+		const calls = [...texts.keys()].filter((key) => key.startsWith("calls/"));
+		expect(JSON.parse(texts.get(calls[0] ?? "") ?? "")).toEqual({
+			...live,
+			raw: null,
+			hook: null,
+			progress: null,
+			result: null,
+		});
+		const headers = assembled.filter((value) => typeof value === "object" && value !== null && "phase" in value);
+		expect(headers, "the header walks; it is never read whole").toEqual([]);
+		expect(peak, "one value page resident while the header streams").toBe(1);
 		rig.lane.release(root);
 	} finally {
 		await rig.close();
