@@ -14,7 +14,7 @@ import {
 export function withAuthGuidance(error: unknown, message: string, ran?: ClaudeCodeRun): string {
 	if (error instanceof AllAccountsBlockedError)
 		return error.unavailableAccount === undefined
-			? allAccountsBlockedGuidance(error.soonestUnblockAt, error.blockReason)
+			? allAccountsBlockedGuidance(error.soonestUnblockAt, error.blockReason, error.accounts)
 			: singleAccountUnavailableGuidance(error.unavailableAccount, error.soonestUnblockAt, error.blockReason);
 	const kind = classifySdkError(error).kind;
 	const account = errorAccountContext(error instanceof ClassifiedSdkError ? error.original : error);

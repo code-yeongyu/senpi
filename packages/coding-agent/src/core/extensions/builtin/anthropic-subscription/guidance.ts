@@ -1,5 +1,5 @@
 import { ACCOUNT_POOL_REFUSAL_NOTE } from "../../../credential-pool/classify.ts";
-import type { PinSource, UnavailableAccount } from "./affinity.ts";
+import type { BlockedAccountState, PinSource, UnavailableAccount } from "./affinity.ts";
 import type { SdkErrorKind } from "./errors.ts";
 import type { ClaudeCodeRun } from "./executable.ts";
 
@@ -20,7 +20,20 @@ export function noAccountGuidance(hasAnthropicCredential: boolean): string {
 	return lines.join("\n");
 }
 
-export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined, blockReason?: "auth_error"): string {
+/** One line per pool member, naming the account that needs /login (senpi#4671). */
+function accountStateLines(accounts: readonly BlockedAccountState[]): string[] {
+	return accounts.map((account) => {
+		const until = account.until === undefined ? "re-login" : new Date(account.until).toISOString();
+		const login = account.reason === "auth_error" ? ` - run /login ${PROVIDER} for this account` : "";
+		return `  ${account.name}: ${account.reason} until ${until}${login}`;
+	});
+}
+
+export function allAccountsBlockedGuidance(
+	soonestUnblockAt: number | undefined,
+	blockReason?: "auth_error",
+	accounts: readonly BlockedAccountState[] = [],
+): string {
 	if (blockReason === "auth_error") {
 		// omo#8383: name the authentication failure; the recovery is a re-login. Only a pool whose every
 		// account is auth-blocked says so (senpi#2081), and the outer credential pool reads the refusal note
@@ -32,6 +45,7 @@ export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined,
 		return [
 			`All Claude accounts for ${PROVIDER} are currently blocked (authentication error).`,
 			...recheck,
+			...accountStateLines(accounts),
 			`  /login ${PROVIDER}  - re-authenticate to refresh the blocked account`,
 			`  /claude-account list  - inspect account states`,
 			ACCOUNT_POOL_REFUSAL_NOTE,
@@ -44,6 +58,7 @@ export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined,
 	return [
 		`All Claude accounts for ${PROVIDER} are currently blocked (rate limit or auth errors).`,
 		`  Soonest automatic retry: ${eta}.`,
+		...accountStateLines(accounts),
 		`  /claude-account list  - inspect account states`,
 		`  /login ${PROVIDER}  - add another account`,
 		ACCOUNT_POOL_REFUSAL_NOTE,

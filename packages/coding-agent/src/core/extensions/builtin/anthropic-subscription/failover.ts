@@ -9,7 +9,8 @@ import {
 } from "../../../credential-pool/model-scope.ts";
 import { usageLimitResetMs } from "../../../credential-pool/reset-time.ts";
 import type { AccountSlot, AnthropicSubscriptionCredential } from "./accounts.ts";
-import { clearExpiredBlocks } from "./affinity.ts";
+import { logAccountBlocked } from "./account-block-log.ts";
+import { AllAccountsBlockedError, clearExpiredBlocks } from "./affinity.ts";
 import type { SdkErrorClassification } from "./errors.ts";
 import { isConfirmedAccountUsageLimit, usageLimitBlockMs } from "./usage-limit-block.ts";
 
@@ -149,14 +150,25 @@ export class ClassifiedSdkError extends Error {
 	readonly classification: SdkErrorClassification;
 	readonly original: unknown;
 	readonly suppressTurnRetry: boolean;
+	/**
+	 * The pool's state when this failure left no other account to try (senpi#4671). The failure stays the
+	 * error; the pool refusal is context, so a refresh failure or a 401 is never hidden behind "all blocked".
+	 */
+	readonly poolState: AllAccountsBlockedError | undefined;
 
-	constructor(classification: SdkErrorClassification, original: unknown, suppressTurnRetry: boolean) {
+	constructor(
+		classification: SdkErrorClassification,
+		original: unknown,
+		suppressTurnRetry: boolean,
+		poolState?: AllAccountsBlockedError,
+	) {
 		const detail = original instanceof Error ? original.message : String(original);
 		super(`${suppressTurnRetry ? TURN_RETRY_SUPPRESSION_PREFIX : ""}${detail}`);
 		this.name = "ClassifiedSdkError";
 		this.classification = classification;
 		this.original = original;
 		this.suppressTurnRetry = suppressTurnRetry;
+		this.poolState = poolState;
 	}
 }
 
@@ -446,6 +458,13 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				attempt--;
 				continue;
 			}
+			logAccountBlocked({
+				account: blocked.name,
+				reason: blocked.blockReason ?? "model_limit",
+				until: blocked.blockedUntil ?? activeModelBlockUntil(blocked.modelBlocks, options.model, now()),
+				shared,
+				detail: errorText(error),
+			});
 			accounts = replaceAccount(accounts, blocked);
 			const event: FailoverEvent = {
 				account: blocked,
@@ -453,13 +472,19 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				attempt: attempt + 1,
 				visibleDeltaEmitted,
 			};
+			let poolState: AllAccountsBlockedError | undefined;
 			try {
 				if (!visibleDeltaEmitted && attempt + 1 < attemptLimit) {
 					event.nextAccount = options.selectFn(accounts);
 				}
+			} catch (selectError) {
+				if (!(selectError instanceof AllAccountsBlockedError)) throw selectError;
+				poolState = selectError;
 			} finally {
 				await options.onFailover?.(event);
 			}
+			if (poolState !== undefined)
+				throw new ClassifiedSdkError(classification, error, visibleDeltaEmitted, poolState);
 			if (visibleDeltaEmitted) throw classified;
 		}
 		if (completed) {
