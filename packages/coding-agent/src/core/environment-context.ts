@@ -37,8 +37,10 @@ const CURRENT_DATE_ENV = "SENPI_TEST_CURRENT_DATE";
 function pinnedCurrentDate(): string | undefined {
 	const value = process.env[CURRENT_DATE_ENV];
 	if (value === undefined || value === "") return undefined;
+	// An out-of-range month or day parses to an invalid Date, whose toISOString() throws RangeError; check validity first.
+	const parsed = new Date(`${value}T00:00:00.000Z`);
 	const isCalendarDate =
-		/^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(`${value}T00:00:00.000Z`).toISOString().startsWith(value);
+		/^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value);
 	if (!isCalendarDate)
 		throw new Error(`${CURRENT_DATE_ENV} must be a calendar date YYYY-MM-DD, got ${JSON.stringify(value)}`);
 	return value;

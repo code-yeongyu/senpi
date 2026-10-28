@@ -29,12 +29,18 @@ describe("resolveEnvironmentContext date", () => {
 		expect(resolveEnvironmentContext("/repo").currentDate).toBe("2030-01-02");
 	});
 
-	test.each(["2030-1-2", "2030-02-30", "tomorrow", " 2030-01-02", "2030-01-02T00:00:00Z"])(
-		"malformed %j throws naming the variable",
-		(value) => {
-			vi.stubEnv("SENPI_TEST_CURRENT_DATE", value);
+	test.each([
+		"2030-1-2",
+		"2030-02-30",
+		"2030-13-01",
+		"2030-00-10",
+		"2030-01-32",
+		"tomorrow",
+		" 2030-01-02",
+		"2030-01-02T00:00:00Z",
+	])("malformed %j throws naming the variable", (value) => {
+		vi.stubEnv("SENPI_TEST_CURRENT_DATE", value);
 
-			expect(() => resolveEnvironmentContext("/repo", LATE_UTC)).toThrow(/SENPI_TEST_CURRENT_DATE/);
-		},
-	);
+		expect(() => resolveEnvironmentContext("/repo", LATE_UTC)).toThrow(/SENPI_TEST_CURRENT_DATE/);
+	});
 });
