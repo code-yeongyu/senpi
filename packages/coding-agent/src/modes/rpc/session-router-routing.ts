@@ -1,15 +1,9 @@
-import { VERSION } from "../../config.ts";
-
-import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
 import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
 
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 
-import { multiSessionHostCapabilities } from "./host-capabilities.ts";
-
 import { answerWarm } from "./host-warm.ts";
-import { protocolIdentity } from "./protocol-identity.ts";
 import { answerRecoveryPage } from "./recovery-page-command.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
@@ -24,7 +18,8 @@ import { releaseConnection } from "./session-router-attachments.ts";
 import { close, tearDownUnloaded } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
-import { acknowledgePrompt, otherRequestsSettled, sessionMemory } from "./session-router-observation.ts";
+import { answerListSessions, answerProtocolInfo, answerSubscriptionLimits } from "./session-router-host-reads.ts";
+import { acknowledgePrompt, otherRequestsSettled } from "./session-router-observation.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { openWithBarrier } from "./session-router-open.ts";
 import {
@@ -76,54 +71,9 @@ export async function dispatch(
 	host: RouterContext,
 	command: Exclude<RpcCommand, { type: "warm" }>,
 ): Promise<RpcResponse | undefined> {
-	if (command.type === "get_protocol_info") {
-		const capabilities = multiSessionHostCapabilities({
-			warm: host.registry.warm !== undefined,
-			toolRuntime: host.defaults.toolRuntime ?? "in-process",
-			negotiated: host.connectionOptions?.capabilities ?? [],
-			mcpPresenters: host.writer.mcpPresenters !== undefined,
-		});
-		return {
-			id: command.id,
-			type: "response",
-			command: "get_protocol_info",
-			success: true,
-			data: {
-				protocolVersion: 1,
-				serverVersion: VERSION,
-				capabilities,
-				mode: "multi",
-				...protocolIdentity(host.defaults.agentDir),
-				memory_pressure: host.memoryPressure,
-			},
-		};
-	}
-	if (command.type === "get_subscription_limits") {
-		return {
-			id: command.id,
-			type: "response",
-			command: "get_subscription_limits",
-			success: true,
-			data: { accounts: subscriptionLimits.snapshot() },
-		};
-	}
-	if (command.type === "list_sessions") {
-		// Worker sessions are machine-driven work: a client sees them only by asking, and
-		// the opaque context blob travels only on that listing, never to every connection.
-		const rows = host.registry.list();
-		const withMemory = rows.map((row) => ({ ...row, memory: sessionMemory(host, row.sessionId) }));
-		const sessions =
-			command.include_workers === true
-				? withMemory
-				: withMemory.filter((row) => row.kind !== "worker").map(({ context: _context, ...row }) => row);
-		return {
-			id: command.id,
-			type: "response",
-			command: "list_sessions",
-			success: true,
-			data: { sessions },
-		};
-	}
+	if (command.type === "get_protocol_info") return answerProtocolInfo(host, command);
+	if (command.type === "get_subscription_limits") return answerSubscriptionLimits(command);
+	if (command.type === "list_sessions") return answerListSessions(host, command);
 	if (command.type === "detach_connection")
 		return detachConnection(command, host.writer.currentConnection(), (id) => releaseConnection(host, id));
 	if (command.type === "open_session") return openWithBarrier(host, command);

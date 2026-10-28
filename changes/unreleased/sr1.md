@@ -1,0 +1,22 @@
+<!-- changes-log: packages/coding-agent/src/modes/rpc/changes.md -->
+## 2026-10-28 - Session event writer and host read routes split into their own modules (SR1, part of senpi#4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts`: `SessionEventWriter` now extends a chain of layer classes, one module per responsibility. `packages/coding-agent/src/modes/rpc/session-event-writer-state.ts` (new) holds every field, in the original declaration order, and the constructor. `packages/coding-agent/src/modes/rpc/session-event-writer-lanes.ts` (new) holds the shared stdio lane and its drain. `packages/coding-agent/src/modes/rpc/session-event-writer-connections.ts` (new) holds connection registration, capabilities and security presentations. `packages/coding-agent/src/modes/rpc/session-event-writer-presenters.ts` (new) holds the MCP presenter accessors. `packages/coding-agent/src/modes/rpc/session-event-writer-lifecycle.ts` (new) holds open, close, seal and forget. `packages/coding-agent/src/modes/rpc/session-event-writer-recovery.ts` (new) holds the recovery accessors, and `packages/coding-agent/src/modes/rpc/session-event-writer-compaction.ts` (new) the record-compaction helpers. Every method body moved unchanged; members another layer reads went from `private` to `protected`.
+- `packages/coding-agent/src/modes/rpc/session-event-writer.ts` keeps every method that builds a `type: "..."` wire record, so the set of record types a scan of this file finds is unchanged.
+- `packages/coding-agent/src/modes/rpc/session-router-routing.ts`: the bodies of the host-level read routes `get_protocol_info`, `get_subscription_limits` and `list_sessions` moved unchanged into `packages/coding-agent/src/modes/rpc/session-router-host-reads.ts` (new); `dispatch` checks the same commands in the same order.
+- Internal refactor: no behaviour, wire, export or public-member change.
+
+### Why
+
+- RULING-70 (4) for senpi#4272: the writer (904 code lines) and the routing file (256) were over the 250-line ceiling, and S12 adds recovery accessors and host read routes to both. Each now has a module of its own to grow in.
+
+### Why an extension could not handle it
+
+- This is the layout of host-internal RPC modules; no extension surface reaches the writer or the router.
+
+### Expected merge conflict zones
+
+- MEDIUM: any branch that edits `session-event-writer.ts` members will find most of them moved into the `session-event-writer-*.ts` layer modules.
+- LOW: `session-router-routing.ts` `dispatch`, for the first three routes.

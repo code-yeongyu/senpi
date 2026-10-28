@@ -918,7 +918,7 @@
   "packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts": {
     "typescript/no-explicit-any": 2
   },
-  "packages/coding-agent/src/modes/rpc/session-event-writer.ts": {
+  "packages/coding-agent/src/modes/rpc/session-event-writer-lanes.ts": {
     "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/src/package-manager-cli.ts": {
