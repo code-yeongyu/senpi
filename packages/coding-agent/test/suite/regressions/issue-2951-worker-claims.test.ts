@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { hostDaemonDirectoryPaths } from "../../../src/modes/rpc/host-daemon-paths.ts";
 import { createSessionPathReservations, readSessionPathClaims } from "../../../src/modes/rpc/host-reservations.ts";
-import { reservationHost, reservationPhase } from "../rpc-worker-reservation-support.ts";
+import { reservationHost, reservationStep } from "../rpc-worker-reservation-support.ts";
 
 afterEach(() => {
 	vi.useRealTimers();
@@ -82,7 +82,7 @@ it("moves a real worker's daemon claim to its switched session file", async () =
 		expect(claim).toHaveBeenCalledWith(rig.second, true);
 		expect(release).toHaveBeenCalledWith(rig.first);
 		expect(rig.host.registry.peek(rig.handle)?.reservationKey).toBe(rig.second);
-		await reservationPhase("old-claim-removed", removed.promise);
+		await reservationStep("old-claim-removed", removed.promise);
 		expect((await readSessionPathClaims(rig.claimDir)).map(({ owner }) => owner.sessionPath)).toEqual([rig.second]);
 	} finally {
 		await rig.host.dispose();
@@ -105,7 +105,7 @@ it("publishes a real retained idle worker's detached claim state", async () => {
 			attachments: 0,
 			detachedAt: expect.any(Number),
 		});
-		await reservationPhase("idle-claim-detached", detached.promise);
+		await reservationStep("idle-claim-detached", detached.promise);
 		expect(attached).toHaveBeenCalledWith(rig.first, false);
 	} finally {
 		await rig.host.dispose();
@@ -134,7 +134,7 @@ it("bounds real native-exit cleanup when daemon claim removal does not settle", 
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		worker.quarantine();
 		await nativeExit;
-		await reservationPhase("claim-removal-started", started.promise);
+		await reservationStep("claim-removal-started", started.promise);
 		await vi.advanceTimersByTimeAsync(rig.host.registry.closeGraceMs);
 		expect(settled).toBe(true);
 		expect(rig.host.registry.peek(rig.handle)).toBeUndefined();

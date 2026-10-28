@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { retainHost } from "./rpc-retain-on-disconnect-support.ts";
 import { startWorkerHost } from "./rpc-worker-host-support.ts";
-import { reservationPhase } from "./rpc-worker-reservation-support.ts";
+import { reservationStep } from "./rpc-worker-reservation-support.ts";
 
 vi.mock("node:worker_threads", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:worker_threads")>();
@@ -222,7 +222,7 @@ it.each(["get_state", "memory_report"])(
 		expect(entry.state).toBe("closing");
 		await entry.closeCompletion;
 		expect(await host.list()).toEqual([]);
-		await reservationPhase("detached-worker-lifecycle-published", published.promise);
+		await reservationStep("detached-worker-lifecycle-published", published.promise);
 		const lifecycle = host.records.filter(
 			(record) =>
 				record.sessionId === row.sessionId &&
