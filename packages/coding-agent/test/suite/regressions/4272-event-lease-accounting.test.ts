@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { dataOf, type RawClient, statusHost, type WireRecord } from "../rpc-session-status-support.ts";
 import { FLAG } from "./4272-construction-host-support.ts";
 
@@ -75,6 +76,52 @@ it("X07 S13 an oversized record is staged once for every compact peer, each hold
 		});
 		await host.drop("compact-b");
 		expect(events.status()).toMatchObject({ open: 0, contentBytes: 0 });
+	} finally {
+		await host[Symbol.asyncDispose]();
+	}
+}, 300_000);
+
+it("T6 X06 with no peer the stdio lane keeps the complete record, and a legacy peer attached after a lease receives no refs or new controls", async () => {
+	vi.stubEnv(FLAG, "1");
+	const stdout: string[] = [];
+	const lone = new SessionEventWriter((chunk) => void stdout.push(chunk));
+	const big = {
+		type: "tool_execution_end",
+		toolCallId: "c-stdio",
+		result: { content: [{ type: "text", text: "s".repeat(300_000) }] },
+	};
+	lone.enqueue("rpc-stdio", big);
+	await lone.flush();
+	const written = stdout
+		.join("")
+		.split("\n")
+		.filter((line) => line !== "")
+		.map((line) => JSON.parse(line) as WireRecord);
+	expect(written).toEqual([{ ...big, sessionId: "rpc-stdio" }]);
+	expect(lone.recoveryEvents?.status()).toMatchObject({ minted: 0, open: 0 });
+	const host = await statusHost();
+	try {
+		const opener = host.client("opener");
+		const routing = String(dataOf(await opener.request({ type: "open_session", cwd: host.cwd })).sessionId);
+		const compact = host.client("compact");
+		host.writer.setConnectionCapabilities("compact", ["compact_events"]);
+		host.writer.attachConnectionToSession("compact", routing);
+		host.writer.enqueue(routing, { ...big, toolCallId: "c-late" });
+		await host.writer.flush();
+		expect(leases(compact)).toHaveLength(1);
+		const late = host.client("late");
+		host.writer.attachConnectionToSession("late", routing);
+		host.writer.enqueue(routing, { ...big, toolCallId: "c-after" });
+		await host.writer.flush();
+		const after = late.inbox.find((record) => record.toolCallId === "c-after");
+		expect(after, "the late legacy peer receives the complete record").toEqual({
+			...big,
+			toolCallId: "c-after",
+			sessionId: routing,
+		});
+		const seen = JSON.stringify(late.inbox);
+		expect(seen.includes("eventLease") || seen.includes("event_lease_refused")).toBe(false);
+		expect(leases(compact), "the compact peer leases both records").toHaveLength(2);
 	} finally {
 		await host[Symbol.asyncDispose]();
 	}
