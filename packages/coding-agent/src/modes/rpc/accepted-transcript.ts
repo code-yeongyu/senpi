@@ -8,7 +8,7 @@ import {
 	type TranscriptUnavailableReason,
 	type TranscriptPersistence,
 } from "../../core/session-transcript-journal.ts";
-import { stageBootstrap, type TailReadFailure, TranscriptTail } from "./accepted-transcript-tail.ts";
+import { stageBootstrap, TailBudget, type TailReadFailure, TranscriptTail } from "./accepted-transcript-tail.ts";
 import { type StagedContent, StagedReadError, type TransferStaging } from "./compact-transfer-staging.ts";
 
 /**
@@ -96,13 +96,21 @@ export class AcceptedTranscript {
 	private kindNames = new Map<string, string>();
 	private ancestryBytes = 0;
 	private readonly staging: TransferStaging;
+	/** One bound for this epoch's tails, a superseded tail a live cut still holds included (carry 65a). */
+	private readonly budget = new TailBudget();
 	private tail: TranscriptTail;
 	private unavailable: TranscriptUnavailableReason | null = null;
+	/**
+	 * The first entry whose text the tail bound refused, while that is the only reason the version is unavailable
+	 * (RULING-80 (4)): later entries still record their identity, no text is kept outside the budget, and the version
+	 * reads whole again once every entry from here on is durable.
+	 */
+	private missingFrom: number | undefined;
 
 	/** Entry texts are staged into, and spill through, the owning lane's staging store (S12a). */
 	constructor(staging: TransferStaging) {
 		this.staging = staging;
-		this.tail = new TranscriptTail(staging, null);
+		this.tail = new TranscriptTail(staging, null, this.budget);
 	}
 
 	get historyVersion(): number {
@@ -138,8 +146,9 @@ export class AcceptedTranscript {
 			this.parents = [];
 			this.kindNames = new Map();
 			this.ancestryBytes = 0;
-			this.tail = new TranscriptTail(this.staging, transition.base);
+			this.tail = new TranscriptTail(this.staging, transition.base, this.budget);
 			this.unavailable = null;
+			this.missingFrom = undefined;
 			return;
 		}
 		if (transition.kind === "unavailable") {
@@ -150,19 +159,16 @@ export class AcceptedTranscript {
 			this.persisted(transition.persistence);
 			return;
 		}
-		if (this.unavailable !== null) return;
+		if (this.unavailable !== null && this.missingFrom === undefined) return;
 		if (transition.kind === "append") {
 			const index = this.entryIds.length;
 			if (!this.retainAncestry(transition.id, transition.type, transition.parentId)) return;
 			if (transition.persistence) this.persisted(transition.persistence);
 			const unpersisted = index + (this.base?.count ?? 0) >= (this.tail.persistence?.count ?? 0);
-			if (unpersisted && transition.entry !== undefined) {
+			if (this.missingFrom === undefined && unpersisted && transition.entry !== undefined) {
 				const content = staged ?? this.tail.stage(index, transition.entry);
-				if (!content) {
-					this.markUnavailable("transcript_tail_over_byte_limit");
-					return;
-				}
-				this.tail.adopt(index, content);
+				if (content) this.tail.adopt(index, content);
+				else this.markUnavailable("transcript_tail_over_byte_limit", index);
 			}
 			this.leafId = transition.id;
 		} else this.leafId = transition.leafId;
@@ -193,7 +199,9 @@ export class AcceptedTranscript {
 		return true;
 	}
 
-	private markUnavailable(reason: TranscriptUnavailableReason): void {
+	/** `missingFrom` marks a tail-bound refusal recoverable; any other reason, or a second one, stays for the version. */
+	private markUnavailable(reason: TranscriptUnavailableReason, missingFrom?: number): void {
+		this.missingFrom = this.unavailable === null ? missingFrom : undefined;
 		this.unavailable ??= reason;
 		process.stderr.write(`senpi rpc acceptance: transcript component unavailable: ${reason}\n`);
 	}
@@ -213,6 +221,11 @@ export class AcceptedTranscript {
 
 	private persisted(persistence: TranscriptPersistence): void {
 		this.tail.persisted(persistence, this.base?.count ?? 0);
+		// Every entry the version holds no text for is now read from the file by identity (RULING-80 (4)).
+		if (this.missingFrom !== undefined && persistence.count - (this.base?.count ?? 0) >= this.entryIds.length) {
+			this.missingFrom = undefined;
+			this.unavailable = null;
+		}
 	}
 
 	/** Releases the epoch's tail content once no root of it can be read any longer. */

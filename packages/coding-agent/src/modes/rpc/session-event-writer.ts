@@ -1,10 +1,8 @@
-import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { serializeJsonLine } from "./jsonl.ts";
-import { omitNormalInlineMedia } from "./media-placeholders.ts";
 import type { RpcHostLifecycleEvent, RpcOpenQueuedEvent } from "./rpc-types.ts";
-import { compactDelta, demoteToDeltaOnly, MESSAGE_KEY, type RpcRecord } from "./session-event-writer-compaction.ts";
-import { SessionEventWriterRecovery } from "./session-event-writer-recovery.ts";
+import type { RpcRecord } from "./session-event-writer-compaction.ts";
+import { SessionEventWriterDestinations } from "./session-event-writer-destinations.ts";
 import { causeOfRecord } from "./session-status.ts";
 import { isCorrelatedReply } from "./socket-peer-recovery.ts";
 
@@ -20,7 +18,7 @@ export { MAX_SHARED_STDIO_QUEUE_BYTES, MAX_SHARED_STDIO_QUEUE_RECORDS } from "./
  * by itself: coalescing records from different sessions would obscure the
  * scheduling boundary and violate D9.
  */
-export class SessionEventWriter extends SessionEventWriterRecovery {
+export class SessionEventWriter extends SessionEventWriterDestinations {
 	/** Private records bypass event queues, snapshots, mirrors, replay, and overflow preview errors. */
 	handleMcpForm(value: unknown): boolean {
 		if (!this.presenterAuthority) return false;
@@ -111,35 +109,7 @@ export class SessionEventWriter extends SessionEventWriterRecovery {
 		// Mirroring is an explicit per-subscription opt-in; it adds destinations, never an attachment.
 		const mirrors = isTargeted ? [] : this.status.mirrorTargets(sessionId, String(record.type));
 		const targets = mirrors.length === 0 ? attached : [...new Set([...attached, ...mirrors])];
-		// A record is only walked and re-serialized when a target asked for placeholders;
-		// otherwise this is byte-for-byte today's path, with serializeJsonLine called once.
-		const hasPlaceholderTarget = targets.some((target) =>
-			this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY),
-		);
-		const redacted = hasPlaceholderTarget
-			? omitNormalInlineMedia(tagged, this.mediaPersisters.get(sessionId))
-			: tagged;
-		const placeholderLine = redacted === tagged ? undefined : serializeJsonLine(redacted);
-		if (!isTargeted) this.fanout.rememberSnapshot(sessionId, tagged, line, placeholderLine);
-		for (const target of targets) {
-			if (target !== undefined && !this.fanout.get(target)) continue;
-			const registered = target === undefined ? undefined : this.fanout.get(target);
-			const wants =
-				placeholderLine !== undefined && this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY);
-			if (registered && target !== undefined) {
-				const keyed = compactDelta(tagged) !== undefined && tagged.message !== null;
-				registered.actor.enqueue(
-					this.eventLine(target, sessionId, wants ? redacted : tagged, wants ? placeholderLine : line),
-					keyed ? MESSAGE_KEY : undefined,
-					undefined,
-					keyed ? serializeJsonLine(demoteToDeltaOnly(tagged)) : undefined,
-					isCorrelatedReply(tagged),
-					mirrors.includes(target)
-						? undefined
-						: this.fanout.attachmentOf(target, sessionId, isTargeted, record.type),
-				);
-			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
-		}
+		this.deliver(sessionId, record, tagged, line, targets, mirrors, isTargeted);
 		// After the causing record is on every destination's FIFO, never before (ordering contract).
 		const cause = isTargeted ? undefined : causeOfRecord(record);
 		if (cause !== undefined) this.status.publish(sessionId, cause, this.changeActor("agent"));
