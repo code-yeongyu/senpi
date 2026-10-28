@@ -5063,6 +5063,53 @@ capability:
 }
 ```
 
+#### Job widgets
+
+The `job-widgets` builtin emits `job_widget_state` on the same path: live, display-ready widgets for the
+session's long background jobs (bash sessions started with `run_in_background` or auto-detached, and jobs a
+host registers, such as background tasks). Clients receive it only when they advertise `extension_events`;
+the in-process `pi.events` channel carries the same payload. It is sent at most once per second per session
+and only when what a client draws changed, so a timestamp moving alone sends nothing. `jobWidgets.enabled:
+false` ([settings](settings.md#job-widgets)) turns it off.
+
+`data` is `{ v: 1, sessionId, jobs }`. Each job has `id` (`bash_N` or a task id), `kind` (`bash` or `task`),
+`state` (`pending`, `live`, `done`, `skipped`, `fallback`), `updatedAtMs`, and, except for `skipped`, a
+`view`: `title`, optional `headline` (`text`, `label`, `trend`), optional `stage`, up to four `blocks`
+(`spark`, `bars`, `meter`, `stat`, `grid`, `text`) whose numbers arrive formatted, and `lines` for
+`pending` and `fallback`. A job appears once its widget is being built; `done` keeps the last view frozen
+after the job exits. Ignore a payload whose `v` you do not know and any block `kind` you do not draw.
+
+```json
+{
+  "type": "extension_event",
+  "name": "job_widget_state",
+  "data": {
+    "v": 1,
+    "sessionId": "session_1",
+    "jobs": [
+      {
+        "id": "bash_3",
+        "kind": "bash",
+        "state": "live",
+        "updatedAtMs": 1710000000000,
+        "view": {
+          "title": "Blender render",
+          "headline": { "text": "120", "label": "rendered" },
+          "blocks": [{ "kind": "meter", "label": "frames", "value": 0.48, "text": "120 / 250" }]
+        }
+      }
+    ]
+  }
+}
+```
+
+Extensions that run their own long jobs offer them through the root package export:
+`registerJobWidgetSource({ sessionId, id, kind, sources, brief, startedAtMs })` returns a handle (`notify`,
+`update`, `settle`, `dispose`), or `undefined` when the session has no widgets; a source is any
+`JobTextSource`, for example a `TextTap` the extension appends text to. `setJobWidgetAuthorResolver(resolver)`
+routes spec writing to a host-chosen model (behind an explicit `jobWidgets.model`), and
+`getJobWidgetState(sessionId)` reads the current state.
+
 ### agent_start
 
 Emitted when the agent begins processing a prompt.
