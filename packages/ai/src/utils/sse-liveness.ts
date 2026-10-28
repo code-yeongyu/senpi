@@ -45,7 +45,7 @@ export function resolveSseLivenessTimeoutMs(configured: number | undefined): num
 export async function readWithSseLiveness<T>(
 	reader: ReadableStreamDefaultReader<T>,
 	timeoutMs: number | undefined,
-): Promise<ReadableStreamReadResult<T>> {
+): ReturnType<ReadableStreamDefaultReader<T>["read"]> {
 	if (timeoutMs === undefined) return reader.read();
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const deadline = new Promise<never>((_, reject) => {
