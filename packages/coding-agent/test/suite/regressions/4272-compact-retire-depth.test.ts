@@ -24,7 +24,7 @@ const end = (toolCallId: string) => ({
 
 /** One field of a stored object, read from its own pages only (the rest of the value is never walked). */
 async function fieldOf(values: CompactValues, ref: ValueRef, name: string): Promise<ValueRef> {
-	for await (const [key, value] of values.fields(ref)) if (key === name) return value;
+	for await (const [key, value] of values.fields(ref, new Set([name]))) if (key === name) return value;
 	return expect.unreachable(`no ${name} field`);
 }
 
