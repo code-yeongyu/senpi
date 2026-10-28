@@ -19,7 +19,7 @@ export type RpcRecoveryCommand =
 	| {
 			id?: string;
 			type: "get_recovery_page";
-			lease: { kind: "event"; id: string };
+			lease: { kind: "event" | "checkpoint"; id: string };
 			admissionId: string;
 			componentRef: string;
 			requestId: string;

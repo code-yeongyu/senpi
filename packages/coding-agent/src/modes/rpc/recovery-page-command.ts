@@ -29,6 +29,16 @@ function callerOf(
 	return { socketEpoch, sessionId };
 }
 
+/** A request refused before any lease is looked at: RULING-81 Q-A (a checkpoint has its own release) or malformed. */
+function refused(
+	id: string | undefined,
+	type: string,
+	reason: "lease_kind_unsupported" | "malformed_request",
+): RpcResponse {
+	const failure = { kind: "request_refused", reason, hint: "new_request" } as const;
+	return error(id, type, codeOf(failure), { ...failure });
+}
+
 /** `get_recovery_page` on a socket host (S11b, R4.B3), under a checkpoint token or an event lease (S13). */
 export async function answerRecoveryPage(
 	pages: RecoveryPageRequests,
@@ -55,10 +65,10 @@ export function answerReleaseRecovery(
 	const caller = callerOf(writer, command);
 	if ("type" in caller) return caller;
 	const { id, type, lease, admissionId } = command;
-	if (lease?.kind !== "event" || typeof lease.id !== "string" || typeof admissionId !== "string") {
-		const failure = { kind: "request_refused", reason: "malformed_request", hint: "new_request" } as const;
-		return error(id, type, codeOf(failure), { ...failure });
-	}
+	const kind: unknown = lease?.kind;
+	if (kind === "checkpoint") return refused(id, type, "lease_kind_unsupported");
+	if (kind !== "event" || typeof lease?.id !== "string" || typeof admissionId !== "string")
+		return refused(id, type, "malformed_request");
 	const outcome = events.release(caller, lease.id, admissionId);
 	if (outcome.ok) return { id, type: "response", command: type, success: true, data: outcome.value };
 	return error(id, type, codeOf(outcome.failure), { ...outcome.failure });

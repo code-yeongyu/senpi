@@ -2,7 +2,7 @@ import { normalizeJsonValue } from "./json-normal-value.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import type { RpcHostLifecycleEvent, RpcOpenQueuedEvent } from "./rpc-types.ts";
 import type { RpcRecord } from "./session-event-writer-compaction.ts";
-import { SessionEventWriterDestinations } from "./session-event-writer-destinations.ts";
+import { RecordLine, SessionEventWriterDestinations } from "./session-event-writer-destinations.ts";
 import { causeOfRecord } from "./session-status.ts";
 import { isCorrelatedReply } from "./socket-peer-recovery.ts";
 
@@ -75,7 +75,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 			(record.type === "extension_ui_request" &&
 				["select", "confirm", "input", "editor"].includes(String(record.method)));
 		const tagged = { ...record, sessionId } as RpcRecord;
-		const line = serializeJsonLine(tagged);
+		const line = new RecordLine(tagged);
 		// Observation records are per-subscription opt-ins on the subscriber's own actor FIFO: never attachments,
 		// the attach replay, response broadcast, or the stdio lane, which cannot subscribe.
 		if (
@@ -87,11 +87,11 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 				record.type === "snapshot_marker"
 					? this.status.mirrorTargets(sessionId, "snapshot_marker").filter((id) => id === targetId)
 					: this.status.dialogTargets(sessionId);
-			for (const target of targets) this.fanout.get(target)?.actor.enqueue(line);
+			for (const target of targets) this.fanout.get(target)?.actor.enqueue(line.text);
 			if (targets.length > 0) this.requestFlush();
 			return true;
 		}
-		if (this.fanout.isEmpty() && this.exceedsStdioCapacity(line)) {
+		if (this.fanout.isEmpty() && this.exceedsStdioCapacity(line.text)) {
 			this.closeSession(
 				sessionId,
 				{

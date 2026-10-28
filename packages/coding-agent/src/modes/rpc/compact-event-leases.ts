@@ -5,6 +5,7 @@ import { CompactContentStore, CompactWriteError } from "./compact-content-store.
 import { CompactReadError, CompactReadLease } from "./compact-read-lease.ts";
 import { FRAGMENT_MAX_BYTES, type FrozenBytes, producePage, type RecoveryPage } from "./compact-recovery-bytes.ts";
 import { protocolId } from "./compact-recovery-ids.ts";
+import { jsonChunks } from "./json-pieces.ts";
 import {
 	type EventLease,
 	type RecoveryCaller,
@@ -30,6 +31,23 @@ const RELEASED_LEASES_REMEMBERED = 256;
 const EVENT_RECORD_COMPONENT = "record";
 
 export type EventLeaseRefusal = "lease_limit" | "storage_unavailable";
+/** The record's legacy line when a destination already built it, else its stored size to stream it at (RULING-81 X06). */
+export type RecordContent = string | { readonly units: number };
+
+/** Stages the record's JSON text: the built line without its newline, or streamed in D-byte chunks, never joined whole. */
+function stageRecord(staging: TransferStaging, record: object, content: RecordContent): StagedContent {
+	const kind = protocolId("event");
+	const id = protocolId(EVENT_RECORD_COMPONENT);
+	if (typeof content === "string") return staging.stage(kind, id, content.slice(0, -1));
+	const transfer = staging.begin(kind, id, content.units * 2);
+	try {
+		for (const chunk of jsonChunks(record, FRAGMENT_MAX_BYTES / 2)) transfer.append(chunk);
+		return transfer.commit();
+	} catch (cause) {
+		transfer.abort();
+		throw cause;
+	}
+}
 export type ReleaseOutcome = "released" | "held" | "duplicate";
 
 export interface ReleaseReceipt {
@@ -111,11 +129,11 @@ export class EventLeases {
 		caller: RecoveryCaller & { readonly admissionId: string },
 		at: Pick<EventLease, "sessionEpoch" | "sequence">,
 		record: object,
-		line: string,
+		content: RecordContent,
 	): { readonly ok: true; readonly value: EventLease } | { readonly ok: false; readonly reason: EventLeaseRefusal } {
 		const peer = this.peers.get(caller.socketEpoch) ?? { held: new Map(), released: new Map() };
 		if (peer.held.size >= this.peerLimit) return this.refuse("lease_limit");
-		const shared = this.stage(record, line);
+		const shared = this.stage(record, content);
 		if (!shared) return this.refuse("storage_unavailable");
 		const { entry } = shared.content.ref;
 		const lease: EventLease = Object.freeze({
@@ -218,17 +236,17 @@ export class EventLeases {
 	}
 
 	/** The record's text staged once and adopted by this owner; undefined when the store could not take it. */
-	private stage(record: object, line: string): SharedContent | undefined {
+	private stage(record: object, content: RecordContent): SharedContent | undefined {
 		const existing = this.shared.get(record);
 		if (existing && existing.holders > 0) return existing;
 		this.staging ??= new TransferStaging(
 			new CompactContentStore({ dir: join(tmpdir(), `senpi-event-leases-${randomUUID()}`) }),
 		);
 		try {
-			const content = this.staging.stage(protocolId("event"), protocolId(EVENT_RECORD_COMPONENT), line.slice(0, -1));
-			this.staging.adopt(content);
-			const shared: SharedContent = { content, holders: 0 };
-			this.contentBytes += content.ref.entry.length;
+			const staged = stageRecord(this.staging, record, content);
+			this.staging.adopt(staged);
+			const shared: SharedContent = { content: staged, holders: 0 };
+			this.contentBytes += staged.ref.entry.length;
 			this.shared.set(record, shared);
 			return shared;
 		} catch (cause) {

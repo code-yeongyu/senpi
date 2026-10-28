@@ -3,7 +3,7 @@ import type { RecoveryPage } from "./compact-recovery-bytes.ts";
 import { type CursorBinding, RecoveryCursors } from "./compact-recovery-cursor.ts";
 import { parseBoundedId } from "./compact-recovery-ids.ts";
 import type { RecoveryCheckpoints } from "./compact-recovery-state.ts";
-import type { RecoveryCaller, RecoveryFailure, RecoveryOutcome } from "./compact-recovery-types.ts";
+import type { RecoveryCaller, RecoveryFailure, RecoveryLease, RecoveryOutcome } from "./compact-recovery-types.ts";
 import { repairNeeded } from "./compact-recovery-types.ts";
 
 /** At most this many page requests are outstanding on one socket across all of its tokens (R4.B3). */
@@ -18,11 +18,11 @@ export interface RecoveryPageRequest {
 	readonly cursor?: string;
 }
 
-/** The same request under an ordinary-event lease (S13, RULING-65 S13-Q1 A): discriminated by `lease.kind`. */
-export interface EventPageRequest {
+/** The same request naming its lease by kind (S13, RULING-65 S13-Q1 A, RULING-81 Q-C): an unknown kind is refused. */
+export interface LeasePageRequest {
 	readonly requestId: string;
 	readonly admissionId: string;
-	readonly lease: { readonly kind: "event"; readonly id: string };
+	readonly lease: { readonly kind: RecoveryLease["kind"]; readonly id: string };
 	readonly componentRef: string;
 	readonly cursor?: string;
 }
@@ -58,7 +58,8 @@ export type RequestRefusalReason =
 	| "request_mismatch"
 	| "invalid_cursor"
 	| "cursor_out_of_range"
-	| "ordinal_exhausted";
+	| "ordinal_exhausted"
+	| "lease_kind_unsupported";
 
 /** What the client does next: wait for the current request, start the component over, re-admit, or send a new id. */
 export type RequestRefusalHint = "retry" | "restart_from_catalog" | "release_token" | "new_request";
@@ -82,7 +83,7 @@ export interface RecoveryPageCounters {
 	readonly refused: Readonly<Partial<Record<RequestRefusalReason, number>>>;
 }
 
-type PageRequest = RecoveryPageRequest | EventPageRequest;
+type PageRequest = RecoveryPageRequest | LeasePageRequest;
 type PageOutcome =
 	| { readonly ok: true; readonly value: RecoveryPageAnswer | EventPageAnswer }
 	| { readonly ok: false; readonly failure: RecoveryPageFailure };
@@ -110,6 +111,7 @@ const HINTS: Readonly<Record<RequestRefusalReason, RequestRefusalHint>> = {
 	invalid_cursor: "restart_from_catalog",
 	cursor_out_of_range: "restart_from_catalog",
 	ordinal_exhausted: "release_token",
+	lease_kind_unsupported: "new_request",
 };
 
 const named = (request: PageRequest): unknown => ("lease" in request ? request.lease?.id : request.token);
@@ -165,13 +167,20 @@ export class RecoveryPageRequests {
 	request(caller: RecoveryCaller, request: RecoveryPageRequest, signal?: AbortSignal): Promise<RecoveryPageOutcome>;
 	request(caller: RecoveryCaller, request: PageRequest, signal?: AbortSignal): Promise<PageOutcome>;
 	async request(caller: RecoveryCaller, request: PageRequest, signal?: AbortSignal): Promise<PageOutcome> {
-		const leaseKind = "lease" in request ? request.lease?.kind : "event";
+		const kind: unknown = "lease" in request ? request.lease?.kind : "checkpoint";
 		const fields = [request.requestId, request.admissionId, named(request), request.componentRef];
-		if (leaseKind !== "event" || fields.some((field) => typeof field !== "string" || !parseBoundedId(field).ok))
+		if (
+			(kind !== "event" && kind !== "checkpoint") ||
+			fields.some((field) => typeof field !== "string" || !parseBoundedId(field).ok)
+		)
 			return this.refuse("malformed_request");
 		if ((this.outstanding.get(caller.socketEpoch) ?? 0) >= SOCKET_PAGE_REQUESTS_MAX)
 			return this.refuse("request_limit");
-		const source = "lease" in request ? this.eventSource(caller, request) : this.checkpointSource(caller, request);
+		const id = String(named(request));
+		const source =
+			kind === "event"
+				? this.eventSource(caller, id, request.admissionId)
+				: this.checkpointSource(caller, id, request.admissionId);
 		if (!source.ok) return source;
 		const token = source.value;
 		const state = this.tokens.get(token.id) ?? { active: false, ordinal: 0, current: undefined };
@@ -197,10 +206,10 @@ export class RecoveryPageRequests {
 	}
 
 	/** A checkpoint token minted for this caller under the named admission, claimed before any request state. */
-	private checkpointSource(caller: RecoveryCaller, request: RecoveryPageRequest): RecoveryOutcome<PageSource> {
+	private checkpointSource(caller: RecoveryCaller, tokenId: string, admissionId: string): RecoveryOutcome<PageSource> {
 		const token = this.checkpoints
 			.tokens()
-			.find((each) => each.id === request.token && each.admission.admissionId === request.admissionId);
+			.find((each) => each.id === tokenId && each.admission.admissionId === admissionId);
 		if (
 			!token ||
 			token.admission.socketEpoch !== caller.socketEpoch ||
@@ -222,10 +231,10 @@ export class RecoveryPageRequests {
 	}
 
 	/** An event lease of this caller (S13); its pages are the leased record's bytes, and it carries no generation. */
-	private eventSource(caller: RecoveryCaller, request: EventPageRequest): RecoveryOutcome<PageSource> {
+	private eventSource(caller: RecoveryCaller, leaseId: string, admissionId: string): RecoveryOutcome<PageSource> {
 		const events = this.events;
 		if (!events) return { ok: false, failure: repairNeeded("unknown_token") };
-		const claimed = events.claim(caller, request.lease.id, request.admissionId);
+		const claimed = events.claim(caller, leaseId, admissionId);
 		if (!claimed.ok) return claimed;
 		const held = claimed.value;
 		return {
