@@ -66,15 +66,16 @@ export class RpcOwnerProcesses {
 		await Promise.all([...this.supervisors.values()].map((supervisor) => supervisor.ready));
 	}
 
-	async allGone(): Promise<void> {
+	/** `boundMs` is the CASE's remaining budget (see `caseBudget`), never a fixed wall-clock deadline. */
+	async allGone(boundMs = EXIT_BOUND_MS): Promise<void> {
 		await Promise.all(
 			this.owners.map((owner) =>
 				owner.exitCode !== null || owner.signalCode !== null
 					? Promise.resolve()
-					: once(owner, "exit", { signal: AbortSignal.timeout(EXIT_BOUND_MS) }),
+					: once(owner, "exit", { signal: AbortSignal.timeout(boundMs) }),
 			),
 		);
-		await Promise.all([...this.supervisors.values()].map((supervisor) => supervisor.wait(EXIT_BOUND_MS)));
+		await Promise.all([...this.supervisors.values()].map((supervisor) => supervisor.wait(boundMs)));
 		for (const [pid, command] of this.pids)
 			expect(processAlive(pid), `pid ${pid} (${command}) still alive after owner exit`).toBe(false);
 	}

@@ -1,5 +1,8 @@
 import type { SupervisorActivity, SupervisorOwner } from "./host-lifecycle-activity.ts";
 
+/** The shutdown reason that names owner death, shared with the record that measures its latency. */
+export const OWNER_GONE_SHUTDOWN_REASON = "owner_gone";
+
 /** Idle and lifetime-owner checks share one ticker and never overlap owner probes. */
 export function startSupervisorTicker(options: {
 	readonly idleExitMs: number;
@@ -20,7 +23,7 @@ export function startSupervisorTicker(options: {
 			void owner
 				.shouldExit(activity)
 				.then((exit) => {
-					if (exit && !shuttingDown() && !draining()) void shutdown("owner_gone", 0);
+					if (exit && !shuttingDown() && !draining()) void shutdown(OWNER_GONE_SHUTDOWN_REASON, 0);
 				})
 				.finally(() => {
 					ownerCheck = false;

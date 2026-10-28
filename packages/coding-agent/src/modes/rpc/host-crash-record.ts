@@ -68,6 +68,14 @@ export interface HostCrashRecord {
 	/** Every sender that acted, outermost first, when the stop passed through more than one. */
 	readonly chain?: readonly HostStopSender[];
 	readonly reason?: string;
+	/**
+	 * When the supervisor OBSERVED its lifetime owner gone, and how long it then took to decide to
+	 * shut down - both on the supervisor's own clock, so the measurement excludes any reader's
+	 * scheduling. Present only on an owner-death stop; absent everywhere else, and on every record
+	 * written before these fields existed (senpi#3392).
+	 */
+	readonly ownerGoneAt?: string;
+	readonly decisionDelayMs?: number;
 	/** Whether a fresh stop intent for this generation was on record when it ended. */
 	readonly stopIntent?: boolean;
 	/** The newest loop stall the host measured, when it was recent at the end. */
