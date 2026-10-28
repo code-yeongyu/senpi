@@ -27,12 +27,14 @@ interface McpReconnectState {
 	disposed: boolean;
 	timer: NodeJS.Timeout | undefined;
 	timerGeneration: number | undefined;
+	/** The attempt running now, if any; dispose awaits it so nothing it started can still write afterwards. */
+	inflight: Promise<void> | undefined;
 }
 
 const reconnectStates = new WeakMap<ServerConnection, McpReconnectState>();
 
 export function configureMcpReconnect(options: McpReconnectOptions): void {
-	disposeMcpReconnect(options.connection);
+	void disposeMcpReconnect(options.connection);
 	const state: McpReconnectState = {
 		attemptTimes: [],
 		backoffIndex: 0,
@@ -44,6 +46,7 @@ export function configureMcpReconnect(options: McpReconnectOptions): void {
 		shouldReconnect: options.shouldReconnect ?? (() => true),
 		timer: undefined,
 		timerGeneration: undefined,
+		inflight: undefined,
 		unsubscribe: options.connection.onStateChange((event) => {
 			if (event.state === "degraded") scheduleReconnect(state, event.generation, event.error);
 			if (event.state === "connected") state.backoffIndex = 0;
@@ -52,13 +55,19 @@ export function configureMcpReconnect(options: McpReconnectOptions): void {
 	reconnectStates.set(options.connection, state);
 }
 
-export function disposeMcpReconnect(connection: ServerConnection): void {
+/**
+ * Stops reconnecting: a reconnect still waiting on its backoff timer never starts, and none is scheduled later.
+ * The returned promise settles once an attempt already running has settled (its failure is not reported), so a
+ * caller that awaits it after closing the connection knows no reconnect can still spawn or log (senpi#4642).
+ */
+export function disposeMcpReconnect(connection: ServerConnection): Promise<void> {
 	const state = reconnectStates.get(connection);
-	if (state === undefined) return;
+	if (state === undefined) return Promise.resolve();
 	reconnectStates.delete(connection);
 	state.disposed = true;
 	clearReconnectTimer(state);
 	state.unsubscribe();
+	return state.inflight ?? Promise.resolve();
 }
 
 export async function reconnectMcpNow(connection: ServerConnection): Promise<void> {
@@ -110,6 +119,20 @@ function scheduleReconnect(state: McpReconnectState, generation: number, cause: 
 }
 
 async function runReconnectAttempt(state: McpReconnectState, generation: number, manual: boolean): Promise<void> {
+	const attempt = attemptReconnect(state, generation, manual);
+	const tracked = attempt.then(
+		() => undefined,
+		() => undefined,
+	);
+	state.inflight = tracked;
+	try {
+		await attempt;
+	} finally {
+		if (state.inflight === tracked) state.inflight = undefined;
+	}
+}
+
+async function attemptReconnect(state: McpReconnectState, generation: number, manual: boolean): Promise<void> {
 	if (state.disposed || !state.shouldReconnect()) return;
 	if (!manual && generation !== state.connection.generation) return;
 	if (state.connection.state === "disabled") return;
@@ -124,6 +147,8 @@ async function runReconnectAttempt(state: McpReconnectState, generation: number,
 		state.backoffIndex = 0;
 	} catch (error) {
 		const failure = error instanceof Error ? error : new Error(String(error));
+		// An attempt that dispose overtook is not a server failure: nothing is marked or rescheduled.
+		if (state.disposed) return throwIfManual(manual, failure);
 		if (state.connection.state !== "suspended" && state.connection.state !== "needs_auth") {
 			const visibleFailure =
 				isGenericReconnectFailure(failure) && state.connection.lastError !== undefined

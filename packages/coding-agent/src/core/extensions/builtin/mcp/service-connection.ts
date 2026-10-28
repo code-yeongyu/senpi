@@ -133,7 +133,9 @@ export async function disposeEntryConnection(
 ): Promise<void> {
 	entry.disposeListChanged?.();
 	entry.disposeWireStatus?.();
-	disposeMcpReconnect(entry.connection);
+	const reconnectSettled = disposeMcpReconnect(entry.connection);
 	disposeMcpConnectionLifecycle(entry.connection);
 	await registry.detach(entry.key, owner);
+	// Detach closed the connection, which ends an attempt in flight; wait for it so nothing it started writes later.
+	await reconnectSettled;
 }

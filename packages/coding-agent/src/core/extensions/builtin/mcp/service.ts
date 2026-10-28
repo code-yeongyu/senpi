@@ -585,6 +585,10 @@ export class McpService {
 	 *
 	 * An attach (or re-sync) still on the queue has not handed its backgrounded connects over yet, so the queue is
 	 * awaited first, within the same budget: an early call must never read an empty pending set as settled (senpi#4027).
+	 *
+	 * It covers the startup race only. A server that degrades keeps reconnecting on its backoff timer until its
+	 * breaker opens, so "settled" does not mean no reconnect is pending; `dispose()` is the guarantee that nothing
+	 * the service started (a scheduled or running reconnect included) can still write once it resolves (senpi#4642).
 	 */
 	async whenAttachSettled(timeoutMs = MCP_ATTACH_SETTLE_TIMEOUT_MS): Promise<McpStartupRaceResult> {
 		const startedAt = Date.now();
