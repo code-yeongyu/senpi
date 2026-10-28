@@ -756,6 +756,16 @@ describe("default model selection", () => {
 		}
 	});
 
+	test("kimi defaults pick kimi k3.1 pro where the provider serves it", () => {
+		expect(defaultModelPerProvider.moonshotai).toBe("kimi-k3.1-pro");
+		expect(defaultModelPerProvider["moonshotai-cn"]).toBe("kimi-k3.1-pro");
+		expect(defaultModelPerProvider["opencode-go"]).toBe("kimi-k3.1-pro");
+		expect(defaultModelPerProvider.opengateway).toBe("moonshotai/kimi-k3.1-pro");
+		// Fireworks and Together list no K3.1 Pro yet, so they stay on K3.
+		expect(defaultModelPerProvider.fireworks).toBe("accounts/fireworks/models/kimi-k3");
+		expect(defaultModelPerProvider.together).toBe("moonshotai/Kimi-K3");
+	});
+
 	test("ai-gateway default tracks current model", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
 	});

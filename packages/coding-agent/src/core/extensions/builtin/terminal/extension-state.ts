@@ -7,6 +7,7 @@ import {
 	TERMINAL_MONITOR_STATE_EVENT,
 	WAKE_SOURCE_STATE_EVENT,
 } from "../monitor-state-event.ts";
+import { tapBackgroundSession, untapBackgroundSession } from "./job-widget-tap.ts";
 import type { MonitorNotifier } from "./monitor-notify.ts";
 import { removeMonitorStateDir, terminalStateDir } from "./monitor-state-dir.ts";
 import type { MonitorStatusTicker } from "./monitor-status-ticker.ts";
@@ -166,9 +167,17 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 		getSessionContext: () => state.ctx,
 		// Exit listeners registered before a reload reach the post-reload owner through the
 		// shared bundle, so this must dispatch via the bundle, never the instance notifier.
-		onBackgroundStart: (id: string, description: string, startedAtMs: number) => {
+		onBackgroundStart: (id: string, description: string, startedAtMs: number, command?: string) => {
 			state.bundle?.notifyBackgroundStart(id, description, startedAtMs);
+			const runtime = state.bundle?.manager.get(id);
+			if (runtime) {
+				tapBackgroundSession(sessionKeyOf(state.ctx), id, runtime, {
+					command: command ?? description,
+					description,
+				});
+			}
 		},
+		onSessionInput: (id: string) => untapBackgroundSession(state.bundle?.manager.get(id)),
 		onBackgroundExit: (id: string, runtime: TerminalExitView) => {
 			state.bundle?.notifyBackgroundExit(id, runtime);
 		},

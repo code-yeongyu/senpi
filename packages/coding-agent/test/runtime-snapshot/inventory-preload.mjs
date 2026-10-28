@@ -4,14 +4,15 @@ import { fileURLToPath } from "node:url";
 
 // Observe resolution, not source text. Append synchronously because --help uses process.exit.
 const output = process.env.SENPI_INVENTORY_LOG;
-const append = fs.appendFileSync;
+// appendFileSync looks up fs.writeFileSync again after the kernel interposes it.
+const append = fs.writeFileSync;
 const seen = new Set();
 function record(value) {
 	if (typeof value !== "string") return;
 	const path = value.startsWith("file:") ? fileURLToPath(value) : value;
 	if (!path.replaceAll("\\", "/").includes("/node_modules/") || seen.has(path)) return;
 	seen.add(path);
-	append(output, `${JSON.stringify(path)}\n`);
+	append(output, `${JSON.stringify(path)}\n`, { flag: "a" });
 }
 
 if (typeof Module.registerHooks === "function") {

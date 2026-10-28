@@ -3,6 +3,7 @@ import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/prot
 import type { WorkerLike } from "./inline-worker.ts";
 import { retireWorker, type WorkerRetirement } from "./interrupt-bounds.ts";
 import type { JavaScriptKernelMode } from "./kernel-contract.ts";
+import type { KernelPermissionHost } from "./permission-host.ts";
 import type { JavaScriptKernelOptions } from "./local-module-loader.ts";
 import { KernelWebViewClients } from "./webview-host.ts";
 import { WorkerStartupCancelledError } from "./worker-host.ts";
@@ -18,6 +19,7 @@ export interface WorkerSlotListeners {
 export class WorkerSlot {
 	readonly #options: JavaScriptKernelOptions;
 	readonly #listeners: WorkerSlotListeners;
+	readonly #permissions?: KernelPermissionHost;
 	#worker: WorkerLike | null = null;
 	#lastProcessPid: number | undefined;
 	#webViews: KernelWebViewClients | null = null;
@@ -26,9 +28,10 @@ export class WorkerSlot {
 	#ready: Promise<void> | null = null;
 	#startupAbort: AbortController | null = null;
 
-	constructor(options: JavaScriptKernelOptions, listeners: WorkerSlotListeners) {
+	constructor(options: JavaScriptKernelOptions, listeners: WorkerSlotListeners, permissions?: KernelPermissionHost) {
 		this.#options = options;
 		this.#listeners = listeners;
+		this.#permissions = permissions;
 	}
 
 	get mode(): JavaScriptKernelMode {
@@ -65,6 +68,7 @@ export class WorkerSlot {
 			const ready = startWorkerWithInlineFallback(
 				{
 					options: this.#options,
+					permissions: this.#permissions,
 					kernelGeneration: generation,
 					publish: (worker) => this.#publish(worker, generation),
 					isCurrent: (worker) => this.#isCurrent(worker, generation),

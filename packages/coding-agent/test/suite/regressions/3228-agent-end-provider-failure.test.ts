@@ -1,5 +1,5 @@
 import { type AssistantMessage, fauxAssistantMessage, type ProviderDiagnostic } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import { describeProviderFailure, formatProviderFailure } from "../../../src/core/provider-failure.ts";
 import { createHarness, type Harness } from "../harness.ts";
@@ -34,6 +34,7 @@ describe("agent_end provider failure", () => {
 	const harnesses: Harness[] = [];
 	afterEach(async () => {
 		while (harnesses.length > 0) await harnesses.pop()?.cleanup();
+		vi.unstubAllEnvs();
 	});
 
 	async function agentEndOf(response: AssistantMessage): Promise<Extract<AgentSessionEvent, { type: "agent_end" }>> {
@@ -79,7 +80,7 @@ describe("agent_end provider failure", () => {
 		expect(end.failure?.reason.length).toBeGreaterThan(0);
 	});
 
-	it("reports an unclassified provider error as unknown with the provider and code, never from the message", async () => {
+	it("reports an unclassified provider error as unknown with its code in typed fields, never from the message", async () => {
 		const end = await agentEndOf(
 			failedTurn("401 invalid api key: rate limit quota exceeded", {
 				category: "unknown",
@@ -88,16 +89,23 @@ describe("agent_end provider failure", () => {
 				evidence: "structured_code",
 			}),
 		);
-		expect(end.failure?.category).toBe("unknown");
-		expect(end.failure?.reason).toMatch(/could not be classified \(faux, code permission_error\)/);
-		expect(end.failure?.action).toMatch(/^retry once/);
+		expect(end.failure).toMatchObject({ category: "unknown", httpStatus: 403, code: "permission_error" });
+		// senpi#4329: the code and status stay in the typed fields; the user-facing text never carries them.
+		for (const text of [end.failure?.reason, end.failure?.action]) {
+			expect(text?.trim().length).toBeGreaterThan(0);
+			expect(text).not.toContain("permission_error");
+			expect(text).not.toContain("403");
+		}
 		expectStructuredOnly(end.failure, "invalid api key");
+		if (end.failure === undefined) throw new Error("Missing provider failure");
+		expect(formatProviderFailure(end.failure).trim().length).toBeGreaterThan(0);
 	});
 
 	it("falls back to unknown, not a guess from the message, when the error carries no diagnostic", async () => {
 		const end = await agentEndOf(failedTurn("429 rate limit exceeded"));
 		expect(end.failure?.category).toBe("unknown");
-		expect(end.failure?.reason).toMatch(/\(faux, no code\)/);
+		expect(end.failure).not.toHaveProperty("httpStatus");
+		expect(end.failure).not.toHaveProperty("code");
 		expectStructuredOnly(end.failure, "rate limit exceeded");
 	});
 
@@ -134,6 +142,25 @@ describe("agent_end provider failure", () => {
 	it("omits failure on a successful turn", async () => {
 		const end = await agentEndOf(fauxAssistantMessage("fine"));
 		expect(end.failure).toBeUndefined();
+	});
+
+	it("publishes the reset in local time with its zone while preserving the epoch timestamp", async () => {
+		vi.stubEnv("TZ", "America/New_York");
+		const end = await agentEndOf(
+			failedTurn("provider failed", {
+				category: "quota",
+				code: "usage_limit_reached",
+				evidence: "structured_code",
+				resetsAt: 1_792_540_800_000,
+			}),
+		);
+		expect(end.failure).toMatchObject({
+			category: "quota",
+			code: "usage_limit_reached",
+			resetsAt: 1_792_540_800_000,
+		});
+		expect(end.failure?.reason).toMatch(/\b8:00\s*PM\b/);
+		expect(end.failure?.reason).toMatch(/\bEDT\b/);
 	});
 
 	// senpi#4328: changing the next selection does not reroute a request already in flight.

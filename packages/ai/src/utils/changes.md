@@ -1,3 +1,48 @@
+## 2026-10-27 - Explicit producer-time seed frontier (part of #4272)
+
+### What changed
+
+- `packages/ai/src/utils/assistant-capture.ts` carries `nextOffset` on block starts; frozen-value construction moves to `packages/ai/src/utils/assistant-capture-record.ts`.
+- `packages/ai/src/utils/assistant-seed-frontier.ts` accepts only zero or full UTF-16 seed length and supplies typed missing/invalid frontier errors.
+
+### Why
+
+- Identical nonempty seeds previously hid whether subsequent deltas replayed from zero or continued at the seed length.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/utils/assistant-capture.ts`, `packages/ai/src/utils/assistant-capture-record.ts`, and `packages/ai/src/utils/assistant-seed-frontier.ts` own producer-time capture and its internal consumer contract, before extension delivery.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/utils/assistant-capture.ts`, `packages/ai/src/utils/assistant-capture-record.ts`, and `packages/ai/src/utils/assistant-seed-frontier.ts`.
+
+## 2026-10-26 - Provider error bodies are classified raw and kept redacted at the stream boundary (senpi#4282)
+
+### What changed
+
+- `provider-error.ts` (new): `isModelConfigError` (every quantifier bounded) and `sanitizeProviderErrorMessage`, which classifies the raw `errorMessage` of an error message (`stopReason: "error"`) first, sets `errorCause: { type: "model_config", model }` when it names a model the route does not serve, then keeps only the redacted text of every provider error.
+- `secret-redaction.ts` (new): `redactSecrets` and `redactCredentialShapes`, the one-pass state machine. One left-to-right pass reads the text as alternating tokens and delimiters; each token is classified from its own characters and the delimiters beside it, with index arithmetic only and no regular expression. The whole value of a strict name (password, secret, authorization, bearer) is read forward to its closing quote (at the opening quote's escaping depth) or, when bare, to whitespace, `,`, `;`, `&`, a quote or `<`, and the scan resumes after it.
+- `secret-lexer.ts` (new): character classes, percent escapes and HTML entities read as what they encode, the token and delimiter units, and the forward scans that find where a quoted or bare value ends. The shared logical-unit reader collapses canonical percent layers in one forward walk, then repeatedly percent-decodes a 64-character window to a fixpoint, retaining source offsets. Independently encoded percent signs and hex digits, mixed depths and either hex case use the same semantics; an unresolved window returns a typed refusal and the scanner redacts the remaining suffix conservatively. Work is linear: canonical prefixes are consumed once and every remaining window has constant work and storage. Both exported redactors use the same scanner and shape classifier; shapes mode deliberately interprets neither credential names nor URL passwords. JWT segment dots and URL authority slashes use logical units too. Scaling tests count scanner character reads through both exports instead of load-sensitive wall time.
+- `secret-classifier.ts` (new): credential words (a name is normalized: lowercase, camelCase split, trailing digits and `value`/`val`/`id` qualifiers stripped), known key prefixes and JWTs. A prefix or JWT is recognized wherever a word starts inside a token (after `/`, `+`, `~`, `-`, `.`, `%`, including percent-encoded token punctuation), never inside a word; each prefix check is bounded work, and a failed JWT candidate skips to its first `.`, so every segment is walked at most three times.
+- `event-stream.ts`: `AssistantMessageEventStream.push` and `end` run `sanitizeProviderErrorMessage` on every partial, error and final message, so no consumer of any provider stream sees a raw provider error body.
+- `retry.ts`: `isRetryableAssistantError` returns false for a `model_config` cause.
+- `secret-lexer.ts`: a percent-window refusal requires an unresolved percent/hex run contiguous to the window edge; a space or non-hex literal ends that dependency, so printf and SQL percent text stays readable. Windows without a percent followed by a hex digit skip fixpoint-buffer allocation and decoding passes.
+- `secret-classifier.ts` and `secret-redaction.ts`: a single known key's redacted span ends at its credential alphabet boundary, preserving a following path separator or filename suffix. If another credential starts anywhere after the first start, even inside its alphabet or behind a word character, the whole remaining token is conservatively redacted. Hook diagnostics retain the source filename around a single PAT. The suffix matrix covers every prefix alias and JWT, slash, dot, colon, query/form separators, underscore, hyphen, end of string, a word character and three joined credential families in EN/KO prose, paths, URLs and userinfo through both public redactors.
+
+### Why
+
+- A redaction applied at `message_end` left the raw body in `message_start`/`message_update` events published before it; every provider builds its error through this stream, so it is the one place where the body enters our objects.
+- Regex redaction was quadratic on shaped input twice in review (a keyword repeated over one name run, then the JWT rule on `eyJ-` runs: 1 MB took about 52 s), synchronously inside `push`; it also mangled names that only contain a credential word, missed numbered or qualified names, and missed cookie pairs after a short first value. A token-wise pass is linear by construction.
+
+### Why an extension could not handle it
+
+- The provider stream class and the retry classifier are core pi-ai code that every provider and the agent loop share.
+
+### Expected merge conflict zones
+
+- LOW: the `AssistantMessageEventStream` class body in `event-stream.ts`; the top of `isRetryableAssistantError`.
+
 ## 2026-10-26 - Relay hints and consistent replaced terminals (senpi#4307, part of #4272)
 
 ### What changed

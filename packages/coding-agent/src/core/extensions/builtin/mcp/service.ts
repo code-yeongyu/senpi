@@ -180,7 +180,11 @@ export class McpService {
 				env: sessionOptions.env,
 				projectTrusted: sessionOptions.projectTrusted ?? ctx.isProjectTrusted(),
 			});
-			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
+			// An extension handling mcp_servers_change connects the registered servers; connecting them here too
+			// would open a second connection per server (senpi#4597).
+			if (ctx.extensionConnectsMcpServers?.() !== true) {
+				mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
+			}
 			const previous = _pi === undefined ? undefined : this.#bindings.get(_pi);
 			if (
 				previous !== undefined &&

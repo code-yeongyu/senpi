@@ -2,9 +2,16 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
 import type { Skill } from "./skills.ts";
 
 export const COMPACT_SKILL_CATALOG_COUNT = 100;
-export const COMPACT_SKILL_CATALOG_DESCRIPTION_BYTES = 64 * 1024;
+export const COMPACT_SKILL_CATALOG_DESCRIPTION_BYTES = 16 * 1024;
 export const MAX_SKILL_CATALOG_BYTES = 48 * 1024;
 const ONE_LINE_DESCRIPTION_MAX_CHARS = 160;
+// A catalog whose 160-character lines overflow the section cap tries shorter lines before dropping descriptions.
+const TIGHT_ONE_LINE_DESCRIPTION_MAX_CHARS = 100;
+const MIN_FILL_CHARS = 24;
+// The when-to-use clause ("Use when...", "MUST USE for...", "Triggers: ...") is what the model selects a skill on.
+const TRIGGER_CLAUSE =
+	/(?:^|(?<=[.!?;:)]\s)|(?<=\s[-\u2013\u2014]\s))(?:MUST (?:USE|READ|use|read)\b|USE ONLY WHEN\b|(?:Use|Used|Read|Load|Invoke|Apply|Run|Call)\b[^.!?]{0,40}?\b(?:when|whenever|for|before|after|if|only)\b|(?:Korean )?[Tt]riggers?(?::| -| on\b)|This skill should be used\b|Use this\b|When the user\b)/;
+const SENTENCE_END = /[.!?](?=\s|$)/g;
 
 /** A catalog this large is listed by name plus a one-line description, since it rides on every request. */
 export function isLargeSkillCatalog(skills: readonly Skill[]): boolean {
@@ -30,12 +37,26 @@ export function warnIfLargeSkillCatalog(skills: readonly Skill[]): ResourceDiagn
 function buildSkillCatalog(skills: readonly Skill[], fileReadTool: "read" | "bash") {
 	const visible = skills.filter((skill) => !skill.disableModelInvocation);
 	const compact = isLargeSkillCatalog(visible);
-	const options = { fileReadTool, compact, namesOnly: false, omitted: 0 };
+	const options = {
+		fileReadTool,
+		compact,
+		namesOnly: false,
+		omitted: 0,
+		descriptionChars: ONE_LINE_DESCRIPTION_MAX_CHARS,
+	};
 	const prompt = renderSkills(visible, options);
 	if (Buffer.byteLength(prompt) <= MAX_SKILL_CATALOG_BYTES) return { prompt, compact, namesOnly: false, omitted: 0 };
 	const compactPrompt = compact ? prompt : renderSkills(visible, { ...options, compact: true });
 	if (Buffer.byteLength(compactPrompt) <= MAX_SKILL_CATALOG_BYTES) {
 		return { prompt: compactPrompt, compact: true, namesOnly: false, omitted: 0 };
+	}
+	const tightPrompt = renderSkills(visible, {
+		...options,
+		compact: true,
+		descriptionChars: TIGHT_ONE_LINE_DESCRIPTION_MAX_CHARS,
+	});
+	if (Buffer.byteLength(tightPrompt) <= MAX_SKILL_CATALOG_BYTES) {
+		return { prompt: tightPrompt, compact: true, namesOnly: false, omitted: 0 };
 	}
 	const minimal = { ...options, namesOnly: true };
 	const namesPrompt = renderSkills(visible, minimal);
@@ -59,11 +80,35 @@ function buildSkillCatalog(skills: readonly Skill[], fileReadTool: "read" | "bas
 	};
 }
 
-function oneLineDescription(description: string): string {
-	const firstLine = description.trim().split("\n", 1)[0]?.trim() ?? "";
-	return firstLine.length <= ONE_LINE_DESCRIPTION_MAX_CHARS
-		? firstLine
-		: `${firstLine.slice(0, ONE_LINE_DESCRIPTION_MAX_CHARS - 1).trimEnd()}…`;
+// A cut keeps the whole when-to-use sentence (or its start, when that sentence alone is too long) and spends the
+// remaining room on the leading what-it-does text, then on whatever follows the trigger sentence.
+function oneLineDescription(description: string, maxChars: number): string {
+	const text = description.trim().replace(/\s+/g, " ");
+	if (text.length <= maxChars) return text;
+	const trigger = TRIGGER_CLAUSE.exec(text);
+	if (!trigger) return truncate(text, maxChars);
+	SENTENCE_END.lastIndex = trigger.index;
+	const end = SENTENCE_END.exec(text)?.index;
+	const clauseEnd = end === undefined ? text.length : end + 1;
+	const clause = text.slice(trigger.index, clauseEnd);
+	if (clause.length >= maxChars) return truncate(clause, maxChars);
+	let room = maxChars - clause.length;
+	const fill = (part: string): string => {
+		if (part.length === 0 || room - 1 < MIN_FILL_CHARS) return "";
+		const kept = truncate(part, room - 1);
+		room -= kept.length + 1;
+		return kept;
+	};
+	const lead = fill(text.slice(0, trigger.index).trim());
+	const rest = fill(text.slice(clauseEnd).trim());
+	return [lead, clause, rest].filter((part) => part.length > 0).join(" ");
+}
+
+function truncate(text: string, maxChars: number): string {
+	if (text.length <= maxChars) return text;
+	const head = text.slice(0, maxChars - 1);
+	const wordEnd = head.lastIndexOf(" ");
+	return `${(wordEnd > maxChars / 2 ? head.slice(0, wordEnd) : head).replace(/[\s,;:]+$/, "")}…`;
 }
 
 /**
@@ -91,6 +136,7 @@ function renderSkills(
 		readonly compact: boolean;
 		readonly namesOnly: boolean;
 		readonly omitted: number;
+		readonly descriptionChars: number;
 	},
 ): string {
 	if (visibleSkills.length === 0 && options.omitted === 0) {
@@ -115,23 +161,28 @@ function renderSkills(
 	for (const [dir, alias] of rootByPath) {
 		lines.push(`  <${alias}>${escapeXml(dir)}</${alias}>`);
 	}
+	const oneLine = options.compact || options.namesOnly;
 	lines.push(
 		"</skill_roots>",
-		"A location's `rN/` prefix expands to the matching root above.",
+		oneLine
+			? `Each line is \`- name [location]${options.namesOnly ? "" : ": when to use it"}\`. A location \`rN\` means the file \`rN/<name>/SKILL.md\`; a longer location is the file's path under that root.`
+			: "A location's `rN/` prefix expands to the matching root above.",
 		"",
 		"<available_skills>",
 	);
 
 	for (const skill of visibleSkills) {
+		if (oneLine) {
+			lines.push(compactSkillLine(skill, rootByPath, options.namesOnly ? undefined : options.descriptionChars));
+			continue;
+		}
 		const dir = skill.filePath.split("/").slice(0, -2).join("/");
 		const alias = rootByPath.get(dir);
 		const relative = skill.filePath.startsWith(`${dir}/`) ? skill.filePath.slice(dir.length + 1) : skill.filePath;
 		lines.push("  <skill>");
 		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
 		if (!options.namesOnly) {
-			lines.push(
-				`    <description>${escapeXml(options.compact ? oneLineDescription(skill.description) : skill.description)}</description>`,
-			);
+			lines.push(`    <description>${escapeXml(skill.description)}</description>`);
 		}
 		lines.push(`    <location>${escapeXml(`${alias}/${relative}`)}</location>`);
 		lines.push("  </skill>");
@@ -141,6 +192,23 @@ function renderSkills(
 	lines.push("</available_skills>");
 
 	return lines.join("\n");
+}
+
+// A large catalog rides on every request, so each skill is one line: its name, the shortest location that still
+// resolves (the root alias alone when the file is `<root>/<name>/SKILL.md`), and a one-line description.
+function compactSkillLine(
+	skill: Skill,
+	rootByPath: ReadonlyMap<string, string>,
+	descriptionChars: number | undefined,
+): string {
+	const dir = skill.filePath.split("/").slice(0, -2).join("/");
+	const alias = rootByPath.get(dir);
+	const relative = skill.filePath.startsWith(`${dir}/`) ? skill.filePath.slice(dir.length + 1) : skill.filePath;
+	const location = relative === `${skill.name}/SKILL.md` ? alias : `${alias}/${relative}`;
+	const head = `- ${escapeXml(skill.name)} [${escapeXml(location ?? relative)}]`;
+	return descriptionChars === undefined
+		? head
+		: `${head}: ${escapeXml(oneLineDescription(skill.description, descriptionChars))}`;
 }
 
 function escapeXml(str: string): string {
