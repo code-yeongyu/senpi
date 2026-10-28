@@ -124,35 +124,69 @@ function omitToolResultImages(message: RpcRecord, persist: MediaPersister | unde
 	return omitted === content ? message : { ...message, content: omitted };
 }
 
+/** One container on the walk's explicit stack; `key` is where its result goes in the parent. */
+type WalkFrame =
+	| { readonly key: string | number; readonly value: unknown[]; index: number; replaced?: unknown[] }
+	| {
+			readonly key: string | number;
+			readonly value: RpcRecord;
+			readonly scrubbed: RpcRecord;
+			readonly entries: readonly (readonly [string, unknown])[];
+			index: number;
+			replaced?: RpcRecord;
+	  };
+
+/** Enter a container (scrubbing a toolResult on entry, so persister calls stay in pre-order), or undefined for a leaf. */
+function enter(value: unknown, key: string | number, persist: MediaPersister | undefined): WalkFrame | undefined {
+	if (Array.isArray(value)) return { key, value, index: 0 };
+	if (!isPlainObject(value)) return undefined;
+	const scrubbed = value.role === "toolResult" ? omitToolResultImages(value, persist) : value;
+	const entries = Object.entries(scrubbed).filter(
+		([name, child]) => (name !== "content" || scrubbed === value) && (isPlainObject(child) || Array.isArray(child)),
+	);
+	return scrubbed === value
+		? { key, value, scrubbed, entries, index: 0 }
+		: { key, value, scrubbed, entries, index: 0, replaced: { ...scrubbed } };
+}
+
 /**
  * Copy-on-write walk. Every object with `role:"toolResult"` has its content array
  * scrubbed, wherever it sits (message arrays, `turn_end.toolResults`, session entries,
  * tree nodes, `state.entries`). Unchanged sub-trees are returned by reference.
+ *
+ * The walk keeps its own stack instead of recursing, so a record of any depth the JSON engine can serialize passes
+ * (a recursive walk overflowed from about 3,000 levels on Node, below the engine's ~6,185; senpi#4272 RULING-68).
+ * A cycle is refused as native JSON refuses it.
  */
-function walk(value: unknown, persist: MediaPersister | undefined): unknown {
-	if (Array.isArray(value)) {
-		let replaced: unknown[] | undefined;
-		for (let index = 0; index < value.length; index++) {
-			const next = walk(value[index], persist);
-			if (next === value[index]) continue;
-			replaced ??= [...value];
-			replaced[index] = next;
+function walk(root: unknown, persist: MediaPersister | undefined): unknown {
+	const first = enter(root, 0, persist);
+	if (!first) return root;
+	const stack: WalkFrame[] = [first];
+	const ancestors = new Set<object>([first.value]);
+	for (;;) {
+		const top = stack[stack.length - 1] as WalkFrame;
+		if ("entries" in top ? top.index < top.entries.length : top.index < top.value.length) {
+			const [key, child] =
+				"entries" in top
+					? (top.entries[top.index] as readonly [string, unknown])
+					: [top.index, top.value[top.index]];
+			top.index++;
+			const frame = enter(child, key, persist);
+			if (!frame) continue;
+			if (ancestors.has(frame.value)) throw new TypeError("Converting circular structure to JSON");
+			ancestors.add(frame.value);
+			stack.push(frame);
+			continue;
 		}
-		return replaced ?? value;
+		stack.pop();
+		ancestors.delete(top.value);
+		const result = top.replaced ?? top.value;
+		const parent = stack[stack.length - 1];
+		if (!parent) return result;
+		if (result === top.value) continue;
+		if ("entries" in parent) (parent.replaced ??= { ...parent.scrubbed })[top.key] = result;
+		else (parent.replaced ??= [...parent.value])[top.key as number] = result;
 	}
-	if (!isPlainObject(value)) return value;
-
-	const scrubbed = value.role === "toolResult" ? omitToolResultImages(value, persist) : value;
-	let replaced: RpcRecord | undefined = scrubbed === value ? undefined : { ...scrubbed };
-	for (const [key, child] of Object.entries(scrubbed)) {
-		if (key === "content" && scrubbed !== value) continue;
-		if (!isPlainObject(child) && !Array.isArray(child)) continue;
-		const next = walk(child, persist);
-		if (next === child) continue;
-		replaced ??= { ...scrubbed };
-		replaced[key] = next;
-	}
-	return replaced ?? value;
 }
 
 /** `tool_execution_end.result.content` is not a toolResult message; scrub it explicitly. */
