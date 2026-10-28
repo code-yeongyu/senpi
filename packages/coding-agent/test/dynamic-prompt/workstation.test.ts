@@ -1,8 +1,10 @@
+import * as os from "node:os";
 import { describe, expect, test } from "vitest";
 import { buildDynamicSystemPrompt } from "../../src/core/dynamic-prompt/build.ts";
 import {
 	buildWorkstationSection,
 	collectWorkstationFacts,
+	readWorkstationFacts,
 	type WorkstationFacts,
 } from "../../src/core/dynamic-prompt/workstation.ts";
 
@@ -92,6 +94,62 @@ describe("collectWorkstationFacts", () => {
 		expect(first.arch.length).toBeGreaterThan(0);
 		expect(first.kernel.toLowerCase()).not.toContain("unknown");
 		expect(second).toBe(first);
+	});
+});
+
+// senpi#4660: SENPI_TEST_WORKSTATION pins the CPU model, core count and kernel so a harness driving the real
+// CLI gets the same prompt bytes on every host.
+function pinned(value: string): NodeJS.ProcessEnv {
+	return { ...process.env, SENPI_TEST_WORKSTATION: value };
+}
+
+describe("readWorkstationFacts SENPI_TEST_WORKSTATION", () => {
+	test("unset: the host's own kernel, CPU model and core count, equal to the cached snapshot", () => {
+		const env = { ...process.env };
+		delete env.SENPI_TEST_WORKSTATION;
+
+		const facts = readWorkstationFacts(env);
+
+		expect(facts.kernel).toBe(`${os.type()} ${os.release()}`.trim());
+		if (facts.cpu !== undefined) expect(facts.cpu.endsWith(` (${os.availableParallelism()} cores)`)).toBe(true);
+		expect(facts).toEqual(collectWorkstationFacts());
+	});
+
+	test("empty counts as unset", () => {
+		expect(readWorkstationFacts(pinned("")).kernel).toBe(`${os.type()} ${os.release()}`.trim());
+	});
+
+	test("set: the pinned kernel, CPU model and core count", () => {
+		const facts = readWorkstationFacts(
+			pinned(JSON.stringify({ cpuModel: "Test CPU", cores: 4, kernel: "TestOS 1.0" })),
+		);
+
+		expect(facts.kernel).toBe("TestOS 1.0");
+		expect(facts.cpu).toBe("Test CPU (4 cores)");
+		expect(facts.gpu).toBeUndefined();
+		expect(facts.osLine).toBe(os.platform());
+		expect(facts.arch).toBe(os.arch());
+	});
+
+	test("the Apple-Silicon GPU line follows the pinned CPU model", () => {
+		const facts = readWorkstationFacts(
+			pinned(JSON.stringify({ cpuModel: "Apple Test", cores: 2, kernel: "TestOS 1.0" })),
+		);
+
+		const appleSilicon = process.platform === "darwin" && os.arch() === "arm64";
+		expect(facts.gpu).toBe(appleSilicon ? "Apple Test" : undefined);
+	});
+
+	test.each([
+		"not json",
+		"[]",
+		JSON.stringify({ cpuModel: "Test CPU", cores: 4 }),
+		JSON.stringify({ cpuModel: "", cores: 4, kernel: "TestOS 1.0" }),
+		JSON.stringify({ cpuModel: "Test CPU", cores: 0, kernel: "TestOS 1.0" }),
+		JSON.stringify({ cpuModel: "Test CPU", cores: 1.5, kernel: "TestOS 1.0" }),
+		JSON.stringify({ cpuModel: "Test CPU", cores: 4, kernel: "TestOS 1.0", gpu: "x" }),
+	])("malformed %s throws naming the variable", (value) => {
+		expect(() => readWorkstationFacts(pinned(value))).toThrow(/SENPI_TEST_WORKSTATION/);
 	});
 });
 
