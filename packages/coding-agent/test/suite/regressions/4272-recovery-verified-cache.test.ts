@@ -122,11 +122,16 @@ it("RULING-69 (2) a second token pinning a root another live token pins is a typ
 	const rig = recoveryRig();
 	await rig.lane.idle();
 	const held = unwrap(rig.checkpoints.freeze(route("s"), rig.lane));
+	const holderStream = rig.checkpoints.stream(held.token.admission);
+	const violating = { ...route("s"), socketEpoch: "socket-2" };
 	const freeze = vi.spyOn(rig.lane, "freeze").mockReturnValueOnce(held.root);
-	expect(() => rig.checkpoints.freeze({ ...route("s"), socketEpoch: "socket-2" }, rig.lane)).toThrow(
-		FrozenRootPinnedError,
-	);
+	expect(() => rig.checkpoints.freeze(violating, rig.lane)).toThrow(FrozenRootPinnedError);
 	freeze.mockRestore();
+	expect(
+		rig.checkpoints.stream(violating),
+		"the throw came before the violating route's stream moved",
+	).toBeUndefined();
+	expect(rig.checkpoints.stream(held.token.admission), "the holder's stream is unchanged").toEqual(holderStream);
 	expect(rig.checkpoints.open, "the violating freeze minted no token").toBe(1);
 	expect(rig.checkpoints.tokens()).toEqual([held.token]);
 	expect(rig.lane.liveRoots, "the holder's root is still live").toBe(1);
