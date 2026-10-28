@@ -1,14 +1,16 @@
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
+import { legacyJsonText } from "./legacy-record-depth.ts";
 
 /**
  * Serialize a single strict JSONL record.
  *
  * Framing is LF-only. Payload strings may contain other Unicode separators such as
- * U+2028 and U+2029. Clients must split records on `\n` only.
+ * U+2028 and U+2029. Clients must split records on `\n` only. A value past the engine's JSON depth limit throws the
+ * typed `LegacyRecordDepthError` (RULING-68).
  */
 export function serializeJsonLine(value: unknown): string {
-	return `${JSON.stringify(value)}\n`;
+	return `${legacyJsonText(value)}\n`;
 }
 
 export const MAX_RPC_LINE_CHARACTERS = 16 * 1024 * 1024;

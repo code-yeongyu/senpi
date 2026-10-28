@@ -1,4 +1,5 @@
 import { isBigIntObject, isBooleanObject, isNumberObject, isStringObject } from "node:util/types";
+import { legacyJsonText } from "./legacy-record-depth.ts";
 
 /** JSON.stringify's value semantics, without serializing or parsing a record. */
 export function normalizeJsonValue(input: unknown): { value: unknown; changed: boolean } {
@@ -77,9 +78,9 @@ export function normalizeJsonValue(input: unknown): { value: unknown; changed: b
 	try {
 		value = visit(input, "");
 	} catch (error) {
-		// The recursive walk overflows the stack before native JSON does; let native JSON decide.
+		// The recursive walk overflows the stack before native JSON does; let native JSON decide (typed past its limit).
 		if (!(error instanceof RangeError)) throw error;
-		return { value: JSON.parse(JSON.stringify(input)), changed: true };
+		return { value: JSON.parse(legacyJsonText(input)), changed: true };
 	}
 	if (value === undefined) throw new SyntaxError("JSON input has no representation");
 	return { value, changed };
