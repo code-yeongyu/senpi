@@ -27,10 +27,14 @@ const ref = (root: string, index: number) => `${root}:${String(index).padStart(3
 
 export const entryMember = (index: number) => `entry-${String(index).padStart(16, "0")}`;
 
-/** The rig's catalog of one fresh cut: the root node's entries as `[kind, id]`, a component-text reader, its token. */
-export async function catalogOf(rig: RecoveryRig) {
+/**
+ * The rig's catalog of one fresh cut: the root node's entries as `[kind, id]`, a component-text reader, its token.
+ * `afterFreeze` runs between the cut and its catalog build, so a test can change the lane under a frozen root.
+ */
+export async function catalogOf(rig: RecoveryRig, afterFreeze?: () => void) {
 	await rig.lane.idle();
 	const token = unwrap(rig.checkpoints.freeze(route(), rig.lane)).token;
+	afterFreeze?.();
 	const manifest = unwrap(await rig.checkpoints.catalog(token, caller));
 	const root = node(unwrap(await rig.checkpoints.readCatalog(token, caller, manifest.catalogRoot)));
 	const entries = root.entries.map((entry) => [entry.kind, entry.id] as const);

@@ -12,11 +12,57 @@ import {
 /** One worker frame's worth of unwritten entries; persisted history consumes no content budget. */
 export const DEFAULT_TRANSCRIPT_TAIL_BYTES = 16 * 1024 * 1024;
 /**
- * What an epoch keeps of every accepted entry after persistence released its text: its kind and parent link
- * (RULING-61 Q1 = C), charged as their bytes plus two slots each, so the count is bounded even for empty strings.
+ * What an epoch keeps of every accepted entry after persistence released its text: its id, kind and parent link
+ * (RULING-61 Q1 = C). Each record is charged no less than the heap it holds, so this budget bounds the retained heap
+ * itself, and the record count to at most 8 MiB / 40 B = 209,715 (records of empty strings).
  */
 export const DEFAULT_TRANSCRIPT_ANCESTRY_BYTES = 8 * 1024 * 1024;
-const ANCESTRY_SLOT_BYTES = 16;
+/** Three 8-byte array slots (id, kind, parent), plus the half more a growing array may hold unused: 36, to 40. */
+const ANCESTRY_RECORD_BYTES = 40;
+/** A distinct kind's row in the epoch's kind table: key, value, chain and bucket slots, doubled for table growth. */
+const KIND_NAME_BYTES = 64;
+
+/** A string's heap: a 16-byte header and its code units (one byte each when all are ASCII, else two), 8-aligned. */
+const stringBytes = (value: string): number =>
+	value === ""
+		? 0
+		: Math.ceil((16 + (Buffer.byteLength(value) === value.length ? value.length : 2 * value.length)) / 8) * 8;
+
+/** One accepted entry of the epoch, at its accepted index, as a frozen root names it. */
+export interface AcceptedEntry {
+	readonly index: number;
+	readonly id: string;
+	readonly kind: string;
+	readonly parentId: string | null;
+}
+
+/**
+ * The first `count` entries of an epoch's columns. The lane only appends to its columns (a `replace` starts new ones),
+ * so this prefix never changes: a root freezes in O(1) without a copy and never sees an entry accepted after it.
+ */
+export class AcceptedEntries implements Iterable<AcceptedEntry> {
+	private readonly ids: readonly string[];
+	private readonly kinds: readonly string[];
+	private readonly parents: readonly (string | null)[];
+	readonly count: number;
+
+	constructor(ids: readonly string[], kinds: readonly string[], parents: readonly (string | null)[], count: number) {
+		this.ids = ids;
+		this.kinds = kinds;
+		this.parents = parents;
+		this.count = count;
+	}
+
+	/** The ids of the first `end` entries, as the base reader takes them. */
+	idsBefore(end: number): string[] {
+		return this.ids.slice(0, Math.min(end, this.count));
+	}
+
+	*[Symbol.iterator](): Generator<AcceptedEntry> {
+		for (let index = 0; index < this.count; index++)
+			yield { index, id: this.ids[index], kind: this.kinds[index], parentId: this.parents[index] };
+	}
+}
 
 interface TranscriptTail {
 	readonly entries: Map<number, string>;
@@ -32,10 +78,8 @@ export interface TranscriptRoot {
 	readonly historyVersion: number;
 	readonly leafId: string | null;
 	readonly base: PersistedBase | null;
-	readonly entryIds: readonly string[];
-	/** Per accepted entry, at its `entryIds` index: the engine kind and parent link the epoch retains. */
-	readonly kinds: readonly string[];
-	readonly parents: readonly (string | null)[];
+	/** Exactly the `count` entries accepted when the root froze: id, engine kind and parent link. */
+	readonly accepted: AcceptedEntries;
 	readonly ancestryBytes: number;
 	readonly tail: TranscriptTail;
 	readonly count: number;
@@ -54,6 +98,8 @@ export class AcceptedTranscript {
 	private entryIds: string[] = [];
 	private kinds: string[] = [];
 	private parents: (string | null)[] = [];
+	/** Each distinct kind once per epoch, so every record of a kind shares one string whatever the producer sent. */
+	private kindNames = new Map<string, string>();
 	private ancestryBytes = 0;
 	private tail: TranscriptTail = { entries: new Map(), retainedBytes: 0, persistence: null };
 	private unavailable: TranscriptUnavailableReason | null = null;
@@ -73,6 +119,7 @@ export class AcceptedTranscript {
 			this.entryIds = [];
 			this.kinds = [];
 			this.parents = [];
+			this.kindNames = new Map();
 			this.ancestryBytes = 0;
 			this.tail = {
 				entries: new Map(),
@@ -93,8 +140,7 @@ export class AcceptedTranscript {
 		if (this.unavailable !== null) return;
 		if (transition.kind === "append") {
 			const index = this.entryIds.length;
-			if (!this.retainAncestry(transition.type, transition.parentId)) return;
-			this.entryIds.push(transition.id);
+			if (!this.retainAncestry(transition.id, transition.type, transition.parentId)) return;
 			if (transition.persistence) this.persisted(transition.persistence);
 			if (index + (this.base?.count ?? 0) >= (this.tail.persistence?.count ?? 0)) {
 				const bytes = Buffer.byteLength(transition.entry ?? "");
@@ -111,16 +157,27 @@ export class AcceptedTranscript {
 		} else this.leafId = transition.leafId;
 	}
 
-	/** The parent link shares the previous entry's own id string when it names it, so the common chain costs one slot. */
-	private retainAncestry(type: string, parentId: string | null): boolean {
-		const bytes = ANCESTRY_SLOT_BYTES + Buffer.byteLength(type) + Buffer.byteLength(parentId ?? "");
+	/**
+	 * Charges what the record really holds: its slots, its id, a kind the epoch has not seen, and a parent link unless it
+	 * shares the previous entry's own id string (the common chain).
+	 */
+	private retainAncestry(id: string, type: string, parentId: string | null): boolean {
+		const previous = this.entryIds.at(-1);
+		const shared = previous !== undefined && previous === parentId;
+		const kind = this.kindNames.get(type);
+		const bytes =
+			ANCESTRY_RECORD_BYTES +
+			stringBytes(id) +
+			(kind === undefined ? KIND_NAME_BYTES + stringBytes(type) : 0) +
+			(shared ? 0 : stringBytes(parentId ?? ""));
 		if (this.ancestryBytes + bytes > DEFAULT_TRANSCRIPT_ANCESTRY_BYTES) {
 			this.markUnavailable("transcript_ancestry_over_byte_limit");
 			return false;
 		}
-		const previous = this.entryIds.at(-1);
-		this.kinds.push(type);
-		this.parents.push(previous !== undefined && previous === parentId ? previous : parentId);
+		if (kind === undefined) this.kindNames.set(type, type);
+		this.entryIds.push(id);
+		this.kinds.push(kind ?? type);
+		this.parents.push(shared ? previous : parentId);
 		this.ancestryBytes += bytes;
 		return true;
 	}
@@ -135,9 +192,7 @@ export class AcceptedTranscript {
 			historyVersion: this.version,
 			leafId: this.leafId,
 			base: this.base,
-			entryIds: this.entryIds,
-			kinds: this.kinds,
-			parents: this.parents,
+			accepted: new AcceptedEntries(this.entryIds, this.kinds, this.parents, this.entryIds.length),
 			ancestryBytes: this.ancestryBytes,
 			tail: this.tail,
 			count: this.entryIds.length,
@@ -168,7 +223,7 @@ export function readTranscriptRoot(root: TranscriptRoot): TranscriptRead {
 			idFingerprint: createHash("sha256").digest("hex"),
 		});
 	const persisted = base
-		? readPersistedBase(base, root.entryIds.slice(0, persistedCount))
+		? readPersistedBase(base, root.accepted.idsBefore(persistedCount))
 		: { ok: true as const, entries: [] };
 	if (!persisted.ok) return persisted;
 	const entries = [...persisted.entries];

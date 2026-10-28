@@ -1,8 +1,5 @@
-import { setFlagsFromString } from "node:v8";
-import { runInNewContext } from "node:vm";
 import { afterEach, expect, it, vi } from "vitest";
 import type { TranscriptTransition } from "../../../src/core/session-transcript-journal.ts";
-import { DEFAULT_TRANSCRIPT_ANCESTRY_BYTES } from "../../../src/modes/rpc/accepted-transcript.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { catalogOf, entryMember } from "./4272-catalog-read-support.ts";
 import { recoveryRig } from "./4272-recovery-support.ts";
@@ -10,13 +7,13 @@ import { recoveryRig } from "./4272-recovery-support.ts";
 // Part of #4272 (S10a fold, RULING-61 Q1 = C): the lane retains {parentId, type} per accepted entry of its epoch, so
 // every transcript row of the epoch carries its kind and family and the opaque family is counted exactly, whether or
 // not persistence already released the entry's text; the loaded base stays a file range the catalog reports as
-// partial, never as complete or empty; the retained ancestry is bounded and freed with the epoch.
+// partial, never as complete or empty; a root frozen at N entries names exactly those N while the lane accepts more.
+// The retained ancestry's bound is 4272-recovery-ancestry-bound.test.ts.
 
 afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-const MiB = 1024 * 1024;
 const fileIdentity = { path: "/nowhere/s.jsonl", dev: "1", ino: "1" };
 const persistence = (count: number) => ({ fileIdentity, count });
 const unknown = { type: "ext_timeline_group", id: "e1", parentId: "e0", timestamp: "t", group: { title: "g" } };
@@ -146,96 +143,37 @@ it("RULING-61 Q1 (b) a loaded base is a file range: transcript and opaque are pa
 	await rig.lane.idle();
 });
 
-setFlagsFromString("--expose-gc");
-const gc: () => void = runInNewContext("gc");
-const heapUsed = () => {
-	gc();
-	gc();
-	return process.memoryUsage().heapUsed;
-};
-const id = (index: number) => index.toString(16).padStart(8, "0");
-/** A worker frame of `count` appends as the host parses it: every string its own instance. */
-const frame = (count: number): TranscriptTransition[] =>
-	JSON.parse(
-		JSON.stringify(
-			Array.from({ length: count }, (_, index) => ({
-				kind: "append",
-				id: id(index),
-				type: index % 7 === 0 ? "ext_timeline_group" : "message",
-				parentId: index === 0 ? null : id(index - 1),
-			})),
-		),
-	);
-
-it("RULING-61 (1) the retained ancestry is measured per record, bounded for 100,000 entries, and freed at epoch end and at retirement", async () => {
-	const count = 100_000;
-	const lane = new SessionAcceptanceLane();
-	lane.bootstrap({ transcript: [] });
-	try {
-		// Given: an empty epoch
-		const baseline = heapUsed();
-		// When: 100,000 entries of engine shape are accepted without their text
-		let transitions: TranscriptTransition[] | undefined = frame(count);
-		lane.applyTranscript(transitions);
-		transitions = undefined;
-		const retained = heapUsed() - baseline;
-		let root: ReturnType<typeof lane.freeze> | undefined = lane.freeze();
-		// Then: the lane accounts every record (two slots + its content) and the heap cost per record is bounded
-		const slots = 16 * count;
-		const parents = 8 * (count - 1);
-		const kinds =
-			Math.ceil(count / 7) * "ext_timeline_group".length + (count - Math.ceil(count / 7)) * "message".length;
-		expect(root.transcript.count).toBe(count);
-		expect(root.transcript.ancestryBytes).toBe(slots + parents + kinds);
-		expect(root.transcript.kinds[7]).toBe("ext_timeline_group");
-		expect(root.transcript.parents[1]).toBe(root.transcript.entryIds[0]);
-		const perRecord = retained / count;
-		console.log(
-			`RULING-61 measured: ${perRecord.toFixed(1)} heap bytes per retained record (ids + kinds + parents), ${(
-				retained / MiB
-			).toFixed(
-				2,
-			)} MiB for ${count} entries; accounted ancestry ${(root.transcript.ancestryBytes / MiB).toFixed(2)} MiB of the ${
-				DEFAULT_TRANSCRIPT_ANCESTRY_BYTES / MiB
-			} MiB budget`,
-		);
-		expect(perRecord).toBeLessThan(256);
-		expect(root.transcript.ancestryBytes).toBeLessThan(DEFAULT_TRANSCRIPT_ANCESTRY_BYTES);
-		// When: the epoch ends (a new bootstrap) and the frozen root is dropped
-		lane.release(root);
-		root = undefined;
-		lane.bootstrap({ transcript: [] });
-		// Then: the retained ancestry is freed with the epoch
-		const afterEpoch = heapUsed() - baseline;
-		expect(afterEpoch, "epoch end frees the retained ancestry").toBeLessThan(retained / 10);
-		// When: a second epoch retains the same and the lane retires
-		lane.applyTranscript(frame(count));
-		expect(lane.freeze().transcript.count).toBe(count);
-		lane.retire("close");
-		// Then: retirement frees it too
-		const afterRetire = heapUsed() - baseline;
-		expect(afterRetire, "retirement frees the retained ancestry").toBeLessThan(retained / 10);
-	} finally {
-		lane.retire("close");
-		await lane.idle();
-	}
-}, 60_000);
-
-it("RULING-61 (1) ancestry over its byte budget leaves the epoch's transcript unavailable with a typed reason, never a silent drop", () => {
-	// Given: an epoch holding a few bytes of ancestry
+it("RULING-61 Q1 a root frozen at N entries keeps exactly N while the lane accepts more", () => {
+	// Given: an epoch with one accepted entry and a root frozen there
 	const lane = new SessionAcceptanceLane(undefined, () => {});
 	lane.bootstrap({ transcript: [] });
-	const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-	lane.applyTranscript([{ kind: "append", id: "e0", type: "message", parentId: null }]);
-	// When: one entry's kind alone would exceed the budget
-	lane.applyTranscript([
-		{ kind: "append", id: "e1", type: "x".repeat(DEFAULT_TRANSCRIPT_ANCESTRY_BYTES), parentId: "e0" },
-	]);
-	// Then: the transcript is unavailable with its typed reason and the entry was not retained
+	lane.applyTranscript([appended(message)]);
 	const root = lane.freeze();
-	expect(root.transcript.unavailable).toBe("transcript_ancestry_over_byte_limit");
+	// When: the lane accepts another entry after the freeze
+	lane.applyTranscript([appended(unknown)]);
+	// Then: the frozen root still names exactly its one entry, with its kind and parent link
 	expect(root.transcript.count).toBe(1);
-	expect(stderr).toHaveBeenCalledWith(expect.stringContaining("transcript_ancestry_over_byte_limit"));
+	expect([...root.transcript.accepted]).toEqual([{ index: 0, id: "e0", kind: "message", parentId: null }]);
+	expect(root.transcript.accepted.idsBefore(2), "a read past the count stops at it").toEqual(["e0"]);
+	expect(lane.freeze().transcript.count, "the live epoch has both").toBe(2);
 	lane.release(root);
 	lane.retire("close");
+});
+
+it("RULING-61 Q1 a cut frozen at N entries is cataloged with exactly N rows after the lane accepts more", async () => {
+	// Given: one accepted entry, then a cut, then two more entries (one of an unknown kind) accepted after it
+	const rig = recoveryRig();
+	rig.lane.applyTranscript([appended(message)]);
+	const later = [appended(unknown), appended({ ...message, id: "e2", parentId: "e1" })];
+	// When: the frozen cut is cataloged after the later entries arrived
+	const catalog = await catalogOf(rig, () => rig.lane.applyTranscript(later));
+	// Then: exactly the cut's one row, its count, and an opaque family with no member from after the cut
+	expect(catalog.entries.filter(([kind]) => kind === "transcript" || kind === "opaque")).toEqual([
+		["transcript", "transcript"],
+		["transcript", entryMember(0)],
+		["opaque", "opaque"],
+	]);
+	expect(await catalog.json("transcript", "transcript")).toMatchObject({ count: 1, leafId: "e0" });
+	catalog.release();
+	await rig.lane.idle();
 });

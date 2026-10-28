@@ -102,8 +102,14 @@ interface RegistryBase {
 	readonly version: 1;
 	readonly families: readonly FamilyRow[];
 }
+/**
+ * Set only by `familyRegistry`, which `readFamilyRegistry` decodes through and `completeAssembly` narrows to, so no other
+ * module can write a complete registry by hand. A symbol key is not serialized: the component text is unchanged.
+ */
+const COMPLETE: unique symbol = Symbol("complete family registry");
 export interface CompleteFamilyRegistry extends RegistryBase {
 	readonly assembly: "complete";
+	readonly [COMPLETE]: true;
 }
 interface IncompleteFamilyRegistry extends RegistryBase {
 	readonly assembly: "incomplete";
@@ -118,7 +124,9 @@ export function familyRegistry(producers: FamilyProducers): FamilyRegistry {
 	const families = CATALOG_FAMILIES.map((family): FamilyRow => ({ family, producer: producers[family] }));
 	const incomplete = families.filter(({ producer }) => producer !== "complete").map(({ family }) => family);
 	const base = { format: "senpi-recovery-families", version: 1, families } as const;
-	return incomplete.length === 0 ? { ...base, assembly: "complete" } : { ...base, assembly: "incomplete", incomplete };
+	return incomplete.length === 0
+		? { ...base, assembly: "complete", [COMPLETE]: true }
+		: { ...base, assembly: "incomplete", incomplete };
 }
 
 /** A registry that is complete only when every producer is; an incomplete one needs the consumer's own check. */
