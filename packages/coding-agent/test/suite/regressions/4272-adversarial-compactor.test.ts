@@ -22,9 +22,9 @@ it("bounds compaction of mixed ceiling-sized rows and overrides spread over many
 	const store = new CompactContentStore({
 		dir: root.dir,
 		io: {
-			async readFile(path) {
+			async readFile(path, range) {
 				sample();
-				return real.readFile(path);
+				return real.readFile(path, range);
 			},
 			async writeFile(path, data) {
 				sample();

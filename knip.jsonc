@@ -1,0 +1,1736 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Exported types are part of our contracts even before they have consumers.
+  "rules": { "types": "off", "nsTypes": "off" },
+  // These executables are supplied by the OS, a language toolchain, or a test that expects a missing command.
+  "ignoreBinaries": [
+    "cc", "julia", "mkfifo", "ollama", "perl", "pgrep", "rg", "ruby", "script", "senpi-deliberately-missing-probe-command",
+    "taskkill.exe", "tasklist", "trash", "vmmap", "where", "xclip",
+  ],
+  // Findings marked "pre-existing at origin main aceb1cc1d9" were already present when this check was added. Each
+  // ignore is scoped to one file or one dependency, so new dead code anywhere else still fails the check. Remove an
+  // entry when its finding is fixed. Unused exports are ignored file-wide only on generated files (and on a vendored file
+  // only when its bytes are pinned and it is not edited here; none today). Every other file's are listed by name under
+  // preprocessorOptions.preExistingExports below, so a new unused export in the same file still fails.
+  // Root-workspace file ignores (knip reads the root workspace's ignoreIssues only at the top level).
+  "ignoreIssues": {
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages yaml
+      "scripts/build-binaries-release-recovery.test.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+      "scripts/bun-bundle-provider-coverage.test.ts": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages yaml
+      "scripts/ci-coding-agent-shards.test.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages yaml
+      "scripts/ci-concurrency.test.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages yaml
+      "scripts/ci-format-gate.test.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages yaml
+      "scripts/ci-macos-combined.test.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages yaml
+      "scripts/ci-platform-scope.test.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages yaml
+      "scripts/ci-test-temp-workflow.test.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+      "scripts/compiled-extension-load.test.ts": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+      "scripts/compiled-provider-probe.test.ts": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages left, right
+      "scripts/copy-codemode-sidecar-closure.test.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages fake-dependency, workspace-dependency, consumer-left, consumer-right; imports that do not resolve ./index.js
+      "scripts/copy-codemode-sidecar.test.mjs": ["unlisted","unresolved"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages yaml
+      "scripts/model-catalog-opengateway-workflows.test.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+      "scripts/node-bundle-reinstall.test.ts": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+      "scripts/node-bundle-smoke.test.ts": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages semver
+      "scripts/publish-registry-dependencies.test.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages typebox
+      "scripts/qa/omp-item8-fixture.ts": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+      "scripts/qa/webfetch-compiled.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages @xterm/headless
+      "scripts/qa/xterm-render.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages yaml
+      "scripts/read-summary-release-contract.test.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+      "scripts/release-graph-codemode.test.ts": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+      "scripts/release-graph-exclusions.test.ts": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages jiti
+      "scripts/run-tests.test.mjs": ["unlisted"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages chalk
+      "scripts/session-transcripts.ts": ["unlisted"],
+  },
+  // Shared byte for byte with sisyphuslabs/omo-relay-daemon (scripts/knip-preexisting-exports.test.mjs pins its sha256):
+  // drops only the (file, export) pairs listed below; every other export of those files stays checked. It also drops an
+  // unused export S of a declaration mirror X.d.mts / X.d.ts / X.d.cts whose twin X.mjs / X.js / X.cjs exports S and
+  // uses it (knip credits a use of the twin to the twin), so mirrors need no entry here.
+  "preprocessor": "./scripts/knip-preexisting-exports.ts",
+  "preprocessorOptions": {
+    "preExistingExports": {
+      // pre-existing at origin main aceb1cc1d9: unused exports runScenario, DriveError, SYNC_BEGIN, SYNC_END, waitForContent, waitForPostResize (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/grok-neo-drive.mjs": ["DriveError", "SYNC_BEGIN", "SYNC_END", "runScenario", "waitForContent", "waitForPostResize"],
+      // pre-existing at origin main aceb1cc1d9: unused export POLICY_REFUSAL (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/lib/anthropic-policy-refusal-server.mjs": ["POLICY_REFUSAL"],
+      // pre-existing at origin main aceb1cc1d9: unused exports FLATTEN_MARKER, FLATTEN_TRAILER (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/lib/anthropic-subscription-fullstack-support.mjs": ["FLATTEN_MARKER", "FLATTEN_TRAILER"],
+      // pre-existing at origin main aceb1cc1d9: unused exports phasePlainConversation, phaseAbortMidTurn, phaseModelSwitch, phaseThinkingSwitch, phaseRestartIsolation, phaseBranchNavigation, phaseIdleExpiry (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/lib/anthropic-subscription-matrix-phases.mjs": ["phaseAbortMidTurn", "phaseBranchNavigation", "phaseIdleExpiry", "phaseModelSwitch", "phasePlainConversation", "phaseRestartIsolation", "phaseThinkingSwitch"],
+      // pre-existing at origin main aceb1cc1d9: unused exports LIVE_GATE, stripCredentialEnvironment, redactSecrets (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/lib/anthropic-subscription-spike-support.mjs": ["LIVE_GATE", "redactSecrets", "stripCredentialEnvironment"],
+      // pre-existing at origin main aceb1cc1d9: unused export toolUseSseBody (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/lib/anthropic-subscription-toolless-compact-server.mjs": ["toolUseSseBody"],
+      // pre-existing at origin main aceb1cc1d9: unused exports APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR, realAgentDir, scrubSandboxEnv, freePort, inspectProcess, OwnedSignalRefusedError, dateStamp, readJsonl (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/lib/common.mjs": ["APP_NAME", "CONFIG_DIR_NAME", "ENV_AGENT_DIR", "ENV_SESSION_DIR", "OwnedSignalRefusedError", "dateStamp", "freePort", "inspectProcess", "readJsonl", "realAgentDir", "scrubSandboxEnv"],
+      // pre-existing at origin main aceb1cc1d9: unused export runTextToolLeakCommand (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/lib/mock-loop-text-leak.mjs": ["runTextToolLeakCommand"],
+      // pre-existing at origin main aceb1cc1d9: unused export inspectProcess (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/lib/owned-signal.mjs": ["inspectProcess"],
+      // pre-existing at origin main aceb1cc1d9: unused exports EVIDENCE_PREFIX, EXACT_EVIDENCE_PATH, normalizeEvidencePath (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/lib/tui-resume-args.mjs": ["EVIDENCE_PREFIX", "EXACT_EVIDENCE_PATH", "normalizeEvidencePath"],
+      // pre-existing at origin main aceb1cc1d9: unused export RpcClient (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/rpc-drive.mjs": ["RpcClient"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages @bufbuild/protobuf
+      // pre-existing at origin main aceb1cc1d9: unused export CONNECT_END_STREAM_FLAG (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/scenarios/cursor-exec-lifecycle/wire.mjs": ["CONNECT_END_STREAM_FLAG"],
+      // pre-existing at origin main aceb1cc1d9: unused export default (run-by-path entry, newly export-checked)
+      ".agents/skills/senpi-qa/scripts/scenarios/goal-policy-rejection-fixture.ts": ["default"],
+      // pre-existing at origin main aceb1cc1d9: unused export generateTelemetryDocs (run-by-path entry, newly export-checked)
+      "packages/agent/scripts/generate-telemetry-docs.ts": ["generateTelemetryDocs"],
+      // pre-existing at origin main aceb1cc1d9: unused exports generateSummaryWithRequest
+      "packages/agent/src/harness/compaction/compaction.ts": ["generateSummaryWithRequest"],
+      // pre-existing at origin main aceb1cc1d9: unused exports WINDOWS_PROCESS_TREE_ROWS
+      "packages/agent/src/harness/env/windows-process-tree.ts": ["WINDOWS_PROCESS_TREE_ROWS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports invalid, DEFAULT_BOUNDS
+      "packages/agent/src/harness/pico3/kinds/tool.ts": ["DEFAULT_BOUNDS", "invalid"],
+      // pre-existing at origin main aceb1cc1d9: unused exports removeWhere
+      "packages/agent/src/harness/pico3/session.ts": ["removeWhere"],
+      // pre-existing at origin main aceb1cc1d9: unused exports removeSection, foldCanonical
+      "packages/agent/src/harness/pico3/system.ts": ["foldCanonical", "removeSection"],
+      // pre-existing at origin main aceb1cc1d9: unused exports runRetryWait
+      "packages/agent/src/harness/runtime/drive/generation.ts": ["runRetryWait"],
+      // pre-existing at origin main aceb1cc1d9: unused exports readPendingMessages
+      "packages/agent/src/harness/runtime/transcript.ts": ["readPendingMessages"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isLegacyV3SessionHeader, isJsonlStorageHeader
+      "packages/agent/src/harness/session/jsonl/codec.ts": ["isJsonlStorageHeader", "isLegacyV3SessionHeader"],
+      // pre-existing at origin main aceb1cc1d9: unused exports normalizeLegacyV3Header
+      "packages/agent/src/harness/session/jsonl/legacy-v3.ts": ["normalizeLegacyV3Header"],
+      // pre-existing at origin main aceb1cc1d9: unused exports normalizeForFuzzyMatch, applyReplacementsPreservingUnchangedLines, fuzzyFindText
+      "packages/agent/src/harness/tools/edit-diff.ts": ["applyReplacementsPreservingUnchangedLines", "fuzzyFindText", "normalizeForFuzzyMatch"],
+      // pre-existing at origin main aceb1cc1d9: unused exports OUTPUT_MIN_EMIT_INTERVAL_MS, OUTPUT_TARGET_BYTES_PER_SECOND
+      "packages/agent/src/harness/utils/output-capture.ts": ["OUTPUT_MIN_EMIT_INTERVAL_MS", "OUTPUT_TARGET_BYTES_PER_SECOND"],
+      // pre-existing at origin main aceb1cc1d9: unused exports hierarchy
+      "packages/agent/src/harness/utils/read-folders/compose.ts": ["hierarchy"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TREE_SITTER_PARSE_BUDGET_MS, resetTreeSitterGrammars
+      "packages/agent/src/harness/utils/read-folders/tree-sitter/engine.ts": ["TREE_SITTER_PARSE_BUDGET_MS", "resetTreeSitterGrammars"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TREE_SITTER_RUNTIME_FILE
+      "packages/agent/src/harness/utils/read-folders/tree-sitter/grammar-assets.ts": ["TREE_SITTER_RUNTIME_FILE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports toolNameCorrectionNotice
+      "packages/agent/src/tool-name-alias.ts": ["toolNameCorrectionNotice"],
+      // pre-existing at origin main aceb1cc1d9: unused export modelDataStructureHash (run-by-path entry, newly export-checked)
+      "packages/ai/scripts/model-data.ts": ["modelDataStructureHash"],
+      // pre-existing at origin main aceb1cc1d9: unused export providerIdOfShard (run-by-path entry, newly export-checked)
+      "packages/ai/scripts/model-shards.ts": ["providerIdOfShard"],
+      // pre-existing at origin main aceb1cc1d9: unused exports anthropicRequestSkeleton
+      "packages/ai/src/api/anthropic-request-shape-log.ts": ["anthropicRequestSkeleton"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CHATGPT_USAGE_LIMIT_PREFIX
+      "packages/ai/src/api/chatgpt-usage-limit.ts": ["CHATGPT_USAGE_LIMIT_PREFIX"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CONTEXT_SAFETY_TOKENS
+      "packages/ai/src/api/context-room.ts": ["CONTEXT_SAFETY_TOKENS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CURSOR_API_URL, CURSOR_CLIENT_VERSION, CURSOR_STREAM_HEALTH_FAIL_THRESHOLD_MS, CURSOR_STREAM_HEALTH_HEARTBEAT_ONLY_THRESHOLD_MS, CURSOR_TURN_END_DRAIN_TIMEOUT_MS, mapH2TransportError (+8 more)
+      "packages/ai/src/api/cursor-agent.ts": ["CURSOR_API_URL", "CURSOR_CLIENT_VERSION", "CURSOR_STREAM_HEALTH_FAIL_THRESHOLD_MS", "CURSOR_STREAM_HEALTH_HEARTBEAT_ONLY_THRESHOLD_MS", "CURSOR_TURN_END_DRAIN_TIMEOUT_MS", "buildCursorHistoryWireBytesForTest", "flushOpenToolCalls", "handleServerMessage", "mapH2TransportError", "measureCursorHistorySerializedBytes", "measureCursorModelInputSerializedBytes", "processInteractionUpdate", "sanitizeCursorToolSchema", "synthesizeCursorExecToolCall"],
+      // pre-existing at origin main aceb1cc1d9: unused exports piOutputText, piTruncation
+      "packages/ai/src/api/cursor-agent/exec-modern.ts": ["piOutputText", "piTruncation"],
+      // pre-existing at origin main aceb1cc1d9: unused exports buildCursorSystemPromptJsons, buildCursorHistoryForTest, buildCursorHistoryWireBytesForTest
+      "packages/ai/src/api/cursor-agent/measure.ts": ["buildCursorHistoryForTest", "buildCursorHistoryWireBytesForTest", "buildCursorSystemPromptJsons"],
+      // pre-existing at origin main aceb1cc1d9: unused exports buildRequestedModelFields
+      "packages/ai/src/api/cursor-agent/reasoning-params.ts": ["buildRequestedModelFields"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_CURSOR_CONVERSATION_ROTATION_RECORDS
+      "packages/ai/src/api/cursor-conversation-rotation.ts": ["MAX_CURSOR_CONVERSATION_ROTATION_RECORDS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports normalizeDevinModels
+      "packages/ai/src/api/devin-agent/discovery.ts": ["normalizeDevinModels"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEVIN_CLI_IDENTITY, DEVIN_DISCOVERY_IDENTITY, DEVIN_SUPPORTED_MODEL_DISPLAYS
+      "packages/ai/src/api/devin-agent/metadata.ts": ["DEVIN_CLI_IDENTITY", "DEVIN_DISCOVERY_IDENTITY", "DEVIN_SUPPORTED_MODEL_DISPLAYS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DevinUnaryError, decodeDevinUnary
+      "packages/ai/src/api/devin-agent/unary.ts": ["DevinUnaryError", "decodeDevinUnary"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEVIN_CLI_IDENTITY, DEVIN_DISCOVERY_IDENTITY, DEVIN_SUPPORTED_MODEL_DISPLAYS, DEVIN_MAX_FRAME_PAYLOAD, DEVIN_UNARY_HEADERS, DevinUnaryError (+1 more)
+      "packages/ai/src/api/devin-agent/wire.ts": ["DEVIN_CLI_IDENTITY", "DEVIN_DISCOVERY_IDENTITY", "DEVIN_MAX_FRAME_PAYLOAD", "DEVIN_SUPPORTED_MODEL_DISPLAYS", "DEVIN_UNARY_HEADERS", "DevinUnaryError", "decodeDevinUnary"],
+      // pre-existing at origin main aceb1cc1d9: unused exports describeGitHubCopilotFailure
+      "packages/ai/src/api/github-copilot-errors.ts": ["describeGitHubCopilotFailure"],
+      // pre-existing at origin main aceb1cc1d9: unused exports inferCopilotInitiator
+      "packages/ai/src/api/github-copilot-headers.ts": ["inferCopilotInitiator"],
+      // pre-existing at origin main aceb1cc1d9: unused exports mapToolChoice, mapStopReasonString
+      "packages/ai/src/api/google-shared.ts": ["mapStopReasonString", "mapToolChoice"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CODEX_WEBSOCKET_FALLBACK_COOLDOWN_MS, CODEX_WEBSOCKET_MID_STREAM_FAILURES_BEFORE_FALLBACK
+      "packages/ai/src/api/openai-codex-responses/fallback-state.ts": ["CODEX_WEBSOCKET_FALLBACK_COOLDOWN_MS", "CODEX_WEBSOCKET_MID_STREAM_FAILURES_BEFORE_FALLBACK"],
+      // pre-existing at origin main aceb1cc1d9: unused exports normalizeCodexReasoningSummary
+      "packages/ai/src/api/openai-codex-responses/reasoning.ts": ["normalizeCodexReasoningSummary"],
+      // pre-existing at origin main aceb1cc1d9: unused exports OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH
+      "packages/ai/src/api/openai-prompt-cache.ts": ["OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL
+      "packages/ai/src/api/openai-responses-shared.ts": ["CUSTOM_TOOL_CALL_ITEM_ID_SENTINEL"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ResponsesCompletionStallError
+      "packages/ai/src/api/responses-completion-grace.ts": ["ResponsesCompletionStallError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CONTEXT_SAFETY_TOKENS, DEFAULT_THINKING_BUDGETS
+      "packages/ai/src/api/simple-options.ts": ["CONTEXT_SAFETY_TOKENS", "DEFAULT_THINKING_BUDGETS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_WEBSOCKET_LIVENESS_POLICY, supportsWebSocketLiveness
+      "packages/ai/src/api/websocket-liveness.ts": ["DEFAULT_WEBSOCKET_LIVENESS_POLICY", "supportsWebSocketLiveness"],
+      // pre-existing at origin main aceb1cc1d9: unused exports WEBSOCKET_ERROR_CLOSE_GRACE_MS, WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE, WebSocketCloseError, extractWebSocketErrorMessage, genericWebSocketError, extractWebSocketCloseError
+      "packages/ai/src/api/websocket-transport-failure.ts": ["WEBSOCKET_ERROR_CLOSE_GRACE_MS", "WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE", "WebSocketCloseError", "extractWebSocketCloseError", "extractWebSocketErrorMessage", "genericWebSocketError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_OAUTH_REFRESH_TIMEOUT_MS
+      "packages/ai/src/auth/oauth-refresh.ts": ["DEFAULT_OAUTH_REFRESH_TIMEOUT_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CALLBACK_PATH, callbackRedirectUri
+      "packages/ai/src/auth/oauth/anthropic-callback-listener.ts": ["CALLBACK_PATH", "callbackRedirectUri"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CHATGPT_CALLBACK_PORTS
+      "packages/ai/src/auth/oauth/chatgpt-subscription-callback.ts": ["CHATGPT_CALLBACK_PORTS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports buildCursorLoginUrl
+      "packages/ai/src/auth/oauth/cursor.ts": ["buildCursorLoginUrl"],
+      // pre-existing at origin main aceb1cc1d9: unused exports abortableSleep
+      "packages/ai/src/auth/oauth/device-code.ts": ["abortableSleep"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEVIN_CALLBACK_PORT, DEVIN_CALLBACK_PATH
+      "packages/ai/src/auth/oauth/devin-callback.ts": ["DEVIN_CALLBACK_PATH", "DEVIN_CALLBACK_PORT"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEVIN_TOKEN_URL, DEVIN_API_ENDPOINT, DEVIN_FALLBACK_EXPIRY_MS, devinCredential
+      "packages/ai/src/auth/oauth/devin-token.ts": ["DEVIN_API_ENDPOINT", "DEVIN_FALLBACK_EXPIRY_MS", "DEVIN_TOKEN_URL", "devinCredential"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_KIMI_CODE_REGION, KIMI_CODE_REGION_PROFILES, isKimiCodeRegion
+      "packages/ai/src/auth/oauth/kimi-region.ts": ["DEFAULT_KIMI_CODE_REGION", "KIMI_CODE_REGION_PROFILES", "isKimiCodeRegion"],
+      // pre-existing at origin main aceb1cc1d9: unused exports loadOpenAIChatGPTOAuth
+      "packages/ai/src/auth/oauth/load.ts": ["loadOpenAIChatGPTOAuth"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_SLOT_NAME, assertValidSlotName, DISPLAY_NAME_MAX_COLUMNS, findSlot, managedSentinelMaterials
+      "packages/ai/src/auth/pool/slots.ts": ["DEFAULT_SLOT_NAME", "DISPLAY_NAME_MAX_COLUMNS", "assertValidSlotName", "findSlot", "managedSentinelMaterials"],
+      // pre-existing at origin main aceb1cc1d9: unused exports registerBundledOAuthFlowLoaders
+      "packages/ai/src/oauth.ts": ["registerBundledOAuthFlowLoaders"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ALIBABA_TOKEN_PLAN_IMAGE_MODELS, ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS
+      "packages/ai/src/providers/alibaba-token-plan.models.ts": ["ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS", "ALIBABA_TOKEN_PLAN_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports AMAZON_BEDROCK_IMAGE_MODELS, AMAZON_BEDROCK_CLASSIFIER_MODELS
+      "packages/ai/src/providers/amazon-bedrock.models.ts": ["AMAZON_BEDROCK_CLASSIFIER_MODELS", "AMAZON_BEDROCK_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ANT_LING_IMAGE_MODELS, ANT_LING_CLASSIFIER_MODELS
+      "packages/ai/src/providers/ant-ling.models.ts": ["ANT_LING_CLASSIFIER_MODELS", "ANT_LING_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ANTHROPIC_IMAGE_MODELS, ANTHROPIC_CLASSIFIER_MODELS
+      "packages/ai/src/providers/anthropic.models.ts": ["ANTHROPIC_CLASSIFIER_MODELS", "ANTHROPIC_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports streamSimpleAnthropic
+      "packages/ai/src/providers/anthropic.ts": ["streamSimpleAnthropic"],
+      // pre-existing at origin main aceb1cc1d9: unused exports AZURE_OPENAI_RESPONSES_IMAGE_MODELS, AZURE_OPENAI_RESPONSES_CLASSIFIER_MODELS
+      "packages/ai/src/providers/azure-openai-responses.models.ts": ["AZURE_OPENAI_RESPONSES_CLASSIFIER_MODELS", "AZURE_OPENAI_RESPONSES_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports normalizeBaiResponsesPayload
+      "packages/ai/src/providers/bai-stream.ts": ["normalizeBaiResponsesPayload"],
+      // pre-existing at origin main aceb1cc1d9: unused exports BAI_IMAGE_MODELS, BAI_CLASSIFIER_MODELS
+      "packages/ai/src/providers/bai.models.ts": ["BAI_CLASSIFIER_MODELS", "BAI_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports BAI_BASE_URL
+      "packages/ai/src/providers/bai.ts": ["BAI_BASE_URL"],
+      // pre-existing at origin main aceb1cc1d9: unused exports BASETEN_IMAGE_MODELS, BASETEN_CLASSIFIER_MODELS
+      "packages/ai/src/providers/baseten.models.ts": ["BASETEN_CLASSIFIER_MODELS", "BASETEN_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CEREBRAS_IMAGE_MODELS, CEREBRAS_CLASSIFIER_MODELS
+      "packages/ai/src/providers/cerebras.models.ts": ["CEREBRAS_CLASSIFIER_MODELS", "CEREBRAS_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CHATGPT_SUBSCRIPTION_IMAGE_MODELS, CHATGPT_SUBSCRIPTION_CLASSIFIER_MODELS
+      "packages/ai/src/providers/chatgpt-subscription.models.ts": ["CHATGPT_SUBSCRIPTION_CLASSIFIER_MODELS", "CHATGPT_SUBSCRIPTION_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CLOUDFLARE_AI_GATEWAY_IMAGE_MODELS, CLOUDFLARE_AI_GATEWAY_CLASSIFIER_MODELS
+      "packages/ai/src/providers/cloudflare-ai-gateway.models.ts": ["CLOUDFLARE_AI_GATEWAY_CLASSIFIER_MODELS", "CLOUDFLARE_AI_GATEWAY_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports resolveCloudflareModel
+      "packages/ai/src/providers/cloudflare-stream.ts": ["resolveCloudflareModel"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CLOUDFLARE_WORKERS_AI_IMAGE_MODELS
+      "packages/ai/src/providers/cloudflare-workers-ai.models.ts": ["CLOUDFLARE_WORKERS_AI_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEEPSEEK_IMAGE_MODELS, DEEPSEEK_CLASSIFIER_MODELS
+      "packages/ai/src/providers/deepseek.models.ts": ["DEEPSEEK_CLASSIFIER_MODELS", "DEEPSEEK_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports FIREWORKS_IMAGE_MODELS, FIREWORKS_CLASSIFIER_MODELS
+      "packages/ai/src/providers/fireworks.models.ts": ["FIREWORKS_CLASSIFIER_MODELS", "FIREWORKS_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GITHUB_COPILOT_IMAGE_MODELS, GITHUB_COPILOT_CLASSIFIER_MODELS
+      "packages/ai/src/providers/github-copilot.models.ts": ["GITHUB_COPILOT_CLASSIFIER_MODELS", "GITHUB_COPILOT_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GOOGLE_VERTEX_IMAGE_MODELS, GOOGLE_VERTEX_CLASSIFIER_MODELS
+      "packages/ai/src/providers/google-vertex.models.ts": ["GOOGLE_VERTEX_CLASSIFIER_MODELS", "GOOGLE_VERTEX_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports streamSimpleGoogleVertex
+      "packages/ai/src/providers/google-vertex.ts": ["streamSimpleGoogleVertex"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GOOGLE_IMAGE_MODELS, GOOGLE_CLASSIFIER_MODELS
+      "packages/ai/src/providers/google.models.ts": ["GOOGLE_CLASSIFIER_MODELS", "GOOGLE_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports streamSimpleGoogle
+      "packages/ai/src/providers/google.ts": ["streamSimpleGoogle"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GROQ_IMAGE_MODELS, GROQ_CLASSIFIER_MODELS
+      "packages/ai/src/providers/groq.models.ts": ["GROQ_CLASSIFIER_MODELS", "GROQ_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HUGGINGFACE_IMAGE_MODELS, HUGGINGFACE_CLASSIFIER_MODELS
+      "packages/ai/src/providers/huggingface.models.ts": ["HUGGINGFACE_CLASSIFIER_MODELS", "HUGGINGFACE_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports KIMI_CODING_IMAGE_MODELS, KIMI_CODING_CLASSIFIER_MODELS
+      "packages/ai/src/providers/kimi-coding.models.ts": ["KIMI_CODING_CLASSIFIER_MODELS", "KIMI_CODING_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports META_IMAGE_MODELS, META_CLASSIFIER_MODELS
+      "packages/ai/src/providers/meta.models.ts": ["META_CLASSIFIER_MODELS", "META_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MINIMAX_CN_IMAGE_MODELS, MINIMAX_CN_CLASSIFIER_MODELS
+      "packages/ai/src/providers/minimax-cn.models.ts": ["MINIMAX_CN_CLASSIFIER_MODELS", "MINIMAX_CN_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MINIMAX_IMAGE_MODELS, MINIMAX_CLASSIFIER_MODELS
+      "packages/ai/src/providers/minimax.models.ts": ["MINIMAX_CLASSIFIER_MODELS", "MINIMAX_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MISTRAL_IMAGE_MODELS, MISTRAL_CLASSIFIER_MODELS
+      "packages/ai/src/providers/mistral.models.ts": ["MISTRAL_CLASSIFIER_MODELS", "MISTRAL_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MOONSHOTAI_CN_IMAGE_MODELS, MOONSHOTAI_CN_CLASSIFIER_MODELS
+      "packages/ai/src/providers/moonshotai-cn.models.ts": ["MOONSHOTAI_CN_CLASSIFIER_MODELS", "MOONSHOTAI_CN_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MOONSHOTAI_IMAGE_MODELS, MOONSHOTAI_CLASSIFIER_MODELS
+      "packages/ai/src/providers/moonshotai.models.ts": ["MOONSHOTAI_CLASSIFIER_MODELS", "MOONSHOTAI_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports NVIDIA_IMAGE_MODELS, NVIDIA_CLASSIFIER_MODELS
+      "packages/ai/src/providers/nvidia.models.ts": ["NVIDIA_CLASSIFIER_MODELS", "NVIDIA_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_OLLAMA_CLOUD_URL, DEFAULT_OLLAMA_CONTEXT_WINDOW, DEFAULT_OLLAMA_MAX_TOKENS
+      "packages/ai/src/providers/ollama.ts": ["DEFAULT_OLLAMA_CLOUD_URL", "DEFAULT_OLLAMA_CONTEXT_WINDOW", "DEFAULT_OLLAMA_MAX_TOKENS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports streamSimpleOpenAICompletions
+      "packages/ai/src/providers/openai-completions.ts": ["streamSimpleOpenAICompletions"],
+      // pre-existing at origin main aceb1cc1d9: unused exports streamSimpleOpenAIResponses
+      "packages/ai/src/providers/openai-responses.ts": ["streamSimpleOpenAIResponses"],
+      // pre-existing at origin main aceb1cc1d9: unused exports OPENAI_CLASSIFIER_MODELS
+      "packages/ai/src/providers/openai.models.ts": ["OPENAI_CLASSIFIER_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports OPENCODE_GO_IMAGE_MODELS, OPENCODE_GO_CLASSIFIER_MODELS
+      "packages/ai/src/providers/opencode-go.models.ts": ["OPENCODE_GO_CLASSIFIER_MODELS", "OPENCODE_GO_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports OPENCODE_IMAGE_MODELS
+      "packages/ai/src/providers/opencode.models.ts": ["OPENCODE_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports OPENGATEWAY_REFRESH_INTERVAL_MS, unshippedServableModels, overlayOpenGatewayCatalog
+      "packages/ai/src/providers/opengateway-refresh.ts": ["OPENGATEWAY_REFRESH_INTERVAL_MS", "overlayOpenGatewayCatalog", "unshippedServableModels"],
+      // pre-existing at origin main aceb1cc1d9: unused exports OPENGATEWAY_IMAGE_MODELS, OPENGATEWAY_CLASSIFIER_MODELS
+      "packages/ai/src/providers/opengateway.models.ts": ["OPENGATEWAY_CLASSIFIER_MODELS", "OPENGATEWAY_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports QWEN_TOKEN_PLAN_CN_IMAGE_MODELS, QWEN_TOKEN_PLAN_CN_CLASSIFIER_MODELS
+      "packages/ai/src/providers/qwen-token-plan-cn.models.ts": ["QWEN_TOKEN_PLAN_CN_CLASSIFIER_MODELS", "QWEN_TOKEN_PLAN_CN_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports QWEN_TOKEN_PLAN_INDIVIDUAL_IMAGE_MODELS, QWEN_TOKEN_PLAN_INDIVIDUAL_CLASSIFIER_MODELS
+      "packages/ai/src/providers/qwen-token-plan-individual.models.ts": ["QWEN_TOKEN_PLAN_INDIVIDUAL_CLASSIFIER_MODELS", "QWEN_TOKEN_PLAN_INDIVIDUAL_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports QWEN_TOKEN_PLAN_IMAGE_MODELS, QWEN_TOKEN_PLAN_CLASSIFIER_MODELS
+      "packages/ai/src/providers/qwen-token-plan.models.ts": ["QWEN_TOKEN_PLAN_CLASSIFIER_MODELS", "QWEN_TOKEN_PLAN_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getRadiusCredentialConfig
+      "packages/ai/src/providers/radius-config.ts": ["getRadiusCredentialConfig"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RADIUS_IMAGE_MODELS, RADIUS_CLASSIFIER_MODELS
+      "packages/ai/src/providers/radius.models.ts": ["RADIUS_CLASSIFIER_MODELS", "RADIUS_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TOGETHER_IMAGE_MODELS, TOGETHER_CLASSIFIER_MODELS
+      "packages/ai/src/providers/together.models.ts": ["TOGETHER_CLASSIFIER_MODELS", "TOGETHER_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TYPESAFE_MODELS, TYPESAFE_IMAGE_MODELS
+      "packages/ai/src/providers/typesafe.models.ts": ["TYPESAFE_IMAGE_MODELS", "TYPESAFE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports VENICE_IMAGE_MODELS, VENICE_CLASSIFIER_MODELS
+      "packages/ai/src/providers/venice.models.ts": ["VENICE_CLASSIFIER_MODELS", "VENICE_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports VERCEL_AI_GATEWAY_IMAGE_MODELS
+      "packages/ai/src/providers/vercel-ai-gateway.models.ts": ["VERCEL_AI_GATEWAY_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports XAI_IMAGE_MODELS, XAI_CLASSIFIER_MODELS
+      "packages/ai/src/providers/xai.models.ts": ["XAI_CLASSIFIER_MODELS", "XAI_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports XIAOMI_TOKEN_PLAN_AMS_IMAGE_MODELS, XIAOMI_TOKEN_PLAN_AMS_CLASSIFIER_MODELS
+      "packages/ai/src/providers/xiaomi-token-plan-ams.models.ts": ["XIAOMI_TOKEN_PLAN_AMS_CLASSIFIER_MODELS", "XIAOMI_TOKEN_PLAN_AMS_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports XIAOMI_TOKEN_PLAN_CN_IMAGE_MODELS, XIAOMI_TOKEN_PLAN_CN_CLASSIFIER_MODELS
+      "packages/ai/src/providers/xiaomi-token-plan-cn.models.ts": ["XIAOMI_TOKEN_PLAN_CN_CLASSIFIER_MODELS", "XIAOMI_TOKEN_PLAN_CN_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports XIAOMI_TOKEN_PLAN_SGP_IMAGE_MODELS, XIAOMI_TOKEN_PLAN_SGP_CLASSIFIER_MODELS
+      "packages/ai/src/providers/xiaomi-token-plan-sgp.models.ts": ["XIAOMI_TOKEN_PLAN_SGP_CLASSIFIER_MODELS", "XIAOMI_TOKEN_PLAN_SGP_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports XIAOMI_IMAGE_MODELS, XIAOMI_CLASSIFIER_MODELS
+      "packages/ai/src/providers/xiaomi.models.ts": ["XIAOMI_CLASSIFIER_MODELS", "XIAOMI_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ZAI_CODING_CN_IMAGE_MODELS, ZAI_CODING_CN_CLASSIFIER_MODELS
+      "packages/ai/src/providers/zai-coding-cn.models.ts": ["ZAI_CODING_CN_CLASSIFIER_MODELS", "ZAI_CODING_CN_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ZAI_IMAGE_MODELS, ZAI_CLASSIFIER_MODELS
+      "packages/ai/src/providers/zai.models.ts": ["ZAI_CLASSIFIER_MODELS", "ZAI_IMAGE_MODELS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports completeSimple
+      "packages/ai/src/stream.ts": ["completeSimple"],
+      // pre-existing at origin main aceb1cc1d9: unused exports findFunctionCallsTag, isPotentialFunctionCallsTag
+      "packages/ai/src/tool-call-middleware/protocols/anthropic-xml/invoke-stream-helpers.ts": ["findFunctionCallsTag", "isPotentialFunctionCallsTag"],
+      // pre-existing at origin main aceb1cc1d9: unused exports createClosingTagMatcher, createTagEndMatcher
+      "packages/ai/src/tool-call-middleware/protocols/anthropic-xml/stream-boundary.ts": ["createClosingTagMatcher", "createTagEndMatcher"],
+      // pre-existing at origin main aceb1cc1d9: unused exports coerceAntmlParameters, createAntmlInvokeRecoveryStreamParser, repairLoneSurrogates, repairStringsDeep, repairUnicodeEscapes
+      "packages/ai/src/tool-call-middleware/protocols/antml/index.ts": ["coerceAntmlParameters", "createAntmlInvokeRecoveryStreamParser", "repairLoneSurrogates", "repairStringsDeep", "repairUnicodeEscapes"],
+      // pre-existing at origin main aceb1cc1d9: unused exports parseGemma4Args
+      "packages/ai/src/tool-call-middleware/protocols/gemma4.ts": ["parseGemma4Args"],
+      // pre-existing at origin main aceb1cc1d9: unused exports freezeCapture, publicBlock
+      "packages/ai/src/utils/assistant-capture.ts": ["freezeCapture", "publicBlock"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CHATGPT_SUBSCRIPTION_AUTH_CLAIM_PATH
+      "packages/ai/src/utils/chatgpt-subscription-auth.ts": ["CHATGPT_SUBSCRIPTION_AUTH_CLAIM_PATH"],
+      // pre-existing at origin main aceb1cc1d9: unused exports resolveClaudeCodeVersionCachePath, createClaudeCodeVersionFileStore
+      "packages/ai/src/utils/claude-code-version-cache.ts": ["createClaudeCodeVersionFileStore", "resolveClaudeCodeVersionCachePath"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ConfigReferenceSchema
+      "packages/ai/src/utils/config-reference.ts": ["ConfigReferenceSchema"],
+      // pre-existing at origin main aceb1cc1d9: unused exports truncateErrorText, safeJsonStringify
+      "packages/ai/src/utils/error-body.ts": ["safeJsonStringify", "truncateErrorText"],
+      // pre-existing at origin main aceb1cc1d9: unused exports estimateTextAndImageContentTokens
+      "packages/ai/src/utils/estimate.ts": ["estimateTextAndImageContentTokens"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GITHUB_COPILOT_TOOL_LIMIT, GITHUB_COPILOT_TOOL_LIMIT_DIAGNOSTIC
+      "packages/ai/src/utils/github-copilot-tool-limit.ts": ["GITHUB_COPILOT_TOOL_LIMIT", "GITHUB_COPILOT_TOOL_LIMIT_DIAGNOSTIC"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GZIP_REQUEST_BODY_MIN_CHARS
+      "packages/ai/src/utils/gzip-request-body.ts": ["GZIP_REQUEST_BODY_MIN_CHARS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports forcePiUserAgent
+      "packages/ai/src/utils/pi-user-agent.ts": ["forcePiUserAgent"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TOOL_CALL_ID_MAX_LENGTH
+      "packages/ai/src/utils/tool-call-id.ts": ["TOOL_CALL_ID_MAX_LENGTH"],
+      // pre-existing at origin main aceb1cc1d9: unused exports refusalNamesForcedTool, omitToolChoiceParam
+      "packages/ai/src/utils/tool-choice-fallback.ts": ["omitToolChoiceParam", "refusalNamesForcedTool"],
+      // pre-existing at origin main aceb1cc1d9: unused exports foldToolName
+      "packages/ai/src/utils/tool-name-match.ts": ["foldToolName"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/auto-commit-on-exit.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/bash-spawn-hook.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/bookmark.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/border-status-editor.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/built-in-tool-renderer.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/claude-rules.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/commands.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/confirm-destructive.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/custom-footer.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/custom-header.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/custom-provider-anthropic/index.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/custom-provider-gitlab-duo/index.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/debug-provider.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/dirty-repo-guard.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/doom-overlay/index.ts": ["default"],
+      // pre-existing at origin main aceb1cc1d9: unused export findWadFile (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/doom-overlay/wad-finder.ts": ["findWadFile"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/dynamic-resources/index.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/dynamic-tools.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/entry-renderer.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/event-bus.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/file-trigger.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/git-checkpoint.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/github-issue-autocomplete.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/gondolin/index.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/handoff.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/hello.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/hidden-thinking-label.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/inline-bash.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/input-transform.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/interactive-shell.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/mac-system-theme.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/message-renderer.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/minimal-mode.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/modal-editor.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/model-status.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/notify.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/overlay-qa-tests.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/overlay-test.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/permission-gate.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/pirate.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/preset.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/project-trust.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/prompt-customizer.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/protected-paths.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/provider-payload.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/qna.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/question.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/questionnaire.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/rainbow-editor.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/reload-runtime.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/rpc-demo.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/sandbox/index.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/searchable-tools.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/send-user-message.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/session-name.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/shutdown-command.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/snake.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/space-invaders.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/ssh.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/status-line.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/structured-output.ts": ["default"],
+      // pre-existing at origin main aceb1cc1d9: unused export formatAgentList (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/subagent/agents.ts": ["formatAgentList"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/summarize.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/system-prompt-header.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/tic-tac-toe.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/timed-confirm.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/titlebar-spinner.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/todo.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/tool-override.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/tools.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/truncated-tool.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/widget-placement.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/with-deps/index.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/working-indicator.ts": ["default"],
+      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/extensions/working-message-test.ts": ["default"],
+      // default export is the plugin module the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/plugins/pi-example-plugin/src/session.ts": ["default"],
+      // default export is the plugin module the loader imports by path, not an import (entry, newly export-checked)
+      "packages/coding-agent/examples/plugins/pi-example-plugin/src/tui.ts": ["default"],
+      // pre-existing at origin main aceb1cc1d9: unused export loadUsageLimitTransform (entry, newly export-checked)
+      "packages/coding-agent/scripts/qa-rpc-socket/lib/expected-entries.mjs": ["loadUsageLimitTransform"],
+      // pre-existing at origin main aceb1cc1d9: unused export writeBigSession (entry, newly export-checked)
+      "packages/coding-agent/scripts/qa-rpc-socket/lib/offload-big-open.mjs": ["writeBigSession"],
+      // pre-existing at origin main aceb1cc1d9: unused export REQUIRED_PHASES (entry, newly export-checked)
+      "packages/coding-agent/scripts/qa-rpc-socket/lib/offload-evaluate.mjs": ["REQUIRED_PHASES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports footprintMb, descendantsOf (entry, newly export-checked)
+      "packages/coding-agent/scripts/qa-rpc-socket/lib/offload-memory.mjs": ["descendantsOf", "footprintMb"],
+      // pre-existing at origin main aceb1cc1d9: unused export workload (entry, newly export-checked)
+      "packages/coding-agent/scripts/qa-rpc-socket/lib/offload-workload.mjs": ["workload"],
+      // pre-existing at origin main aceb1cc1d9: unused export parseInject (entry, newly export-checked)
+      "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-args.mjs": ["parseInject"],
+      // pre-existing at origin main aceb1cc1d9: unused exports sandboxHostEnv, QA_READINESS_TIMEOUT_MS, qaHostLaunch (entry, newly export-checked)
+      "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-host.mjs": ["QA_READINESS_TIMEOUT_MS", "qaHostLaunch", "sandboxHostEnv"],
+      // pre-existing at origin main aceb1cc1d9: unused export REQUIREMENT_CAPABILITIES (entry, newly export-checked)
+      "packages/coding-agent/scripts/qa-rpc-socket/lib/qa-scenarios.mjs": ["REQUIREMENT_CAPABILITIES"],
+      // pre-existing at origin main aceb1cc1d9: unused export connectSocket (entry, newly export-checked)
+      "packages/coding-agent/scripts/qa-rpc-socket/lib/rpc-client.mjs": ["connectSocket"],
+      // pre-existing at origin main aceb1cc1d9: unused export cleanupAll (entry, newly export-checked)
+      "packages/coding-agent/scripts/qa-shared/lib/cleanup.mjs": ["cleanupAll"],
+      // pre-existing at origin main aceb1cc1d9: unused exports cleanupAll, qaPortRange, findQaPort, uniqueLabel (entry, newly export-checked)
+      "packages/coding-agent/scripts/qa-shared/lib/env.mjs": ["cleanupAll", "findQaPort", "qaPortRange", "uniqueLabel"],
+      // pre-existing at origin main aceb1cc1d9: unused exports omoLocalUpdateWorkerLogPath
+      "packages/coding-agent/src/beta/omo-local-update-worker.ts": ["omoLocalUpdateWorkerLogPath"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ensureBuildWorktree
+      "packages/coding-agent/src/beta/omo-local-update.ts": ["ensureBuildWorktree"],
+      // pre-existing at origin main aceb1cc1d9: unused exports readBunVersion
+      "packages/coding-agent/src/bun-runtime.ts": ["readBunVersion"],
+      // pre-existing at origin main aceb1cc1d9: unused exports formatModelsDiscoveryReport
+      "packages/coding-agent/src/cli/models-command.ts": ["formatModelsDiscoveryReport"],
+      // pre-existing at origin main aceb1cc1d9: unused exports OUTPUT_DELIVERY_LIMIT_MS
+      "packages/coding-agent/src/cli/print-then-exit.ts": ["OUTPUT_DELIVERY_LIMIT_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TOOL_CHILD_PLACEMENTS, OFFLOAD_API_CAPABILITY
+      "packages/coding-agent/src/cli/tool-runtime.ts": ["OFFLOAD_API_CAPABILITY", "TOOL_CHILD_PLACEMENTS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getPackageJsonPath, getToolsDir, getPromptsDir
+      "packages/coding-agent/src/config.ts": ["getPackageJsonPath", "getPromptsDir", "getToolsDir"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RESUME_EFFECT_ENTRY
+      "packages/coding-agent/src/core/agent-session.ts": ["RESUME_EFFECT_ENTRY"],
+      // pre-existing at origin main aceb1cc1d9: unused exports IMPORTED_GRANTS_FIELD
+      "packages/coding-agent/src/core/anthropic-oauth-migration.ts": ["IMPORTED_GRANTS_FIELD"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getProviderLoginHelp
+      "packages/coding-agent/src/core/auth-guidance.ts": ["getProviderLoginHelp"],
+      // pre-existing at origin main aceb1cc1d9: unused exports buildLogoutProviderInfos
+      "packages/coding-agent/src/core/auth-providers.ts": ["buildLogoutProviderInfos"],
+      // pre-existing at origin main aceb1cc1d9: unused exports BROWSER_ENGINES, BROWSER_ENGINE_ENV
+      "packages/coding-agent/src/core/browser-engine.ts": ["BROWSER_ENGINES", "BROWSER_ENGINE_ENV"],
+      // pre-existing at origin main aceb1cc1d9: unused exports compactionTokenSetting
+      "packages/coding-agent/src/core/compaction-settings-access.ts": ["compactionTokenSetting"],
+      // pre-existing at origin main aceb1cc1d9: unused exports configReferenceContext
+      "packages/coding-agent/src/core/config-reference-resolver.ts": ["configReferenceContext"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_CONTEXT_FILE_MAX_BYTES, DEFAULT_CONTEXT_FILES_MAX_TOTAL_BYTES
+      "packages/coding-agent/src/core/context-files.ts": ["DEFAULT_CONTEXT_FILES_MAX_TOTAL_BYTES", "DEFAULT_CONTEXT_FILE_MAX_BYTES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports readCrashLog, recordCrash, takeUnnotifiedCrash, clearCrashLog
+      "packages/coding-agent/src/core/crash-log.ts": ["clearCrashLog", "readCrashLog", "recordCrash", "takeUnnotifiedCrash"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RETRY_SAME_MAX_ATTEMPTS, usageLimitCooldown
+      "packages/coding-agent/src/core/credential-pool/classify.ts": ["RETRY_SAME_MAX_ATTEMPTS", "usageLimitCooldown"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_ENV_SLOT_INDEX
+      "packages/coding-agent/src/core/credential-pool/env-slots.ts": ["MAX_ENV_SLOT_INDEX"],
+      // pre-existing at origin main aceb1cc1d9: unused exports THINKING_LEVEL_OPTIONS
+      "packages/coding-agent/src/core/defaults.ts": ["THINKING_LEVEL_OPTIONS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getExtensionSourceLabel
+      "packages/coding-agent/src/core/discovered-resource-scope.ts": ["getExtensionSourceLabel"],
+      // pre-existing at origin main aceb1cc1d9: unused exports PROMPT_SURFACE_ENV_VAR
+      "packages/coding-agent/src/core/dynamic-prompt/build.ts": ["PROMPT_SURFACE_ENV_VAR"],
+      // pre-existing at origin main aceb1cc1d9: unused exports PROMPT_SURFACE_ENV_VAR, buildHandoffSection, buildIdentitySection, buildIntentGate, buildPoliciesSection, buildStyleSection (+4 more)
+      "packages/coding-agent/src/core/dynamic-prompt/index.ts": ["PROMPT_SURFACE_ENV_VAR", "buildHandoffSection", "buildIdentitySection", "buildIntentGate", "buildPoliciesSection", "buildStyleSection", "buildToolSection", "buildVerificationSection", "buildWorkingTaskSection", "categorizeTools"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_ROUTING_LINE_RULE
+      "packages/coding-agent/src/core/dynamic-prompt/intent-gate.ts": ["DEFAULT_ROUTING_LINE_RULE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_ERROR_RULE
+      "packages/coding-agent/src/core/dynamic-prompt/policies.ts": ["DEFAULT_ERROR_RULE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_WORKING_TASK_OPENING
+      "packages/coding-agent/src/core/dynamic-prompt/working-task.ts": ["DEFAULT_WORKING_TASK_OPENING"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ENGINE_TURN_WINDOW_MS
+      "packages/coding-agent/src/core/engine-turn-limit.ts": ["ENGINE_TURN_WINDOW_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_SLICE_BUDGET_MS
+      "packages/coding-agent/src/core/event-loop-slicer.ts": ["DEFAULT_SLICE_BUDGET_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ansiToHtml
+      "packages/coding-agent/src/core/export-html/ansi-to-html.ts": ["ansiToHtml"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isAuthBlockRecoverable
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-block-recovery.ts": ["isAuthBlockRecoverable"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, resolveEffectiveLane
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts": ["ANTHROPIC_SUBSCRIPTION_PROVIDER_ID", "resolveEffectiveLane"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/context-window.ts": ["CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW"],
+      // pre-existing at origin main aceb1cc1d9: unused exports objectToShape
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/custom-tools-schema.ts": ["objectToShape"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TRANSIENT_RETRIES_PER_TURN, TRANSIENT_RETRY_DELAY_MS
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts": ["TRANSIENT_RETRIES_PER_TURN", "TRANSIENT_RETRY_DELAY_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports contentToText
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts": ["contentToText"],
+      // pre-existing at origin main aceb1cc1d9: unused exports PROMPT_CACHE_TTL_ENV, FORCE_PROMPT_CACHING_5M_ENV
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/prompt-cache-ttl.ts": ["FORCE_PROMPT_CACHING_5M_ENV", "PROMPT_CACHE_TTL_ENV"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isClaudeSdkRefusal
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/refusal.ts": ["isClaudeSdkRefusal"],
+      // pre-existing at origin main aceb1cc1d9: unused exports default
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts": ["default"],
+      // pre-existing at origin main aceb1cc1d9: unused exports peekPendingCloseCause
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-observability.ts": ["peekPendingCloseCause"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_PRE_REPLAY_MAX_MESSAGES, DEFAULT_PRE_REPLAY_MAX_BYTES, SESSION_TURN_ABORT_GRACE_MS
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry-pump.ts": ["DEFAULT_PRE_REPLAY_MAX_BYTES", "DEFAULT_PRE_REPLAY_MAX_MESSAGES", "SESSION_TURN_ABORT_GRACE_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports transitionToStarting, transitionToBroken
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry-state.ts": ["transitionToBroken", "transitionToStarting"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SESSION_REGISTRY_MAX_ENTRIES
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry.ts": ["SESSION_REGISTRY_MAX_ENTRIES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isTransmittedMessage
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-sync.ts": ["isTransmittedMessage"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isAutonomousResult
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-claim.ts": ["isAutonomousResult"],
+      // pre-existing at origin main aceb1cc1d9: unused exports sdkTools, toolExecutionDeniedMessage, mapToolName
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream-protocol.ts": ["mapToolName", "sdkTools", "toolExecutionDeniedMessage"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TOOL_WATCH_CUSTOM_TYPE
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/tool-watch.ts": ["TOOL_WATCH_CUSTOM_TYPE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SDK_TO_PI_TOOL_NAME, PI_TO_SDK_TOOL_NAME, CUSTOM_TOOLS_MCP_PREFIX, HOST_CAPTURED_SDK_TOOL_MATCHER; duplicate exports TOOL_EXECUTION_DENIED_MESSAGE|HOST_TOOL_EXECUTION_DENIED_MESSAGE
+      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/tools.ts": ["CUSTOM_TOOLS_MCP_PREFIX", "HOST_CAPTURED_SDK_TOOL_MATCHER", "PI_TO_SDK_TOOL_NAME", "SDK_TO_PI_TOOL_NAME"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getPendingQuestions
+      "packages/coding-agent/src/core/extensions/builtin/ask-user/index.ts": ["getPendingQuestions"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ASK_USER_CLOSED_EVENT
+      "packages/coding-agent/src/core/extensions/builtin/ask-user/notify.ts": ["ASK_USER_CLOSED_EVENT"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ASK_USER_RESUMED_ENTRY
+      "packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts": ["ASK_USER_RESUMED_ENTRY"],
+      // pre-existing at origin main aceb1cc1d9: unused exports applyBashTimeout, buildBashTimeoutPrompt, resolveBashTimeoutDefaults
+      "packages/coding-agent/src/core/extensions/builtin/bash-timeout/index.ts": ["applyBashTimeout", "buildBashTimeoutPrompt", "resolveBashTimeoutDefaults"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_ESTABLISHMENT_TIMEOUT_MS
+      "packages/coding-agent/src/core/extensions/builtin/btw/side-query.ts": ["DEFAULT_ESTABLISHMENT_TIMEOUT_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports PROMPT_CACHE_PREWARM_TIMEOUT_MS
+      "packages/coding-agent/src/core/extensions/builtin/cache-keepalive/session-prewarm.ts": ["PROMPT_CACHE_PREWARM_TIMEOUT_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports createContextReductionState
+      "packages/coding-agent/src/core/extensions/builtin/compaction/context-pipeline.ts": ["createContextReductionState"],
+      // pre-existing at origin main aceb1cc1d9: unused exports projectedReductionTokens
+      "packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-frontier.ts": ["projectedReductionTokens"],
+      // pre-existing at origin main aceb1cc1d9: unused exports BUILTIN_CONTEXT_REDUCTION_GATE_RATIO
+      "packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction.ts": ["BUILTIN_CONTEXT_REDUCTION_GATE_RATIO"],
+      // pre-existing at origin main aceb1cc1d9: unused exports POST_COMPACTION_MONITOR_COUNT, POST_COMPACTION_NO_TEXT_THRESHOLD, MAX_RECOVERY_ATTEMPTS, RECOVERY_NOTIFICATION
+      "packages/coding-agent/src/core/extensions/builtin/compaction/degradation-monitor.ts": ["MAX_RECOVERY_ATTEMPTS", "POST_COMPACTION_MONITOR_COUNT", "POST_COMPACTION_NO_TEXT_THRESHOLD", "RECOVERY_NOTIFICATION"],
+      // pre-existing at origin main aceb1cc1d9: unused exports truncateContextMessages
+      "packages/coding-agent/src/core/extensions/builtin/compaction/emergency-prune.ts": ["truncateContextMessages"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_IDLE_WARMUP_RETRIES
+      "packages/coding-agent/src/core/extensions/builtin/compaction/idle-retry.ts": ["MAX_IDLE_WARMUP_RETRIES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports withRemoteCompactionV2Header
+      "packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-responses-v2.ts": ["withRemoteCompactionV2Header"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isOpenAiCompactionItem
+      "packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote-schema.ts": ["isOpenAiCompactionItem"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getOpenAiRemoteCompactionDetails
+      "packages/coding-agent/src/core/extensions/builtin/compaction/openai-remote.ts": ["getOpenAiRemoteCompactionDetails"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_SUMMARIZATION_OVERFLOW_RETRIES, SUMMARIZATION_OVERFLOW_TOTAL_BUDGET_MS
+      "packages/coding-agent/src/core/extensions/builtin/compaction/overflow-retry.ts": ["MAX_SUMMARIZATION_OVERFLOW_RETRIES", "SUMMARIZATION_OVERFLOW_TOTAL_BUDGET_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MERGED_COMPACTION_PROMPT_SYSTEM, MERGED_COMPACTION_PROMPT_UPDATE, MERGED_COMPACTION_PROMPT_BRANCH, MERGED_COMPACTION_PROMPT_TURN_PREFIX
+      "packages/coding-agent/src/core/extensions/builtin/compaction/prompts.ts": ["MERGED_COMPACTION_PROMPT_BRANCH", "MERGED_COMPACTION_PROMPT_SYSTEM", "MERGED_COMPACTION_PROMPT_TURN_PREFIX", "MERGED_COMPACTION_PROMPT_UPDATE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports truncateContextMessages
+      "packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts": ["truncateContextMessages"],
+      // pre-existing at origin main aceb1cc1d9: unused exports summarizationRetryTotalBudgetMs
+      "packages/coding-agent/src/core/extensions/builtin/compaction/summarization-retry.ts": ["summarizationRetryTotalBudgetMs"],
+      // pre-existing at origin main aceb1cc1d9: unused exports configReloadExtension; duplicate exports configReloadExtension|default
+      "packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts": ["configReloadExtension"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isConfigWatchTarget
+      "packages/coding-agent/src/core/extensions/builtin/config-reload/protocol.ts": ["isConfigWatchTarget"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getAffinityKey
+      "packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/affinity.ts": ["getAffinityKey"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CURSOR_CLI_STATUS_LANE, CURSOR_CLI_STATUS_CONTEXT_OWNER, parseCursorCliVersion, compareCursorCliVersions, isCursorCliContextRetired, cursorCliChildRegistry
+      "packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/diagnostics.ts": ["CURSOR_CLI_STATUS_CONTEXT_OWNER", "CURSOR_CLI_STATUS_LANE", "compareCursorCliVersions", "cursorCliChildRegistry", "isCursorCliContextRetired", "parseCursorCliVersion"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CURSOR_CLI_OAUTH_FORCE_DISABLED_WARNING, sanitizeCursorCliDenyCommands
+      "packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/guardrails.ts": ["CURSOR_CLI_OAUTH_FORCE_DISABLED_WARNING", "sanitizeCursorCliDenyCommands"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CursorCliModelProbeTimeoutError, CursorCliModelProbeExitError
+      "packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/models-probe.ts": ["CursorCliModelProbeExitError", "CursorCliModelProbeTimeoutError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CURSOR_CLI_OAUTH_NAME, CURSOR_CLI_OAUTH_LOGIN_ACKNOWLEDGEMENT_EXPLANATION, defaultCursorCliOauthConfig
+      "packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/oauth-login.ts": ["CURSOR_CLI_OAUTH_LOGIN_ACKNOWLEDGEMENT_EXPLANATION", "CURSOR_CLI_OAUTH_NAME", "defaultCursorCliOauthConfig"],
+      // pre-existing at origin main aceb1cc1d9: unused exports UNATTENDED_CONTINUATION_BLOCKED_REASON, PROVIDER_AUTH_BLOCKED_REASON_PREFIX
+      "packages/coding-agent/src/core/extensions/builtin/goal/continuation-recovery.ts": ["PROVIDER_AUTH_BLOCKED_REASON_PREFIX", "UNATTENDED_CONTINUATION_BLOCKED_REASON"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GOAL_LOCK_WAIT_BUDGET_MS, GoalStoreBusyError, GoalStoreLockCompromisedError
+      "packages/coding-agent/src/core/extensions/builtin/goal/goal-file-lock.ts": ["GOAL_LOCK_WAIT_BUDGET_MS", "GoalStoreBusyError", "GoalStoreLockCompromisedError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports queueHiddenGoalPrompt
+      "packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts": ["queueHiddenGoalPrompt"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS, GOAL_MONITOR_STALL_EVENT
+      "packages/coding-agent/src/core/extensions/builtin/goal/monitor-continuation.ts": ["GOAL_MONITOR_CONTINUATION_FALLBACK_DELAY_MS", "GOAL_MONITOR_STALL_EVENT"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isGpt6AstraReceiver
+      "packages/coding-agent/src/core/extensions/builtin/goal/prompt.ts": ["isGpt6AstraReceiver"],
+      // pre-existing at origin main aceb1cc1d9: unused exports PROVIDER_RETRY_CAP_MS, PROVIDER_RETRY_WAKE_CAP_MS
+      "packages/coding-agent/src/core/extensions/builtin/goal/provider-retry.ts": ["PROVIDER_RETRY_CAP_MS", "PROVIDER_RETRY_WAKE_CAP_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GOAL_CONTINUATION_FIRE_NOW_REQUEST
+      "packages/coding-agent/src/core/extensions/builtin/goal/rpc-wait-surface.ts": ["GOAL_CONTINUATION_FIRE_NOW_REQUEST"],
+      // pre-existing at origin main aceb1cc1d9: unused exports STALE_EXTENSION_CONTEXT_ERROR_PREFIX, STALE_EXTENSION_GENERATION_AFTER_RELOAD_MESSAGE
+      "packages/coding-agent/src/core/extensions/builtin/goal/stale-context.ts": ["STALE_EXTENSION_CONTEXT_ERROR_PREFIX", "STALE_EXTENSION_GENERATION_AFTER_RELOAD_MESSAGE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GOAL_STOP_PAUSED_ENTRY, GOAL_STOP_RESUMED_ENTRY
+      "packages/coding-agent/src/core/extensions/builtin/goal/stop-pause.ts": ["GOAL_STOP_PAUSED_ENTRY", "GOAL_STOP_RESUMED_ENTRY"],
+      // pre-existing at origin main aceb1cc1d9: unused exports goalHistoryFilePath, objectiveFullTextFilePath, archiveGoal
+      "packages/coding-agent/src/core/extensions/builtin/goal/store.ts": ["archiveGoal", "goalHistoryFilePath", "objectiveFullTextFilePath"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TODO_OWED_SECOND_PREFIX
+      "packages/coding-agent/src/core/extensions/builtin/goal/todo-owed-backstop.ts": ["TODO_OWED_SECOND_PREFIX"],
+      // pre-existing at origin main aceb1cc1d9: unused exports emptyUsage
+      "packages/coding-agent/src/core/extensions/builtin/goal/turn-usage.ts": ["emptyUsage"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_OBJECTIVE_LENGTH, truncationMarker
+      "packages/coding-agent/src/core/extensions/builtin/goal/validation.ts": ["MAX_OBJECTIVE_LENGTH", "truncationMarker"],
+      // pre-existing at origin main aceb1cc1d9: unused exports channelsOnDuty
+      "packages/coding-agent/src/core/extensions/builtin/goal/wait-progress.ts": ["channelsOnDuty"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GOAL_WAIT_TICK_INTERVAL_MS
+      "packages/coding-agent/src/core/extensions/builtin/goal/wait-ticker.ts": ["GOAL_WAIT_TICK_INTERVAL_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports APPLY_PATCH_PARAMS, registerApplyPatchExtension, clearApplyPatchRenderState, getApplyPatchRenderState, normalizePatchText, stripHeredoc
+      "packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/index.ts": ["APPLY_PATCH_PARAMS", "clearApplyPatchRenderState", "getApplyPatchRenderState", "normalizePatchText", "registerApplyPatchExtension", "stripHeredoc"],
+      // pre-existing at origin main aceb1cc1d9: unused exports clearApplyPatchRenderState
+      "packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/preview-format.ts": ["clearApplyPatchRenderState"],
+      // pre-existing at origin main aceb1cc1d9: unused exports createPatchPreview
+      "packages/coding-agent/src/core/extensions/builtin/gpt-apply-patch/preview.ts": ["createPatchPreview"],
+      // pre-existing at origin main aceb1cc1d9: unused exports formatUsd
+      "packages/coding-agent/src/core/extensions/builtin/handoff-hint/estimate.ts": ["formatUsd"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HANDOFF_COMMAND, DEFAULT_HANDOFF_HINT_SETTINGS
+      "packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts": ["DEFAULT_HANDOFF_HINT_SETTINGS", "HANDOFF_COMMAND"],
+      // pre-existing at origin main aceb1cc1d9: unused exports formatHookStatus
+      "packages/coding-agent/src/core/extensions/builtin/hooks/command.ts": ["formatHookStatus"],
+      // pre-existing at origin main aceb1cc1d9: unused exports UNSUPPORTED_HANDLER_TYPES
+      "packages/coding-agent/src/core/extensions/builtin/hooks/index.ts": ["UNSUPPORTED_HANDLER_TYPES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports USER_PROMPT_BLOCK_REASON
+      "packages/coding-agent/src/core/extensions/builtin/hooks/prompt-adapter.ts": ["USER_PROMPT_BLOCK_REASON"],
+      // pre-existing at origin main aceb1cc1d9: unused exports STOP_OUTPUT_CUSTOM_TYPE
+      "packages/coding-agent/src/core/extensions/builtin/hooks/stop-adapter.ts": ["STOP_OUTPUT_CUSTOM_TYPE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports PRE_TOOL_BLOCK_REASON, POST_TOOL_BLOCK_REASON
+      "packages/coding-agent/src/core/extensions/builtin/hooks/tool-adapter.ts": ["POST_TOOL_BLOCK_REASON", "PRE_TOOL_BLOCK_REASON"],
+      // pre-existing at origin main aceb1cc1d9: unused exports hashCommandHook
+      "packages/coding-agent/src/core/extensions/builtin/hooks/trust.ts": ["hashCommandHook"],
+      // pre-existing at origin main aceb1cc1d9: unused exports UNSUPPORTED_HANDLER_TYPES
+      "packages/coding-agent/src/core/extensions/builtin/hooks/types.ts": ["UNSUPPORTED_HANDLER_TYPES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HtmlRenderImagesNotFoundError, HtmlRenderImageTooLargeError, HtmlRenderPageTooLargeError
+      "packages/coding-agent/src/core/extensions/builtin/html-render/images.ts": ["HtmlRenderImageTooLargeError", "HtmlRenderImagesNotFoundError", "HtmlRenderPageTooLargeError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports LOOK_AT_USAGE
+      "packages/coding-agent/src/core/extensions/builtin/look-at/arguments.ts": ["LOOK_AT_USAGE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports IMAGE_ATTACHMENT_REFERENCE_REGEX
+      "packages/coding-agent/src/core/extensions/builtin/look-at/image-input.ts": ["IMAGE_ATTACHMENT_REFERENCE_REGEX"],
+      // pre-existing at origin main aceb1cc1d9: unused exports formatFixedLoopConfirmation, formatDynamicLoopConfirmation, formatBareLoopConfirmation, formatLoopStatusListing
+      "packages/coding-agent/src/core/extensions/builtin/loop/command.ts": ["formatBareLoopConfirmation", "formatDynamicLoopConfirmation", "formatFixedLoopConfirmation", "formatLoopStatusListing"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MIN_KEEPALIVE_SECONDS, MAX_KEEPALIVE_SECONDS, KEEPALIVE_SECONDS_ENV, MIN_MAX_TICKS, MAX_TICKS_ENV
+      "packages/coding-agent/src/core/extensions/builtin/loop/scheduler.ts": ["KEEPALIVE_SECONDS_ENV", "MAX_KEEPALIVE_SECONDS", "MAX_TICKS_ENV", "MIN_KEEPALIVE_SECONDS", "MIN_MAX_TICKS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports LOOP_STATUS_TICK_INTERVAL_MS
+      "packages/coding-agent/src/core/extensions/builtin/loop/status.ts": ["LOOP_STATUS_TICK_INTERVAL_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports encodedSessionId, emptyLoopState, clearLoopStateSnapshot
+      "packages/coding-agent/src/core/extensions/builtin/loop/store.ts": ["clearLoopStateSnapshot", "emptyLoopState", "encodedSessionId"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MIN_WAKEUP_DELAY_SECONDS, MAX_WAKEUP_DELAY_SECONDS, SCHEDULE_WAKEUP_DESCRIPTION, NO_ACTIVE_DYNAMIC_LOOP_ERROR, FIXED_TICK_ERROR, MISSING_PROMPT_ERROR (+4 more)
+      "packages/coding-agent/src/core/extensions/builtin/loop/tools.ts": ["BLANK_REASON_ERROR", "FIXED_TICK_ERROR", "MAX_WAKEUP_DELAY_SECONDS", "MIN_WAKEUP_DELAY_SECONDS", "MISSING_DELAY_ERROR", "MISSING_PROMPT_ERROR", "NON_INTEGER_DELAY_ERROR", "NOOP_WITH_STOP_ERROR", "NO_ACTIVE_DYNAMIC_LOOP_ERROR", "SCHEDULE_WAKEUP_DESCRIPTION"],
+      // pre-existing at origin main aceb1cc1d9: unused exports LOOP_KINDS
+      "packages/coding-agent/src/core/extensions/builtin/loop/types.ts": ["LOOP_KINDS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports tokenExpiresAt, freezeGrantAttribution
+      "packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts": ["freezeGrantAttribution", "tokenExpiresAt"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isTokenStale
+      "packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-refresh.ts": ["isTokenStale"],
+      // pre-existing at origin main aceb1cc1d9: unused exports assertAuthorizable
+      "packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth.ts": ["assertAuthorizable"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getGlobalMcpConfigPath
+      "packages/coding-agent/src/core/extensions/builtin/mcp/config-edit.ts": ["getGlobalMcpConfigPath"],
+      // pre-existing at origin main aceb1cc1d9: unused exports LogLevelSchema, ServerSchema, ConfigSchema
+      "packages/coding-agent/src/core/extensions/builtin/mcp/config-schema.ts": ["ConfigSchema", "LogLevelSchema", "ServerSchema"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MCP_STDIO_DIAGNOSTIC_TIMEOUT_MS, maybeDiagnoseStdioFailure
+      "packages/coding-agent/src/core/extensions/builtin/mcp/diagnose.ts": ["MCP_STDIO_DIAGNOSTIC_TIMEOUT_MS", "maybeDiagnoseStdioFailure"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MCP_ELICITATION_TIMEOUT_MS, setMcpElicitationUiProvider
+      "packages/coding-agent/src/core/extensions/builtin/mcp/elicitation.ts": ["MCP_ELICITATION_TIMEOUT_MS", "setMcpElicitationUiProvider"],
+      // pre-existing at origin main aceb1cc1d9: unused exports McpError
+      "packages/coding-agent/src/core/extensions/builtin/mcp/errors.ts": ["McpError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MCP_TOOL_NAME_MAX_LENGTH
+      "packages/coding-agent/src/core/extensions/builtin/mcp/expose/naming.ts": ["MCP_TOOL_NAME_MAX_LENGTH"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ANTHROPIC_MAX_TOOLS, ANTHROPIC_TOOL_SEARCH_NAME
+      "packages/coding-agent/src/core/extensions/builtin/mcp/expose/native-search.ts": ["ANTHROPIC_MAX_TOOLS", "ANTHROPIC_TOOL_SEARCH_NAME"],
+      // pre-existing at origin main aceb1cc1d9: unused exports buildMcpStubDefinition
+      "packages/coding-agent/src/core/extensions/builtin/mcp/expose/tier-b.ts": ["buildMcpStubDefinition"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MCP_PING_STALE_MS, MCP_PING_TIMEOUT_MS
+      "packages/coding-agent/src/core/extensions/builtin/mcp/health.ts": ["MCP_PING_STALE_MS", "MCP_PING_TIMEOUT_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getMcpLogDir
+      "packages/coding-agent/src/core/extensions/builtin/mcp/log.ts": ["getMcpLogDir"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MCP_LOG_RATE_LIMIT_PER_SECOND
+      "packages/coding-agent/src/core/extensions/builtin/mcp/logging.ts": ["MCP_LOG_RATE_LIMIT_PER_SECOND"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MODERN_PROTOCOL_VERSION, modernError
+      "packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts": ["MODERN_PROTOCOL_VERSION", "modernError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_MCP_MRTR_ROUNDS
+      "packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts": ["MAX_MCP_MRTR_ROUNDS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports STDIO_PROBE_MS
+      "packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts": ["STDIO_PROBE_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MCP_TASK_TIMEOUT_ENV
+      "packages/coding-agent/src/core/extensions/builtin/mcp/modern/tasks.ts": ["MCP_TASK_TIMEOUT_ENV"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MODERN_ERROR_CODES, ModernWireError
+      "packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts": ["MODERN_ERROR_CODES", "ModernWireError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isProcessAlive
+      "packages/coding-agent/src/core/extensions/builtin/mcp/process-tree.ts": ["isProcessAlive"],
+      // pre-existing at origin main aceb1cc1d9: unused exports lookupProjectEnv
+      "packages/coding-agent/src/core/extensions/builtin/mcp/project-env.ts": ["lookupProjectEnv"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MCP_RECONNECT_BACKOFF_MS, MCP_RECONNECT_BREAKER_WINDOW_MS, MCP_RECONNECT_BREAKER_ATTEMPTS
+      "packages/coding-agent/src/core/extensions/builtin/mcp/reconnect.ts": ["MCP_RECONNECT_BACKOFF_MS", "MCP_RECONNECT_BREAKER_ATTEMPTS", "MCP_RECONNECT_BREAKER_WINDOW_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports shouldDisposeMcpService
+      "packages/coding-agent/src/core/extensions/builtin/mcp/service.ts": ["shouldDisposeMcpService"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ignoreStartupNeedsAuth
+      "packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts": ["ignoreStartupNeedsAuth"],
+      // pre-existing at origin main aceb1cc1d9: unused exports formatModel
+      "packages/coding-agent/src/core/extensions/builtin/model-fallback/ui.ts": ["formatModel"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_TRUST_FILE_BYTES
+      "packages/coding-agent/src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts": ["MAX_TRUST_FILE_BYTES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MOVED_BREADCRUMB_KIND, MOVED_BREADCRUMB_SCHEMA_VERSION
+      "packages/coding-agent/src/core/extensions/builtin/moved-path-guard/breadcrumb.ts": ["MOVED_BREADCRUMB_KIND", "MOVED_BREADCRUMB_SCHEMA_VERSION"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_GUARD_LOG_BYTES
+      "packages/coding-agent/src/core/extensions/builtin/moved-path-guard/guard-log.ts": ["MAX_GUARD_LOG_BYTES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_PROBED_PATHS
+      "packages/coding-agent/src/core/extensions/builtin/moved-path-guard/index.ts": ["MAX_PROBED_PATHS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports legacyRoots
+      "packages/coding-agent/src/core/extensions/builtin/moved-path-guard/known-moves.ts": ["legacyRoots"],
+      // pre-existing at origin main aceb1cc1d9: unused exports pathSegments
+      "packages/coding-agent/src/core/extensions/builtin/moved-path-guard/path-match.ts": ["pathSegments"],
+      // pre-existing at origin main aceb1cc1d9: unused exports movedPathReason
+      "packages/coding-agent/src/core/extensions/builtin/moved-path-guard/resolve.ts": ["movedPathReason"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SINGLETON_SESSION_KEY
+      "packages/coding-agent/src/core/extensions/builtin/nested-agents-md/core/session-key.ts": ["SINGLETON_SESSION_KEY"],
+      // pre-existing at origin main aceb1cc1d9: unused exports STATUS_KEY, WIDGET_KEY
+      "packages/coding-agent/src/core/extensions/builtin/nested-agents-md/ui/reporter.ts": ["STATUS_KEY", "WIDGET_KEY"],
+      // pre-existing at origin main aceb1cc1d9: unused exports IMAGE_GENERATION_CALL_SUBTYPE, readCompletedNativeImage, detectImageExtension
+      "packages/coding-agent/src/core/extensions/builtin/openai-image-gen/externalize.ts": ["IMAGE_GENERATION_CALL_SUBTYPE", "detectImageExtension", "readCompletedNativeImage"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isOpenAiImageGenEnabled, applyImageGenerationTools, NATIVE_IMAGE_GEN_TOOL_TYPE
+      "packages/coding-agent/src/core/extensions/builtin/openai-image-gen/index.ts": ["NATIVE_IMAGE_GEN_TOOL_TYPE", "applyImageGenerationTools", "isOpenAiImageGenEnabled"],
+      // pre-existing at origin main aceb1cc1d9: unused exports NATIVE_IMAGE_GEN_TOOL_TYPE
+      "packages/coding-agent/src/core/extensions/builtin/openai-image-gen/inject.ts": ["NATIVE_IMAGE_GEN_TOOL_TYPE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports canonicalUrlOrigin
+      "packages/coding-agent/src/core/extensions/builtin/permission-system/always-scope.ts": ["canonicalUrlOrigin"],
+      // pre-existing at origin main aceb1cc1d9: unused exports fallbackEvalPermissionRequest
+      "packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts": ["fallbackEvalPermissionRequest"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GEMINI_4_ARGON_ROUTING_LINE_RULE, GEMINI_4_ARGON_WORKING_TASK_OPENING, GEMINI_4_ARGON_ERROR_RULE, GEMINI_4_ARGON_SEARCH_GROUNDING
+      "packages/coding-agent/src/core/extensions/builtin/prompt-preset/gemini-4-argon.ts": ["GEMINI_4_ARGON_ERROR_RULE", "GEMINI_4_ARGON_ROUTING_LINE_RULE", "GEMINI_4_ARGON_SEARCH_GROUNDING", "GEMINI_4_ARGON_WORKING_TASK_OPENING"],
+      // pre-existing at origin main aceb1cc1d9: unused exports normalizeModelId, hasGpt6FamilySignal, hasKimiK26Signal, KIMI_CODE_K27_MODEL_ID, KIMI_CODE_K28_MODEL_ID, hasKimiK27Signal (+21 more)
+      "packages/coding-agent/src/core/extensions/builtin/prompt-preset/matchers.ts": ["CLAUDE_FABLE_51_MARKERS", "CLAUDE_FABLE_5_MARKERS", "CLAUDE_HAIKU_55_MARKERS", "CLAUDE_OPUS_55_MARKERS", "CLAUDE_SONNET_55_MARKERS", "DEEPSEEK_OFFICIAL_PROVIDER", "KIMI_CODE_K27_MODEL_ID", "KIMI_CODE_K28_MODEL_ID", "hasDeepseekV41FlashSignal", "hasDeepseekV4Flash0731Signal", "hasDeepseekV4FlashSignal", "hasDeepseekV4ProSignal", "hasGemini4ArgonSignal", "hasGlm52Signal", "hasGlm53Signal", "hasGpt6FamilySignal", "hasGrok45Signal", "hasGrok46Signal", "hasGrok47Signal", "hasKimiK26Signal", "hasKimiK27Signal", "hasKimiK28Signal", "hasKimiK31Signal", "hasKimiK3Signal", "hasSWE2Signal", "isRetiredOfficialDeepseekV4FlashAlias", "normalizeModelId"],
+      // pre-existing at origin main aceb1cc1d9: unused exports targetsText, requestText
+      "packages/coding-agent/src/core/extensions/builtin/relocate-session/index.ts": ["requestText", "targetsText"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RULE_ACTIVATION_ENTRY_TYPE
+      "packages/coding-agent/src/core/extensions/builtin/rule-activation/index.ts": ["RULE_ACTIVATION_ENTRY_TYPE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports staticDedupKey, dynamicDedupKey
+      "packages/coding-agent/src/core/extensions/builtin/rules/rules/cache.ts": ["dynamicDedupKey", "staticDedupKey"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TRACKED_BUILTIN_TOOLS
+      "packages/coding-agent/src/core/extensions/builtin/rules/rules/constants.ts": ["TRACKED_BUILTIN_TOOLS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports normalizeGlobs, resetMatcherCache, getMatcherCacheStats
+      "packages/coding-agent/src/core/extensions/builtin/rules/rules/matcher.ts": ["getMatcherCacheStats", "normalizeGlobs", "resetMatcherCache"],
+      // pre-existing at origin main aceb1cc1d9: unused exports compareCandidates
+      "packages/coding-agent/src/core/extensions/builtin/rules/rules/ordering.ts": ["compareCandidates"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isTrackedTool
+      "packages/coding-agent/src/core/extensions/builtin/rules/rules/tool-paths.ts": ["isTrackedTool"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RulesBanner, statusLineText
+      "packages/coding-agent/src/core/extensions/builtin/rules/ui/rules-banner.ts": ["RulesBanner", "statusLineText"],
+      // pre-existing at origin main aceb1cc1d9: unused exports occurrenceFile
+      "packages/coding-agent/src/core/extensions/builtin/schedule/occurrences.ts": ["occurrenceFile"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_MAX_DELIVERY_MS, isDeliveryGroupAlive
+      "packages/coding-agent/src/core/extensions/builtin/schedule/runner-lease.ts": ["DEFAULT_MAX_DELIVERY_MS", "isDeliveryGroupAlive"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SCHEDULE_PROMPT_DESCRIPTION, schedulePromptSchema
+      "packages/coding-agent/src/core/extensions/builtin/schedule/tool.ts": ["SCHEDULE_PROMPT_DESCRIPTION", "schedulePromptSchema"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SERVER_SEARCH_DISABLED
+      "packages/coding-agent/src/core/extensions/builtin/server-search-fallback.ts": ["SERVER_SEARCH_DISABLED"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getRememberedServiceTier
+      "packages/coding-agent/src/core/extensions/builtin/service-tier.ts": ["getRememberedServiceTier"],
+      // pre-existing at origin main aceb1cc1d9: unused exports classifyDetachedChange
+      "packages/coding-agent/src/core/extensions/builtin/terminal/durable-file.ts": ["classifyDetachedChange"],
+      // pre-existing at origin main aceb1cc1d9: unused exports registerTerminalExtension, loadTerminalSettings, resolveTerminalSettings, TERMINAL_SETTINGS_DEFAULTS, TERMINAL_BASH_TOOL, TERMINAL_COMPANION_TOOLS (+5 more)
+      "packages/coding-agent/src/core/extensions/builtin/terminal/index.ts": ["TERMINAL_BASH_TOOL", "TERMINAL_COMPANION_TOOLS", "TERMINAL_INPUT_TOOL", "TERMINAL_KILL_TOOL", "TERMINAL_MONITOR_TOOL", "TERMINAL_OUTPUT_TOOL", "TERMINAL_RESIZE_TOOL", "TERMINAL_SETTINGS_DEFAULTS", "loadTerminalSettings", "registerTerminalExtension", "resolveTerminalSettings"],
+      // pre-existing at origin main aceb1cc1d9: unused exports LEASE_KEEPER_INTERVAL_MS
+      "packages/coding-agent/src/core/extensions/builtin/terminal/lease-keeper.ts": ["LEASE_KEEPER_INTERVAL_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports monitorOverflowPath
+      "packages/coding-agent/src/core/extensions/builtin/terminal/monitor-overflow-file.ts": ["monitorOverflowPath"],
+      // pre-existing at origin main aceb1cc1d9: unused exports monitorParent
+      "packages/coding-agent/src/core/extensions/builtin/terminal/monitor-permission.ts": ["monitorParent"],
+      // pre-existing at origin main aceb1cc1d9: unused exports monitorStateDir
+      "packages/coding-agent/src/core/extensions/builtin/terminal/monitor-state-dir.ts": ["monitorStateDir"],
+      // pre-existing at origin main aceb1cc1d9: unused exports monitorElapsedSeconds
+      "packages/coding-agent/src/core/extensions/builtin/terminal/monitor-status.ts": ["monitorElapsedSeconds"],
+      // pre-existing at origin main aceb1cc1d9: unused exports OWNER_START_TOLERANCE_MS, DEFAULT_KILL_GRACE_MS, isProcessAlive
+      "packages/coding-agent/src/core/extensions/builtin/terminal/orphan-reaper.ts": ["DEFAULT_KILL_GRACE_MS", "OWNER_START_TOLERANCE_MS", "isProcessAlive"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RESTORE_STATUS_KEY
+      "packages/coding-agent/src/core/extensions/builtin/terminal/restore-session.ts": ["RESTORE_STATUS_KEY"],
+      // pre-existing at origin main aceb1cc1d9: unused exports parseTerminalManifest
+      "packages/coding-agent/src/core/extensions/builtin/terminal/restore.ts": ["parseTerminalManifest"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RPC_RESCAN_MS
+      "packages/coding-agent/src/core/extensions/builtin/terminal/rpc-monitor-watch.ts": ["RPC_RESCAN_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_MONITOR_WAKES_PER_HOUR
+      "packages/coding-agent/src/core/extensions/builtin/terminal/settings.ts": ["MAX_MONITOR_WAKES_PER_HOUR"],
+      // pre-existing at origin main aceb1cc1d9: unused exports resolveKeySequence
+      "packages/coding-agent/src/core/extensions/builtin/terminal/shared.ts": ["resolveKeySequence"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TERMINAL_MANIFEST_CHECKPOINT_DEBOUNCE_MS, TERMINAL_MANIFEST_VERSION
+      "packages/coding-agent/src/core/extensions/builtin/terminal/terminal-manifest.ts": ["TERMINAL_MANIFEST_CHECKPOINT_DEBOUNCE_MS", "TERMINAL_MANIFEST_VERSION"],
+      // pre-existing at origin main aceb1cc1d9: unused exports bashInputSchema
+      "packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash-input.ts": ["bashInputSchema"],
+      // pre-existing at origin main aceb1cc1d9: unused exports bashResizeSchema
+      "packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash-resize.ts": ["bashResizeSchema"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ptyBashSchema
+      "packages/coding-agent/src/core/extensions/builtin/terminal/tools/bash.ts": ["ptyBashSchema"],
+      // pre-existing at origin main aceb1cc1d9: unused exports lostSessionResult
+      "packages/coding-agent/src/core/extensions/builtin/terminal/tools/child-placement.ts": ["lostSessionResult"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_FOREGROUND_WINDOW_SECONDS
+      "packages/coding-agent/src/core/extensions/builtin/terminal/tools/foreground-window.ts": ["DEFAULT_FOREGROUND_WINDOW_SECONDS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports killBashSchema
+      "packages/coding-agent/src/core/extensions/builtin/terminal/tools/kill-bash.ts": ["killBashSchema"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_PENDING_MONITOR_SPECS, pendingDurableSpecCount
+      "packages/coding-agent/src/core/extensions/builtin/terminal/tools/monitor-manifest-binding.ts": ["MAX_PENDING_MONITOR_SPECS", "pendingDurableSpecCount"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_MONITOR_TIMEOUT_MS, MAX_MONITOR_TIMEOUT_MS
+      "packages/coding-agent/src/core/extensions/builtin/terminal/tools/monitor-schema.ts": ["DEFAULT_MONITOR_TIMEOUT_MS", "MAX_MONITOR_TIMEOUT_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_PENDING_MONITOR_SPECS, pendingDurableSpecCount, DEFAULT_MONITOR_TIMEOUT_MS, MAX_MONITOR_TIMEOUT_MS
+      "packages/coding-agent/src/core/extensions/builtin/terminal/tools/monitor.ts": ["DEFAULT_MONITOR_TIMEOUT_MS", "MAX_MONITOR_TIMEOUT_MS", "MAX_PENDING_MONITOR_SPECS", "pendingDurableSpecCount"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SLEEP_WAIT_THRESHOLD_SECONDS, SLEEP_WAIT_LOOP_THRESHOLD_SECONDS
+      "packages/coding-agent/src/core/extensions/builtin/terminal/tools/sleep-wait.ts": ["SLEEP_WAIT_LOOP_THRESHOLD_SECONDS", "SLEEP_WAIT_THRESHOLD_SECONDS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_TODO_MARKDOWN_FILE
+      "packages/coding-agent/src/core/extensions/builtin/todotools/markdown.ts": ["DEFAULT_TODO_MARKDOWN_FILE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getTodoWidgetModel
+      "packages/coding-agent/src/core/extensions/builtin/todotools/state.ts": ["getTodoWidgetModel"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ASK_TEXT_LIMIT, truncateAskText
+      "packages/coding-agent/src/core/extensions/builtin/todotools/todo-ask.ts": ["ASK_TEXT_LIMIT", "truncateAskText"],
+      // pre-existing at origin main aceb1cc1d9: unused exports deriveRegistrationId
+      "packages/coding-agent/src/core/extensions/builtin/tool-search/engine/marker.ts": ["deriveRegistrationId"],
+      // pre-existing at origin main aceb1cc1d9: unused exports createToolSearchTool, TOOL_SEARCH_TOOL_NAME
+      "packages/coding-agent/src/core/extensions/builtin/tool-search/index.ts": ["TOOL_SEARCH_TOOL_NAME", "createToolSearchTool"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ANTHROPIC_TOOL_SEARCH_NAME, ANTHROPIC_MAX_TOOLS
+      "packages/coding-agent/src/core/extensions/builtin/tool-search/native-search.ts": ["ANTHROPIC_MAX_TOOLS", "ANTHROPIC_TOOL_SEARCH_NAME"],
+      // pre-existing at origin main aceb1cc1d9: unused exports FABRICATED_UNAVAILABLE_TOOL_CALL_RULE_NAME
+      "packages/coding-agent/src/core/extensions/builtin/ttsr/builtin-rules.ts": ["FABRICATED_UNAVAILABLE_TOOL_CALL_RULE_NAME"],
+      // pre-existing at origin main aceb1cc1d9: unused exports LINE_RING_CAPACITY, LINE_PERIOD_MAX, LINE_CYCLE_MIN_CYCLES, LINE_MIN_REPEATED_CHARS, LINE_TEXT_RETENTION_MAX
+      "packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse-lines.ts": ["LINE_CYCLE_MIN_CYCLES", "LINE_MIN_REPEATED_CHARS", "LINE_PERIOD_MAX", "LINE_RING_CAPACITY", "LINE_TEXT_RETENTION_MAX"],
+      // pre-existing at origin main aceb1cc1d9: unused exports NEAR_DUPLICATE_MIN_CHARS, NEAR_DUPLICATE_MIN_WORD_CHARS, NEAR_DUPLICATE_SIMILARITY, NEAR_DUPLICATE_LOOKBACK, NEAR_DUPLICATE_TEXT_RETENTION_MAX
+      "packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse-near-duplicates.ts": ["NEAR_DUPLICATE_LOOKBACK", "NEAR_DUPLICATE_MIN_CHARS", "NEAR_DUPLICATE_MIN_WORD_CHARS", "NEAR_DUPLICATE_SIMILARITY", "NEAR_DUPLICATE_TEXT_RETENTION_MAX"],
+      // pre-existing at origin main aceb1cc1d9: unused exports PARAGRAPH_MIN_CHARS, PARAGRAPH_MIN_WORD_CHARS, PARAGRAPH_REPEAT_THRESHOLD, PARAGRAPH_RING_CAPACITY, PARAGRAPH_TEXT_RETENTION_MAX
+      "packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse-paragraphs.ts": ["PARAGRAPH_MIN_CHARS", "PARAGRAPH_MIN_WORD_CHARS", "PARAGRAPH_REPEAT_THRESHOLD", "PARAGRAPH_RING_CAPACITY", "PARAGRAPH_TEXT_RETENTION_MAX"],
+      // pre-existing at origin main aceb1cc1d9: unused exports PERIOD_MIN, PERIOD_MAX, PERIOD_SPAN_MIN, PERIOD_REPS_MIN
+      "packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse-periods.ts": ["PERIOD_MAX", "PERIOD_MIN", "PERIOD_REPS_MIN", "PERIOD_SPAN_MIN"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CJK_SCALAR_RUN_THRESHOLD, PUNCTUATION_RUN_THRESHOLD, RUN_WHITESPACE_MAX_CHARS, RUN_WHITESPACE_TARGET_RATIO, NEWLINE_FLOOD_MIN_CHARS, NEWLINE_FLOOD_MIN_NEWLINES (+1 more)
+      "packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse-scalars.ts": ["CJK_SCALAR_RUN_THRESHOLD", "GENERIC_FLOOD_MIN_CHARS", "NEWLINE_FLOOD_MIN_CHARS", "NEWLINE_FLOOD_MIN_NEWLINES", "PUNCTUATION_RUN_THRESHOLD", "RUN_WHITESPACE_MAX_CHARS", "RUN_WHITESPACE_TARGET_RATIO"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TAIL_RING_CAPACITY
+      "packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse.ts": ["TAIL_RING_CAPACITY"],
+      // pre-existing at origin main aceb1cc1d9: unused exports REPETITIVE_TURNS_SIMILARITY_THRESHOLD, REPETITIVE_TURNS_STREAK_LENGTH, REPETITIVE_TURNS_HISTORY_CAPACITY
+      "packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/repetitive-turns.ts": ["REPETITIVE_TURNS_HISTORY_CAPACITY", "REPETITIVE_TURNS_SIMILARITY_THRESHOLD", "REPETITIVE_TURNS_STREAK_LENGTH"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SGML_CONTROL_TOKEN_NAMES, isSgmlControlTokenName
+      "packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/token-grammar.ts": ["SGML_CONTROL_TOKEN_NAMES", "isSgmlControlTokenName"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ANY_TOOL_NAME
+      "packages/coding-agent/src/core/extensions/builtin/ttsr/scope.ts": ["ANY_TOOL_NAME"],
+      // pre-existing at origin main aceb1cc1d9: unused exports VERTEX_MODEL_GARDEN_ADC_PATH
+      "packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts": ["VERTEX_MODEL_GARDEN_ADC_PATH"],
+      // pre-existing at origin main aceb1cc1d9: unused exports VERTEX_MODEL_GARDEN_LOCATION, vertexHost
+      "packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/transport.ts": ["VERTEX_MODEL_GARDEN_LOCATION", "vertexHost"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isWebfetchEnabled
+      "packages/coding-agent/src/core/extensions/builtin/webfetch/index.ts": ["isWebfetchEnabled"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, validateUrl, buildAcceptHeader
+      "packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/fetcher.ts": ["DEFAULT_TIMEOUT_SECONDS", "MAX_TIMEOUT_SECONDS", "buildAcceptHeader", "validateUrl"],
+      // pre-existing at origin main aceb1cc1d9: unused exports parseWebfetchFormat
+      "packages/coding-agent/src/core/extensions/builtin/webfetch/webfetch/tool.ts": ["parseWebfetchFormat"],
+      // pre-existing at origin main aceb1cc1d9: unused exports validateWebsearchConfig
+      "packages/coding-agent/src/core/extensions/builtin/websearch/websearch/config.ts": ["validateWebsearchConfig"],
+      // pre-existing at origin main aceb1cc1d9: unused exports buildResponsesRequest
+      "packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/openai-responses.ts": ["buildResponsesRequest"],
+      // pre-existing at origin main aceb1cc1d9: unused exports unique
+      "packages/coding-agent/src/core/extensions/builtin/websearch/websearch/providers/shared.ts": ["unique"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SESSION_SEARCH_MODEL
+      "packages/coding-agent/src/core/extensions/builtin/websearch/websearch/search-model.ts": ["SESSION_SEARCH_MODEL"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ENGINE_COOLDOWN_MAX_MS
+      "packages/coding-agent/src/core/extensions/builtin/websearch/websearch/search.ts": ["ENGINE_COOLDOWN_MAX_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports web_search
+      "packages/coding-agent/src/core/extensions/builtin/websearch/websearch/tool.ts": ["web_search"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ExtensionModuleIdError
+      "packages/coding-agent/src/core/extensions/bun-extension-registry.ts": ["ExtensionModuleIdError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HELD_INPUT_WITHDRAWN_ENTRY, HELD_INPUTS_CONSUMED_ENTRY
+      "packages/coding-agent/src/core/held-inputs.ts": ["HELD_INPUTS_CONSUMED_ENTRY", "HELD_INPUT_WITHDRAWN_ENTRY"],
+      // pre-existing at origin main aceb1cc1d9: unused exports INTERRUPTED_TOOL_TEXT
+      "packages/coding-agent/src/core/interrupted-tool-result.ts": ["INTERRUPTED_TOOL_TEXT"],
+      // pre-existing at origin main aceb1cc1d9: unused exports KERNEL_REGISTRY_KEY
+      "packages/coding-agent/src/core/memory-report/kernel-registry-read.ts": ["KERNEL_REGISTRY_KEY"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MEMORY_REPORT_ENV, MEMORY_REPORT_SNAPSHOT_ENV
+      "packages/coding-agent/src/core/memory-report/memory-report-registry.ts": ["MEMORY_REPORT_ENV", "MEMORY_REPORT_SNAPSHOT_ENV"],
+      // pre-existing at origin main aceb1cc1d9: unused exports bashExecutionToText, dedupeConsecutivePlaceholder
+      "packages/coding-agent/src/core/messages.ts": ["bashExecutionToText", "dedupeConsecutivePlaceholder"],
+      // pre-existing at origin main aceb1cc1d9: unused exports displayUrl
+      "packages/coding-agent/src/core/model-discovery-url.ts": ["displayUrl"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getExtensionTempFolder
+      "packages/coding-agent/src/core/package-manager.ts": ["getExtensionTempFolder"],
+      // pre-existing at origin main aceb1cc1d9: unused exports PROCESS_CRASH_RECORD_LIMIT, PROCESS_MARKER_HEARTBEAT_MS
+      "packages/coding-agent/src/core/process-crash-record.ts": ["PROCESS_CRASH_RECORD_LIMIT", "PROCESS_MARKER_HEARTBEAT_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports buildPromptCachePrefixRequest
+      "packages/coding-agent/src/core/prompt-cache-prefix-request.ts": ["buildPromptCachePrefixRequest"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isAmbientOnlyProvider
+      "packages/coding-agent/src/core/provider-default-selection.ts": ["isAmbientOnlyProvider"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isProviderImageRejection, rejectedImagePlaceholder
+      "packages/coding-agent/src/core/provider-rejected-images.ts": ["isProviderImageRejection", "rejectedImagePlaceholder"],
+      // pre-existing at origin main aceb1cc1d9: unused exports REMOTE_CATALOG_REFRESH_INTERVAL_MS
+      "packages/coding-agent/src/core/remote-catalog-provider.ts": ["REMOTE_CATALOG_REFRESH_INTERVAL_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getConfigValueEnvVarName, getMissingConfigValueEnvVarNames
+      "packages/coding-agent/src/core/resolve-config-value.ts": ["getConfigValueEnvVarName", "getMissingConfigValueEnvVarNames"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isChainTombstone
+      "packages/coding-agent/src/core/retry-fallback/chains.ts": ["isChainTombstone"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isAnthropicRequestShapeRejection, stripProviderNativeReplay
+      "packages/coding-agent/src/core/retry-fallback/request-shape.ts": ["isAnthropicRequestShapeRejection", "stripProviderNativeReplay"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CURRENT_SESSION_LIST_PUBLISH_INTERVAL, listSessionInfos
+      "packages/coding-agent/src/core/session-discovery.ts": ["CURRENT_SESSION_LIST_PUBLISH_INTERVAL", "listSessionInfos"],
+      // pre-existing at origin main aceb1cc1d9: unused exports KNOWN_PAYLOAD_KINDS
+      "packages/coding-agent/src/core/session-move/bundle.ts": ["KNOWN_PAYLOAD_KINDS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MovedStateMissingError
+      "packages/coding-agent/src/core/session-move/export.ts": ["MovedStateMissingError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MoveMismatchError, MoveAlreadyMovedError, requeueDroppedInput
+      "packages/coding-agent/src/core/session-move/finish.ts": ["MoveAlreadyMovedError", "MoveMismatchError", "requeueDroppedInput"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MoveTargetOccupiedError, StatusPathMismatchError
+      "packages/coding-agent/src/core/session-move/import.ts": ["MoveTargetOccupiedError", "StatusPathMismatchError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports acquireMoveRecordLock
+      "packages/coding-agent/src/core/session-move/move-ledger-lock.ts": ["acquireMoveRecordLock"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isOwnershipEntryType
+      "packages/coding-agent/src/core/session-move/ownership.ts": ["isOwnershipEntryType"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RevokeMismatchError
+      "packages/coding-agent/src/core/session-move/revoke.ts": ["RevokeMismatchError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports writeAtomic
+      "packages/coding-agent/src/core/session-sidecar-store.ts": ["writeAtomic"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SESSION_SUMMARY_CACHE_LIMIT, SESSION_SUMMARY_CACHE_MAX_TEXT_BYTES
+      "packages/coding-agent/src/core/session-summary-cache.ts": ["SESSION_SUMMARY_CACHE_LIMIT", "SESSION_SUMMARY_CACHE_MAX_TEXT_BYTES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SESSION_SUMMARY_INDEX_MAX_BYTES
+      "packages/coding-agent/src/core/session-summary-index.ts": ["SESSION_SUMMARY_INDEX_MAX_BYTES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports modelThinkingKey, deriveSessionModelThinkingLevels
+      "packages/coding-agent/src/core/session-thinking-memory.ts": ["deriveSessionModelThinkingLevels", "modelThinkingKey"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS, resolveSettingsSource
+      "packages/coding-agent/src/core/settings-manager.ts": ["DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS", "resolveSettingsSource"],
+      // pre-existing at origin main aceb1cc1d9: unused exports shannonBitsPerChar, readsAsWords, looksGenerated, joinedLooksGenerated
+      "packages/coding-agent/src/core/share/share-entropy.ts": ["joinedLooksGenerated", "looksGenerated", "readsAsWords", "shannonBitsPerChar"],
+      // pre-existing at origin main aceb1cc1d9: unused exports prepareShare, describeShare
+      "packages/coding-agent/src/core/share/share-session.ts": ["describeShare", "prepareShare"],
+      // pre-existing at origin main aceb1cc1d9: unused exports EMPTY_SKILL_ALLOWED_SET
+      "packages/coding-agent/src/core/skill-access.ts": ["EMPTY_SKILL_ALLOWED_SET"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CLAIM_MS
+      "packages/coding-agent/src/core/subscription-limits/usage-cache.ts": ["CLAIM_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CODEX_USAGE_URL, retryAfterMs
+      "packages/coding-agent/src/core/subscription-limits/usage-endpoints.ts": ["CODEX_USAGE_URL", "retryAfterMs"],
+      // pre-existing at origin main aceb1cc1d9: unused exports POLL_INTERVAL_MS
+      "packages/coding-agent/src/core/subscription-limits/usage-poller.ts": ["POLL_INTERVAL_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports normalizeBuildSystemPromptOptions
+      "packages/coding-agent/src/core/system-prompt.ts": ["normalizeBuildSystemPromptOptions"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_TOOL_BARRIER_DEADLINE_MS
+      "packages/coding-agent/src/core/tool-barrier.ts": ["MAX_TOOL_BARRIER_DEADLINE_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HostCallError
+      "packages/coding-agent/src/core/tool-child-host-calls.ts": ["HostCallError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports InProcessHostCallError
+      "packages/coding-agent/src/core/tool-dispatch/in-process-host-calls.ts": ["InProcessHostCallError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports childModulePath, offloadJob
+      "packages/coding-agent/src/core/tool-dispatch/offload.ts": ["childModulePath", "offloadJob"],
+      // pre-existing at origin main aceb1cc1d9: unused exports resolveToolPlacement, unavailableToolResult, unavailableBashOperations
+      "packages/coding-agent/src/core/tool-dispatch/tool-dispatcher.ts": ["resolveToolPlacement", "unavailableBashOperations", "unavailableToolResult"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RESOLUTION_DEADLINE_MS
+      "packages/coding-agent/src/core/tools/bounded-realpath.ts": ["RESOLUTION_DEADLINE_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports normalizeForFuzzyMatch, applyReplacementsPreservingUnchangedLines, fuzzyFindText
+      "packages/coding-agent/src/core/tools/edit-diff.ts": ["applyReplacementsPreservingUnchangedLines", "fuzzyFindText", "normalizeForFuzzyMatch"],
+      // pre-existing at origin main aceb1cc1d9: unused exports recoverPattern
+      "packages/coding-agent/src/core/tools/grep/pattern.ts": ["recoverPattern"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RgGrepEngine
+      "packages/coding-agent/src/core/tools/grep/rg-engine.ts": ["RgGrepEngine"],
+      // pre-existing at origin main aceb1cc1d9: unused exports candidateArgument
+      "packages/coding-agent/src/core/tools/grep/rg/args.ts": ["candidateArgument"],
+      // pre-existing at origin main aceb1cc1d9: unused exports createShellRenderers, editRenderers, writeRenderers
+      "packages/coding-agent/src/core/tools/renderers/index.ts": ["createShellRenderers", "editRenderers", "writeRenderers"],
+      // pre-existing at origin main aceb1cc1d9: unused exports wrapToolDefinitions
+      "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts": ["wrapToolDefinitions"],
+      // pre-existing at origin main aceb1cc1d9: unused exports truncateMiddle
+      "packages/coding-agent/src/core/tools/truncate.ts": ["truncateMiddle"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getProjectTrustParentPath
+      "packages/coding-agent/src/core/trust-manager.ts": ["getProjectTrustParentPath"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_TURN_INACTIVITY_MS, MIN_TURN_INACTIVITY_MS, DEFAULT_TURN_MAX_RUNTIME_MS
+      "packages/coding-agent/src/core/turn-deadline.ts": ["DEFAULT_TURN_INACTIVITY_MS", "DEFAULT_TURN_MAX_RUNTIME_MS", "MIN_TURN_INACTIVITY_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports VIRTUAL_MODEL_API
+      "packages/coding-agent/src/core/virtual-models.ts": ["VIRTUAL_MODEL_API"],
+      // pre-existing at origin main aceb1cc1d9: unused exports READINESS_URL
+      "packages/coding-agent/src/core/webview/webview-readiness.ts": ["READINESS_URL"],
+      // pre-existing at origin main aceb1cc1d9: unused exports WEBVIEW_METHODS
+      "packages/coding-agent/src/core/webview/webview-wire.ts": ["WEBVIEW_METHODS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports WAKE_SOURCE_KEY_PREFIX
+      "packages/coding-agent/src/core/work-obligations.ts": ["WAKE_SOURCE_KEY_PREFIX"],
+      // pre-existing at origin main aceb1cc1d9: unused exports runCoordinatorProcess
+      "packages/coding-agent/src/experimental/coordinator.ts": ["runCoordinatorProcess"],
+      // pre-existing at origin main aceb1cc1d9: unused exports defineService, Worker
+      "packages/coding-agent/src/experimental/mini/shared/protocol.ts": ["Worker", "defineService"],
+      // pre-existing at origin main aceb1cc1d9: unused exports jsonConnection, parentConnection
+      "packages/coding-agent/src/experimental/mini/shared/transport.ts": ["jsonConnection", "parentConnection"],
+      // pre-existing at origin main aceb1cc1d9: unused exports INTERNAL_PROCESS_ENV, getInternalProcessRole
+      "packages/coding-agent/src/experimental/process.ts": ["INTERNAL_PROCESS_ENV", "getInternalProcessRole"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ENV_RADIUS_GATEWAY
+      "packages/coding-agent/src/experimental/radius-auth.ts": ["ENV_RADIUS_GATEWAY"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RADIUS_RELAY_HOST_SUBPROTOCOL, RADIUS_RELAY_CLIENT_SUBPROTOCOL
+      "packages/coding-agent/src/experimental/radius-relay.ts": ["RADIUS_RELAY_CLIENT_SUBPROTOCOL", "RADIUS_RELAY_HOST_SUBPROTOCOL"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ENV_SERVER_DIR, ensurePrivateServerDirectory, acquireServerActivation, runServerProcess
+      "packages/coding-agent/src/experimental/server.ts": ["ENV_SERVER_DIR", "acquireServerActivation", "ensurePrivateServerDirectory", "runServerProcess"],
+      // pre-existing at origin main aceb1cc1d9: unused exports createModelsService
+      "packages/coding-agent/src/experimental/services/models-provider.ts": ["createModelsService"],
+      // pre-existing at origin main aceb1cc1d9: unused exports OWNERSHIP_LOST_REPORT_TIMEOUT_MS
+      "packages/coding-agent/src/experimental/session-worker-ownership.ts": ["OWNERSHIP_LOST_REPORT_TIMEOUT_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SessionWorkerMetadataSchema, SessionWorkerOptionsSchema, WorkerOperationScopeSchema, WorkerOperationRequestSchema, WorkerOperationResponseSchema, SessionWorkerCommandSchema (+3 more)
+      "packages/coding-agent/src/experimental/session-worker.ts": ["SESSION_WORKER_INITIAL_DEMAND_GRACE_ENV", "SESSION_WORKER_ORPHAN_DEMAND_GRACE_ENV", "SessionWorkerCommandSchema", "SessionWorkerMetadataSchema", "SessionWorkerOptionsSchema", "WorkerOperationRequestSchema", "WorkerOperationResponseSchema", "WorkerOperationScopeSchema", "runSessionWorkerProcess"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isLegacyPiConfigFile
+      "packages/coding-agent/src/legacy-pi-edits.ts": ["isLegacyPiConfigFile"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MIGRATIONS_STATE_SCHEMA_VERSION
+      "packages/coding-agent/src/migrations-state.ts": ["MIGRATIONS_STATE_SCHEMA_VERSION"],
+      // pre-existing at origin main aceb1cc1d9: unused exports migrateAuthToAuthJson, migrateSessionsFromAgentRoot
+      "packages/coding-agent/src/migrations.ts": ["migrateAuthToAuthJson", "migrateSessionsFromAgentRoot"],
+      // pre-existing at origin main aceb1cc1d9: unused exports describeHostHolder
+      "packages/coding-agent/src/modes/index.ts": ["describeHostHolder"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ASK_USER_ANSWER_KEYBINDING, darwinOptionGlyphs
+      "packages/coding-agent/src/modes/interactive/components/ask-user-answer-key.ts": ["ASK_USER_ANSWER_KEYBINDING", "darwinOptionGlyphs"],
+      // pre-existing at origin main aceb1cc1d9: unused exports renderStatusLine, renderQuestionLine, renderOptionsLine, renderAnswerHint
+      "packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts": ["renderAnswerHint", "renderOptionsLine", "renderQuestionLine", "renderStatusLine"],
+      // pre-existing at origin main aceb1cc1d9: unused exports renderTabBar
+      "packages/coding-agent/src/modes/interactive/components/ask-user-question-render.ts": ["renderTabBar"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DISMISS_NOTICE, PARTIAL_SUBMIT_NOTICE
+      "packages/coding-agent/src/modes/interactive/components/ask-user-question-state.ts": ["DISMISS_NOTICE", "PARTIAL_SUBMIT_NOTICE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RESUME_FALLBACK_DIAGNOSTIC_TYPE
+      "packages/coding-agent/src/modes/interactive/components/continuity-notice.ts": ["RESUME_FALLBACK_DIAGNOSTIC_TYPE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports elideHead
+      "packages/coding-agent/src/modes/interactive/components/footer-layout.ts": ["elideHead"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DaxnutsComponent, FavoriteModelsSelectorComponent, FirstTimeSetupComponent, TrustSelectorComponent
+      "packages/coding-agent/src/modes/interactive/components/index.ts": ["DaxnutsComponent", "FavoriteModelsSelectorComponent", "FirstTimeSetupComponent", "TrustSelectorComponent"],
+      // pre-existing at origin main aceb1cc1d9: unused exports formatAuthSelectorProviderStatus
+      "packages/coding-agent/src/modes/interactive/components/oauth-selector.ts": ["formatAuthSelectorProviderStatus"],
+      // pre-existing at origin main aceb1cc1d9: unused exports renderRemoteDelivery, senderLabel
+      "packages/coding-agent/src/modes/interactive/components/remote-delivery-message.ts": ["renderRemoteDelivery", "senderLabel"],
+      // pre-existing at origin main aceb1cc1d9: unused exports parseSearchQuery, matchSession
+      "packages/coding-agent/src/modes/interactive/components/session-selector-search.ts": ["matchSession", "parseSearchQuery"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TODO_STRIKE_REVEAL_FRAMES
+      "packages/coding-agent/src/modes/interactive/components/todo-strike.ts": ["TODO_STRIKE_REVEAL_FRAMES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports VisualLinePreview
+      "packages/coding-agent/src/modes/interactive/components/visual-truncate.ts": ["VisualLinePreview"],
+      // pre-existing at origin main aceb1cc1d9: unused exports LOGIN_CANCELLED_NOTICE
+      "packages/coding-agent/src/modes/interactive/login-outcome.ts": ["LOGIN_CANCELLED_NOTICE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports modelChangeNoticeText
+      "packages/coding-agent/src/modes/interactive/model-change-notice.ts": ["modelChangeNoticeText"],
+      // pre-existing at origin main aceb1cc1d9: unused exports bunReinstallCommand, installBunCommand
+      "packages/coding-agent/src/modes/interactive/runtime-notice.ts": ["bunReinstallCommand", "installBunCommand"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TUI_CONTROL_CAPABILITY
+      "packages/coding-agent/src/modes/interactive/session-control-commands.ts": ["TUI_CONTROL_CAPABILITY"],
+      // pre-existing at origin main aceb1cc1d9: unused exports relativeLuminance
+      "packages/coding-agent/src/modes/interactive/theme/system-theme.ts": ["relativeLuminance"],
+      // pre-existing at origin main aceb1cc1d9: unused exports validateThemeJson
+      "packages/coding-agent/src/modes/interactive/theme/theme.ts": ["validateThemeJson"],
+      // pre-existing at origin main aceb1cc1d9: unused exports formatWorkingStatusTextFrame
+      "packages/coding-agent/src/modes/interactive/working-status.ts": ["formatWorkingStatusTextFrame"],
+      // pre-existing at origin main aceb1cc1d9: unused exports stringifyProviderNative
+      "packages/coding-agent/src/modes/provider-native-rendering.ts": ["stringifyProviderNative"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_TRANSCRIPT_TAIL_BYTES
+      "packages/coding-agent/src/modes/rpc/accepted-transcript.ts": ["DEFAULT_TRANSCRIPT_TAIL_BYTES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isHostMintedId
+      "packages/coding-agent/src/modes/rpc/client-admission-record.ts": ["isHostMintedId"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CONNECTION_ROLE_CAPABILITIES
+      "packages/coding-agent/src/modes/rpc/connection-roles.ts": ["CONNECTION_ROLE_CAPABILITIES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports UNLOAD_SESSION_CAPABILITY, SUBSCRIPTION_LIMITS_CAPABILITY, RESOLVE_PATH_CAPABILITY
+      "packages/coding-agent/src/modes/rpc/host-capabilities.ts": ["RESOLVE_PATH_CAPABILITY", "SUBSCRIPTION_LIMITS_CAPABILITY", "UNLOAD_SESSION_CAPABILITY"],
+      // pre-existing at origin main aceb1cc1d9: unused exports readHostHolder, publicEndpointAccepts
+      "packages/coding-agent/src/modes/rpc/host-ensure-liveness.ts": ["publicEndpointAccepts", "readHostHolder"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GC_SKIP_MAX_BACKOFF_MS
+      "packages/coding-agent/src/modes/rpc/host-gc-pass-marker.ts": ["GC_SKIP_MAX_BACKOFF_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports handoverWire
+      "packages/coding-agent/src/modes/rpc/host-handover-wire.ts": ["handoverWire"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RPC_SESSION_IDLE_EVICTION_MS_ENV, RPC_HOST_EMPTY_EXIT_MS_ENV, DEFAULT_SESSION_IDLE_EVICTION_MS, DEFAULT_HOST_EMPTY_EXIT_MS
+      "packages/coding-agent/src/modes/rpc/host-idle-policy.ts": ["DEFAULT_HOST_EMPTY_EXIT_MS", "DEFAULT_SESSION_IDLE_EVICTION_MS", "RPC_HOST_EMPTY_EXIT_MS_ENV", "RPC_SESSION_IDLE_EVICTION_MS_ENV"],
+      // pre-existing at origin main aceb1cc1d9: unused exports OWNER_EXIT_GRACE_MS
+      "packages/coding-agent/src/modes/rpc/host-lifecycle-activity.ts": ["OWNER_EXIT_GRACE_MS"],
+      // pre-existing at origin main aceb1cc1d9: parseColdStart: declared here, reported because the host-lifecycle.ts entry re-exports it and nothing imports it (newly export-checked; the file stays checked)
+      "packages/coding-agent/src/modes/rpc/host-lifecycle-policy.ts": ["parseColdStart"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CHILD_STOP_TIMEOUT_MS, childExited, waitForChildExit
+      "packages/coding-agent/src/modes/rpc/host-lifecycle-shutdown.ts": ["CHILD_STOP_TIMEOUT_MS", "childExited", "waitForChildExit"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HANDOFF_GRACE_MS_ENV, parseColdStart (entry, newly export-checked)
+      "packages/coding-agent/src/modes/rpc/host-lifecycle.ts": ["HANDOFF_GRACE_MS_ENV", "parseColdStart"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HOST_RSS_WARN_MB_ENV, HOST_MEMORY_SAMPLE_MS
+      "packages/coding-agent/src/modes/rpc/host-memory-sampler.ts": ["HOST_MEMORY_SAMPLE_MS", "HOST_RSS_WARN_MB_ENV"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DETACH_ACK_TIMEOUT_MS
+      "packages/coding-agent/src/modes/rpc/host-session-detach.ts": ["DETACH_ACK_TIMEOUT_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports STALE_ENGINE_GRACE_MS
+      "packages/coding-agent/src/modes/rpc/host-stale-engine.ts": ["STALE_ENGINE_GRACE_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports STALL_REFUSAL_WINDOW_MS_ENV, DEFAULT_STALL_REFUSAL_WINDOW_MS, DEFAULT_CHILD_STALLED_STOP_MAX_MS, readStallEvidence
+      "packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts": ["DEFAULT_CHILD_STALLED_STOP_MAX_MS", "DEFAULT_STALL_REFUSAL_WINDOW_MS", "STALL_REFUSAL_WINDOW_MS_ENV", "readStallEvidence"],
+      // pre-existing at origin main aceb1cc1d9: unused exports STOP_INTENT_MAX_AGE_MS, clearStopIntent, DRAIN_REQUEST_WATCHED_POLL_MS, readDrainRequest
+      "packages/coding-agent/src/modes/rpc/host-stop-intent.ts": ["DRAIN_REQUEST_WATCHED_POLL_MS", "STOP_INTENT_MAX_AGE_MS", "clearStopIntent", "readDrainRequest"],
+      // pre-existing at origin main aceb1cc1d9: unused exports readLiveStartTime
+      "packages/coding-agent/src/modes/rpc/host-stop-start-time.ts": ["readLiveStartTime"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ABSENT_CONFIRMATIONS
+      "packages/coding-agent/src/modes/rpc/host-supersession.ts": ["ABSENT_CONFIRMATIONS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HOST_WATCH_IDENTITY_INTERVAL_MS, HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS
+      "packages/coding-agent/src/modes/rpc/host-supervisor-poll.ts": ["HOST_WATCH_IDENTITY_INTERVAL_MS", "HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HostWarmer
+      "packages/coding-agent/src/modes/rpc/host-warm.ts": ["HostWarmer"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HOST_WATCH_BACKSTOP_INTERVAL_MS, HOST_WATCH_IDENTITY_INTERVAL_MS, HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS
+      "packages/coding-agent/src/modes/rpc/host-watchdog.ts": ["HOST_WATCH_BACKSTOP_INTERVAL_MS", "HOST_WATCH_IDENTITY_INTERVAL_MS", "HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DECLINE_TRIM_PAUSE_FACTOR, collectFully
+      "packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts": ["DECLINE_TRIM_PAUSE_FACTOR", "collectFully"],
+      // pre-existing at origin main aceb1cc1d9: unused exports loopLagErrorMs, LOOP_LAG_WARN_INTERVAL_MS
+      "packages/coding-agent/src/modes/rpc/loop-lag-watchdog.ts": ["LOOP_LAG_WARN_INTERVAL_MS", "loopLagErrorMs"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_HOST_EMPTY_EXIT_MS, DEFAULT_SESSION_IDLE_EVICTION_MS, RPC_HOST_EMPTY_EXIT_MS_ENV, RPC_SESSION_IDLE_EVICTION_MS_ENV, resolveHostIdlePolicy
+      "packages/coding-agent/src/modes/rpc/multi-session-host.ts": ["DEFAULT_HOST_EMPTY_EXIT_MS", "DEFAULT_SESSION_IDLE_EVICTION_MS", "RPC_HOST_EMPTY_EXIT_MS_ENV", "RPC_SESSION_IDLE_EVICTION_MS_ENV", "resolveHostIdlePolicy"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HOST_GENERATION_ENV, HOST_INSTANCE_ID_ENV
+      "packages/coding-agent/src/modes/rpc/protocol-identity.ts": ["HOST_GENERATION_ENV", "HOST_INSTANCE_ID_ENV"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_SESSION_IDENTITY_MISMATCH, RPC_ERROR_SESSION_BUSY_LIFECYCLE, RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_SESSION_PATH_IN_USE, RPC_ERROR_SESSION_RESERVATION_LIMIT, RPC_ERROR_SESSION_NOT_HELD (+7 more)
+      "packages/coding-agent/src/modes/rpc/rpc-error-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STALE_LEAF", "RPC_ERROR_STREAMING"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SESSION_CONTEXT_LIMITS
+      "packages/coding-agent/src/modes/rpc/rpc-input-validation.ts": ["SESSION_CONTEXT_LIMITS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports checkRpcKeyDirectory
+      "packages/coding-agent/src/modes/rpc/rpc-public-key.ts": ["checkRpcKeyDirectory"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RPC_ERROR_ATTACHED_ELSEWHERE, RPC_ERROR_EMPTY_TEXT, RPC_ERROR_HOST_MEMORY_PRESSURE, RPC_ERROR_HOST_STOPPING, RPC_ERROR_INVALID_SESSION_ID, RPC_ERROR_SESSION_BUSY_LIFECYCLE (+7 more)
+      "packages/coding-agent/src/modes/rpc/rpc-types.ts": ["RPC_ERROR_ATTACHED_ELSEWHERE", "RPC_ERROR_EMPTY_TEXT", "RPC_ERROR_HOST_MEMORY_PRESSURE", "RPC_ERROR_HOST_STOPPING", "RPC_ERROR_INVALID_SESSION_ID", "RPC_ERROR_SESSION_BUSY_LIFECYCLE", "RPC_ERROR_SESSION_IDENTITY_MISMATCH", "RPC_ERROR_SESSION_ID_IN_USE", "RPC_ERROR_SESSION_NOT_HELD", "RPC_ERROR_SESSION_PATH_IN_USE", "RPC_ERROR_SESSION_RESERVATION_LIMIT", "RPC_ERROR_STALE_LEAF", "RPC_ERROR_STREAMING"],
+      // pre-existing at origin main aceb1cc1d9: unused exports loadedRuntimeSource
+      "packages/coding-agent/src/modes/rpc/runtime-build-id.ts": ["loadedRuntimeSource"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SESSION_CONTEXT_PATCH_LIMITS, RESERVED_SESSION_CONTEXT_KEYS
+      "packages/coding-agent/src/modes/rpc/session-context-patch.ts": ["RESERVED_SESSION_CONTEXT_KEYS", "SESSION_CONTEXT_PATCH_LIMITS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports beginPendingClaim
+      "packages/coding-agent/src/modes/rpc/session-registry-claims.ts": ["beginPendingClaim"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RELEASE_SETTLE_MS
+      "packages/coding-agent/src/modes/rpc/session-release-interrupt.ts": ["RELEASE_SETTLE_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HOST_ANSWER_TIMEOUT_MS
+      "packages/coding-agent/src/modes/rpc/session-relocation.ts": ["HOST_ANSWER_TIMEOUT_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports createFinalization
+      "packages/coding-agent/src/modes/rpc/session-router-close.ts": ["createFinalization"],
+      // pre-existing at origin main aceb1cc1d9: unused exports parkForHandoff, evictIdleSession
+      "packages/coding-agent/src/modes/rpc/session-router-occupancy.ts": ["evictIdleSession", "parkForHandoff"],
+      // pre-existing at origin main aceb1cc1d9: unused exports open
+      "packages/coding-agent/src/modes/rpc/session-router-open.ts": ["open"],
+      // pre-existing at origin main aceb1cc1d9: unused exports dispatch, setSessionContext
+      "packages/coding-agent/src/modes/rpc/session-router-routing.ts": ["dispatch", "setSessionContext"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DETACHED_RETIREMENT_GRACE_MS
+      "packages/coding-agent/src/modes/rpc/session-sweep.ts": ["DETACHED_RETIREMENT_GRACE_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_IDENTITY_WAIT_MS, lsofSocketHolders
+      "packages/coding-agent/src/modes/rpc/socket-ownership.ts": ["SOCKET_IDENTITY_WAIT_MS", "lsofSocketHolders"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_CUT_GRACE_MS
+      "packages/coding-agent/src/modes/rpc/socket-sink.ts": ["SOCKET_CUT_GRACE_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_SECRET_SUFFIX
+      "packages/coding-agent/src/modes/rpc/socket-transport.ts": ["SOCKET_SECRET_SUFFIX"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_LAUNCH_SLOTS
+      "packages/coding-agent/src/modes/rpc/tool-child/barrier-clock.ts": ["DEFAULT_LAUNCH_SLOTS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports wrapChannelSocket
+      "packages/coding-agent/src/modes/rpc/tool-child/channel.ts": ["wrapChannelSocket"],
+      // pre-existing at origin main aceb1cc1d9: unused exports NestedWorkerRefusedError
+      "packages/coding-agent/src/modes/rpc/tool-child/gated-modules.ts": ["NestedWorkerRefusedError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CANCEL_ACK_MS, TERM_GRACE_MS, READY_MS, CRASH_LOOP_EXITS, CRASH_LOOP_WINDOW_MS, CRASH_LOOP_COOLDOWN_MS
+      "packages/coding-agent/src/modes/rpc/tool-child/job-policy.ts": ["CANCEL_ACK_MS", "CRASH_LOOP_COOLDOWN_MS", "CRASH_LOOP_EXITS", "CRASH_LOOP_WINDOW_MS", "READY_MS", "TERM_GRACE_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports REAL_TIMERS, JobSupervisorError
+      "packages/coding-agent/src/modes/rpc/tool-child/job-supervisor.ts": ["JobSupervisorError", "REAL_TIMERS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports LAUNCH_PROOF_MS
+      "packages/coding-agent/src/modes/rpc/tool-child/launch-enforcer.ts": ["LAUNCH_PROOF_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports INTERNAL_ENV
+      "packages/coding-agent/src/modes/rpc/tool-child/launch-env-names.ts": ["INTERNAL_ENV"],
+      // pre-existing at origin main aceb1cc1d9: unused exports LaunchGateError
+      "packages/coding-agent/src/modes/rpc/tool-child/launch-gate.ts": ["LaunchGateError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports parseModuleJobArgs, parseModuleRoots, MODULE_CANCEL_GRACE_MS
+      "packages/coding-agent/src/modes/rpc/tool-child/module-job.ts": ["MODULE_CANCEL_GRACE_MS", "parseModuleJobArgs", "parseModuleRoots"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GENERATION_CHILD_FILE
+      "packages/coding-agent/src/modes/rpc/tool-child/orphan-sweep.ts": ["GENERATION_CHILD_FILE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports refGenerationDir
+      "packages/coding-agent/src/modes/rpc/tool-child/payload-ref-paths.ts": ["refGenerationDir"],
+      // pre-existing at origin main aceb1cc1d9: unused exports parseUserBashArgs
+      "packages/coding-agent/src/modes/rpc/tool-child/user-bash-job.ts": ["parseUserBashArgs"],
+      // pre-existing at origin main aceb1cc1d9: unused exports environmentBlock
+      "packages/coding-agent/src/modes/rpc/tool-child/windows-breakaway.ts": ["environmentBlock"],
+      // pre-existing at origin main aceb1cc1d9: unused exports JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_BASIC_PROCESS_ID_LIST_CLASS, extendedLimitInformation
+      "packages/coding-agent/src/modes/rpc/tool-child/windows-job.ts": ["JOB_OBJECT_BASIC_PROCESS_ID_LIST_CLASS", "JOB_OBJECT_LIMIT_BREAKAWAY_OK", "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE", "extendedLimitInformation"],
+      // pre-existing at origin main aceb1cc1d9: unused exports WorkerLaunchError
+      "packages/coding-agent/src/modes/rpc/tool-child/worker-launch.ts": ["WorkerLaunchError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_SESSION_MEDIA_BYTES
+      "packages/coding-agent/src/modes/rpc/tool-media-store.ts": ["MAX_SESSION_MEDIA_BYTES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports cleanupManagedInstall
+      "packages/coding-agent/src/package-manager-cli.ts": ["cleanupManagedInstall"],
+      // pre-existing at origin main aceb1cc1d9: unused exports RuntimeSnapshotLayoutError
+      "packages/coding-agent/src/runtime-snapshot/layout.ts": ["RuntimeSnapshotLayoutError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isProcessAlive
+      "packages/coding-agent/src/runtime-snapshot/registry.ts": ["isProcessAlive"],
+      // pre-existing at origin main aceb1cc1d9: unused export isCompiledBunExecutable
+      "packages/coding-agent/src/utils/bundled-bun.ts": ["isCompiledBunExecutable"],
+      // pre-existing at origin main aceb1cc1d9: unused exports compareVersions, getChangelogPath
+      "packages/coding-agent/src/utils/changelog.ts": ["compareVersions", "getChangelogPath"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isWaylandSession, extensionForImageMimeType
+      "packages/coding-agent/src/utils/clipboard-image.ts": ["extensionForImageMimeType", "isWaylandSession"],
+      // pre-existing at origin main aceb1cc1d9: unused exports decodeHtmlEntity
+      "packages/coding-agent/src/utils/html.ts": ["decodeHtmlEntity"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GIT_BASH_PATH_ENV
+      "packages/coding-agent/src/utils/shell.ts": ["GIT_BASH_PATH_ENV"],
+      // default export is the reporter vitest.evals.config.ts loads by path, not an import (entry, newly export-checked)
+      "packages/evals/src/vitest-evals/reporter.ts": ["default"],
+      // pre-existing at origin main aceb1cc1d9: unused exports getHost, getVendoredPrebuildPath (run-by-path entry, newly export-checked)
+      "packages/pty/native/check-prebuild-fresh.mjs": ["getHost", "getVendoredPrebuildPath"],
+      // pre-existing at origin main aceb1cc1d9: unused export loadNativePty (run-by-path entry, newly export-checked)
+      "packages/pty/native/index.d.ts": ["loadNativePty"],
+      // pre-existing at origin main aceb1cc1d9: unused export loadNativePty (run-by-path entry, newly export-checked)
+      "packages/pty/native/index.js": ["loadNativePty"],
+      // pre-existing at origin main aceb1cc1d9: unused exports trackSettler
+      "packages/pty/src/screen-operations.ts": ["trackSettler"],
+      // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_COLS, DEFAULT_ROWS, DEFAULT_RAW_TAIL_BYTES
+      "packages/pty/src/session-options.ts": ["DEFAULT_COLS", "DEFAULT_RAW_TAIL_BYTES", "DEFAULT_ROWS"],
+      // pre-existing at origin main aceb1cc1d9: unused export DATASET_SIZE (run-by-path entry, newly export-checked)
+      "packages/senpi-codemode/scripts/bench-cells.ts": ["DATASET_SIZE"],
+      // pre-existing at origin main aceb1cc1d9: unused export collectGarbage (run-by-path entry, newly export-checked)
+      "packages/senpi-codemode/scripts/bench-measure.ts": ["collectGarbage"],
+      // pre-existing at origin main aceb1cc1d9: unused export HOST_SAMPLE_INTERVAL_MS (run-by-path entry, newly export-checked)
+      "packages/senpi-codemode/scripts/bench-sampler.ts": ["HOST_SAMPLE_INTERVAL_MS"],
+      // pre-existing at origin main aceb1cc1d9: unused export TRIM_FRACTION (run-by-path entry, newly export-checked)
+      "packages/senpi-codemode/scripts/bench-stats.ts": ["TRIM_FRACTION"],
+      // pre-existing at origin main aceb1cc1d9: unused exports kernelToolInvokeScopeSchema
+      "packages/senpi-codemode/src/bridge/kernel-tools-protocol.ts": ["kernelToolInvokeScopeSchema"],
+      // pre-existing at origin main aceb1cc1d9: unused exports AgentIsolationNotAppliedError
+      "packages/senpi-codemode/src/bridges/agent-bridge.ts": ["AgentIsolationNotAppliedError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HANDLE_TOOL_NAMES
+      "packages/senpi-codemode/src/bridges/handle-bridge.ts": ["HANDLE_TOOL_NAMES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports JS_ISOLATION_ENVIRONMENT_FLAG, SANDBOX_MEMORY_ENVIRONMENT_FLAG
+      "packages/senpi-codemode/src/config/feature-settings.ts": ["JS_ISOLATION_ENVIRONMENT_FLAG", "SANDBOX_MEMORY_ENVIRONMENT_FLAG"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_IDLE_PARK_MINUTES, MEMORY_GC_WATERMARK_ENVIRONMENT_FLAG, MEMORY_NOTICE_ENVIRONMENT_FLAG, MEMORY_CEILING_ENVIRONMENT_FLAG, RETAINED_RESULTS_ENVIRONMENT_FLAG, RETAINED_IMAGES_ENVIRONMENT_FLAG (+3 more)
+      "packages/senpi-codemode/src/config/memory-settings.ts": ["MAX_IDLE_PARK_MINUTES", "MEMORY_CEILING_ENVIRONMENT_FLAG", "MEMORY_GC_WATERMARK_ENVIRONMENT_FLAG", "MEMORY_NOTICE_ENVIRONMENT_FLAG", "RETAINED_IMAGES_ENVIRONMENT_FLAG", "RETAINED_RESULTS_ENVIRONMENT_FLAG", "defaultMemorySettings", "memorySettingsOrderWarning", "mergeMemorySettings"],
+      // pre-existing at origin main aceb1cc1d9: unused exports jsInstallArgv, jsRemoveArgv
+      "packages/senpi-codemode/src/environments/js-installer.ts": ["jsInstallArgv", "jsRemoveArgv"],
+      // pre-existing at origin main aceb1cc1d9: unused exports PACKAGES_INSTALL_DEFAULT_TIMEOUT_SECONDS
+      "packages/senpi-codemode/src/environments/packages-install.ts": ["PACKAGES_INSTALL_DEFAULT_TIMEOUT_SECONDS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports formatElapsedSeconds, evalCellElapsedSeconds
+      "packages/senpi-codemode/src/extension/eval-status.ts": ["evalCellElapsedSeconds", "formatElapsedSeconds"],
+      // pre-existing at origin main aceb1cc1d9: unused exports registerKernel
+      "packages/senpi-codemode/src/extension/kernel-registration.ts": ["registerKernel"],
+      // pre-existing at origin main aceb1cc1d9: unused exports WAIT_REMOVED_TOOL_HINT
+      "packages/senpi-codemode/src/extension/removed-tool-hints.ts": ["WAIT_REMOVED_TOOL_HINT"],
+      // pre-existing at origin main aceb1cc1d9: unused exports BUN_SKILL_MIN_VERSION
+      "packages/senpi-codemode/src/extension/skill-contribution.ts": ["BUN_SKILL_MIN_VERSION"],
+      // pre-existing at origin main aceb1cc1d9: unused exports WAIT_MODES, HandleArgumentsError
+      "packages/senpi-codemode/src/handles/handle-args.ts": ["HandleArgumentsError", "WAIT_MODES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports HandleOutcomeError, WaitAllRejectedError
+      "packages/senpi-codemode/src/handles/wait.ts": ["HandleOutcomeError", "WaitAllRejectedError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports KERNEL_TOOLS_CAPABILITIES, KERNEL_TOOLS_UNSUPPORTED, enabledLanguagesFrom (run-by-path entry, newly export-checked)
+      "packages/senpi-codemode/src/index.ts": ["KERNEL_TOOLS_CAPABILITIES", "KERNEL_TOOLS_UNSUPPORTED", "enabledLanguagesFrom"],
+      // pre-existing at origin main aceb1cc1d9: unused exports sniffImageMimeType, isBinaryData, imagePayload
+      "packages/senpi-codemode/src/kernels/js/display-image.js": ["imagePayload", "isBinaryData", "sniffImageMimeType"],
+      // pre-existing at origin main aceb1cc1d9: unused exports GROUP_SIGNAL_NOTICE_TAG, agentProcessGroup
+      "packages/senpi-codemode/src/kernels/js/group-signal-notice.js": ["GROUP_SIGNAL_NOTICE_TAG", "agentProcessGroup"],
+      // pre-existing at origin main aceb1cc1d9: unused exports toHandleRef
+      "packages/senpi-codemode/src/kernels/js/handles.js": ["toHandleRef"],
+      // pre-existing at origin main aceb1cc1d9: unused exports INTERRUPT_ACK_MS, WORKER_TERMINATE_DEADLINE_MS, abandonedWorkerNote
+      "packages/senpi-codemode/src/kernels/js/interrupt-bounds.ts": ["INTERRUPT_ACK_MS", "WORKER_TERMINATE_DEADLINE_MS", "abandonedWorkerNote"],
+      // pre-existing at origin main aceb1cc1d9: unused exports KERNEL_TOOL_ERROR_CODES, KernelToolError
+      "packages/senpi-codemode/src/kernels/js/kernel-tools-errors.js": ["KERNEL_TOOL_ERROR_CODES", "KernelToolError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports KERNEL_TOOL_ERROR_CODES
+      "packages/senpi-codemode/src/kernels/js/kernel-tools-errors.ts": ["KERNEL_TOOL_ERROR_CODES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports matcherKey, ellipsizeMiddle, normalizeKernelToolName
+      "packages/senpi-codemode/src/kernels/js/kernel-tools-naming.js": ["ellipsizeMiddle", "matcherKey", "normalizeKernelToolName"],
+      // pre-existing at origin main aceb1cc1d9: unused exports defaultInputSchema, isPlainJsonObject, isJsonValue
+      "packages/senpi-codemode/src/kernels/js/kernel-tools-schema.js": ["defaultInputSchema", "isJsonValue", "isPlainJsonObject"],
+      // pre-existing at origin main aceb1cc1d9: KERNEL_TOOLS_UNSUPPORTED: declared here, reported because the package entry src/index.ts re-exports it and nothing imports it (newly export-checked; the file stays checked)
+      "packages/senpi-codemode/src/kernels/js/kernel-tools-types.ts": ["KERNEL_TOOLS_UNSUPPORTED"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isProcessAlive, signalProcess, readProcessTable, collectDescendants, ownedRoots
+      "packages/senpi-codemode/src/kernels/js/process-tree-host.ts": ["collectDescendants", "isProcessAlive", "ownedRoots", "readProcessTable", "signalProcess"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isProcessAlive, signalProcess, readProcessTable, collectDescendants, ownedRoots (run-by-path entry, newly export-checked)
+      "packages/senpi-codemode/src/kernels/js/process-tree.d.ts": ["collectDescendants", "isProcessAlive", "ownedRoots", "readProcessTable", "signalProcess"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isProcessAlive, signalProcess, readProcessTable, collectDescendants, ownedRoots
+      "packages/senpi-codemode/src/kernels/js/process-tree.js": ["collectDescendants", "isProcessAlive", "ownedRoots", "readProcessTable", "signalProcess"],
+      // pre-existing at origin main aceb1cc1d9: unused exports JavaScriptProcessRuntimeUnavailableError
+      "packages/senpi-codemode/src/kernels/js/process-worker.ts": ["JavaScriptProcessRuntimeUnavailableError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports parseWindowsRows, windowsTreeKillPids, windowsTreeKillArgs (run-by-path entry, newly export-checked)
+      "packages/senpi-codemode/src/kernels/js/windows-tree-kill.d.ts": ["parseWindowsRows", "windowsTreeKillArgs", "windowsTreeKillPids"],
+      // pre-existing at origin main aceb1cc1d9: unused exports parseWindowsRows, windowsTreeKillPids, windowsTreeKillArgs
+      "packages/senpi-codemode/src/kernels/js/windows-tree-kill.js": ["parseWindowsRows", "windowsTreeKillArgs", "windowsTreeKillPids"],
+      // pre-existing at origin main aceb1cc1d9: unused exports errorFromBridge
+      "packages/senpi-codemode/src/kernels/js/worker-host.ts": ["errorFromBridge"],
+      // pre-existing at origin main aceb1cc1d9: unused exports resolvePackage
+      "packages/senpi-codemode/src/kernels/js/worker-package-resolve.js": ["resolvePackage"],
+      // pre-existing at origin main aceb1cc1d9: unused exports PROCESS_STARTUP_DEADLINE_MS, ProcessKernelStartupTimeoutError
+      "packages/senpi-codemode/src/kernels/js/worker-startup.ts": ["PROCESS_STARTUP_DEADLINE_MS", "ProcessKernelStartupTimeoutError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports PythonKernelStartupError
+      "packages/senpi-codemode/src/kernels/py/startup.ts": ["PythonKernelStartupError"],
+      // vendored from earendil-works/pi v1.0.1 with senpi changes; pre-existing exports at origin main aceb1cc1d9: unused exports MAX_STORE_VALUE_CHARS, MAX_STORE_TOTAL_CHARS
+      "packages/senpi-codemode/src/kernels/sandbox/vendor/pi-codemode/runtime/prelude-source.ts": ["MAX_STORE_TOTAL_CHARS", "MAX_STORE_VALUE_CHARS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isBunFfi
+      "packages/senpi-codemode/src/kernels/shared/bun-ffi.ts": ["isBunFfi"],
+      // pre-existing at origin main aceb1cc1d9: unused exports EVAL_KERNEL_UNAVAILABLE
+      "packages/senpi-codemode/src/kernels/shared/kernel-death.ts": ["EVAL_KERNEL_UNAVAILABLE"],
+      // pre-existing at origin main aceb1cc1d9: unused exports subprocessStartupNoProgressMs
+      "packages/senpi-codemode/src/kernels/shared/subprocess-startup.ts": ["subprocessStartupNoProgressMs"],
+      // pre-existing at origin main aceb1cc1d9: unused exports formatMiddleElisionMarker, truncateHeadBytes, ARTIFACT_DEFAULT_HEAD_BYTES
+      "packages/senpi-codemode/src/output/streaming-output.ts": ["ARTIFACT_DEFAULT_HEAD_BYTES", "formatMiddleElisionMarker", "truncateHeadBytes"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isGptCodeModeModel
+      "packages/senpi-codemode/src/prompt/eval-prompt.ts": ["isGptCodeModeModel"],
+      // pre-existing at origin main aceb1cc1d9: unused exports runBudgetError
+      "packages/senpi-codemode/src/timeouts/run-budget.ts": ["runBudgetError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MAX_CAPTURED_TOOL_NAME_CODE_POINTS, settleToolCallMetric
+      "packages/senpi-codemode/src/tool/call-capture.ts": ["MAX_CAPTURED_TOOL_NAME_CODE_POINTS", "settleToolCallMetric"],
+      // pre-existing at origin main aceb1cc1d9: unused exports hardLimitError
+      "packages/senpi-codemode/src/tool/cell-deadlines.ts": ["hardLimitError"],
+      // pre-existing at origin main aceb1cc1d9: unused exports currentDetachedResult
+      "packages/senpi-codemode/src/tool/detached-cell-snapshot.ts": ["currentDetachedResult"],
+      // pre-existing at origin main aceb1cc1d9: unused exports webpExclusionForModel
+      "packages/senpi-codemode/src/tool/image-resize.ts": ["webpExclusionForModel"],
+      // pre-existing at origin main aceb1cc1d9: unused exports resizeEvalImage, webpExclusionForModel
+      "packages/senpi-codemode/src/tool/image.ts": ["resizeEvalImage", "webpExclusionForModel"],
+      // pre-existing at origin main aceb1cc1d9: unused exports LIVE_CODE_WINDOW_LINES
+      "packages/senpi-codemode/src/tool/render-cell.ts": ["LIVE_CODE_WINDOW_LINES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports LIVE_CODE_WINDOW_LINES, isLiveCellStatus
+      "packages/senpi-codemode/src/tool/render-live.ts": ["LIVE_CODE_WINDOW_LINES", "isLiveCellStatus"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TERMINAL_SNAPSHOT_CAP, estimateSnapshotBytes
+      "packages/senpi-codemode/src/tool/terminal-snapshot-store.ts": ["TERMINAL_SNAPSHOT_CAP", "estimateSnapshotBytes"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TestHarness
+      "packages/server/src/testing/index.ts": ["TestHarness"],
+      // pre-existing at origin main aceb1cc1d9: unused exports createUnixListener
+      "packages/server/src/transports/unix/index.ts": ["createUnixListener"],
+      // pre-existing at origin main aceb1cc1d9: unused export wrapNodeSqliteDatabase (run-by-path entry, newly export-checked)
+      "packages/session-backends/sqlite-node/src/index.ts": ["wrapNodeSqliteDatabase"],
+      // pre-existing at origin main aceb1cc1d9: unused export SQLITE_SESSION_EXTENSION (run-by-path entry, newly export-checked)
+      "packages/session-backends/sqlite-node/src/sqlite/repo.ts": ["SQLITE_SESSION_EXTENSION"],
+      // pre-existing at origin main aceb1cc1d9: unused exports insertEntryRow, entryStructureFromRow
+      "packages/session-backends/sqlite-node/src/sqlite/session/entries.ts": ["entryStructureFromRow", "insertEntryRow"],
+      // pre-existing at origin main aceb1cc1d9: unused exports insertUsageLedgerRow
+      "packages/session-backends/sqlite-node/src/sqlite/session/usage-ledger.ts": ["insertUsageLedgerRow"],
+      // pre-existing at origin main aceb1cc1d9: unused exports parseKeyboardProtocolNegotiationSequence
+      "packages/tui/src/terminal.ts": ["parseKeyboardProtocolNegotiationSequence"],
+      // pre-existing at origin main aceb1cc1d9: unused exports canTrackTmuxImageFocus
+      "packages/tui/src/tmux-image-capability.ts": ["canTrackTmuxImageFocus"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TMUX_IMAGE_FORMAT, parseTmuxImageState
+      "packages/tui/src/tmux-image-probe.ts": ["TMUX_IMAGE_FORMAT", "parseTmuxImageState"],
+      // pre-existing at origin main aceb1cc1d9: unused exports canReceiveKeys, visibleWidth, __viewportRenderStats
+      "packages/tui/src/tui.ts": ["__viewportRenderStats", "canReceiveKeys", "visibleWidth"],
+      // pre-existing at origin main aceb1cc1d9: unused exports cjkPunctuationRegex
+      "packages/tui/src/utils.ts": ["cjkPunctuationRegex"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MIN_WEZTERM_WINDOWS_IMAGES_VERSION
+      "packages/tui/src/wezterm-windows-images.ts": ["MIN_WEZTERM_WINDOWS_IMAGES_VERSION"],
+      // pre-existing at origin main aceb1cc1d9: unused export agent (run-by-path entry, newly export-checked)
+      "scripts/agent-treeshake-smoke-entry.ts": ["agent"],
+      // pre-existing at origin main aceb1cc1d9: unused export collectExternalPackages (run-by-path entry, newly export-checked)
+      "scripts/build-coding-agent-bundle.mjs": ["collectExternalPackages"],
+      // pre-existing at origin main aceb1cc1d9: unused export DEPENDENCY_GROUPS (run-by-path entry, newly export-checked)
+      "scripts/bun-lock-workspace-specifiers.mjs": ["DEPENDENCY_GROUPS"],
+      // pre-existing at origin main aceb1cc1d9: unused exports changelogBullets, insertTrackerEntries, insertChangelogBullets (run-by-path entry, newly export-checked)
+      "scripts/changes-fragments.mjs": ["changelogBullets", "insertChangelogBullets", "insertTrackerEntries"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CANONICAL_SECTIONS, isTestFile, isDocsFile, nearestTrackerFor, entryCovers (run-by-path entry, newly export-checked)
+      "scripts/changes-md-policy.mjs": ["CANONICAL_SECTIONS", "entryCovers", "isDocsFile", "isTestFile", "nearestTrackerFor"],
+      // pre-existing at origin main aceb1cc1d9: unused export foreignCommits (run-by-path entry, newly export-checked)
+      "scripts/check-bot-branch-commits.mjs": ["foreignCommits"],
+      // pre-existing at origin main aceb1cc1d9: unused export CHANGELOG_PATTERN (run-by-path entry, newly export-checked)
+      "scripts/check-pr-changelog-facts.mjs": ["CHANGELOG_PATTERN"],
+      // pre-existing at origin main aceb1cc1d9: unused exports validateGitRevision, isRuntimeSourceChange, main (run-by-path entry, newly export-checked)
+      "scripts/check-pr-changelog.mjs": ["isRuntimeSourceChange", "main", "validateGitRevision"],
+      // pre-existing at origin main aceb1cc1d9: unused export PR_FILES_API_LIMIT (run-by-path entry, newly export-checked)
+      "scripts/ci-platform-scope.mjs": ["PR_FILES_API_LIMIT"],
+      // pre-existing at origin main aceb1cc1d9: unused export updateClaudeAgentSdkPlatformLock (run-by-path entry, newly export-checked)
+      "scripts/generate-claude-agent-sdk-platform-lock.mjs": ["updateClaudeAgentSdkPlatformLock"],
+      // pre-existing at origin main aceb1cc1d9: unused export RATCHET_RULES (run-by-path entry, newly export-checked)
+      "scripts/lint-ratchet.mjs": ["RATCHET_RULES"],
+      // pre-existing at origin main aceb1cc1d9: unused exports MODEL_CATALOG_REVISION_RE, isValidModelCatalogPiVersion (run-by-path entry, newly export-checked)
+      "scripts/model-catalog-protocol.ts": ["MODEL_CATALOG_REVISION_RE", "isValidModelCatalogPiVersion"],
+      // pre-existing at origin main aceb1cc1d9: unused exports refreshEntry, summaryMarkdown (run-by-path entry, newly export-checked)
+      "scripts/model-catalog-refresh.mjs": ["refreshEntry", "summaryMarkdown"],
+      // pre-existing at origin main aceb1cc1d9: unused export AI_CHANGELOG_FIXTURE (run-by-path entry, newly export-checked)
+      "scripts/model-catalog-refresh.test-support.mjs": ["AI_CHANGELOG_FIXTURE"],
+      // pre-existing at origin main aceb1cc1d9: unused export CI_BUILD_STEP (run-by-path entry, newly export-checked)
+      "scripts/native-grep-addon.mjs": ["CI_BUILD_STEP"],
+      // pre-existing at origin main aceb1cc1d9: unused exports normalizeCallText, THIRD_PARTY_EXCLUDED_BUNDLES (run-by-path entry, newly export-checked)
+      "scripts/no-raw-tls-client-scan.test-support.mjs": ["THIRD_PARTY_EXCLUDED_BUNDLES", "normalizeCallText"],
+      // pre-existing at origin main aceb1cc1d9: unused export parityDir (run-by-path entry, newly export-checked)
+      "scripts/oxlint-biome-parity.mjs": ["parityDir"],
+      // pre-existing at origin main aceb1cc1d9: unused export default (run-by-path entry, newly export-checked)
+      "scripts/oxlint/biome-ports.ts": ["default"],
+      // pre-existing at origin main aceb1cc1d9: unused export default (run-by-path entry, newly export-checked)
+      "scripts/oxlint/copy.mjs": ["default"],
+      // pre-existing at origin main aceb1cc1d9: unused export default (run-by-path entry, newly export-checked)
+      "scripts/oxlint/model-type-comparison.ts": ["default"],
+      // pre-existing at origin main aceb1cc1d9: unused export pinSenpiPeerDependency (run-by-path entry, newly export-checked)
+      "scripts/publish-manifest.mjs": ["pinSenpiPeerDependency"],
+      // pre-existing at origin main aceb1cc1d9: unused export default (run-by-path entry, newly export-checked)
+      "scripts/qa/fixtures/read-summary-provider.mjs": ["default"],
+      // pre-existing at origin main aceb1cc1d9: unused exports packageSourceDirs, grepCount, useSiteLines (run-by-path entry, newly export-checked)
+      "scripts/qa/fork-preservation-checks.mjs": ["grepCount", "packageSourceDirs", "useSiteLines"],
+      // pre-existing at origin main aceb1cc1d9: unused export binaryTargets (run-by-path entry, newly export-checked)
+      "scripts/qa/read-summary-build.mjs": ["binaryTargets"],
+      // pre-existing at origin main aceb1cc1d9: unused export frozenReadFiles (run-by-path entry, newly export-checked)
+      "scripts/qa/read-summary-parity.mjs": ["frozenReadFiles"],
+      // pre-existing at origin main aceb1cc1d9: imports of undeclared packages @xterm/headless
+      // pre-existing at origin main aceb1cc1d9: unused exports assertRawStream, gridToHtml, renderToGrid, replayToSnapshots, runAssertion, verifyManifest (run-by-path entry, newly export-checked)
+      "scripts/qa/xterm-render.mjs": ["assertRawStream", "gridToHtml", "renderToGrid", "replayToSnapshots", "runAssertion", "verifyManifest"],
+      // pre-existing at origin main aceb1cc1d9: unused exports ISLAND_PREFIX, FORBIDDEN_ISLAND_ENTRIES, hashFile, hashManifests, diffManifestHashes (run-by-path entry, newly export-checked)
+      "scripts/regenerate-bun-lock-isolated.mjs": ["FORBIDDEN_ISLAND_ENTRIES", "ISLAND_PREFIX", "diffManifestHashes", "hashFile", "hashManifests"],
+      // pre-existing at origin main aceb1cc1d9: unused export CAPTURE_MAX_BUFFER (run-by-path entry, newly export-checked)
+      "scripts/release-capture.mjs": ["CAPTURE_MAX_BUFFER"],
+      // pre-existing at origin main aceb1cc1d9: unused export extractUnreleasedSubsections (run-by-path entry, newly export-checked)
+      "scripts/release-changelog.mjs": ["extractUnreleasedSubsections"],
+      // pre-existing at origin main aceb1cc1d9: unused export SUPERVISOR_TIMEOUT_EXIT (run-by-path entry, newly export-checked)
+      "scripts/release-forced-test-supervisor.mjs": ["SUPERVISOR_TIMEOUT_EXIT"],
+      // pre-existing at origin main aceb1cc1d9: unused export TRANSIENT_CODES (run-by-path entry, newly export-checked)
+      "scripts/rename-sync-retry.mjs": ["TRANSIENT_CODES"],
+      // pre-existing at origin main aceb1cc1d9: unused export delegationRisk (run-by-path entry, newly export-checked)
+      "scripts/root-workspace-scripts.test.mjs": ["delegationRisk"],
+      // pre-existing at origin main aceb1cc1d9: unused exports UsageError, runWorkspaces (run-by-path entry, newly export-checked)
+      "scripts/run-workspaces.mjs": ["UsageError", "runWorkspaces"],
+      // pre-existing at origin main aceb1cc1d9: unused exports fromDiff, main (run-by-path entry, newly export-checked)
+      "scripts/sync-changes-fragments.mjs": ["fromDiff", "main"],
+      // pre-existing at origin main aceb1cc1d9: unused export repoTempName (run-by-path entry, newly export-checked)
+      "scripts/test-temp-guard.mjs": ["repoTempName"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TRACKED_HARNESS_ALLOWLIST, HARNESS_ROOT_PATTERNS, findTrackedHarnessPaths (run-by-path entry, newly export-checked)
+      "scripts/tracked-harness-artifacts-audit.test.mjs": ["HARNESS_ROOT_PATTERNS", "TRACKED_HARNESS_ALLOWLIST", "findTrackedHarnessPaths"],
+    },
+  },
+  "workspaces": {
+    ".": {
+      "project": ["scripts/**/*.{js,mjs,cjs,ts,mts}"],
+      "entry": [
+        // Root scripts are run by path (package.json scripts, CI workflows, release docs).
+        "scripts/*.{js,mjs,ts}",
+        "scripts/qa/*.{mjs,ts}",
+        "scripts/qa/fixtures/*.mjs",
+        "scripts/oxlint/*.{mjs,ts}",
+        // These sidecars type an .mjs module for its importers and tests.
+        "scripts/**/*.d.mts",
+      ],
+      "includeEntryExports": true,
+    },
+    ".agents/skills/senpi-qa": {
+      // A private dependency island outside the npm workspaces (its own package.json).
+      "project": ["scripts/**/*.{js,mjs,cjs,ts,mts}"],
+      // Every QA driver is run by path (node .agents/skills/senpi-qa/scripts/<driver>.mjs), including
+      // scenarios/*.mjs and drivers added later under any subdirectory.
+      "entry": ["scripts/**/*.{mjs,ts}"],
+      "includeEntryExports": true,
+      "ignoreIssues": {
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages @anthropic-ai/claude-agent-sdk; imports that do not resolve ../../../packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/executable.ts
+        "scripts/anthropic-subscription-auth-spike.mjs": ["unlisted","unresolved"],
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages @anthropic-ai/claude-agent-sdk; imports that do not resolve ../../../packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/executable.ts, ../../../packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/tools.ts
+        "scripts/anthropic-subscription-persistent-query-spike.mjs": ["unlisted","unresolved"],
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages @anthropic-ai/claude-agent-sdk; imports that do not resolve ../../../packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/executable.ts
+        "scripts/anthropic-subscription-sysprompt-spike.mjs": ["unlisted","unresolved"],
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages ws
+        "scripts/lib/codex-websocket-mock.mjs": ["unlisted"],
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages @xterm/headless
+        "scripts/scenarios/btw-during-eval-qa.mjs": ["unlisted"],
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages @bufbuild/protobuf
+          "scripts/scenarios/cursor-exec-lifecycle/wire.mjs": ["unlisted"],
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages @xterm/headless
+        "scripts/scenarios/dollar-invocation-qa.mjs": ["unlisted"],
+      },
+    },
+    "packages/agent": {
+      // Design notes with illustrative code, not part of the package.
+      "project": ["**/*.{js,mjs,cjs,ts,mts}", "!docs/**"],
+      "vitest": { "config": ["vitest.config.ts", "vitest.harness.config.ts", "vitest.benchmark.config.ts"] },
+      // Run by path from package.json scripts (scripts/knip-entry-exports.test.mjs fails when one is missing).
+      "entry": [
+        "benchmark/session/allocation-profile.ts",
+        "benchmark/session/loaded-footprint.ts",
+        "scripts/generate-telemetry-docs.ts",
+      ],
+      "includeEntryExports": true,
+      "ignoreFiles": [
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/harness/runtime/index.ts",
+      ],
+      "ignoreDependencies": [
+        // pre-existing at origin main aceb1cc1d9: a declared devDependency nothing imports
+        "@vscode/tree-sitter-wasm",
+      ],
+      "ignoreIssues": {
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+        "test/harness/fixtures/read-summary/corpus.ts": ["unlisted"],
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+        "test/harness/fixtures/read-summary/frozen-baseline.ts": ["unlisted"],
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+        "test/harness/fixtures/read-summary/oracle.ts": ["unlisted"],
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+        "test/harness/fixtures/read-summary/reference.ts": ["unlisted"],
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+        "test/harness/fixtures/read-summary/tokenizer-identity.ts": ["unlisted"],
+      },
+    },
+    "packages/ai": {
+      "entry": [
+        // Run by path: the proto transform after `buf generate`, and the benchmarks run-pr530-benchmarks.mjs drives.
+        "scripts/*.{ts,mjs}",
+        "bench/*.ts",
+        // The package-root shim (and its types) runtime-modules.ts and senpi-codemode's vitest config load by path.
+        "bedrock-provider.js",
+        "bedrock-provider.d.ts",
+        // The pi-ai bin (package.json bin points at dist/cli.js).
+        "src/cli.ts",
+        // vitest.config.ts loads it as a setupFile only when CI/GITHUB_ACTIONS is set, so knip's vitest
+        // plugin resolves it only under CI; listing it keeps the entry set the same on every machine.
+        "test/ci-diagnostics.ts",
+      ],
+      "includeEntryExports": true,
+      // dist/cli.js is a committed bin stub the build overwrites.
+      "ignore": ["dist/**"],
+      // The package-root shim re-exports the built file.
+      "ignoreUnresolved": ["./dist/bedrock-provider.js"],
+      "ignoreFiles": [
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/utils/retry-profile/index.ts",
+      ],
+      "ignoreIssues": {
+        // File-wide on purpose: generated by `buf generate` + transform-cursor-agent-proto.mjs (protobuf-es), kept as a
+        // complete set and never hand-edited, so no per-symbol list can track it.
+        "src/api/*/gen/*_pb.ts": ["exports", "duplicates"],
+        // pre-existing at origin main aceb1cc1d9: duplicate exports stream|streamSimple
+        "src/api/devin-agent.ts": ["duplicates"],
+      },
+    },
+    "packages/coding-agent": {
+      "entry": [
+        // The CLI and package entries (package.json bin/exports point at dist/, which knip cannot map back here).
+        "src/cli.ts",
+        "src/rpc-entry.ts",
+        "src/client/index.ts",
+        // The Bun-compiled binary entry (build-binaries.sh).
+        "src/bun/cli.ts",
+        // Bundled as separate entries or started by path (build-coding-agent-bundle.mjs, worker URLs, child spawns).
+        "src/modes/rpc/host-supervisor-entry.ts",
+        "src/modes/rpc/session-worker.ts",
+        "src/modes/rpc/host-lifecycle.ts",
+        "src/modes/rpc/tool-child/module-job-worker.ts",
+        "src/tool-child-main.ts",
+        "src/utils/image-resize-worker.ts",
+        // Experimental entries run by path (mini-test.sh, experimental-cli-entry.test.ts).
+        "src/experimental/cli.ts",
+        "src/experimental/mini/main.ts",
+        // QA drivers and benchmarks run by path.
+        "scripts/**/*.mjs",
+        "bench/*.ts",
+        // Example extensions are loaded by path (`senpi -e <file>`), never imported. The examples with
+        // their own package.json are separate workspaces.
+        "examples/**/*.ts",
+        "!examples/extensions/{with-deps,custom-provider-anthropic,custom-provider-gitlab-duo,sandbox,gondolin}/**",
+        // The vitest setup file vitest.config.ts loads by path.
+        "test/setup.ts",
+      ],
+      "includeEntryExports": true,
+      // Minified vendor bundles read as text by export-html.
+      "project": ["**/*.{js,mjs,cjs,ts,mts}", "!src/core/export-html/vendor/**"],
+      // dist/cli.js is a committed bin stub the build overwrites.
+      "ignore": ["dist/**"],
+      "ignoreFiles": [
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/experimental/coordinator-entry.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/experimental/session-catalog.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/utils/deprecation.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/utils/zip.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/core/session-export.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/experimental/micro/main.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/experimental/micro/tui.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/core/extensions/jiti-loader.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/core/extensions/jiti-static-loader.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/core/extensions/virtual-modules.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/experimental/mini/server/entry.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/experimental/mini/server/run.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/experimental/mini/worker/entry.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/experimental/mini/worker/lane-service.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/experimental/mini/worker/models-service.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/experimental/mini/worker/run.ts",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "examples/extensions/doom-overlay/doom/build/doom.js",
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/core/extensions/builtin/rules/ui/dynamic-border.ts",
+      ],
+      "ignoreDependencies": [
+        // pre-existing at origin main aceb1cc1d9: a declared dependency nothing imports
+        "@code-yeongyu/senpi-codemode",
+      ],
+      "ignoreIssues": {
+        // pre-existing at origin main aceb1cc1d9: duplicate exports TOOL_EXECUTION_DENIED_MESSAGE|HOST_TOOL_EXECUTION_DENIED_MESSAGE
+        "src/core/extensions/builtin/anthropic-subscription/tools.ts": ["duplicates"],
+        // pre-existing at origin main aceb1cc1d9: duplicate exports configReloadExtension|default
+        "src/core/extensions/builtin/config-reload/index.ts": ["duplicates"],
+        // pre-existing at origin main aceb1cc1d9: duplicate exports registerApplyPatchExtension|default
+        "src/core/extensions/builtin/gpt-apply-patch/extension.ts": ["duplicates"],
+        // pre-existing at origin main aceb1cc1d9: duplicate exports registerTerminalExtension|default
+        "src/core/extensions/builtin/terminal/extension.ts": ["duplicates"],
+        // pre-existing at origin main aceb1cc1d9: imports that do not resolve ./gated-barrier-cp-worker.ts
+        "src/modes/rpc/tool-child/gated-bun.test.ts": ["unresolved"],
+        // pre-existing at origin main aceb1cc1d9: imports that do not resolve ../../dist/core/cursor-exec-bridge-session.js
+        "test/manual-qa/cursor-bridge-late-frame-qa.mjs": ["unresolved"],
+      },
+    },
+    "packages/coding-agent/examples/extensions/*": {
+      // Each example extension is loaded through its package.json "pi.extensions" list, never imported.
+      "entry": ["*.ts"],
+      "includeEntryExports": true,
+    },
+    "packages/evals": {
+      "vitest": { "config": ["vitest.evals.config.ts", "vitest.test.config.ts"] },
+      // The container runner's entrypoint and install step (docker/Dockerfile).
+      // Run by path from package.json scripts (scripts/knip-entry-exports.test.mjs fails when one is missing).
+      "entry": [
+        "docker/*.{ts,mjs}",
+        "scripts/run-evals.mjs",
+        "src/cli.ts",
+        // The reporter and setup file vitest.evals.config.ts loads by path.
+        "src/vitest-evals/reporter.ts",
+        "src/vitest-evals/setup.ts",
+      ],
+      "includeEntryExports": true,
+    },
+    "packages/pty": {
+      // Run by path from package.json scripts (scripts/knip-entry-exports.test.mjs fails when one is missing).
+      "entry": ["native/check-prebuild-fresh.mjs"],
+      "includeEntryExports": true,
+    },
+    "packages/senpi-codemode": {
+      "entry": [
+        // Gate, bench and QA drivers run by path (`bun scripts/<name>.ts`).
+        "scripts/*.{ts,mjs}",
+        // Kernel worker and child-process entries started by path (inline-worker.ts, process-worker.ts).
+        "src/kernels/js/inline-worker-entry.js",
+        "src/kernels/js/process-entry.js",
+      ],
+      "includeEntryExports": true,
+      "ignoreFiles": [
+        // pre-existing at origin main aceb1cc1d9: a file nothing imports or runs
+        "src/kernels/js/prelude.ts",
+      ],
+      "ignoreIssues": {
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages @babel/types
+        "src/kernels/js/rewrite-imports.ts": ["unlisted"],
+        // pre-existing at origin main aceb1cc1d9: duplicate exports MAX_DISPLAY_TEXT_BYTES|MAX_DISPLAY_JSON_BYTES
+        "src/tool/display-json-size.ts": ["duplicates"],
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages only-managed, both-roots, broken, counted
+        "test/kernel-js-require-order.test.ts": ["unlisted"],
+        // pre-existing at origin main aceb1cc1d9: imports of undeclared packages zod
+        "test/workpool/omo-create-schema.ts": ["unlisted"],
+      },
+    },
+    "packages/server": {
+      "ignoreDependencies": [
+        // pre-existing at origin main aceb1cc1d9: a declared dependency nothing imports
+        "@earendil-works/pi-ai",
+      ],
+    },
+    "packages/session-backends/sqlite-node": {
+      // Run by path from package.json scripts (scripts/knip-entry-exports.test.mjs fails when one is missing).
+      "entry": ["scripts/copy-migrations.mjs"],
+      "includeEntryExports": true,
+    },
+    "packages/tui": {
+      // Benchmarks run by path (run-pr530-benchmarks.mjs, perf-trend-local.sh).
+      // Run by path from package.json scripts or CI workflow `run:` lines (scripts/knip-entry-exports.test.mjs fails when one is missing).
+      "entry": ["bench/*.ts", "native/win32/build.mjs", "test/tui-main-screen-mouse.test.ts", "test/setup-multiplexer-env.mjs"],
+      "includeEntryExports": true,
+    },
+  },
+}

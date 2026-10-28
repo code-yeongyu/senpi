@@ -1,3 +1,28 @@
+## 2026-10-26 - Apply bash redaction before persistent terminal retention (senpi#4358)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/terminal/settings.ts`: resolve the bash output setting with a disabled default.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension.ts`: load settings from the active session's agent directory, including SDK and isolated CLI sessions.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/extension-state.ts`: expose the resolved setting to command launches.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/context.ts`: carry the optional output-redaction flag.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/spawn.ts`: pass the setting into each new runtime.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/manager.ts`: accept runtime options at creation.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/runtime-session.ts`: redact before screen feeds, retained buffers and observers, including the final token at process exit. Flush ordinary idle prompts and completed controls after 50 ms; withhold started credential shapes, including short Bearer values, until a delimiter or exit. Clear idle timers at exit and disposal.
+- `packages/coding-agent/src/core/extensions/builtin/terminal/tools/child-placement.ts`: forward the flag into terminal child jobs.
+
+### Why
+
+- Background notices, monitor overflow, screen reads and subsequent output peeks must consume the same sanitized stream as the initial bash result.
+
+### Why an extension could not handle it
+
+- This builtin owns the persistent terminal buffers and output observers, below external result hooks.
+
+### Expected merge conflict zones
+
+- Terminal runtime ingestion/exit, settings resolution and the session-start settings load in `packages/coding-agent/src/core/extensions/builtin/terminal/extension.ts`, and spawn/job option construction.
+
 ## 2026-10-25 - Name monitor wake items by their stable id (senpi#3864)
 
 ### What changed

@@ -22,12 +22,12 @@ it("keeps a released cut's file until the held read unwinds and rejects the stal
 		spillTargetBytes: 0,
 		io: {
 			...control.io,
-			async readFile(path) {
+			async readFile(path, range) {
 				if (/[/\\]leaf-/.test(path)) {
 					entered.resolve(path);
 					await gate.promise;
 				}
-				return control.io.readFile(path);
+				return control.io.readFile(path, range);
 			},
 		},
 	});
@@ -77,10 +77,10 @@ it("joins direct leaf reads before retiring the spool and refuses their stale re
 		spillTargetBytes: 0,
 		io: {
 			...control.io,
-			async readFile(path) {
+			async readFile(path, range) {
 				entered.resolve(path);
 				await gate.promise;
-				return control.io.readFile(path);
+				return control.io.readFile(path, range);
 			},
 		},
 	});

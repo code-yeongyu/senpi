@@ -1,3 +1,43 @@
+## 2026-10-26 - Thrown provider errors pass the provider error boundary (senpi#4282)
+
+### What changed
+
+- `packages/agent/src/assistant-terminal-state.ts`: `createTerminalFailureAssistantMessage` runs pi-ai's `sanitizeProviderErrorMessage` on the message it builds from a thrown error, so the terminal message is classified (`errorCause: { type: "model_config" }`) and redacted before `message_start`/`message_end`.
+- `packages/agent/src/agent.ts`: `handleRunFailure` runs `sanitizeProviderErrorMessage` on the failure message of a run that threw between turns.
+- `packages/agent/src/harness/pico3/kinds/generation.ts`: the terminal message the generation builds from a thrown stream error runs `sanitizeProviderErrorMessage`, so it is classified and redacted before it is recorded.
+
+### Why
+
+- An error the stream function throws, or one that fails the run between turns, never passes `AssistantMessageEventStream`: its raw text reached every event and the session file, and a thrown `404 model_not_found` lost its classification, so the session retried it and walked the fallback chain onto another model.
+
+### Why an extension could not handle it
+
+- Both messages are built inside the agent loop and published to every subscriber before an extension sees them.
+
+### Expected merge conflict zones
+
+- LOW: the end of `createTerminalFailureAssistantMessage`; the two lines before the first `processEvents` call in `handleRunFailure` and the `pi-ai` import block of `agent.ts`; the `pi-ai` import block and the stream `catch` of `generation.ts`.
+
+## 2026-10-25 - Identify assistant stream starts for lifecycle activity (senpi#3864)
+
+### What changed
+
+- `types.ts` adds optional `streaming: true` to the `message_start` event.
+- `agent-loop.ts` sets the marker only at the provider assistant stream-start boundary; prepared messages, user messages, tool results, and synthetic failures do not set it.
+
+### Why
+
+- An assistant role alone cannot distinguish a live model stream from a prepared or synthetic assistant message.
+
+### Why an extension could not handle it
+
+- Only the agent loop knows whether a message start came from the provider stream or from prepared input.
+
+### Expected merge conflict zones
+
+- `agent-loop.ts`: provider stream-start event.
+- `types.ts`: additive message-start event metadata.
+
 ## 2026-10-26 - Hand the internal channel to Agent at construction (senpi#4349, part of #4272)
 
 ### What changed

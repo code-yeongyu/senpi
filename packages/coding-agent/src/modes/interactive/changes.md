@@ -1,3 +1,61 @@
+## 2026-10-27 - Omitted render-signature tails are hashed iteratively (senpi#4415)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/render-signature.ts`: omitted array items (past 40) and omitted object entries (past 80) are folded into one FNV-1a accumulator in a single loop (`hashSignatureArrayTail`, `hashSignatureEntries`) that shares the active ancestor set, instead of re-entering the summarizer on a fresh copy of the remainder per 40 items or 80 keys. Carries the hashing from #782.
+
+### Why
+
+- Depth grew linearly and live memory quadratically with a value's width; a wide tool result aborted Node at its heap limit (80,000 keys: 4.2 GB) and cost Bun 5+ GB per signature. Now 80,000 keys take about 100 ms and 120 MB on Node.
+
+### Why an extension could not handle it
+
+- Assistant-message and tool-execution render signatures are private TUI cache keys; extensions cannot replace their hashing.
+
+### Expected merge conflict zones
+
+- LOW: the omitted array/object branches in `components/render-signature.ts` and `test/render-signature.test.ts`.
+
+## 2026-10-26 - Show the session recovery notice (senpi#4295)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleEvent` shows `session_recovered` as a warning with its `notice`.
+
+### Why
+
+- The person must be told once that the last message was not saved, and where the incomplete bytes were kept.
+
+### Why an extension could not handle it
+
+- The session event switch is core interactive-mode code.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, the `case` before `continuation_error`.
+
+## 2026-10-25 - Show ordered session lifecycle status in the TUI (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/lifecycle-status.ts` projects state, named child sources/reports, background items, human waits, stop provenance, failure and live activity into the interactive footer. Ordinary state follows lifecycle sequence; activity follows owner-scoped sequence/revision ordering, including explicit absence.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` reads the authoritative lifecycle on subscription/rebind, consumes lifecycle events separately from ordinary event effects, synchronizes unfamiliar owners from the bound session snapshot, and fences retired subscriptions on replacement/disposal. Its extension-UI reset (`/reload`) clears extension statuses but keeps the host-owned `session-lifecycle` status, so the reload keeps the existing subscription and the status never goes missing; the `session-lifecycle` status key is reserved, so an extension's `ctx.ui.setStatus` cannot overwrite or clear it; `stop()` clears the status without scheduling a frame after the footer is disposed. The existing working animation, tool output, compaction/retry progress and abort controls remain in place.
+- The lifecycle text is never empty (an idle session shows `idle`), so the interactive footer always has its extension-status line. That line keeps its existing behaviour: statuses sorted by key and truncated to the terminal width, so long lifecycle text (many named waits or child reports) can be cut and can push later-sorted extension statuses off the line.
+- `packages/coding-agent/test/suite/regressions/3864-tui-lifecycle.test.ts` renders the actual footer through the real session event subscription, compares named wait content with RPC capture, and covers stops/caps, lost custody, same-sequence activity, owner replacement and disposal. `3864-tui-lifecycle-ownership.test.ts` covers `/reload`, the reserved key and `stop()`.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/lifecycle-status.ts` and `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: terminal users need the same authoritative coarse status as RPC consumers without mistaking an unknown activity for model work or replaying ordinary state at equal sequence.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` and `packages/coding-agent/src/modes/interactive/lifecycle-status.ts`: the interactive host owns its session subscription, binding generation, footer data provider and status indicator lifetime.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, agent subscription, rebind, `resetExtensionUI`, extension UI `setStatus` and stop paths.
+- `packages/coding-agent/src/modes/interactive/lifecycle-status.ts`: none; new fork-only consumer.
+
 ## 2026-10-25 - Make MRTR presentation lifetime explicitly optional (#4226)
 
 ### What changed
