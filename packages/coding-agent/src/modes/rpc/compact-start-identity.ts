@@ -1,6 +1,9 @@
 import { type CompactTransition, CompactTransitionError } from "./compact-transition.ts";
 
-type Start = Extract<CompactTransition, { type: "block_start" }>;
+type Start = Pick<
+	Extract<CompactTransition, { type: "block_start" }>,
+	"epoch" | "ordinal" | "firstOrdinal" | "messageId"
+>;
 
 /** R1 uses the producer's lifetime ordinal and the S05 opaque nonce, never a receipt-time identity. */
 export class CompactStartIdentity {

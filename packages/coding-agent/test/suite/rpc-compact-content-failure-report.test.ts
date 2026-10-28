@@ -1,8 +1,8 @@
-import { readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { readdir, unlink, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { COMPACT_LEAF_CODE_UNITS as LEAF } from "../../src/modes/rpc/compact-content-store.ts";
 import { CompactSessionState } from "../../src/modes/rpc/compact-session-state.ts";
-import type { CompactStorageIo } from "../../src/modes/rpc/compact-storage-io.ts";
+import { type CompactStorageIo, nodeCompactStorageIo } from "../../src/modes/rpc/compact-storage-io.ts";
 import { spoolRoot, startIdentity } from "./compact-storage-support.ts";
 
 // senpi#4272 (#4322 delta review LOW 3): a spill write whose failure cannot even be described still
@@ -30,7 +30,7 @@ const partialWriteIo: CompactStorageIo = {
 		await writeFile(path, data.subarray(0, data.byteLength / 2), { flag: "wx", mode: 0o600 });
 		throw unprintable();
 	},
-	readFile: (path) => readFile(path),
+	readFile: nodeCompactStorageIo.readFile,
 	unlink: (path) => unlink(path),
 };
 

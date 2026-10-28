@@ -38,9 +38,9 @@ it("reads exactly the size/count boundary and rejects either excess without read
 		spillTargetBytes: 0,
 		io: {
 			...control.io,
-			readFile: (path) => {
+			readFile: (path, range) => {
 				reads++;
-				return control.io.readFile(path);
+				return control.io.readFile(path, range);
 			},
 		},
 	});

@@ -1,5 +1,73 @@
 # Permission System Builtin Extension
 
+## 2026-10-26 - Retain resolved external-directory targets (senpi#4351)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/external-dir.ts`: return the symlink-resolved external target and compare directory device/inode identities for case-alias containment, including missing descendants.
+- External rules and remembered scopes now compare their existing literal prefix by device/inode without opening directories or folding case; trailing-slash directory approvals retain the resolved directory scope rather than granting its parent (binding review H1/H2).
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/external-pattern.ts`: verify case aliases after wildcards by component device/inode, preventing glob-deny bypasses while preserving exact case for distinct or missing targets and synchronous no-open matching (binding review H1-GLOB).
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts` and `packages/coding-agent/src/core/extensions/builtin/permission-system/read-permission.ts`: use that target for external request patterns and remembered scopes.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/types.ts`, `packages/coding-agent/src/core/extensions/builtin/permission-system/index.ts`, and `packages/coding-agent/src/core/extensions/builtin/permission-system/service.ts`: carry lexical spellings separately for display and copy them when listing pending requests.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/prompt.ts`: show the resolved target alongside its original spelling, without trusting caller-supplied directory metadata or truncating literal stars.
+- Review fold: external-directory rules retain last-match-wins separately for absolute lexical, on-disk case-canonical, and resolved spellings, then take the most restrictive decision. Directory listings and device/inode checks preserve lexical ancestry across case aliases and wildcards before symlinks; raw display paths never affect policy, and remembered scopes stay resolved. Filesystem identity lookups remain evaluation-local, and prompts list every resolved target.
+- Resolution-chain review fold: branch between keeping and following every symlink, preserving intermediate spellings with a 16-spelling/40-hop limit that asks on exhaustion or loops. Component `lstat` identities retain case equivalence below non-listable ancestors without merging distinct symlink routes. Case recovery and directory listings are cached only within one decision; multi-path denials report only the target belonging to a denied alias. Document the intentional difference between a resolved-only configured allow and remembered "Always".
+- Dot-target review fold: normalize followed link targets against their containing directory before storing or walking the absolute spelling, closing intermediate-deny bypasses through `.`, `..`, and `../..`. Refuse new spellings over the bound before case-recovery directory reads. Cover relative-target rule precedence and document that a genuine intermediate spelling's blanket deny can still win when both endpoints allow.
+- Physical-walk review fold (supersedes the branching and lexical normalization above): traverse a component queue from a fully resolved position, applying `..` only to its physical parent and prepending raw link targets. Retain the absolute request, actual physical-prefix symlink routes, final path, and case forms; never synthesize relative targets under unresolved lexical parents. Enforce the 16-spelling bound before every insertion, including case forms, and retain the 40-hop fail-closed limit. Cover absolute/relative `S/..` deny bypasses, phantom-parent false denies, and the linear walk's exact spelling boundary.
+- Wildcard-suffix identity review fold: prove component case equivalence with lexical `lstat` identity, not the followed target, so distinct case-sensitive symlink entries sharing a destination cannot override each other's deny or cause a false denial; retain true case aliases and non-listable-ancestor handling.
+
+### Why
+
+- Classification resolved symlinks but rule evaluation and saved approvals still used the alias, allowing an alias approval to miss a deny on the actual target. Case-preserving string comparison also treated an internal case alias as external. Part of #4311.
+
+### Why an extension could not handle it
+
+- The builtin parser, classifier, and request renderer own the identity that reaches permission evaluation and approval persistence.
+
+### Expected merge conflict zones
+
+- `external-dir.ts` containment, `parsers.ts` external-request construction, `read-permission.ts` external reads, `index.ts` request construction, `types.ts` request fields, `service.ts` defensive copies, and `prompt.ts` external-directory display.
+
+## 2026-10-26 - A refusal is final for what the refused call was meant to do (senpi#4321)
+
+### What changed
+
+- `types.ts`: `RejectedError`, `CorrectedError` and `DeniedError` keep their first sentence, which clients match as a prefix, and then add the rule (`DENIAL_IS_FINAL`, built on `NO_OTHER_ROUTE`). The model must not get the same result another way (another tool, command, path or host), tells the user what was refused, and continues only with work that does not depend on it. With feedback, the model follows the feedback first.
+- `non-interactive.ts`: a no-UI refusal says the call did not run, carries the same rule, and frames the `--permission` override as the user's action.
+- `index.ts`: the deny provenance suffix says the user can edit the rule, instead of telling the model to edit it.
+
+### Why
+
+- "This specific tool call" read as permission to reach the refused result through a different tool. The provenance suffix told the model to edit its own permission rule.
+
+### Why an extension could not handle it
+
+- These texts are the permission builtin's own refusal results; another extension cannot rewrite them.
+
+### Expected merge conflict zones
+
+- `types.ts` (the three error constructors), `non-interactive.ts` (`handleNoUI` message).
+
+## 2026-10-27 - external_directory classifies the path the tool opens (senpi#4311)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/parsers.ts`: `withExternalDirectoryRequests` maps each raw argument through the resolver its tool uses before classifying it (write/edit/ls/find/glob: `resolveToCwd`; apply_patch: `resolvePatchPath`; grep: `resolveToCwd` with the same existing-literal-name-first, missing-name/file-prefix selector fallback as the tool; `multiedit`: raw and resolved; monitor: raw). grep `path` arrays are classified element by element. Each opened path then goes through `resolveExternalPath` (the senpi#4351 canonical spelling walk, still the source of truth); the lexical rule alias is taken from the opened path, and `originalPaths` keeps the raw argument. Patterns and Always scopes are de-duplicated by canonical target, while the rule aliases are merged (in order, without duplicates) from every opened spelling, so a rule on a symlink spelling still applies when the same call names the real path first.
+- `packages/coding-agent/src/core/extensions/builtin/permission-system/prompt.ts`: the external-directory prompt uses only the resolved request target, ignoring caller display metadata and preserving literal filename characters.
+- Review fold: selector-shaped grep paths use synchronous stat probes to preserve the synchronous dispatch fence; only ENOENT permits fallback. Tests cover literal names, non-file prefixes, spoofed display metadata, literal `*`, and platform-specific file-URL/UNC behavior.
+
+### Why
+
+- The check classified the raw text while the tools open the normalized path, so `@/abs/x`, `file:///abs/x`, Unicode-space spellings and grep arrays or line selectors reached files outside the workspace with no `external_directory` ask under the narrower presets.
+
+### Why an extension could not handle it
+
+- The parser registry is the permission system's own input to every decision (tool_call hook and codemode dispatch); an extension cannot replace a builtin parser.
+
+### Expected merge conflict zones
+
+- LOW: `parsers.ts` parser registrations and the external-directory branch of `prompt.ts` (fork-only permission system).
+
 ## 2026-10-26 - bash permission: evaluate every command segment (senpi#4317)
 
 ### What changed

@@ -5063,6 +5063,53 @@ capability:
 }
 ```
 
+#### Job widgets
+
+The `job-widgets` builtin emits `job_widget_state` on the same path: live, display-ready widgets for the
+session's long background jobs (bash sessions started with `run_in_background` or auto-detached, and jobs a
+host registers, such as background tasks). Clients receive it only when they advertise `extension_events`;
+the in-process `pi.events` channel carries the same payload. It is sent at most once per second per session
+and only when what a client draws changed, so a timestamp moving alone sends nothing. `jobWidgets.enabled:
+false` ([settings](settings.md#job-widgets)) turns it off.
+
+`data` is `{ v: 1, sessionId, jobs }`. Each job has `id` (`bash_N` or a task id), `kind` (`bash` or `task`),
+`state` (`pending`, `live`, `done`, `skipped`, `fallback`), `updatedAtMs`, and, except for `skipped`, a
+`view`: `title`, optional `headline` (`text`, `label`, `trend`), optional `stage`, up to four `blocks`
+(`spark`, `bars`, `meter`, `stat`, `grid`, `text`) whose numbers arrive formatted, and `lines` for
+`pending` and `fallback`. A job appears once its widget is being built; `done` keeps the last view frozen
+after the job exits. Ignore a payload whose `v` you do not know and any block `kind` you do not draw.
+
+```json
+{
+  "type": "extension_event",
+  "name": "job_widget_state",
+  "data": {
+    "v": 1,
+    "sessionId": "session_1",
+    "jobs": [
+      {
+        "id": "bash_3",
+        "kind": "bash",
+        "state": "live",
+        "updatedAtMs": 1710000000000,
+        "view": {
+          "title": "Blender render",
+          "headline": { "text": "120", "label": "rendered" },
+          "blocks": [{ "kind": "meter", "label": "frames", "value": 0.48, "text": "120 / 250" }]
+        }
+      }
+    ]
+  }
+}
+```
+
+Extensions that run their own long jobs offer them through the root package export:
+`registerJobWidgetSource({ sessionId, id, kind, sources, brief, startedAtMs })` returns a handle (`notify`,
+`update`, `settle`, `dispose`), or `undefined` when the session has no widgets; a source is any
+`JobTextSource`, for example a `TextTap` the extension appends text to. `setJobWidgetAuthorResolver(resolver)`
+routes spec writing to a host-chosen model (behind an explicit `jobWidgets.model`), and
+`getJobWidgetState(sessionId)` reads the current state.
+
 ### agent_start
 
 Emitted when the agent begins processing a prompt.
@@ -5108,15 +5155,16 @@ When the run ended with a provider error (the last assistant message has `stopRe
 | --- | --- |
 | `auth` | re-authenticate the provider |
 | `request_refused` | send the message again or choose another model; if it keeps failing, re-authenticate `<provider>` |
+| `model_unavailable` | choose another model, or check that your plan or key includes this model |
 | `rate_limit` | retry later or set a fallback model |
 | `quota` | check the plan or credits |
 | `context_limit` | compact or shorten the conversation |
-| `invalid_request` | report it with the code |
+| `invalid_request` | send the message again; if it repeats, choose another model or start a new session |
 | `provider_unavailable` | retry or switch provider |
 | `network` | check connectivity |
-| `unknown` | retry once; if it repeats, switch the model or report the code |
+| `unknown` | send the message again; if it repeats, choose another model |
 
-`unknown` is used when the error carries no diagnostic or its metadata matches no row; its `reason` names the provider and the code or status, for example `the provider returned an error that could not be classified (openai, status 429)`. A bare 429 stays `unknown` because status alone cannot tell a rate limit from exhausted quota. Retry and fallback decisions do not read `failure`.
+`unknown` is used when the error carries no diagnostic or its metadata matches no row; its `reason` is the generic `the provider returned an unexpected error`, and the provider's code or status, when it sent one, is only in `httpStatus` and `code`. No `reason` or `action` text carries a code or status. When `resetsAt` is set, `reason` ends with that time in the host's local time zone. A bare 429 stays `unknown` because status alone cannot tell a rate limit from exhausted quota. An `unknown` failure the provider answered with HTTP 404 is `model_unavailable` instead: a model endpoint returns 404 for a model id this account cannot use, as the ChatGPT subscription backend does for a model not yet rolled out to the plan. Retry and fallback decisions do not read `failure`.
 
 `request_refused` is an `auth` failure whose credential (same provider, endpoint and key) served a response within the last 10 minutes: the provider refused this one request, and the key may still be valid. If failures persist, re-authenticate the named provider: a recently working key may have been revoked. The failed assistant message carries `credentialServedRecently: true` and keeps the provider's own `errorMessage`. The in-memory record drops expired entries on each record/check and retains at most 1,024 credentials, evicting the least recently served first. Header-based, ADC and SigV4 authentication do not supply an `apiKey`, so their fingerprint reduces to provider + baseUrl; different credentials on that endpoint share the record.
 
@@ -5510,6 +5558,7 @@ Logins are fire-command-then-subscribe: the command answers as soon as the flow 
 
 - `login_start` `{provider}`: responds immediately with `success: true` (flow started). A second `login_start` for the same provider aborts the earlier attempt.
 - `auth_login_url` `{provider, url}`: the URL (or device-code verification URL) the user must open.
+- `auth_login_progress` `{provider, text}`: a status line while the login prepares or runs, for example an extension's `provider_login_start` handler reporting `Downloading Claude Code 2.1.306: 10% of 200 MB`. Zero or more per login, always before `auth_login_end`. Every provider progress and info line is forwarded as written, so `text` may name the local callback address a login listens on (for example `Listening for OpenRouter OAuth callback on http://<host>:<port>/<path>`), the same redirect address the `auth_login_url` already carries; the URL the user must open arrives only in `auth_login_url`. Built-in providers put no authorization code or token in these lines.
 - `auth_login_end` `{provider, success, error?, replaced?, backupPath?}`: exactly one per login; `error` is a non-secret message. When a successful login replaced the provider's credential of the other kind (an OAuth login over a stored API key), `replaced` names that kind (`"api_key"` or `"oauth"`) and `backupPath` is the copy of `auth.json` taken before it (absent when the credential store is not a file). A login of the same kind adds an account and carries neither field.
 - `login_cancel` `{provider}`: aborts the in-flight login; the client then sees `auth_login_end` with `success: false`.
 
