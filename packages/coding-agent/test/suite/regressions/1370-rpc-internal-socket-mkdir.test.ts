@@ -34,14 +34,29 @@ const SUPERVISOR_START_ALLOWANCE_MS = 30_000;
 const HOST_CHILD_LISTEN_MS = 30_000;
 const READINESS_DEADLINE_MS = SUPERVISOR_START_ALLOWANCE_MS + HOST_CHILD_LISTEN_MS;
 const ENDPOINT_DEADLINE_MS = 15_000;
-const DIRECT_ROUTE_CEILING_MS = READINESS_DEADLINE_MS + 2 * ENDPOINT_DEADLINE_MS + 15_000;
+// Each cleanup signal (tree stop, then SIGTERM, then SIGKILL to the supervisor itself) gets this long to end it.
+const SUPERVISOR_EXIT_DEADLINE_MS = 5_000;
+// The stderr pipe can stay open after the supervisor exits (its host child inherits it), so its drain is bounded.
+const STDERR_DRAIN_MS = 2_000;
+const DIRECT_ROUTE_CEILING_MS =
+	READINESS_DEADLINE_MS + 2 * ENDPOINT_DEADLINE_MS + 3 * SUPERVISOR_EXIT_DEADLINE_MS + STDERR_DRAIN_MS + 5_000;
 
-/** Settles with `work`, or fails as `${failure} within <ms> ms` with the supervisor output so far. */
+function reasonOf(cause: unknown): string {
+	if (!(cause instanceof Error)) return String(cause);
+	return cause.cause instanceof Error ? cause.cause.message : cause.message;
+}
+
+/**
+ * Settles with `work`, or fails by name with the supervisor output so far: `${failure} within <ms> ms`
+ * when the deadline passes, `${failure} (<reason>)` when the work itself rejects.
+ */
 async function withinDeadline<T>(ms: number, failure: string, output: () => string, work: Promise<T>): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
 		return await Promise.race([
-			work,
+			work.catch((cause: unknown) => {
+				throw new Error(`${failure} (${reasonOf(cause)}):\n${output()}`, { cause });
+			}),
 			new Promise<never>((_resolve, reject) => {
 				timer = setTimeout(() => reject(new Error(`${failure} within ${ms} ms:\n${output()}`)), ms);
 			}),
@@ -49,6 +64,52 @@ async function withinDeadline<T>(ms: number, failure: string, output: () => stri
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+/** Signals a process group this test created; a group that is already gone is not an error. */
+function signalGroup(group: number, signal: NodeJS.Signals): void {
+	try {
+		process.kill(-group, signal);
+	} catch (cause) {
+		if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH")) throw cause;
+	}
+}
+
+/** Whether `work` settles within `ms`; never rejects on the deadline. */
+async function settlesWithin(ms: number, work: Promise<unknown>): Promise<boolean> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			work.then(() => true),
+			new Promise<boolean>((resolveLate) => {
+				timer = setTimeout(() => resolveLate(false), ms);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/**
+ * Stops the supervisor tree, then makes sure it is gone. The tree stop signals nothing when it cannot read
+ * the process table, so the supervisor's own process group is signalled after it: SIGTERM first, whose
+ * shutdown also stops its host child, then SIGKILL. A supervisor that outlives both fails by name.
+ */
+async function stopSupervisor(supervisor: childProcess.ChildProcess, exited: Promise<unknown>, output: () => string) {
+	if (supervisor.pid !== undefined) {
+		await terminateProcessTrees([supervisor.pid], { ownerPid: process.pid, graceMs: 1000 });
+	}
+	if (await settlesWithin(SUPERVISOR_EXIT_DEADLINE_MS, exited)) return;
+	const group = supervisor.pid;
+	for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+		// The supervisor's own process group (it was spawned detached): the wrapper, the re-executed CLI and the host child.
+		if (process.platform === "win32") supervisor.kill(signal);
+		else if (group !== undefined && group > 0) signalGroup(group, signal);
+		if (await settlesWithin(SUPERVISOR_EXIT_DEADLINE_MS, exited)) return;
+	}
+	throw new Error(
+		`supervisor did not exit within ${3 * SUPERVISOR_EXIT_DEADLINE_MS} ms of cleanup (tree stop, SIGTERM, SIGKILL):\n${output()}`,
+	);
 }
 
 // Regression coverage for https://github.com/code-yeongyu/senpi/issues/1370
@@ -124,12 +185,17 @@ describe("createInternalSocketPath", () => {
 						SENPI_RPC_HOST_COLD_START: "persistent",
 					},
 					stdio: ["ignore", "ignore", "pipe"],
+					// Its own process group: cleanup can still end the whole tree (the CLI re-executes itself under
+					// another runtime, then starts the host child) when the process table cannot be read.
+					detached: process.platform !== "win32",
 				},
 			);
 			const exited = once(supervisor, "exit");
 			const stderr = createInterface({ input: supervisor.stderr });
+			const stderrClosed = once(stderr, "close");
 			let output = "";
 			const captured = () => output;
+			let failure: unknown;
 			const ready = new Promise<void>((resolveReady) => {
 				stderr.on("line", (line) => {
 					output = `${output}${line}\n`.slice(-16_000);
@@ -147,21 +213,24 @@ describe("createInternalSocketPath", () => {
 				);
 				if (earlyExit) {
 					const [code, signal] = earlyExit;
+					// 'exit' can arrive before the pipe drains: read the last lines before quoting them.
+					await settlesWithin(STDERR_DRAIN_MS, stderrClosed);
 					throw new Error(`supervisor exited (code ${code}, signal ${signal}) before readiness:\n${output}`);
 				}
 				const secret = process.platform === "win32" ? await readSocketSecret(secretPath) : undefined;
 				const socket = createConnection(resolveSocketTransportAddress(socketPath, process.platform, secret));
 				const lines = createInterface({ input: socket });
+				// Both waits below also end when the connection closes: a refused or vanished endpoint can
+				// close the socket without an 'error' event, and a closed endpoint never connects or answers.
+				const closed = new AbortController();
+				socket.once("close", () => closed.abort(new Error("the connection closed")));
 				try {
 					await withinDeadline(
 						ENDPOINT_DEADLINE_MS,
 						"public endpoint did not accept a connection",
 						captured,
-						once(socket, "connect"),
+						once(socket, "connect", { signal: closed.signal }),
 					);
-					// The answer or the connection's end, whichever comes first; a closed endpoint never answers.
-					const closed = new AbortController();
-					socket.once("close", () => closed.abort(new Error("public endpoint closed before answering")));
 					const response = once(lines, "line", { signal: closed.signal });
 					if (secret) sendSocketHandshake(socket, secret);
 					socket.write(`${JSON.stringify({ id: "bootstrap", type: "get_protocol_info" })}\n`);
@@ -177,16 +246,25 @@ describe("createInternalSocketPath", () => {
 					lines.close();
 					socket.destroy();
 				}
-			} finally {
-				try {
-					if (supervisor.pid !== undefined) {
-						await terminateProcessTrees([supervisor.pid], { ownerPid: process.pid, graceMs: 1000 });
-					}
-					await exited;
-				} finally {
-					stderr.close();
-				}
+			} catch (cause) {
+				failure = cause;
 			}
+			// Cleanup runs on every path; a cleanup failure never hides why the case itself failed.
+			let cleanupFailure: unknown;
+			try {
+				await stopSupervisor(supervisor, exited, captured);
+			} catch (cause) {
+				cleanupFailure = cause;
+			} finally {
+				stderr.close();
+			}
+			if (failure !== undefined && cleanupFailure !== undefined)
+				throw new AggregateError(
+					[failure, cleanupFailure],
+					"the case failed, then its supervisor outlived cleanup",
+				);
+			if (failure !== undefined) throw failure;
+			if (cleanupFailure !== undefined) throw cleanupFailure;
 		},
 		DIRECT_ROUTE_CEILING_MS,
 	);
