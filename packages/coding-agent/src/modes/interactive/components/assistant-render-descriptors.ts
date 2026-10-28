@@ -1,4 +1,5 @@
 import {
+	ACCOUNT_LIMIT_NEXT_STEP_LEAD,
 	type AssistantMessage,
 	describeProviderFailureForUser,
 	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
@@ -221,8 +222,23 @@ export function createAssistantRenderDescriptors(
 							model: `${message.provider}/${message.model}`,
 							usageLimit: usageLimitScope(message),
 						});
+			// Auth resolution is not a public pi-ai subpath. The component test feeds this boundary
+			// providerNotConfiguredMessage output so its classifier sentinel cannot drift.
+			const commandHint = stripTurnRetrySuppressionPrefix(message.errorMessage ?? "").startsWith(
+				"Provider is not configured: ",
+			)
+				? " Use /login to connect it, or /model to choose another model."
+				: usageLimitScope(message) === "account"
+					? message.provider === "anthropic"
+						? " Use /login to connect Anthropic Subscription, or /model to choose another provider."
+						: described?.includes(ACCOUNT_LIMIT_NEXT_STEP_LEAD)
+							? ""
+							: " Use /model to choose another provider."
+					: "";
 			addError(
-				described ?? `Error: ${stripTurnRetrySuppressionPrefix(message.errorMessage ?? "") || "Unknown error"}`,
+				described === undefined
+					? `Error: ${stripTurnRetrySuppressionPrefix(message.errorMessage ?? "") || "Unknown error"}`
+					: `${described}${commandHint}`,
 			);
 			break;
 		}

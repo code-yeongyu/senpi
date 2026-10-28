@@ -398,6 +398,9 @@ user sends another prompt ◄─────────────────
 thinking level changes (settings, keybinding, pi.setThinkingLevel())
   └─► thinking_level_select
 
+/login, RPC login_start, or an account command (extension-registered OAuth provider)
+  └─► provider_login_start (awaited, before the provider's login runs)
+
 exit (Ctrl+C, Ctrl+D, SIGHUP, SIGTERM)
   └─► session_shutdown
 ```
@@ -1116,6 +1119,21 @@ pi.on("tool_activated", async (event, ctx) => {
 });
 ```
 
+#### provider_login_start
+
+Fired when the OAuth login of a provider registered with `pi.registerProvider(name, { oauth })` starts, before the provider's own `oauth.login` runs. It fires for every login entry point: `/login`, RPC `login_start`, and account commands. Every handler is awaited in order, so a host can prepare what the login needs first, for example download and pin the Claude Code binary and set `CLAUDE_CODE_EXECUTABLE` before the `anthropic-subscription` login resolves it. Return values are ignored. A handler that throws is reported as an extension error and the login still runs. There is no handler time budget: the login's own cancel and idle timeout bound it through `event.signal`.
+
+```typescript
+pi.on("provider_login_start", async (event) => {
+  // event.provider - the provider id being logged in
+  // event.signal - aborts when the login is cancelled
+  // event.progress(message) - shows a progress line in the login UI
+  if (event.provider !== "anthropic-subscription") return;
+  event.progress("Downloading Claude Code");
+  process.env.CLAUDE_CODE_EXECUTABLE = await downloadPinnedClaude(event.signal);
+});
+```
+
 ### Tool Events
 
 #### tool_call
@@ -1267,6 +1285,7 @@ pi.on("input", async (event, ctx) => {
   // event.text - raw input (before skill/template expansion)
   // event.images - attached images, if any
   // event.source - "interactive" (typed), "rpc" (API), or "extension" (via sendUserMessage)
+  // event.attribution - "user" (a person sent it) or "agent" (an extension, tool, subagent, another agent's RPC client, or the session)
   // event.streamingBehavior - "steer" | "followUp" | undefined
   //   undefined when idle, "steer" for mid-stream interrupts,
   //   "followUp" for messages queued until the agent finishes
@@ -1293,10 +1312,23 @@ pi.on("input", async (event, ctx) => {
 });
 ```
 
+`source` names the channel the input arrived on; `attribution` names who sent it. Typed input is `"user"`. An RPC client's `prompt`, `steer` and `follow_up` are `"user"` only when that connection declared the `interactive_user` role with `set_client_info`; from any other RPC client (for example a parent agent driving a child session) they are `"agent"`. Input an extension sends with `sendUserMessage` is `"agent"`, except a person's answer to a question that the extension delivers through it, which stays `"user"` with `source: "extension"`. React to `attribution === "user"` when only the person's own messages should count, for example to lift a stop the user set.
+
 **Results:**
 - `continue` - pass through unchanged (default if handler returns nothing)
 - `transform` - modify text/images, then continue to expansion
 - `handled` - skip agent entirely (first handler to return this wins)
+
+#### input_disposition
+
+Fired once the session has decided what happens to an input an `input` handler saw. `event.inputId` matches that `input` event; `event.disposition` is `"handled"` (a handler or command consumed it), `"rejected"`, `"started"` (it began a turn) or `"queued"` (it waits as a steer or follow-up). An input queued while a turn runs gets `"queued"` when it is queued and then `"started"` when its message is delivered into a turn, always in that order.
+
+```typescript
+pi.on("input_disposition", async (event, ctx) => {
+  // event.inputId - the id of the matching input event
+  // event.disposition - "handled" | "rejected" | "started" | "queued"
+});
+```
 
 Transforms chain across handlers. See [input-transform.ts](../examples/extensions/input-transform.ts) and [input-transform-streaming.ts](../examples/extensions/input-transform-streaming.ts) for `streamingBehavior`-aware routing.
 
@@ -2045,9 +2077,13 @@ automatically and must call their own policy if they access the filesystem.
 
 ### pi.registerMcpServer(name, config)
 
-Register an MCP server that the agent can use. This is a **factory-time only**
-API: it must be called inside the extension factory before the factory returns.
-Calling it after startup throws because registration is tied to extension load.
+Register an MCP server for the current session. Servers registered while the
+extension factory runs connect on `session_start`, together with the `mcp.json`
+servers. Servers registered later reach an extension that handles
+`mcp_servers_change` right away (see below); when no extension handles it, the
+built-in MCP support picks them up at its next attach (`session_start` after a
+reload or session switch), and no error is reported meanwhile. Registrations are
+not saved: register again on every load.
 
 `config` accepts the same fields as `mcpServers.<name>` in `mcp.json` (see the
 [MCP server fields reference](mcp.md#server-fields-mcpserversname)): `type`,
@@ -2079,8 +2115,9 @@ Same-name precedence:
   `project`) wins over an extension-declared server, including `enabled: false`.
 - An extension-declared server replaces an untrusted placeholder from an
   untrusted project config and records a diagnostic.
-- Across extensions, the first loaded extension wins; later collisions log a
-  warning naming both extension paths.
+- Across extensions, the extension earliest in the session's extension order
+  wins (see `pi.getMcpServers()` below); later collisions log a warning naming
+  both extension paths.
 
 A stdio declaration that omits `cwd` defaults to the extension's registration
 cwd (the cwd passed to the factory), not the ambient `process.cwd()`.
@@ -2088,6 +2125,53 @@ cwd (the cwd passed to the factory), not the ambient `process.cwd()`.
 Extension factories re-run on `/reload`, so declarations are refreshed then.
 In-process senpi-task children load no extensions, so they see no
 extension-declared MCP servers.
+
+### pi.unregisterMcpServer(name)
+
+Remove an MCP server this extension registered. Names registered by another
+extension are left alone.
+
+### pi.getMcpServers()
+
+Every MCP server registered by the extensions of the current session, in the
+session's extension order, as `{ name, config, extensionPath }` copies
+(`RegisteredMcpServer`). That order puts inline extension factories and the
+default built-in extensions before file extensions, whatever order they loaded
+in; a built-in loaded by path with `-e builtin:<id>` is ordered with the file
+paths instead. Before the session binds its extensions (while extension
+factories run), the list holds only the extensions loaded so far, in load order.
+When a session is created with a pass that resolves project trust (at startup,
+or on a switch into a folder whose trust is not cached yet), a trusted project's
+own extensions load after the factories, so a factory reading the list then does
+not see their servers; without that pass, every file extension loads before the
+factories. Extensions the resource loader
+left out of the session (replaced, disabled, filtered) contribute nothing, and
+on a name clash the registration from the extension earliest in the session's
+extension order wins. For extensions that connect MCP servers
+themselves, such as `pi-mcp-adapter`: read it on `session_start` and handle
+`mcp_servers_change` for later changes.
+
+### mcp_servers_change
+
+Fired after the extensions are bound whenever an extension registers or
+unregisters an MCP server, with `servers` listing every registered server after
+the change (same shape as `pi.getMcpServers()`). Registrations made while the
+extensions load do not fire it; read them with `pi.getMcpServers()` on
+`session_start`.
+
+Handling this event marks an extension as the one that connects registered
+servers: the built-in MCP support then does not connect them (one connection per
+server) while it keeps connecting the `mcp.json` servers. When no loaded
+extension handles the event, the built-in MCP support connects registered
+servers as before. Subscribe only if your extension connects them: the built-in
+support reads the rule when it attaches on `session_start`, so a handler that
+only observes leaves registered servers unconnected, and one subscribed after
+that attach connects them next to the built-in support.
+
+```typescript
+pi.on("session_start", () => connect(pi.getMcpServers()));
+pi.on("mcp_servers_change", (event) => connect(event.servers));
+```
 
 ### pi.sendMessage(message, options?)
 

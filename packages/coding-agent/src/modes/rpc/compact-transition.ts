@@ -1,3 +1,5 @@
+import type { SeededBlockEvent } from "./compact-seeded-block.ts";
+
 /**
  * The typed transitions compact current state accepts (senpi#4272, R3.C6.4) and the typed
  * rejection `CompactSessionState.accept` throws when one fails validation.
@@ -12,6 +14,14 @@ export interface BlockAddress {
 }
 
 export type CompactTransition =
+	| {
+			readonly type: "seeded_block";
+			readonly messageId: string;
+			readonly epoch: string;
+			readonly ordinal: number;
+			readonly firstOrdinal: number;
+			readonly event: SeededBlockEvent;
+	  }
 	| (BlockAddress & {
 			readonly type: "block_start";
 			readonly epoch: string;
@@ -40,7 +50,12 @@ type CompactRejection =
 	| "non_contiguous"
 	| "conflicting_overlap"
 	| "cold_operation_required"
-	| "unknown_message";
+	| "unknown_message"
+	| "invalid_parse_frontier"
+	| "invalid_seed_frontier"
+	| "invalid_phase"
+	| "wrong_kind"
+	| "wrong_epoch";
 
 export class CompactTransitionError extends Error {
 	readonly reason: CompactRejection;

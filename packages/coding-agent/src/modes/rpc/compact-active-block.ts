@@ -1,10 +1,13 @@
 import { COMPACT_LEAF_CODE_UNITS, type CompactContentStore, type LeafId } from "./compact-content-store.ts";
 import type { ComponentRoot } from "./compact-component-roots.ts";
+import type { SeededBlock } from "./compact-seeded-block.ts";
 import type { FrozenBlock } from "./compact-text-view.ts";
 import { type CompactBlockKind, CompactTransitionError } from "./compact-transition.ts";
 
 export interface ActiveBlock {
 	readonly kind: CompactBlockKind;
+	readonly seeded?: SeededBlock;
+	readonly epoch?: string;
 	root: LeafId;
 	tail: string;
 	tailRoot: LeafId;
