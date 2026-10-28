@@ -1,0 +1,191 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { afterEach, describe, expect, it } from "vitest";
+import { getModel, streamSimple } from "../src/compat.ts";
+import type { AssistantMessageEvent, Context, Model } from "../src/types.ts";
+import { DsmlEnvelopeFilter, stripDsmlEnvelopes } from "../src/utils/dsml-envelope.ts";
+
+// senpi#4621: DeepSeek V4.1 Flash at thinking `max` emits DSML tool-call envelopes inside `reasoning_content`.
+// The fixture reproduces the reported shape (fullwidth bars, a space after the marker, a degenerate `calls`
+// envelope closed by `parameter`) with synthetic text.
+const BAR = "\uFF5C";
+const open = (rest: string): string => `<${BAR}DSML${BAR}${rest}>`;
+const close = (rest: string): string => `</${BAR}DSML${BAR}${rest}>`;
+
+const REASONING_WITH_DSML = [
+	"I need to confirm the build output before editing.\n",
+	`${open(' invoke name="bash"')}\n`,
+	`${open(' parameter name="command" string="true"')}echo done27${close(" parameter")}\n`,
+	`${close(" invoke")}\n`,
+	"The output should say done; then I will patch the parser.\n",
+	`${open(" calls")} \u8b77${close(" parameter")}\n`,
+	"Next I read the test file.",
+].join("");
+
+const REASONING_WITHOUT_DSML =
+	"I need to confirm the build output before editing.\n\nThe output should say done; then I will patch the parser.\n\nNext I read the test file.";
+
+const activeServers: Server[] = [];
+
+afterEach(async () => {
+	await Promise.all(
+		activeServers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+	);
+});
+
+function filterInPieces(text: string, cuts: readonly number[]): string {
+	const filter = new DsmlEnvelopeFilter();
+	let out = "";
+	let from = 0;
+	for (const cut of [...cuts, text.length]) {
+		out += filter.push(text.slice(from, cut));
+		from = cut;
+	}
+	return out + filter.finish();
+}
+
+describe("DSML envelope filter (senpi#4621)", () => {
+	it.each([
+		{ name: "the reported envelope shape", input: REASONING_WITH_DSML, expected: REASONING_WITHOUT_DSML },
+		{
+			name: "an ASCII-bar envelope",
+			input: 'before <|DSML|invoke name="x">payload</|DSML|invoke> after',
+			expected: "before  after",
+		},
+		{
+			name: "an envelope that never closes keeps its reasoning",
+			input: `before ${open("function_calls")} the real thought continues`,
+			expected: "before  the real thought continues",
+		},
+		{ name: "a self-closing tag", input: `a ${open('invoke name="x"/')}b`, expected: "a b" },
+		{
+			name: "reasoning without DSML",
+			input: "a < b, <|im_end|> and <think> stay",
+			expected: "a < b, <|im_end|> and <think> stay",
+		},
+		{ name: "a lone partial marker at the end", input: `tail <${BAR}DS`, expected: `tail <${BAR}DS` },
+	])("strips $name without losing reasoning", ({ input, expected }) => {
+		expect(stripDsmlEnvelopes(input)).toBe(expected);
+	});
+
+	it("gives the same result for every way the stream is split", () => {
+		const expected = stripDsmlEnvelopes(REASONING_WITH_DSML);
+		const length = REASONING_WITH_DSML.length;
+		for (let cut = 0; cut <= length; cut++) {
+			expect(filterInPieces(REASONING_WITH_DSML, [cut])).toBe(expected);
+		}
+		expect(
+			filterInPieces(
+				REASONING_WITH_DSML,
+				Array.from({ length }, (_, index) => index),
+			),
+		).toBe(expected);
+	});
+});
+
+describe("openai-completions reasoning stream with DSML (senpi#4621)", () => {
+	it("never streams, stores or replays a DSML envelope in thinking", async () => {
+		// given a server that streams the reported reasoning in 7-character chunks, splitting every marker
+		const bodies: unknown[] = [];
+		const baseUrl = await startServer(async (request, response) => {
+			bodies.push(JSON.parse(await readBody(request)));
+			streamReasoning(response, chunk(REASONING_WITH_DSML, 7));
+		});
+		const model = testModel(baseUrl);
+
+		// when the first reply streams
+		const deltas: string[] = [];
+		const firstStream = streamSimple(model, userContext(), { apiKey: "test", maxRetries: 0 });
+		for await (const event of firstStream) collectThinkingDelta(event, deltas);
+		const first = await firstStream.result();
+
+		// then no streamed delta and no stored block carries DSML, and the real reasoning is intact
+		expect(deltas.join("")).toBe(REASONING_WITHOUT_DSML);
+		expect(deltas.some((delta) => delta.includes("DSML"))).toBe(false);
+		expect(first.content).toEqual([
+			{ type: "thinking", thinking: REASONING_WITHOUT_DSML, thinkingSignature: "reasoning_content" },
+		]);
+
+		// when a session written before the fix replays a thinking block that still holds DSML
+		const poisoned: Context = {
+			messages: [
+				{ role: "user", content: "check the build", timestamp: 1 },
+				{
+					...first,
+					content: [
+						{ type: "thinking", thinking: REASONING_WITH_DSML, thinkingSignature: "reasoning_content" },
+						{ type: "text", text: "The build passes." },
+					],
+				},
+				{ role: "user", content: "go on", timestamp: 2 },
+			],
+		};
+		await streamSimple(model, poisoned, { apiKey: "test", maxRetries: 0, reasoning: "high" }).result();
+
+		// then the request replays the reasoning without the envelope
+		expect(JSON.stringify(bodies[1])).not.toContain("DSML");
+		expect(JSON.stringify(bodies[1])).toContain(JSON.stringify(REASONING_WITHOUT_DSML).slice(1, -1));
+	});
+});
+
+function collectThinkingDelta(event: AssistantMessageEvent, deltas: string[]): void {
+	if (event.type === "thinking_delta") deltas.push(event.delta);
+}
+
+function chunk(text: string, size: number): string[] {
+	const pieces: string[] = [];
+	for (let index = 0; index < text.length; index += size) pieces.push(text.slice(index, index + size));
+	return pieces;
+}
+
+function streamReasoning(response: ServerResponse, pieces: readonly string[]): void {
+	response.writeHead(200, { "content-type": "text/event-stream" });
+	for (const piece of pieces) {
+		response.write(
+			`data: ${JSON.stringify({
+				id: "chatcmpl-dsml",
+				choices: [{ index: 0, delta: { reasoning_content: piece }, finish_reason: null }],
+			})}\n\n`,
+		);
+	}
+	response.write(
+		`data: ${JSON.stringify({ id: "chatcmpl-dsml", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`,
+	);
+	response.end("data: [DONE]\n\n");
+}
+
+function userContext(): Context {
+	return { messages: [{ role: "user", content: "check the build", timestamp: 1 }] };
+}
+
+function testModel(baseUrl: string): Model<"openai-completions"> {
+	const model = getModel("openai", "gpt-4o-mini");
+	if (model === undefined) throw new Error("Missing gpt-4o-mini test model");
+	return { ...model, api: "openai-completions", provider: "test", baseUrl, reasoning: true };
+}
+
+function readBody(request: IncomingMessage): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const parts: Buffer[] = [];
+		request.on("data", (part: Buffer) => parts.push(part));
+		request.on("end", () => resolve(Buffer.concat(parts).toString("utf8")));
+		request.on("error", reject);
+	});
+}
+
+async function startServer(
+	handle: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>,
+): Promise<string> {
+	const server = createServer((request, response) => {
+		Promise.resolve()
+			.then(() => handle(request, response))
+			.catch((error: unknown) => response.destroy(error instanceof Error ? error : new Error(String(error))));
+	});
+	activeServers.push(server);
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", resolve);
+	});
+	const address = server.address();
+	if (address === null || typeof address === "string") throw new Error("Expected TCP server address");
+	return `http://127.0.0.1:${address.port}/v1`;
+}

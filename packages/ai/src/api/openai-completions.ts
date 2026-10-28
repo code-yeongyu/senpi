@@ -43,6 +43,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { DsmlEnvelopeFilter, stripDsmlEnvelopes } from "../utils/dsml-envelope.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import {
@@ -660,6 +661,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 
 			let textBlock: TextContent | null = null;
 			let thinkingBlock: ThinkingContent | null = null;
+			const dsmlFilters = new Map<ThinkingContent, DsmlEnvelopeFilter>();
 			let activeBlock: StreamingBlock | null = null;
 			let deferMixedEvents = false;
 			let hasFinishReason = false;
@@ -705,6 +707,12 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						partial: output,
 					});
 				} else if (block.type === "thinking") {
+					const tail = dsmlFilters.get(block)?.finish() ?? "";
+					dsmlFilters.delete(block);
+					if (tail.length > 0) {
+						block.thinking += tail;
+						stream.push({ type: "thinking_delta", contentIndex, delta: tail, partial: output });
+					}
 					applyStreamedReasoningDetails(block);
 					stream.push({
 						type: "thinking_end",
@@ -959,14 +967,22 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 									? "reasoning_content"
 									: foundReasoningField;
 							const block = ensureThinkingBlock(thinkingSignature);
-							block.thinking += delta;
-							if (deferMixedEvents) {
-								deferredThinkingDeltas.push(delta);
-							} else {
+							// DeepSeek writes DSML tool-call envelopes into its reasoning; they are dropped here, before any
+							// consumer can show, store or replay them (senpi#4621).
+							let dsmlFilter = dsmlFilters.get(block);
+							if (dsmlFilter === undefined) {
+								dsmlFilter = new DsmlEnvelopeFilter();
+								dsmlFilters.set(block, dsmlFilter);
+							}
+							const reasoning = dsmlFilter.push(delta);
+							block.thinking += reasoning;
+							if (reasoning.length > 0 && deferMixedEvents) {
+								deferredThinkingDeltas.push(reasoning);
+							} else if (reasoning.length > 0) {
 								stream.push({
 									type: "thinking_delta",
 									contentIndex: getContentIndex(block),
-									delta,
+									delta: reasoning,
 									partial: output,
 								});
 							}
@@ -1756,7 +1772,10 @@ export function convertMessages(
 			const preservedReasoningDetails =
 				signedReasoningDetails ?? (legacyReasoningDetails.length > 0 ? legacyReasoningDetails : undefined);
 
-			const nonEmptyThinkingBlocks = thinkingBlocks.filter((block) => block.thinking.trim().length > 0);
+			// Sessions written before senpi#4621 can hold DSML envelopes in thinking; never replay them.
+			const nonEmptyThinkingBlocks = thinkingBlocks
+				.map((block) => ({ ...block, thinking: stripDsmlEnvelopes(block.thinking) }))
+				.filter((block) => block.thinking.trim().length > 0);
 			if (nonEmptyThinkingBlocks.length > 0) {
 				if (compat.requiresThinkingAsText) {
 					// Convert thinking blocks to plain text (no tags to avoid model mimicking them)
