@@ -1,3 +1,42 @@
+## 2026-10-26 - Claude account listing reports the block reason too (senpi#4365)
+
+### What changed
+
+- `account-management.ts`: `getProviderAccounts` reports `blockedReason` (`auth_error` | `rate_limit` | `disabled`)
+  and `blockedUntil` while an account is blocked, matching the generic account listing; a slot with
+  `blockReason: "account_disabled"` is now `blocked` (reason `disabled`, no end time) there too.
+
+### Why
+
+- The 1495 regression asserts both listings return the same descriptors.
+
+### Why an extension could not handle it
+
+- This file is the extension; the change keeps it equal to core's listing.
+
+### Expected merge conflict zones
+
+- None upstream: the directory is fork-only.
+
+## 2026-10-26 - An unanswered attempt on another account keeps the serving account's lineage (senpi#4304, senpi#4318)
+
+### What changed
+
+- `session-turn-attempt.ts`: `createSessionTurnAttempt` takes `servedLineage`, the session's binding from before the attempt. An unanswered attempt on an account other than the one that binding names re-publishes the binding instead of its own retry checkpoint, once the attempt's process is gone: after a failure, a discard, or an abort that closed it. If Claude Code rejected a fork boundary, that boundary is dropped from the binding first (`withoutMissingAssistantUuid`). A process kept after an abort, and any attempt on the serving account, record their own retry checkpoint as before.
+- `session-stream.ts`: `createResidentAttempt` reads the binding after restored-binding admission and passes it to the attempt.
+
+### Why
+
+- A prompt cache lives on the account that served the session. A failed attempt on account B replaced the session's binding with B's retry checkpoint. The next request then preferred B, which never served the session, over the recovered account A that holds its cache, and wrote the whole conversation to B (oh-my-openagent#10304). When B was still blocked and the request went back to A, the continuity line still read `account_changed` with `seatChanged: true` (senpi#4304).
+
+### Why an extension could not handle it
+
+- The session binding and the account preference are internal to the builtin's resident session lane.
+
+### Expected merge conflict zones
+
+- LOW: the unanswered-attempt branches of `createSessionTurnAttempt` (`session-turn-attempt.ts`); the `servedLineage` line in `createResidentAttempt` (`session-stream.ts`).
+
 ## 2026-10-26 - Attribute billing errors to the attempted Claude account (#4364)
 
 ### What changed

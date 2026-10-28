@@ -12,8 +12,10 @@ import { type FallbackModelLookup, parseFallbackSelector } from "./retry-fallbac
 /**
  * `request_refused`: an `auth` failure on a credential that served a response moments before, so the
  * provider refused this request rather than the key (senpi#2491).
+ * `model_unavailable`: an `unknown` failure the provider answered with HTTP 404, the status a model
+ * endpoint returns for a model id this account cannot use (senpi#4578).
  */
-export type ProviderFailureCategory = ProviderDiagnosticCategory | "request_refused";
+export type ProviderFailureCategory = ProviderDiagnosticCategory | "request_refused" | "model_unavailable";
 
 /**
  * Structured failure of a turn that ended with a provider error, attached to `agent_end`.
@@ -47,22 +49,23 @@ const ACTIONS: Record<Exclude<ProviderFailureCategory, "unknown">, { reason: str
 		reason: "the provider refused this request, but the same key worked moments ago, so it may still be valid",
 		action: "send the message again or choose another model; if it keeps failing, re-authenticate",
 	},
+	model_unavailable: {
+		reason: "the model is not available for this account",
+		action: "choose another model, or check that your plan or key includes this model",
+	},
 	rate_limit: { reason: "the provider is rate limiting requests", action: "retry later or set a fallback model" },
 	quota: { reason: "the provider account is out of quota", action: "check the plan or credits" },
 	context_limit: {
 		reason: "the conversation is larger than the model's context",
 		action: "compact or shorten the conversation",
 	},
-	invalid_request: { reason: "the provider rejected the request as invalid", action: "report it with the code" },
+	invalid_request: {
+		reason: "the provider could not accept this request",
+		action: "send the message again; if it repeats, choose another model or start a new session",
+	},
 	provider_unavailable: { reason: "the provider is unavailable", action: "retry or switch provider" },
 	network: { reason: "the connection to the provider failed", action: "check connectivity" },
 };
-
-function identifier(diagnostic: ProviderDiagnostic | undefined): string {
-	if (diagnostic?.code !== undefined) return `code ${diagnostic.code}`;
-	if (diagnostic?.httpStatus !== undefined) return `status ${diagnostic.httpStatus}`;
-	return "no code";
-}
 
 /** An `auth` failure on a credential that served a response moments before: the request was refused, not the key. */
 export function isRequestLevelRefusal(message: AssistantMessage): boolean {
@@ -99,12 +102,14 @@ export function describeProviderFailure(
 ): ProviderFailure {
 	const category: ProviderFailureCategory = options.requestRefused
 		? "request_refused"
-		: (diagnostic?.category ?? "unknown");
+		: diagnostic?.category === "unknown" && diagnostic.httpStatus === 404
+			? "model_unavailable"
+			: (diagnostic?.category ?? "unknown");
 	const detail =
 		category === "unknown"
 			? {
-					reason: `the provider returned an error that could not be classified (${provider}, ${identifier(diagnostic)})`,
-					action: "retry once; if it repeats, switch the model or report the code",
+					reason: "the provider returned an unexpected error",
+					action: "send the message again; if it repeats, choose another model",
 				}
 			: ACTIONS[category];
 	const resetsAt = diagnostic?.resetsAt;
@@ -117,7 +122,18 @@ export function describeProviderFailure(
 		...(resetsAt === undefined ? {} : { resetsAt }),
 		...detail,
 		...(category === "request_refused" ? { action: `${detail.action} ${provider}` } : {}),
-		...(resetsAt === undefined ? {} : { reason: `${detail.reason} until ${new Date(resetsAt).toISOString()}` }),
+		...(resetsAt === undefined
+			? {}
+			: {
+					reason: `${detail.reason} until ${new Date(resetsAt).toLocaleString("en-US", {
+						year: "numeric",
+						month: "short",
+						day: "numeric",
+						hour: "numeric",
+						minute: "2-digit",
+						timeZoneName: "short",
+					})}`,
+				}),
 	};
 }
 

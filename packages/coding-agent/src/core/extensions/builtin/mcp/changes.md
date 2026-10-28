@@ -1,3 +1,49 @@
+## 2026-10-27 - Negotiate advertised legacy MCP versions (senpi#4402)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts`: use the SDK's supported legacy versions when discovery rejects the modern version, select the existing legacy handshake when appropriate, and name server versions when neither era is supported.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: retain the actionable version-negotiation diagnostic in stdio connection errors.
+
+### Why
+
+- Servers advertising implemented legacy versions in a `-32022` error failed to connect because the probe considered only modern versions. Modern selection and its single retry remain unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts` own transport negotiation before extension requests can run.
+
+### Expected merge conflict zones
+
+- LOW: version selection in `packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts` and discovery errors in `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`.
+
+## 2026-10-25 - Follow negotiated modern MCP tasks (senpi#4195, #4238)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: negotiate `io.modelcontextprotocol/tasks` only with advertising modern servers and follow `tools/call` task handles before SDK output validation; reuse the originating MRTR presenter and authority checks for task input.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/tasks.ts`: own polling, terminal results, deduplicated task input, and `tasks/cancel` on abort or the separate 30-minute cap (`SENPI_MCP_TASK_TIMEOUT_MS`).
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/errors.ts`: name the task and lifetime setting on cap expiry and retain numeric task failure codes.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts`: route task requests with `Mcp-Name = taskId`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: centralize abortable polling timers and close observers, and remove interrupted-promise listeners immediately on abort.
+- `packages/coding-agent/docs/mcp.md`: document the lifetime setting beside request timeout settings.
+- `packages/coding-agent/test/mcp/modern-tasks.test.ts`, `modern-tasks-http.test.ts`, and `fixtures/mrtr-lifecycle.ts`: cover task settlement, cancellation, polling, consent, disconnect cleanup, routing headers, and tool-row status through real modern SDK requests.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: the adapter rejected every task handle. The lead selected Option 2: task lifetime is separate from RPC timeouts, while ordinary calls retain `min(maxTotalTimeout, 9 * requestTimeout + 300000)`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/tasks.ts`: per-poll deadlines must not prematurely end a valid long-running task; the independent cap and abort path explicitly request task cancellation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: negotiation, request origins, MRTR presenters, and final SDK result validation are owned by the builtin client.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: modern dispatch and consent collection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts`: routing-header method selection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: safe lifecycle helpers.
+
 ## 2026-10-25 - MRTR review cleanup and startup diagnostics (#4226)
 
 ### What changed

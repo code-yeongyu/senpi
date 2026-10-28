@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CompactStorageIo } from "../../src/modes/rpc/compact-storage-io.ts";
+import { type CompactStorageIo, nodeCompactStorageIo } from "../../src/modes/rpc/compact-storage-io.ts";
 
 let ordinal = 0;
 /** Producer-side fixture numbering; the consumer never fills missing identity fields. */
@@ -54,9 +54,9 @@ export function controlledIo(): {
 				await pass("write", path);
 				await writeFile(path, data, { flag: "wx", mode: 0o600 });
 			},
-			async readFile(path) {
+			async readFile(path, range) {
 				await pass("read", path);
-				return readFile(path);
+				return nodeCompactStorageIo.readFile(path, range);
 			},
 			async unlink(path) {
 				await pass("unlink", path);

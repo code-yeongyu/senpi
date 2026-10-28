@@ -9,7 +9,8 @@ export interface TerminalPromptOptions {
  * `bash` and `monitor` leave the model's direct tool list whenever the session has an
  * `eval` tool, so their call shapes are rendered per branch: a hardcoded direct shape
  * would teach a call the model cannot make. The steering companions
- * (`bash_output`/`bash_input`/`bash_resize`/`kill_bash`) stay directly callable in both.
+ * (`bash_output`/`bash_input`/`bash_resize`/`kill_bash`) stay callable by name in both; `bash_input` and
+ * `bash_resize` are search-exposed and activate on that first call (senpi#4446).
  */
 export function buildTerminalPromptSection(options: TerminalPromptOptions): string {
 	const bash = options.evalOnly ? "tool.bash" : "bash";

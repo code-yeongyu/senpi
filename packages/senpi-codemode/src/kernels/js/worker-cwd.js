@@ -73,17 +73,18 @@ export function installSessionCwd(cwd, options) {
 	const path = process.getBuiltinModule("node:path");
 	const resolveFromProcess = path.resolve;
 	path.resolve = (...segments) => resolveFromProcess(root, ...segments);
-	patchFs(process.getBuiltinModule("node:fs"), process.getBuiltinModule("node:fs/promises"), at, root);
+	patchFs(process.getBuiltinModule("node:fs"), process.getBuiltinModule("node:fs/promises"), at, root, options?.permissionInterposed);
 	patchChildProcess(process.getBuiltinModule("node:child_process"), at, root);
 	patchBun(globalThis.Bun, at, root);
 	syncBuiltinESMExports();
 }
 
-function patchFs(fs, promises, at, root) {
+function patchFs(fs, promises, at, root, permissionInterposed) {
 	const promiseModules = [...new Set([fs.promises, promises])];
 	for (const [name, indexes] of Object.entries(FS_PATH_ARGS)) {
 		replace(fs, name, (fn) => resolvingArgs(fn, indexes, at));
-		replace(fs, `${name}Sync`, (fn) => resolvingArgs(fn, indexes, at));
+		// The early wrapper must see the requested spelling before cwd resolution (#4309).
+		if (!(permissionInterposed && name === "writeFile")) replace(fs, `${name}Sync`, (fn) => resolvingArgs(fn, indexes, at));
 		for (const target of promiseModules) replace(target, name, (fn) => resolvingArgs(fn, indexes, at));
 	}
 	replace(fs.realpath, "native", (fn) => resolvingArgs(fn, [0], at));

@@ -43,13 +43,13 @@ it("leases a page across cut release and compaction, and refuses foreign cursors
 		dir: root.dir,
 		io: {
 			...real,
-			async readFile(path) {
+			async readFile(path, range) {
 				if (hold && /[/\\]page-/.test(path)) {
 					hold = false;
 					entered.resolve(path);
 					await gate.promise;
 				}
-				return real.readFile(path);
+				return real.readFile(path, range);
 			},
 		},
 	});

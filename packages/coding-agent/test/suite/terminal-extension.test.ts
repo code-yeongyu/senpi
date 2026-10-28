@@ -36,7 +36,7 @@ vi.mock("../../src/core/extensions/builtin/terminal/tools/spawn.ts", async (impo
 	};
 });
 
-const COMPANIONS = ["bash_output", "bash_input", "bash_resize", "kill_bash", "monitor"];
+const COMPANIONS = ["bash_output", "kill_bash", "monitor"];
 
 function firstText(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content.find((block) => block.type === "text")?.text ?? "";
@@ -66,7 +66,7 @@ describe("terminal builtin extension — tool surface & mutual exclusion", () =>
 		return harness;
 	}
 
-	it("registers PTY bash plus the four companion tools", async () => {
+	it("registers PTY bash plus the resident companion tools", async () => {
 		delete process.env.PI_ANTHROPIC_BASH;
 		const harness = await anthropicHarness();
 		await harness.session.bindExtensions({});

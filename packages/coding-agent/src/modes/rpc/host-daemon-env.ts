@@ -90,6 +90,9 @@ const TRANSIENT_ENV_NAMES = new Set([
 	"SENPI_RPC_HOST_GENERATION",
 	"SENPI_RPC_HOST_DAEMON_DIR",
 	"SENPI_RPC_HOST_EXPECTED_RUNTIME_BUILD_ID",
+	// Engine trust launch plumbing: a daemon gets the generation only through its forced hand-off.
+	"SENPI_ENGINE_TRUST",
+	"SENPI_ENGINE_TRUST_HOP",
 ]);
 
 export function daemonEnvIsAllowed(name: string, platform: NodeJS.Platform = process.platform): boolean {

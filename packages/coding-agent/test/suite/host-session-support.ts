@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,7 +32,7 @@ export async function cleanupHostSessionRigs(): Promise<void> {
 		await model.close();
 	}
 	vi.restoreAllMocks();
-	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+	for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
 }
 
 export async function rig(held = false, hostEnv: Readonly<Record<string, string>> = {}) {

@@ -1,3 +1,39 @@
+## 2026-10-26 - Junction and ReFS receipts for the socket-secret adapter (senpi#4375)
+
+### What changed
+
+- `.github/workflows/ci.yml`: job `socket-secret-native-windows` also creates two NTFS directory junctions on the fixed volume (to the WinFsp `M:` volume and to the VHDX `V:` volume) and a ReFS-formatted VHDX (`R:`), and exports `RECEIPT_JUNCTION_WINFSP`, `RECEIPT_JUNCTION_VHDX` and `RECEIPT_REFS_VHDX`. If the image cannot format ReFS, the step exports `RECEIPT_REFS_UNAVAILABLE` with diskpart's exit instead of failing the job.
+
+### Why
+
+- senpi#4354: the classifying handle follows reparse points, but no native receipt proved it, and the ReFS-local rule had only fake coverage.
+
+### Why an extension could not handle it
+
+- CI workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `Mount receipt fixtures` step of `socket-secret-native-windows` in `ci.yml`, if another fixture lands beside it.
+
+## 2026-10-26 - Windows native receipts for the socket-secret adapter (senpi#4302)
+
+### What changed
+
+- `.github/workflows/ci.yml`: new job `socket-secret-native-windows` on `windows-latest`, gated on the platform scope and added to the `Check and test` fan-in. It installs WinFsp 2.1 and Dokany 2.3.1 from their release assets, mounts a WinFsp disk volume reporting NTFS, a WinFsp network volume, a Dokany mirror, a local SMB share (mapped and UNC) and a VHDX-mounted NTFS volume, runs `cargo test -p senpi-socket-secret` and then the ignored native receipts, and writes every `RECEIPT_` line to the job summary.
+
+### Why
+
+- sisyphuslabs/omo-desktop-app#4199 design receipts 27 (PID-4 kernel-session identity) and 28 (`FileFsDriverPathInformation` locality) need a real Windows kernel; fakes cannot supply them, and no VM is used.
+
+### Why an extension could not handle it
+
+- CI workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the job list and the `Check and test` needs list in `ci.yml`, if another Windows job lands beside it.
+
 ## 2026-10-26 - publish-model-catalog requires a same-repository push for workflow_run runs (senpi#4344)
 
 ### What changed

@@ -41,6 +41,7 @@ import { validateChildModuleRegistration } from "../tool-dispatch/offload.ts";
 import { type ReadClassifier, registerReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import { validateMcpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import { McpServerRegistry } from "./mcp-server-registry.ts";
 import { readPermissionPreset } from "./builtin/permission-system/preset-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
@@ -53,6 +54,7 @@ import {
 	rememberExtensionFactory,
 } from "./extension-module-cache.ts";
 import { createLifecycleApi } from "./lifecycle-api.ts";
+import { withProviderLoginStart } from "./provider-login-start.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
 import type {
 	AppendEntryOptions,
@@ -77,6 +79,7 @@ import type {
 	ProviderConfig,
 	RegisteredChildModule,
 	RegisteredCommand,
+	RegisteredMcpServer,
 	RegisteredMcpServerDeclaration,
 	SendMessageItem,
 	SendMessageOptions,
@@ -302,6 +305,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		pendingProviderRegistrations: [],
 		pendingNativeProviderRegistrations: [],
 		pendingVirtualModelRegistrations: [],
+		mcpServers: new McpServerRegistry(),
 		createContext: notInitialized,
 		assertActive,
 		invalidate: (message) => {
@@ -356,6 +360,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 				({ definition }) => definition.provider !== provider || definition.id !== id,
 			);
 		},
+		emitProviderLoginStart: async () => {},
 	};
 
 	return runtime;
@@ -605,17 +610,28 @@ function createExtensionAPI(
 		},
 
 		registerMcpServer(name: string, config: RegisteredMcpServerDeclaration["config"]): void {
-			runtime.assertActive();
+			assertActive();
 			const error = validateMcpServerDeclaration(name, config);
 			if (error) {
 				throw new Error(error);
 			}
 			extension.mcpServers.set(name, {
 				name,
-				config,
+				config: structuredClone(config),
 				extensionPath: extension.path,
 				registrationCwd: extension.registrationCwd,
 			});
+			runtime.mcpServers.changed();
+		},
+
+		unregisterMcpServer(name: string): void {
+			assertActive();
+			if (extension.mcpServers.delete(name)) runtime.mcpServers.changed();
+		},
+
+		getMcpServers(): RegisteredMcpServer[] {
+			assertActive();
+			return runtime.mcpServers.list();
 		},
 
 		// Flag access - checks extension registered it, reads from runtime
@@ -785,7 +801,10 @@ function createExtensionAPI(
 			assertActive();
 			if (typeof providerOrName === "string") {
 				if (!config) throw new Error("Provider config is required when registering by name");
-				applyRuntimeChange(() => runtime.registerProvider(providerOrName, config, extension.path));
+				const wrapped = withProviderLoginStart(providerOrName, config, (event) =>
+					runtime.emitProviderLoginStart(event),
+				);
+				applyRuntimeChange(() => runtime.registerProvider(providerOrName, wrapped, extension.path));
 				return;
 			}
 			applyRuntimeChange(() => runtime.registerNativeProvider(providerOrName, extension.path));
@@ -993,6 +1012,7 @@ async function initializeExtension(
 ): Promise<Extension> {
 	const extension = createExtension(extensionPath, resolvedPath, cwd);
 	const load = createExtensionAPI(extension, runtime, cwd, eventBus, session);
+	runtime.mcpServers.track(extension);
 	try {
 		await runOwnedBy(extension, () => factory(load.api));
 		load.commit();
@@ -1002,6 +1022,7 @@ async function initializeExtension(
 			runtimeFactories.set(runtime, factories);
 		}
 	} catch (error) {
+		runtime.mcpServers.untrack(extension);
 		load.discard();
 		throw error;
 	}
