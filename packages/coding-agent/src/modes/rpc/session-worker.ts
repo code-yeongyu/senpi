@@ -26,7 +26,8 @@ import type { RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts"
 import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
 import { type CanonicalControl, carriedCanonical, carriedRefusal } from "./compact-canonical-pairing.ts";
-import { protocolDepthLimitOf } from "./compact-protocol-depth.ts";
+import { COMPACT_PROTOCOL_MAX_DEPTH, protocolDepthLimitOf } from "./compact-protocol-depth.ts";
+import { jsonTextDeeperThan, legacyJsonText } from "./legacy-record-depth.ts";
 import { CompactProducerStamp } from "./compact-producer-stamp.ts";
 import {
 	type HostToSessionWorker,
@@ -98,7 +99,7 @@ class WorkerEventWriter extends SessionEventWriter {
 		}));
 	}
 	override enqueue(_sessionId: string, record: object): boolean {
-		const line = JSON.stringify(record);
+		const line = legacyJsonText(record);
 		if (Buffer.byteLength(line) > SESSION_WORKER_LIMITS.outputBytes) failWorker("session_worker_output_limit");
 		const session = entry?.runtime?.session;
 		if (!session) throw new Error("Session output preceded runtime creation");
@@ -149,7 +150,9 @@ class WorkerEventWriter extends SessionEventWriter {
 			type: "output",
 			// Keep one JSON-normal transfer format, including toJSON and non-cloneable fields.
 			// S12 replaces this whole-record serialization with compact records and permits.
-			record: JSON.parse(line) as object,
+			...(jsonTextDeeperThan(line, COMPACT_PROTOCOL_MAX_DEPTH)
+				? { record: {}, recordText: line }
+				: { record: JSON.parse(line) as object }),
 			connection: this.currentConnection(),
 			signal,
 			activity,

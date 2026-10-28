@@ -1,7 +1,7 @@
 import { checkpointComponents } from "./compact-catalog-families.ts";
 import { COMPACT_LEAF_CODE_UNITS, type CompactContentStore, type LeafId } from "./compact-content-store.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
-import { type FrozenBytes, producePage, type RecoveryPage } from "./compact-recovery-bytes.ts";
+import { producePage, type RecoveryPage } from "./compact-recovery-bytes.ts";
 import {
 	type CatalogComponent,
 	type CatalogRead,
@@ -20,6 +20,7 @@ import {
 } from "./compact-recovery-ids.ts";
 import type { CheckpointToken, RecoveryRouteKind } from "./compact-recovery-types.ts";
 import { CompactValues } from "./compact-values.ts";
+import { VerifiedComponents } from "./compact-verified-components.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 
 /** A manifest string: inline when it is a bounded protocol id, otherwise a ref to its exact stored value. */
@@ -70,10 +71,6 @@ interface Built {
 	readonly root: CatalogRoot;
 	readonly store: CompactContentStore;
 }
-interface Opened {
-	readonly ref: ContentRef;
-	readonly bytes: FrozenBytes;
-}
 
 const chunks = (value: string): string[] => {
 	const parts: string[] = [];
@@ -83,15 +80,16 @@ const chunks = (value: string): string[] => {
 };
 
 /**
- * One manifest and catalog per token, built once from the pinned root and released with the token; one open component
- * per token while it pages (S11a, RULING-62 Q1 (1)): opened and verified once, replaced by the next component paged,
- * dropped with the token. The open source holds leaf positions, never bytes; S11b owns the current-page retry cache.
+ * One manifest and catalog per token, built once from the pinned root and released with the token. A component is
+ * verified once per frozen root (RULING-69 (2)): every later page or re-open on that root reuses the verified source,
+ * and the entry is dropped with the token's lease. A source holds leaf positions, never bytes; S11b owns the
+ * current-page retry cache.
  */
 export class RecoveryManifests {
 	private readonly catalogs = new CompactRecoveryCatalog();
 	private readonly building = new Map<string, Promise<Built>>();
 	private readonly ready = new Map<string, Built>();
-	private readonly opened = new Map<string, Opened>();
+	private readonly verified = new VerifiedComponents();
 	private counter = 0;
 
 	manifest(
@@ -120,26 +118,34 @@ export class RecoveryManifests {
 		return lane.cutStorage(root, (store, valid) => this.catalogs.read(store, built.root, parsed.value, valid));
 	}
 
-	/** One page of a component's bytes at a raw byte offset; a ref that names a node or nothing is `range`. */
+	get verifiedComponents(): number {
+		return this.verified.size;
+	}
+
+	/**
+	 * One page of a component's bytes at a raw byte offset; a ref that names a node or nothing is `range`. A first open
+	 * verifies the component inside this request under its `signal`; it is cached only while the token still holds it.
+	 */
 	page(
 		tokenId: string,
 		lane: SessionAcceptanceLane,
 		root: FrozenAcceptedRoot,
 		ref: string,
 		offset: number,
+		signal?: AbortSignal,
 	): Promise<RecoveryPage> {
 		const parsed = parseContentRef(ref);
 		const built = this.ready.get(tokenId);
 		if (!parsed.ok || !built) throw new CompactReadError("range");
 		return lane.cutStorage(root, async (store, valid) => {
-			let open = this.opened.get(tokenId);
-			if (open?.ref !== parsed.value) {
-				const read = await this.catalogs.read(store, built.root, parsed.value, valid);
+			let bytes = this.verified.get(tokenId, parsed.value);
+			if (!bytes) {
+				const read = await this.catalogs.read(store, built.root, parsed.value, valid, signal);
 				if (read.kind !== "component") throw new CompactReadError("range");
-				open = { ref: read.ref, bytes: read.bytes };
-				this.opened.set(tokenId, open);
+				bytes = read.bytes;
+				if (this.ready.get(tokenId) === built) this.verified.set(tokenId, read.ref, bytes);
 			}
-			return producePage(open.bytes, offset, valid);
+			return producePage(bytes, offset, valid);
 		});
 	}
 
@@ -147,7 +153,7 @@ export class RecoveryManifests {
 		const built = this.ready.get(tokenId);
 		this.ready.delete(tokenId);
 		this.building.delete(tokenId);
-		this.opened.delete(tokenId);
+		this.verified.drop(tokenId);
 		if (built) this.catalogs.release(built.store, built.root);
 	}
 

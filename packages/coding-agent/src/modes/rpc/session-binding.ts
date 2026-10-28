@@ -14,6 +14,7 @@ import {
 	type RpcConnectionOptions,
 	type RpcConnectionSink,
 } from "./connection-handler.ts";
+import { enqueueLegacyRecord } from "./legacy-record-depth.ts";
 import { createToolAttributionSpans } from "./session-attribution.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionEntry } from "./session-registry.ts";
@@ -78,7 +79,7 @@ export async function createRpcSessionBinding(
 			const carrier = recoveryCarrier(record);
 			lane.accept(record, carrier, unit(carrier, canonical, record), refused);
 		} else carryCanonical(record, canonical, refused);
-		writer.enqueue(sessionId, record);
+		enqueueLegacyRecord(writer, sessionId, record);
 	};
 	// Attachments share one entry, so resolve the host from the live runtime. In
 	// particular, switch_session must use the entry's replacement-aware method

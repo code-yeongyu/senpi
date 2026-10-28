@@ -61,9 +61,10 @@ export interface CallProjection {
 	readonly startedAtMs: number | null;
 	readonly outcome: CallOutcome | null;
 	/**
-	 * `omitted` counts completed children a projecting path left out (RULING-49): 0 everywhere since the settled store
-	 * pages the projection instead of capping it (RULING-60 Q3); a consumer that truncates for its own bound reports
-	 * its exact count here. `complete` is false when a child is still open, incomplete, or omitted.
+	 * `omitted` counts completed children a projecting path left out (RULING-49). It is 0 whenever paging is complete:
+	 * the settled store pages every completed child instead of capping it (RULING-60 Q3, RULING-67 (1)), and no producer
+	 * truncates. A consumer that truncates for its own bound reports its exact count here and carries RULING-49's
+	 * exact-count test. `complete` is false when a child is still open, incomplete, or omitted.
 	 */
 	readonly nestedCalls: {
 		readonly calls: readonly CallProjection[];

@@ -232,10 +232,16 @@ export class RecoveryCheckpoints {
 
 	/**
 	 * One bounded page (at most `FRAGMENT_MAX_BYTES` raw bytes) of a catalog component at a raw byte offset, under the
-	 * same claim and lease as every read (S11a; the cursor, ordinal and request limits around it are S11b).
+	 * same claim and lease as every read (S11a; the cursor, ordinal and request limits around it are S11b). `signal` is
+	 * the request's budget: a first open's verification is charged to it and stops, typed `aborted`, when it aborts.
 	 */
-	readCatalogPage(token: RecoveryToken, caller: RecoveryCaller, ref: string, offset: number) {
-		return this.read(token, caller, (lane, root) => this.manifests.page(token.id, lane, root, ref, offset));
+	readCatalogPage(token: RecoveryToken, caller: RecoveryCaller, ref: string, offset: number, signal?: AbortSignal) {
+		return this.read(token, caller, (lane, root) => this.manifests.page(token.id, lane, root, ref, offset, signal));
+	}
+
+	/** Components verified under the live frozen roots (RULING-69 (2)); a root's entries go with its lease. */
+	get verifiedComponents(): number {
+		return this.manifests.verifiedComponents;
 	}
 
 	private async read<T>(

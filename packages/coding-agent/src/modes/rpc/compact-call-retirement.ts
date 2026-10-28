@@ -19,19 +19,45 @@ export function settleCall(table: CompactCallTable, call: OutstandingCall, isErr
 	return retire(table, settled);
 }
 
-function retire(table: CompactCallTable, call: OutstandingCall): CallProjection {
+interface RetireFrame {
+	readonly call: OutstandingCall;
+	readonly completed: readonly OutstandingCall[];
+	readonly everyChildCompleted: boolean;
+	readonly calls: CallProjection[];
+}
+
+function frame(table: CompactCallTable, call: OutstandingCall): RetireFrame {
 	const children = table.childrenOf(call.runtimeItemKey);
 	const completed = children.filter(terminal);
-	const calls = completed.map((child) => retire(table, child));
-	table.remove(call.runtimeItemKey);
-	return {
-		...projectionOf(call),
-		nestedCalls: {
-			calls,
-			complete: completed.length === children.length && calls.every((child) => child.nestedCalls.complete),
-			omitted: 0,
-		},
-	};
+	return { call, completed, everyChildCompleted: completed.length === children.length, calls: [] };
+}
+
+/**
+ * Post-order over the completed descendants with an explicit stack (RULING-59 (1), RULING-67 (2)): one frame per open
+ * level, so the stack is bounded by the live call table, never by the JS stack, and a chain of any depth settles. A
+ * call leaves the table once every completed child has, in the order the recursive walk removed them.
+ */
+function retire(table: CompactCallTable, call: OutstandingCall): CallProjection {
+	const stack = [frame(table, call)];
+	for (;;) {
+		const top = stack[stack.length - 1];
+		if (!top) throw new Error("call retirement lost its root");
+		const child = top.completed[top.calls.length];
+		if (child) {
+			stack.push(frame(table, child));
+			continue;
+		}
+		table.remove(top.call.runtimeItemKey);
+		const complete = top.everyChildCompleted && top.calls.every((projection) => projection.nestedCalls.complete);
+		const projection: CallProjection = {
+			...projectionOf(top.call),
+			nestedCalls: { calls: top.calls, complete, omitted: 0 },
+		};
+		stack.pop();
+		const parent = stack[stack.length - 1];
+		if (!parent) return projection;
+		parent.calls.push(projection);
+	}
 }
 
 /** A child whose parent left the table, or can no longer get a carrier, has no projection to ride on. */

@@ -97,17 +97,21 @@ class FrozenLeafBytes implements FrozenBytes {
 /**
  * Opens a component's stored leaves as `FrozenBytes` after verifying them, one leaf resident, against the catalog
  * entry's length and digest; a mismatch is `integrity` and no byte source exists. `valid` runs after every leaf read.
+ * The verification belongs to the request that asked for it (RULING-69 (2)): once `signal` aborts, no further leaf is
+ * read and the open is the typed `aborted`, holding nothing.
  */
 export async function openFrozenBytes(
 	entry: Pick<CatalogEntry, "length" | "digest">,
 	leaves: readonly LeafId[],
 	read: ReadLeaf,
 	valid: () => void,
+	signal?: AbortSignal,
 ): Promise<FrozenBytes> {
 	const digester = catalogDigester("leaf", entry.length);
 	const starts: number[] = [0];
 	let fed = 0;
 	for (const leaf of leaves) {
+		if (signal?.aborted) throw new CompactReadError("aborted");
 		const stored = storedBytes(await read(leaf));
 		valid();
 		fed += stored.length;

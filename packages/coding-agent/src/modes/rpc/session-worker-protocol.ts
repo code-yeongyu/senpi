@@ -117,6 +117,9 @@ export type SessionWorkerToHost =
 			/** One per output frame of this worker incarnation, from 0; continuity only, never the accepted sequence. */
 			ordinal?: number;
 			record: object;
+			/** A record nested past the protocol depth limit travels as its JSON text (`record` is then `{}`): the host parses
+			 * text without recursion, where its structured-clone reader drops a deep frame (Node ~4,000 levels; RULING-68). */
+			recordText?: string;
 			recovery?: RecoveryCarrier;
 			/** Transcript transitions the isolate's manager committed before this record, accepted just before it. */
 			transitions?: readonly TranscriptTransition[];

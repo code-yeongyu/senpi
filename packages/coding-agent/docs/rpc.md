@@ -530,6 +530,15 @@ the event's projections exceed the limit) and the host reports it once on stderr
 still ends that session epoch's compact state. Every refused record of the session is counted the same way whether
 or not the compact state is still live: after such a loss, refusals on either projection keep counting.
 
+The legacy JSONL stream has no protocol depth limit: a record deeper than 1,024 levels is delivered unchanged to a
+legacy client. Only a record the runtime's own JSON engine cannot serialize (above about 6,185 levels on Node 24 or
+40,000 on Bun 1.4, less on a deep stack) is refused, as the typed `LegacyRecordDepthError`: it is not delivered,
+the session (and a worker session's isolate) keeps running, the next record is delivered, and the host counts it
+and reports it once on stderr as
+`senpi rpc host: legacy record refused: <type> nests deeper than this runtime's JSON engine limit (session <id>)`.
+A worker session sends a record deeper than 1,024 levels to the host as JSON text, so the host's structured-clone
+reader (which stops near 4,000 levels on Node) never drops it.
+
 #### get_recovery_page
 
 Behind the same flag, one bounded page of a frozen checkpoint component, through the recovery-token owner
