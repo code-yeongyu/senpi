@@ -203,9 +203,10 @@ it("snapshots getters once before later getters can mutate earlier properties", 
 // process keeps the walk cold: warmed-up code uses smaller frames and hides the earlier overflow.
 // RULING-68: under the engine limit the normalizer equals the JSON round trip exactly; past it (where the round trip
 // throws the engine's RangeError) it refuses with the typed LegacyRecordDepthError. The boundary is searched with the
-// same input shape and call chain the samples use, but a stack limit still moves with frame sizes, so no sample assumes
-// which side it lands on: each is held to the invariant, and 200,000 is past every engine's limit.
-// 20,000 is under Bun's limit and past Node's.
+// same input shape and call chain the samples use, but where (and whether) nested arrays hit a limit depends on the
+// engine: some serialize arrays without recursion and have no array limit at all. So no array sample assumes which
+// side it lands on; each is held to the invariant. The one sample that must refuse is an endless toJSON chain of
+// fresh objects: every engine serializes toJSON results by recursion, so its round trip throws RangeError everywhere.
 it("normalizes deeply nested arrays like the JSON round trip", async () => {
 	const source = new URL("../../src/modes/rpc/json-normal-value.ts", import.meta.url).href;
 	const script = `
@@ -221,8 +222,10 @@ it("normalizes deeply nested arrays like the JSON round trip", async () => {
 			if (roundTrip(record(middle)) === "RangeError") high = middle - 1;
 			else low = middle;
 		}
-		const results = [low - 16, low, low + 1, 20000, 200000].map((depth) => {
-			const input = record(depth);
+		const level = () => ({ toJSON: () => ({ inner: level() }) });
+		const endless = { type: "tool_execution_end", result: { content: [], details: level() } };
+		const results = [low - 16, low, low + 1, 20000, -1].map((depth) => {
+			const input = depth < 0 ? endless : record(depth);
 			const reference = roundTrip(input);
 			const normalized = outcome(() => normalizeJsonValue(input).value);
 			return { depth, low, same: normalized === reference, reference: reference.slice(0, 48), normalized: normalized.slice(0, 48) };
@@ -234,9 +237,9 @@ it("normalizes deeply nested arrays like the JSON round trip", async () => {
 		JSON.parse(stdout);
 	expect(results).toHaveLength(5);
 	const underLimit = results[0];
-	const pastEveryEngine = results[4];
+	const endlessChain = results[4];
 	expect(underLimit?.reference, "the record under the engine limit serializes").not.toBe("RangeError");
-	expect(pastEveryEngine?.reference, "200,000 levels is past every engine's limit").toBe("RangeError");
+	expect(endlessChain?.reference, "an endless toJSON chain overflows every engine").toBe("RangeError");
 	for (const { depth, low, same, reference, normalized } of results) {
 		if (reference === "RangeError")
 			expect({ depth, low, normalized }).toEqual({ depth, low, normalized: "LegacyRecordDepthError" });
