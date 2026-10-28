@@ -5,17 +5,21 @@
  * (senpi#4621). This filter removes the envelopes from a reasoning stream as it arrives and keeps every
  * character outside them: prose next to DSML-shaped text is never lost and never held without bound.
  *
- * - Envelope text is dropped only when the envelope's own outermost closing tag arrives; nothing is dropped on
- *   suspicion. An envelope still open when the stream ends was quoted: its held text is released, tags removed. A
- *   hold that passes `LONE_HOLD_CHARS` is released the same way, so the display never stalls without bound.
- * - Nesting is strict: a closing tag pops only the innermost open tag of the same name; any other closing tag is
- *   ignored. Inside a confirmed envelope's `parameter` value every DSML tag is value text, not structure, so a
- *   quoted tag in a tool argument can neither close the envelope early nor keep it open.
- * - A second opening tag after only whitespace nests (`invoke` > `parameter`): the envelope is confirmed tool
- *   syntax. A second opening tag after real prose means the first tag was quoted: that prose is released at once
- *   and the new tag becomes the lone tag.
- * - A closing tag with nothing open is dropped; an opening tag that never completes at the end of the stream is
- *   released as text.
+ * Two states, no third:
+ * - A CONFIRMED envelope is real tool syntax: an opening tag followed, after only whitespace, by a nested DSML
+ *   opening tag (`invoke` > `parameter`). Everything from the outer opening tag is dropped as it streams, with
+ *   no hold and no size cap, until the envelope's open tags are all closed or the stream ends. Inside it a
+ *   closing tag pops only the innermost open tag of the same name, and inside a `parameter` value every DSML
+ *   tag except `</parameter>` is value text, so a stray or quoted closing tag can never end the envelope early.
+ * - An UNCONFIRMED lone tag may be prose that quotes a tag. The text after it is held, at most
+ *   `LONE_HOLD_CHARS`, and released as text (the tag removed) when the stream ends, when the hold passes the
+ *   cap, or when real prose followed by a new tag shows the first tag was quoted. Its own closing tag makes it
+ *   an envelope after all, and the held text is dropped; any other closing tag is ignored.
+ * Accepted trade-off: prose that quotes two nested tags with only whitespace between them and never closes them
+ * looks exactly like real tool syntax, so it is treated as a confirmed envelope and dropped. That is rare, and
+ * releasing a real tool argument into thinking and replay (the bug this filter exists for) is worse.
+ * A closing tag with nothing open is dropped; an opening tag that never completes at the end of the stream is
+ * released as text unless it is inside a confirmed envelope.
  */
 
 const MARKER_BODY = "DSML";
@@ -25,7 +29,7 @@ const CLOSE_MARKERS = BARS.map((bar) => `</${bar}${MARKER_BODY}${bar}`);
 const ALL_MARKERS = [...OPEN_MARKERS, ...CLOSE_MARKERS];
 /** A DSML tag longer than this without a closing `>` is not a tag; its text is kept. */
 const MAX_TAG_CHARS = 512;
-/** Text held inside an open envelope; past this the envelope counts as quoted and the text is released. */
+/** Text held after an unconfirmed lone tag; past this the tag counts as quoted and the text is released. */
 export const LONE_HOLD_CHARS = 64 * 1024;
 /** The DSML tag whose body is a tool argument value. */
 const PAYLOAD_TAG = "parameter";
@@ -54,9 +58,9 @@ export class DsmlEnvelopeFilter {
 	#pending = "";
 	/** Names of the open tags, outermost first; empty outside an envelope. */
 	#open: string[] = [];
-	/** Text inside the open envelope, dropped when it closes and released if it never does. */
+	/** Text after an unconfirmed lone tag, dropped if the tag closes and released if it never does. */
 	#held = "";
-	/** The open envelope nests tags, so it is tool syntax and its `parameter` values are opaque. */
+	/** The open envelope nests tags: it is tool syntax and is dropped as it streams. */
 	#confirmed = false;
 
 	/** Feed one stream delta; returns the reasoning text that is safe to show and store now. */
@@ -65,10 +69,10 @@ export class DsmlEnvelopeFilter {
 		return this.#drain(false);
 	}
 
-	/** End of the stream: an envelope still open was quoted, so its held text is released. */
+	/** End of the stream: an unconfirmed lone tag was quoted (held text released); a confirmed envelope stays dropped. */
 	finish(): string {
 		const out = this.#drain(true);
-		const released = out + this.#held;
+		const released = this.#confirmed ? out : out + this.#held;
 		this.#reset();
 		return released;
 	}
@@ -85,6 +89,7 @@ export class DsmlEnvelopeFilter {
 			out.push(text);
 			return;
 		}
+		if (this.#confirmed) return;
 		this.#held += text;
 		if (this.#held.length > LONE_HOLD_CHARS) {
 			out.push(this.#held);
@@ -106,6 +111,7 @@ export class DsmlEnvelopeFilter {
 			return;
 		}
 		this.#confirmed = true;
+		this.#held = "";
 		this.#open.push(name);
 	}
 

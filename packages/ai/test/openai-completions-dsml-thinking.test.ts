@@ -70,8 +70,8 @@ describe("DSML envelope filter (senpi#4621)", () => {
 
 	it.each([
 		{
-			name: "a tool argument longer than the hold limit",
-			input: `before ${open(' invoke name="write"')}${open(' parameter name="content"')}${"x".repeat(5000)}${close(" parameter")}${close(" invoke")} after`,
+			name: "a tool argument longer than the 64 KiB hold limit",
+			input: `before ${open(' invoke name="write"')}${open(' parameter name="content"')}${"x".repeat(70 * 1024)}${close(" parameter")}${close(" invoke")} after`,
 			expected: "before  after",
 		},
 		{
@@ -185,17 +185,19 @@ const CLASS_TABLE = (["parameter", "invoke", "other"] as const).flatMap((tag) =>
 	),
 );
 const LONE_HOLD_LIMIT = 64 * 1024;
+const CONFIRMED_OPEN = `${open(' invoke name="write"')}\n${open(' parameter name="content"')}`;
+const BIG_ARGUMENT = "data ".repeat((70 * 1024) / 5);
 const NEVER_CLOSED_NEST = `${open(' invoke name="x"')}\n${open(' parameter name="y"')} I keep thinking about the loader.`;
 const PROBE_QUOTED_NEST = `Format: ${open(" function_calls")} ${open(' invoke name="x"')} etc. Then I reason a lot more here.`;
 const PROBE_OUTER_CLOSE_IN_VALUE = `pre ${open(" function_calls")}${open(' invoke name="x"')}${open(' parameter name="code"')}code ${close(" function_calls")} SECRETPAY${close(" parameter")}${close(" invoke")}${close(" function_calls")}`;
-const EVERY_CLOSE_IN_VALUE = `pre ${open(" function_calls")}\n${open(' invoke name="write"')}\n${open(' parameter name="content"')}a ${close(" function_calls")} b ${close(" invoke")} c ${close(" calls")} d ${close(" tool_call")} e </|DSML|invoke> f </|DSML|function_calls> g ${open(' invoke name="inner"')} SECRET${close(" parameter")}\n${close(" invoke")}\n${close(" function_calls")}`;
+const EVERY_CLOSE_IN_VALUE = `pre ${open(" function_calls")}\n${open(' invoke name="write"')}\n${open(' parameter name="content"')}a ${close(" function_calls")} b ${close(" invoke")} c ${close(" calls")} d ${close(" tool_call")} e </|DSML|invoke> f </|DSML|function_calls> g ${open(' invoke name="inner"')} h ${close(" parameter")} SECRET${close(" parameter")}\n${close(" invoke")}\n${close(" function_calls")}`;
 for (const where of ["at stream end", "mid-stream"] as const) {
 	const tail = where === "mid-stream" ? LATER : "";
 	CLASS_TABLE.push(
 		{
-			name: `two whitespace-separated quoted tags, never closed (review probe 1), ${where}`,
+			name: `ACCEPTED TRADE-OFF: prose quoting two whitespace-separated nested tags, never closed, is dropped as a confirmed envelope, ${where}`,
 			input: `${PROBE_QUOTED_NEST}${tail}`,
-			expected: `Format:   etc. Then I reason a lot more here.${tail}`,
+			expected: "Format: ",
 			visibleBeforeEnd: 0,
 		},
 		{
@@ -211,15 +213,39 @@ for (const where of ["at stream end", "mid-stream"] as const) {
 			visibleBeforeEnd: 0,
 		},
 		{
-			name: `two nested tags that never close, ${where}`,
+			name: `a confirmed envelope cut off by the stream end, ${where}`,
 			input: `Plan: ${NEVER_CLOSED_NEST}${tail}`,
-			expected: `Plan: \n I keep thinking about the loader.${tail}`,
+			expected: "Plan: ",
 			visibleBeforeEnd: 0,
 		},
 		{
 			name: `a parameter that never closes inside an invoke envelope, ${where}`,
 			input: `before ${open(' invoke name="write"')}${open(' parameter name="content"')}${"y".repeat(5000)}${tail}`,
-			expected: `before ${"y".repeat(5000)}${tail}`,
+			expected: "before ",
+			visibleBeforeEnd: 0,
+		},
+		{
+			name: `a confirmed envelope with a 70 KiB argument, closed, ${where}`,
+			input: `pre ${CONFIRMED_OPEN}${BIG_ARGUMENT}${close(" parameter")}\n${close(" invoke")} post${tail}`,
+			expected: `pre  post${tail}`,
+			visibleBeforeEnd: 0,
+		},
+		{
+			name: `a confirmed envelope with a 70 KiB argument, cut off, ${where}`,
+			input: `pre ${CONFIRMED_OPEN}${BIG_ARGUMENT}${tail}`,
+			expected: "pre ",
+			visibleBeforeEnd: 0,
+		},
+		{
+			name: `'echo PAY' closed by the wrong tag, ${where}`,
+			input: `pre ${open(' invoke name="bash"')}\n${open(' parameter name="command"')}echo PAY${close(" invoke")} after${tail}`,
+			expected: "pre ",
+			visibleBeforeEnd: 0,
+		},
+		{
+			name: `a value quoting </parameter> then </invoke> and more value text, ${where}`,
+			input: `pre ${open(" function_calls")}\n${open(' invoke name="write"')}\n${open(' parameter name="content"')}a ${close(" parameter")} b ${close(" invoke")} more value${close(" parameter")}\n${close(" invoke")}\n${close(" function_calls")} post${tail}`,
+			expected: `pre  post${tail}`,
 			visibleBeforeEnd: 0,
 		},
 	);
