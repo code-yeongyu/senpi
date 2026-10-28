@@ -3,19 +3,20 @@
  * the model sometimes emits inside its reasoning stream. They are not reasoning: kept in a thinking block, they
  * are shown to the user, replayed to the model on the next request, and imitated until the reply collapses
  * (senpi#4621). This filter removes the envelopes from a reasoning stream as it arrives and keeps every
- * character outside them.
+ * character outside them: prose next to DSML-shaped text is never lost and never held without bound.
  *
- * An envelope is everything from an opening DSML tag to the closing tag that brings the nesting depth back to
- * zero, tags included. Tag names are not matched against each other: a degenerate stream closes `calls` with
- * `parameter`, and depth alone is what tells envelope from reasoning.
- *
- * Text inside an envelope that is confirmed tool syntax (a DSML tag nested in another) is payload: it is dropped
- * and never released as reasoning, however long it runs. Text after a lone opening tag at depth 0 may be prose that
- * quotes the tag; it is held until the envelope closes (then dropped as payload) or the stream ends (then released
- * as reasoning, the tag itself dropped). A lone `parameter` tag is held without limit, because its body is a tool
- * argument that is dropped once its closing tag arrives; any other lone tag is released once its held text exceeds
- * `MAX_HELD_CHARS`. An opening tag that never completes at the end of the stream is released as text, so a stray
- * or quoted tag never swallows real thinking.
+ * - A lone opening tag (none open yet) may be prose that quotes a tag. The text after it is held until the
+ *   tag is decided: a closing tag that empties the envelope makes it an envelope (held text dropped); the
+ *   stream ending, or the hold passing `LONE_HOLD_CHARS`, makes it a quotation (held text released, the tag
+ *   itself dropped); another opening tag decides by what lies between them.
+ * - Another opening tag after only whitespace nests: the envelope is tool syntax (`invoke` > `parameter`), so
+ *   its text is payload and is dropped however long it runs, until the envelope closes or the stream ends.
+ * - Another opening tag after real prose means the first tag was quoted: the held prose is released at once
+ *   and the new tag becomes the lone tag.
+ * - A closing tag pops back to the innermost open tag of the same name (so a tag quoted inside an argument
+ *   cannot keep the envelope open), or pops one level when no open tag has that name (a degenerate stream
+ *   closes `calls` with `parameter`). A closing tag with nothing open is dropped.
+ * - An opening tag that never completes at the end of the stream is released as text.
  */
 
 const MARKER_BODY = "DSML";
@@ -25,11 +26,10 @@ const CLOSE_MARKERS = BARS.map((bar) => `</${bar}${MARKER_BODY}${bar}`);
 const ALL_MARKERS = [...OPEN_MARKERS, ...CLOSE_MARKERS];
 /** A DSML tag longer than this without a closing `>` is not a tag; its text is kept. */
 const MAX_TAG_CHARS = 512;
-/** Text held after a lone opening tag other than `parameter`; past this it is released as reasoning. */
-const MAX_HELD_CHARS = 4096;
-/** The DSML tag whose body is a tool argument. */
-const PAYLOAD_TAG = "parameter";
+/** Text held after a lone opening tag; past this the tag counts as quoted and the text is released. */
+export const LONE_HOLD_CHARS = 64 * 1024;
 const TAG_NAME = /^\s*([A-Za-z_]+)/;
+const NON_WHITESPACE = /\S/;
 
 type MarkerMatch =
 	| { readonly kind: "full"; readonly closing: boolean; readonly length: number }
@@ -51,10 +51,12 @@ function matchMarker(text: string, start: number): MarkerMatch {
 
 export class DsmlEnvelopeFilter {
 	#pending = "";
-	#depth = 0;
+	/** Names of the open tags, outermost first; empty outside an envelope. */
+	#open: string[] = [];
+	/** Text after a lone opening tag, waiting for the tag to be decided. */
 	#held = "";
+	/** The open envelope is confirmed tool syntax: its text is dropped. */
 	#payload = false;
-	#uncapped = false;
 
 	/** Feed one stream delta; returns the reasoning text that is safe to show and store now. */
 	push(delta: string): string {
@@ -62,43 +64,55 @@ export class DsmlEnvelopeFilter {
 		return this.#drain(false);
 	}
 
-	/** End of the stream: releases held text of an unclosed envelope and an undecided partial marker. */
+	/** End of the stream: a lone tag still undecided was quoted, so its held text is released. */
 	finish(): string {
 		const out = this.#drain(true);
 		const released = out + this.#held;
-		this.#close();
+		this.#reset();
 		return released;
 	}
 
-	#close(): void {
+	#reset(): void {
+		this.#open = [];
 		this.#held = "";
-		this.#depth = 0;
 		this.#payload = false;
-		this.#uncapped = false;
-	}
-
-	#open(tagName: string | undefined): void {
-		if (this.#depth > 0) {
-			this.#payload = true;
-			this.#held = "";
-		} else if (tagName === PAYLOAD_TAG) {
-			this.#uncapped = true;
-		}
-		this.#depth += 1;
 	}
 
 	#emit(out: string[], text: string): void {
 		if (text.length === 0) return;
-		if (this.#depth === 0) {
+		if (this.#open.length === 0) {
 			out.push(text);
 			return;
 		}
 		if (this.#payload) return;
 		this.#held += text;
-		if (!this.#uncapped && this.#held.length > MAX_HELD_CHARS) {
+		if (this.#held.length > LONE_HOLD_CHARS) {
 			out.push(this.#held);
-			this.#close();
+			this.#reset();
 		}
+	}
+
+	#openTag(out: string[], name: string): void {
+		if (this.#open.length === 0) {
+			this.#open = [name];
+			return;
+		}
+		if (this.#payload || !NON_WHITESPACE.test(this.#held)) {
+			this.#payload = true;
+			this.#held = "";
+			this.#open.push(name);
+			return;
+		}
+		out.push(this.#held);
+		this.#held = "";
+		this.#open = [name];
+	}
+
+	#closeTag(name: string): void {
+		if (this.#open.length === 0) return;
+		const index = this.#open.lastIndexOf(name);
+		this.#open.length = index >= 0 ? index : this.#open.length - 1;
+		if (this.#open.length === 0) this.#reset();
 	}
 
 	#drain(final: boolean): string {
@@ -128,30 +142,21 @@ export class DsmlEnvelopeFilter {
 				break;
 			}
 			const gt = text.indexOf(">", lt);
-			if (gt === -1) {
-				if (text.length - lt > MAX_TAG_CHARS) {
-					this.#emit(out, text.slice(lt, lt + 1));
-					index = lt + 1;
-					continue;
+			if (gt === -1 || gt - lt > MAX_TAG_CHARS) {
+				if (gt === -1 && text.length - lt <= MAX_TAG_CHARS) {
+					if (final) {
+						this.#emit(out, text.slice(lt));
+						index = text.length;
+					}
+					break;
 				}
-				if (final) {
-					this.#emit(out, text.slice(lt));
-					index = text.length;
-				}
-				break;
-			}
-			if (gt - lt > MAX_TAG_CHARS) {
 				this.#emit(out, "<");
 				index = lt + 1;
 				continue;
 			}
-			const selfClosing = text[gt - 1] === "/";
-			if (marker.closing) {
-				if (this.#depth > 1) this.#depth -= 1;
-				else if (this.#depth === 1) this.#close();
-			} else if (!selfClosing) {
-				this.#open(TAG_NAME.exec(text.slice(lt + marker.length, gt))?.[1]);
-			}
+			const name = TAG_NAME.exec(text.slice(lt + marker.length, gt))?.[1] ?? "";
+			if (marker.closing) this.#closeTag(name);
+			else if (text[gt - 1] !== "/") this.#openTag(out, name);
 			index = gt + 1;
 		}
 		this.#pending = text.slice(index);

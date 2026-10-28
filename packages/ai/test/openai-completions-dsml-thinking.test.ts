@@ -126,6 +126,90 @@ describe("DSML envelope filter (senpi#4621)", () => {
 	});
 });
 
+type LoneTag = "parameter" | "invoke" | "other";
+type Follow =
+	| "never closed"
+	| "closed later"
+	| "then a real envelope"
+	| "then a second lone tag"
+	| "nested in a real envelope";
+
+const LONE_OPEN: Readonly<Record<LoneTag, string>> = {
+	parameter: open(' parameter name="path"'),
+	invoke: open(' invoke name="bash"'),
+	other: open(" calls"),
+};
+const LONE_CLOSE: Readonly<Record<LoneTag, string>> = {
+	parameter: close(" parameter"),
+	invoke: close(" invoke"),
+	other: close(" calls"),
+};
+const REAL_ENVELOPE = `${open(' invoke name="bash"')}\n${open(' parameter name="command" string="true"')}echo hi${close(" parameter")}\n${close(" invoke")}`;
+const QUOTE = "I must not write ";
+const AFTER = " in my thinking. Next I will read config.ts";
+const LATER = " Later prose.";
+
+function classRow(tag: LoneTag, follow: Follow, tail: string): { input: string; expected: string } {
+	const lone = LONE_OPEN[tag];
+	switch (follow) {
+		case "never closed":
+			return { input: `${QUOTE}${lone}${AFTER}${tail}`, expected: `${QUOTE}${AFTER}${tail}` };
+		case "closed later":
+			return { input: `${QUOTE}${lone}${AFTER}${LONE_CLOSE[tag]}${tail}`, expected: `${QUOTE}${tail}` };
+		case "then a real envelope":
+			return { input: `${QUOTE}${lone}${AFTER} ${REAL_ENVELOPE}${tail}`, expected: `${QUOTE}${AFTER} ${tail}` };
+		case "then a second lone tag":
+			return {
+				input: `${QUOTE}${lone}${AFTER} or ${open(' invoke name="read"')} either.${tail}`,
+				expected: `${QUOTE}${AFTER} or  either.${tail}`,
+			};
+		case "nested in a real envelope":
+			return {
+				input: `Before ${open(' invoke name="write"')}\n${open(' parameter name="content"')}${QUOTE}${lone} here${close(" parameter")}\n${close(" invoke")}${tail}`,
+				expected: `Before ${tail}`,
+			};
+	}
+}
+
+const CLASS_TABLE = (["parameter", "invoke", "other"] as const).flatMap((tag) =>
+	(
+		[
+			"never closed",
+			"closed later",
+			"then a real envelope",
+			"then a second lone tag",
+			"nested in a real envelope",
+		] as const
+	).flatMap((follow) =>
+		(["at stream end", "mid-stream"] as const).map((where) => ({
+			name: `lone ${tag} tag, ${follow}, ${where}`,
+			...classRow(tag, follow, where === "mid-stream" ? LATER : ""),
+			visibleBeforeEnd: 0,
+		})),
+	),
+);
+const LONE_HOLD_LIMIT = 64 * 1024;
+const LONG_PROSE = "word ".repeat(14_000);
+for (const tag of ["parameter", "invoke", "other"] as const) {
+	CLASS_TABLE.push({
+		name: `lone ${tag} tag, never closed, ${LONG_PROSE.length} chars of prose after it`,
+		input: `${QUOTE}${LONE_OPEN[tag]}${LONG_PROSE}`,
+		expected: `${QUOTE}${LONG_PROSE}`,
+		visibleBeforeEnd: QUOTE.length + LONE_HOLD_LIMIT,
+	});
+}
+
+describe("prose next to DSML-shaped text is never lost and never held without bound (senpi#4623 review class)", () => {
+	it.each(CLASS_TABLE)("$name", ({ input, expected, visibleBeforeEnd }) => {
+		expect(stripDsmlEnvelopes(input)).toBe(expected);
+		const filter = new DsmlEnvelopeFilter();
+		let streamed = "";
+		for (const char of input) streamed += filter.push(char);
+		expect(streamed.length).toBeGreaterThanOrEqual(visibleBeforeEnd);
+		expect(streamed + filter.finish()).toBe(expected);
+	});
+});
+
 describe("openai-completions reasoning stream with DSML (senpi#4621)", () => {
 	it("never streams, stores or replays a DSML envelope in thinking", async () => {
 		// given a server that streams the reported reasoning in 7-character chunks, splitting every marker
