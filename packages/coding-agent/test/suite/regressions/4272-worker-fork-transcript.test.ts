@@ -20,8 +20,8 @@ function fileIds(path: string): string[] {
 		.map((line) => String(JSON.parse(line).id));
 }
 
-function rootIds(root: TranscriptRoot): string[] {
-	const read = readTranscriptRoot(root);
+async function rootIds(root: TranscriptRoot): Promise<string[]> {
+	const read = await readTranscriptRoot(root);
 	if (!read.ok) throw new Error(`transcript read failed: ${read.error}`);
 	return read.entries.map((entry) => entry.id);
 }
@@ -43,7 +43,7 @@ it("X03 persisted fork held at reconcile: the cut keeps the old epoch and transc
 		await settled;
 		const original = realpathSync(String(host.registry.peek(sessionId)?.sessionPath));
 		const beforeFork = lane.freeze();
-		const beforeIds = rootIds(beforeFork.transcript);
+		const beforeIds = await rootIds(beforeFork.transcript);
 		expect(beforeIds.length, "the turn's entries were accepted").toBeGreaterThan(2);
 		expect(fileIds(original).slice(0, beforeIds.length), "the cut is a prefix of what is on disk").toEqual(beforeIds);
 
@@ -58,7 +58,7 @@ it("X03 persisted fork held at reconcile: the cut keeps the old epoch and transc
 		const forkHeader = fileIds(fork)[0];
 
 		const heldCut = lane.freeze();
-		const heldIds = rootIds(heldCut.transcript);
+		const heldIds = await rootIds(heldCut.transcript);
 		const heldObserved = host.frames.at(-1);
 		const heldFrame = heldObserved?.frame;
 		expect(recordType(heldFrame), "the worker is blocked on the replacement frame").toBe("session_replaced");
@@ -79,10 +79,10 @@ it("X03 persisted fork held at reconcile: the cut keeps the old epoch and transc
 		const after = lane.freeze();
 		expect(after.sessionEpoch, "the bootstrap minted a new epoch").not.toBe(beforeFork.sessionEpoch);
 		expect(basePath(after.transcript), "the fork file is the new epoch's persisted base").toBe(fork);
-		const afterIds = rootIds(after.transcript);
+		const afterIds = await rootIds(after.transcript);
 		expect(afterIds[0]).toBe(forkHeader);
 		expect(fileIds(fork).slice(0, afterIds.length)).toEqual(afterIds);
-		expect(rootIds(heldCut.transcript), "the held cut is unchanged after the disk and lane moved on").toEqual(
+		expect(await rootIds(heldCut.transcript), "the held cut is unchanged after the disk and lane moved on").toEqual(
 			heldIds,
 		);
 		expect(heldCut.sessionEpoch).toBe(beforeFork.sessionEpoch);

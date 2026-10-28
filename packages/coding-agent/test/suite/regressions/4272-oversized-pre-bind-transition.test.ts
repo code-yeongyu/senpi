@@ -57,7 +57,7 @@ it("Q5 a single pre-bind transition over the 16 MiB worker frame limit makes the
 	try {
 		const root = over.lane.freeze();
 		expect(root.transcript.unavailable).toBe("transition_over_worker_frame_limit");
-		expect(readTranscriptRoot(root.transcript), "no partial transcript is read").toEqual({
+		expect(await readTranscriptRoot(root.transcript), "no partial transcript is read").toEqual({
 			ok: false,
 			error: "transition_over_worker_frame_limit",
 		});
@@ -70,7 +70,7 @@ it("Q5 a single pre-bind transition over the 16 MiB worker frame limit makes the
 
 		const control = under.lane.freeze();
 		expect(control.transcript.unavailable, "a transition under the limit stays available").toBeNull();
-		const read = readTranscriptRoot(control.transcript);
+		const read = await readTranscriptRoot(control.transcript);
 		expect(read.ok && read.entries.map((entry) => entry.type)).toContain("custom");
 		over.lane.release(root);
 		under.lane.release(control);

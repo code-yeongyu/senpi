@@ -44,14 +44,14 @@ for (const tail of ["torn", "unterminated"] as const) {
 			lane.bootstrap({ transcript: manager.beginTranscriptJournal() });
 			await manager["transcriptFile"].ready;
 			lane.applyTranscript(manager.drainTranscript());
-			const opened = readTranscriptRoot(lane.freeze().transcript);
+			const opened = await readTranscriptRoot(lane.freeze().transcript);
 			expect(opened.ok, JSON.stringify(opened)).toBe(true);
 			const ids = (opened.ok ? opened.entries : []).map((entry) => entry.id);
 			expect(ids.includes("unterminated-entry")).toBe(tail === "unterminated");
 			manager.appendMessage({ role: "user", content: "after repair", timestamp: 3 });
 			await manager.persistHeaderNow();
 			lane.applyTranscript(manager.drainTranscript());
-			const appended = readTranscriptRoot(lane.freeze().transcript);
+			const appended = await readTranscriptRoot(lane.freeze().transcript);
 			expect(appended.ok, JSON.stringify(appended)).toBe(true);
 			expect(appended.ok && appended.entries.at(-1)).toMatchObject({ message: { content: "after repair" } });
 		} finally {
