@@ -246,7 +246,17 @@ export class SupervisorOwner {
 		// fs.watch may lag a new owner's atomic write. Its ensure holds a connection until this
 		// publication, so re-read the record AND occupancy before authorizing synchronous shutdown.
 		const current = await readHostOwner(this.generationDir);
-		return !this.stopped && revision === this.revision && sameHostOwner(owner, current) && activity.quiescent();
+		if (this.stopped || revision !== this.revision) return false;
+		// `fs.watch` can also DROP that write entirely (senpi#4629 measured the same loss in a test
+		// wait on this machine class). Refusing on the mismatch alone left this supervisor bound to a
+		// dead predecessor forever: it never adopted the replacement, so the replacement's own death
+		// could not end the generation and the host outlived its owner until the idle window. Adopt
+		// the record here - the watcher stays the fast path - and decide for the real owner next tick.
+		if (!sameHostOwner(owner, current)) {
+			await this.reload();
+			return false;
+		}
+		return activity.quiescent();
 	}
 
 	stop(): void {
