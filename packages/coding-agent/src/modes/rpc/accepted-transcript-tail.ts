@@ -94,6 +94,7 @@ export class TranscriptTail {
 	readonly #staging: TransferStaging;
 	/** Live cuts by their entry count: a cut of count `n` names every entry below `n`. */
 	readonly #cuts = new Map<number, number>();
+	#superseded = false;
 
 	constructor(staging: TransferStaging, persistence: TranscriptPersistence | null) {
 		this.#staging = staging;
@@ -114,11 +115,21 @@ export class TranscriptTail {
 		this.#cuts.set(count, (this.#cuts.get(count) ?? 0) + 1);
 	}
 
-	/** The last live cut naming a kept entry releases its segments. */
+	/**
+	 * A `replace` within the epoch left this tail behind: released now unless a live cut still names it, else by the last
+	 * such cut's release, so a replaced version still reads its own entries (RULING-78 (1), C1.1).
+	 */
+	supersede(): void {
+		this.#superseded = true;
+		if (this.#cuts.size === 0) this.releaseAll();
+	}
+
+	/** The last live cut naming a kept entry releases its segments; the last cut of a superseded tail releases it all. */
 	releaseCut(count: number): void {
 		const left = (this.#cuts.get(count) ?? 0) - 1;
 		if (left > 0) this.#cuts.set(count, left);
 		else this.#cuts.delete(count);
+		if (this.#superseded && this.#cuts.size === 0) return this.releaseAll();
 		const reach = this.reach();
 		for (const [index, content] of this.kept) {
 			if (index < reach) continue;

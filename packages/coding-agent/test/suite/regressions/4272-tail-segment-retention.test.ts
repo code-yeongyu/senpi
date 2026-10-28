@@ -142,3 +142,32 @@ it("S12a RULING-78 (2): a staged read verifies every leaf before yielding it, so
 		})(),
 	).rejects.toMatchObject({ name: "StagedReadError" });
 });
+
+it("S12a review HIGH: a root frozen before a replace still reads its own entries, and the superseded tail frees with its last cut", async () => {
+	const manager = SessionManager.create(dir, dir);
+	const lane = new SessionAcceptanceLane({ dir: join(dir, "spool") });
+	lane.bootstrap({ transcript: manager.beginTranscriptJournal() });
+	manager.appendMessage({ role: "user", content: "before the replace", timestamp: 1 });
+	lane.applyTranscript(manager.drainTranscript());
+	const held = lane.freeze();
+	const types = async () => {
+		const read = await readTranscriptRoot(held.transcript);
+		return read.ok ? read.entries.map((entry) => entry.type) : read.error;
+	};
+	expect(await types()).toEqual(["session", "message"]);
+	const before = await linesOf(held.transcript);
+	manager.newSession();
+	lane.applyTranscript(manager.drainTranscript());
+	expect(await types(), "the replaced version still reads its own entries").toEqual(["session", "message"]);
+	expect(await linesOf(held.transcript)).toBe(before);
+	expect(lane.storageStatus().transcript.residentPayloadBytes, "the superseded tail is still held").toBeGreaterThan(0);
+	lane.release(held);
+	await lane.idle();
+	const current = lane.freeze();
+	expect(
+		lane.storageStatus().transcript.residentPayloadBytes,
+		"freed with the last cut, only the new tail is left",
+	).toBe(current.transcript.tail.retainedBytes);
+	lane.release(current);
+	manager.dispose();
+});
