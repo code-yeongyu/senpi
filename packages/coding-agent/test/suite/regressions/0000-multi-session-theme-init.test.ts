@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { assertWorkspaceBuildPrerequisite } from "../../support/workspace-build-prerequisite.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
@@ -62,7 +63,7 @@ describe("multi-session host initializes the interactive theme", () => {
 
 		const spawned = spawn(process.execPath, [tsxCli, senpiCli, "--mode", "rpc", "--multi-session"], {
 			cwd: workspace,
-			env: { ...process.env, SENPI_CODING_AGENT_DIR: agentDir, NO_COLOR: "1" },
+			env: { ...hostSpawnEnv(), SENPI_CODING_AGENT_DIR: agentDir, NO_COLOR: "1" },
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		child = spawned;

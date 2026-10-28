@@ -22,6 +22,7 @@ import {
 	tracked,
 } from "./helpers/rpc-host-endpoint-scratch.ts";
 import { processAlive, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 afterEach(sweepEndpointScratches, 180_000);
 
@@ -34,7 +35,7 @@ async function bareSocketHost(qa: EndpointScratch, socket: string, emptyExitMs: 
 	const child = spawn(process.execPath, [cli, "--mode", "rpc", "--listen", `unix://${socket}`, ...hostArgs()], {
 		cwd: qa.cwd,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...hostEnv(qa),
 			SENPI_CODING_AGENT_DIR: qa.agentDir,
 			SENPI_RPC_HOST_EMPTY_EXIT_MS: String(emptyExitMs),

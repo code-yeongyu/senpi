@@ -21,6 +21,7 @@ import {
 } from "../../helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "../../helpers/rpc-hermetic.ts";
 import { RpcOwnerProcesses } from "../../helpers/rpc-owner-processes.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 const fixture = join(import.meta.dirname, "../../fixtures/rpc-owner-caller.ts");
 const roots: GenerationScratch[] = [];
@@ -31,7 +32,7 @@ const EXIT_BOUND_MS = 10_000;
 
 async function caller(qa: GenerationScratch, ownership = "caller", failure?: string): Promise<ChildProcess> {
 	const child = spawn(process.execPath, [fixture, qa.socket, qa.agentDir, ownership], {
-		env: { ...process.env, ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
+		env: { ...hostSpawnEnv(), ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
 		stdio: ["ignore", "ignore", "inherit", "ipc"],
 	});
 	processes.owner(child);
