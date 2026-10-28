@@ -60,14 +60,23 @@ export function fingerprintOf(entries: readonly { readonly type: string; readonl
 	return hash.digest("hex");
 }
 
-/** Writes `entries` as a session file and names it the way a load captures it: identity, count, fingerprint. */
+/** RULING-72's content fingerprint, restated: sha256 over its own domain tag, NUL, then each counted line and LF. */
+export function contentFingerprintOf(lines: readonly string[]): string {
+	const hash = createHash("sha256").update("senpi-recovery-base/1/sha256\u0000");
+	for (const line of lines) hash.update(`${line}\n`);
+	return hash.digest("hex");
+}
+
+/** Writes `entries` as a session file and names it the way a load captures it: identity, count, fingerprints. */
 export async function writeBase(path: string, entries: readonly BaseEntry[], raw?: string): Promise<PersistedBase> {
-	await writeFile(path, raw ?? `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+	const lines = entries.map((entry) => JSON.stringify(entry));
+	await writeFile(path, raw ?? `${lines.join("\n")}\n`);
 	const identity = await stat(path, { bigint: true });
 	return {
 		fileIdentity: { path, dev: String(identity.dev), ino: String(identity.ino) },
 		count: entries.length,
 		idFingerprint: fingerprintOf(entries),
+		contentFingerprint: contentFingerprintOf(lines),
 	};
 }
 

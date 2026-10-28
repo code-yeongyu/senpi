@@ -16,6 +16,8 @@ export interface PersistedBase {
 	readonly fileIdentity: FileIdentity;
 	readonly count: number;
 	readonly idFingerprint: string;
+	/** RULING-72: the counted lines' content as the load read them (`BaseContentHash`); any later edit changes it. */
+	readonly contentFingerprint: string;
 }
 
 export type TranscriptUnavailableReason =

@@ -102,7 +102,7 @@ it("RULING-61 Q1 (a) an entry accepted already persisted (no text ever retained)
 it("RULING-61 Q1 (b) a loaded base is a file range S11c streams: transcript and opaque are complete and each names the stream, opaque never explicitly empty", async () => {
 	// Given: an epoch bootstrapped on a loaded base of three entries whose kinds the lane never saw
 	const rig = recoveryRig();
-	const base = { fileIdentity, count: 3, idFingerprint: "ab".repeat(32) };
+	const base = { fileIdentity, count: 3, idFingerprint: "ab".repeat(32), contentFingerprint: "cd".repeat(32) };
 	rig.lane.bootstrap({
 		transcript: [
 			{ kind: "replace", base },

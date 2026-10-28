@@ -11,7 +11,13 @@ import { open } from "node:fs/promises";
 import { StringDecoder } from "node:string_decoder";
 import { normalizePath } from "../utils/paths.ts";
 import { EventLoopSlicer } from "./event-loop-slicer.ts";
-import { captureAndCloseFileIdentity, captureFileIdentity, loadedFileIdentities } from "./session-file-identity.ts";
+import {
+	BaseContentHash,
+	captureAndCloseFileIdentity,
+	captureFileIdentity,
+	loadedContentFingerprints,
+	loadedFileIdentities,
+} from "./session-file-identity.ts";
 import type { FileEntry } from "./session-manager.ts";
 import { backupTornBytes, type SessionRecovery, type SessionRecoveryCause } from "./session-write-recovery.ts";
 
@@ -48,6 +54,14 @@ export class SessionLineSplitter {
 	finish(): string {
 		return this.pending + this.decoder.end();
 	}
+}
+
+/** A parsed line becomes an entry; a capturing load also feeds its line to the content fingerprint (RULING-72). */
+function countEntry(entries: FileEntry[], line: string, content: BaseContentHash | undefined): void {
+	const entry = parseSessionEntryLine(line);
+	if (!entry) return;
+	entries.push(entry);
+	content?.line(line);
 }
 
 function acceptSessionEntries(entries: FileEntry[]): FileEntry[] {
@@ -100,23 +114,21 @@ function readRawEntriesFromFile(filePath: string, captureIdentity = false): File
 
 	const entries: FileEntry[] = [];
 	const splitter = new SessionLineSplitter();
+	const content = captureIdentity ? new BaseContentHash() : undefined;
 	const fd = openSync(resolvedFilePath, "r");
 	try {
 		const buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
 		while (true) {
 			const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
 			if (bytesRead === 0) break;
-			for (const line of splitter.push(buffer.subarray(0, bytesRead))) {
-				const entry = parseSessionEntryLine(line);
-				if (entry) entries.push(entry);
-			}
+			for (const line of splitter.push(buffer.subarray(0, bytesRead))) countEntry(entries, line, content);
 		}
-		const finalEntry = parseSessionEntryLine(splitter.finish());
-		if (finalEntry) entries.push(finalEntry);
+		countEntry(entries, splitter.finish(), content);
 	} finally {
 		if (captureIdentity) loadedFileIdentities.set(entries, captureAndCloseFileIdentity(fd, resolvedFilePath));
 		else closeSync(fd);
 	}
+	if (content) loadedContentFingerprints.set(entries, content.digest());
 	return entries;
 }
 
@@ -134,6 +146,7 @@ export async function loadEntriesFromFileAsync(
 
 	const entries: FileEntry[] = [];
 	const splitter = new SessionLineSplitter();
+	const content = captureIdentity ? new BaseContentHash() : undefined;
 	const handle = await open(resolvedFilePath, "r");
 	try {
 		const buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
@@ -141,13 +154,12 @@ export async function loadEntriesFromFileAsync(
 			const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
 			if (bytesRead === 0) break;
 			for (const line of splitter.push(buffer.subarray(0, bytesRead))) {
-				const entry = parseSessionEntryLine(line);
-				if (entry) entries.push(entry);
+				countEntry(entries, line, content);
 				if (slicer.due) await slicer.yield();
 			}
 		}
-		const finalEntry = parseSessionEntryLine(splitter.finish());
-		if (finalEntry) entries.push(finalEntry);
+		countEntry(entries, splitter.finish(), content);
+		if (content) loadedContentFingerprints.set(entries, content.digest());
 	} finally {
 		if (captureIdentity) {
 			const identity = captureFileIdentity(handle.fd, resolvedFilePath);

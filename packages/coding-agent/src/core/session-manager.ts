@@ -52,7 +52,13 @@ import {
 	terminateFinalSessionLine,
 } from "./session-entry-file.ts";
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
-import { captureAndCloseFileIdentity, captureFileIdentity, loadedFileIdentities } from "./session-file-identity.ts";
+import {
+	BaseContentHash,
+	captureAndCloseFileIdentity,
+	captureFileIdentity,
+	loadedContentFingerprints,
+	loadedFileIdentities,
+} from "./session-file-identity.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type HistoryReducer, HistoryReductions } from "./session-history-reduce.ts";
 import type { SpawnedBy } from "./session-lifecycle-types.ts";
@@ -1704,11 +1710,14 @@ export class SessionManager {
 	}
 
 	private *_serializedFileEntries(): Generator<string> {
+		const content = this.capturesTranscriptBase ? new BaseContentHash() : undefined;
 		for (const entry of this.fileEntries) {
 			const bytes = this._transcriptEntryBytes(entry);
 			if (this.capturesTranscriptBase && !this.transcriptFile.unavailable) this.transcriptBytes.set(entry, bytes);
+			content?.line(bytes);
 			yield `${bytes}\n`;
 		}
+		if (content) loadedContentFingerprints.set(this.fileEntries, content.digest());
 	}
 
 	isPersisted(): boolean {

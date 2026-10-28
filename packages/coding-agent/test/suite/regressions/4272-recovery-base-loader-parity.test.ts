@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { loadEntriesFromFile } from "../../../src/core/session-entry-file.ts";
+import { loadedContentFingerprints } from "../../../src/core/session-file-identity.ts";
 import { captureTranscriptBase, type PersistedBase } from "../../../src/core/session-transcript-journal.ts";
 import { openBaseBytes } from "../../../src/modes/rpc/compact-recovery-base.ts";
 import { producePage } from "../../../src/modes/rpc/compact-recovery-bytes.ts";
@@ -26,11 +27,13 @@ afterEach(async () => {
 async function loadedBase(lines: readonly string[]): Promise<PersistedBase> {
 	const path = join(dir, "s.jsonl");
 	await writeFile(path, `${lines.join("\n")}\n`);
-	const entries = loadEntriesFromFile(path);
+	const entries = loadEntriesFromFile(path, true);
 	expect(entries.length, "the loader accepts the file").toBeGreaterThan(0);
 	const identity = await stat(path, { bigint: true });
 	const { count, idFingerprint } = captureTranscriptBase(entries);
-	return { fileIdentity: { path, dev: String(identity.dev), ino: String(identity.ino) }, count, idFingerprint };
+	const contentFingerprint = loadedContentFingerprints.get(entries) ?? expect.unreachable("a capturing load");
+	const fileIdentity = { path, dev: String(identity.dev), ino: String(identity.ino) };
+	return { fileIdentity, count, idFingerprint, contentFingerprint };
 }
 
 async function rowsOf(base: PersistedBase): Promise<Record<string, unknown>[]> {

@@ -599,12 +599,11 @@ Behind the same flag, one bounded page of a frozen checkpoint component, through
   `kind NUL id LF` of every row, in order, is the catalog's `idFingerprint`. A line the loader parsed that is no
   session entry is a row too (never dropped): its `kind` and `id` are the string forms of its `type` and `id`
   (`"undefined"` when absent), its `parentId` null unless a string, and its `family` that of its kind. The host opens
-  the session file only for this route, asynchronously, verifies its identity, count and fingerprint before the first
-  page, and re-checks the identity and every row a page re-derives against that open. A file replaced, truncated or
-  missing, a change to an entry id or kind since the cut, or any change to a row (its id, kind, parent or position)
-  after that first open is `recovery_storage_unavailable` with `reason` `base_file_replaced`, `base_file_truncated`,
-  `base_file_missing` or `base_fingerprint_mismatch`, never stale rows. An in-place edit of a parent before the first
-  open is not detected. With a base present, the transcript, opaque and source families are
+  the session file only for this route, asynchronously, verifies its identity, count, `idFingerprint` and a content
+  fingerprint the load took over the lines it read before the first page, and re-checks the identity and every row a
+  page re-derives against that open. Any change to the base since the load (replaced, truncated, missing, or any
+  edit to its lines, ids or content, before or after the first page) is `recovery_storage_unavailable` with `reason`
+  `base_file_replaced`, `base_file_truncated`, `base_file_missing` or `base_fingerprint_mismatch`, never stale rows. With a base present, the transcript, opaque and source families are
   complete: their members are the catalog's rows of this epoch plus the base stream's rows of their family.
 
 #### interactive_user

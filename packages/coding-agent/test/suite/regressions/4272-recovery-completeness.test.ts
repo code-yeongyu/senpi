@@ -143,7 +143,12 @@ it("RULING-61 Q2 the source family enumerates every this-epoch source entry with
 			transcript: [
 				{
 					kind: "replace",
-					base: { fileIdentity: { path: "/nowhere/s.jsonl", dev: "1", ino: "1" }, count: 2, idFingerprint: "f" },
+					base: {
+						fileIdentity: { path: "/nowhere/s.jsonl", dev: "1", ino: "1" },
+						count: 2,
+						idFingerprint: "f",
+						contentFingerprint: "c",
+					},
 				},
 			],
 		});

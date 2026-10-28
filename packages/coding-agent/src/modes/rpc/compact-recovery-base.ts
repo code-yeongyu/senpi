@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { type FileHandle, open } from "node:fs/promises";
 import { parseSessionEntryLine } from "../../core/session-entry-file.ts";
+import { BaseContentHash } from "../../core/session-file-identity.ts";
 import type { FileEntry } from "../../core/session-manager.ts";
 import { fingerprintLine, type PersistedBase } from "../../core/session-transcript-journal.ts";
 import type { TranscriptRoot } from "./accepted-transcript.ts";
@@ -15,12 +16,13 @@ import { type BaseRef, baseRef, type ContentRef, parseContentDigest } from "./co
  * The loaded transcript base as the page route streams it (S11c, RULING-70 (1) B, RULING-61 "partial -> exact"): one
  * stamped row per base entry, `{index, id, source: "file", parentId, kind, family}` plus a newline, in the ONE
  * UTF-16LE codec every component uses, so a page of it is a page like any other (`fragment` digest over its raw
- * bytes). The anchor is the cut's `idFingerprint` and file identity, never a catalog leaf: the open scans the file
- * once with one line resident, refuses typed unless the identity, the count and the fingerprint all hold, and keeps a
- * row table bounded by its budget (`compact-recovery-base-index.ts`, RULING-71 (2)), freed with the root's lease.
- * Every page re-opens the file by path, re-checks the identity and re-derives its rows from their lines: a file
- * replaced, truncated or missing, or changed in a row since the open, is a typed `PersistedBaseError`, never a stale
- * byte. The recovery owner reads the file only here and only asynchronously (RULING-50 (3)).
+ * bytes). The anchor is the cut's file identity, `idFingerprint` and `contentFingerprint` (RULING-72: the counted
+ * lines as the load read them, `BaseContentHash`), never a catalog leaf: the open scans the file once with one line
+ * resident, refuses typed unless the identity, the count and both fingerprints hold, and keeps a row table bounded by
+ * its budget (`compact-recovery-base-index.ts`, RULING-71 (2)), freed with the root's lease. Every page re-opens the
+ * file by path, re-checks the identity and re-derives its rows from their lines. So ANY change to the base since the
+ * load, to an id or to content, before or after the first page, is a typed `PersistedBaseError`, never a stale byte.
+ * The recovery owner reads the file only here and only asynchronously (RULING-50 (3)).
  *
  * The scan reads lines exactly as the loader does (`parseSessionEntryLine`, `fingerprintLine`): every base the loader
  * accepted streams. A parsed line that is not a session entry is a row like any other, retained, never dropped
@@ -30,9 +32,9 @@ import { type BaseRef, baseRef, type ContentRef, parseContentDigest } from "./co
  *
  * What each check proves (RULING-71 (3), (4)):
  * - `idFingerprint` (SHA-256 over `kind NUL id LF` per entry) covers the entries' ids and kinds, NOT their content:
- *   a parent changed under unchanged ids passes it. A content change after the open is caught by the per-row check on
- *   every page (each re-derived row must start, measure and hash as the open recorded it); an in-place edit of a
- *   non-id field before the open is not detected by this anchor.
+ *   a parent changed under unchanged ids passes it. A content change between the load and the open is caught by
+ *   `contentFingerprint` at the open; one after the open by the per-row check on every page (each re-derived row
+ *   must start, measure and hash as the open recorded it).
  * - That per-row hash is FNV-1a-32: CHANGE DETECTION for the user's own local session file only, between this
  *   process's open and its later reads. It is never an integrity proof on the wire, never sent to a client, and never
  *   a cache key across files; what a client receives is verified by the RULING-57 SHA-256 domains where they apply
@@ -204,16 +206,19 @@ export async function openBaseBytes(
 		const rows = new BaseRowTable(base.count, budget);
 		const walk = rows.walk(0, "record");
 		const fingerprint = createHash("sha256");
+		const content = new BaseContentHash();
 		for await (const line of lines(handle, 0, check)) {
 			const entry = parseSessionEntryLine(line.text);
 			if (!entry) continue;
 			fingerprint.update(fingerprintLine(entry));
+			content.line(line.text);
 			walk.add(line, stampedRow(walk.row, entry));
 			if (walk.row === base.count) break;
 		}
 		if (walk.row < base.count) throw new CompactReadError("base_file_truncated");
 		const digest = parseContentDigest(fingerprint.digest("hex"));
-		if (!digest.ok || digest.value !== base.idFingerprint) throw new CompactReadError("base_fingerprint_mismatch");
+		if (!digest.ok || digest.value !== base.idFingerprint || content.digest() !== base.contentFingerprint)
+			throw new CompactReadError("base_fingerprint_mismatch");
 		return new FrozenBaseBytes(base, digest.value, rows);
 	} finally {
 		await handle.close();
