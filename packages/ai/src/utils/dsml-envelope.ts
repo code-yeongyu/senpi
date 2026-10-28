@@ -9,11 +9,13 @@
  * zero, tags included. Tag names are not matched against each other: a degenerate stream closes `calls` with
  * `parameter`, and depth alone is what tells envelope from reasoning.
  *
- * Text inside an envelope that is confirmed tool syntax (a nested DSML tag, or an opening `parameter` tag, which
- * carries a tool argument) is payload: it is dropped and never released as reasoning, however long it runs. Text
- * after a lone opening tag that is never confirmed may be reasoning after a stray tag; it is held and released at
- * `finish()` or once it exceeds `MAX_HELD_CHARS`. An opening tag that never completes at the end of the stream
- * is released as text, so a stray tag never swallows real thinking.
+ * Text inside an envelope that is confirmed tool syntax (a DSML tag nested in another) is payload: it is dropped
+ * and never released as reasoning, however long it runs. Text after a lone opening tag at depth 0 may be prose that
+ * quotes the tag; it is held until the envelope closes (then dropped as payload) or the stream ends (then released
+ * as reasoning, the tag itself dropped). A lone `parameter` tag is held without limit, because its body is a tool
+ * argument that is dropped once its closing tag arrives; any other lone tag is released once its held text exceeds
+ * `MAX_HELD_CHARS`. An opening tag that never completes at the end of the stream is released as text, so a stray
+ * or quoted tag never swallows real thinking.
  */
 
 const MARKER_BODY = "DSML";
@@ -23,7 +25,7 @@ const CLOSE_MARKERS = BARS.map((bar) => `</${bar}${MARKER_BODY}${bar}`);
 const ALL_MARKERS = [...OPEN_MARKERS, ...CLOSE_MARKERS];
 /** A DSML tag longer than this without a closing `>` is not a tag; its text is kept. */
 const MAX_TAG_CHARS = 512;
-/** Text held after an unconfirmed opening tag; past this it is released as reasoning. */
+/** Text held after a lone opening tag other than `parameter`; past this it is released as reasoning. */
 const MAX_HELD_CHARS = 4096;
 /** The DSML tag whose body is a tool argument. */
 const PAYLOAD_TAG = "parameter";
@@ -52,6 +54,7 @@ export class DsmlEnvelopeFilter {
 	#depth = 0;
 	#held = "";
 	#payload = false;
+	#uncapped = false;
 
 	/** Feed one stream delta; returns the reasoning text that is safe to show and store now. */
 	push(delta: string): string {
@@ -71,12 +74,15 @@ export class DsmlEnvelopeFilter {
 		this.#held = "";
 		this.#depth = 0;
 		this.#payload = false;
+		this.#uncapped = false;
 	}
 
 	#open(tagName: string | undefined): void {
-		if (this.#depth > 0 || tagName === PAYLOAD_TAG) {
+		if (this.#depth > 0) {
 			this.#payload = true;
 			this.#held = "";
+		} else if (tagName === PAYLOAD_TAG) {
+			this.#uncapped = true;
 		}
 		this.#depth += 1;
 	}
@@ -89,7 +95,7 @@ export class DsmlEnvelopeFilter {
 		}
 		if (this.#payload) return;
 		this.#held += text;
-		if (this.#held.length > MAX_HELD_CHARS) {
+		if (!this.#uncapped && this.#held.length > MAX_HELD_CHARS) {
 			out.push(this.#held);
 			this.#close();
 		}

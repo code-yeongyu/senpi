@@ -74,11 +74,28 @@ describe("DSML envelope filter (senpi#4621)", () => {
 			expected: "before  after",
 		},
 		{
-			name: "a parameter envelope that never closes",
-			input: `before ${open(' parameter name="content"')}${"y".repeat(5000)}`,
+			name: "a parameter that never closes inside an invoke envelope",
+			input: `before ${open(' invoke name="write"')}${open(' parameter name="content"')}${"y".repeat(5000)}`,
 			expected: "before ",
 		},
+		{
+			name: "a lone parameter that closes after a 5000-char argument",
+			input: `before ${open(' parameter name="content"')}${"z".repeat(5000)}${close(" parameter")} after`,
+			expected: "before  after",
+		},
 	])("never releases $name as reasoning", ({ input, expected }) => {
+		expect(stripDsmlEnvelopes(input)).toBe(expected);
+		expect(
+			filterInPieces(
+				input,
+				Array.from({ length: input.length }, (_, index) => index),
+			),
+		).toBe(expected);
+	});
+
+	it("keeps the prose after a quoted parameter tag that never closes (senpi#4623 review probe)", () => {
+		const input = `I must not write ${open(' parameter name="path"')} in my thinking. Next I will read config.ts\u2026`;
+		const expected = "I must not write  in my thinking. Next I will read config.ts\u2026";
 		expect(stripDsmlEnvelopes(input)).toBe(expected);
 		expect(
 			filterInPieces(
