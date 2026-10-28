@@ -1285,6 +1285,7 @@ pi.on("input", async (event, ctx) => {
   // event.text - raw input (before skill/template expansion)
   // event.images - attached images, if any
   // event.source - "interactive" (typed), "rpc" (API), or "extension" (via sendUserMessage)
+  // event.attribution - "user" (a person sent it) or "agent" (an extension, tool, subagent, another agent's RPC client, or the session)
   // event.streamingBehavior - "steer" | "followUp" | undefined
   //   undefined when idle, "steer" for mid-stream interrupts,
   //   "followUp" for messages queued until the agent finishes
@@ -1311,10 +1312,23 @@ pi.on("input", async (event, ctx) => {
 });
 ```
 
+`source` names the channel the input arrived on; `attribution` names who sent it. Typed input is `"user"`. An RPC client's `prompt`, `steer` and `follow_up` are `"user"` only when that connection declared the `interactive_user` role with `set_client_info`; from any other RPC client (for example a parent agent driving a child session) they are `"agent"`. Input an extension sends with `sendUserMessage` is `"agent"`, except a person's answer to a question that the extension delivers through it, which stays `"user"` with `source: "extension"`. React to `attribution === "user"` when only the person's own messages should count, for example to lift a stop the user set.
+
 **Results:**
 - `continue` - pass through unchanged (default if handler returns nothing)
 - `transform` - modify text/images, then continue to expansion
 - `handled` - skip agent entirely (first handler to return this wins)
+
+#### input_disposition
+
+Fired once the session has decided what happens to an input an `input` handler saw. `event.inputId` matches that `input` event; `event.disposition` is `"handled"` (a handler or command consumed it), `"rejected"`, `"started"` (it began a turn) or `"queued"` (it waits as a steer or follow-up). An input queued while a turn runs gets `"queued"` when it is queued and then `"started"` when its message is delivered into a turn, always in that order.
+
+```typescript
+pi.on("input_disposition", async (event, ctx) => {
+  // event.inputId - the id of the matching input event
+  // event.disposition - "handled" | "rejected" | "started" | "queued"
+});
+```
 
 Transforms chain across handlers. See [input-transform.ts](../examples/extensions/input-transform.ts) and [input-transform-streaming.ts](../examples/extensions/input-transform-streaming.ts) for `streamingBehavior`-aware routing.
 
@@ -2121,13 +2135,19 @@ extension are left alone.
 
 Every MCP server registered by the extensions of the current session, in the
 session's extension order, as `{ name, config, extensionPath }` copies
-(`RegisteredMcpServer`). That order puts inline and built-in extension factories
-before file extensions, whatever order they loaded in. Before the session binds
-its extensions (while extension factories run), the list holds only the
-extensions loaded so far, in load order; a trusted project's own extensions load
-after the factories, so a factory reading it then does not see their servers. Extensions the resource loader left out of the session (replaced,
-disabled, filtered) contribute nothing, and on a name clash the registration
-from the extension earliest in that order wins. For extensions that connect MCP servers
+(`RegisteredMcpServer`). That order puts inline extension factories and the
+default built-in extensions before file extensions, whatever order they loaded
+in; a built-in loaded by path with `-e builtin:<id>` is ordered with the file
+paths instead. Before the session binds its extensions (while extension
+factories run), the list holds only the extensions loaded so far, in load order.
+When a session is created with a pass that resolves project trust (at startup,
+or on a switch into a folder whose trust is not cached yet), a trusted project's
+own extensions load after the factories, so a factory reading the list then does
+not see their servers; without that pass, every file extension loads before the
+factories. Extensions the resource loader
+left out of the session (replaced, disabled, filtered) contribute nothing, and
+on a name clash the registration from the extension earliest in the session's
+extension order wins. For extensions that connect MCP servers
 themselves, such as `pi-mcp-adapter`: read it on `session_start` and handle
 `mcp_servers_change` for later changes.
 

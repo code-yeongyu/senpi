@@ -1956,6 +1956,12 @@ export interface UserBashEvent {
 /** Source of user input */
 export type InputSource = "interactive" | "rpc" | "extension";
 
+/**
+ * Who the input came from: `"user"` for a person (typed in the TUI, sent by an RPC client, or a person's answer
+ * delivered through the extension API); `"agent"` for input an extension, tool, subagent or the session itself sends.
+ */
+export type InputAttribution = "user" | "agent";
+
 /** Fired when user input is received, before agent processing */
 export interface InputEvent {
 	type: "input";
@@ -1967,6 +1973,8 @@ export interface InputEvent {
 	images?: ImageContent[];
 	/** Where the input came from */
 	source: InputSource;
+	/** Whether a person or an agent sent the input; `source` says only which channel it arrived on. */
+	attribution: InputAttribution;
 	/** How the input will be delivered during streaming, or undefined when idle */
 	streamingBehavior?: "steer" | "followUp";
 }
@@ -2644,8 +2652,10 @@ export interface ExtensionAPI {
 	 * Register an MCP server for this session, with the same config as an `mcpServers` entry in
 	 * `mcp.json`. Servers registered while the extension loads connect on `session_start`; the
 	 * extension that handles `mcp_servers_change` connects later registrations right away.
-	 * Registering a name again replaces this extension's earlier registration; a name another
-	 * extension registered first is kept. The registration is not saved: register again on every load.
+	 * Registering a name again replaces this extension's earlier registration. When several extensions
+	 * register the same name, the declaration from the extension earliest in the session's extension
+	 * order is kept, regardless of which registered first (see `getMcpServers` in docs/extensions.md
+	 * for that order). The registration is not saved: register again on every load.
 	 * Throws for invalid configs.
 	 */
 	registerMcpServer(name: string, config: McpServerDeclaration): void;

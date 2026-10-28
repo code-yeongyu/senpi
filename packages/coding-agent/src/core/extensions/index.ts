@@ -126,6 +126,7 @@ export type {
 	GrepToolResultEvent,
 	InlineExtension,
 	// Events - Input
+	InputAttribution,
 	InputDispositionEvent,
 	InputEvent,
 	InputEventResult,

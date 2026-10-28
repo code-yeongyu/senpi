@@ -148,6 +148,7 @@ export type {
 	FindToolCallEvent,
 	GrepToolCallEvent,
 	InlineExtension,
+	InputAttribution,
 	InputDispositionEvent,
 	InputEvent,
 	InputEventResult,

@@ -64,7 +64,9 @@
       "scripts/session-transcripts.ts": ["unlisted"],
   },
   // Shared byte for byte with sisyphuslabs/omo-relay-daemon (scripts/knip-preexisting-exports.test.mjs pins its sha256):
-  // drops only the (file, export) pairs listed below; every other export of those files stays checked.
+  // drops only the (file, export) pairs listed below; every other export of those files stays checked. It also drops an
+  // unused export S of a declaration mirror X.d.mts / X.d.ts / X.d.cts whose twin X.mjs / X.js / X.cjs exports S and
+  // uses it (knip credits a use of the twin to the twin), so mirrors need no entry here.
   "preprocessor": "./scripts/knip-preexisting-exports.ts",
   "preprocessorOptions": {
     "preExistingExports": {
@@ -133,8 +135,8 @@
       "packages/ai/scripts/model-shards.ts": ["providerIdOfShard"],
       // pre-existing at origin main aceb1cc1d9: unused exports anthropicRequestSkeleton
       "packages/ai/src/api/anthropic-request-shape-log.ts": ["anthropicRequestSkeleton"],
-      // pre-existing at origin main aceb1cc1d9: unused exports CHATGPT_USAGE_LIMIT_PREFIX, describeChatGptUsageLimit
-      "packages/ai/src/api/chatgpt-usage-limit.ts": ["CHATGPT_USAGE_LIMIT_PREFIX", "describeChatGptUsageLimit"],
+      // pre-existing at origin main aceb1cc1d9: unused exports CHATGPT_USAGE_LIMIT_PREFIX
+      "packages/ai/src/api/chatgpt-usage-limit.ts": ["CHATGPT_USAGE_LIMIT_PREFIX"],
       // pre-existing at origin main aceb1cc1d9: unused exports CONTEXT_SAFETY_TOKENS
       "packages/ai/src/api/context-room.ts": ["CONTEXT_SAFETY_TOKENS"],
       // pre-existing at origin main aceb1cc1d9: unused exports CURSOR_API_URL, CURSOR_CLIENT_VERSION, CURSOR_STREAM_HEALTH_FAIL_THRESHOLD_MS, CURSOR_STREAM_HEALTH_HEARTBEAT_ONLY_THRESHOLD_MS, CURSOR_TURN_END_DRAIN_TIMEOUT_MS, mapH2TransportError (+8 more)
@@ -859,8 +861,6 @@
       "packages/coding-agent/src/core/extensions/builtin/terminal/monitor-state-dir.ts": ["monitorStateDir"],
       // pre-existing at origin main aceb1cc1d9: unused exports monitorElapsedSeconds
       "packages/coding-agent/src/core/extensions/builtin/terminal/monitor-status.ts": ["monitorElapsedSeconds"],
-      // pre-existing at origin main aceb1cc1d9: unused exports TERMINAL_NOTIFICATION_CUSTOM_TYPE
-      "packages/coding-agent/src/core/extensions/builtin/terminal/notify.ts": ["TERMINAL_NOTIFICATION_CUSTOM_TYPE"],
       // pre-existing at origin main aceb1cc1d9: unused exports OWNER_START_TOLERANCE_MS, DEFAULT_KILL_GRACE_MS, isProcessAlive
       "packages/coding-agent/src/core/extensions/builtin/terminal/orphan-reaper.ts": ["DEFAULT_KILL_GRACE_MS", "OWNER_START_TOLERANCE_MS", "isProcessAlive"],
       // pre-existing at origin main aceb1cc1d9: unused exports RESTORE_STATUS_KEY
@@ -1005,8 +1005,6 @@
       "packages/coding-agent/src/core/session-summary-index.ts": ["SESSION_SUMMARY_INDEX_MAX_BYTES"],
       // pre-existing at origin main aceb1cc1d9: unused exports modelThinkingKey, deriveSessionModelThinkingLevels
       "packages/coding-agent/src/core/session-thinking-memory.ts": ["deriveSessionModelThinkingLevels", "modelThinkingKey"],
-      // pre-existing at origin main aceb1cc1d9: unused exports realWriterProbes, writerClaimsDir
-      "packages/coding-agent/src/core/session-writer-claims.ts": ["realWriterProbes", "writerClaimsDir"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS, resolveSettingsSource
       "packages/coding-agent/src/core/settings-manager.ts": ["DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS", "resolveSettingsSource"],
       // pre-existing at origin main aceb1cc1d9: unused exports shannonBitsPerChar, readsAsWords, looksGenerated, joinedLooksGenerated
@@ -1253,8 +1251,8 @@
       "packages/coding-agent/src/runtime-snapshot/layout.ts": ["RuntimeSnapshotLayoutError"],
       // pre-existing at origin main aceb1cc1d9: unused exports isProcessAlive
       "packages/coding-agent/src/runtime-snapshot/registry.ts": ["isProcessAlive"],
-      // pre-existing at origin main aceb1cc1d9: unused exports isCompiledBunExecutable, bundledBunDir
-      "packages/coding-agent/src/utils/bundled-bun.ts": ["bundledBunDir", "isCompiledBunExecutable"],
+      // pre-existing at origin main aceb1cc1d9: unused export isCompiledBunExecutable
+      "packages/coding-agent/src/utils/bundled-bun.ts": ["isCompiledBunExecutable"],
       // pre-existing at origin main aceb1cc1d9: unused exports compareVersions, getChangelogPath
       "packages/coding-agent/src/utils/changelog.ts": ["compareVersions", "getChangelogPath"],
       // pre-existing at origin main aceb1cc1d9: unused exports isWaylandSession, extensionForImageMimeType
@@ -1267,8 +1265,8 @@
       "packages/evals/src/vitest-evals/reporter.ts": ["default"],
       // pre-existing at origin main aceb1cc1d9: unused exports getHost, getVendoredPrebuildPath (run-by-path entry, newly export-checked)
       "packages/pty/native/check-prebuild-fresh.mjs": ["getHost", "getVendoredPrebuildPath"],
-      // pre-existing at origin main aceb1cc1d9: unused exports loadNativePty, nativePty (run-by-path entry, newly export-checked)
-      "packages/pty/native/index.d.ts": ["loadNativePty", "nativePty"],
+      // pre-existing at origin main aceb1cc1d9: unused export loadNativePty (run-by-path entry, newly export-checked)
+      "packages/pty/native/index.d.ts": ["loadNativePty"],
       // pre-existing at origin main aceb1cc1d9: unused export loadNativePty (run-by-path entry, newly export-checked)
       "packages/pty/native/index.js": ["loadNativePty"],
       // pre-existing at origin main aceb1cc1d9: unused exports trackSettler
@@ -1319,50 +1317,32 @@
       "packages/senpi-codemode/src/kernels/js/handles.js": ["toHandleRef"],
       // pre-existing at origin main aceb1cc1d9: unused exports INTERRUPT_ACK_MS, WORKER_TERMINATE_DEADLINE_MS, abandonedWorkerNote
       "packages/senpi-codemode/src/kernels/js/interrupt-bounds.ts": ["INTERRUPT_ACK_MS", "WORKER_TERMINATE_DEADLINE_MS", "abandonedWorkerNote"],
-      // pre-existing at origin main aceb1cc1d9: unused exports kernelToolCallContext, inKernelToolInvoke (run-by-path entry, newly export-checked)
-      "packages/senpi-codemode/src/kernels/js/kernel-tools-context.d.ts": ["inKernelToolInvoke", "kernelToolCallContext"],
-      // pre-existing at origin main aceb1cc1d9: unused export createToolNamespace (run-by-path entry, newly export-checked)
-      "packages/senpi-codemode/src/kernels/js/kernel-tools-define.d.ts": ["createToolNamespace"],
       // pre-existing at origin main aceb1cc1d9: unused exports KERNEL_TOOL_ERROR_CODES, KernelToolError
       "packages/senpi-codemode/src/kernels/js/kernel-tools-errors.js": ["KERNEL_TOOL_ERROR_CODES", "KernelToolError"],
       // pre-existing at origin main aceb1cc1d9: unused exports KERNEL_TOOL_ERROR_CODES
       "packages/senpi-codemode/src/kernels/js/kernel-tools-errors.ts": ["KERNEL_TOOL_ERROR_CODES"],
       // pre-existing at origin main aceb1cc1d9: unused exports matcherKey, ellipsizeMiddle, normalizeKernelToolName
       "packages/senpi-codemode/src/kernels/js/kernel-tools-naming.js": ["ellipsizeMiddle", "matcherKey", "normalizeKernelToolName"],
-      // pre-existing at origin main aceb1cc1d9: unused export parseToolFunction (run-by-path entry, newly export-checked)
-      "packages/senpi-codemode/src/kernels/js/kernel-tools-parse.d.ts": ["parseToolFunction"],
-      // pre-existing at origin main aceb1cc1d9: unused exports createToolNamespace, createKernelToolRegistry (run-by-path entry, newly export-checked)
-      "packages/senpi-codemode/src/kernels/js/kernel-tools-registry.d.ts": ["createKernelToolRegistry", "createToolNamespace"],
       // pre-existing at origin main aceb1cc1d9: unused exports defaultInputSchema, isPlainJsonObject, isJsonValue
       "packages/senpi-codemode/src/kernels/js/kernel-tools-schema.js": ["defaultInputSchema", "isJsonValue", "isPlainJsonObject"],
-      // pre-existing at origin main aceb1cc1d9: unused exports hostToolRefusal, hostDeniedError (run-by-path entry, newly export-checked)
-      "packages/senpi-codemode/src/kernels/js/kernel-tools-scope.d.ts": ["hostDeniedError", "hostToolRefusal"],
       // pre-existing at origin main aceb1cc1d9: KERNEL_TOOLS_UNSUPPORTED: declared here, reported because the package entry src/index.ts re-exports it and nothing imports it (newly export-checked; the file stays checked)
       "packages/senpi-codemode/src/kernels/js/kernel-tools-types.ts": ["KERNEL_TOOLS_UNSUPPORTED"],
-      // pre-existing at origin main aceb1cc1d9: unused export scanDrainText (run-by-path entry, newly export-checked)
-      "packages/senpi-codemode/src/kernels/js/process-drain-scan.d.ts": ["scanDrainText"],
       // pre-existing at origin main aceb1cc1d9: unused exports isProcessAlive, signalProcess, readProcessTable, collectDescendants, ownedRoots
       "packages/senpi-codemode/src/kernels/js/process-tree-host.ts": ["collectDescendants", "isProcessAlive", "ownedRoots", "readProcessTable", "signalProcess"],
-      // pre-existing at origin main aceb1cc1d9: unused exports isProcessAlive, signalProcess, readProcessTable, collectDescendants, ownedRoots, terminateProcessTrees, terminateProcessGroups (run-by-path entry, newly export-checked)
-      "packages/senpi-codemode/src/kernels/js/process-tree.d.ts": ["collectDescendants", "isProcessAlive", "ownedRoots", "readProcessTable", "signalProcess", "terminateProcessGroups", "terminateProcessTrees"],
+      // pre-existing at origin main aceb1cc1d9: unused exports isProcessAlive, signalProcess, readProcessTable, collectDescendants, ownedRoots (run-by-path entry, newly export-checked)
+      "packages/senpi-codemode/src/kernels/js/process-tree.d.ts": ["collectDescendants", "isProcessAlive", "ownedRoots", "readProcessTable", "signalProcess"],
       // pre-existing at origin main aceb1cc1d9: unused exports isProcessAlive, signalProcess, readProcessTable, collectDescendants, ownedRoots
       "packages/senpi-codemode/src/kernels/js/process-tree.js": ["collectDescendants", "isProcessAlive", "ownedRoots", "readProcessTable", "signalProcess"],
       // pre-existing at origin main aceb1cc1d9: unused exports JavaScriptProcessRuntimeUnavailableError
       "packages/senpi-codemode/src/kernels/js/process-worker.ts": ["JavaScriptProcessRuntimeUnavailableError"],
-      // pre-existing at origin main aceb1cc1d9: unused exports parseWindowsRows, windowsTreeKillPids, windowsTreeKillArgs, listWindowsRows, killWindowsTree (run-by-path entry, newly export-checked)
-      "packages/senpi-codemode/src/kernels/js/windows-tree-kill.d.ts": ["killWindowsTree", "listWindowsRows", "parseWindowsRows", "windowsTreeKillArgs", "windowsTreeKillPids"],
+      // pre-existing at origin main aceb1cc1d9: unused exports parseWindowsRows, windowsTreeKillPids, windowsTreeKillArgs (run-by-path entry, newly export-checked)
+      "packages/senpi-codemode/src/kernels/js/windows-tree-kill.d.ts": ["parseWindowsRows", "windowsTreeKillArgs", "windowsTreeKillPids"],
       // pre-existing at origin main aceb1cc1d9: unused exports parseWindowsRows, windowsTreeKillPids, windowsTreeKillArgs
       "packages/senpi-codemode/src/kernels/js/windows-tree-kill.js": ["parseWindowsRows", "windowsTreeKillArgs", "windowsTreeKillPids"],
-      // pre-existing at origin main aceb1cc1d9: unused export createWorkerCore (run-by-path entry, newly export-checked)
-      "packages/senpi-codemode/src/kernels/js/worker-core.d.ts": ["createWorkerCore"],
       // pre-existing at origin main aceb1cc1d9: unused exports errorFromBridge
       "packages/senpi-codemode/src/kernels/js/worker-host.ts": ["errorFromBridge"],
       // pre-existing at origin main aceb1cc1d9: unused exports resolvePackage
       "packages/senpi-codemode/src/kernels/js/worker-package-resolve.js": ["resolvePackage"],
-      // pre-existing at origin main aceb1cc1d9: unused exports createCellRequire, createRequire (run-by-path entry, newly export-checked)
-      "packages/senpi-codemode/src/kernels/js/worker-require.d.ts": ["createCellRequire", "createRequire"],
-      // pre-existing at origin main aceb1cc1d9: unused export installShellCapture (run-by-path entry, newly export-checked)
-      "packages/senpi-codemode/src/kernels/js/worker-shell-capture.d.ts": ["installShellCapture"],
       // pre-existing at origin main aceb1cc1d9: unused exports PROCESS_STARTUP_DEADLINE_MS, ProcessKernelStartupTimeoutError
       "packages/senpi-codemode/src/kernels/js/worker-startup.ts": ["PROCESS_STARTUP_DEADLINE_MS", "ProcessKernelStartupTimeoutError"],
       // pre-existing at origin main aceb1cc1d9: unused exports PythonKernelStartupError
@@ -1467,16 +1447,8 @@
       "scripts/qa/fixtures/read-summary-provider.mjs": ["default"],
       // pre-existing at origin main aceb1cc1d9: unused exports packageSourceDirs, grepCount, useSiteLines (run-by-path entry, newly export-checked)
       "scripts/qa/fork-preservation-checks.mjs": ["grepCount", "packageSourceDirs", "useSiteLines"],
-      // pre-existing at origin main aceb1cc1d9: unused export runInstalledPlugin (run-by-path entry, newly export-checked)
-      "scripts/qa/omp-item2-plugin.d.mts": ["runInstalledPlugin"],
-      // pre-existing at origin main aceb1cc1d9: unused exports sha256, buildReadBinaries (run-by-path entry, newly export-checked)
-      "scripts/qa/read-summary-build.d.mts": ["buildReadBinaries", "sha256"],
       // pre-existing at origin main aceb1cc1d9: unused export binaryTargets (run-by-path entry, newly export-checked)
       "scripts/qa/read-summary-build.mjs": ["binaryTargets"],
-      // pre-existing at origin main aceb1cc1d9: unused export missingAssetAndBudget (run-by-path entry, newly export-checked)
-      "scripts/qa/read-summary-packaging.d.mts": ["missingAssetAndBudget"],
-      // pre-existing at origin main aceb1cc1d9: unused export compiledReadParity (run-by-path entry, newly export-checked)
-      "scripts/qa/read-summary-parity.d.mts": ["compiledReadParity"],
       // pre-existing at origin main aceb1cc1d9: unused export frozenReadFiles (run-by-path entry, newly export-checked)
       "scripts/qa/read-summary-parity.mjs": ["frozenReadFiles"],
       // pre-existing at origin main aceb1cc1d9: imports of undeclared packages @xterm/headless
@@ -1502,8 +1474,6 @@
       "scripts/test-temp-guard.mjs": ["repoTempName"],
       // pre-existing at origin main aceb1cc1d9: unused exports TRACKED_HARNESS_ALLOWLIST, HARNESS_ROOT_PATTERNS, findTrackedHarnessPaths (run-by-path entry, newly export-checked)
       "scripts/tracked-harness-artifacts-audit.test.mjs": ["HARNESS_ROOT_PATTERNS", "TRACKED_HARNESS_ALLOWLIST", "findTrackedHarnessPaths"],
-      // pre-existing at origin main aceb1cc1d9: unused exports windowsTreeKillArgs, windowsTreeKillArgsAsync (run-by-path entry, newly export-checked)
-      "scripts/windows-process-tree.d.mts": ["windowsTreeKillArgs", "windowsTreeKillArgsAsync"],
     },
   },
   "workspaces": {
@@ -1586,6 +1556,9 @@
         "bedrock-provider.d.ts",
         // The pi-ai bin (package.json bin points at dist/cli.js).
         "src/cli.ts",
+        // vitest.config.ts loads it as a setupFile only when CI/GITHUB_ACTIONS is set, so knip's vitest
+        // plugin resolves it only under CI; listing it keeps the entry set the same on every machine.
+        "test/ci-diagnostics.ts",
       ],
       "includeEntryExports": true,
       // dist/cli.js is a committed bin stub the build overwrites.
