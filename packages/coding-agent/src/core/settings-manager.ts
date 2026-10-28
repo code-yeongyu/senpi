@@ -1778,7 +1778,10 @@ export class SettingsManager {
 	}
 
 	getRetryFallbackSettings(): ResolvedRetryFallbackSettings {
-		return resolveRetryFallbackSettings(this.settings.retry);
+		// Only a per-session fallback profile writes chains into the session-only override layer.
+		return resolveRetryFallbackSettings(this.settings.retry, {
+			sessionPolicy: this.runtimeOverrides.retry?.fallbackChains !== undefined,
+		});
 	}
 
 	getFallbackCircuitSettings(): ResolvedFallbackCircuitSettings {
