@@ -48,6 +48,8 @@ export class WorkerIntake {
 	private serial = 0;
 	private open: { readonly transfer: StagedTransfer; fed: number } | undefined;
 	private refused: TransferRefusal | undefined;
+	/** Messages this intake reassembled: their fragments already returned every permit they were paid with. */
+	private readonly assembled = new WeakSet<SessionWorkerToHost>();
 
 	constructor(
 		staging: TransferStaging,
@@ -70,7 +72,7 @@ export class WorkerIntake {
 	}
 
 	received(message: SessionWorkerToHost): void {
-		if (PAID.has(message.type)) this.permits.returned();
+		if (PAID.has(message.type) && !this.assembled.delete(message)) this.permits.returned();
 	}
 
 	/** A gap, duplicate or reordered physical frame is denied and ends this incarnation before any mutation. */
@@ -133,6 +135,7 @@ export class WorkerIntake {
 			let text = "";
 			for await (const chunk of this.staging.chunks(content)) text += chunk;
 			const message: SessionWorkerToHost = JSON.parse(text);
+			this.assembled.add(message);
 			return Object.assign(
 				message,
 				frame.ordinal === undefined ? {} : { ordinal: frame.ordinal },
@@ -143,7 +146,8 @@ export class WorkerIntake {
 					: {},
 			);
 		} finally {
-			this.staging.release(content);
+			// A store closed under this read already released the content: release it only while it is still staged.
+			this.staging.abandon(content);
 		}
 	}
 }
