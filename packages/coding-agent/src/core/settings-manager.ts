@@ -2031,6 +2031,14 @@ export class SettingsManager {
 	}
 
 	/**
+	 * No-bytes liveness bound for SSE provider response bodies (senpi#4608).
+	 * `undefined` leaves the provider default (90s); 0 disables it.
+	 */
+	getProviderStreamLivenessTimeoutMs(): number | undefined {
+		return this.settings.retry?.provider?.streamLivenessTimeoutMs;
+	}
+
+	/**
 	 * Idle timeout for the agent loop's provider event reader. Defaults to
 	 * httpIdleTimeoutMs so streams that stop delivering events (e.g. a
 	 * connection that silently died after a network change) fail with a

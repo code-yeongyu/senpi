@@ -312,6 +312,14 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 */
 	websocketConnectTimeoutMs?: number;
 	/**
+	 * No-bytes bound in milliseconds for an SSE response body, for adapters that support it
+	 * (Anthropic Messages). Any received byte, including ping events and comment keepalives,
+	 * resets it, so a slow model that keeps the connection alive is never cut off; a body that
+	 * delivers nothing for this long fails with a retryable "SSE transport liveness timeout".
+	 * Default: 90000. 0 disables.
+	 */
+	streamLivenessTimeoutMs?: number;
+	/**
 	 * Optional metadata to include in API requests.
 	 * Providers extract the fields they understand and ignore the rest.
 	 * For example, Anthropic uses `user_id` for abuse tracking and rate limiting.

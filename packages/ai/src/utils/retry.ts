@@ -509,14 +509,15 @@ export function isRetryableAssistantError(message: AssistantMessage): boolean {
  * Matches the agent-loop stream watchdog failures ("Idle timeout waiting for
  * provider stream after <n>ms" and "Provider stream start timed out after
  * <n>ms"), the WebSocket liveness verdict ("WebSocket liveness timeout after
- * <n>ms (<k> pings unanswered)"), and the Responses completion-phase verdict
+ * <n>ms (<k> pings unanswered)"), the SSE body liveness verdict ("SSE transport
+ * liveness timeout after <n>ms (no bytes received)"), and the Responses completion-phase verdict
  * ("Provider stream stalled after the last output item: response.completed
  * timed out after <n>ms"). These anchored shapes
  * distinguish provider-stream stalls from unrelated extension, command, or MCP
  * timeout diagnostics.
  */
 const PROVIDER_STREAM_STALL_ERROR_PATTERN =
-	/^(?:Idle timeout waiting for provider stream after \d+ms|Provider stream start timed out after \d+ms(?: \([^)]*\))?|WebSocket liveness timeout after \d+ms \(\d+ pings unanswered\)|Provider stream stalled after the last output item: response\.completed timed out after \d+ms)$/i;
+	/^(?:Idle timeout waiting for provider stream after \d+ms|Provider stream start timed out after \d+ms(?: \([^)]*\))?|WebSocket liveness timeout after \d+ms \(\d+ pings unanswered\)|SSE transport liveness timeout after \d+ms \(no bytes received\)|Provider stream stalled after the last output item: response\.completed timed out after \d+ms)$/i;
 const PROVIDER_TRANSPORT_TIMEOUT_ERROR_PATTERN = /^Request timed out\.?$/i;
 
 export function isProviderStreamStallError(message: AssistantMessage): boolean {
@@ -544,6 +545,11 @@ const PROVIDER_STALL_PHASES: ReadonlyArray<{
 	{
 		pattern: /^WebSocket liveness timeout after (\d+)ms/i,
 		symptom: "stopped answering connection health checks",
+	},
+	{
+		pattern: /^SSE transport liveness timeout after (\d+)ms/i,
+		symptom: "kept the connection open but sent nothing over it",
+		setting: "retry.provider.streamLivenessTimeoutMs",
 	},
 	{
 		pattern: /^Provider stream stalled after the last output item: response\.completed timed out after (\d+)ms/i,

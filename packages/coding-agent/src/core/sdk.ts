@@ -503,6 +503,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs;
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
+			const streamLivenessTimeoutMs =
+				options?.streamLivenessTimeoutMs ?? settingsManager.getProviderStreamLivenessTimeoutMs();
 			const headerRunner = extensionRunnerRef.current;
 			// A provider-declared profile owns the transport retry budget: a disabled
 			// providerRequest stage sends 0 so user retry.provider.* cannot hand it a
@@ -525,6 +527,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				serviceTier,
 				timeoutMs,
 				websocketConnectTimeoutMs,
+				streamLivenessTimeoutMs,
 				maxRetries: options?.maxRetries ?? profileMaxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
 				transformHeaders: async (requestHeaders) => {

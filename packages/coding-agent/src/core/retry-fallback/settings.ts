@@ -4,6 +4,7 @@ import type { FallbackChains } from "./chains.ts";
 export interface ProviderRetrySettings {
 	timeoutMs?: number;
 	streamStartTimeoutMs?: number;
+	streamLivenessTimeoutMs?: number; // no-bytes bound on an SSE response body (any byte, pings included, resets it); default: 90000, 0 disables
 	streamRetryTimeoutMs?: number; // retry-continuation watchdog cap after a provider timeout; reconciled to max(cap, streamStartTimeoutMs) so a granted stream-start budget is never cut short; default: 30000, 0 disables
 	maxRetries?: number;
 	maxRetryDelayMs?: number;

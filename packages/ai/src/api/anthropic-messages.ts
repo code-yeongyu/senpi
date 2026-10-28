@@ -56,6 +56,7 @@ import {
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import { readWithSseLiveness, resolveSseLivenessTimeoutMs } from "../utils/sse-liveness.ts";
 import {
 	formatGitHubCopilotToolLimitError,
 	limitGitHubCopilotTools,
@@ -1213,6 +1214,7 @@ function consumeLine(text: string): { line: string; rest: string } | null {
 async function* iterateSseMessages(
 	body: ReadableStream<Uint8Array>,
 	signal?: AbortSignal,
+	livenessTimeoutMs?: number,
 ): AsyncGenerator<ServerSentEvent> {
 	const reader = body.getReader();
 	const decoder = new TextDecoder();
@@ -1225,7 +1227,7 @@ async function* iterateSseMessages(
 				throw new Error("Request was aborted");
 			}
 
-			const { value, done } = await reader.read();
+			const { value, done } = await readWithSseLiveness(reader, livenessTimeoutMs);
 			if (done) {
 				break;
 			}
@@ -1272,6 +1274,7 @@ async function* iterateSseMessages(
 async function* iterateAnthropicEvents(
 	response: Response,
 	signal?: AbortSignal,
+	livenessTimeoutMs?: number,
 ): AsyncGenerator<RawMessageStreamEvent> {
 	if (!response.body) {
 		throw new Error("Attempted to iterate over an Anthropic response with no body");
@@ -1280,7 +1283,7 @@ async function* iterateAnthropicEvents(
 	let sawMessageStart = false;
 	let sawMessageEnd = false;
 
-	for await (const sse of iterateSseMessages(response.body, signal)) {
+	for await (const sse of iterateSseMessages(response.body, signal, livenessTimeoutMs)) {
 		if (sse.event === "error") {
 			let errorText = sse.data;
 			const hintMs = extract429RetryAfterMs({ bodyText: sse.data });
@@ -1573,7 +1576,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				| (ProviderNativeContent & { partialJson?: string; index?: number });
 			const blocks = output.content as Block[];
 
-			for await (const event of iterateAnthropicEvents(response, requestSignal)) {
+			const livenessTimeoutMs = resolveSseLivenessTimeoutMs(options?.streamLivenessTimeoutMs);
+			for await (const event of iterateAnthropicEvents(response, requestSignal, livenessTimeoutMs)) {
 				await options?.onProviderStreamEvent?.(event, model);
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
