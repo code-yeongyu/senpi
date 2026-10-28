@@ -226,7 +226,7 @@ function bashCommandRequests(command: string): PermissionRequest[] {
 }
 
 /** The complete bash tool parse, including external-directory requests. */
-export function bashPermissionRequests(command: string, cwd: string): PermissionRequest[] {
+function bashPermissionRequests(command: string, cwd: string): PermissionRequest[] {
 	const requests = bashCommandRequests(command);
 	const externalPaths = extractExternalPaths(command, cwd);
 	return withExternalDirectoryRequests(requests, externalPaths, cwd, "file", rawTarget);

@@ -22,7 +22,13 @@ import {
 	readProcessStartTime,
 	waitForStartTime,
 } from "../src/utils/process-identity.ts";
-import { killAndWait, processesUnder, reapProcessesUnder, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
+import {
+	collectSpawnedHosts,
+	killAndWait,
+	processesUnder,
+	reapCollectedHosts,
+	waitForPidGone,
+} from "./helpers/spawned-host-reaper.ts";
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
@@ -34,16 +40,19 @@ const CAPABILITIES = "multi_session,extension_events,session_context,session_kin
 const HANDOFF_CAPABILITIES = `${CAPABILITIES},${GENERATION_HANDOFF_CAPABILITY}`;
 
 afterEach(async () => {
-	for (const child of children.splice(0)) await killAndWait(child);
-	for (const root of roots.splice(0)) {
-		await stopManagedRoot(root);
-		// Most hosts here are spawned by PRODUCTION code: detached, with only a pid handed back, and
-		// some cases deliberately leave a registration the teardown above cannot act on (an unguarded
-		// pidfile, an ensure that cleaned its own state). The sandbox path still names every one of
-		// them, and the wait is what keeps the removal below from racing a host that is still writing.
-		await reapProcessesUnder(root);
-		await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-	}
+	const spawned = children.splice(0);
+	const pending = roots.splice(0);
+	// Most hosts here are spawned by PRODUCTION code: detached, with only a pid handed back, and
+	// some cases deliberately leave a registration the teardown cannot act on (an unguarded pidfile,
+	// an ensure that cleaned its own state). The sandbox path still names every one of them, and the
+	// wait is what keeps the removals below from racing a host that is still writing. The snapshot is
+	// taken BEFORE anything is signalled: a supervisor's host child is re-parented out of the tree the
+	// moment its supervisor dies, and argv never named it.
+	const scope = { children: spawned, roots: pending };
+	const collected = collectSpawnedHosts(scope);
+	for (const root of pending) await stopManagedRoot(root);
+	await reapCollectedHosts(collected, scope);
+	for (const root of pending) await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }, 60_000);
 
 describe("ensureHost", () => {
