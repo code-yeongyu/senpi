@@ -85,8 +85,8 @@ const chunks = (value: string): string[] => {
 /**
  * One manifest and catalog per token, built once from the pinned root and released with the token. A component is
  * verified once per frozen root (RULING-69 (2)): every later page or re-open on that root reuses the verified source,
- * and the root's entries are dropped with the lease of the one token that pins it (`VerifiedComponents`). A source holds leaf positions, never bytes; S11b owns the
- * current-page retry cache.
+ * and the root's entries are dropped with the lease of the one token that pins it (`VerifiedComponents`). A source
+ * holds leaf positions, never bytes; S11b owns the current-page retry cache.
  */
 export class RecoveryManifests {
 	private readonly catalogs = new CompactRecoveryCatalog();

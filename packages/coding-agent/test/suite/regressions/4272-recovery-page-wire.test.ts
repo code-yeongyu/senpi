@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
+import { CompactContentStore } from "../../../src/modes/rpc/compact-content-store.ts";
 import { CompactReadError } from "../../../src/modes/rpc/compact-read-lease.ts";
 import { CompactRecoveryCatalog } from "../../../src/modes/rpc/compact-recovery-catalog.ts";
 import type { RecoveryManifest } from "../../../src/modes/rpc/compact-recovery-manifest.ts";
@@ -185,6 +186,8 @@ it("RULING-69 (2) a peer that disconnects during a slow first open aborts it: th
 	const gate = Promise.withResolvers<void>();
 	const entered = Promise.withResolvers<AbortSignal | undefined>();
 	const settled: unknown[] = [];
+	const leafReads = vi.spyOn(CompactContentStore.prototype, "readLeaf");
+	let readsAtGate = -1;
 	const read = CompactRecoveryCatalog.prototype.read;
 	vi.spyOn(CompactRecoveryCatalog.prototype, "read").mockImplementation(async function (
 		this: CompactRecoveryCatalog,
@@ -192,6 +195,7 @@ it("RULING-69 (2) a peer that disconnects during a slow first open aborts it: th
 	) {
 		entered.resolve(args[4]);
 		await gate.promise;
+		readsAtGate = leafReads.mock.calls.length;
 		try {
 			const opened = await read.apply(this, args);
 			settled.push(opened.kind);
@@ -231,6 +235,10 @@ it("RULING-69 (2) a peer that disconnects during a slow first open aborts it: th
 	expect(settled, "the verification stopped typed aborted, before any component byte was read").toHaveLength(1);
 	expect(settled[0]).toBeInstanceOf(CompactReadError);
 	expect(settled[0]).toMatchObject({ reason: "aborted" });
+	expect(readsAtGate, "the held open reached its gate").toBeGreaterThanOrEqual(0);
+	// After the gate the catalog walk reads only the root node and the component's pointer side (a one-level ref); the
+	// component's own leaves are read inside openFrozenBytes, which checks the signal before each one.
+	expect(leafReads.mock.calls.length - readsAtGate, "only the catalog walk's two reads, no component leaf").toBe(2);
 	expect(pages.status(), "the slot and the token's request state are freed; nothing is cached").toMatchObject({
 		tokens: 0,
 		outstanding: 0,

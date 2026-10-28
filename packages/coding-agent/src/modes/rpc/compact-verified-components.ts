@@ -30,10 +30,10 @@ interface PinnedRoot {
  * dropped with the lease of the one token that pins it.
  *
  * Invariant: a frozen root is pinned by exactly one live token. `RecoveryCheckpoints.freeze` is the only place a token
- * is minted, and it pins the root its own `lane.freeze()` call just built (compact-recovery-state.ts:99); every freeze
- * builds a new root object with its own references (session-acceptance-lane.ts:214-231, compact-lane-current.ts:133-139,
- * compact-session-state.ts:138-161), so two peers, a re-attach or a shed's resync each get a root of their own, and
- * `retain()` hands a root to a non-token consumer under the same token's lease (compact-recovery-state.ts:139). A
+ * is minted, and it pins the root its own `lane.freeze()` call just built; every freeze builds a new root object with
+ * its own references (`SessionAcceptanceLane.freeze`, `CompactLaneCurrent.freeze`, `CompactSessionState.freeze`), so
+ * two peers, a re-attach or a shed's resync each get a root of their own, and `RecoveryCheckpoints.retain` hands a root
+ * to a non-token consumer under the same token's lease. A
  * second peer on the same session therefore never shares an entry; it verifies its own root once. `pin` enforces the
  * invariant with `FrozenRootPinnedError` instead of serving or overwriting another token's entries.
  * An entry holds positions only, never bytes: at most one number per stored leaf of a component, or per row of the

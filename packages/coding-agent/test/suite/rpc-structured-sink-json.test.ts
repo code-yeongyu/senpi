@@ -201,6 +201,9 @@ it("snapshots getters once before later getters can mutate earlier properties", 
 
 // Part of #4272: deep nesting must succeed or fail exactly where native JSON.stringify does. A fresh
 // process keeps the walk cold: warmed-up code uses smaller frames and hides the earlier overflow.
+// RULING-68: under the engine limit the normalizer equals the JSON round trip exactly; past it (where the round trip
+// throws the engine's RangeError) it refuses with the typed LegacyRecordDepthError. 20,000 is under Bun's limit and past
+// Node's, so it lands on whichever side this runtime puts it.
 it("normalizes deeply nested arrays like the JSON round trip", async () => {
 	const source = new URL("../../src/modes/rpc/json-normal-value.ts", import.meta.url).href;
 	const script = `
@@ -213,19 +216,26 @@ it("normalizes deeply nested arrays like the JSON round trip", async () => {
 			try { JSON.stringify(deep(middle)); low = middle; } catch { high = middle - 1; }
 		}
 		const outcome = (run) => { try { return JSON.stringify(run()); } catch (error) { return error.name; } };
-		const results = [low - 16, 20000].map((depth) => {
+		const results = [low - 16, low + 1, 20000].map((depth) => {
 			const input = { type: "tool_execution_end", result: { content: [], details: deep(depth) } };
 			const reference = outcome(() => JSON.parse(JSON.stringify(input)));
 			const normalized = outcome(() => normalizeJsonValue(input).value);
-			return { depth, same: normalized === reference, reference: reference.slice(0, 48), normalized: normalized.slice(0, 48) };
+			return { depth, low, same: normalized === reference, reference: reference.slice(0, 48), normalized: normalized.slice(0, 48) };
 		});
 		process.stdout.write(JSON.stringify(results));`;
 	const args = process.versions.bun ? ["-e", script] : ["--input-type=module", "-e", script];
 	const { stdout } = await promisify(execFile)(process.execPath, args, { timeout: 60_000 });
-	const results: { depth: number; same: boolean; reference: string; normalized: string }[] = JSON.parse(stdout);
-	expect(results).toHaveLength(2);
-	for (const { depth, same, reference, normalized } of results)
-		expect({ depth, same, normalized }).toEqual({ depth, same: true, normalized: reference });
+	const results: { depth: number; low: number; same: boolean; reference: string; normalized: string }[] =
+		JSON.parse(stdout);
+	expect(results).toHaveLength(3);
+	const [underLimit, limitPlusOne] = results;
+	expect(underLimit.reference, "the record under the engine limit serializes").not.toBe("RangeError");
+	expect(limitPlusOne.reference, "the engine limit + 1 is past the engine limit").toBe("RangeError");
+	for (const { depth, low, same, reference, normalized } of results) {
+		if (reference === "RangeError")
+			expect({ depth, low, normalized }).toEqual({ depth, low, normalized: "LegacyRecordDepthError" });
+		else expect({ depth, low, same, normalized }).toEqual({ depth, low, same: true, normalized: reference });
+	}
 }, 90_000);
 
 it.each(["BigInt", "cycle"])("throws the reference error class for %s", (kind) => {

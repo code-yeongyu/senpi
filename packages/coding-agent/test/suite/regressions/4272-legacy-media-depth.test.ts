@@ -179,7 +179,9 @@ it.each([DEEP, LIMIT - 256])(
 			host.writer.setConnectionCapabilities("c", [MEDIA_PLACEHOLDERS_CAPABILITY]);
 			const { sessionId } = await host.open();
 			for (const message of ["go deep", "again"]) {
-				const idle = host.next(`idle after ${message}`, (record) => record.type === "agent_idle");
+				// A hang guard, not a timing assertion: a record near the engine limit is serialized and parsed several times
+				// (isolate, host, writer), which on Bun at ~40,000 levels under a loaded host takes longer than the default 30 s.
+				const idle = host.next(`idle after ${message}`, (record) => record.type === "agent_idle", 120_000);
 				expect((await host.request({ type: "prompt", sessionId, message })).success).toBe(true);
 				await idle;
 			}
@@ -194,5 +196,5 @@ it.each([DEEP, LIMIT - 256])(
 			await host.dispose();
 		}
 	},
-	90_000,
+	300_000,
 );
