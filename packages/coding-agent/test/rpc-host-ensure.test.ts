@@ -1,9 +1,11 @@
-import { type ChildProcess, spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import childProcess, { type ChildProcess, spawn } from "node:child_process";
+import { once } from "node:events";
+import { access, mkdir, mkdtemp, readFile, rm, stat, watch, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { VERSION } from "../src/config.ts";
 import { type HostPidFileWriter, readHostRegistration } from "../src/modes/rpc/host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY, HostEnsureRefusedError } from "../src/modes/rpc/host-decision.ts";
@@ -29,7 +31,6 @@ import {
 	reapCollectedHosts,
 	waitForPidGone,
 } from "./helpers/spawned-host-reaper.ts";
-import { fileAppears } from "./helpers/rpc-supervised-host.ts";
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
@@ -870,12 +871,38 @@ async function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
 	const controller = new AbortController();
 	// Arm before spawn. These cases time protocol readiness, not the runtime's first instruction:
 	// under CPU pressure SIGTERM can otherwise arrive before the fixture ever writes its diagnostic.
-	const diagnosticReady =
+	// #4708: fixture startup is bounded by the test, not a second wall-clock readiness budget.
+	const markerReady =
 		overrides.spawn?.args[0] === readinessDiagnosticFixture
-			? fileAppears(join(qa.root, "stderr-ready"), 5_000, controller.signal)
+			? (async () => {
+					for await (const event of watch(qa.root, { signal: controller.signal })) {
+						if (event.filename === "stderr-ready") return;
+					}
+				})()
 			: undefined;
+	let diagnosticReady = markerReady;
 	// Startup may fail before the pidfile hook awaits the fixture; cancellation must still be observed.
-	void diagnosticReady?.catch(() => {});
+	void markerReady?.catch(() => {});
+	const spawnOriginal = childProcess.spawn;
+	const diagnostic: { child?: ChildProcess } = {};
+	const spawnSpy = markerReady
+		? vi.spyOn(childProcess, "spawn").mockImplementation((...args: Parameters<typeof spawnOriginal>) => {
+				const child = spawnOriginal(...args);
+				if (markerReady && args[1]?.[0] === readinessDiagnosticFixture) {
+					diagnostic.child = child;
+					diagnosticReady = Promise.race([
+						markerReady,
+						once(child, "exit", { signal: controller.signal }).then(([code, signal]) => {
+							throw new Error(`diagnostic fixture exited before stderr marker (code ${code}, signal ${signal})`);
+						}),
+					]);
+					void diagnosticReady.catch(() => {});
+				}
+				return child;
+			})
+		: undefined;
+	// ensureHost imports the native named export; observe its real child without a product seam.
+	if (spawnSpy) syncBuiltinESMExports();
 	try {
 		return await ensureHost({
 			agentDir: qa.agentDir,
@@ -894,8 +921,15 @@ async function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
 				},
 			},
 		});
+	} catch (error) {
+		// A failed spawn has no pid; preserve its asynchronous error rather than the generic
+		// ensureHost failure thrown before the pidfile hook can await diagnosticReady.
+		if (diagnostic.child && diagnostic.child.pid === undefined) await diagnosticReady;
+		throw error;
 	} finally {
 		controller.abort();
+		spawnSpy?.mockRestore();
+		if (spawnSpy) syncBuiltinESMExports();
 	}
 }
 
