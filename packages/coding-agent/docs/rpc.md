@@ -596,11 +596,15 @@ Behind the same flag, one bounded page of a frozen checkpoint component, through
   file order,
   `{index, id, source: "file", parentId, kind, family}` followed by a newline, UTF-16LE like every component, so a
   page of it is verified exactly like any other page. A client anchors the join to the catalog: the SHA-256 over
-  `kind NUL id LF` of every row, in order, is the catalog's `idFingerprint`. The host opens the session file only for
-  this route, asynchronously, verifies its identity, count and fingerprint before the first page, and re-checks the
-  identity on every page: a file replaced, truncated, missing, or rewritten since the cut is
-  `recovery_storage_unavailable` with `reason` `base_file_replaced`, `base_file_truncated`, `base_file_missing` or
-  `base_fingerprint_mismatch`, never stale rows. With a base present, the transcript, opaque and source families are
+  `kind NUL id LF` of every row, in order, is the catalog's `idFingerprint`. A line the loader parsed that is no
+  session entry is a row too (never dropped): its `kind` and `id` are the string forms of its `type` and `id`
+  (`"undefined"` when absent), its `parentId` null unless a string, and its `family` that of its kind. The host opens
+  the session file only for this route, asynchronously, verifies its identity, count and fingerprint before the first
+  page, and re-checks the identity and every row a page re-derives against that open. A file replaced, truncated or
+  missing, a change to an entry id or kind since the cut, or any change to a row (its id, kind, parent or position)
+  after that first open is `recovery_storage_unavailable` with `reason` `base_file_replaced`, `base_file_truncated`,
+  `base_file_missing` or `base_fingerprint_mismatch`, never stale rows. An in-place edit of a parent before the first
+  open is not detected. With a base present, the transcript, opaque and source families are
   complete: their members are the catalog's rows of this epoch plus the base stream's rows of their family.
 
 #### interactive_user

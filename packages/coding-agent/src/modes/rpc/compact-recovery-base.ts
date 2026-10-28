@@ -1,49 +1,56 @@
 import { createHash } from "node:crypto";
 import { type FileHandle, open } from "node:fs/promises";
-import { z } from "zod";
-import type { PersistedBase } from "../../core/session-transcript-journal.ts";
+import { parseSessionEntryLine } from "../../core/session-entry-file.ts";
+import type { FileEntry } from "../../core/session-manager.ts";
+import { fingerprintLine, type PersistedBase } from "../../core/session-transcript-journal.ts";
 import type { TranscriptRoot } from "./accepted-transcript.ts";
 import { storedBytes } from "./compact-catalog-codec.ts";
 import { entryFamily } from "./compact-catalog-registry.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
-import { assertRange, type FrozenBytes, startAtOrBefore } from "./compact-recovery-bytes.ts";
-import {
-	type BaseRef,
-	baseRef,
-	type ContentDigest,
-	type ContentRef,
-	parseContentDigest,
-} from "./compact-recovery-ids.ts";
+import { BASE_ROW_TABLE_BYTES, BaseRowTable, type LineSpan } from "./compact-recovery-base-index.ts";
+import { assertRange, type FrozenBytes } from "./compact-recovery-bytes.ts";
+import { type BaseRef, baseRef, type ContentRef, parseContentDigest } from "./compact-recovery-ids.ts";
 
 /**
  * The loaded transcript base as the page route streams it (S11c, RULING-70 (1) B, RULING-61 "partial -> exact"): one
  * stamped row per base entry, `{index, id, source: "file", parentId, kind, family}` plus a newline, in the ONE
  * UTF-16LE codec every component uses, so a page of it is a page like any other (`fragment` digest over its raw
  * bytes). The anchor is the cut's `idFingerprint` and file identity, never a catalog leaf: the open scans the file
- * once with one line resident, refuses typed unless the identity, the count and the fingerprint all hold, and keeps
- * per row only its stream start, its line's file start and a 32-bit hash of the row (20 bytes per entry, freed with
- * the root's lease). Every page re-opens the file by path, re-checks the identity and re-derives its rows from their
- * lines: a file that changed since the cut (replaced, truncated, missing, or rewritten so a row no longer hashes) is a
- * typed `PersistedBaseError`, never a stale byte. The recovery owner reads the file only here and only asynchronously
- * (RULING-50 (3)).
+ * once with one line resident, refuses typed unless the identity, the count and the fingerprint all hold, and keeps a
+ * row table bounded by its budget (`compact-recovery-base-index.ts`, RULING-71 (2)), freed with the root's lease.
+ * Every page re-opens the file by path, re-checks the identity and re-derives its rows from their lines: a file
+ * replaced, truncated or missing, or changed in a row since the open, is a typed `PersistedBaseError`, never a stale
+ * byte. The recovery owner reads the file only here and only asynchronously (RULING-50 (3)).
+ *
+ * The scan reads lines exactly as the loader does (`parseSessionEntryLine`, `fingerprintLine`): every base the loader
+ * accepted streams. A parsed line that is not a session entry is a row like any other, retained, never dropped
+ * (RULING-60 Q1 (2)): its `kind` and `id` are the loader's string forms of its `type` and `id` (`"undefined"` when
+ * absent, so the rows still re-derive `idFingerprint`), its `parentId` is null unless a string, and its family is its
+ * kind's (`opaque` for an unknown one).
+ *
+ * What each check proves (RULING-71 (3), (4)):
+ * - `idFingerprint` (SHA-256 over `kind NUL id LF` per entry) covers the entries' ids and kinds, NOT their content:
+ *   a parent changed under unchanged ids passes it. A content change after the open is caught by the per-row check on
+ *   every page (each re-derived row must start, measure and hash as the open recorded it); an in-place edit of a
+ *   non-id field before the open is not detected by this anchor.
+ * - That per-row hash is FNV-1a-32: CHANGE DETECTION for the user's own local session file only, between this
+ *   process's open and its later reads. It is never an integrity proof on the wire, never sent to a client, and never
+ *   a cache key across files; what a client receives is verified by the RULING-57 SHA-256 domains where they apply
+ *   (the `fragment` digest of every page) and by the `idFingerprint` it re-derives from the rows.
  */
 const READ_BYTES = 64 * 1024;
 const NEWLINE = 0x0a;
 
-const EntryLineSchema = z.object({ type: z.string(), id: z.string(), parentId: z.string().nullable().optional() });
-type EntryLine = z.infer<typeof EntryLineSchema>;
-
-interface Line {
-	readonly start: number;
-	readonly end: number;
+interface Line extends LineSpan {
 	readonly text: string;
 }
 
-interface RowTable {
-	readonly starts: Float64Array;
-	readonly fileStarts: Float64Array;
-	readonly hashes: Uint32Array;
-	readonly fileEnd: number;
+/** The FrozenBytes of the base, with the bound its row table keeps (RULING-71 (2)). */
+export interface BaseBytes extends FrozenBytes {
+	readonly rowsPerAnchor: number;
+	readonly tableBytes: number;
+	/** The most rows one range re-derived; a test instrument for the bounded reparse between anchors. */
+	readonly peakRangeRows: number;
 }
 
 /** The base this cut's reserved ref names; another cut's ref, an unavailable transcript or no base is `range`. */
@@ -99,135 +106,115 @@ async function* lines(handle: FileHandle, from: number, check: () => void): Asyn
 	if (carried.length > 0) yield { start, end: position, text: Buffer.concat(carried).toString("utf8") };
 }
 
-/** A blank or unparsable line is skipped as the loader skips it; a parsable one that is no entry cannot be stamped. */
-function parseLine(text: string): EntryLine | undefined {
-	if (text.trim() === "") return undefined;
-	let value: unknown;
-	try {
-		value = JSON.parse(text);
-	} catch (cause) {
-		if (cause instanceof SyntaxError) return undefined;
-		throw cause;
-	}
-	const entry = EntryLineSchema.safeParse(value);
-	if (!entry.success) throw new CompactReadError("base_fingerprint_mismatch");
-	return entry.data;
-}
+/** A field of a parsed line, read as the loader's template literal reads `entry.type` / `entry.id`. */
+const field = (entry: FileEntry, key: "type" | "id" | "parentId"): unknown =>
+	typeof entry === "object" && entry !== null ? Reflect.get(entry, key) : undefined;
 
-const stampedRow = (index: number, entry: EntryLine): Buffer =>
-	storedBytes(
+function stampedRow(index: number, entry: FileEntry): Buffer {
+	const kind = String(field(entry, "type"));
+	const parentId = field(entry, "parentId");
+	return storedBytes(
 		`${JSON.stringify({
 			index,
-			id: entry.id,
+			id: String(field(entry, "id")),
 			source: "file",
-			parentId: entry.parentId ?? null,
-			kind: entry.type,
-			family: entryFamily(entry.type),
+			parentId: typeof parentId === "string" ? parentId : null,
+			kind,
+			family: entryFamily(kind),
 		})}\n`,
 	);
-
-/** FNV-1a over a row's stored bytes: the 32 bits per row a page re-derivation is checked against. */
-function rowHash(row: Buffer): number {
-	let hash = 0x811c9dc5;
-	for (let index = 0; index < row.length; index++) hash = Math.imul(hash ^ (row[index] ?? 0), 0x01000193) >>> 0;
-	return hash;
 }
 
-class FrozenBaseBytes implements FrozenBytes {
+class FrozenBaseBytes implements BaseBytes {
 	readonly length: number;
-	readonly digest: ContentDigest;
+	readonly digest: BaseBytes["digest"];
 	/** The most lines materialized at once while serving ranges: one, beside the read buffer. */
 	peakResidentLeaves = 0;
+	peakRangeRows = 0;
 	private resident = 0;
 	private readonly base: PersistedBase;
-	private readonly rows: RowTable;
+	private readonly rows: BaseRowTable;
 
-	constructor(base: PersistedBase, digest: ContentDigest, rows: RowTable) {
+	constructor(base: PersistedBase, digest: BaseBytes["digest"], rows: BaseRowTable) {
 		this.base = base;
 		this.digest = digest;
 		this.rows = rows;
-		this.length = rows.starts[base.count] ?? 0;
+		this.length = rows.length;
 	}
 
+	get rowsPerAnchor(): number {
+		return this.rows.rowsPerAnchor;
+	}
+
+	get tableBytes(): number {
+		return this.rows.tableBytes;
+	}
+
+	/** Re-derives every anchor group the range touches, whole, and serves its bytes only once each group verified. */
 	async range(offset: number, length: number, valid?: () => void): Promise<Buffer> {
 		assertRange(offset, length, this.length);
 		const out = Buffer.allocUnsafe(length);
+		const end = offset + length;
 		const handle = await openIdentified(this.base, this.rows.fileEnd);
 		try {
-			let index = startAtOrBefore(this.rows.starts, this.base.count, offset);
-			let written = 0;
-			for await (const line of lines(handle, this.rows.fileStarts[index] ?? 0, () => valid?.())) {
-				const entry = parseLine(line.text);
+			const walk = this.rows.walk(offset, "verify");
+			let rows = 0;
+			for await (const line of lines(handle, walk.fileStart, () => valid?.())) {
+				const entry = parseSessionEntryLine(line.text);
 				if (!entry) continue;
 				this.peakResidentLeaves = Math.max(this.peakResidentLeaves, ++this.resident);
 				try {
-					const row = this.verifiedRow(index, line.start, entry);
-					const from = Math.max(0, offset - (this.rows.starts[index] ?? 0));
-					written += row.copy(out, written, from, Math.min(row.length, from + length - written));
+					const from = walk.at;
+					const row = stampedRow(walk.row, entry);
+					const closed = walk.add(line, row);
+					const first = Math.max(offset, from);
+					const last = Math.min(end, from + row.length);
+					if (last > first) row.copy(out, first - offset, first - from, last - from);
+					this.peakRangeRows = Math.max(this.peakRangeRows, ++rows);
+					if (closed && walk.at >= end) return out;
 				} finally {
 					this.resident -= 1;
 				}
-				if (written === length) return out;
-				index += 1;
 			}
 			throw new CompactReadError("base_file_truncated");
 		} finally {
 			await handle.close();
 		}
 	}
-
-	/** The row re-derived from its line must start where the open found it and hash as the open hashed it. */
-	private verifiedRow(index: number, lineStart: number, entry: EntryLine): Buffer {
-		const row = stampedRow(index, entry);
-		const stamped = (this.rows.starts[index + 1] ?? 0) - (this.rows.starts[index] ?? 0);
-		if (
-			lineStart !== this.rows.fileStarts[index] ||
-			row.length !== stamped ||
-			rowHash(row) !== this.rows.hashes[index]
-		)
-			throw new CompactReadError("base_fingerprint_mismatch");
-		return row;
-	}
 }
 
 /**
- * Opens the base's stamped rows as `FrozenBytes` after one verifying scan of the file: `count` entries must be there
- * and fingerprint as the cut captured, else a typed `PersistedBaseError` and no source exists. The scan belongs to the
- * request that asked for it (RULING-69 (2)): once `signal` aborts no further read happens and the open is `aborted`;
- * `valid` runs after every read of the file.
+ * Opens the base's stamped rows after one verifying scan of the file: `count` entries must be there and fingerprint
+ * as the cut captured, else a typed `PersistedBaseError` and no source exists. The row table is bounded by `budget`
+ * (RULING-71 (2)). The scan belongs to the request that asked for it (RULING-69 (2)): once `signal` aborts no further
+ * read happens and the open is `aborted`; `valid` runs after every read of the file.
  */
 export async function openBaseBytes(
 	base: PersistedBase,
 	valid: () => void,
 	signal?: AbortSignal,
-): Promise<FrozenBytes> {
+	budget: number = BASE_ROW_TABLE_BYTES,
+): Promise<BaseBytes> {
 	const check = () => {
 		if (signal?.aborted) throw new CompactReadError("aborted");
 		valid();
 	};
 	const handle = await openIdentified(base);
 	try {
-		const starts = new Float64Array(base.count + 1);
-		const fileStarts = new Float64Array(base.count);
-		const hashes = new Uint32Array(base.count);
+		const rows = new BaseRowTable(base.count, budget);
+		const walk = rows.walk(0, "record");
 		const fingerprint = createHash("sha256");
-		let count = 0;
-		let fileEnd = 0;
 		for await (const line of lines(handle, 0, check)) {
-			const entry = parseLine(line.text);
+			const entry = parseSessionEntryLine(line.text);
 			if (!entry) continue;
-			const row = stampedRow(count, entry);
-			fingerprint.update(`${entry.type}\u0000${entry.id}\n`);
-			fileStarts[count] = line.start;
-			hashes[count] = rowHash(row);
-			starts[count + 1] = (starts[count] ?? 0) + row.length;
-			fileEnd = line.end;
-			if (++count === base.count) break;
+			fingerprint.update(fingerprintLine(entry));
+			walk.add(line, stampedRow(walk.row, entry));
+			if (walk.row === base.count) break;
 		}
-		if (count < base.count) throw new CompactReadError("base_file_truncated");
+		if (walk.row < base.count) throw new CompactReadError("base_file_truncated");
 		const digest = parseContentDigest(fingerprint.digest("hex"));
 		if (!digest.ok || digest.value !== base.idFingerprint) throw new CompactReadError("base_fingerprint_mismatch");
-		return new FrozenBaseBytes(base, digest.value, { starts, fileStarts, hashes, fileEnd });
+		return new FrozenBaseBytes(base, digest.value, rows);
 	} finally {
 		await handle.close();
 	}

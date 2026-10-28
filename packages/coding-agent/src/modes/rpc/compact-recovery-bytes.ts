@@ -14,9 +14,11 @@ export const FRAGMENT_ENVELOPE_MAX_BYTES = Math.ceil(FRAGMENT_MAX_BYTES / 3) * 4
 /**
  * One frozen component as the byte stream the recovery pages address (S11a, RULING-46 item 2: the one byte
  * representation S11b, S12a and S13 reuse): its EXACT stored UTF-16LE bytes in leaf order (RULING-58 (1)), addressed by
- * raw byte offset, never by code unit or base64 character. `digest` is the catalog entry's `leaf` digest of the whole
- * stream, verified against the stored bytes before this exists (RULING-57 Q1 (3)); a range is served from the same
- * immutable leaves with at most one stored leaf resident beside the result.
+ * raw byte offset, never by code unit or base64 character. For a catalog component, `digest` is the catalog entry's
+ * `leaf` digest of the whole stream, verified against the stored bytes before this exists (RULING-57 Q1 (3)); a range
+ * is served from the same immutable leaves with at most one stored leaf resident beside the result. For the loaded
+ * base stream (`compact-recovery-base.ts`) it is the cut's `idFingerprint` (RULING-71 (4)), the anchor a client
+ * re-derives from the rows' `kind` and `id`, never a digest of the stream's bytes.
  */
 export interface FrozenBytes {
 	readonly length: number;
