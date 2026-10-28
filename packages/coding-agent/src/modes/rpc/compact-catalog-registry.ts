@@ -50,13 +50,15 @@ export const FAMILY_PRODUCERS: FamilyProducers = {
 /**
  * The producers at one root (RULING-61 Q1): a loaded base is a file range whose kinds this epoch never saw, and an
  * unavailable transcript enumerates nothing, so the families fed by entry kinds (transcript, opaque, source) are
- * then `partial`, never complete or empty.
+ * then `partial`, never complete or empty. A client correlation refused at the protocol depth limit never became the
+ * lane's standing one, so `identity` is then `partial` too: its member reports the count (RULING-67 (4)).
  */
-export function familyProducers(transcript: TranscriptRoot): FamilyProducers {
+export function familyProducers(transcript: TranscriptRoot, refusedCorrelations: number): FamilyProducers {
 	const exact = transcript.unavailable === null && (transcript.base?.count ?? 0) === 0;
-	return exact
-		? FAMILY_PRODUCERS
-		: { ...FAMILY_PRODUCERS, transcript: "partial", opaque: "partial", source: "partial" };
+	const entries: Partial<Record<CatalogFamily, "partial">> = exact
+		? {}
+		: { transcript: "partial", opaque: "partial", source: "partial" };
+	return { ...FAMILY_PRODUCERS, ...entries, ...(refusedCorrelations > 0 ? { identity: "partial" } : {}) };
 }
 
 /**

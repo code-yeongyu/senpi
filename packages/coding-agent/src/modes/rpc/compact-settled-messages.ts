@@ -45,10 +45,15 @@ export interface OwnerRow {
 	readonly entryId: string;
 }
 
-type Row = TerminalRow | OwnerRow;
+/** A join as stored: its row and the epoch-local ordinal it was joined at, the identity member's stable id. */
+interface StoredOwner extends OwnerRow {
+	readonly ordinal: number;
+}
+
+type Row = TerminalRow | StoredOwner;
 export type SettledRoot = FrozenIndex;
 /** One row of a cut as the catalog enumerates it: a terminal with its paged call, or one message's entry join. */
-type SettledMember = { readonly kind: "terminal"; readonly row: TerminalRow } | OwnerRow;
+type SettledMember = { readonly kind: "terminal"; readonly row: TerminalRow } | StoredOwner;
 /** The bounded reads of one cut of this store (S10b): its rows a page at a time, its leaves, its values, its joins. */
 export interface SettledReader {
 	readonly store: CompactContentStore;
@@ -73,6 +78,7 @@ export class CompactSettledMessages {
 	 * message count needs a paged synchronous membership filter, carried to S08/S11 (RULING-48 item 9).
 	 */
 	private readonly keys = new Map<string, string>();
+	private joins = 0;
 	private readonly epoch: string;
 	private readonly diagnose: (reason: SettledDiagnostic) => void;
 
@@ -131,6 +137,8 @@ export class CompactSettledMessages {
 			this.settle(id);
 			return joined;
 		}
+		// The call projection is owned first: a refusal there leaves no payload leaf and no end marker behind.
+		const projection = call ? this.rows.values.own(call) : null;
 		this.keys.set(`end:${id}`, "");
 		const message: unknown = Reflect.get(record, "message");
 		const role = String(Reflect.get(Object(message), "role"));
@@ -145,7 +153,6 @@ export class CompactSettledMessages {
 		});
 		for (let offset = 0; offset < text.length; offset += COMPACT_LEAF_CODE_UNITS)
 			payload.push(this.store.createLeaf(text.slice(offset, offset + COMPACT_LEAF_CODE_UNITS)));
-		const projection = call ? this.rows.values.own(call) : null;
 		this.put(`terminal:${id}`, {
 			kind: "terminal",
 			messageId: id,
@@ -186,7 +193,7 @@ export class CompactSettledMessages {
 	}
 
 	private join(messageId: string, entryId: string): void {
-		const owner: OwnerRow = { kind: "owner", messageId, entryId };
+		const owner: StoredOwner = { kind: "owner", messageId, entryId, ordinal: this.joins++ };
 		this.put(`owner:${messageId}`, owner);
 		this.put(`entry:${entryId}`, owner);
 		this.rows.delete(`terminal:${messageId}`);
@@ -235,7 +242,8 @@ export class CompactSettledMessages {
 		})[] = [];
 		const owners: OwnerRow[] = [];
 		for (const [key, row] of await this.rows.entries(root)) {
-			if (row.kind === "owner" && key.startsWith("owner:")) owners.push(row);
+			if (row.kind === "owner" && key.startsWith("owner:"))
+				owners.push({ kind: "owner", messageId: row.messageId, entryId: row.entryId });
 			if (row.kind !== "terminal") continue;
 			const { payload, kind: _kind, call, ...fields } = row;
 			const bytes = (await Promise.all(payload.map((leaf) => this.store.readLeaf(leaf)))).join("");

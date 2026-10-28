@@ -50,7 +50,7 @@ export async function* checkpointComponents(cut: CatalogCut, valid: () => void):
 	const current = root.current;
 	if (!current) throw new CompactReadError("unavailable");
 	const reader: CatalogReader = { store, values, valid };
-	const producers = familyProducers(root.transcript);
+	const producers = familyProducers(root.transcript, root.refusedCorrelations);
 	const registry = familyRegistry(producers);
 	yield* textComponent(store, FAMILIES, FAMILIES, JSON.stringify(registry));
 	const family = (name: CatalogFamily): AsyncGenerator<CatalogComponent> => {
