@@ -8,7 +8,7 @@ import {
 	type TranscriptUnavailableReason,
 	type TranscriptPersistence,
 } from "../../core/session-transcript-journal.ts";
-import { stageBootstrap, type TailReadFailure, TranscriptTail } from "./accepted-transcript-tail.ts";
+import { stageBootstrap, TailBudget, type TailReadFailure, TranscriptTail } from "./accepted-transcript-tail.ts";
 import { type StagedContent, StagedReadError, type TransferStaging } from "./compact-transfer-staging.ts";
 
 /**
@@ -96,13 +96,15 @@ export class AcceptedTranscript {
 	private kindNames = new Map<string, string>();
 	private ancestryBytes = 0;
 	private readonly staging: TransferStaging;
+	/** One bound for this epoch's tails, a superseded tail a live cut still holds included (carry 65a). */
+	private readonly budget = new TailBudget();
 	private tail: TranscriptTail;
 	private unavailable: TranscriptUnavailableReason | null = null;
 
 	/** Entry texts are staged into, and spill through, the owning lane's staging store (S12a). */
 	constructor(staging: TransferStaging) {
 		this.staging = staging;
-		this.tail = new TranscriptTail(staging, null);
+		this.tail = new TranscriptTail(staging, null, this.budget);
 	}
 
 	get historyVersion(): number {
@@ -138,7 +140,7 @@ export class AcceptedTranscript {
 			this.parents = [];
 			this.kindNames = new Map();
 			this.ancestryBytes = 0;
-			this.tail = new TranscriptTail(this.staging, transition.base);
+			this.tail = new TranscriptTail(this.staging, transition.base, this.budget);
 			this.unavailable = null;
 			return;
 		}

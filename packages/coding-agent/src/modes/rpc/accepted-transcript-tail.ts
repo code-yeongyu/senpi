@@ -3,9 +3,10 @@ import { protocolId } from "./compact-recovery-ids.ts";
 import { type StagedContent, type TransferStaging, TransferStagingError } from "./compact-transfer-staging.ts";
 
 /**
- * Accepted tail bytes one epoch may hold beyond its persisted count, resident and spilled together, in stored
- * UTF-16LE bytes (RULING-21 (3)). The tail spills to the lane's staging store (S12a), so this bounds the spool a
- * writer that stopped persisting can grow, not RAM: sixteen times the 16 MiB in-memory tail it replaces.
+ * Tail bytes one epoch's transcript may hold in its store, resident and spilled together, in stored UTF-16LE bytes
+ * (RULING-21 (3)): its unpersisted entries plus every segment kept for a held cut, in the current tail and in any
+ * superseded tail a live cut still holds (carry 65a). It bounds the spool those can grow, not RAM: sixteen times the
+ * 16 MiB in-memory tail it replaces.
  */
 export const DEFAULT_TRANSCRIPT_TAIL_BYTES = 256 * 1024 * 1024;
 /**
@@ -15,18 +16,28 @@ export const DEFAULT_TRANSCRIPT_TAIL_BYTES = 256 * 1024 * 1024;
 export const TRANSCRIPT_TAIL_RESIDENT_BYTES = 32 * 1024 * 1024;
 const TAIL_KIND = protocolId("transcript-tail");
 
+/** The tail bytes one transcript's tails hold in its store, kept segments included, against their one bound. */
+export class TailBudget {
+	readonly max: number;
+	held = 0;
+
+	constructor(max = DEFAULT_TRANSCRIPT_TAIL_BYTES) {
+		this.max = max;
+	}
+}
+
 /**
- * Stages one accepted entry's text against both tail bounds, `retained` being the bytes its tail already adopted;
- * undefined, with nothing allocated, when a bound refuses it.
+ * Stages one accepted entry's text against both tail bounds, `held` being the bytes the transcript's tails already
+ * hold; undefined, with nothing allocated, when a bound refuses it.
  */
 function stageTailEntry(
 	staging: TransferStaging,
-	retained: number,
+	budget: Pick<TailBudget, "held" | "max">,
 	index: number,
 	text: string,
 ): StagedContent | undefined {
 	const bytes = text.length * 2;
-	if (retained + staging.stagedBytes + bytes > DEFAULT_TRANSCRIPT_TAIL_BYTES) return undefined;
+	if (budget.held + staging.stagedBytes + bytes > budget.max) return undefined;
 	if (staging.residentBytes + bytes > TRANSCRIPT_TAIL_RESIDENT_BYTES) return undefined;
 	try {
 		return staging.stage(TAIL_KIND, protocolId(`entry-${index}`), text);
@@ -52,7 +63,7 @@ export function stageBootstrap(
 			if (transition.kind === "replace") index = 0;
 			if (transition.kind !== "append") continue;
 			const text = transition.entry;
-			const content = text === undefined ? null : stageTailEntry(staging, 0, index, text);
+			const content = text === undefined ? null : stageTailEntry(staging, new TailBudget(), index, text);
 			index += 1;
 			if (content === undefined) throw new TransferStagingError("staging_over_byte_limit");
 			if (content) staged.set(transition, content);
@@ -92,23 +103,26 @@ export class TranscriptTail {
 	retainedBytes = 0;
 	persistence: TranscriptPersistence | null;
 	readonly #staging: TransferStaging;
+	readonly #budget: TailBudget;
 	/** Live cuts by their entry count: a cut of count `n` names every entry below `n`. */
 	readonly #cuts = new Map<number, number>();
 	#superseded = false;
 
-	constructor(staging: TransferStaging, persistence: TranscriptPersistence | null) {
+	constructor(staging: TransferStaging, persistence: TranscriptPersistence | null, budget = new TailBudget()) {
 		this.#staging = staging;
 		this.persistence = persistence;
+		this.#budget = budget;
 	}
 
 	stage(index: number, text: string): StagedContent | undefined {
-		return stageTailEntry(this.#staging, this.retainedBytes, index, text);
+		return stageTailEntry(this.#staging, this.#budget, index, text);
 	}
 
 	adopt(index: number, content: StagedContent): void {
 		this.#staging.adopt(content);
 		this.entries.set(index, content);
 		this.retainedBytes += content.ref.entry.length;
+		this.#budget.held += content.ref.entry.length;
 	}
 
 	retainCut(count: number): void {
@@ -121,7 +135,10 @@ export class TranscriptTail {
 	 */
 	supersede(): void {
 		this.#superseded = true;
-		if (this.#cuts.size === 0) this.releaseAll();
+		if (this.#cuts.size === 0) return this.releaseAll();
+		// No later persistence reaches a superseded tail: its unpersisted entries leave RAM now, still readable, so they
+		// never take the resident room the next version appends into (carry 66).
+		for (const content of this.entries.values()) this.#staging.spill(content);
 	}
 
 	/** The last live cut naming a kept entry releases its segments; the last cut of a superseded tail releases it all. */
@@ -134,7 +151,7 @@ export class TranscriptTail {
 		for (const [index, content] of this.kept) {
 			if (index < reach) continue;
 			this.kept.delete(index);
-			this.#staging.release(content);
+			this.free(content);
 		}
 	}
 
@@ -147,7 +164,7 @@ export class TranscriptTail {
 			this.entries.delete(index);
 			this.retainedBytes -= content.ref.entry.length;
 			if (index >= reach) {
-				this.#staging.release(content);
+				this.free(content);
 				continue;
 			}
 			this.kept.set(index, content);
@@ -156,7 +173,7 @@ export class TranscriptTail {
 	}
 
 	releaseAll(): void {
-		for (const content of [...this.entries.values(), ...this.kept.values()]) this.#staging.release(content);
+		for (const content of [...this.entries.values(), ...this.kept.values()]) this.free(content);
 		this.entries.clear();
 		this.kept.clear();
 		this.retainedBytes = 0;
@@ -189,6 +206,12 @@ export class TranscriptTail {
 				for (const content of held.values()) staging.pin(content, -1);
 			},
 		};
+	}
+
+	/** Content leaves the store and the bound together: kept segments stay counted until exactly this release. */
+	private free(content: StagedContent): void {
+		this.#budget.held -= content.ref.entry.length;
+		this.#staging.release(content);
 	}
 
 	private reach(): number {
