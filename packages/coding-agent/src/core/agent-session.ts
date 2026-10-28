@@ -7001,7 +7001,8 @@ export class AgentSession {
 		const { items } = options;
 		const held =
 			this._wakeGateApplies(message.customType, options) &&
-			(this._engineTurnHold.holdsSource(engineWakeSource(message.customType)) ||
+			(this._holdForInterruptedRun(options) ||
+				this._engineTurnHold.holdsSource(engineWakeSource(message.customType)) ||
 				this._runHolds.holdsWake(message.details) ||
 				items.some(
 					(item) =>
@@ -7331,14 +7332,11 @@ export class AgentSession {
 		if (
 			!releasedWake &&
 			this._wakeGateApplies(message.customType, options) &&
-			(this._engineTurnHold.holdsSource(engineWakeSource(message.customType)) ||
+			(this._holdForInterruptedRun(options) ||
+				this._engineTurnHold.holdsSource(engineWakeSource(message.customType)) ||
 				this._runHolds.holdsWake(message.details))
 		) {
-			this._engineTurnHold.note(engineWakeSource(message.customType), appMessage);
-			if (options?.ticket) {
-				const noticeId = heldLifecycleNotice(this, options.ticket, message.customType);
-				if (noticeId) this.workObligations.held(options.ticket, noticeId);
-			}
+			this._noteHeldWake(appMessage, options?.ticket);
 			deferredTurnClaim?.resolve("finished-without-start");
 			return;
 		}
@@ -7442,6 +7440,16 @@ export class AgentSession {
 					throw error;
 				} finally {
 					this._triggerTurnAdmissionAbortGeneration = undefined;
+				}
+				// The lifecycle restore awaited above can find the previous run interrupted (senpi#4683). A released
+				// wake is still in notice custody, so only a fresh send becomes a notice.
+				if (this._wakeGateApplies(message.customType, options) && this._holdForInterruptedRun(options)) {
+					if (itemized !== undefined) {
+						if (options.ticket) this._retireLifecycleDelivery(options.ticket, !this._isEngineDelivery(options.ticket));
+						this._persistWatchers.delete(appMessage);
+						itemized.droppedByAbort();
+					} else if (!releasedWake) this._noteHeldWake(appMessage, options.ticket);
+					return;
 				}
 				if (releasedWake && !releasedWake()) return;
 				const inputOrigin = customTurnOrigin(message.customType);
@@ -7987,6 +7995,33 @@ export class AgentSession {
 
 	get holds() {
 		return this._engineTurnHold.holds;
+	}
+
+	/**
+	 * An automatic send that would start a turn while the previous run is interrupted waits for a person (senpi#4683):
+	 * it joins the interrupted-run hold as a notice that Resume or the next message delivers. Refused as a turn it was
+	 * lost, and each refusal counted as an engine turn until the no-work limit paused the session.
+	 */
+	private _holdForInterruptedRun(options: { triggerTurn?: boolean } | undefined): boolean {
+		if (options?.triggerTurn !== true || this.isStreaming) return false;
+		if (!this._lifecycleBinding.controller.requiresHumanContinuation) return false;
+		if (this._engineTurnHold.getHold("interrupted-run") === undefined) {
+			this._engineTurnHold.addHold("session_hold", { key: "interrupted-run" });
+			this._extensionRunner
+				.getUIContext()
+				.notify(
+					"Paused: the previous run was interrupted. Automatic updates are held until you send a message or /resume.",
+					"warning",
+				);
+		}
+		return true;
+	}
+
+	private _noteHeldWake(appMessage: CustomMessage, ticket: string | undefined): void {
+		this._engineTurnHold.note(engineWakeSource(appMessage.customType), appMessage);
+		if (!ticket) return;
+		const noticeId = heldLifecycleNotice(this, ticket, appMessage.customType);
+		if (noticeId) this.workObligations.held(ticket, noticeId);
 	}
 
 	/**
