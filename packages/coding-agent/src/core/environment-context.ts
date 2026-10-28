@@ -28,8 +28,24 @@ export interface EnvironmentContext {
 	currentDate: string;
 }
 
+/**
+ * Test-only date pin (senpi#4660): `SENPI_TEST_CURRENT_DATE=YYYY-MM-DD` replaces the clock's date so a harness
+ * driving the real CLI gets the same prompt bytes on every day. Unset (or empty) in every production launch.
+ */
+const CURRENT_DATE_ENV = "SENPI_TEST_CURRENT_DATE";
+
+function pinnedCurrentDate(): string | undefined {
+	const value = process.env[CURRENT_DATE_ENV];
+	if (value === undefined || value === "") return undefined;
+	const isCalendarDate =
+		/^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(`${value}T00:00:00.000Z`).toISOString().startsWith(value);
+	if (!isCalendarDate)
+		throw new Error(`${CURRENT_DATE_ENV} must be a calendar date YYYY-MM-DD, got ${JSON.stringify(value)}`);
+	return value;
+}
+
 export function resolveEnvironmentContext(cwd: string, now: Date = new Date()): EnvironmentContext {
-	return { cwd: cwd.replace(/\\/g, "/"), currentDate: now.toISOString().slice(0, 10) };
+	return { cwd: cwd.replace(/\\/g, "/"), currentDate: pinnedCurrentDate() ?? now.toISOString().slice(0, 10) };
 }
 
 export function formatEnvironmentContext(context: EnvironmentContext): string {
