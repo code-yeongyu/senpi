@@ -590,6 +590,45 @@ Behind the same flag, one bounded page of a frozen checkpoint component, through
   it is reclaimed. The owner's other typed failures arrive as `recovery_repair_needed` or
   `recovery_storage_unavailable` with `errorData` carrying the failure. Every refusal happens before any byte is read.
 
+**Event leases (senpi#4272, S13).** Behind the same flag, a connection that sends `compact_events` in its
+`set_client_info` capabilities (an internal opt-in, not advertised; the public selection comes later) receives a
+session record larger than F = 262,144 bytes (newline included) as an envelope
+`{"type": <the record's type>, "sessionId", "eventLease": {"kind": "event", "id", "admissionId", "sessionEpoch",
+"sequence", "componentRef": "record", "length", "digest"}}`. `sequence` is the record's accepted sequence in
+`sessionEpoch`; no recovery generation changes. Other connections still receive the complete record. The lease's
+one component, `record`, is the record's exact JSON line without its newline, paged as its stored UTF-16LE bytes
+(`length`, `leaf` digest `digest`) through this command with `lease` in place of `token`:
+
+```json
+{"type": "get_recovery_page", "sessionId": "rpc-1", "lease": {"kind": "event", "id": "event:socket-3:4"},
+ "admissionId": "attach-9", "componentRef": "record", "requestId": "r-13"}
+```
+
+The answer's `data` carries `lease` in place of `token` and `generation`; ordinals, the active request, the
+socket's eight outstanding requests, retries and cursors follow the rules above. A lease is scoped like a token: one
+minted for another connection, session or admission is `unknown_token` with nothing else. A connection holds at
+most 32 live event leases; past that it receives `{"type": "event_lease_refused", "sessionId", "reason":
+"lease_limit"}` and is closed, and a record the host cannot stage is refused the same way with
+`"storage_unavailable"`. Its end releases every lease it holds. Leases are released only by `release_recovery`.
+
+#### release_recovery
+
+Behind the same flag, the consumer's receipt for an event lease (senpi#4272, S13). Send it only once the leased
+content is committed on the consumer's side (for the desktop: after its command transaction's dispatch succeeded);
+decoding a page, queueing or staging it is not a release point.
+
+```json
+{"type": "release_recovery", "sessionId": "rpc-1", "lease": {"kind": "event", "id": "event:socket-3:4"},
+ "admissionId": "attach-9"}
+```
+
+The answer's `data` is `{lease: {kind: "event", id}, outcome, remaining}`: `released` when this admission's
+reference was the last (`remaining: 0`, the content goes once reads in flight unwind), `held` while another
+admission still references it, and `duplicate` for a receipt this admission already gave, which changes nothing, so
+a consumer may retry a receipt after a rollback. A lease of another connection or session, or an unknown one, is
+`recovery_repair_needed` with `reason: "unknown_token"`; a malformed request is `recovery_malformed_request`.
+With the flag off it answers as any unknown session command.
+
 #### interactive_user
 
 A client that advertises `interactive_user` in `set_client_info` declares that the connection belongs to a person's

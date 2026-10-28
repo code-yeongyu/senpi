@@ -1,8 +1,9 @@
+import type { EventLeases } from "./compact-event-leases.ts";
 import type { RecoveryPage } from "./compact-recovery-bytes.ts";
 import { type CursorBinding, RecoveryCursors } from "./compact-recovery-cursor.ts";
 import { parseBoundedId } from "./compact-recovery-ids.ts";
 import type { RecoveryCheckpoints } from "./compact-recovery-state.ts";
-import type { CheckpointToken, RecoveryCaller, RecoveryFailure, RecoveryOutcome } from "./compact-recovery-types.ts";
+import type { RecoveryCaller, RecoveryFailure, RecoveryOutcome } from "./compact-recovery-types.ts";
 import { repairNeeded } from "./compact-recovery-types.ts";
 
 /** At most this many page requests are outstanding on one socket across all of its tokens (R4.B3). */
@@ -13,6 +14,15 @@ export interface RecoveryPageRequest {
 	readonly requestId: string;
 	readonly admissionId: string;
 	readonly token: string;
+	readonly componentRef: string;
+	readonly cursor?: string;
+}
+
+/** The same request under an ordinary-event lease (S13, RULING-65 S13-Q1 A): discriminated by `lease.kind`. */
+export interface EventPageRequest {
+	readonly requestId: string;
+	readonly admissionId: string;
+	readonly lease: { readonly kind: "event"; readonly id: string };
 	readonly componentRef: string;
 	readonly cursor?: string;
 }
@@ -35,6 +45,11 @@ export interface RecoveryPageAnswer {
 	readonly cursor: string | null;
 	readonly complete: boolean;
 }
+
+/** A page under an event lease: the lease in place of the token and its generation, which an event lease never has. */
+export type EventPageAnswer = Omit<RecoveryPageAnswer, "token" | "generation"> & {
+	readonly lease: { readonly kind: "event"; readonly id: string };
+};
 
 export type RequestRefusalReason =
 	| "malformed_request"
@@ -67,11 +82,24 @@ export interface RecoveryPageCounters {
 	readonly refused: Readonly<Partial<Record<RequestRefusalReason, number>>>;
 }
 
-/** One token's request state: its last ordinal, whether a request is in flight, and the one page kept for a retry. */
+type PageRequest = RecoveryPageRequest | EventPageRequest;
+type PageOutcome =
+	| { readonly ok: true; readonly value: RecoveryPageAnswer | EventPageAnswer }
+	| { readonly ok: false; readonly failure: RecoveryPageFailure };
+
+/** One token's or lease's request state: its last ordinal, a request in flight, and the one page kept for a retry. */
 interface TokenRequests {
 	active: boolean;
 	ordinal: number;
-	current: { readonly request: RecoveryPageRequest; readonly answer: RecoveryPageAnswer } | undefined;
+	current: { readonly request: PageRequest; readonly answer: RecoveryPageAnswer | EventPageAnswer } | undefined;
+}
+
+/** What a request reads under: a checkpoint token or an event lease, and the identity its answers carry. */
+interface PageSource {
+	readonly id: string;
+	readonly generation: number;
+	readonly label: Pick<RecoveryPageAnswer, "token" | "generation"> | Pick<EventPageAnswer, "lease">;
+	read(componentRef: string, offset: number, signal: AbortSignal): Promise<RecoveryOutcome<RecoveryPage>>;
 }
 
 const HINTS: Readonly<Record<RequestRefusalReason, RequestRefusalHint>> = {
@@ -84,8 +112,9 @@ const HINTS: Readonly<Record<RequestRefusalReason, RequestRefusalHint>> = {
 	ordinal_exhausted: "release_token",
 };
 
-const sameRequest = (a: RecoveryPageRequest, b: RecoveryPageRequest): boolean =>
-	a.requestId === b.requestId && a.componentRef === b.componentRef && a.cursor === b.cursor && a.token === b.token;
+const named = (request: PageRequest): unknown => ("lease" in request ? request.lease?.id : request.token);
+const sameRequest = (a: PageRequest, b: PageRequest): boolean =>
+	a.requestId === b.requestId && a.componentRef === b.componentRef && a.cursor === b.cursor && named(a) === named(b);
 
 /**
  * The page requests of one host over its checkpoint owner (S11b, RULING-62 Q1 A): one monotonically advancing ordinal
@@ -97,16 +126,19 @@ const sameRequest = (a: RecoveryPageRequest, b: RecoveryPageRequest): boolean =>
 export class RecoveryPageRequests {
 	private readonly checkpoints: RecoveryCheckpoints;
 	private readonly cursors: RecoveryCursors;
+	private readonly events: EventLeases | undefined;
 	private readonly tokens = new Map<string, TokenRequests>();
 	private readonly outstanding = new Map<string, number>();
 	private readonly refusals = new Map<RequestRefusalReason, number>();
 	/** Per socket with a request in flight: its connection's lifetime, aborted when that peer's connection ends. */
 	private readonly lifetimes = new Map<string, AbortController>();
 
-	constructor(checkpoints: RecoveryCheckpoints, cursors = new RecoveryCursors()) {
+	constructor(checkpoints: RecoveryCheckpoints, cursors = new RecoveryCursors(), events?: EventLeases) {
 		this.checkpoints = checkpoints;
 		this.cursors = cursors;
+		this.events = events;
 		checkpoints.onTokenEnd((tokenId) => this.tokens.delete(tokenId));
+		events?.onLeaseEnd((leaseId) => this.tokens.delete(leaseId));
 	}
 
 	status(): RecoveryPageCounters {
@@ -130,29 +162,18 @@ export class RecoveryPageRequests {
 	 * `signal` is the request's budget: a first open's verification is charged to it and to the asking connection's
 	 * lifetime, whichever ends first (RULING-69 (2)).
 	 */
-	async request(
-		caller: RecoveryCaller,
-		request: RecoveryPageRequest,
-		signal?: AbortSignal,
-	): Promise<RecoveryPageOutcome> {
-		const fields = [request.requestId, request.admissionId, request.token, request.componentRef];
-		if (fields.some((field) => typeof field !== "string" || !parseBoundedId(field).ok))
+	request(caller: RecoveryCaller, request: RecoveryPageRequest, signal?: AbortSignal): Promise<RecoveryPageOutcome>;
+	request(caller: RecoveryCaller, request: PageRequest, signal?: AbortSignal): Promise<PageOutcome>;
+	async request(caller: RecoveryCaller, request: PageRequest, signal?: AbortSignal): Promise<PageOutcome> {
+		const leaseKind = "lease" in request ? request.lease?.kind : "event";
+		const fields = [request.requestId, request.admissionId, named(request), request.componentRef];
+		if (leaseKind !== "event" || fields.some((field) => typeof field !== "string" || !parseBoundedId(field).ok))
 			return this.refuse("malformed_request");
 		if ((this.outstanding.get(caller.socketEpoch) ?? 0) >= SOCKET_PAGE_REQUESTS_MAX)
 			return this.refuse("request_limit");
-		const token = this.checkpoints
-			.tokens()
-			.find(
-				(candidate) => candidate.id === request.token && candidate.admission.admissionId === request.admissionId,
-			);
-		if (
-			!token ||
-			token.admission.socketEpoch !== caller.socketEpoch ||
-			token.admission.sessionId !== caller.sessionId
-		)
-			return { ok: false, failure: repairNeeded("unknown_token") };
-		const claimed = this.checkpoints.check(token, caller);
-		if (!claimed.ok) return claimed;
+		const source = "lease" in request ? this.eventSource(caller, request) : this.checkpointSource(caller, request);
+		if (!source.ok) return source;
+		const token = source.value;
 		const state = this.tokens.get(token.id) ?? { active: false, ordinal: 0, current: undefined };
 		if (state.active) return this.refuse("busy");
 		if (state.current?.request.requestId === request.requestId)
@@ -163,7 +184,7 @@ export class RecoveryPageRequests {
 			socketEpoch: caller.socketEpoch,
 			sessionId: caller.sessionId,
 			tokenId: token.id,
-			generation: token.admission.generation,
+			generation: token.generation,
 			componentRef: request.componentRef,
 		};
 		const position = request.cursor === undefined ? undefined : this.cursors.open(request.cursor, binding);
@@ -175,16 +196,59 @@ export class RecoveryPageRequests {
 		return this.serve(caller, token, request, state, binding, position?.offset ?? 0, signal);
 	}
 
+	/** A checkpoint token minted for this caller under the named admission, claimed before any request state. */
+	private checkpointSource(caller: RecoveryCaller, request: RecoveryPageRequest): RecoveryOutcome<PageSource> {
+		const token = this.checkpoints
+			.tokens()
+			.find((each) => each.id === request.token && each.admission.admissionId === request.admissionId);
+		if (
+			!token ||
+			token.admission.socketEpoch !== caller.socketEpoch ||
+			token.admission.sessionId !== caller.sessionId
+		)
+			return { ok: false, failure: repairNeeded("unknown_token") };
+		const claimed = this.checkpoints.check(token, caller);
+		if (!claimed.ok) return claimed;
+		const { generation } = token.admission;
+		return {
+			ok: true,
+			value: {
+				id: token.id,
+				generation,
+				label: { token: token.id, generation },
+				read: (ref, offset, signal) => this.checkpoints.readCatalogPage(token, caller, ref, offset, signal),
+			},
+		};
+	}
+
+	/** An event lease of this caller (S13); its pages are the leased record's bytes, and it carries no generation. */
+	private eventSource(caller: RecoveryCaller, request: EventPageRequest): RecoveryOutcome<PageSource> {
+		const events = this.events;
+		if (!events) return { ok: false, failure: repairNeeded("unknown_token") };
+		const claimed = events.claim(caller, request.lease.id, request.admissionId);
+		if (!claimed.ok) return claimed;
+		const held = claimed.value;
+		return {
+			ok: true,
+			value: {
+				id: held.lease.id,
+				generation: 0,
+				label: { lease: { kind: "event", id: held.lease.id } },
+				read: (ref, offset, signal) => events.page(held, ref, offset, signal),
+			},
+		};
+	}
+
 	/** Holds the token's active flag and one socket slot from before the read until the outcome is known. */
 	private async serve(
 		caller: RecoveryCaller,
-		token: CheckpointToken,
-		request: RecoveryPageRequest,
+		token: PageSource,
+		request: PageRequest,
 		state: TokenRequests,
 		binding: CursorBinding,
 		offset: number,
 		signal: AbortSignal | undefined,
-	): Promise<RecoveryPageOutcome> {
+	): Promise<PageOutcome> {
 		state.active = true;
 		this.outstanding.set(caller.socketEpoch, (this.outstanding.get(caller.socketEpoch) ?? 0) + 1);
 		const lifetime = this.lifetimes.get(caller.socketEpoch) ?? new AbortController();
@@ -192,7 +256,7 @@ export class RecoveryPageRequests {
 		const budget = signal === undefined ? lifetime.signal : AbortSignal.any([signal, lifetime.signal]);
 		let page: RecoveryOutcome<RecoveryPage>;
 		try {
-			page = await this.checkpoints.readCatalogPage(token, caller, request.componentRef, offset, budget);
+			page = await token.read(request.componentRef, offset, budget);
 		} finally {
 			state.active = false;
 			const left = (this.outstanding.get(caller.socketEpoch) ?? 1) - 1;
@@ -205,10 +269,9 @@ export class RecoveryPageRequests {
 		if (!page.ok) return page;
 		if (!this.tokens.has(token.id)) return { ok: false, failure: repairNeeded("released") };
 		const ordinal = state.ordinal + 1;
-		const answer: RecoveryPageAnswer = {
+		const answer = {
 			requestId: request.requestId,
-			token: token.id,
-			generation: token.admission.generation,
+			...token.label,
 			componentRef: request.componentRef,
 			ordinal,
 			offset: page.value.offset,

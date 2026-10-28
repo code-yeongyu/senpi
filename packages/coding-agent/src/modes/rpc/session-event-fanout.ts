@@ -1,11 +1,12 @@
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { EventLeases } from "./compact-event-leases.ts";
 import { legacyAttachView } from "./compact-legacy-view.ts";
 import { RecoveryPageRequests } from "./compact-recovery-requests.ts";
 import { RecoveryCheckpoints } from "./compact-recovery-state.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { LegacyReplayStore } from "./legacy-replay-store.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
-import { SessionRecoveryPins } from "./session-recovery-pins.ts";
+import { admissionOf, SessionRecoveryPins } from "./session-recovery-pins.ts";
 import { type ShedMode, SocketEventSinkActor } from "./socket-event-fanout.ts";
 import { EVENT_RESYNC_CAPABILITY } from "./socket-peer-recovery.ts";
 
@@ -48,8 +49,12 @@ export class SessionEventFanout {
 	readonly replay = new LegacyReplayStore();
 	/** The checkpoint tokens this host froze for its peers' baselines and recoveries (S08a). */
 	readonly checkpoints = new RecoveryCheckpoints();
-	/** The page route over those tokens (S11b); absent with the flag off, so the command answers as before. */
-	readonly pages = compactUpdatesEnabled() ? new RecoveryPageRequests(this.checkpoints) : undefined;
+	/** The ordinary-event leases of peers that selected compact events (S13); absent with the flag off. */
+	readonly events = compactUpdatesEnabled() ? new EventLeases() : undefined;
+	/** The page route over those tokens and leases (S11b, S13); absent with the flag off, so it answers as before. */
+	readonly pages = compactUpdatesEnabled()
+		? new RecoveryPageRequests(this.checkpoints, undefined, this.events)
+		: undefined;
 	private socketEpochs = 0;
 	/** Today's shed path with the compact-updates flag off; the cut frozen at the shed with it on. */
 	private readonly shedMode: ShedMode = compactUpdatesEnabled() ? "capture" : "drop";
@@ -89,6 +94,7 @@ export class SessionEventFanout {
 					this.registeredCapabilityConnections.delete(id);
 					this.pages?.forgetPeer(socketEpoch);
 					this.checkpoints.forgetPeer(socketEpoch);
+					this.events?.forgetPeer(socketEpoch);
 					this.onConnectionClosed?.(id);
 				}
 				process.stderr.write(
@@ -111,6 +117,7 @@ export class SessionEventFanout {
 		registered.actor.close();
 		this.pages?.forgetPeer(registered.socketEpoch);
 		this.checkpoints.forgetPeer(registered.socketEpoch);
+		this.events?.forgetPeer(registered.socketEpoch);
 		this.connections.delete(id);
 		this.connectionCapabilities.delete(id);
 		this.connectionSessions.delete(id);
@@ -208,6 +215,12 @@ export class SessionEventFanout {
 		if (isTargeted || (typeof recordType === "string" && BROADCAST_LIFECYCLE_RECORDS.has(recordType)))
 			return undefined;
 		return this.attachment(id, sessionId);
+	}
+
+	/** The admission (the attach ordinal) through which `id` holds `sessionId` now; undefined when it does not. */
+	admissionOf(id: string, sessionId: string): string | undefined {
+		const ordinal = this.connectionSessions.get(id)?.get(sessionId);
+		return ordinal === undefined ? undefined : admissionOf(ordinal);
 	}
 
 	get(id: string): RegisteredConnection | undefined {

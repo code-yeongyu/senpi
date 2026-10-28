@@ -27,7 +27,7 @@ export interface RecoveryPeers {
 	has(id: string, capability: string): boolean;
 }
 
-const admissionOf = (ordinal: number): string => `attach-${ordinal}`;
+export const admissionOf = (ordinal: number): string => `attach-${ordinal}`;
 
 /**
  * The checkpoints a host pins for its peers' legacy views (S08a producers): one per held lane-owned session on the

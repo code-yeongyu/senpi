@@ -4,7 +4,7 @@ import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 
 import { answerWarm } from "./host-warm.ts";
-import { answerRecoveryPage } from "./recovery-page-command.ts";
+import { answerRecoveryPage, answerReleaseRecovery } from "./recovery-page-command.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { RPC_ERROR_MISSING_SESSION_ID } from "./rpc-types.ts";
@@ -197,6 +197,8 @@ export async function dispatch(
 	// The token owner's page route (S11b): host-level, before any session or worker forwarding; absent with the flag off.
 	if (command.type === "get_recovery_page" && host.writer.recoveryPages !== undefined)
 		return answerRecoveryPage(host.writer.recoveryPages, host.writer, command);
+	if (command.type === "release_recovery" && host.writer.recoveryEvents !== undefined)
+		return answerReleaseRecovery(host.writer.recoveryEvents, host.writer, command);
 	if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 	const sessionId = command.sessionId;
 	if (host.writer.isSessionSealed(sessionId) && host.registry.peek(sessionId)?.state === "open")

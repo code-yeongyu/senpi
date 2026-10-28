@@ -129,7 +129,7 @@ export class SessionEventWriter extends SessionEventWriterRecovery {
 			if (registered && target !== undefined) {
 				const keyed = compactDelta(tagged) !== undefined && tagged.message !== null;
 				registered.actor.enqueue(
-					wants ? placeholderLine : line,
+					this.eventLine(target, sessionId, wants ? redacted : tagged, wants ? placeholderLine : line),
 					keyed ? MESSAGE_KEY : undefined,
 					undefined,
 					keyed ? serializeJsonLine(demoteToDeltaOnly(tagged)) : undefined,

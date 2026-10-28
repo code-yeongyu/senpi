@@ -95,6 +95,11 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		return this.nonce;
 	}
 
+	/** The sequence of the last record this epoch accepted: what a record leased right after its acceptance names (S13). */
+	get acceptedSequence(): number {
+		return this.sequence;
+	}
+
 	/** The public epoch of this incarnation (S08-Q1): distinct from the producer nonce, which is never serialized. */
 	get sessionEpoch(): string {
 		return this.epoch;

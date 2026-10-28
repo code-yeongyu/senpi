@@ -36,6 +36,11 @@ export const ATTENDED_CAPABILITY = "attended";
  * placeholders for this connection; the client fetches a block on demand with `get_media`.
  */
 export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
+/**
+ * Opt-in, honored only behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` and never advertised (S13; S17 owns the public
+ * selection): a record past F reaches this connection as an `eventLease` envelope paged through `get_recovery_page`.
+ */
+export const COMPACT_EVENTS_CAPABILITY = "compact_events";
 /** Opt-in: the client can present a multi-question `extension_ui_request{method:"question"}`. */
 export const QUESTION_CAPABILITY = "question";
 /** HOST capability: `prompt.toolBarrier` and `release_tool_barrier` are honored (senpi#3717). */
