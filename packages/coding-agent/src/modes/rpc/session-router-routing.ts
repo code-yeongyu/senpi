@@ -38,11 +38,16 @@ import { unloadSession } from "./session-unload.ts";
  * loop-lag watchdog observes right after this dispatch can name the session that
  * caused it - and anything the command starts inherits the attribution.
  */
-export async function handle(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
-	const refusal =
-		invalidCompactAdmission(command) ??
-		(await unknownCompactAdmission(host, command)) ??
-		attachmentGate(host, command);
+export function handle(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
+	const malformed = invalidCompactAdmission(command);
+	if (malformed) return Promise.resolve(malformed);
+	const ownership = unknownCompactAdmission(host, command);
+	if (ownership instanceof Promise) return ownership.then((refusal) => refusal ?? admitted(host, command));
+	return ownership ? Promise.resolve(ownership) : admitted(host, command);
+}
+
+function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
+	const refusal = attachmentGate(host, command);
 	if (refusal) return Promise.resolve(refusal);
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;
 	// A parked handle is answered by its terminal record and connection close, never unknown_session.

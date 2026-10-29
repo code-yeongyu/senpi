@@ -19,26 +19,23 @@ export function invalidCompactAdmission(command: RpcCommand): RpcResponse | unde
 }
 
 /** RULING-94: only the server-side caller's authority is examined, before any command side effect. */
-export async function unknownCompactAdmission(
+export function unknownCompactAdmission(
 	host: RouterContext,
 	command: RpcCommand,
-): Promise<RpcResponse | undefined> {
+): RpcResponse | undefined | Promise<RpcResponse | undefined> {
 	if (!host.admissions || command.admissionId === undefined) return undefined;
 	// These commands introduce client IDs; their bounded attempt index owns retry/conflict/retirement.
 	if (command.type === "open_session" || command.type === "subscribe_sessions") return undefined;
+	// RULING-96: recovery IDs select token/lease authority, not the ordinary attempt ledger.
+	if (command.type === "get_recovery_page" || command.type === "release_recovery") return undefined;
 	const admissionId = command.admissionId;
 	const peer = host.writer.currentConnection();
 	const epoch = peer === undefined ? undefined : host.writer.socketEpochOf(peer);
 	const held =
 		peer !== undefined &&
 		host.writer.holdsAdmission(peer, admissionId, "sessionId" in command ? command.sessionId : undefined);
-	// A not-yet-accepted open has no route yet, but the caller may cancel its own indexed producer.
-	if (
-		held ||
-		(command.type === "cancel_attempt" && epoch !== undefined && (await host.admissions.pending(epoch, admissionId)))
-	)
-		return undefined;
-	return {
+	if (held) return undefined;
+	const refusal: RpcResponse = {
 		id: command.id,
 		type: "response",
 		command: command.type,
@@ -49,4 +46,8 @@ export async function unknownCompactAdmission(
 		code: "unknown_admission",
 		admissionId,
 	};
+	// Only an unaccepted producer needs an async index read; every other route stays synchronous.
+	return command.type === "cancel_attempt" && epoch !== undefined
+		? host.admissions.pending(epoch, admissionId).then((pending) => (pending ? undefined : refusal))
+		: refusal;
 }
