@@ -13,7 +13,6 @@ import { pickRotationSlot } from "./session-slot.ts";
 import type { CredentialSlotState } from "./state-store.ts";
 
 export { listRotationSlots, type RotationLane, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
-export { selectSessionSlot } from "./session-slot.ts";
 
 /** The exact hash the claude-sdk-oauth affinity oracle uses, so pools never remap. */
 export const sha256SlotHasher: SlotHasher = (input) => createHash("sha256").update(input).digest().readBigUInt64BE(0);

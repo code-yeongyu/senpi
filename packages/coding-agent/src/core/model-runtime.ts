@@ -878,12 +878,13 @@ export class ModelRuntime implements Models {
 		const sources = await this.credentialRotationSources(model, undefined);
 		if (!sources) return undefined;
 		const { rotation } = await this.loadCredentialPool();
+		const { selectSessionSlot } = await import("./credential-pool/session-slot.ts");
 		const slots = await rotation.listRotationSlots(sources, {
 			acquireLeases: false,
 			modelId: this.getCompatibilityRequestConfig(model).upstreamModelId ?? model.id,
 		});
 		const pooled: PooledCredential | undefined = sources.credential;
-		const slot = rotation.selectSessionSlot(
+		const slot = selectSessionSlot(
 			slots,
 			{
 				affinityKey: sessionId,
