@@ -18,6 +18,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { findEnvKeys, getEnvApiKey, readByProviderId } from "@earendil-works/pi-ai";
 import { type CredentialKind, slotKind, unusedSlotKinds } from "@earendil-works/pi-ai/auth/pool/kinds";
+import { stampLogin } from "@earendil-works/pi-ai/auth/pool/login-id";
 import {
 	appendLoginSlot,
 	type CredentialSlot,
@@ -667,7 +668,7 @@ export class AuthStorage implements CredentialStore {
 		return this.storage.withLock((content) => {
 			const currentData = this.parseStorageData(content);
 			const replacement = this.noteReplacement(provider, currentData[provider], credential, content);
-			const next = appendLoginSlot(currentData[provider], credential);
+			const next = stampLogin(appendLoginSlot(currentData[provider], credential));
 			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
 			return { result: replacement, next: JSON.stringify(nextData, null, 2) };
@@ -768,10 +769,14 @@ export class AuthStorage implements CredentialStore {
 		return listSlots(readByProviderId(this.data, provider) as PooledCredential | undefined);
 	}
 
+	/** Adding a new slot is a sign-in and stamps a fresh `loginId`; updating an existing slot keeps it (senpi#4099). */
 	setSlot(provider: string, slot: CredentialSlot): void {
 		this.storage.withLock((content) => {
 			const currentData = this.parseStorageData(content);
-			const next = upsertSlot(currentData[provider] as PooledCredential | undefined, slot);
+			const current = currentData[provider] as PooledCredential | undefined;
+			const upserted = upsertSlot(current, slot);
+			const adds = !listSlots(current).some((existing) => existing.name === slot.name);
+			const next = adds ? stampLogin(upserted) : upserted;
 			const nextData = { ...currentData, [provider]: next };
 			this.data = nextData;
 			return { result: undefined, next: JSON.stringify(nextData, null, 2) };

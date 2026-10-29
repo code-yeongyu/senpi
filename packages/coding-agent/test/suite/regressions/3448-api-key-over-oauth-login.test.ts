@@ -38,6 +38,9 @@ describe("an API key saved over an OAuth login (senpi#3448)", () => {
 		cleanup = harness.cleanup;
 		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
 		harness.authStorage.set("openrouter", oauth);
+		// set() is a sign-in, so the stored login carries its own loginId (senpi#4099)
+		const storedLogin = await harness.authStorage.read("openrouter");
+		expect(storedLogin).toEqual({ ...oauth, loginId: expect.any(String) });
 
 		await handler.handleInputLine(
 			JSON.stringify({ id: "key", type: "login_api_key", provider: "openrouter", key: "sk-scripted" }),
@@ -55,9 +58,13 @@ describe("an API key saved over an OAuth login (senpi#3448)", () => {
 			api_key: { configured: true, source: "stored" },
 		});
 
-		expect(await harness.authStorage.read("openrouter")).toEqual({ type: "api_key", key: "sk-scripted" });
+		expect(await harness.authStorage.read("openrouter")).toEqual({
+			type: "api_key",
+			key: "sk-scripted",
+			loginId: expect.any(String),
+		});
 		expect(
-			backups(harness.authPath).some((backup) => JSON.stringify(backup.openrouter) === JSON.stringify(oauth)),
+			backups(harness.authPath).some((backup) => JSON.stringify(backup.openrouter) === JSON.stringify(storedLogin)),
 		).toBe(true);
 		await handler.dispose();
 	});
@@ -81,6 +88,8 @@ describe("an API key saved over an OAuth login (senpi#3448)", () => {
 		const harness = makeHarness(tempDir);
 		cleanup = harness.cleanup;
 		harness.authStorage.set("openrouter", oauth);
+		const storedLogin = await harness.authStorage.read("openrouter");
+		expect(storedLogin).toEqual({ ...oauth, loginId: expect.any(String) });
 
 		await harness.runtimeHost.session.modelRuntime.login("openrouter", "api_key", {
 			signal: new AbortController().signal,
@@ -89,12 +98,16 @@ describe("an API key saved over an OAuth login (senpi#3448)", () => {
 		});
 
 		// Then the new key is used, the OAuth login is in a backup, and the replacement is reported once
-		expect(await harness.authStorage.read("openrouter")).toEqual({ type: "api_key", key: "sk-typed-in-tui" });
+		expect(await harness.authStorage.read("openrouter")).toEqual({
+			type: "api_key",
+			key: "sk-typed-in-tui",
+			loginId: expect.any(String),
+		});
 		const replacement = harness.authStorage.takeReplacement("openrouter");
 		expect(replacement?.replaced).toBe("oauth");
 		expect(replacement?.backupPath).toBeDefined();
 		const backup = JSON.parse(readFileSync(replacement?.backupPath ?? "", "utf-8")) as Record<string, unknown>;
-		expect(backup.openrouter).toEqual(oauth);
+		expect(backup.openrouter).toEqual(storedLogin);
 		expect(harness.authStorage.takeReplacement("openrouter")).toBeUndefined();
 	});
 

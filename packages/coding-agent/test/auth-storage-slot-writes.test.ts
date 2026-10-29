@@ -149,7 +149,7 @@ describe("AuthStorage slot-preserving writes", () => {
 
 		storage.set("openai", { type: "api_key", key: "first-key" });
 
-		expect(readAuthJson().openai).toEqual({ type: "api_key", key: "first-key" });
+		expect(readAuthJson().openai).toEqual({ type: "api_key", key: "first-key", loginId: expect.any(String) });
 	});
 
 	test("reading a flat credential never rewrites auth.json", () => {

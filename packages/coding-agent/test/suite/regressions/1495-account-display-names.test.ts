@@ -55,11 +55,12 @@ describe.each(["chatgpt-subscription", "anthropic-subscription"])("%s display na
 		const saved = AuthStorage.create(path).get(provider) as PooledCredential;
 		expect(saved).toEqual({
 			...credential,
+			loginId: expect.any(String),
 			accounts: [{ ...credential.accounts[0], displayName: "Personal account" }, credential.accounts[1]],
 		});
 		expect(accountLabel(listSlots(saved)[0])).toBe("Personal account (default)");
 		await renameCredentialAccount(storage, provider, "default", null);
-		expect(JSON.parse(readFileSync(path, "utf8"))[provider]).toEqual(credential);
+		expect(JSON.parse(readFileSync(path, "utf8"))[provider]).toEqual({ ...credential, loginId: saved.loginId });
 	});
 
 	it("rejects empty, unsafe, oversized, missing, and duplicate labels without a write or event", async () => {

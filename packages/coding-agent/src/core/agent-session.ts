@@ -146,6 +146,7 @@ import {
 	ContinueFromLeafError,
 	trackTurnAdmission,
 } from "./continue-from-leaf.ts";
+import { credentialRecoveryRevision } from "./credential-recovery-revision.ts";
 import { admitCursorHistory, cursorAdmissionBudgetBytes } from "./cursor-history-admission.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import { resolveDiscoveredResourcePaths } from "./discovered-resource-scope.ts";
@@ -1948,6 +1949,7 @@ export class AgentSession {
 			emit: (event) => this._emit(event),
 			getCurrentSelector: () => (this.model ? { model: this.model, thinkingLevel: this.thinkingLevel } : undefined),
 			isAuthAvailable: (provider) => this._modelRuntime.hasConfiguredAuth(provider),
+			recoveryRevision: (provider) => credentialRecoveryRevision(this._modelRuntime.authStorage, provider),
 		});
 		this._probeBackScheduler = new ProbeBackScheduler({
 			now: this._fallbackNow,

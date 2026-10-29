@@ -15,6 +15,8 @@ export interface ActiveFallbackState {
 	pinnedByBilling: boolean;
 	/** Derived OR of the two provenance flags - the only field consumers read. */
 	pinned: boolean;
+	/** The original provider's login id when the episode began; a sign-in moves it and releases a billing pin (senpi#4099). */
+	recoveryRevision?: string;
 }
 
 export type FallbackReason = "transient" | "refusal" | "hard-error" | "billing";
@@ -58,4 +60,9 @@ export interface RetryFallbackControllerDeps {
 	): void;
 	getCurrentSelector(): { model: Model<Api>; thinkingLevel?: ThinkingLevel } | undefined;
 	isAuthAvailable(provider: string): boolean;
+	/**
+	 * The `loginId` the last sign-in stored for `provider` ("" when none did), never key material;
+	 * `undefined` when it cannot be read. Only a sign-in writes a new id; a token refresh keeps it or drops it to "" (senpi#4099).
+	 */
+	recoveryRevision?(provider: string): Promise<string | undefined>;
 }
