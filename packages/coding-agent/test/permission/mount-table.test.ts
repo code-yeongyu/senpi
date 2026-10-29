@@ -73,6 +73,21 @@ describe("mount table: a mount point listed more than once", () => {
 		expect(createDetector(autofsOverTmpfs, budget, io, "linux")("/run/x").reasons).toEqual(["fs-type:autofs@/run"]);
 	});
 
+	it("drops a linux mount hidden by a later mount at its ancestor, so its paths use the visible mount", () => {
+		const overmounted = parseMountTable(
+			"overlay / overlay rw 0 0\noverlay /x/y overlay rw 0 0\nsystemd-1 /x autofs rw 0 0",
+			"linux",
+		);
+		expect(overmounted.mounts.map((mount) => mount.on)).toEqual(["/x", "/"]);
+		expect(volumeKeyFor(overmounted, (value) => value, "/x/y/f")).toBe("/x");
+		const nestedAfter = parseMountTable(
+			"overlay / overlay rw 0 0\nsystemd-1 /x autofs rw 0 0\noverlay /x/y overlay rw 0 0",
+			"linux",
+		);
+		expect(nestedAfter.mounts.map((mount) => mount.on)).toEqual(["/x/y", "/x", "/"]);
+		expect(volumeKeyFor(nestedAfter, (value) => value, "/x/y/f")).toBe("/x/y");
+	});
+
 	it("keys the breaker by the mount point of a stacked linux mount", () => {
 		const snapshot = parseMountTable(LINUX_STACKED, "linux");
 		expect(volumeKeyFor(snapshot, (value) => value, "/run/x")).toBe("/run");

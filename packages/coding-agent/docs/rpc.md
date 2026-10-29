@@ -2057,7 +2057,7 @@ Startup: `senpi --mode rpc --multi-session` → NO default session is constructe
 
 ### Session replacement
 
-A replacement (`new_session`, `switch_session`, `fork`) responds as soon as the swap is committed; the derived-surface refresh that rebinds extensions continues afterwards. That refresh does not disturb work the client starts against the committed session: tool activation performed while extensions are still binding no longer cancels an in-flight compaction or invalidates its context. `loaded_surfaces_changed` is emitted only when the surface digest actually changes, so it is NOT a settle barrier clients can wait on.
+A replacement (`new_session`, `switch_session`, `fork`) responds as soon as the swap is committed; the derived-surface refresh that rebinds extensions continues afterwards. That refresh does not disturb work the client starts against the committed session: tool activation performed while extensions are still binding no longer cancels an in-flight compaction or invalidates its context. Outside an MCP startup window, `loaded_surfaces_changed` is emitted only when the surface digest actually changes, so it is NOT a settle barrier for the extension rebind; the one settle point it does carry is the end of the MCP startup window described under [loaded_surfaces_changed](#loaded_surfaces_changed).
 
 #### Replacement identity event
 
@@ -5610,6 +5610,16 @@ Emitted without a request id when the loaded skill, extension, or MCP inventory 
 ```json
 {"type": "loaded_surfaces_changed"}
 ```
+
+**MCP startup window.** Every MCP attach of a session (session start, a new, resumed or forked session, a reload) opens a startup window. It stays open until every MCP server connect that attach started has settled: connected with its tools registered, failed, or timed out by the server's `connectTimeoutMs`. The count of startup events is fixed by this contract, not by how parallel connects interleave or how often the client reads:
+
+- While the window is open, MCP inventory changes emit no `loaded_surfaces_changed`. `get_loaded_surfaces` still answers with the current inventory, which may show servers still connecting.
+- When the window closes after starting at least one connect, each connection attached to the session receives exactly one `loaded_surfaces_changed`, even when its last `get_loaded_surfaces` already showed the final inventory. Re-reading after it gives the settled startup inventory. A multi-session host applies the per-connection dedupe above: sessions that settle onto the same inventory share one event.
+- An attach that starts no connect (no server configured, servers disabled, or every connection reused) emits no startup event; if its inventory changed, that change is announced once, like any other.
+- A connection that attaches after the window closed receives no startup event; it reads the inventory.
+- After the window, each MCP inventory change emits as before. Skill and extension changes are not held by the window.
+
+`get_loaded_surfaces` never emits `loaded_surfaces_changed`: a read answers with the inventory and records nothing, so polling during startup adds no events.
 
 ### transcript_write_failed
 

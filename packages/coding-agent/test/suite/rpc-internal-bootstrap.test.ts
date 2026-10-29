@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const children: ChildProcess[] = [];
 afterEach(async () => {
@@ -20,11 +21,16 @@ function start(runtime: string, args: string[] = [], env: Readonly<Record<string
 		runtime,
 		[
 			...(runtime === "bun" ? [] : ["--import", "tsx"]),
-			join(import.meta.dirname, "rpc-internal-bootstrap-harness.ts"),
+			join(
+				import.meta.dirname,
+				args[0]?.startsWith("readiness-")
+					? "rpc-internal-bootstrap-readiness-harness.ts"
+					: "rpc-internal-bootstrap-harness.ts",
+			),
 			...args,
 		],
 		{
-			env: { ...process.env, ...env, SENPI_RPC_INTERNAL_KEY_STDIN: "1" },
+			env: { ...hostSpawnEnv(), ...env, SENPI_RPC_INTERNAL_KEY_STDIN: "1" },
 			stdio: ["pipe", "ignore", "pipe", "pipe", "ipc"],
 		},
 	);
@@ -58,6 +64,78 @@ function message(child: ChildProcess): Promise<unknown> {
 // senpi#3795: real socketpair stdin, on both runtimes; no inherited agent profile.
 describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => {
 	for (const runtime of ["node", "bun"]) {
+		// senpi#4839: an independent gate holds the real Worker; wait results never fabricate readiness.
+		it.each(["timed-out", "ok"])(
+			`${runtime} rejects unready Worker after %s wait before closing stdin`,
+			async (result) => {
+				const { child } = start(runtime, [`readiness-unready-${result}`]);
+				const report = message(child);
+				const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
+				child.stdin?.end(Buffer.alloc(32, 7));
+				expect(await report).toMatchObject({
+					type: "failure",
+					error: expect.stringContaining("internal_key_unavailable"),
+					startupSignal: 0,
+					events: [],
+					applicationStarted: false,
+					descendants: 0,
+					listeners: 0,
+				});
+				expect((await exit)[0]).toBe(1);
+			},
+		);
+
+		it.each(["timed-out", "ok"])(`${runtime} accepts actual Worker readiness after %s wait`, async (result) => {
+			const { child } = start(runtime, [`readiness-ready-${result}`]);
+			const report = message(child);
+			const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
+			child.stdin?.write(Buffer.alloc(32, 7));
+			expect(await report).toMatchObject({
+				type: "ready",
+				startupSignal: 1,
+				signalAtClose: 1,
+				events: ["close", "restore", "release-null"],
+				applicationStarted: true,
+				descendants: 1,
+				listeners: 1,
+			});
+			expect((await exit)[0]).toBe(0);
+		});
+
+		it.each([0, 7])(`${runtime} restores stdin and releases ready Worker after a %i-byte key`, async (length) => {
+			const { child } = start(runtime, ["readiness-ready-ok"]);
+			const report = message(child);
+			const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
+			child.stdin?.end(Buffer.alloc(length, 7));
+			expect(await report).toMatchObject({
+				type: "failure",
+				error: "internal_key_unavailable",
+				startupSignal: 1,
+				events: ["close", "restore", "release-null"],
+				applicationStarted: false,
+				descendants: 0,
+				listeners: 0,
+			});
+			expect((await exit)[0]).toBe(1);
+		});
+
+		it(`${runtime} refuses a null restore failure before application startup`, async () => {
+			const { child } = start(runtime, ["readiness-restore-error"]);
+			const report = message(child);
+			const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
+			child.stdin?.end(Buffer.alloc(32, 7));
+			expect(await report).toMatchObject({
+				type: "failure",
+				error: "fixture null open denied",
+				startupSignal: 1,
+				events: ["close"],
+				applicationStarted: false,
+				descendants: 0,
+				listeners: 0,
+			});
+			expect((await exit)[0]).toBe(1);
+		});
+
 		it(`${runtime} restores null stdin and its inherited-stdin descendant completes while the writer lives`, async () => {
 			const { child, stderr } = start(runtime);
 			const ready = message(child);

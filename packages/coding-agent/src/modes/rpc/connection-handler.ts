@@ -299,6 +299,12 @@ function loadedMcpServers(snapshot: McpWireStatusSnapshot): RpcLoadedMcpServer[]
 	}));
 }
 
+/**
+ * The prior digest a startup-settled announcement reports: the session leaves its MCP startup window, whatever digest
+ * the connection last recorded, so a shared host's per-connection dedupe never drops it as a no-op transition.
+ */
+const MCP_STARTUP_PENDING_DIGEST = "mcp-startup-pending";
+
 function loadedSurfacesFingerprint(
 	session: AgentSession,
 	extensions: readonly RpcLoadedExtension[],
@@ -400,6 +406,7 @@ export function createRpcConnectionHandler(
 	let loadedSurfacesDigest: string | undefined;
 	let rpcCommandsDigest: string | undefined;
 	let suppressLoadedSurfaceEvents = false;
+	let mcpStartupSettledPending = false;
 	const eventOutput = sink.writeRecord
 		? undefined
 		: createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
@@ -451,6 +458,17 @@ export function createRpcConnectionHandler(
 		else outputEvent({ type: "loaded_surfaces_changed" });
 	};
 
+	/** The one event that ends the MCP startup window, emitted even when the digest is unchanged (senpi#4828). */
+	const announceMcpStartupSettled = (): void => {
+		if (suppressLoadedSurfaceEvents) {
+			mcpStartupSettledPending = true;
+			return;
+		}
+		mcpStartupSettledPending = false;
+		loadedSurfacesDigest = currentLoadedSurfaces().digest;
+		emitLoadedSurfacesChanged(MCP_STARTUP_PENDING_DIGEST, loadedSurfacesDigest);
+	};
+
 	const requestMcpWireStatus = async (): Promise<void> => {
 		let response: Promise<McpWireStatusSnapshot> | undefined;
 		const request: McpControlInventoryRequest = {
@@ -470,7 +488,8 @@ export function createRpcConnectionHandler(
 			(data) => {
 				if (!isMcpControlInventoryChanged(data) || data.sessionId !== session.sessionId) return;
 				mcpWireStatus = data.snapshot;
-				if (!suppressLoadedSurfaceEvents) recordLoadedSurfaces(true);
+				if (data.startupSettled === true) announceMcpStartupSettled();
+				else if (!suppressLoadedSurfaceEvents) recordLoadedSurfaces(true);
 			},
 		);
 	};
@@ -837,7 +856,9 @@ export function createRpcConnectionHandler(
 		if (!wasSuppressed && commandsChanged) {
 			outputEvent(commandsChanged);
 		}
-		if (!wasSuppressed && previousDigest !== undefined && previousDigest !== loadedSurfacesDigest) {
+		if (!wasSuppressed && mcpStartupSettledPending) {
+			announceMcpStartupSettled();
+		} else if (!wasSuppressed && previousDigest !== undefined && previousDigest !== loadedSurfacesDigest) {
 			emitLoadedSurfacesChanged(previousDigest, loadedSurfacesDigest);
 		}
 	};
@@ -2006,9 +2027,9 @@ export function createRpcConnectionHandler(
 			}
 
 			case "get_loaded_surfaces": {
+				// A read answers with the inventory and never announces: changes are announced by their own notifications.
 				await requestMcpWireStatus();
-				const inventory = recordLoadedSurfaces(true);
-				return success(id, "get_loaded_surfaces", inventory.data);
+				return success(id, "get_loaded_surfaces", currentLoadedSurfaces().data);
 			}
 
 			case "extension_request":
