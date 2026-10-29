@@ -5,7 +5,6 @@ export function buildFragmentFixtureIndex(cases: readonly { caseId: string; kind
 		contract: "CONTRACT-r6",
 		section: "B3",
 		digestAlgorithm: "sha256",
-		digestRulingPending: "S09-Q1",
 		digestRule:
 			"digest is lowercase hex SHA-256 over the exact raw bytes of one fragment; sourceDigest and binding.digest cover the whole value. Pending the S09-Q1 ruling; a different ruling regenerates every file.",
 		limits: FRAGMENT_LIMITS,
