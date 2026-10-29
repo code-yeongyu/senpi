@@ -7,7 +7,7 @@
  */
 import { FieldStore, windowRate } from "./field-state.ts";
 import { truncateText } from "./format.ts";
-import { SourceLineReader } from "./line-reader.ts";
+import { type SourceLineRedactor, SourceLineReader } from "./line-reader.ts";
 import type { LineMatcher } from "./matcher.ts";
 import { applyMatches, compileSourceMatcher, type SourceMatcher } from "./rule-match.ts";
 import {
@@ -51,6 +51,12 @@ export interface JobWidgetRuntimeOptions {
 	matcher: LineMatcher;
 	startTime: number;
 	now?: () => number;
+	/**
+	 * A fresh redactor per source, fed that source's complete lines in order before they are cut,
+	 * matched or kept: views cut long text, a cut token no longer looks like one to a redactor, and
+	 * a private key spans lines, so redaction is stateful per source and runs before any cut.
+	 */
+	redactSource?: () => SourceLineRedactor;
 }
 
 export class JobWidgetRuntime {
@@ -58,6 +64,7 @@ export class JobWidgetRuntime {
 	readonly #matcher: LineMatcher;
 	readonly #startTime: number;
 	readonly #now: () => number;
+	readonly #redactSource: (() => SourceLineRedactor) | undefined;
 	readonly #readers = new Map<string, SourceLineReader>();
 	readonly #stats = new Map<string, SourceStats>();
 	readonly #matchers = new Map<string, SourceMatcher | null>();
@@ -73,6 +80,7 @@ export class JobWidgetRuntime {
 		this.#matcher = options.matcher;
 		this.#startTime = options.startTime;
 		this.#now = options.now ?? Date.now;
+		this.#redactSource = options.redactSource;
 		this.#store = new FieldStore(keyedFields(options.spec), pinnedKeys(options.spec));
 	}
 
@@ -105,7 +113,7 @@ export class JobWidgetRuntime {
 		for (const source of sources) {
 			let reader = this.#readers.get(source.id);
 			if (!reader || reader.source !== source) {
-				reader = new SourceLineReader(source);
+				reader = new SourceLineReader(source, this.#redactSource?.());
 				this.#readers.set(source.id, reader);
 			}
 			const { lines, end } = reader.read(flush);

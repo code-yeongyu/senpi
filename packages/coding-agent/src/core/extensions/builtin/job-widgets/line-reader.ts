@@ -16,6 +16,17 @@ function sanitizeLine(line: string): string {
 	return line.replace(ANSI_SEQUENCE, "").replace(CONTROL_CHARS, "");
 }
 
+/**
+ * One source's redaction, fed its complete lines in order (`JobWidgetSourceRedactor`): `cut` marks
+ * text the source dropped unread, `finish` the end of the source. A key spans lines, so a fresh
+ * redactor per line would miss it.
+ */
+export interface SourceLineRedactor {
+	push(line: string): string[];
+	cut(): string[];
+	finish(): string[];
+}
+
 export interface SourceLines {
 	lines: string[];
 	open: boolean;
@@ -27,7 +38,8 @@ export interface SourceLines {
  * Keeps a cursor, carries the trailing partial line to the next read, turns CR and CRLF into line
  * breaks, strips ANSI and control characters, and cuts lines at {@link MAX_LINE_CHARS}. When the
  * source dropped text the reader never saw, the torn line at the gap is skipped so no rule reads
- * half a line.
+ * half a line. With a redactor, lines are redacted before they are cut, so a cut never splits a
+ * secret's marker.
  */
 export class SourceLineReader {
 	readonly source: JobTextSource;
@@ -35,25 +47,28 @@ export class SourceLineReader {
 	/** Raw text of the line in progress; sanitized once complete so split escapes still strip. */
 	#partial = "";
 	#torn = false;
+	readonly #redactor: SourceLineRedactor | undefined;
 
-	constructor(source: JobTextSource) {
+	constructor(source: JobTextSource, redactor?: SourceLineRedactor) {
 		this.source = source;
+		this.#redactor = redactor;
 	}
 
 	/** New complete lines; `flush` also ends the line in progress. */
 	read(flush: boolean): SourceLines {
 		const chunk = this.source.read(this.#cursor);
 		let text = chunk.text;
-		if (chunk.start > this.#cursor) {
+		const skipped = chunk.start > this.#cursor;
+		if (skipped) {
 			this.#partial = "";
 			this.#torn = true;
 		}
 		this.#cursor = Math.max(this.#cursor, chunk.end);
 		if (this.#torn) {
-			const lineEnd = text.search(/[\r\n]/);
-			if (lineEnd === -1) text = "";
+			const lineEnd = /\r\n|\r|\n/.exec(text);
+			if (lineEnd === null) text = "";
 			else {
-				text = text.slice(lineEnd + 1);
+				text = text.slice(lineEnd.index + lineEnd[0].length);
 				this.#torn = false;
 			}
 		}
@@ -63,7 +78,16 @@ export class SourceLineReader {
 			raw.push(this.#partial);
 			this.#partial = "";
 		}
-		const lines = raw.map((line) => sanitizeLine(line).slice(0, MAX_LINE_CHARS));
+		const clean = raw.map(sanitizeLine);
+		const redactor = this.#redactor;
+		const redacted = redactor
+			? [
+					...(skipped ? redactor.cut() : []),
+					...clean.flatMap((line) => redactor.push(line)),
+					...(flush || !chunk.open ? redactor.finish() : []),
+				]
+			: clean;
+		const lines = redacted.map((line) => line.slice(0, MAX_LINE_CHARS));
 		return { lines, open: chunk.open, end: chunk.end };
 	}
 }

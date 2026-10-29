@@ -1,6 +1,7 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { on, once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createServer as createHttpServer, type Server as HttpServer, type ServerResponse } from "node:http";
 import { type AddressInfo, createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -78,7 +79,7 @@ afterEach(
 			// Supervisors are detached and a failed ensure leaves no registration to stop them by; the
 			// sandbox path names every process this file started, so nothing outlives its directory.
 			await reapProcessesUnder(root);
-			rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+			await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 		}
 		// Each managed supervisor can use its stalled-child grace and post-SIGKILL exit breaker.
 	},
