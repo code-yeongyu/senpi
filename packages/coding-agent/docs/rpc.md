@@ -5328,12 +5328,21 @@ call such as `mcp__1a2b__Edit` streams with `toolName: "mcp__1a2b__Edit"` and `r
 an exact or unresolvable name reports itself. Title and render the call by `resolvedToolName`, which is
 also the `toolName` of its `tool_execution_*` events.
 
-`message_update` intentionally omits the former cumulative `message` field and
+Classic stdio `message_update` intentionally omits the former cumulative `message` field and
 `assistantMessageEvent.partial`. Clients that need a live partial message must assemble it
 from `message_start` and subsequent events using `contentIndex`. Treat `message_end.message`
 as authoritative. For tool calls, `toolcall_start` provides the call `id` and `toolName`;
 buffer `toolcall_delta.delta` for arguments. `toolcall_end.toolCall` contains the completed
 call.
+
+Shared-host and terminal-control streams may also carry cumulative `message` and
+`assistantMessageEvent.partial` snapshots. Buffered replay and collected client events
+retain only the latest such snapshot: superseded records keep their delta and position,
+with cumulative fields set to `null`. Apply a non-null `message` as the current baseline,
+not as text to append. Tool-call starts retain their `id` and `toolName` after demotion.
+Late attachment and recovery still receive the complete current partial; final
+`message_end.message` is unchanged. Live `RpcClient.onEvent` delivery is not mutated by
+`collectEvents` or pending-open retention.
 
 ### bash_execution_update
 

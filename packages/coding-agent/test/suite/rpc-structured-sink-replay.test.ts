@@ -10,21 +10,24 @@ const sink = (lines: string[]) => ({
 const wire = (record: object) => `${JSON.stringify({ ...record, sessionId: "session" })}\n`;
 
 // Part of #4272: a placeholder peer attaching mid-stream must not parse the retained partials.
-it("replays retained message_update partials to a late placeholder peer without parsing them", async () => {
+it("replays every delta and only the latest partial to a late placeholder peer without parsing", async () => {
 	const writer = new SessionEventWriter(() => {});
 	const replay: string[] = [];
 	writer.registerConnection("live", sink([]));
 	writer.attachConnectionToSession("live", "session");
 	const message = { role: "assistant", content: [{ type: "text", text: "" }] };
 	const expected: string[] = [];
-	const accept = (record: Record<string, unknown>) => {
+	const accept = (record: Record<string, unknown>, retainSnapshot = true) => {
 		writer.enqueue("session", record);
-		expected.push(wire(record));
+		expected.push(wire(retainSnapshot ? record : { ...record, message: null }));
 	};
 	accept({ type: "message_start", message });
 	for (let index = 0; index < 256; index++) {
 		message.content[0].text += "x";
-		accept({ type: "message_update", message, assistantMessageEvent: { type: "text_delta", delta: "x" } });
+		accept(
+			{ type: "message_update", message, assistantMessageEvent: { type: "text_delta", delta: "x" } },
+			index === 255,
+		);
 	}
 	const parse = vi.spyOn(JSON, "parse");
 	try {

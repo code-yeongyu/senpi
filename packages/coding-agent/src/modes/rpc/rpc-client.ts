@@ -21,6 +21,7 @@ import { MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
 import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
+import { demoteMessageUpdate } from "./demote-message-update.ts";
 import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
 
 /** A command the host refused; `errorCode` carries the typed code when the command defines one. */
@@ -1327,6 +1328,7 @@ export class RpcClient {
 	collectEvents(timeout = 60000): Promise<JsonAgentSessionEvent[]> {
 		return new Promise((resolve, reject) => {
 			const events: JsonAgentSessionEvent[] = [];
+			let latestPartial: number | undefined;
 			const timer = setTimeout(() => {
 				unsubscribe();
 				reject(new Error(`Timeout collecting events. Stderr: ${this.stderr}`));
@@ -1345,6 +1347,11 @@ export class RpcClient {
 					event.type === "queued"
 				)
 					return;
+				if (event.type === "message_update" || event.type === "message_end") {
+					if (latestPartial !== undefined)
+						events[latestPartial] = demoteMessageUpdate(events[latestPartial]) as JsonAgentSessionEvent;
+					latestPartial = event.type === "message_update" ? events.length : undefined;
+				}
 				events.push(event);
 				if (event.type === "agent_settled") {
 					clearTimeout(timer);
@@ -1391,6 +1398,18 @@ export class RpcClient {
 			// the response establishes the lease so startup hooks are not lost.
 			if (typeof data.sessionId === "string" && data.sessionId !== this.sessionId) {
 				if (this.pendingOpenSession) {
+					if (data.type === "message_update" || data.type === "message_end") {
+						const previous = this.pendingSessionEvents.findLast(
+							(entry) => entry.sessionId === data.sessionId && entry.event.type === "message_update",
+						);
+						if (previous) {
+							const demoted = demoteMessageUpdate(previous.event) as RpcClientEvent;
+							const bytes = Buffer.byteLength(JSON.stringify(demoted));
+							this.pendingSessionEventBytes += bytes - previous.bytes;
+							previous.event = demoted;
+							previous.bytes = bytes;
+						}
+					}
 					const bytes = Buffer.byteLength(line);
 					this.pendingSessionEvents.push({ sessionId: data.sessionId, event: data as RpcClientEvent, bytes });
 					this.pendingSessionEventBytes += bytes;
