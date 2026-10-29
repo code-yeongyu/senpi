@@ -67,6 +67,7 @@ import {
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import * as builtinProviderCatalog from "@earendil-works/pi-ai/providers/all";
 import { installClaudeCodeVersionFileStore } from "@earendil-works/pi-ai/utils/claude-code-version-cache";
+import { setOAuthPageBrand } from "@earendil-works/pi-ai/utils/oauth-page";
 import {
 	assertChatModel,
 	assertClassifierModel,
@@ -115,6 +116,7 @@ import {
 // The product's identity must ride outgoing requests. This lives here because the AI package
 // is already part of this module's graph; the CLI bootstrap deliberately does not import it.
 setWireIdentity(BRAND?.userAgent ?? APP_NAME);
+setOAuthPageBrand({ name: APP_NAME, ...(BRAND?.logo ? { logo: BRAND.logo } : {}) });
 
 /** Availability re-reads after a busy credential store: 250, 500, 1000, 2000, 4000 ms. */
 const BUSY_AVAILABILITY_RETRY_LIMIT = 5;
