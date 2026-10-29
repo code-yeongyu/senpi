@@ -3,11 +3,12 @@ import { join } from "node:path";
 import { z } from "zod";
 import { CompactAdmissionError } from "./compact-admission-error.ts";
 
-/** Per socket epoch, including ordinary and mirror attempts; retired IDs are never evicted. */
+/** Per socket epoch: 128 IDs, 16 MiB reserved disk bytes, 16 live producers. No retired ID is evicted. */
 export const ADMISSION_LIMITS = { entries: 128, bytes: 16 * 1024 * 1024, hot: 16, row: 131_584 } as const;
 const rowSchema = z.object({
 	fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
 	state: z.enum(["pending", "complete", "cancelled", "failed"]),
+	failure: z.literal("storage_unavailable").optional(),
 	answer: z.string().max(65_536).optional(),
 });
 export type AdmissionRow = z.infer<typeof rowSchema>;

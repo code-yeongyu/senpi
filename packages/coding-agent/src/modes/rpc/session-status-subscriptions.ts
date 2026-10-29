@@ -37,7 +37,7 @@ export function matchingMirrors(
 	subscriptions: Iterable<StatusSubscription>,
 	sessionId: string,
 	recordType: string,
-	entry: () => SessionStatusEntryView | undefined,
+	entryView: () => SessionStatusEntryView | undefined,
 	dialogs = false,
 ): StatusSubscription[] {
 	const candidates = [...subscriptions].filter(
@@ -48,8 +48,8 @@ export function matchingMirrors(
 				: mirrorsRecord(subscription.options.mirror, recordType)),
 	);
 	if (candidates.length === 0) return [];
-	const view = entry();
-	return view ? candidates.filter((s) => subscriptionMatches(s.options, sessionId, view)) : [];
+	const entry = entryView();
+	return entry ? candidates.filter((s) => subscriptionMatches(s.options, sessionId, entry)) : [];
 }
 
 export type SessionSelector =
