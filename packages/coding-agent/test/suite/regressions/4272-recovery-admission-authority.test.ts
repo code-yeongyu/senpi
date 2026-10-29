@@ -57,12 +57,11 @@ for (const kind of ["checkpoint", "event"] as const) {
 			};
 			if (type === "get_recovery_page") expect(dataOf(await peer.request(command))).toMatchObject({ ordinal: 1 });
 			const bytes: string[] = [];
-			for (const fields of [
-				{ lease: { kind, id: "unknown" } },
-				...["unknown", "retired", "foreign"].map((admissionId) => ({ admissionId })),
-			]) {
+			for (const admissionId of ["unknown", "retired", "foreign"]) {
 				const start = peer.received.length;
-				await host.writer.withConnection("peer", () => host.core.handle(JSON.stringify({ ...command, ...fields })));
+				await host.writer.withConnection("peer", () =>
+					host.core.handle(JSON.stringify({ ...command, admissionId })),
+				);
 				await host.writer.flush();
 				const replies = peer.received.slice(start);
 				expect(replies).toHaveLength(1);
@@ -79,14 +78,22 @@ for (const kind of ["checkpoint", "event"] as const) {
 				});
 				bytes.push(line);
 			}
-			expect(new Set(bytes).size).toBe(1);
 			const foreignStart = foreign.received.length;
 			await host.writer.withConnection("foreign", () => host.core.handle(JSON.stringify(command)));
 			await host.writer.flush();
 			expect(foreign.received.slice(foreignStart)).toEqual([bytes[0]]);
-			if (type === "release_recovery")
-				expect(dataOf(await peer.request(command))).toMatchObject({ outcome: "released" });
+			if (kind === "event")
+				expect(dataOf(await peer.request({ ...command, type: "release_recovery" }))).toMatchObject({
+					outcome: "released",
+				});
 			host.writer.recoveryCheckpoints.release(cut.value.token);
+			host.writer.recoveryEvents?.forgetPeer(socketEpoch);
+			// The same presented bytes are now unknown, rather than a valid token under a mismatched admission.
+			const unknownStart = peer.received.length;
+			await host.writer.withConnection("peer", () => host.core.handle(JSON.stringify(command)));
+			await host.writer.flush();
+			expect(peer.received.slice(unknownStart)).toEqual([bytes[0]]);
+			expect(new Set(bytes).size).toBe(1);
 		}, 120_000);
 	}
 }
