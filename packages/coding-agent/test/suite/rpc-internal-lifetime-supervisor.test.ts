@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { waitForListener } from "../../src/modes/rpc/host-lifecycle-proxy.ts";
 import { processExitEvent } from "../helpers/process-exit-event.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -64,7 +65,7 @@ describe.skipIf(process.platform === "win32")("supervisor lifetime FIFO", () => 
 				]),
 			],
 			{
-				env: { ...process.env, TMPDIR: tmp, SENPI_CODING_AGENT_DIR: join(root, "agent") },
+				env: { ...hostSpawnEnv(), TMPDIR: tmp, SENPI_CODING_AGENT_DIR: join(root, "agent") },
 				stdio: ["ignore", "ignore", "inherit"],
 			},
 		);

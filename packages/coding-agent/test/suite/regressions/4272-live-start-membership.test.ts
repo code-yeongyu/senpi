@@ -76,7 +76,7 @@ it("keeps exact duplicate rejection across every held page-out and cold-read ste
 			await state.applyCold({ type: "message_status", messageId: "message", persistence: "appended" }),
 		).toMatchObject({ kind: "applied" });
 		duplicate();
-		handoff = io.hold("write", (path) => path.includes("/value-"));
+		handoff = io.hold("write", (path) => path.includes("/node-"));
 		write.release();
 		await handoff.entered;
 		// The row page is committed, but its replacement navigation root is not published yet.
@@ -124,10 +124,10 @@ it("releases settled membership instead of retaining a catalog after 10,000 mess
 			async writeFile(path, data) {
 				files.set(path, Buffer.from(data));
 			},
-			async readFile(path) {
+			async readFile(path, range) {
 				const data = files.get(path);
 				if (!data) throw Object.assign(new Error("missing backing file"), { code: "ENOENT" });
-				return Buffer.from(data);
+				return Buffer.from(range ? data.subarray(range.offset, range.offset + range.length) : data);
 			},
 			async unlink(path) {
 				files.delete(path);
