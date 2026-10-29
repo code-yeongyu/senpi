@@ -1,9 +1,11 @@
-import { type ChildProcess, spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import childProcess, { type ChildProcess, spawn } from "node:child_process";
+import { once } from "node:events";
+import { access, mkdir, mkdtemp, readFile, rm, stat, watch, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, describe, expect, it, onTestFailed } from "vitest";
+import { afterAll, afterEach, describe, expect, it, onTestFailed, vi } from "vitest";
 import { VERSION } from "../src/config.ts";
 import { type HostPidFileWriter, readHostRegistration } from "../src/modes/rpc/host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY, HostEnsureRefusedError } from "../src/modes/rpc/host-decision.ts";
@@ -29,10 +31,10 @@ import {
 	reapCollectedHosts,
 	waitForPidGone,
 } from "./helpers/spawned-host-reaper.ts";
-import { fileAppears } from "./helpers/rpc-supervised-host.ts";
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
+const diagnosticCleanups = new Set<() => void>();
 const fixture = join(import.meta.dirname, "fixtures", "rpc-host-fixture.mjs");
 const incompatibleProtocolFixture = join(import.meta.dirname, "fixtures", "rpc-incompatible-protocol-host.ts");
 const readinessDiagnosticFixture = join(import.meta.dirname, "fixtures", "rpc-readiness-diagnostic.mjs");
@@ -42,6 +44,7 @@ const CAPABILITIES = "multi_session,extension_events,session_context,session_kin
 const HANDOFF_CAPABILITIES = `${CAPABILITIES},${GENERATION_HANDOFF_CAPABILITY}`;
 
 afterEach(async () => {
+	for (const cleanup of diagnosticCleanups) cleanup();
 	const spawned = children.splice(0);
 	const pending = roots.splice(0);
 	// Most hosts here are spawned by PRODUCTION code: detached, with only a pid handed back, and
@@ -874,16 +877,110 @@ async function scratch(label: string): Promise<Qa> {
 	return { root, agentDir: join(root, "agent"), socket: join(root, "rpc.sock") };
 }
 
+async function waitForDiagnosticMarker(
+	root: string,
+	signal: AbortSignal,
+	watchMarker = (watchSignal: AbortSignal) => watch(root, { signal: watchSignal }),
+) {
+	const controller = new AbortController();
+	const events = watchMarker(AbortSignal.any([signal, controller.signal]));
+	// fs/promises.watch is lazy: next() attaches the watcher before the existence check.
+	let next = events.next();
+	void next.catch(() => {});
+	const markerExists = () =>
+		access(join(root, "stderr-ready")).then(
+			() => true,
+			() => false,
+		);
+	try {
+		// The marker may predate watcher attachment; notifications can omit or coalesce names.
+		if (await markerExists()) return;
+		while (!(await next).done) {
+			if (await markerExists()) return;
+			next = events.next();
+			void next.catch(() => {});
+		}
+		if (await markerExists()) return;
+		throw new Error("diagnostic marker watch ended before stderr-ready appeared");
+	} finally {
+		controller.abort();
+		await events.return?.();
+	}
+}
+
+// #4708: marker existence must survive missed and coalesced watcher notifications.
+describe("diagnostic marker wait", () => {
+	it.each(["before-watch", null, "unrelated", "watch-ended"] as const)(
+		"settles the marker wait with %s notification",
+		async (filename) => {
+			const qa = await scratch("marker-notification");
+			const controller = new AbortController();
+			if (filename === "before-watch") await writeFile(join(qa.root, "stderr-ready"), "");
+			const watchMarker = () =>
+				(async function* (): AsyncGenerator<{ eventType: "rename"; filename: string | null }, undefined> {
+					if (filename === "watch-ended") return undefined;
+					if (filename !== "before-watch") {
+						// Let the initial existence check and one event re-check observe absence.
+						yield { eventType: "rename" as const, filename: "before-marker" };
+						await writeFile(join(qa.root, "stderr-ready"), "");
+						yield { eventType: "rename" as const, filename };
+					}
+					throw new Error("marker was missed");
+				})();
+			try {
+				const ready = waitForDiagnosticMarker(qa.root, controller.signal, watchMarker);
+				if (filename === "watch-ended") {
+					await expect(ready).rejects.toThrow("diagnostic marker watch ended before stderr-ready appeared");
+				} else {
+					await expect(ready).resolves.toBeUndefined();
+				}
+			} finally {
+				controller.abort();
+			}
+		},
+	);
+});
+
 async function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
 	const controller = new AbortController();
 	// Arm before spawn. These cases time protocol readiness, not the runtime's first instruction:
 	// under CPU pressure SIGTERM can otherwise arrive before the fixture ever writes its diagnostic.
-	const diagnosticReady =
+	// #4708: fixture startup is bounded by the test, not a second wall-clock readiness budget.
+	const markerReady =
 		overrides.spawn?.args[0] === readinessDiagnosticFixture
-			? fileAppears(join(qa.root, "stderr-ready"), 5_000, controller.signal)
+			? waitForDiagnosticMarker(qa.root, controller.signal)
 			: undefined;
+	let diagnosticReady = markerReady;
 	// Startup may fail before the pidfile hook awaits the fixture; cancellation must still be observed.
-	void diagnosticReady?.catch(() => {});
+	void markerReady?.catch(() => {});
+	const spawnOriginal = childProcess.spawn;
+	const diagnostic: { child?: ChildProcess } = {};
+	const spawnSpy = markerReady
+		? vi.spyOn(childProcess, "spawn").mockImplementation((...args: Parameters<typeof spawnOriginal>) => {
+				const child = spawnOriginal(...args);
+				if (markerReady && args[1]?.[0] === readinessDiagnosticFixture) {
+					diagnostic.child = child;
+					diagnosticReady = Promise.race([
+						markerReady,
+						once(child, "exit", { signal: controller.signal }).then(([code, signal]) => {
+							throw new Error(`diagnostic fixture exited before stderr marker (code ${code}, signal ${signal})`);
+						}),
+					]);
+					void diagnosticReady.catch(() => {});
+				}
+				return child;
+			})
+		: undefined;
+	// ensureHost imports the native named export; observe its real child without a product seam.
+	if (spawnSpy) syncBuiltinESMExports();
+	const cleanup = () => {
+		if (!diagnosticCleanups.delete(cleanup)) return;
+		controller.abort();
+		spawnSpy?.mockRestore();
+		if (spawnSpy) syncBuiltinESMExports();
+	};
+	// A Vitest timeout does not unwind a pending ensureHost await.
+	diagnosticCleanups.add(cleanup);
 	try {
 		return await ensureHost({
 			agentDir: qa.agentDir,
@@ -902,8 +999,13 @@ async function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
 				},
 			},
 		});
+	} catch (error) {
+		// A failed spawn has no pid; preserve its asynchronous error rather than the generic
+		// ensureHost failure thrown before the pidfile hook can await diagnosticReady.
+		if (diagnostic.child && diagnostic.child.pid === undefined) await diagnosticReady;
+		throw error;
 	} finally {
-		controller.abort();
+		cleanup();
 	}
 }
 
