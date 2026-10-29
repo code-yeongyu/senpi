@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { once } from "node:events";
 import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -698,34 +699,51 @@ describe.skipIf(process.platform === "win32")("protocol fixture self-termination
 		expect(await waitForPidGone(host, 15_000)).toBe(true);
 	}, 30_000);
 
-	it("exits when the process that started it is gone", async () => {
-		// A SIGKILLed test runner cannot run any teardown at all; the fixture notices that it has
-		// been reparented and leaves on its own.
-		const qa = await scratch("fixture-orphan");
-		const launcher = spawn(
-			process.execPath,
-			[
-				"-e",
-				"const { spawn } = require('node:child_process');" +
-					"spawn(process.execPath, process.argv.slice(1), { detached: true, stdio: 'ignore' }).unref();" +
-					"setInterval(() => {}, 1000);",
-				fixture,
-				qa.socket,
-				VERSION,
-				CAPABILITIES,
-				"answer",
-			],
-			{ stdio: "ignore" },
-		);
-		children.push(launcher);
-		await waitForProtocol(qa.socket);
-		const host = processesUnder(qa.root).find((pid) => pid !== launcher.pid);
-		expect(host).toBeGreaterThan(0);
+	it.each(["native", "simulated subreaper"])(
+		"exits when the process that started it is gone (%s)",
+		async (reparent) => {
+			// A SIGKILLed test runner cannot run any teardown at all; the fixture notices that it has
+			// been reparented and leaves on its own.
+			const qa = await scratch("fixture-orphan");
+			// #4761: Darwin reparents to pid 1. Model a non-1 reparent using IPC disconnect as the
+			// parent's death signal, without replacing the fixture's watchdog or termination logic.
+			const simulatedSubreaper = reparent === "simulated subreaper";
+			const preload =
+				"let parentPid = process.ppid;" +
+				"Object.defineProperty(process, 'ppid', { get: () => parentPid });" +
+				"process.once('disconnect', () => { parentPid = process.pid; });";
+			const launcher = spawn(
+				process.execPath,
+				[
+					"-e",
+					"const { spawn } = require('node:child_process');" +
+						`spawn(process.execPath, process.argv.slice(1), { detached: true, stdio: ['ignore', 1, 'ignore'${simulatedSubreaper ? ", 'ipc'" : ""}] }).unref();` +
+						"setInterval(() => {}, 1000);",
+					"--",
+					...(simulatedSubreaper ? ["--import", `data:text/javascript,${encodeURIComponent(preload)}`] : []),
+					fixture,
+					qa.socket,
+					VERSION,
+					CAPABILITIES,
+					"answer",
+				],
+				{ stdio: ["ignore", "pipe", "ignore"] },
+			);
+			children.push(launcher);
+			await waitForProtocol(qa.socket);
+			const host = processesUnder(qa.root).find((pid) => pid !== launcher.pid);
+			expect(host).toBeGreaterThan(0);
 
-		await killAndWait(launcher);
+			// The fixture inherits the launcher's stdout. `close` waits for that last writer, even
+			// after the launcher exits, so subscribe before killing and await the fixture's exit.
+			const exited = once(launcher, "close", { signal: AbortSignal.timeout(15_000) });
+			await killAndWait(launcher);
+			await exited;
 
-		expect(await waitForPidGone(host ?? 0, 15_000)).toBe(true);
-	}, 30_000);
+			expect(await waitForPidGone(host ?? 0, 15_000)).toBe(true);
+		},
+		30_000,
+	);
 });
 
 describe("defaultHostLaunch", () => {
