@@ -1,6 +1,6 @@
 {
  "repo": {
-  "head": "cf116461ac636513654b8d973e85814a2b7ea445",
+  "head": "2cf6adb6496775b799c0d3e757831aaf8cdb0e52",
   "dirty": false
  },
  "platform": "linux-x64",
@@ -9,11 +9,11 @@
   "child": "bun@1.4.4"
  },
  "hashes": {
-  "harness": "sha256:3e1746aa5d5f225e37aabb8ce4378084c21bcff752f929d1c0254dfac8390354",
-  "normalizer": "sha256:568e958ec47174d275363492e1ecd1dd38dbd85be3511f673c84747d34ba7023",
+  "harness": "sha256:9280da0b853c3ca12b8a6bb9a58279e33bfc475dd6783e9308b5632bff6d9659",
+  "normalizer": "sha256:19524e3e2fa4883b02b817375131e78d267a9a8c285fc53f5668f1ec3dd70ba6",
   "fakeModelServer": "sha256:cab5b6866b7854287218de51d1fafcc242a8602b2c83fb85572abe332f9f6560",
-  "cases": "sha256:b9975118edb132eb55974abbe30efd7acabfee4d79636a7df05fd5b8e3e75355",
-  "fixtures": "sha256:40f9e14a19251c338614b3c0d2d2ecfce9f543aca9df5a389bd7bf5bd8f6b038"
+  "cases": "sha256:4e7cbec6543f677b2dd51b72f8835eebf259f1fdf4ec2d318f858f0caa3a4635",
+  "fixtures": "sha256:639344488dbf5c7b39cbf7f3d6b151565ec71a4557c6717a904147ab864ceb8f"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --repeat 3 --evidence eq-rec-linux-x64-rec1"
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --cases E25,E26,E27,E30 --repeat 3 --evidence eq-r2-linux-x64-rec1"
 }
