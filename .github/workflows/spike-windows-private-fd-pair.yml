@@ -1,0 +1,44 @@
+name: Spike - Windows private-fd pair (S0)
+
+# Feasibility spike for the Windows memory-sync transport design (desktop#5194, rev 2.2 section 8).
+# Runs only when the spike files change; no product code is built or changed.
+on:
+  pull_request:
+    paths:
+      - "spike/windows-private-fd-pair/**"
+      - ".github/workflows/spike-windows-private-fd-pair.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  s0:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Toolchain
+        shell: bash
+        run: |
+          bun --version
+          node --version
+          echo "runner: $ImageOS $ImageVersion"
+      - name: Compile probe like omo.exe (bun build --compile, bun-windows-x64)
+        shell: bash
+        run: bun build --compile --target=bun-windows-x64 spike/windows-private-fd-pair/probe.ts --outfile spike/windows-private-fd-pair/probe.exe
+      - name: Run S0
+        shell: bash
+        working-directory: spike/windows-private-fd-pair
+        run: node driver.mjs "$PWD/probe.exe"
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s0-results
+          path: spike/windows-private-fd-pair/s0-results.json
