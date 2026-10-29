@@ -94,12 +94,18 @@ it("S14 R56 foreign tokens receive bounded repair advice without source identity
 			componentRef: "unknown",
 			requestId: "unknown",
 		});
-		expect(record(failed.errorData).repair).toMatchObject({
+		const refusal = record(failed.errorData);
+		const advice = refusal.repair;
+		expect(advice).toMatchObject({
 			state: "repair_needed",
 			source: null,
 			healthRevision: null,
 			hint: "restart_from_catalog",
 		});
+		const controller = new RecoveryRepairController();
+		const context = { token: "unknown", reason: String(refusal.reason) };
+		expect(controller.observe(advice, 0, context).action).toBe("restart_from_catalog");
+		expect(controller.observe(advice, 10_000, context).action).toBe("wait");
 		expect((await client.request({ type: "get_state", sessionId })).success).toBe(true);
 	} finally {
 		await host[Symbol.asyncDispose]();

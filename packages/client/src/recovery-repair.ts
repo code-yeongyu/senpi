@@ -15,9 +15,41 @@ export class RecoveryRepairAdviceError extends Error {
 /** S14 policy only: S15a drives this from RpcClient. No transport, prompt, current-root read or retry loop lives here. */
 export class RecoveryRepairController {
 	private blocked: { readonly advice: RecoveryRepairAdvice; readonly until: number } | undefined;
+	private consecutiveGone = false;
+	private goneWait: { readonly token: string; readonly until: number } | undefined;
+	private readonly restartedTokens = new Set<string>();
 
-	observe(input: unknown, now: number): RecoveryRepairAction {
+	observe(
+		input: unknown,
+		now: number,
+		context?: { readonly token: string; readonly reason: string },
+	): RecoveryRepairAction {
 		if (!isRecoveryRepairAdvice(input)) throw new RecoveryRepairAdviceError();
+		if (
+			input.state === "repair_needed" &&
+			context &&
+			(context.reason === "unknown_token" || context.reason === "released")
+		) {
+			const delay = Math.max(100, input.retryAfterMs);
+			this.blocked = undefined;
+			if (this.restartedTokens.has(context.token)) return { action: "wait", retryAfterMs: delay };
+			if (!this.consecutiveGone) {
+				this.consecutiveGone = true;
+				this.restartedTokens.add(context.token);
+				return { action: "restart_from_catalog" };
+			}
+			if (this.goneWait?.token !== context.token) this.goneWait = { token: context.token, until: now + delay };
+			if (now >= this.goneWait.until) {
+				this.restartedTokens.add(context.token);
+				this.goneWait = undefined;
+				return { action: "restart_from_catalog" };
+			}
+			return { action: "wait", retryAfterMs: Math.max(100, this.goneWait.until - now) };
+		}
+		if (input.state === "ok") {
+			this.consecutiveGone = false;
+			this.goneWait = undefined;
+		}
 		const blocked = this.blocked;
 		if (blocked) {
 			const before = blocked.advice;

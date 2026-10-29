@@ -1,12 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import { constants, lstatSync, mkdirSync } from "node:fs";
+import { open, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { getAgentDir } from "../../config.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 import { privateRootStat } from "./compact-root-owner.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
-import { homedir } from "node:os";
-import { envValue } from "../../core/brand.ts";
 
 /**
  * RULING-84: shared durable storage-health clock, independent of accepted sequence and freeze generation.
@@ -19,8 +18,10 @@ export class RecoveryStorageHealth {
 	private cleared = 0;
 	private pending: Promise<string> | undefined;
 
-	constructor(base = envValue("CODING_AGENT_DIR") ?? homedir()) {
+	constructor(base = getAgentDir()) {
 		this.dir = join(base, `.senpi-recovery-health-${process.getuid?.() ?? "user"}`);
+		mkdirSync(this.dir, { mode: 0o700, recursive: true });
+		if (!privateRootStat(lstatSync(this.dir))) throw new CompactReadError("ownership");
 	}
 
 	get needsRecovery(): boolean {
@@ -31,19 +32,24 @@ export class RecoveryStorageHealth {
 	}
 
 	async revision(): Promise<string> {
-		await this.ensureDir();
+		return (await this.readRevision()) ?? this.advance();
+	}
+
+	/** Corrupt metadata has no usable revision; only a locked atomic repair publishes its replacement. */
+	private async readRevision(): Promise<string | undefined> {
 		try {
 			const handle = await open(join(this.dir, "revision"), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
 			try {
-				if ((await handle.stat()).size > 128) throw new CompactReadError("unavailable");
+				const stat = await handle.stat();
+				if (!stat.isFile() || stat.size > 128) return undefined;
 				const text = (await handle.readFile("utf8")).trim();
-				if (!/^(0|[1-9]\d*)$/.test(text)) throw new CompactReadError("unavailable");
-				return text;
+				return /^(0|[1-9]\d*)$/.test(text) ? text : undefined;
 			} finally {
 				await handle.close();
 			}
 		} catch (cause) {
 			if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return "0";
+			if (cause instanceof Error && "code" in cause && cause.code === "ELOOP") return undefined;
 			throw cause;
 		}
 	}
@@ -66,18 +72,16 @@ export class RecoveryStorageHealth {
 		}
 	}
 
-	private async ensureDir(): Promise<void> {
-		await mkdir(this.dir, { mode: 0o700, recursive: true });
-		if (!privateRootStat(await lstat(this.dir))) throw new CompactReadError("ownership");
-	}
-
 	private async advance(): Promise<string> {
-		await this.ensureDir();
 		const release = await acquireOwnershipSafeLock(join(this.dir, "revision.lock"));
 		const temporary = join(this.dir, `${randomUUID()}.tmp`);
 		try {
-			const next = String(BigInt(await this.revision()) + 1n);
-			const file = await open(temporary, "wx", 0o600);
+			const next = String(BigInt((await this.readRevision()) ?? "0") + 1n);
+			const file = await open(
+				temporary,
+				constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+				0o600,
+			);
 			try {
 				await file.writeFile(next);
 				await file.sync();
