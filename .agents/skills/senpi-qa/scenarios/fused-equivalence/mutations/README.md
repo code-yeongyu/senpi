@@ -17,6 +17,7 @@ compare there first, and then per row applies the patch, runs `fused-equivalence
 | Patch | Plan row | Observation | Cases | What it changes |
 |---|---|---|---|---|
 | `o1-dropped-prompt-segment.patch` | dropped prompt segment | O1 | E01, E19 | removes the "Judgment asks" line from the intent-gate system prompt segment (E19 sees it through its raw-hash blobs, VER-E19-RAW) |
+| `o1-one-byte-prompt-change.patch` | one-byte change in a fixed prompt sentence | O1 | E19 | flips one letter of the intent-gate sentence "Route by true intent, not surface form:" (`surface` -> `surfaxe`); E19's `body.blobs` normalization replaces only run-scoped roots, so the change is not masked (VER-E19-RAW) |
 | `o2-swapped-model.patch` | swapped model | O2 | E01 | OpenAI-completions requests name `mock-model-b` instead of `mock-model` |
 | `o3-dropped-declaration.patch` | dropped declaration | O3 | E01 | the last tool declaration is dropped from each request |
 | `o4-dropped-custom-header.patch` | dropped custom header | O4 | E01 | senpi's own `User-Agent` header is no longer sent (the SDK default goes out) |
@@ -32,7 +33,7 @@ compare there first, and then per row applies the patch, runs `fused-equivalence
 
 Origins: the O1, O2, O3 and reordered-effects patches are P0-05b's (senpi#4639), the dialog patch is P0-05c's
 (senpi#4661), and the E25 and E30 patches are P0-05e's (senpi#4751); each was regenerated with `git diff` at this
-branch's base. The other five are new here.
+branch's base. The other five are new here. `o1-one-byte-prompt-change.patch` is VER-E19-RAW's (senpi#4896).
 
 Row verdicts: KILLED is the proof. DEFERRED (the case's golden cell is listed in `../deferred-goldens.mjs`, or the row
 belongs to another PR) and NO_B0 (no goldens for that surface on this platform, e.g. EQ.tui has none on linux-x64) are

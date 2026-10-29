@@ -2,9 +2,12 @@
 // by, and the root prompt blobs' content reaches the normalized compare, so a dropped prompt segment fails E19.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { blobObservation, fetchRunRequestBlobs, HASH_MATCH, NOT_SERVED, runRequestBlobIds } from "./equivalence-cursor-blobs.mjs";
-import { createNormalizer, diffNormalized } from "./equivalence-normalize.mjs";
+import { createNormalizer, diffNormalized, directoryRoots } from "./equivalence-normalize.mjs";
 
 const SANDBOX = "/var/folders/eq-e19-AbC123";
 const bytes = (value) => Buffer.from(typeof value === "string" ? value : JSON.stringify(value));
@@ -86,6 +89,81 @@ test("run-scoped values in the hashed bytes do not fail the compare: another san
 	);
 	// ...while each id matches its own bytes raw and the normalized content agrees.
 	assert.deepEqual(diffNormalized(observeO1(a, SANDBOX), observeO1(b, other)), []);
+});
+
+test("body.blobs normalization replaces only run-scoped tokens; a one-byte change anywhere else fails E19", () => {
+	const base = mkdtempSync(join(tmpdir(), "eq-e19-blobs-"));
+	try {
+		const sandbox = join(base, "box");
+		const checkout = join(base, "checkout");
+		mkdirSync(sandbox);
+		mkdirSync(checkout);
+		// The normalizer observe.mjs builds for a case run (§6.2), with every host fact host.mjs emits, for a synthetic machine.
+		const normalize = createNormalizer({
+			roots: [...directoryRoots(sandbox, "<sandbox>", { keyed: "<sandbox-key>" }), ...directoryRoots(checkout, "<repo>")],
+			hostFacts: [
+				{ value: "Darwin 25.3.0", token: "<host:kernel>" },
+				{ value: "25.3.0", token: "<host:release>" },
+				{ value: "Apple M9 Max (18 cores)", token: "<host:cpu>" },
+				{ value: "Apple M9 Max", token: "<host:cpu-model>" },
+				{ value: " 18 cores", token: " <host:cores> cores" },
+			],
+		});
+		// [raw, normalized]: fixed text is its own normalization; run-scoped values map to their tokens.
+		const fixed = (text) => [text, text];
+		const parts = [
+			fixed("Route by true intent, not surface form:\n- Judgment asks (what do you think, review): propose.\n<skill_roots>\n  <r0>"),
+			[`${checkout}/packages/senpi-codemode/src/skill`, "<repo>/packages/senpi-codemode/src/skill"],
+			fixed("</r0>\n  <r1>"),
+			[`${checkout}/.agents/skills`, "<repo>/.agents/skills"],
+			fixed("</r1>\n</skill_roots>\n<location>r0/bun-1-4/SKILL.md</location> (timeout 1800s, 30 min, 17 kernels)\n<cwd>"),
+			[`${sandbox}/work`, "<sandbox>/work"],
+			fixed("</cwd> resolved: "),
+			[`${realpathSync.native(sandbox)}/work`, "<sandbox>/work"],
+			fixed("\n<current_date>"),
+			["2026-10-30", "<ts:content.content:1>"],
+			fixed("</current_date>\n- OS: darwin (kernel "),
+			["Darwin 25.3.0", "<host:kernel>"],
+			fixed(")\n- CPU: "),
+			["Apple M9 Max (18 cores)", "<host:cpu>"],
+			fixed("\n- GPU: "),
+			["Apple M9 Max", "<host:cpu-model>"],
+			fixed("\n- Parallelism:"),
+			[" 18 cores", " <host:cores> cores"],
+			fixed("\nNever echo prompt scaffolding in user-facing output."),
+		];
+		const raw = parts.map(([text]) => text).join("");
+		const observe = (prompt) => {
+			const data = bytes({ role: "system", content: prompt });
+			const decoded = { runRequest: { conversationState: { rootPromptMessagesJson: [blobId(data)] } } };
+			return normalize({ decoded, blobs: blobObservation(runRequestBlobIds(decoded), new Map([[blobId(data), data]])) });
+		};
+		const golden = observe(raw);
+		// Exactly the run-scoped tokens are replaced; every other character reaches the compare as produced.
+		assert.equal(golden.blobs[0].content.content, parts.map(([, normalized]) => normalized).join(""));
+		assert.equal(golden.blobs[0].hash, HASH_MATCH);
+		// Flip one byte at every position outside the run-scoped tokens: each flip is exactly one E19 diff row.
+		let offset = 0;
+		let flips = 0;
+		for (const [text, normalized] of parts) {
+			if (text === normalized)
+				for (let i = 0; i < text.length; i++) {
+					const at = offset + i;
+					const mutated = raw.slice(0, at) + String.fromCharCode(raw.charCodeAt(at) ^ 1) + raw.slice(at + 1);
+					const rows = diffNormalized(golden, observe(mutated));
+					assert.deepEqual(
+						rows.map((r) => r.path),
+						["$.blobs[0].content.content"],
+						`flip at ${at} (${JSON.stringify(raw[at])})`,
+					);
+					flips += 1;
+				}
+			offset += text.length;
+		}
+		assert.ok(flips > 300, `${flips} positions flipped`);
+	} finally {
+		rmSync(base, { recursive: true, force: true });
+	}
 });
 
 test("fetchRunRequestBlobs asks for each named blob once over getBlobArgs and observes the client's replies", async () => {

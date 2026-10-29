@@ -20,6 +20,18 @@ export const mutations = Object.freeze([
 		},
 	},
 	{
+		id: "o1-one-byte-prompt-change",
+		row: "one-byte change in a fixed prompt sentence",
+		observation: "O1",
+		surface: "rpc",
+		patch: "o1-one-byte-prompt-change.patch",
+		// VER-E19-RAW: body.blobs normalization replaces only run-scoped roots, so one flipped letter outside them fails E19.
+		cases: ["E19"],
+		expect: {
+			E19: /^\$\.O1\[0\]\.body\.blobs\[\d+\]\.content\.content: golden=".*Route by true intent, not surface form:.*" actual="(?![\s\S]*not surface form:).*Route by true intent, not surfaxe form:/,
+		},
+	},
+	{
 		id: "o2-swapped-model",
 		row: "swapped model",
 		observation: "O2",
