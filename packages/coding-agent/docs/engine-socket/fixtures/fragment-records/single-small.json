@@ -1,0 +1,29 @@
+{
+	"caseId": "single-small",
+	"kind": "valid",
+	"contractIds": [
+		"R4.B3"
+	],
+	"description": "17 ASCII bytes in one complete record.",
+	"digestAlgorithm": "sha256",
+	"limits": {
+		"D": 131072,
+		"F": 262144,
+		"H": 16384
+	},
+	"source": {
+		"base64": "c2luZ2xlIHNtYWxsIDE3QiE="
+	},
+	"sourceLength": 17,
+	"sourceDigest": "68d293e63935fcb9c006fdf2c33f7a9f1feaeafb1b16c0b004244b9f6e9995af",
+	"expectedRecords": [
+		{
+			"offset": 0,
+			"length": 17,
+			"digest": "68d293e63935fcb9c006fdf2c33f7a9f1feaeafb1b16c0b004244b9f6e9995af",
+			"next": null,
+			"complete": true,
+			"data": "c2luZ2xlIHNtYWxsIDE3QiE="
+		}
+	]
+}

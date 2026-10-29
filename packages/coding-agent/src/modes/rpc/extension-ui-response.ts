@@ -2,6 +2,20 @@ import type { QuestionRequest, QuestionResponse } from "../../core/extensions/ty
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
 import type { UiAnswerLedger } from "./ui-answer-ledger.ts";
 
+/** Only a named grant-selection request takes the worker's grant-dialog routing path. */
+export function isGrantSelectRequest(record: object): record is object & { id: string } {
+	return (
+		"type" in record &&
+		record.type === "extension_ui_request" &&
+		"method" in record &&
+		record.method === "select" &&
+		"grantSelect" in record &&
+		record.grantSelect === true &&
+		"id" in record &&
+		typeof record.id === "string"
+	);
+}
+
 /**
  * An `extension_ui_response` carries two ids: `id`, the frame's own correlation id that its reply
  * echoes, and `uiRequestId`, the extension UI request it answers. The short form every older client
@@ -76,7 +90,7 @@ export function settleExtensionUiResponse(
 		response.answerId !== undefined &&
 		(typeof response.answerId !== "string" || response.answerId.length < 1 || response.answerId.length > 256)
 	)
-		return refused(response.id, "invalid_answer_id");
+		return refusedExtensionUiResponse(response.id, "invalid_answer_id");
 	const requestId = answeredUiRequestId(response) ?? response.id;
 	const receipt = response.answerId === undefined ? undefined : targets.ledger?.lookup(requestId, response.answerId);
 	if (receipt === "replay") return { ...reply(response.id), success: true, disposition: "replay" };
@@ -85,7 +99,7 @@ export function settleExtensionUiResponse(
 	const answer = requestId === response.id ? response : { ...response, id: requestId };
 	const question = targets.questions.respond(answer, targets.beforeAnswer);
 	if (typeof question === "string")
-		return refused(
+		return refusedExtensionUiResponse(
 			response.id,
 			response.answerId !== undefined && question === "question_already_resolved"
 				? "unknown_extension_ui_request"
@@ -98,7 +112,7 @@ export function settleExtensionUiResponse(
 	// A routed binding owns exactly one session's request map: an unmatched response is a protocol
 	// error for its sender, never a cross-session match.
 	return targets.routed || response.answerId !== undefined
-		? refused(response.id, "unknown_extension_ui_request")
+		? refusedExtensionUiResponse(response.id, "unknown_extension_ui_request")
 		: undefined;
 }
 
@@ -106,7 +120,7 @@ function reply(id: string) {
 	return { id, type: "response", command: "extension_ui_response" } as const;
 }
 
-function refused(id: string, error: string): ExtensionUiResponseReply {
+export function refusedExtensionUiResponse(id: string, error: string): ExtensionUiResponseReply {
 	const disposition =
 		error === "question_already_resolved"
 			? "already_answered"

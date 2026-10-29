@@ -24,6 +24,7 @@ import {
 } from "../helpers/rpc-generation-support.ts";
 import { writeRpcModelsJson } from "../helpers/rpc-hermetic.ts";
 import { assertWorkspaceBuildPrerequisite } from "../support/workspace-build-prerequisite.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 assertWorkspaceBuildPrerequisite(import.meta.url);
 
@@ -90,7 +91,7 @@ describe("tool runtime at startup", () => {
 			["--import", sourceResolverUrl, cliPath, "--mode", "rpc", ...GENERATION_HOST_ARGS, "--tool-runtime", "child"],
 			{
 				cwd: scratch.cwd,
-				env: { ...process.env, ...generationEnv(scratch), SENPI_CODING_AGENT_DIR: scratch.agentDir },
+				env: { ...hostSpawnEnv(), ...generationEnv(scratch), SENPI_CODING_AGENT_DIR: scratch.agentDir },
 				stdio: ["pipe", "pipe", "pipe"],
 			},
 		);
@@ -173,7 +174,7 @@ function runCli(args: string[], env: Record<string, string>): Promise<{ code: nu
 		const scratch = generationScratch("toolrt-cli");
 		const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, ...args], {
 			cwd: scratch.cwd,
-			env: { ...process.env, ...generationEnv(scratch), SENPI_CODING_AGENT_DIR: scratch.agentDir, ...env },
+			env: { ...hostSpawnEnv(), ...generationEnv(scratch), SENPI_CODING_AGENT_DIR: scratch.agentDir, ...env },
 			stdio: ["ignore", "ignore", "pipe"],
 		});
 		let stderr = "";

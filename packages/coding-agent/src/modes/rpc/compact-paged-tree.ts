@@ -1,13 +1,22 @@
 import { type CompactContentStore, type LeafId } from "./compact-content-store.ts";
+import { CompactPagedBatch } from "./compact-paged-batch.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import { CompactValues, type ValueRef } from "./compact-values.ts";
+
+/**
+ * Decoded-node budget of one compaction round's LRU (senpi#4559). A round's 128 rows land on up to 128 separate
+ * tree paths, about 1,000 nodes of about 0.9 KiB each (as accounted below) at 8,000 rows. The selection lookup and the
+ * batched apply walk the same paths, so the cache must hold a whole round's paths for the apply to reuse them.
+ * Measured at 8,000 settled rows: 32 KiB re-read 67,509 nodes from the spool, 512 KiB 58,175, 1 MiB 31,543.
+ */
+export const ROUND_CACHE_BYTES = 1024 * 1024;
 
 export interface PagedRoot {
 	readonly ref: ValueRef;
 	readonly height: number;
 	readonly size: number;
 }
-interface Node<T> {
+export interface PagedNode<T> {
 	readonly key: ValueRef;
 	readonly value: T;
 	readonly left?: PagedRoot;
@@ -20,8 +29,7 @@ export class CompactPagedTree<T> {
 	private readonly values: CompactValues;
 	private readonly leavesOf: (value: T) => readonly LeafId[];
 	private dirty: LeafId[] = [];
-	private dirtyBytes = 0;
-	private cache: Map<LeafId, { node: Node<T>; name: string; bytes: number }> | undefined;
+	private cache: Map<LeafId, { node: PagedNode<T>; name: string; bytes: number }> | undefined;
 	private cacheBytes = 0;
 	allocatedNodes = 0;
 
@@ -35,7 +43,7 @@ export class CompactPagedTree<T> {
 		if (root) this.store.adjust(root.ref.owner, live, pins);
 	}
 
-	/** A round-local 32 KiB LRU retains reused upper paths, including newly built ones. */
+	/** A round-local `ROUND_CACHE_BYTES` LRU retains reused paths, including newly built ones; it ends with the round. */
 	async cached<R>(operation: () => Promise<R>): Promise<R> {
 		this.cache = new Map();
 		this.cacheBytes = 0;
@@ -55,19 +63,19 @@ export class CompactPagedTree<T> {
 			return cached;
 		}
 		const text = await this.store.readLeaf(root.ref.node);
-		const node: Node<T> = JSON.parse(text);
+		const node: PagedNode<T> = JSON.parse(text);
 		const name = await this.values.read(node.key);
 		if (typeof name !== "string") throw new CompactReadError("ownership");
 		return this.remember(root.ref.node, node, name, text.length);
 	}
 
-	private remember(id: LeafId, node: Node<T>, name: string, units: number) {
+	private remember(id: LeafId, node: PagedNode<T>, name: string, units: number) {
 		const existing = this.cache?.get(id);
 		if (existing) return existing;
 		const bytes = (units + name.length) * 2 + 128;
 		const decoded = { node, name, bytes };
-		if (this.cache && bytes <= 32_768) {
-			while (this.cacheBytes + bytes > 32_768) {
+		if (this.cache && bytes <= ROUND_CACHE_BYTES) {
+			while (this.cacheBytes + bytes > ROUND_CACHE_BYTES) {
 				const oldest = this.cache.entries().next().value;
 				if (!oldest) break;
 				this.cache.delete(oldest[0]);
@@ -117,45 +125,18 @@ export class CompactPagedTree<T> {
 		yield* this.entries(node.right, after);
 	}
 
-	async set(root: PagedRoot | undefined, key: string, value: T | undefined): Promise<PagedRoot | undefined> {
-		if (!root) {
-			if (value === undefined) return undefined;
-			const ref = this.values.own(key);
-			try {
-				return await this.make({ key: ref, value });
-			} finally {
-				this.store.adjust(ref.owner, -1, 0);
-			}
-		}
-		const { node, name } = await this.read(root);
-		if (key === name) {
-			if (value !== undefined) return this.make({ ...node, value });
-			if (!node.left || !node.right) {
-				const child = node.left ?? node.right;
-				this.adjust(child, 1, 0);
-				return child;
-			}
-			let next = await this.read(node.right);
-			while (next.node.left) next = await this.read(next.node.left);
-			const right = await this.set(node.right, next.name, undefined);
-			try {
-				return await this.balance({ ...next.node, left: node.left, right });
-			} finally {
-				this.adjust(right, -1, 0);
-			}
-		}
-		const side = key < name ? "left" : "right";
-		const child = await this.set(node[side], key, value);
-		try {
-			return await this.balance({ ...node, [side]: child });
-		} finally {
-			this.adjust(child, -1, 0);
-		}
+	/** Applies one round's changes (undefined deletes) in one sorted pass; returns an owned root. */
+	apply(root: PagedRoot | undefined, changes: ReadonlyMap<string, T | undefined>): Promise<PagedRoot | undefined> {
+		return new CompactPagedBatch<T>({
+			read: (ref) => this.read(ref),
+			make: (node) => this.make(node),
+			own: (name) => this.values.own(name),
+			adjust: (ref, live) => this.adjust(ref, live, 0),
+			release: (key) => this.store.adjust(key.owner, -1, 0),
+		}).apply(root, changes);
 	}
 
-	private async make(node: Node<T>): Promise<PagedRoot> {
-		// Intermediate changed paths can die before their first write; bound the draft buffer, not each update.
-		if (this.dirtyBytes >= 32_768) await this.flush();
+	private async make(node: PagedNode<T>): Promise<PagedRoot> {
 		const text = JSON.stringify(node);
 		// Decode before allocating: a failed key read must not strand a new leaf.
 		const name = this.cache ? await this.values.read(node.key) : undefined;
@@ -169,7 +150,6 @@ export class CompactPagedTree<T> {
 		]);
 		this.store.adjust(leaf, -1, 0);
 		this.dirty.push(leaf);
-		this.dirtyBytes += text.length * 2;
 		this.allocatedNodes++;
 		if (this.cache && typeof name === "string") this.remember(leaf, node, name, text.length);
 		return {
@@ -179,37 +159,15 @@ export class CompactPagedTree<T> {
 		};
 	}
 
+	/**
+	 * Commits a round as `node-` files of at most 64 KiB each, published together once the last one is
+	 * durable (RULING-54): nodes replaced within the round were released and are skipped, so only
+	 * survivors are written. Until then a round's built nodes stay resident, at most 384 keys x 3 nodes per
+	 * level x (height + 1).
+	 */
 	async flush(): Promise<void> {
 		const dirty = this.dirty;
 		this.dirty = [];
-		this.dirtyBytes = 0;
-		for (const leaf of dirty) await this.store.flushLeaf(leaf);
-	}
-
-	private async balance(node: Node<T>): Promise<PagedRoot> {
-		const leftHeavy = (node.left?.height ?? 0) > (node.right?.height ?? 0) + 1;
-		const rightHeavy = (node.right?.height ?? 0) > (node.left?.height ?? 0) + 1;
-		const side = leftHeavy ? "left" : "right";
-		const other = leftHeavy ? "right" : "left";
-		const heavy = node[side];
-		if ((!leftHeavy && !rightHeavy) || !heavy) return this.make(node);
-		const { node: child } = await this.read(heavy);
-		const middle = child[other];
-		const owned: PagedRoot[] = [];
-		try {
-			if (middle && middle.height > (child[side]?.height ?? 0)) {
-				const { node: pivot } = await this.read(middle);
-				const a = await this.make({ ...child, [other]: pivot[side] });
-				owned.push(a);
-				const b = await this.make({ ...node, [side]: pivot[other] });
-				owned.push(b);
-				return await this.make({ ...pivot, [side]: a, [other]: b });
-			}
-			const next = await this.make({ ...node, [side]: middle });
-			owned.push(next);
-			return await this.make({ ...child, [other]: next });
-		} finally {
-			for (const ref of owned) this.adjust(ref, -1, 0);
-		}
+		await this.store.flushLeaves(dirty, "node_write");
 	}
 }

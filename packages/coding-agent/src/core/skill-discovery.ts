@@ -1,5 +1,6 @@
 import {
 	closeSync,
+	type Dirent,
 	existsSync,
 	fstatSync,
 	openSync,
@@ -69,13 +70,19 @@ function prefixIgnorePattern(line: string, prefix: string): string | null {
 	return negated ? `!${prefixed}` : prefixed;
 }
 
-function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string): void {
+/**
+ * Applies the ignore files present in `entries`, the listing of `dir` the walk already read, so no
+ * directory pays a probe per ignore-file name (omo#11437). Names compare case-insensitively, as the
+ * former existence probe did on case-insensitive volumes; a name that does not open is skipped.
+ */
+export function addIgnoreRules(ig: IgnoreMatcher, dir: string, rootDir: string, entries: readonly Dirent[]): void {
 	const relativeDir = relative(rootDir, dir);
 	const prefix = relativeDir ? `${toPosixPath(relativeDir)}/` : "";
+	const names = new Set(entries.map((entry) => entry.name.toLowerCase()));
 
 	for (const filename of IGNORE_FILE_NAMES) {
+		if (!names.has(filename)) continue;
 		const ignorePath = join(dir, filename);
-		if (!existsSync(ignorePath)) continue;
 		try {
 			const content = readFileSync(ignorePath, "utf-8");
 			const patterns = content
@@ -170,10 +177,10 @@ export function collectSkillEntries(
 
 	const root = rootDir ?? dir;
 	const ig = ignoreMatcher ?? ignore();
-	addIgnoreRules(ig, dir, root);
 
 	try {
 		const dirEntries = readdirSync(dir, { withFileTypes: true });
+		addIgnoreRules(ig, dir, root, dirEntries);
 
 		for (const entry of dirEntries) {
 			if (entry.name !== "SKILL.md") {

@@ -77,6 +77,8 @@ function formatRequestForDisplay(request: Request): string {
 			parts.push(`Query: ${meta.query || "Unknown"}`);
 			break;
 		case "external_directory": {
+			// These are resolved targets, not approval globs. Caller metadata cannot name the
+			// approved directory, and a literal '*' in a filename must survive (senpi#4316).
 			for (const target of request.patterns.length ? request.patterns : ["Unknown"]) {
 				parts.push(`Directory: ${target}`);
 			}
