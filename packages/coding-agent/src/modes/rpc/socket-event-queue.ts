@@ -11,7 +11,8 @@ export type QueueEntry = {
 	 * this line instead of being replaced, so a stalled reader never loses a delta.
 	 */
 	demotedLine?: string;
-	onWritten?: () => void;
+	/** Runs once with `true` when `line` reached the peer, with `false` when the actor dropped or replaced it unwritten. */
+	onWritten?: (written: boolean) => void;
 	reply: boolean;
 	/** Set on a record captured behind a pending cut: it reaches the peer only while the peer still holds its session. */
 	held?: () => boolean;
@@ -80,17 +81,20 @@ export class SocketEventQueue {
 			existing.bytes = Buffer.byteLength(existing.line);
 			this.charged += existing.bytes;
 			existing.demotedLine = undefined;
+			// The enqueued line never reaches the peer (an event lease it named is released, S13a review).
+			existing.onWritten?.(false);
+			existing.onWritten = undefined;
 		}
 		existing.key = undefined;
 	}
 
-	/** Keeps the items `keep` accepts; every other record is released (`onWritten`) and every other barrier ended. */
+	/** Keeps the items `keep` accepts; every other record is released (`onWritten(false)`) and every other barrier ended. */
 	retain(keep: (item: QueueItem) => boolean): void {
 		const kept: QueueItem[] = [];
 		for (const item of this.items) {
 			if (keep(item)) kept.push(item);
 			else if (isBarrier(item)) item.barrier.cancel();
-			else item.onWritten?.();
+			else item.onWritten?.(false);
 		}
 		this.items = kept;
 		this.charged = kept.reduce((bytes, item) => (isBarrier(item) ? bytes : bytes + item.bytes), 0);
