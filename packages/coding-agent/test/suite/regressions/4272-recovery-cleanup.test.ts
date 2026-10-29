@@ -48,7 +48,7 @@ it("S14 X04 publishes a complete private lifetime marker atomically and still re
 	await removeSpoolDir(dir, token);
 });
 
-for (const spool of ["transcript", "settled", "current"]) {
+for (const spool of ["transcript", "settled", "current", "event-leases"]) {
 	it(`S14 R79 X04 reclaims a provably dead ${spool} spool, never a live owner's spool`, async () => {
 		const owner = await currentRootOwner();
 		expect(owner).not.toBeNull();
@@ -69,6 +69,29 @@ it("S14 X04 proves same-boot pid loss and pid reuse, but preserves committed liv
 	const committed = await root("senpi-transcript-committed", "live", { ...owner, bootNonce: "prior-boot" });
 	expect((await sweepRecoveryRoots(base)).removed).toBe(2);
 	expect(await readFile(join(committed, "content"), "utf8")).toBe("preserved bytes");
+});
+
+it("S14 R86 reports a live root with a dead owner without reclaiming or following links", async () => {
+	const owner = await currentRootOwner();
+	if (!owner) throw new Error("fixture needs a provable POSIX owner");
+	const dir = await root("senpi-current-orphan-live", "live", { ...owner, bootNonce: "prior-boot" });
+	const outside = join(base, "unrelated");
+	await writeFile(outside, "x".repeat(65_536));
+	const link = join(dir, "link");
+	await symlink(outside, link);
+	const bytes =
+		(await lstat(join(dir, markerName))).size + (await lstat(join(dir, "content"))).size + (await lstat(link)).size;
+	const stat = await lstat(dir);
+	vi.spyOn(Date, "now").mockReturnValue(stat.mtimeMs + 60_000);
+	const result = await sweepRecoveryRoots(base);
+	expect(result).toEqual({
+		removed: 0,
+		unknown: [{ name: "senpi-current-orphan-live", reason: "live_owner_dead", ageMs: 60_000, bytes }],
+		failures: [],
+	});
+	expect(await readFile(join(dir, "content"), "utf8")).toBe("preserved bytes");
+	expect((await lstat(link)).isSymbolicLink()).toBe(true);
+	expect((await lstat(outside)).size).toBe(65_536);
 });
 
 it("S14 X04 preserves unknown, foreign, wide-mode and symlink roots and reports their age and size", async () => {

@@ -590,15 +590,23 @@ Behind the same flag, one bounded page of a frozen checkpoint component, through
   it is reclaimed. The owner's other typed failures arrive as `recovery_repair_needed` or
   `recovery_storage_unavailable` with `errorData` carrying the failure. Every refusal happens before any byte is read.
 
-**S14 repair policy (RULING-84).** Success carries `data.repair`; a typed recovery failure carries
+**S14 repair policy (RULING-84 and RULING-87).** Success carries `data.repair`; a typed recovery failure carries
 `errorData.repair`, using the same `RecoveryRepairAdviceSchema` as the client package's
 `RecoveryRepairController`. Advice contains `state` (`ok`, `repair_needed`, or `storage_unavailable`),
 `healthRevision` (a persisted decimal counter), `source` (`sessionEpoch`, accepted `sequence`),
 `hint: "restart_from_catalog"` and `retryAfterMs` (100 to 2,000 ms, jittered, or zero on success).
 An unknown or foreign token receives null revision and source, never another admission's state.
 Storage unavailability ends only the recovery attempt, not the connection, and does not resubmit a prompt or
-fall back to current-root content. Repair restarts at the catalog with a fresh cut after the backoff and only
-when either health revision or accepted-source identity changes. A freeze never advances health revision;
+fall back to current-root content. For storage failures, repair restarts at the catalog with a fresh cut after
+the backoff and only when either health revision or accepted-source identity changes.
+An `unknown_token` or `released` refusal instead requests one immediate catalog restart, even with unchanged
+or null revision/source. The driver supplies `observe(advice, now, { token, reason })`, using the refused request's
+token ID (or event lease ID) and `errorData.reason`; these are request context, not extra advice fields.
+A token receives at most one restart from this controller. If the fresh cut's token is also refused immediately,
+the controller waits for the bounded backoff before restarting it, without requiring a health/source change.
+Repeated observations of an already restarted token wait and cannot spin; a successful page ends the consecutive
+gone-token chain. Other repair reasons and calls without gone-token context retain the change-gated policy.
+A freeze never advances health revision;
 a successful write/fsync or completed repair after a storage failure does, durably before publication.
 The controller implements this policy without transport wiring; S15a owns the blocking end-to-end test
 `the in-repo client honours the hint end to end`. The compact delta flag remains OFF by default until S15a

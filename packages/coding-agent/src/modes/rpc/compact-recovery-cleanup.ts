@@ -60,12 +60,12 @@ export async function sweepRecoveryRoots(base: string): Promise<RootSweep> {
 					throw new Error("root identity changed during classification");
 				await rm(path, { recursive: true });
 				removed += 1;
-			} else if (!marker || owner === "unknown") {
+			} else if (!marker || owner === "unknown" || (marker.kind === "live" && owner === "dead")) {
 				unknown.push({
 					name,
 					ageMs: Math.max(0, Date.now() - stat.mtimeMs),
 					bytes: await rootBytes(path),
-					reason: "ownership_unknown",
+					reason: marker?.kind === "live" && owner === "dead" ? "live_owner_dead" : "ownership_unknown",
 				});
 			}
 		} catch (cause) {

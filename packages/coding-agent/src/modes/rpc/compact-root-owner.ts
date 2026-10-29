@@ -63,7 +63,7 @@ export async function rootOwnerState(owner: RootOwner | null): Promise<"dead" | 
 	const start = await readProcessIdentity(owner.pid, process.platform, 2_000, processIsLive, "UTC");
 	switch (start.kind) {
 		case "absent":
-			return "dead";
+			return processIsLive(owner.pid) ? "unknown" : "dead";
 		case "present":
 			return start.identity === owner.startTime ? "alive" : "dead";
 		case "error":
