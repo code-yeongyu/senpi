@@ -618,7 +618,7 @@ describe("account_reset unblocks one account over RPC", () => {
 			...(oauth
 				? { access: `access-${name}`, refresh: `refresh-${name}`, expires: FUTURE }
 				: { key: `synthetic-${name}` }),
-			source: name === "a" ? "import" as const : "login" as const,
+			source: name === "a" ? ("import" as const) : ("login" as const),
 			displayName: `Account ${name}`,
 			...block,
 			modelBlocks,
@@ -636,7 +636,11 @@ describe("account_reset unblocks one account over RPC", () => {
 		const repo = credentialPoolRepository(harness.authStorage);
 		for (const slot of accounts) {
 			const credentialRevision = await repo.storedCredentialRevision(provider, slot.name, slot);
-			await repo.mutateSlotState(provider, "stored", slot.name, () => ({ ...block, ...history, credentialRevision }));
+			await repo.mutateSlotState(provider, "stored", slot.name, () => ({
+				...block,
+				...history,
+				credentialRevision,
+			}));
 		}
 		return repo;
 	}
@@ -726,7 +730,9 @@ describe("account_reset unblocks one account over RPC", () => {
 		const repo = await seed("openai");
 		const before = readFileSync(harness.authPath, "utf8");
 		const state = await repo.listSlots("openai", "stored");
-		expect(await send("missing", { type: "account_reset", provider: "openai", name: "synthetic-secret-name" })).toMatchObject({
+		expect(
+			await send("missing", { type: "account_reset", provider: "openai", name: "synthetic-secret-name" }),
+		).toMatchObject({
 			id: "missing",
 			type: "response",
 			command: "account_reset",
@@ -825,12 +831,19 @@ it.each([false, true])("round-trips account metadata and reset responses with le
 		attachJsonlLineReader(socket, (line) => {
 			const command = JSON.parse(line) as { id?: string; type: string };
 			if (legacy && (command.type === "account_reset" || command.type === "get_provider_accounts")) {
-				socket.write(serializeJsonLine({
-					type: "response", id: command.id, command: command.type,
-					...(command.type === "account_reset"
-						? { success: false, error: "Unknown command: account_reset" }
-						: { success: true, data: { accounts: [{ name: "work", source: "login", blocked: true, pinned: false }] } }),
-				}));
+				socket.write(
+					serializeJsonLine({
+						type: "response",
+						id: command.id,
+						command: command.type,
+						...(command.type === "account_reset"
+							? { success: false, error: "Unknown command: account_reset" }
+							: {
+									success: true,
+									data: { accounts: [{ name: "work", source: "login", blocked: true, pinned: false }] },
+								}),
+					}),
+				);
 				return;
 			}
 			void handler.handleInputLine(line);
@@ -871,7 +884,10 @@ it.each([false, true])("round-trips account metadata and reset responses with le
 			});
 		});
 
-		const observed = changed.then((value) => value, (error: unknown) => error);
+		const observed = changed.then(
+			(value) => value,
+			(error: unknown) => error,
+		);
 
 		await client.resetProviderAccount("openai", "work");
 

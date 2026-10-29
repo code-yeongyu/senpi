@@ -2118,14 +2118,15 @@ export function createRpcConnectionHandler(
 					return error(id, "account_reset", "provider and name must be strings", "invalid_argument");
 				}
 				try {
-					await resetCredentialAccount(
-						session.modelRegistry.authStorage,
-						command.provider,
-						command.name,
-					);
+					await resetCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
 				} catch (resetError: unknown) {
 					if (resetError instanceof CredentialAccountNotFoundError) {
-						return error(id, "account_reset", "Provider account not found. Refresh the account list.", resetError.code);
+						return error(
+							id,
+							"account_reset",
+							"Provider account not found. Refresh the account list.",
+							resetError.code,
+						);
 					}
 					return error(id, "account_reset", "Could not reset this account. Try again.", "account_reset_failed");
 				}
