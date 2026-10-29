@@ -27,6 +27,8 @@ export function unknownCompactAdmission(
 	if (!host.admissions || command.admissionId === undefined) return undefined;
 	// These commands introduce client IDs; their bounded attempt index owns retry/conflict/retirement.
 	if (command.type === "open_session" || command.type === "subscribe_sessions") return undefined;
+	// RULING-96: recovery IDs select token/lease authority, not the ordinary attempt ledger.
+	if (command.type === "get_recovery_page" || command.type === "release_recovery") return undefined;
 	const admissionId = command.admissionId;
 	const peer = host.writer.currentConnection();
 	const epoch = peer === undefined ? undefined : host.writer.socketEpochOf(peer);
@@ -45,7 +47,7 @@ export function unknownCompactAdmission(
 		code: "unknown_admission",
 		admissionId,
 	};
-	// Only an unaccepted producer needs an async index read; live-route cancellation stays synchronous.
+	// Only an unaccepted producer needs an async index read; every other route stays synchronous.
 	return command.type === "cancel_attempt" && epoch !== undefined
 		? host.admissions.pending(epoch, admissionId).then(
 				(pending) => (pending ? undefined : refusal),

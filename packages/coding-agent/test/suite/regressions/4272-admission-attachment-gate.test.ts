@@ -38,9 +38,8 @@ it.each(["get_recovery_page", "release_recovery"])(
 		const subscribed = await owner.request({ type: "subscribe_sessions", admissionId: "own" });
 		const subscriptionId = String(dataOf(subscribed).subscriptionId);
 		const manifest = await owner.waitFor((frame) => frame.type === "recovery_manifest");
-		const page = vi.spyOn(host.writer.recoveryPages ?? expect.unreachable(), "request");
-		const release = vi.spyOn(host.writer.recoveryEvents ?? expect.unreachable(), "release");
-		const lane = vi.spyOn(host.writer, "recoveryLane");
+		const events = host.writer.recoveryEvents ?? expect.unreachable();
+		const before = events.status();
 		const command = {
 			id: "denied",
 			type,
@@ -61,19 +60,25 @@ it.each(["get_recovery_page", "release_recovery"])(
 			await host.writer.flush();
 			denied.push(foreign.received.slice(from).join(""));
 		}
-		expect(denied[0]).toContain('"errorCode":"unknown_admission"');
+		// RULING-96: a foreign peer gets the token/lease path's own refusal, never unknown_admission.
+		expect(denied[0]).toContain('"errorCode":"recovery_repair_needed"');
+		expect(denied[0]).toContain('"reason":"unknown_token"');
 		expect(denied).toEqual(Array(2).fill(denied[0]));
 		expect(await foreign.request({ ...command, admissionId: "bad/id" })).toMatchObject({
 			success: false,
 			errorData: { reason: "malformed_request" },
 		});
+		// RULING-96: syntax first, then token/lease authority; a missing ID is the recovery path's typed refusal.
 		expect(await foreign.request({ ...command, admissionId: undefined })).toMatchObject({
 			success: false,
-			errorCode: "session_not_attached",
+			errorCode: "recovery_malformed_request",
 		});
-		expect(page).not.toHaveBeenCalled();
-		expect(release).not.toHaveBeenCalled();
-		expect(lane).not.toHaveBeenCalled();
+		// No foreign request released, duplicated or otherwise touched the owner's lease.
+		expect(events.status()).toMatchObject({
+			open: before.open,
+			released: before.released,
+			duplicates: before.duplicates,
+		});
 		expect(
 			await owner.request({
 				...command,
