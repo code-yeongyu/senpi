@@ -1,0 +1,57 @@
+{
+	"caseId": "digest-mismatch",
+	"kind": "receiver",
+	"contractIds": [
+		"R4.B3",
+		"R4.B5",
+		"RULING-37",
+		"RULING-44"
+	],
+	"description": "Record 2 declares a digest that does not match its bytes. The receiver must answer page-reset-needed and must not complete or deliver the value.",
+	"digestAlgorithm": "sha256",
+	"limits": {
+		"D": 131072,
+		"F": 262144,
+		"H": 16384
+	},
+	"source": {
+		"generator": {
+			"kind": "segments",
+			"params": {
+				"segments": [
+					{
+						"kind": "xorshift32",
+						"seed": 1592590345,
+						"length": 131073
+					}
+				]
+			}
+		}
+	},
+	"sourceLength": 131073,
+	"sourceDigest": "f39f4e34db37882a3bd1562f83057d341200458e87515c1f78bad35f8d09f913",
+	"fault": {
+		"recordIndex": 1,
+		"field": "digest",
+		"declaredDigest": "de2e331d891ae267a7009cb45b4e8830f170e0c937288ea2731a1941c7a53b0d",
+		"actualDigest": "e6f207509afa3908da116ce61a7576954248d9fe64a3c652b493cca57ce36e2e",
+		"corruption": "declaredDigest is sha256 of the record bytes with the first byte XOR 0x01"
+	},
+	"input": [
+		{
+			"offset": 0,
+			"length": 131072,
+			"digest": "b2e9614bb083430ac75dc294e846555c1f53adc3b4a8dd63ff18364545754c0b",
+			"next": 131072,
+			"complete": false
+		},
+		{
+			"offset": 131072,
+			"length": 1,
+			"digest": "de2e331d891ae267a7009cb45b4e8830f170e0c937288ea2731a1941c7a53b0d",
+			"next": null,
+			"complete": true
+		}
+	],
+	"expectedOutcome": "page-reset-needed"
+}

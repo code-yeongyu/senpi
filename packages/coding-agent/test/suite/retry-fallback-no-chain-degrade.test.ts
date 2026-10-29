@@ -1,5 +1,5 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, type Harness } from "./harness.ts";
 
 // A 429-class failure with NO usable fallback (no chain configured for the faux
@@ -21,8 +21,10 @@ function errorTurn(errorMessage: string) {
 describe("429 degrade to in-turn retry when fallback is unavailable", () => {
 	const harnesses: Harness[] = [];
 
-	afterEach(() => {
-		while (harnesses.length) harnesses.pop()?.cleanup();
+	afterEach(async () => {
+		while (harnesses.length) await harnesses.pop()?.cleanup();
+		vi.restoreAllMocks();
+		vi.unstubAllEnvs();
 	});
 
 	it("no-hint 429 without a chain retries in-turn with exponential backoff and recovers", async () => {
@@ -84,6 +86,8 @@ describe("429 degrade to in-turn retry when fallback is unavailable", () => {
 	});
 
 	it("tier3 hinted 429 without a chain fails fast but names the provider-requested wait", async () => {
+		vi.stubEnv("TZ", "America/New_York");
+		vi.spyOn(Date, "now").mockReturnValue(Date.UTC(2026, 9, 21));
 		const harness = await createHarness({
 			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } },
 		});
@@ -99,5 +103,7 @@ describe("429 degrade to in-turn retry when fallback is unavailable", () => {
 		// knows WHY the turn was not retried in-turn.
 		expect(ends[0]?.finalError).toContain("3600s");
 		expect(ends[0]?.finalError).toContain("rate_limit_error");
+		expect(ends[0]?.finalError).toMatch(/\b9:00\s*PM\b/);
+		expect(ends[0]?.finalError).toMatch(/\bEDT\b/);
 	});
 });
