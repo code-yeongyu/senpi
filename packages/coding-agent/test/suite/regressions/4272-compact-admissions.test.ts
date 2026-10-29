@@ -70,7 +70,7 @@ it("T2/T5 an identical live admission returns its original open without another 
 	expect(listed).toEqual([expect.objectContaining({ attachments: 1 })]);
 }, 120_000);
 
-it("T2/X04 a cancelled pending open releases only its own late hold and duplicate cancellation is idempotent", async () => {
+it("T2/X04 a cancelled pending open releases its late hold and RULING-94 hides unheld attempts", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 	await using host = await statusHost();
 	const survivor = host.client("survivor");
@@ -96,14 +96,18 @@ it("T2/X04 a cancelled pending open releases only its own late hold and duplicat
 	const pending = peer.request({ type: "open_session", cwd: host.cwd, sessionPath, admissionId: "pending-1" });
 	try {
 		await entered.promise;
-		expect(dataOf(await survivor.request({ type: "cancel_attempt", admissionId: "pending-1" }))).toEqual({
-			outcome: "unknown",
+		expect(await survivor.request({ type: "cancel_attempt", admissionId: "pending-1" })).toMatchObject({
+			success: false,
+			code: "unknown_admission",
+			admissionId: "pending-1",
 		});
 		expect(dataOf(await peer.request({ type: "cancel_attempt", admissionId: "pending-1" }))).toEqual({
 			outcome: "cancelled",
 		});
-		expect(dataOf(await peer.request({ type: "cancel_attempt", admissionId: "pending-1" }))).toEqual({
-			outcome: "cancelled",
+		expect(await peer.request({ type: "cancel_attempt", admissionId: "pending-1" })).toMatchObject({
+			success: false,
+			code: "unknown_admission",
+			admissionId: "pending-1",
 		});
 	} finally {
 		release.resolve();
@@ -116,8 +120,10 @@ it("T2/X04 a cancelled pending open releases only its own late hold and duplicat
 		generation: 1,
 	});
 	expect(cancelled).not.toHaveProperty("sessionId");
-	expect(dataOf(await peer.request({ type: "cancel_attempt", admissionId: "pending-1" }))).toEqual({
-		outcome: "cancelled",
+	expect(await peer.request({ type: "cancel_attempt", admissionId: "pending-1" })).toMatchObject({
+		success: false,
+		code: "unknown_admission",
+		admissionId: "pending-1",
 	});
 	expect(dataOf(await survivor.request({ type: "list_sessions" })).sessions).toEqual([
 		expect.objectContaining({ attachments: 1 }),

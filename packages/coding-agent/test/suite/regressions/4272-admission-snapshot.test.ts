@@ -36,8 +36,10 @@ it("T2/X04 a streamed host snapshot spans bounded pages, rejects a foreign peer 
 		lease,
 		componentRef: "record",
 	};
+	// RULING-96: a foreign peer gets the lease's own typed refusal, never unknown_admission.
 	expect(await foreign.request({ ...request, requestId: "foreign" })).toMatchObject({
 		success: false,
+		errorCode: "recovery_repair_needed",
 		errorData: { reason: "unknown_token" },
 	});
 	const pages: Buffer[] = [];
@@ -106,12 +108,15 @@ it("T2/X04 golden f: returned subscription id owns every snapshot page and live 
 	);
 	expect(delta).toMatchObject({ admissionId: "golden-f", generation: 0, seq: 1 });
 	await peer.request({ type: "unsubscribe_sessions", subscriptionId });
-	await peer.request({
-		type: "release_recovery",
-		sessionId: subscriptionId,
-		admissionId: "golden-f",
-		lease: baseline.eventLease,
-	});
+	expect(
+		await peer.request({
+			type: "release_recovery",
+			sessionId: subscriptionId,
+			admissionId: "golden-f",
+			lease: baseline.eventLease,
+		}),
+		// RULING-96 (#4844 LOW): a receipt after unsubscribe gets the lease's own typed answer.
+	).toMatchObject({ success: false, errorCode: "recovery_repair_needed", errorData: { reason: "unknown_token" } });
 	expect(host.writer.status.connectionSize("peer")).toBe(0);
 	expect(host.writer.recoveryEvents?.status().open).toBe(0);
 	await compareAdmissionGoldens(

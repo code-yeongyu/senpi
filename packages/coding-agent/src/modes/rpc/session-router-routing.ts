@@ -1,6 +1,6 @@
 import { detachConnection } from "./connection-detach.ts";
 import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
-import { invalidCompactAdmission } from "./compact-admission-validation.ts";
+import { invalidCompactAdmission, unknownCompactAdmission } from "./compact-admission-validation.ts";
 import { compactSubscribe } from "./compact-subscribe-admission.ts";
 import { withAdmissionRequest } from "./compact-admission-reply.ts";
 import { resetStream } from "./compact-reset-stream.ts";
@@ -40,12 +40,15 @@ import { unloadSession } from "./session-unload.ts";
  * caused it - and anything the command starts inherits the attribution.
  */
 export function handle(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
-	// Recovery ownership precedes ID validation and token/source lookup: foreign, unknown and malformed
-	// unattached routes must be indistinguishable (RULING-56).
-	const recovery = command.type === "get_recovery_page" || command.type === "release_recovery";
-	const refusal = recovery
-		? (attachmentGate(host, command) ?? invalidCompactAdmission(command))
-		: (invalidCompactAdmission(command) ?? attachmentGate(host, command));
+	const malformed = invalidCompactAdmission(command);
+	if (malformed) return Promise.resolve(malformed);
+	const ownership = unknownCompactAdmission(host, command);
+	if (ownership instanceof Promise) return ownership.then((refusal) => refusal ?? admitted(host, command));
+	return ownership ? Promise.resolve(ownership) : admitted(host, command);
+}
+
+function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
+	const refusal = attachmentGate(host, command);
 	if (refusal) return Promise.resolve(refusal);
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;
 	// A parked handle is answered by its terminal record and connection close, never unknown_session.

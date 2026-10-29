@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
-import { CompactAdmissions } from "../../../src/modes/rpc/compact-admissions.ts";
+import { CompactAdmissionError, CompactAdmissions } from "../../../src/modes/rpc/compact-admissions.ts";
 
 vi.mock("node:fs/promises", { spy: true });
 const actual = await vi.importActual<typeof fs>("node:fs/promises");
@@ -114,23 +114,43 @@ it("T2/R93 overflow during commit persists an identical refusal on retry", async
 	}
 });
 
-it("T2/R93 a throwing activation is logged, rolled back once and refused as unavailable", async () => {
+it("T2/R93 a throwing activation never exposes success to queued retry or cancel", async () => {
 	const ledger = new CompactAdmissions();
+	const gate = terminalWrite();
 	const release = vi.fn(async () => {});
 	const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+	const outcome = (pending: Promise<unknown>) =>
+		pending.then(
+			(value) => ({ value }),
+			(cause: unknown) => (cause instanceof CompactAdmissionError ? { reason: cause.reason } : { cause }),
+		);
 	try {
-		await expect(
+		const running = outcome(
 			ledger.run(identity, async () => ({
 				answer,
 				release,
 				activate: () => {
-					throw new Error("activation failed");
+					throw new Error("activation fixture cause");
 				},
 			})),
-		).rejects.toMatchObject({ reason: "storage_unavailable" });
+		);
+		await gate.entered.promise;
+		const retry = outcome(ledger.run(identity, async () => expect.unreachable("retry produced again")));
+		const cancelling = ledger.cancel(identity.socketEpoch, identity.admissionId);
+		const observed = ledger.result(identity.socketEpoch, identity.admissionId);
+		gate.finish.resolve();
+		expect.soft(await running).toEqual({ reason: "storage_unavailable" });
+		expect.soft(await retry).toEqual({ reason: "storage_unavailable" });
+		expect.soft(await cancelling).toBe("already_complete");
+		expect.soft(await observed).toBeUndefined();
+		const later = await outcome(ledger.run(identity, async () => expect.unreachable("late retry produced again")));
+		expect.soft(later).toEqual({ reason: "storage_unavailable" });
 		expect(release).toHaveBeenCalledTimes(1);
-		expect(log).toHaveBeenCalled();
+		expect(log).toHaveBeenCalledWith(expect.stringContaining("activation fixture cause"));
+		const rows = vi.mocked(fs.writeFile).mock.calls.map((call) => JSON.parse(String(call[1])) as { state: string });
+		expect(rows.map((row) => row.state)).toEqual(["pending", "complete", "failed"]);
 	} finally {
+		gate.finish.resolve();
 		await ledger.dispose();
 	}
 });

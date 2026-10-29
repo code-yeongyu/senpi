@@ -84,7 +84,10 @@ export class RpcClientAdmissions {
 	async page(admissionId: string, componentRef: string, cursor?: string) {
 		const route = this.routes.get(admissionId);
 		if (!route?.token || !route.sessionId)
-			throw new RpcCommandError("unknown compact admission", "unknown_admission", undefined);
+			throw new RpcCommandError("unknown compact admission", "unknown_admission", {
+				code: "unknown_admission",
+				admissionId,
+			});
 		const now = Date.now();
 		if (now < route.notBefore) return { action: "wait", retryAfterMs: route.notBefore - now } as const;
 		const token = route.token;
