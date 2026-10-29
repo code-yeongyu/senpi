@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 import { CompactContentIndex } from "../../../src/modes/rpc/compact-content-index.ts";
 import { CompactContentStore } from "../../../src/modes/rpc/compact-content-store.ts";
+import type { PagedRoot } from "../../../src/modes/rpc/compact-paged-tree.ts";
 import { CompactReadError } from "../../../src/modes/rpc/compact-read-lease.ts";
 import { spoolRoot } from "../compact-storage-support.ts";
 
@@ -39,17 +40,18 @@ it("rolls back a mid-publish ownership failure and runs the next compaction", as
 		await store.idle();
 		const base = index.base;
 		const pages = [...index.pages];
-		const set = index.bases.set.bind(index.bases);
-		const inserts = new Set<string>();
-		const fail = vi.spyOn(index.bases, "set").mockImplementation((root, key, value) => {
-			if (value) inserts.add(key);
-			if (inserts.size === 3) throw new CompactReadError("ownership");
-			return set(root, key, value);
+		// The third node the round builds fails after two were made: a publication half way through its new paths.
+		const tree = index.bases as unknown as { make(node: object): Promise<PagedRoot> };
+		const make = tree.make.bind(tree);
+		let made = 0;
+		const fail = vi.spyOn(tree, "make").mockImplementation(async (node) => {
+			if (++made === 3) throw new CompactReadError("ownership");
+			return make(node);
 		});
 		index.set("00064", { n: -1 });
 		await store.idle();
 		fail.mockRestore();
-		expect(inserts.size).toBe(3);
+		expect(made).toBe(3);
 		expect(store.status().failures).toEqual(
 			expect.arrayContaining([expect.objectContaining({ operation: "page_write" })]),
 		);

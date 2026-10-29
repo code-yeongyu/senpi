@@ -8,7 +8,9 @@ export const cliPromptSizeInventory: PromptSizeInventory = {
 	mcpServerNames: ({ cwd, runner }) => {
 		const context = runner.createContext();
 		const config = loadMcpConfig({ cwd, projectTrusted: context.isProjectTrusted() });
-		mergeExtensionMcpServers(config, context.getRegisteredMcpServers?.() ?? []);
+		if (context.extensionConnectsMcpServers?.() !== true) {
+			mergeExtensionMcpServers(config, context.getRegisteredMcpServers?.() ?? []);
+		}
 		return Object.keys(config.servers);
 	},
 };

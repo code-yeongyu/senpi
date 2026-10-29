@@ -49,6 +49,17 @@ describe("resolveVisionModel", () => {
 		});
 	});
 
+	it("(a2) ends the default chain at Kimi K3.1 Pro, not Kimi K3", async () => {
+		const available = await getAvailable([
+			{ provider: "moonshotai", models: [vision("kimi-k3"), vision("kimi-k3.1-pro")] },
+		]);
+
+		expect(resolveVisionModel(DEFAULT_LOOK_AT_CHAIN, available)?.model).toMatchObject({
+			provider: "moonshotai",
+			id: "kimi-k3.1-pro",
+		});
+	});
+
 	it("(b) never returns a text-only exact match", async () => {
 		const available = await getAvailable([
 			{ provider: "openai", models: [textOnly("target")] },

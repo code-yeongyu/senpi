@@ -1,5 +1,24 @@
 # changes.md — dynamic-prompt
 
+## 2026-10-27 - Instruction files outrank the default asking style (senpi#4453)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/build.ts`: user-scoped context files are emitted under a `## User Instructions` header part before the `## Project Context` header part and the project files. Both headers say that instruction files override the default working style above, including whether, when and how to ask the user questions. Part names stay `project_context`; header parts keep source `dynamic-prompt`.
+- `packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the question tool description says not to call it when the user's instructions say not to ask, or not to ask with choices.
+
+### Why
+
+- Measured on main: a user's rule against asking sat at 94-97% of every preset's prompt, after 2-4 ask instructions and under a header that scoped it to files, so the model kept calling the question tool (#4453).
+
+### Why an extension could not handle it
+
+- The precedence sentence and the context-file grouping are built in `buildDynamicSystemPromptParts`, which every preset calls; the tool description is core-registered.
+
+### Expected merge conflict zones
+
+- LOW: the context-file block of `buildDynamicSystemPromptParts` in `packages/coding-agent/src/core/dynamic-prompt/build.ts` (fork-only file).
+
 ## 2026-10-16 - Named byte-preserving prompt parts (senpi#3483)
 
 ### What changed
