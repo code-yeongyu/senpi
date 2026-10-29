@@ -11,6 +11,8 @@ export interface McpControlInventoryRequest {
 export interface McpControlInventoryChanged {
 	readonly sessionId: string;
 	readonly snapshot: McpWireStatusSnapshot;
+	/** Set on the one notification sent once every MCP connect of the session's attach has settled (senpi#4828). */
+	readonly startupSettled?: true;
 }
 
 export function isMcpControlInventoryRequest(value: unknown): value is McpControlInventoryRequest {

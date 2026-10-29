@@ -24,7 +24,7 @@
 | 16 | `model-fallback` | `model-fallback/` | Fallback-chain validation + `/model-fallback` menu, `--no-model-fallback` flag (uses `core/retry-fallback/`) |
 | 17 | `recommended-models` | `recommended-models/` | Auto-switches implicit default models to recommended ones; respects explicit `settings` provenance; `--no-recommended-models` |
 | 18 | `bash-timeout` | `bash-timeout/` | Bash tool timeout + handlers |
-| 19 | `terminal` | `terminal/` | Persistent PTY-backed bash + bash_output/bash_input/bash_resize/kill_bash tools; follows bash-timeout (default reaches PTY bash) and anthropic-bash (mutual-exclusion step-aside) |
+| 19 | `terminal` | `terminal/` | Persistent PTY-backed bash + bash/bash_output/kill_bash/monitor tools (bash_input and bash_resize are search-exposed and activate on their first call); follows bash-timeout (default reaches PTY bash) and anthropic-bash (mutual-exclusion step-aside) |
 | 20 | `tool-pair-guard` | `tool-pair-guard/` | Repairs orphaned tool_use/tool_result pairs (compaction safety) |
 | 21 | `compaction` | `compaction/` | Plugsuit-style speculative + emergency compaction with restoration |
 | 22 | `history-search` | `history-search/` | Cross-session transcript search overlay (indexes session files) |
