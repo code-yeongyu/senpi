@@ -365,6 +365,19 @@ jobs:
         with:
           bun-version: "1.4.4"
 
+      # E28 runs examples/extensions/sandbox, whose @anthropic-ai/sandbox-runtime needs bwrap, socat and rg on Linux.
+      - name: Install sandbox example dependencies
+        timeout-minutes: 5
+        run: bash scripts/install-ci-system-deps.sh bubblewrap=0.9.0-1build1 socat=1.8.0.0-4build3 ripgrep=14.1.0-1
+
+      # Ubuntu 24.04 strips capabilities from unprivileged user namespaces; bwrap needs capability-bearing ones.
+      - name: Allow user namespaces for bubblewrap
+        shell: bash
+        run: |
+          if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
