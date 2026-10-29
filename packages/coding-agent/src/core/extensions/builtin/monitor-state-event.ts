@@ -2,6 +2,8 @@ export const TERMINAL_MONITOR_STATE_EVENT = "terminal_monitor_state";
 export const TERMINAL_MONITOR_ENDED_EVENT = "terminal_monitor_ended";
 export const WAKE_SOURCE_STATE_EVENT = "wake_source_state";
 export const CONTINUATION_HOLD_STATE_EVENT = "continuation_hold_state";
+/** Live widgets of a session's long background jobs; payload `JobWidgetState` (job-widgets/view-types.ts). */
+export const JOB_WIDGET_STATE_EVENT = "job_widget_state";
 export const MONITOR_NOTIFICATION_CUSTOM_TYPE = "senpi-monitor:notification";
 
 /** Per-monitor entry in a monitor notification's `details.monitors`. */

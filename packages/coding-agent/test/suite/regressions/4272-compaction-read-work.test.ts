@@ -17,10 +17,10 @@ it.each(
 			async writeFile(path, data) {
 				files.set(path, Buffer.from(data));
 			},
-			async readFile(path) {
+			async readFile(path, range) {
 				const data = files.get(path);
 				if (!data) throw new Error("missing backing file");
-				return Buffer.from(data);
+				return Buffer.from(range ? data.subarray(range.offset, range.offset + range.length) : data);
 			},
 			async unlink(path) {
 				files.delete(path);
@@ -48,16 +48,13 @@ it.each(
 		await store.idle();
 		pause.mockRestore();
 		const reads = vi.spyOn(store, "readLeaf");
-		const started = performance.now();
 		index.maybeCompact();
 		await store.idle();
 		const hydrations = reads.mock.calls.length;
 		reads.mockRestore();
-		console.info(
-			`compaction count=${count} mode=${mode} leafReads=${hydrations} pointDescents=${points.mock.calls.length} durationMs=${performance.now() - started}`,
-		);
-		// New nodes stay decoded; each 128-row append round rehydrates only its upper path.
-		const bound = Math.ceil(count / 128) * Math.ceil(Math.log2(count));
+		// The first round folds into an empty base; each later 128-row append round rehydrates its upper path
+		// once, shared by the selection lookup and the batched apply (without the round cache, it is read twice).
+		const bound = (Math.ceil(count / 128) - 1) * Math.ceil(Math.log2(count));
 		if (mode === "cache-disabled") expect(hydrations).toBeGreaterThan(bound);
 		else expect(hydrations).toBeLessThanOrEqual(bound);
 		// A warm path can hide disk reads, but must not hide one root descent per overlay key.

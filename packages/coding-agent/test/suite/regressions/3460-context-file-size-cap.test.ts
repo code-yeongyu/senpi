@@ -196,16 +196,16 @@ describe("issue #3460: a large skills catalog is listed compactly", () => {
 		const prompt = formatSkillsForPrompt(skills);
 		// Then
 		expect(Buffer.byteLength(prompt)).toBeLessThanOrEqual(48 * 1024);
-		expect(prompt).toContain("<name>skill-0</name>");
+		expect(prompt).toContain("- skill-0 [r0]");
 		expect(prompt).not.toContain("<description>");
-		const listed = [...prompt.matchAll(/<name>/g)].length;
+		const listed = [...prompt.matchAll(/^- skill-/gm)].length;
 		if (listed < count) expect(prompt).toContain(`<omitted_skills>${count - listed}</omitted_skills>`);
 		expect(warnIfLargeSkillCatalog(skills)).toContainEqual(expect.objectContaining({ type: "warning" }));
 	});
 
-	it("keeps 70 descriptions below 64 KiB out of compact mode", () => {
+	it("keeps 70 descriptions below 16 KiB out of compact mode", () => {
 		// Given
-		const skills = Array.from({ length: 70 }, (_, index) => skill(index, "d".repeat(480)));
+		const skills = Array.from({ length: 70 }, (_, index) => skill(index, "d".repeat(200)));
 		// When
 		const compact = isLargeSkillCatalog(skills);
 		// Then
@@ -216,7 +216,7 @@ describe("issue #3460: a large skills catalog is listed compactly", () => {
 
 		const prompt = formatSkillsForPrompt(skills);
 
-		expect(prompt).toContain("<name>skill-399</name>");
+		expect(prompt).toContain("- skill-399 [r0]: Use this skill when the task involves the workflow");
 		expect(prompt).not.toContain("retry rules");
 		expect(prompt.length).toBeLessThan(100_000);
 	});
