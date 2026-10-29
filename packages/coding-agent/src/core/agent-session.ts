@@ -7412,24 +7412,26 @@ export class AgentSession {
 					await this._enforceCompactionBeforeProvider(this._findLastAssistantMessage(), false, "pre_prompt");
 					this._refreshToolDeclarationsForModel();
 					this._promptCachePrefixBuilds.cancelAll();
-					const result = await this._extensionRunner.emitBeforeAgentStart(
-						contentText(appMessage.content, ""),
-						undefined,
-						this._baseSystemPrompt,
-						this._baseSystemPromptOptions,
-						{
-							trigger: deliveryIdOf(appMessage) === undefined ? "extension" : "delivery",
-						},
-					);
-					if (userAbortGeneration !== this._userAbortGeneration) {
-						queueTriggerForLater();
-						return;
-					}
-					this._applyBeforeAgentStartResult(messages, result, appMessage);
-					await this._enforceFinalProviderAdmission(messages);
-					if (userAbortGeneration !== this._userAbortGeneration) {
-						queueTriggerForLater();
-						return;
+					if (!(this._wakeGateApplies(message.customType, options) && this._holdForInterruptedRun(options))) {
+						const result = await this._extensionRunner.emitBeforeAgentStart(
+							contentText(appMessage.content, ""),
+							undefined,
+							this._baseSystemPrompt,
+							this._baseSystemPromptOptions,
+							{
+								trigger: deliveryIdOf(appMessage) === undefined ? "extension" : "delivery",
+							},
+						);
+						if (userAbortGeneration !== this._userAbortGeneration) {
+							queueTriggerForLater();
+							return;
+						}
+						this._applyBeforeAgentStartResult(messages, result, appMessage);
+						await this._enforceFinalProviderAdmission(messages);
+						if (userAbortGeneration !== this._userAbortGeneration) {
+							queueTriggerForLater();
+							return;
+						}
 					}
 				} catch (error) {
 					// Mirror sendUserMessage's retention contract: an admission
