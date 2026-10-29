@@ -49,8 +49,9 @@ before importing the runtime, including before a package can obtain a static
 builtin binding. Originals stay in module-local closures. The one-time runtime
 initializer does not export a token store or original functions.
 
-The initial covered operations are `child_process.spawnSync`, `Bun.spawnSync`
-and `fs.writeFileSync`. Arguments are analyzed only on the active path. Direct
+Operation families are installed by `interpose-fs.js`, `interpose-process.js`,
+`interpose-bun.js` and `interpose-sqlite.js` through the same check closure.
+Arguments are analyzed only on the active path. Direct
 argv becomes shell-quoted command text; a shell invocation uses the text the
 shell actually receives. Requested path spelling is preserved for policy;
 execution still resolves relative paths against the kernel cwd.
@@ -88,7 +89,26 @@ and its available source coordinates, and observed exit dispatches close.
 
 ## Scope boundary
 
-Full API coverage is PR 3. This core is not a sandbox and does not claim read
-completeness.
+PR 3 extends the operation table without changing authority or slot messages.
+Resource tables retain each open's path and access modes; locally granted
+operations still check authority liveness before using a resource. Engine
+package-resolution reads and process retirement use one-time, closure-private
+originals, rather than gaining an exemption for an installation path.
+
+The module plugin observes resolution only and lets the native loader handle
+attributes. Cell import and require routes also check relative and absolute
+paths. Dynamic-code preflight runs in the host AST preparer so workers remain
+dependency-free and direct eval retains lexical scope.
+
+Native capability residual: Bun 1.4.4 makes both the global `Bun` binding and `Bun.plugin`
+non-writable and non-configurable. The cell-local binding can guard plugin calls;
+native libraries' plugin calls and non-literal dynamic evaluation remain available.
+The native-loader regression matrix verifies that code reached through these routes
+still encounters the enforced synchronous/asynchronous spawn and write checks.
+The engine adds no onLoad transform. Final acceptance of this named residual
+remains with the lead.
+This core is not a sandbox and does not claim read completeness.
+
+Known limitation: in natively loaded dependencies, Bun.plugin registration and non-literal eval are not refused (Bun 1.4.4 makes Bun.plugin immutable); code loaded that way still runs under the enforced spawn and write checks; tracked in #4380.
 
 Known limitation: reads performed by the runtime's native module resolver (bare packages, tsconfig aliases, package.json #imports, symlinked packages) are not covered by this work; tracked in #4380.
