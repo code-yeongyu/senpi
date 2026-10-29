@@ -84,4 +84,26 @@ describe("an account's cooldown can be cleared on request (senpi#3285)", () => {
 			"Provider account not found: missing",
 		);
 	});
+
+	test("the slash-command default still resets all health for the named account", async () => {
+		const modelBlocks = { limited: { blockedUntil: FAR_FUTURE } };
+		await storage.modify("test", async () => ({
+			...pooled(),
+			slotState: { b: { blockReason: "rate_limit", modelBlocks } },
+			accounts: [{ name: "b", key: "key-b", modelBlocks }],
+		}));
+		await repository.mutateSlotState("test", "stored", "b", () => ({
+			blockReason: "rate_limit",
+			blockedUntil: FAR_FUTURE,
+			modelBlocks,
+			lease: { id: "probe", expiresAt: FAR_FUTURE },
+		}));
+
+		await resetCredentialAccount(storage, "test", "b", {}, repository);
+
+		expect((await repository.listSlots("test", "stored")).b).toBeUndefined();
+		const saved = JSON.parse(readFileSync(join(dir, "auth.json"), "utf8"));
+		expect(saved.test.accounts).toEqual([{ name: "b", key: "key-b" }]);
+		expect(saved.test.slotState).toEqual({});
+	});
 });

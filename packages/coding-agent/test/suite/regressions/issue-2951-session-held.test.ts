@@ -89,7 +89,7 @@ it("refuses open with session_held and only the foreign holder pid/cwd", async (
 	expect(rig.registry.size).toBe(0);
 });
 
-it.each(["prompt", "steer"] as const)("refuses %s on an already-open session until the holder exits", async (type) => {
+it.each(["prompt", "steer", "account_reset"] as const)("refuses %s on an already-open session until the holder exits", async (type) => {
 	const handled: string[] = [];
 	await using rig = createInProcessRig(root, undefined, async (command) => {
 		handled.push(command.type);
@@ -98,12 +98,13 @@ it.each(["prompt", "steer"] as const)("refuses %s on an already-open session unt
 	const sessionId = (await rig.list())[0]?.sessionId;
 	if (sessionId === undefined) throw new Error("Host did not open session");
 	await using holder = await startHolder();
-	const refusal = await rig.send("client", { id: "blocked", type, sessionId, message: "hello" });
+	const payload = type === "account_reset" ? { type, provider: "openai", name: "work" } : { type, message: "hello" };
+	const refusal = await rig.send("client", { id: "blocked", sessionId, ...payload });
 	expect(refusal).toMatchObject({ success: false, error: "session_held", errorCode: "session_held" });
 	expect(refusal?.errorData).toEqual({ holders: [{ pid: holder.pid, cwd: root }] });
 	expect(handled).toEqual([]);
 	await holder.stop();
-	await rig.send("client", { id: "retry", type, sessionId, message: "hello" });
+	await rig.send("client", { id: "retry", sessionId, ...payload });
 	expect(handled).toEqual([type]);
 });
 

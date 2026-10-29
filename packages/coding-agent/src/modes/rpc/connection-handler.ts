@@ -33,6 +33,7 @@ import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import { authMethodStatus, buildLoginProviderInfos } from "../../core/auth-providers.ts";
 import { ContinueFromLeafError } from "../../core/continue-from-leaf.ts";
 import { listCredentialAccounts, orderCredentialAccounts } from "../../core/credential-account-order.ts";
+import { CredentialAccountNotFoundError, resetCredentialAccount } from "../../core/credential-account-reset.ts";
 import { pinCredentialAccount, removeCredentialAccount } from "../../core/credential-accounts.ts";
 import { AssistantEditError, SessionStreamingError } from "../../core/edited-assistant-message.ts";
 import { UserEditError } from "../../core/edited-user-message.ts";
@@ -2110,6 +2111,25 @@ export function createRpcConnectionHandler(
 			case "account_remove": {
 				await removeCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
 				return success(id, "account_remove");
+			}
+
+			case "account_reset": {
+				if (typeof command.provider !== "string" || typeof command.name !== "string") {
+					return error(id, "account_reset", "provider and name must be strings", "invalid_argument");
+				}
+				try {
+					await resetCredentialAccount(
+						session.modelRegistry.authStorage,
+						command.provider,
+						command.name,
+					);
+				} catch (resetError: unknown) {
+					if (resetError instanceof CredentialAccountNotFoundError) {
+						return error(id, "account_reset", "Provider account not found. Refresh the account list.", resetError.code);
+					}
+					return error(id, "account_reset", "Could not reset this account. Try again.", "account_reset_failed");
+				}
+				return success(id, "account_reset");
 			}
 
 			case "account_order": {
