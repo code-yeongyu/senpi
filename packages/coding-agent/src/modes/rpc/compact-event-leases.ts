@@ -62,6 +62,8 @@ export interface EventLeaseCounters {
 	readonly minted: number;
 	readonly released: number;
 	readonly duplicates: number;
+	/** Leases whose envelope the socket actor dropped before it reached the peer. */
+	readonly abandoned: number;
 	/** Stored bytes of accepted records still pinned by a lease. */
 	readonly contentBytes: number;
 	readonly refused: Readonly<Partial<Record<EventLeaseRefusal, number>>>;
@@ -110,6 +112,7 @@ export class EventLeases {
 	private minted = 0;
 	private released = 0;
 	private duplicates = 0;
+	private abandoned = 0;
 	private contentBytes = 0;
 
 	constructor(peerLimit = PEER_EVENT_LEASES_MAX) {
@@ -216,6 +219,16 @@ export class EventLeases {
 		return { ok: false, failure: repairNeeded("unknown_token") };
 	}
 
+	/**
+	 * The envelope naming this lease never reached its peer (superseded, shed or cut by the socket actor, S13a review):
+	 * the lease ends with no receipt, at once and only once; an unknown or already ended lease is a no-op.
+	 */
+	abandon(socketEpoch: string, leaseId: string): void {
+		const held = this.peers.get(socketEpoch)?.held.get(leaseId);
+		if (!held || !held.reads.release()) return;
+		this.abandoned += 1;
+	}
+
 	/** A peer incarnation is gone: every lease it holds ends once the reads in flight on it unwind. */
 	forgetPeer(socketEpoch: string): void {
 		const peer = this.peers.get(socketEpoch);
@@ -230,6 +243,7 @@ export class EventLeases {
 			minted: this.minted,
 			released: this.released,
 			duplicates: this.duplicates,
+			abandoned: this.abandoned,
 			contentBytes: this.contentBytes,
 			refused: Object.fromEntries(this.refusals),
 		};

@@ -28,6 +28,12 @@ export class RecordLine {
 	}
 }
 
+/** A destination's line, and for an event-lease envelope the release that runs if the actor never writes it. */
+interface EventLine {
+	readonly line: string;
+	readonly undelivered?: (written: boolean) => void;
+}
+
 /** Per-destination delivery of one session record, moved verbatim out of `session-event-writer.ts` (S13w0, #4272). */
 export abstract class SessionEventWriterDestinations extends SessionEventWriterRecovery {
 	/** Puts the record on every target's FIFO in target order, or on the stdio lane for the `undefined` target. */
@@ -59,10 +65,11 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 				placeholderLine !== undefined && this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY);
 			if (registered && target !== undefined) {
 				const keyed = compactDelta(tagged) !== undefined && tagged.message !== null;
+				const out = this.eventLine(target, sessionId, wants ? redacted : tagged, wants ? placeholder : line);
 				registered.actor.enqueue(
-					this.eventLine(target, sessionId, wants ? redacted : tagged, wants ? placeholder : line),
+					out.line,
 					keyed ? MESSAGE_KEY : undefined,
-					undefined,
+					out.undelivered,
 					keyed ? serializeJsonLine(demoteToDeltaOnly(tagged)) : undefined,
 					isCorrelatedReply(tagged),
 					mirrors.includes(target)
@@ -80,23 +87,31 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 	 * other destination gets the legacy line. Past the peer's lease bound, or when the record cannot be staged, the peer
 	 * gets a typed refusal and its connection closes (fail closed, like a plain peer's overflow).
 	 */
-	private eventLine(target: string, sessionId: string, record: object, line: RecordLine): string {
+	private eventLine(target: string, sessionId: string, record: object, line: RecordLine): EventLine {
 		const events = this.fanout.events;
 		const lane = this.fanout.acceptance.get(sessionId);
 		const admissionId = this.fanout.admissionOf(target, sessionId);
 		const socketEpoch = this.fanout.get(target)?.socketEpoch;
-		if (!events || !lane || admissionId === undefined || socketEpoch === undefined) return line.text;
-		if (!this.fanout.connectionHas(target, COMPACT_EVENTS_CAPABILITY)) return line.text;
+		if (!events || !lane || admissionId === undefined || socketEpoch === undefined) return { line: line.text };
+		if (!this.fanout.connectionHas(target, COMPACT_EVENTS_CAPABILITY)) return { line: line.text };
 		const built = line.built;
 		const size =
 			built === undefined ? jsonSize(record) : { bytes: Buffer.byteLength(built) - 1, units: built.length - 1 };
-		if (size.bytes + 1 <= COMPACT_RECORD_MAX_BYTES) return line.text;
+		if (size.bytes + 1 <= COMPACT_RECORD_MAX_BYTES) return { line: line.text };
 		const at = { sessionEpoch: lane.sessionEpoch, sequence: lane.acceptedSequence };
 		const minted = events.mint({ socketEpoch, sessionId, admissionId }, at, record, built ?? size);
-		if (minted.ok)
-			return serializeJsonLine({ type: Reflect.get(record, "type"), sessionId, eventLease: minted.value });
+		if (minted.ok) {
+			const { id } = minted.value;
+			return {
+				line: serializeJsonLine({ type: Reflect.get(record, "type"), sessionId, eventLease: minted.value }),
+				// The lease lives only if its envelope is written: every drop path of the socket actor ends it unseen.
+				undelivered: (written) => {
+					if (!written) events.abandon(socketEpoch, id);
+				},
+			};
+		}
 		process.stderr.write(`senpi rpc connection ${target} event lease refused (${minted.reason}); closing\n`);
 		this.fanout.get(target)?.connection.close?.();
-		return serializeJsonLine({ type: "event_lease_refused", sessionId, reason: minted.reason });
+		return { line: serializeJsonLine({ type: "event_lease_refused", sessionId, reason: minted.reason }) };
 	}
 }

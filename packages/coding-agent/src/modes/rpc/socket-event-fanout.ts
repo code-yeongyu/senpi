@@ -120,7 +120,7 @@ export class SocketEventSinkActor {
 	enqueue(
 		line: string,
 		key?: string,
-		onWritten?: () => void,
+		onWritten?: (written: boolean) => void,
 		demotedLine?: string,
 		reply = false,
 		held?: () => boolean,
@@ -129,7 +129,7 @@ export class SocketEventSinkActor {
 		const bytes = Buffer.byteLength(line);
 		if (this.shed.dropsRecords) {
 			if (reply) this.admitReply({ line, bytes, onWritten, reply });
-			else onWritten?.();
+			else onWritten?.(false);
 			return;
 		}
 		if (key !== undefined) this.queue.supersede(key);
@@ -139,7 +139,7 @@ export class SocketEventSinkActor {
 				else this.cut("overflow");
 				// The cut covers this record; only a reply still needs its own place.
 				if (reply) this.admitReply({ line, bytes, onWritten, reply });
-				else onWritten?.();
+				else onWritten?.(false);
 				void this.drain();
 				return;
 			}
@@ -188,7 +188,7 @@ export class SocketEventSinkActor {
 	private admitReply(entry: QueueEntry): void {
 		if (!this.fits(entry.bytes)) {
 			this.recovery?.loseReply();
-			entry.onWritten?.();
+			entry.onWritten?.(false);
 			return;
 		}
 		this.shed.admitReply(entry);
@@ -299,11 +299,11 @@ export class SocketEventSinkActor {
 						continue;
 					}
 					if (item.held !== undefined && !item.held()) {
-						item.onWritten?.();
+						item.onWritten?.(false);
 						continue;
 					}
 					await this.write(item.line);
-					item.onWritten?.();
+					item.onWritten?.(true);
 				}
 			} catch (cause) {
 				this.failure = cause;
