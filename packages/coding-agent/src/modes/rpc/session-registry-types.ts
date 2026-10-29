@@ -152,6 +152,8 @@ export interface RpcSessionRow {
 	name?: string;
 	status: Exclude<RpcSessionState, "quarantined">;
 	attachments: number;
+	/** True when the session outlives its last attachment; once granted, never revoked. */
+	retain_on_disconnect: boolean;
 	kind: SessionKind;
 	context: PublishedSessionContext;
 	/** Milliseconds since the last routed command or session-owned activity refreshed the idle window. */
@@ -175,6 +177,7 @@ export function frozenProfile(profile: RpcSessionLaunchProfile): Readonly<RpcSes
 		...(profile.holderEndpoint ? { holderEndpoint: Object.freeze({ ...profile.holderEndpoint }) } : {}),
 		...(profile.creationModel ? { creationModel: Object.freeze({ ...profile.creationModel }) } : {}),
 		...(profile.sessionContext ? { sessionContext: Object.freeze({ ...profile.sessionContext }) } : {}),
+		...(profile.sessionEnv ? { sessionEnv: Object.freeze({ ...profile.sessionEnv }) } : {}),
 		...(profile.retryFallback
 			? {
 					retryFallback: Object.freeze({

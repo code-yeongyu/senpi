@@ -11,6 +11,7 @@ import type { ExtensionFlag } from "../core/extensions/types.ts";
 import type { SpawnedBy } from "../core/session-lifecycle-types.ts";
 import { isSpawnedBy } from "../core/session-spawned-by.ts";
 import type { TuiMode } from "../core/settings-manager.ts";
+import { applyAttachArgs } from "./attach-args.ts";
 import { isGrokNeoEnabled } from "./grok-neo-gate.ts";
 import { isToolRuntimeKind, type ToolRuntimeKind } from "./tool-runtime.ts";
 
@@ -31,6 +32,7 @@ export interface Args {
 	name?: string;
 	noSession?: boolean;
 	session?: string;
+	attach?: string;
 	sessionId?: string;
 	spawnedBy?: SpawnedBy;
 	fork?: string;
@@ -387,6 +389,7 @@ export function parseArgs(args: string[], options: { grokNeoEnabled?: boolean } 
 		});
 	}
 
+	applyAttachArgs(result);
 	return result;
 }
 
@@ -439,6 +442,7 @@ ${chalk.bold("Options:")}
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
   --session <path|id>            Use specific session file or partial UUID
+  --attach <address>             Attach the TUI to an RPC endpoint (requires --session <ref>)
   --session-id <id>              Use exact project session ID, creating it if missing
   --spawned-by <json>            Fresh session ancestry: parentSessionId, rootSessionId, taskId
                                  Ignored with a warning when resuming or forking

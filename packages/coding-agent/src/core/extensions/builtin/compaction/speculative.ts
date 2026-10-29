@@ -76,6 +76,8 @@ const SUMMARY_SCHEMA = "senpi.compaction.summary.v1";
 type CompactionProgressCallback = (delta: string) => void;
 
 export interface SpeculativeCompactionContext {
+	/** Absolute session directory; subprocess-backed providers (Claude SDK) refuse a summary request without it. */
+	cwd: string;
 	model: Model<any> | undefined;
 	sessionManager: ReadonlySessionManager;
 	modelRegistry?: ModelRegistry;

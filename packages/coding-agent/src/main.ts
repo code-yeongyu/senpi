@@ -1094,6 +1094,7 @@ export function createCliRuntimeFactory(
 			),
 			promptSurface: launchProfile?.promptSurface,
 			browserEngine: launchProfile?.browserEngine,
+			sessionEnv: launchProfile?.sessionEnv,
 			...(toolRuntime !== undefined ? { toolRuntime } : {}),
 		});
 		markSwitch("createSession");
@@ -1212,6 +1213,25 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (parsed.version) {
 		await printThenExit(() => console.log(DISPLAY_VERSION), 0);
+	}
+
+	if (parsed.attach && parsed.session && !parsed.help) {
+		const { runAttachedTui } = await import("./modes/interactive/run-attached-tui.ts");
+		try {
+			await runAttachedTui({
+				address: parsed.attach,
+				session: parsed.session,
+				tuiMode: parsed.tuiMode,
+				theme: parsed.useTheme,
+			});
+		} catch (error) {
+			// A refusal or connection failure is the user's next step, not a crash: one line, no stack.
+			await printThenExit(
+				() => console.error(`Error: ${error instanceof Error ? error.message : String(error)}`),
+				1,
+			);
+		}
+		return;
 	}
 
 	if (parsed.export) {
