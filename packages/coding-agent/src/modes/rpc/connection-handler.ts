@@ -5,6 +5,9 @@ import {
 } from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
+import type { ExtensionRpcRequestContext } from "../../core/extensions/rpc-context.ts";
+import type { ExtensionOwner } from "./extension-owner.ts";
+import { ExtensionOwnerLifetime } from "./extension-owner-lifetime.ts";
 /**
  * Per-connection RPC handler.
  *
@@ -160,6 +163,9 @@ export { buildRpcSessionState } from "./rpc-session-state.ts";
 
 /** Additive per-connection options. Absent = classic default (byte-identical). */
 export interface RpcConnectionOptions {
+	/** Trusted capture supplied by the host binding, never by a public RPC command. */
+	rpcOwner?: () => ExtensionOwner | undefined;
+	retireRpcBinding?: () => void;
 	/** Client capability flags from the handshake (e.g. custom_unsupported opt-in). */
 	capabilities?: readonly string[];
 	/** The host's per-connection role registry; a single-connection process keeps its own. */
@@ -372,6 +378,7 @@ export function createRpcConnectionHandler(
 	// already learns the new identity from its command response.
 	let replacementIssuedHere = false;
 	let session = runtimeHost.session;
+	const rpcOwners = new ExtensionOwnerLifetime(options.sessionId === undefined, options.rpcOwner, options.retireRpcBinding);
 	let sessionControl: HostSessionControl | undefined;
 	let relocation: RpcSessionRelocation | undefined;
 	const promptCalls = new Set<Promise<unknown>>();
@@ -883,6 +890,7 @@ export function createRpcConnectionHandler(
 	};
 
 	const rebindSession = async (deferRefresh = false): Promise<void> => {
+		rpcOwners.retireBinding();
 		unbindMcpForms?.();
 		unbindMcpForms = undefined;
 		unsubscribeSecurityNotices?.();
@@ -1145,7 +1153,7 @@ export function createRpcConnectionHandler(
 	});
 
 	// Handle a single command
-	const handleCommand = async (command: RpcCommand): Promise<RpcResponse | undefined> => {
+	const handleCommand = async (command: RpcCommand, requestContext?: ExtensionRpcRequestContext): Promise<RpcResponse | undefined> => {
 		const id = command.id;
 
 		switch (command.type) {
@@ -2005,6 +2013,7 @@ export function createRpcConnectionHandler(
 					const data = await session.extensionRunner.requestRpc(
 						name,
 						command.type === "extension_request" ? command.data : command,
+						requestContext,
 					);
 					return success(id, command.type, data);
 				} catch (cause) {
@@ -2128,7 +2137,7 @@ export function createRpcConnectionHandler(
 		}
 	};
 
-	const handleInputLine = async (line: string): Promise<void> => {
+	const handleInputLine = async (line: string, requestContext?: ExtensionRpcRequestContext): Promise<void> => {
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(line);
@@ -2203,7 +2212,7 @@ export function createRpcConnectionHandler(
 			return;
 		}
 		try {
-			const response = await handleCommand(command);
+			const response = await handleCommand(command, requestContext);
 			if (response) {
 				output(response);
 				await waitForRpcBackpressure();
@@ -2266,8 +2275,9 @@ export function createRpcConnectionHandler(
 	return {
 		ready,
 		async handleInputLine(line: string) {
+			const requestContext = rpcOwners.capture()?.context;
 			await ready;
-			await handleInputLine(line);
+			await handleInputLine(line, requestContext);
 		},
 		pendingPrompts() {
 			return [...promptCalls];
@@ -2283,6 +2293,7 @@ export function createRpcConnectionHandler(
 			relocation?.connectionDetached(connectionId);
 		},
 		async dispose(disposeOptions) {
+			rpcOwners.dispose();
 			await ready;
 			await dispose(disposeOptions);
 		},
