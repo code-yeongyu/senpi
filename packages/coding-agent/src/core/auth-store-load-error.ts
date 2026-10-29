@@ -28,7 +28,7 @@ export class AuthStoreUnreadableError extends Error {
  * A store load that failed after auth.json was read and parsed: saving its repaired or migrated copy
  * failed (`wroteBack`), or the lock was lost once the read was done. Neither means the file is unreadable.
  */
-export class AuthStoreAfterReadError extends Error {
+class AuthStoreAfterReadError extends Error {
 	readonly wroteBack: boolean;
 
 	constructor(cause: unknown, wroteBack: boolean) {
