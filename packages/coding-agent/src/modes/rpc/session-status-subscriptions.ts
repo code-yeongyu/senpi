@@ -5,7 +5,51 @@
  * be well formed. Every refusal names the field that was wrong and what to send instead.
  */
 import type { RpcCommand } from "./rpc-types.ts";
-import type { SessionStatusEntryView } from "./session-status.ts";
+import type { SessionStatusEntryView, SessionStatusRuntimeView } from "./session-status.ts";
+import type { MirrorPending } from "./compact-mirror-pending.ts";
+
+export interface SessionStatusSource {
+	readonly sessionIds: () => readonly string[];
+	readonly entryView: (sessionId: string) => SessionStatusEntryView | undefined;
+	readonly view: (
+		sessionId: string,
+	) => { readonly entry: SessionStatusEntryView; readonly runtime?: SessionStatusRuntimeView } | undefined;
+}
+
+export interface SessionStatusDelivery {
+	readonly enqueue: (connectionId: string, line: string) => boolean;
+	readonly pendingQuestions: (sessionId: string) => number | undefined;
+	readonly now?: () => Date;
+}
+
+export type StatusSubscription = {
+	readonly id: string;
+	readonly connectionId: string;
+	readonly options: SubscriptionOptions;
+	seq: number;
+};
+export type PendingStatusSubscription = StatusSubscription & {
+	readonly lines: string[];
+	readonly buffer?: MirrorPending;
+};
+
+export function matchingMirrors(
+	subscriptions: Iterable<StatusSubscription>,
+	sessionId: string,
+	recordType: string,
+	entry: SessionStatusEntryView | undefined,
+	dialogs = false,
+): StatusSubscription[] {
+	if (!entry) return [];
+	return [...subscriptions].filter(
+		(subscription) =>
+			(!dialogs || subscription.options.dialogs === true) &&
+			(recordType === "snapshot_marker" || dialogs
+				? subscription.options.mirror.kind !== "none"
+				: mirrorsRecord(subscription.options.mirror, recordType)) &&
+			subscriptionMatches(subscription.options, sessionId, entry),
+	);
+}
 
 export type SessionSelector =
 	| { readonly kind: "all" }

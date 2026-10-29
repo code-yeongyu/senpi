@@ -19,6 +19,7 @@ import type { EffectStatus } from "./effect-record.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { effectStatusRecord } from "./session-effect-status.ts";
 import { statusRecord } from "./session-status-record.ts";
+import { MirrorPending } from "./compact-mirror-pending.ts";
 import {
 	type DerivedSessionStatus,
 	deriveSessionStatus,
@@ -30,39 +31,20 @@ import {
 	type SessionStatusRuntimeView,
 	type SessionStatusTerminal,
 } from "./session-status.ts";
-import { mirrorsRecord, type SubscriptionOptions, subscriptionMatches } from "./session-status-subscriptions.ts";
+import {
+	matchingMirrors,
+	type PendingStatusSubscription as PendingSubscription,
+	type StatusSubscription as Subscription,
+	type SessionStatusSource,
+	type SessionStatusDelivery,
+	type SubscriptionOptions,
+	subscriptionMatches,
+} from "./session-status-subscriptions.ts";
 
-export interface SessionStatusSource {
-	readonly sessionIds: () => readonly string[];
-	readonly entryView: (sessionId: string) => SessionStatusEntryView | undefined;
-	readonly view: (
-		sessionId: string,
-	) => { readonly entry: SessionStatusEntryView; readonly runtime?: SessionStatusRuntimeView } | undefined;
-}
-
-export interface SessionStatusDelivery {
-	readonly enqueue: (connectionId: string, line: string) => boolean;
-	readonly pendingQuestions: (sessionId: string) => number | undefined;
-	readonly now?: () => Date;
-}
+export type { SessionStatusSource, SessionStatusDelivery } from "./session-status-subscriptions.ts";
 
 /** Optional hook a later effect ledger installs to fill `session_status.lastEffect`. */
 export type SessionLastEffectProvider = (sessionId: string) => SessionStatusLastEffect | undefined;
-
-type Subscription = {
-	readonly id: string;
-	readonly connectionId: string;
-	readonly options: SubscriptionOptions;
-	seq: number;
-};
-
-type PendingSubscription = {
-	readonly id: string;
-	readonly connectionId: string;
-	readonly options: SubscriptionOptions;
-	seq: number;
-	lines: string[];
-};
 
 type SessionView = { readonly entry: SessionStatusEntryView; readonly runtime?: SessionStatusRuntimeView };
 type LastChange = SessionStatusRecord["lastChange"];
@@ -71,6 +53,7 @@ type LastChange = SessionStatusRecord["lastChange"];
 export const MAX_SUBSCRIPTIONS_PER_CONNECTION = 64;
 
 export class SessionStatusStream {
+	onSubscriptionEnd?: (connectionId: string, subscriptionId: string) => void;
 	private readonly subscriptions = new Map<string, Subscription>();
 	private readonly pendings = new Map<string, PendingSubscription>();
 	private readonly terminals = new Map<string, SessionStatusTerminal>();
@@ -116,6 +99,7 @@ export class SessionStatusStream {
 			options,
 			seq: 0,
 			lines: [],
+			...(options.admissionId === undefined ? {} : { buffer: new MirrorPending() }),
 		};
 		this.pendings.set(pending.id, pending);
 		const at = snapshotSink ? (this.delivery.now?.() ?? new Date()).toISOString() : undefined;
@@ -123,7 +107,7 @@ export class SessionStatusStream {
 		try {
 			if (snapshotSink) snapshotSink(rows, pending.id);
 		} catch (cause) {
-			this.pendings.delete(pending.id);
+			this.unsubscribe(connectionId, pending.id);
 			throw cause;
 		}
 		return { subscriptionId: pending.id, snapshot: snapshotSink ? [] : [...rows()], seq: pending.seq };
@@ -150,6 +134,7 @@ export class SessionStatusStream {
 			seq: pending.seq,
 		};
 		this.subscriptions.set(subscription.id, subscription);
+		pending.buffer?.activate();
 		for (const line of pending.lines) this.delivery.enqueue(subscription.connectionId, line);
 		pending.lines.length = 0;
 	}
@@ -159,18 +144,31 @@ export class SessionStatusStream {
 		if (pending !== undefined) {
 			if (pending.connectionId !== connectionId) return false;
 			this.pendings.delete(subscriptionId);
+			pending.buffer?.retire();
+			this.onSubscriptionEnd?.(connectionId, subscriptionId);
 			return true;
 		}
 		const subscription = this.subscriptions.get(subscriptionId);
 		if (subscription?.connectionId !== connectionId) return false;
 		this.subscriptions.delete(subscriptionId);
+		this.onSubscriptionEnd?.(connectionId, subscriptionId);
 		return true;
 	}
 
 	dropConnection(connectionId: string): void {
-		for (const [id, pending] of this.pendings) if (pending.connectionId === connectionId) this.pendings.delete(id);
+		for (const [id, pending] of this.pendings)
+			if (pending.connectionId === connectionId) this.unsubscribe(connectionId, id);
 		for (const [id, subscription] of this.subscriptions)
-			if (subscription.connectionId === connectionId) this.subscriptions.delete(id);
+			if (subscription.connectionId === connectionId) this.unsubscribe(connectionId, id);
+	}
+
+	pendingBuffer(subscriptionId: string): MirrorPending | undefined {
+		return this.pendings.get(subscriptionId)?.buffer;
+	}
+
+	private queue(pending: PendingSubscription, line: string): void {
+		if (pending.buffer) pending.buffer.enqueue(line, () => this.delivery.enqueue(pending.connectionId, line));
+		else pending.lines.push(line);
 	}
 
 	/**
@@ -188,7 +186,7 @@ export class SessionStatusStream {
 			if (contextOnly && !pending.options.includeContext) continue;
 			if (!subscriptionMatches(pending.options, sessionId, view.entry)) continue;
 			pending.seq += 1;
-			pending.lines.push(serializeJsonLine(this.recordFor(pending, sessionId, derived, change)));
+			this.queue(pending, serializeJsonLine(this.recordFor(pending, sessionId, derived, change)));
 		}
 		for (const subscription of this.subscriptions.values()) {
 			if (contextOnly && !subscription.options.includeContext) continue;
@@ -209,7 +207,7 @@ export class SessionStatusStream {
 		for (const pending of this.pendings.values()) {
 			if (!pending.options.effects || !subscriptionMatches(pending.options, sessionId, view.entry)) continue;
 			pending.seq += 1;
-			pending.lines.push(serializeJsonLine(effectStatusRecord(pending, sessionId, status, at)));
+			this.queue(pending, serializeJsonLine(effectStatusRecord(pending, sessionId, status, at)));
 		}
 		for (const subscription of this.subscriptions.values()) {
 			if (!subscription.options.effects || !subscriptionMatches(subscription.options, sessionId, view.entry))
@@ -236,20 +234,23 @@ export class SessionStatusStream {
 	}
 
 	mirrorTargets(sessionId: string, recordType: string, dialogs = false): readonly string[] {
-		const subscriptions = [...this.pendings.values(), ...this.subscriptions.values()].filter(
-			(subscription) =>
-				(dialogs ? subscription.options.dialogs === true : true) &&
-				(recordType === "snapshot_marker" || dialogs
-					? subscription.options.mirror.kind !== "none"
-					: mirrorsRecord(subscription.options.mirror, recordType)),
+		return [...new Set(this.mirrorSubscriptions(sessionId, recordType, dialogs).map((s) => s.connectionId))];
+	}
+
+	mirrorAdmissions(peer: string, sessionId: string, recordType: string): readonly string[] {
+		return this.mirrorSubscriptions(sessionId, recordType).flatMap((s) =>
+			s.connectionId === peer && s.options.admissionId !== undefined ? [s.options.admissionId] : [],
 		);
-		if (subscriptions.length === 0) return [];
-		const entry = this.source?.entryView(sessionId) ?? this.lastViews.get(sessionId)?.entry;
-		if (entry === undefined) return [];
-		const targets = new Set<string>();
-		for (const subscription of subscriptions)
-			if (subscriptionMatches(subscription.options, sessionId, entry)) targets.add(subscription.connectionId);
-		return [...targets];
+	}
+
+	private mirrorSubscriptions(sessionId: string, recordType: string, dialogs = false): readonly Subscription[] {
+		return matchingMirrors(
+			[...this.pendings.values(), ...this.subscriptions.values()],
+			sessionId,
+			recordType,
+			this.source?.entryView(sessionId) ?? this.lastViews.get(sessionId)?.entry,
+			dialogs,
+		);
 	}
 
 	matchingConnections(sessionId: string): ReadonlyMap<string, boolean> {

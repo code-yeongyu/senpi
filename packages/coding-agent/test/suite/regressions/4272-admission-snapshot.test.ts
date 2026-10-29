@@ -149,7 +149,8 @@ it("T2/X04 cancellation racing subscribe cleans the actual returned subscription
 		outcome: "cancelled",
 	});
 	const answer = await pending;
-	expect(dataOf(answer).subscriptionId).toBe(actual);
+	expect(answer).toMatchObject({ success: false, code: "attempt_cancelled", admissionId: "late-client-id" });
+	expect(answer).not.toHaveProperty("sessionId");
 	expect(unsubscribe).toHaveBeenCalledExactlyOnceWith("peer", actual);
 	expect(host.writer.isCompactSubscription("peer", "late-client-id", actual)).toBe(false);
 	expect(host.writer.status.connectionSize("peer")).toBe(0);

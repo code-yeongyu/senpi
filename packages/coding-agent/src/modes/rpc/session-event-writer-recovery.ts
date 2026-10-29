@@ -20,7 +20,50 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 	}
 	registerSubscription(peer: string, admissionId: string, subscriptionId: string): void {
 		const actor = this.fanout.get(peer)?.actor;
-		if (actor instanceof AdmissionRoutingActor) actor.subscriptions.set(subscriptionId, admissionId);
+		if (!(actor instanceof AdmissionRoutingActor)) return;
+		actor.subscriptions.set(subscriptionId, admissionId);
+		actor.mirrorOwners.set(subscriptionId, admissionId);
+		const pending = this.status.pendingBuffer(subscriptionId);
+		if (pending) actor.pendingMirrors.set(admissionId, pending);
+		this.status.onSubscriptionEnd = (owner, id) => this.retireMirror(owner, id);
+		actor.mirrorAdmissions = (sessionId, type) => {
+			const ids = this.status.mirrorAdmissions(peer, sessionId, type);
+			const socketEpoch = this.socketEpochOf(peer);
+			const lane = this.recoveryLane(sessionId);
+			return ids.filter((id) => {
+				if (!lane || lane.retired)
+					return (
+						actor.remember(sessionId, this.recoveryCheckpoints, socketEpoch ?? "")?.routes.includes(id) === true
+					);
+				if (socketEpoch && this.recoveryCheckpoints.stream({ socketEpoch, sessionId })?.routes.includes(id))
+					return true;
+				if (socketEpoch && lane) {
+					const frozen = this.recoveryCheckpoints.freeze(
+						{ socketEpoch, sessionId, peer, admissionId: id, routeKind: "mirror" },
+						lane,
+						true,
+					);
+					if (frozen.ok) return true;
+				}
+				actor.pendingMirrors.get(id)?.retire("storage_unavailable");
+				process.stderr.write(`senpi rpc mirror checkpoint unavailable (${type}); closing connection\n`);
+				this.fanout.get(peer)?.connection.close?.();
+				return true;
+			});
+		};
+	}
+	private retireMirror(peer: string, subscriptionId: string): void {
+		const registered = this.fanout.get(peer);
+		const actor = registered?.actor;
+		if (!(actor instanceof AdmissionRoutingActor) || !registered) return;
+		const admissionId = actor.mirrorOwners.get(subscriptionId);
+		if (admissionId === undefined) return;
+		actor.pendingMirrors.get(admissionId)?.retire();
+		actor.pendingMirrors.delete(admissionId);
+		actor.mirrorOwners.delete(subscriptionId);
+		actor.subscriptions.delete(subscriptionId);
+		for (const sessionId of this.fanout.acceptance.keys())
+			this.recoveryCheckpoints.retireRoute({ socketEpoch: registered.socketEpoch, sessionId }, admissionId);
 	}
 	unregisterSubscription(peer: string, subscriptionId: string): void {
 		const actor = this.fanout.get(peer)?.actor;
@@ -31,7 +74,11 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 		return (
 			typeof admissionId === "string" &&
 			actor instanceof AdmissionRoutingActor &&
-			actor.subscriptions.get(subscriptionId) === admissionId
+			(actor.subscriptions.get(subscriptionId) === admissionId ||
+				([...actor.mirrorOwners.values()].includes(admissionId) &&
+					this.recoveryCheckpoints
+						.stream({ socketEpoch: this.socketEpochOf(peer) ?? "", sessionId: subscriptionId })
+						?.routes.includes(admissionId) === true))
 		);
 	}
 	registerAdmission(peer: string, admissionId: string, sessionId: string): void {

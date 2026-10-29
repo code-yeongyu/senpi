@@ -22,11 +22,29 @@ export async function compactSubscribe(
 	const fingerprint = createHash("sha256")
 		.update(JSON.stringify(Object.entries(request).sort(([a], [b]) => a.localeCompare(b))))
 		.digest("hex");
-	let delivery: ReturnType<typeof Promise.withResolvers<Readonly<Record<string, unknown>>>> | undefined;
+	let delivery: ReturnType<typeof Promise.withResolvers<Readonly<Record<string, unknown>> | undefined>> | undefined;
+	let baseline: (() => void) | undefined;
+	const cancelledAnswer = async () => {
+		const result = await host.admissions?.result(socketEpoch, admissionId);
+		return result?.state === "cancelled"
+			? {
+					id,
+					type: "response" as const,
+					command: command.type,
+					success: false as const,
+					code: "attempt_cancelled",
+					errorCode: "attempt_cancelled",
+					error: "attempt_cancelled",
+					admissionId,
+					generation: 0,
+				}
+			: undefined;
+	};
 	try {
 		const answer = await host.admissions.run({ peer, socketEpoch, admissionId, fingerprint }, async () => {
 			let lease: EventLease | undefined;
 			const subscribed = answerSubscribeSessions(command, peer, host.writer.status, (rows, subscriptionId) => {
+				host.writer.registerSubscription(peer, admissionId, subscriptionId);
 				lease = statusSnapshot(events, socketEpoch, admissionId, subscriptionId, rows);
 			});
 			const subscriptionId = subscribed.activate;
@@ -38,23 +56,44 @@ export async function compactSubscribe(
 				return { answer: { ...subscribed.answer }, release: async () => {} };
 			}
 			if (lease === undefined) throw new CompactAdmissionError("storage_unavailable");
+			const pending = host.writer.status.pendingBuffer(subscriptionId);
+			if (!pending) throw new CompactAdmissionError("storage_unavailable");
 			const eventLease = lease;
 			const identity = { sessionId: subscriptionId, admissionId, generation: 0 };
 			delivery = Promise.withResolvers();
 			const reply = delivery.promise;
 			let live = true;
-			host.writer.installAdmissionBaseline(
-				peer,
-				admissionBaseline(reply, { ...identity, eventLease, componentRef: "record" }, () => live),
-				() => host.writer.socketEpochOf(peer) === socketEpoch,
-			);
-			// All subsequent status changes enter the bounded actor behind this barrier, never pending.lines[].
-			host.writer.registerSubscription(peer, admissionId, subscriptionId);
-			host.writer.status.activate(subscriptionId);
+			let installed = false;
+			baseline = () => {
+				if (installed) return;
+				installed = true;
+				host.writer.installAdmissionBaseline(
+					peer,
+					admissionBaseline(reply, { ...identity, eventLease, componentRef: "record" }, () => live),
+					() => host.writer.socketEpochOf(peer) === socketEpoch,
+				);
+			};
 			const { snapshot: _snapshot, ...data } = subscribed.answer.data;
 			return {
 				answer: { ...subscribed.answer, ...identity, data: { ...data, recovery: eventLease } },
+				activate: () => {
+					baseline?.();
+					host.writer.status.activate(subscriptionId);
+				},
+				refusal: () =>
+					pending.reason === undefined
+						? undefined
+						: {
+								...error(undefined, command.type, pending.reason, {
+									kind: "request_refused",
+									reason: pending.reason,
+									hint: "new_request",
+								}),
+								admissionId,
+								generation: 0,
+							},
 				release: async () => {
+					if (!live) return;
 					live = false;
 					host.writer.unregisterSubscription(peer, subscriptionId);
 					host.writer.status.unsubscribe(peer, subscriptionId);
@@ -62,18 +101,27 @@ export async function compactSubscribe(
 				},
 			};
 		});
-		const response = { ...answer, id };
-		if (delivery) delivery.resolve(response);
-		else await host.writer.enqueueControl(response, peer);
+		if (host.writer.socketEpochOf(peer) !== socketEpoch) {
+			delivery?.resolve(undefined);
+			return undefined;
+		}
+		const response = { ...((await cancelledAnswer()) ?? answer), id };
+		if (delivery) {
+			baseline?.();
+			delivery.resolve(response);
+		} else await host.writer.enqueueControl(response, peer);
 		return undefined;
 	} catch (cause) {
 		if (!(cause instanceof CompactAdmissionError)) throw cause;
-		const refusal = error(id, command.type, `admission_${cause.reason}`, {
-			kind: "request_refused",
-			reason: cause.reason,
-			hint: "new_request",
-		});
+		const refusal =
+			(await cancelledAnswer()) ??
+			error(id, command.type, `admission_${cause.reason}`, {
+				kind: "request_refused",
+				reason: cause.reason,
+				hint: "new_request",
+			});
 		if (delivery) {
+			baseline?.();
 			delivery.resolve({ ...refusal });
 			return undefined;
 		}

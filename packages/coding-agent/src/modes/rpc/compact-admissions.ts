@@ -1,23 +1,26 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { parseBoundedId } from "./compact-recovery-ids.ts";
 import { CompactAdmissionError } from "./compact-admission-error.ts";
 import { AdmissionProducerLifetime, runAdmissionProducer } from "./compact-admission-producer.ts";
+import {
+	ADMISSION_LIMITS,
+	type AdmissionRow as Row,
+	readAdmissionRow,
+	writeAdmissionRow,
+} from "./compact-admission-row.ts";
 export { CompactAdmissionError } from "./compact-admission-error.ts";
-
-/** Per socket epoch: 128 IDs, 16 MiB reserved disk bytes, 16 live producers. No retired ID is evicted. */
-export const ADMISSION_LIMITS = { entries: 128, bytes: 16 * 1024 * 1024, hot: 16, row: 131_584 } as const;
-const rowSchema = z.object({
-	fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
-	state: z.enum(["pending", "complete", "cancelled", "failed"]),
-	answer: z.string().max(65_536).optional(),
-});
-type Row = z.infer<typeof rowSchema>;
+export { ADMISSION_LIMITS } from "./compact-admission-row.ts";
 type Answer = Readonly<Record<string, unknown>>;
-type Produced = { readonly answer: Answer; readonly release: () => Promise<void> };
+type Produced = {
+	readonly answer: Answer;
+	readonly release: () => Promise<void>;
+	readonly activate?: () => void;
+	readonly refusal?: () => Answer | undefined;
+};
 type Pending = ReturnType<typeof Promise.withResolvers<Answer>>;
 type Epoch = {
 	readonly producer: AdmissionProducerLifetime;
@@ -91,29 +94,6 @@ export class CompactAdmissions {
 		}
 	}
 
-	private async read(epoch: Epoch, key: string): Promise<Row | undefined> {
-		try {
-			const text = await readFile(join(await epoch.directory, key), "utf8");
-			if (Buffer.byteLength(text) > ADMISSION_LIMITS.row) throw new CompactAdmissionError("storage_unavailable");
-			return rowSchema.parse(JSON.parse(text));
-		} catch (cause) {
-			if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") return undefined;
-			if (cause instanceof CompactAdmissionError) throw cause;
-			throw new CompactAdmissionError("storage_unavailable");
-		}
-	}
-
-	private async write(epoch: Epoch, key: string, row: Row): Promise<void> {
-		const text = JSON.stringify(row);
-		if (Buffer.byteLength(text) > ADMISSION_LIMITS.row) throw new CompactAdmissionError("storage_unavailable");
-		try {
-			await writeFile(join(await epoch.directory, key), text, { mode: 0o600 });
-		} catch (cause) {
-			if (!(cause instanceof Error)) throw cause;
-			throw new CompactAdmissionError("storage_unavailable");
-		}
-	}
-
 	async run(
 		identity: {
 			readonly socketEpoch: string;
@@ -127,7 +107,7 @@ export class CompactAdmissions {
 		const epoch = this.epoch(identity.socketEpoch, identity.peer);
 		const registered = await this.serial(epoch, async () => {
 			if (epoch.ended) throw new CompactAdmissionError("admission_retired");
-			const row = await this.read(epoch, key);
+			const row = await readAdmissionRow(epoch, key);
 			if (row) {
 				if (row.fingerprint !== identity.fingerprint) throw new CompactAdmissionError("admission_conflict");
 				switch (row.state) {
@@ -150,7 +130,7 @@ export class CompactAdmissions {
 			if (epoch.entries >= this.limits.entries || (epoch.entries + 1) * ADMISSION_LIMITS.row > this.limits.bytes)
 				throw new CompactAdmissionError("admission_limit");
 			if (epoch.hot.size >= ADMISSION_LIMITS.hot) throw new CompactAdmissionError("admission_busy");
-			await this.write(epoch, key, { state: "pending", fingerprint: identity.fingerprint });
+			await writeAdmissionRow(epoch, key, { state: "pending", fingerprint: identity.fingerprint });
 			epoch.entries++;
 			const pending = Promise.withResolvers<Answer>();
 			void pending.promise.catch(() => {});
@@ -172,18 +152,37 @@ export class CompactAdmissions {
 				() => produce(epoch.producer.signal),
 				(value) => value.release(),
 			);
-			const value = produced.answer;
-			const answer = JSON.stringify(produced.answer);
-			if (Buffer.byteLength(answer) > 65_536) throw new CompactAdmissionError("storage_unavailable");
+			let value = produced.answer;
 			const cancelled = await this.serial(epoch, async () => {
-				const row = await this.read(epoch, key);
+				const row = await readAdmissionRow(epoch, key);
 				const retired = epoch.ended || row?.state === "cancelled";
-				await this.write(epoch, key, {
-					state: retired ? "cancelled" : "complete",
-					fingerprint: identity.fingerprint,
-					answer,
-				});
-				return retired;
+				const persist = async () => {
+					const answer = JSON.stringify(value);
+					if (Buffer.byteLength(answer) > 65_536) throw new CompactAdmissionError("storage_unavailable");
+					await writeAdmissionRow(epoch, key, {
+						state: retired ? "cancelled" : "complete",
+						fingerprint: identity.fingerprint,
+						answer,
+					});
+				};
+				value = produced?.refusal?.() ?? value;
+				await persist();
+				// Overflow during the durable write is a terminal, replayable refusal, not a fresh attempt.
+				const refused = produced?.refusal?.();
+				if (refused && JSON.stringify(refused) !== JSON.stringify(value)) {
+					value = refused;
+					await persist();
+				}
+				if (retired || epoch.ended || refused) return true;
+				// RULING-93: durable terminal row FIRST, synchronous activation SECOND. A crash
+				// between them ends this connection, which retires its subscription and pending buffer.
+				try {
+					produced?.activate?.();
+				} catch {
+					process.stderr.write("senpi rpc admission activation failed; releasing subscription\n");
+					throw new CompactAdmissionError("storage_unavailable");
+				}
+				return false;
 			});
 			if (cancelled) {
 				const release = produced.release;
@@ -196,7 +195,7 @@ export class CompactAdmissions {
 			if (produced) await produced.release();
 			try {
 				await this.serial(epoch, () =>
-					this.write(epoch, key, { state: "failed", fingerprint: identity.fingerprint }),
+					writeAdmissionRow(epoch, key, { state: "failed", fingerprint: identity.fingerprint }),
 				);
 			} finally {
 				registered.pending.reject(cause);
@@ -212,7 +211,7 @@ export class CompactAdmissions {
 		const epoch = this.epochs.get(socketEpoch);
 		if (!epoch) return "unknown";
 		return this.serial(epoch, async () => {
-			const row = await this.read(epoch, key);
+			const row = await readAdmissionRow(epoch, key);
 			if (!row) return "unknown";
 			switch (row.state) {
 				case "complete":
@@ -221,7 +220,7 @@ export class CompactAdmissions {
 				case "cancelled":
 					return "cancelled";
 				case "pending":
-					await this.write(epoch, key, { ...row, state: "cancelled" });
+					await writeAdmissionRow(epoch, key, { ...row, state: "cancelled" });
 					return "cancelled";
 			}
 		});
@@ -236,7 +235,7 @@ export class CompactAdmissions {
 		const epoch = this.epochs.get(socketEpoch);
 		if (!epoch) return undefined;
 		return this.serial(epoch, async () => {
-			const row = await this.read(epoch, key);
+			const row = await readAdmissionRow(epoch, key);
 			if (row?.answer === undefined) return undefined;
 			return { state: row.state, answer: z.record(z.string(), z.unknown()).parse(JSON.parse(row.answer)) };
 		});
