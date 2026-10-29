@@ -173,7 +173,7 @@ function writeRuntimeManifest(metafiles) {
 	writeFileSync(join(bundleDir, "runtime-manifest.json"), `${JSON.stringify(manifest)}\n`);
 }
 
-function findContainingOutput(metafile, inputSuffix) {
+export function findContainingOutput(metafile, inputSuffix) {
 	const normalizedSuffix = inputSuffix.replaceAll("\\", "/");
 	for (const [outputPath, output] of Object.entries(metafile.outputs)) {
 		if (Object.keys(output.inputs).some((inputPath) => inputPath.replaceAll("\\", "/").endsWith(normalizedSuffix))) {
@@ -198,6 +198,7 @@ async function buildBundle() {
 		join(codingAgentDistDir, "modes", "rpc", "host-supervisor-entry.js"),
 		join(codingAgentDistDir, "client", "index.js"),
 		join(codingAgentDistDir, "utils", "image-resize-worker.js"),
+		join(codingAgentDistDir, "core", "extensions", "builtin", "permission-system", "path-identity-worker.js"),
 		join(aiDistDir, "api", "bedrock-converse-stream.js"),
 		join(aiDistDir, "auth", "oauth", "anthropic.js"),
 	]) {
@@ -230,10 +231,69 @@ async function buildBundle() {
 		throw new Error("Bedrock and OAuth lazy loaders were emitted into different directories");
 	}
 
-	// These implementations are reached through variable-specifier imports or a
-	// worker URL, so the main bundle cannot follow them. Emit one self-contained
-	// file per implementation beside the code that resolves it.
-	const lazyEntryPoints = {
+	const lazy = lazyEntryPoints({ codingAgentDistDir, aiDistDir });
+
+	// Every OAuth flow loaded through importOAuthModule() must have a lazy entry,
+	// otherwise the flow fails at runtime with a missing module error.
+	const oauthLoadSource = readFileSync(join(repoRoot, "packages", "ai", "src", "auth", "oauth", "load.ts"), "utf8");
+	for (const match of oauthLoadSource.matchAll(/importOAuthModule\("\.\/([^"]+)\.ts"\)/g)) {
+		if (!(match[1] in lazy)) {
+			throw new Error(`OAuth flow "${match[1]}" is lazily imported but has no lazy bundle entry`);
+		}
+	}
+
+	const lazyResult = await build({
+		...commonBuildOptions(),
+		entryNames: "[name]",
+		entryPoints: lazy,
+		outdir: dirname(bedrockLoaderOutput),
+		splitting: false,
+	});
+
+	const imageResizeWorkerOutput = resolve(dirname(bedrockLoaderOutput), "image-resize-worker.js");
+	if (dirname(imageResizeOutput) !== dirname(imageResizeWorkerOutput)) {
+		throw new Error("Image resize implementation and worker were emitted into different directories");
+	}
+	const pathIdentityHostOutput = findContainingOutput(
+		mainResult.metafile,
+		"packages/coding-agent/dist/core/extensions/builtin/permission-system/path-identity-host.js",
+	);
+	if (dirname(pathIdentityHostOutput) !== dirname(bedrockLoaderOutput)) {
+		throw new Error("Path identity host and its resolver worker were emitted into different directories");
+	}
+
+	const supervisorResult = await buildSupervisor();
+
+	const metafiles = [mainResult.metafile, lazyResult.metafile, supervisorResult.metafile];
+	validateExternalImports(metafiles);
+	chmodSync(join(bundleDir, "cli.js"), 0o755);
+	chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
+	writeRuntimeManifest(metafiles);
+
+	const files = new Set(metafiles.flatMap((metafile) => Object.keys(metafile.outputs))).size;
+	const mib = outputBytes(metafiles) / (1024 * 1024);
+	console.log(`Built ${relative(repoRoot, bundleDir)} (${files} files, ${mib.toFixed(1)} MiB)`);
+}
+
+// The lifecycle supervisor's own program (senpi#3743): self-contained beside cli.js, so a supervisor loads
+// only its own graph instead of booting the whole CLI to reach `--internal-rpc-host-supervisor`.
+function buildSupervisor() {
+	return build({
+		...commonBuildOptions(),
+		entryNames: "[name]",
+		entryPoints: { "host-supervisor": join(codingAgentDistDir, "modes", "rpc", "host-supervisor-entry.js") },
+		outdir: bundleDir,
+		splitting: false,
+	});
+}
+
+/**
+ * Implementations reached through variable-specifier imports or a worker URL, which the main
+ * bundle cannot follow: one self-contained file per implementation, emitted beside the code that
+ * resolves it.
+ */
+export function lazyEntryPoints({ codingAgentDistDir, aiDistDir }) {
+	return {
 		anthropic: join(aiDistDir, "auth", "oauth", "anthropic.js"),
 		"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
 		cursor: join(aiDistDir, "auth", "oauth", "cursor.js"),
@@ -248,6 +308,16 @@ async function buildBundle() {
 		// or `host ensure` dies with "Module not found .../chunks/host-lifecycle.js".
 		"host-lifecycle": join(codingAgentDistDir, "modes", "rpc", "host-lifecycle.js"),
 		"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
+		// `path-identity-host.js` starts this with new URL("./path-identity-worker.js", import.meta.url), so
+		// the worker must sit in the chunk directory the host is emitted into (checked after the build).
+		"path-identity-worker": join(
+			codingAgentDistDir,
+			"core",
+			"extensions",
+			"builtin",
+			"permission-system",
+			"path-identity-worker.js",
+		),
 		"session-worker": join(codingAgentDistDir, "modes", "rpc", "session-worker.js"),
 		"kimi-coding": join(aiDistDir, "auth", "oauth", "kimi-coding.js"),
 		meta: join(aiDistDir, "auth", "oauth", "meta.js"),
@@ -257,48 +327,6 @@ async function buildBundle() {
 		radius: join(aiDistDir, "auth", "oauth", "radius.js"),
 		xai: join(aiDistDir, "auth", "oauth", "xai.js"),
 	};
-
-	// Every OAuth flow loaded through importOAuthModule() must have a lazy entry,
-	// otherwise the flow fails at runtime with a missing module error.
-	const oauthLoadSource = readFileSync(join(repoRoot, "packages", "ai", "src", "auth", "oauth", "load.ts"), "utf8");
-	for (const match of oauthLoadSource.matchAll(/importOAuthModule\("\.\/([^"]+)\.ts"\)/g)) {
-		if (!(match[1] in lazyEntryPoints)) {
-			throw new Error(`OAuth flow "${match[1]}" is lazily imported but has no lazy bundle entry`);
-		}
-	}
-
-	const lazyResult = await build({
-		...commonBuildOptions(),
-		entryNames: "[name]",
-		entryPoints: lazyEntryPoints,
-		outdir: dirname(bedrockLoaderOutput),
-		splitting: false,
-	});
-
-	const imageResizeWorkerOutput = resolve(dirname(bedrockLoaderOutput), "image-resize-worker.js");
-	if (dirname(imageResizeOutput) !== dirname(imageResizeWorkerOutput)) {
-		throw new Error("Image resize implementation and worker were emitted into different directories");
-	}
-
-	// The lifecycle supervisor's own program (senpi#3743): self-contained beside cli.js, so a supervisor loads
-	// only its own graph instead of booting the whole CLI to reach `--internal-rpc-host-supervisor`.
-	const supervisorResult = await build({
-		...commonBuildOptions(),
-		entryNames: "[name]",
-		entryPoints: { "host-supervisor": join(codingAgentDistDir, "modes", "rpc", "host-supervisor-entry.js") },
-		outdir: bundleDir,
-		splitting: false,
-	});
-
-	const metafiles = [mainResult.metafile, lazyResult.metafile, supervisorResult.metafile];
-	validateExternalImports(metafiles);
-	chmodSync(join(bundleDir, "cli.js"), 0o755);
-	chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
-	writeRuntimeManifest(metafiles);
-
-	const files = new Set(metafiles.flatMap((metafile) => Object.keys(metafile.outputs))).size;
-	const mib = outputBytes(metafiles) / (1024 * 1024);
-	console.log(`Built ${relative(repoRoot, bundleDir)} (${files} files, ${mib.toFixed(1)} MiB)`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

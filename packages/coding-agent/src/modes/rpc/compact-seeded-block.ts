@@ -174,7 +174,7 @@ export function foldSeededBlock(
 	}
 }
 
-export function frozenSeededBlock(block: SeededBlock) {
+function frozenSeededBlock(block: SeededBlock) {
 	return {
 		type: block.type,
 		fields: block.fields,

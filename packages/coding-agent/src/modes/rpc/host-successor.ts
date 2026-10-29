@@ -17,6 +17,7 @@
  * generation's next restart ever sees the successor that did not happen.
  */
 import { type ChildProcess, spawn } from "node:child_process";
+import { spawnWithPrivateFds } from "../../private-fd-spawn.ts";
 import { randomUUID } from "node:crypto";
 import { open, rm, writeFile } from "node:fs/promises";
 import { waitForStartTime } from "../../utils/process-identity.ts";
@@ -122,7 +123,7 @@ export async function startSuccessor(context: {
 		];
 		const launch = (options._test?.launch ?? options.launch)?.(argv) ?? defaultHostLaunch(argv);
 		const stderr = await open(paths.stderrLog, "a", 0o600);
-		const spawned = spawn(launch.command, [...launch.args], {
+		const spawned = spawnWithPrivateFds(spawn, launch.command, [...launch.args], {
 			detached: true,
 			windowsHide: true,
 			env: successorHostEnvironment({
