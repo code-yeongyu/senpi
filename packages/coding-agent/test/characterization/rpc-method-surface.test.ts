@@ -39,6 +39,7 @@ const HOST_METHODS = new Set(
  */
 const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	get_recovery_page: "no::Unknown command: get_recovery_page",
+	release_recovery: "no::Unknown command: release_recovery",
 	get_protocol_info:
 		"ok{agentDir,capabilities,engineOrdinal,engineVersion,generation,instanceId,launch_profile,memory_pressure,mode,path_identity_resolver,protocolVersion,serverVersion}",
 	open_session: "ok{sessionId,state}",
