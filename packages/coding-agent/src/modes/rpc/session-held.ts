@@ -10,7 +10,7 @@ import { type RpcSessionEntry, RpcSessionRegistryError } from "./session-registr
 
 // Admission is conservative: a new command must pass the guard unless it is explicitly
 // a read or a control needed to finish/cancel an already-admitted turn.
-const READ_ONLY_OR_CONTROL = new Set<RpcInboundRecord["type"]>([
+export const READ_ONLY_OR_CONTROL: ReadonlySet<string> = new Set<RpcInboundRecord["type"]>([
 	"get_state",
 	"get_snapshot",
 	"get_effect_status",

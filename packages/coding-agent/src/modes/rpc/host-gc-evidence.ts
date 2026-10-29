@@ -62,10 +62,12 @@ export async function socketSiblings(socket: string): Promise<readonly string[]>
 
 /**
  * EVERY generation, not only the pointer's: a predecessor draining after a handoff is still serving.
- * Also the "dead" half of `classifyEndpointLiveness`, so the verdict and gc never disagree about it.
+ * Also the "dead" half of `classifyEndpointLiveness`, so the verdict and gc never disagree about it. `except` names
+ * the generation asking whether ANOTHER one runs (a successor still consuming its predecessor's parks).
  */
-export async function anyGenerationLive(paths: HostDaemonDirectory): Promise<boolean> {
+export async function anyGenerationLive(paths: HostDaemonDirectory, except?: string): Promise<boolean> {
 	for (const instanceId of await readdir(paths.generationsDir).catch(() => [] as string[])) {
+		if (instanceId === except) continue;
 		if (await hostChildAlive(generationPaths(paths, instanceId))) return true;
 		const record = generationRecord(await readFileOrUndefined(generationPaths(paths, instanceId).pidFile));
 		if (record !== undefined && (await recordIsLive(record))) return true;

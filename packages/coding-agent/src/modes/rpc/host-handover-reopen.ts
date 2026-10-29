@@ -1,10 +1,13 @@
-import { existsSync } from "node:fs";
-import { createHostDaemonPaths } from "./host-daemon-paths.ts";
+import { existsSync, type FSWatcher, watch } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { createHostDaemonPaths, type HostDaemonDirectory } from "./host-daemon-paths.ts";
+import { anyGenerationLive } from "./host-gc-evidence.ts";
 import {
 	clearHandoverParkedSession,
-	dropHandoverParkedSessionIfFileGone,
 	type HandoverParkedEntry,
+	handoverParkedRecordDir,
 	readHandoverParkedSessions,
+	recordHandoverParkedFailure,
 } from "./host-handover-parked.ts";
 import { RpcSessionRegistryError } from "./session-registry.ts";
 
@@ -15,15 +18,24 @@ import { RpcSessionRegistryError } from "./session-registry.ts";
  */
 export type ParkedSessionOpener = (entry: HandoverParkedEntry) => Promise<void>;
 
-// The watch budget must outlast a heavily loaded drain: a predecessor whose event loop is blocked
-// (parallel hosts, a busy turn settling) can take tens of seconds to write its park after this
-// generation binds. The record persists until a successful reopen consumes it, so a generous
-// budget is safe: the watch is a background task that never blocks readiness, and it returns early
-// once the record has been drained and stayed empty for the quiet streak.
-const HANDOVER_PARKED_REOPEN_BUDGET_MS = 120_000;
-const HANDOVER_PARKED_REOPEN_POLL_MS = 250;
-const HANDOVER_PARKED_REOPEN_MAX_ATTEMPTS = 8;
-const HANDOVER_PARKED_REOPEN_QUIET_STREAK = 8;
+/**
+ * A guard against a missed change notification, never the pace of the work: the consumer wakes on every change to
+ * the park records, the path claims and the generations (code-yeongyu/oh-my-openagent#10091).
+ */
+const RESCAN_FALLBACK_MS = 30_000;
+
+/** What woke the consumer. Its own failure records wake it as `record`, which never retries a failed reopen. */
+export type ReopenWake = "record" | "claims" | "generations" | "fallback";
+
+/** What the consumer waits on: the host watches its daemon directory, and a test drives every wake itself. */
+export interface ReopenWatch {
+	/** Registered before the first scan, so a park written while a scan runs wakes the next one. */
+	subscribe(wake: (cause: ReopenWake) => void): () => void;
+	/** Whether a generation other than this one still runs: it may park another session for this one. */
+	predecessorLive(): Promise<boolean>;
+	/** Test seam: called each time the consumer waits for its next wake. */
+	readonly idle?: () => void;
+}
 
 /**
  * The host the watch reopens into. `shouldReopen` returns false once that host is draining for a
@@ -36,56 +48,183 @@ export interface ReopenHolder {
 }
 
 /**
- * senpi#3282: a successor host reopens exactly the set its predecessor held resident and parked
- * with `handoff_parked`, restoring it with the same durable id and `retain_on_disconnect`. An
- * entry is removed from the record only after a successful reopen (crash-safe, at most once); an
- * entry whose session file is gone is logged and dropped. Runs once at host startup.
+ * senpi#3282: a successor host reopens exactly the set its predecessor held resident and parked with
+ * `handoff_parked`, restoring it with the same durable id and `retain_on_disconnect`. It consumes the parks for as
+ * long as a predecessor runs or a park remains (code-yeongyu/oh-my-openagent#10091): a session that transfers hours
+ * after this host took the socket still reopens here. An entry is removed only after its reopen succeeded and only
+ * while it still names that transfer; one whose reopen fails stays, with the failure recorded on it, and is tried
+ * again when a claim or a generation changes. An entry whose session file is gone, or whose task ended, is dropped.
  */
 export async function reopenHandoverParkedSessions(
 	open: ParkedSessionOpener,
 	agentDir: string,
 	socket: string,
 	holder?: ReopenHolder,
+	watcher?: ReopenWatch,
 ): Promise<void> {
-	const daemonDir = createHostDaemonPaths({ socket, agentDir }).dir;
-	// The predecessor parks its retained sessions AFTER this generation binds the public socket (its
-	// drain fires on detecting supersession), so the record is not necessarily present at startup,
-	// and a session still busy at the drain start parks only after its turn settles. Returning on the
-	// first empty read would drop those. Keep watching until the record has stayed empty for a
-	// sustained streak - the drain has finished writing by then - bounded by the window. Entries are
-	// removed only after a successful reopen (crash-safe, at most once, never lost).
-	//
-	// The empty-streak early-exit only applies once a park has actually been seen: under load the
-	// predecessor's drain can be delayed past the whole quiet streak while it has not written a
-	// single entry yet, and returning then would skip a park that lands late (senpi#3282 review).
-	// Before the first entry arrives, only the budget ends the watch. The record persists until a
-	// successful reopen consumes it, so the watch can afford a generous budget: a predecessor whose
-	// event loop is starved by parallel hosts still parks eventually, and the entry is waiting when
-	// it does. Once a park has been seen and the record has stayed empty for the quiet streak, the
-	// drain is finished and the watch returns early.
-	const deadline = Date.now() + HANDOVER_PARKED_REOPEN_BUDGET_MS;
-	const reopenAttempts = new Map<string, number>();
-	const heldPolls = new Map<string, number>();
-	let emptyStreak = 0;
-	let sawAnyPark = false;
-	for (;;) {
-		// A draining predecessor must not reopen into its own registry a session it just parked for
-		// its successor: stop consuming the record and leave every entry for the next generation
-		// (senpi#3282). The watch returns, the record persists, and the successor's own watch reopens
-		// it by path with the same durable id.
-		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
-		const parked = await inheritedParks(daemonDir, holder);
-		for (const entry of parked) {
-			sawAnyPark = true;
-			await reopenOne(daemonDir, open, entry, reopenAttempts, heldPolls, holder);
+	const paths = createHostDaemonPaths({ socket, agentDir });
+	// The record directory exists before it is watched: the predecessor's first park may land at any moment.
+	await mkdir(handoverParkedRecordDir(paths.dir), { recursive: true, mode: 0o700 }).catch(() => undefined);
+	const source = watcher ?? daemonDirectoryWatch(paths, holder?.hostInstance);
+	const consumer = new ParkConsumer(paths.dir, open, holder);
+	let wake = Promise.withResolvers<void>();
+	let woken = false;
+	// Whether a predecessor may have ended since it was last seen running: the first pass, or a generation change.
+	let livenessDue = true;
+	const unsubscribe = source.subscribe((cause) => {
+		woken = true;
+		if (cause !== "record") consumer.retryFailed();
+		if (cause === "generations" || cause === "fallback") livenessDue = true;
+		wake.resolve();
+	});
+	try {
+		for (;;) {
+			woken = false;
+			wake = Promise.withResolvers<void>();
+			const remaining = await consumer.pass();
+			if (remaining === "stopped") return;
+			if (remaining === 0 && livenessDue) {
+				livenessDue = false;
+				if (!(await predecessorLive(source))) {
+					// A predecessor seen ended parks nothing more: one last pass is conclusive.
+					const last = await consumer.pass();
+					if (last === "stopped" || last === 0) return;
+					continue;
+				}
+			}
+			if (woken) continue;
+			source.idle?.();
+			await wake.promise;
 		}
-		const remaining = (await inheritedParks(daemonDir, holder)).length;
-		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
-		emptyStreak = remaining === 0 ? emptyStreak + 1 : 0;
-		if (sawAnyPark && emptyStreak >= HANDOVER_PARKED_REOPEN_QUIET_STREAK) return;
-		if (Date.now() >= deadline) return;
-		await new Promise((resolve) => setTimeout(resolve, HANDOVER_PARKED_REOPEN_POLL_MS));
+	} finally {
+		unsubscribe();
 	}
+}
+
+class ParkConsumer {
+	private readonly daemonDir: string;
+	private readonly open: ParkedSessionOpener;
+	private readonly holder: ReopenHolder | undefined;
+	/** Transfers whose reopen failed since the last claim or generation change: their own record writes never retry them. */
+	private readonly failed = new Set<string>();
+	private readonly heldTries = new Map<string, number>();
+
+	constructor(daemonDir: string, open: ParkedSessionOpener, holder: ReopenHolder | undefined) {
+		this.daemonDir = daemonDir;
+		this.open = open;
+		this.holder = holder;
+	}
+
+	retryFailed(): void {
+		this.failed.clear();
+	}
+
+	/** Tries every inherited park not tried in this pass until none is new; returns how many remain. */
+	async pass(): Promise<number | "stopped"> {
+		const tried = new Set<string>();
+		for (;;) {
+			if (stopped(this.holder)) return "stopped";
+			const fresh = (await inheritedParks(this.daemonDir, this.holder)).filter(
+				(entry) => !tried.has(transferKey(entry)) && !this.failed.has(transferKey(entry)),
+			);
+			if (fresh.length === 0) break;
+			for (const entry of fresh) {
+				tried.add(transferKey(entry));
+				if ((await this.reopen(entry)) === "failed") this.failed.add(transferKey(entry));
+				if (stopped(this.holder)) return "stopped";
+			}
+		}
+		return (await inheritedParks(this.daemonDir, this.holder)).length;
+	}
+
+	private async reopen(entry: HandoverParkedEntry): Promise<"done" | "held" | "failed"> {
+		const ended = terminalTaskStatus(entry);
+		if (ended !== undefined) {
+			await clearHandoverParkedSession(this.daemonDir, entry.sessionPath, entry.transferId);
+			process.stderr.write(
+				`senpi rpc successor dropped a terminal parked session (${ended}): ${entry.sessionPath}\n`,
+			);
+			return "done";
+		}
+		if (!existsSync(entry.sessionPath)) {
+			await clearHandoverParkedSession(this.daemonDir, entry.sessionPath, entry.transferId);
+			process.stderr.write(
+				`senpi rpc successor dropped a parked session whose file is gone: ${entry.sessionPath}\n`,
+			);
+			return "done";
+		}
+		try {
+			await this.open(entry);
+			// The host started draining while this reopen was in flight: the session landed in a registry that is
+			// handing off, and the drain parks it again. The record stays for the next generation (senpi#3282).
+			if (stopped(this.holder)) return "done";
+			await clearHandoverParkedSession(this.daemonDir, entry.sessionPath, entry.transferId);
+			return "done";
+		} catch (cause) {
+			// `session_path_in_use`: the predecessor still holds the path's claim, so the park is waiting, not
+			// failing. Its release is a claim change, which wakes the next try.
+			if (cause instanceof RpcSessionRegistryError && cause.code === "session_path_in_use") {
+				const tries = (this.heldTries.get(entry.sessionPath) ?? 0) + 1;
+				this.heldTries.set(entry.sessionPath, tries);
+				if (isPowerOfTwo(tries))
+					process.stderr.write(
+						`senpi rpc successor reopen parked session ${entry.sessionPath} waiting on the holder: ${String(cause)}\n`,
+					);
+				return "held";
+			}
+			const attempts = (entry.failedTransfer?.attempts ?? 0) + 1;
+			await recordHandoverParkedFailure(this.daemonDir, entry, {
+				reason: String(cause),
+				at: new Date().toISOString(),
+				attempts,
+			}).catch((error: unknown) => {
+				process.stderr.write(
+					`senpi rpc successor could not record the failed reopen of ${entry.sessionPath}: ${String(error)}\n`,
+				);
+			});
+			if (isPowerOfTwo(attempts))
+				process.stderr.write(
+					`senpi rpc successor reopen parked session ${entry.sessionPath} failed (attempt ${attempts}; kept, tried again on a claim or generation change): ${String(cause)}\n`,
+				);
+			return "failed";
+		}
+	}
+}
+
+/** The host's own watch: the park records, the path claims and the generations, plus the missed-event fallback. */
+function daemonDirectoryWatch(paths: HostDaemonDirectory, self: string | undefined): ReopenWatch {
+	return {
+		subscribe(wake) {
+			const watched: ReadonlyArray<readonly [string, ReopenWake]> = [
+				[handoverParkedRecordDir(paths.dir), "record"],
+				[paths.reservationsDir, "claims"],
+				[paths.generationsDir, "generations"],
+			];
+			const watchers: FSWatcher[] = [];
+			for (const [dir, cause] of watched) {
+				try {
+					const watcher = watch(dir, { persistent: false }, () => wake(cause));
+					// A directory removed under the watch ends it; the fallback rescan still runs.
+					watcher.on("error", () => watcher.close());
+					watchers.push(watcher);
+				} catch {
+					// Not created yet (no claim or generation recorded here): the fallback rescan covers it.
+				}
+			}
+			const fallback = setInterval(() => wake("fallback"), RESCAN_FALLBACK_MS);
+			fallback.unref();
+			return () => {
+				for (const watcher of watchers) watcher.close();
+				clearInterval(fallback);
+			};
+		},
+		predecessorLive: () => anyGenerationLive(paths, self),
+	};
+}
+
+/** An unreadable generation state errs toward a live predecessor: the consumer keeps waiting rather than miss a park. */
+function predecessorLive(source: ReopenWatch): Promise<boolean> {
+	return source.predecessorLive().catch(() => true);
 }
 
 /**
@@ -101,68 +240,25 @@ async function inheritedParks(
 	return parked.filter((entry) => entry.parkedBy === undefined || entry.parkedBy !== holder?.hostInstance);
 }
 
-async function reopenOne(
-	daemonDir: string,
-	open: ParkedSessionOpener,
-	entry: HandoverParkedEntry,
-	attempts: Map<string, number>,
-	heldPolls?: Map<string, number>,
-	holder?: ReopenHolder,
-): Promise<void> {
+function terminalTaskStatus(entry: HandoverParkedEntry): string | undefined {
 	const taskStatus =
 		entry.contextOverlay && Object.hasOwn(entry.contextOverlay, "task_status")
 			? entry.contextOverlay.task_status
 			: entry.sessionContext?.task_status;
-	if (
-		typeof taskStatus === "string" &&
+	return typeof taskStatus === "string" &&
 		["completed", "cancelled", "error", "failed", "lost", "interrupted"].includes(taskStatus)
-	) {
-		await clearHandoverParkedSession(daemonDir, entry.sessionPath);
-		process.stderr.write(
-			`senpi rpc successor dropped a terminal parked session (${taskStatus}): ${entry.sessionPath}\n`,
-		);
-		return;
-	}
-	await dropHandoverParkedSessionIfFileGone(daemonDir, entry.sessionPath);
-	if (!existsSync(entry.sessionPath)) {
-		process.stderr.write(`senpi rpc successor dropped a parked session whose file is gone: ${entry.sessionPath}\n`);
-		return;
-	}
-	try {
-		await open(entry);
-		// The host started draining while this reopen was in flight: the session landed in a registry
-		// that is handing off, and the drain parks it again. Keep the record so the successor still
-		// reopens it; clearing it here would lose the session when the drain closes it (senpi#3282).
-		if (holder?.shouldReopen !== undefined && !holder.shouldReopen()) return;
-		await clearHandoverParkedSession(daemonDir, entry.sessionPath);
-	} catch (cause) {
-		// A `session_path_in_use` refusal means the predecessor still holds the path's cross-generation
-		// claim (its drain has not released it yet): the holder is alive, so the park is not failing -
-		// it is waiting. It is retried on the next poll, bounded only by the watch budget, and it is
-		// NOT counted toward the attempt cap. Only a genuine failure consumes an attempt: if held
-		// refusals also counted, ~2s of holding would push the count past the cap, and the first real
-		// failure after the predecessor releases the path would drop the entry at once (M1).
-		const heldByPredecessor = cause instanceof RpcSessionRegistryError && cause.code === "session_path_in_use";
-		if (heldByPredecessor) {
-			// Throttle the hold log: a slow drain can hold the path for the whole budget, and a line
-			// every 250 ms is ~480 lines of noise. Log the first hold, then about once every 10 s.
-			const polls = (heldPolls?.get(entry.sessionPath) ?? 0) + 1;
-			heldPolls?.set(entry.sessionPath, polls);
-			if (polls === 1 || polls % 40 === 0)
-				process.stderr.write(
-					`senpi rpc successor reopen parked session ${entry.sessionPath} waiting on the holder: ${String(cause)}\n`,
-				);
-			return;
-		}
-		const tried = (attempts.get(entry.sessionPath) ?? 0) + 1;
-		attempts.set(entry.sessionPath, tried);
-		if (tried >= HANDOVER_PARKED_REOPEN_MAX_ATTEMPTS) {
-			process.stderr.write(
-				`senpi rpc successor gave up reopening parked session ${entry.sessionPath} after ${tried} attempts: ${String(cause)}\n`,
-			);
-			await clearHandoverParkedSession(daemonDir, entry.sessionPath);
-			return;
-		}
-		process.stderr.write(`senpi rpc successor reopen parked session ${entry.sessionPath} failed: ${String(cause)}\n`);
-	}
+		? taskStatus
+		: undefined;
+}
+
+function stopped(holder: ReopenHolder | undefined): boolean {
+	return holder?.shouldReopen !== undefined && !holder.shouldReopen();
+}
+
+function transferKey(entry: HandoverParkedEntry): string {
+	return `${entry.sessionPath}\n${entry.transferId ?? ""}`;
+}
+
+function isPowerOfTwo(count: number): boolean {
+	return (count & (count - 1)) === 0;
 }

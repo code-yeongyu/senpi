@@ -26,7 +26,6 @@ import type { AgentSession } from "../../core/agent-session.ts";
 import { isMoveId, isPlainId, parseMoveId } from "../../core/session-move/bundle.ts";
 import { prepareOutgoingState, STATE_ATTEMPT_FIELD } from "../../core/session-move/extension-state.ts";
 import { SessionMovedAwayError } from "../../core/session-move/ownership.ts";
-import { isHandoffBusy } from "./handoff-activity.ts";
 import {
 	RPC_ERROR_ATTACHED,
 	RPC_ERROR_HOST_DRAINING,
@@ -47,6 +46,7 @@ import {
 	type ReleaseSettlePort,
 	takeQueuedInput,
 } from "./session-release-interrupt.ts";
+import { type SessionBusySignal, sessionBusySignals } from "./session-transfer-quiescence.ts";
 
 /** `customType` of the transcript entry a release appends. */
 export const SESSION_RELEASED_ENTRY_TYPE = "session_released";
@@ -61,16 +61,7 @@ export const RELEASED_ADMISSION_CLOSED =
 export const RELEASE_QUEUED_HINT =
 	"queued user input is still owed a turn; release with interrupt: true to take it out and receive it in dropped.user_messages";
 
-export type ReleaseBusySignal =
-	| "turn"
-	| "prompt"
-	| "queued"
-	| "delivery"
-	| "bash"
-	| "compaction"
-	| "session_work"
-	| "activity"
-	| "request";
+export type ReleaseBusySignal = SessionBusySignal;
 
 /** What the router lends a release: its lookup, its request accounting, and the park teardown. */
 export interface SessionReleasePort extends ReleaseSettlePort {
@@ -237,20 +228,7 @@ async function claimAndRelease(
 }
 
 function busySignals(port: SessionReleasePort, sessionId: string, session: AgentSession): ReleaseBusySignal[] {
-	const activity = session.activitySnapshot;
-	const signals: ReleaseBusySignal[] = [];
-	if (activity.isStreaming) signals.push("turn");
-	if (port.pendingPrompts(sessionId).length > 0) signals.push("prompt");
-	// Queued user input outlives its run (a steer can end the stream it was aimed at): it is still owed a turn.
-	if (session.pendingMessageCount > 0) signals.push("queued");
-	if (session.externalAdmission.list().pending.length > 0) signals.push("delivery");
-	if (activity.isBashRunning) signals.push("bash");
-	if (activity.isCompacting) signals.push("compaction");
-	if (activity.hasSessionWork) signals.push("session_work");
-	// The handoff park's predicate decides; a source added to it later is not missed here.
-	if (signals.length === 0 && isHandoffBusy(activity)) signals.push("activity");
-	if (port.otherRequests(sessionId) > 0) signals.push("request");
-	return signals;
+	return sessionBusySignals(session, port.pendingPrompts(sessionId).length, port.otherRequests(sessionId));
 }
 
 function busyData(signals: readonly ReleaseBusySignal[]): Readonly<Record<string, unknown>> {
