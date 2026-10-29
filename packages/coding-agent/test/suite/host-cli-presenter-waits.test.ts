@@ -88,6 +88,24 @@ describe.skipIf(process.platform === "win32")("presenter test waits end on event
 			await expect(waiting).rejects.toThrow("open_session was answered without a queued acknowledgement before it");
 	});
 
+	it.each(["ECONNRESET", "EIO"])("hostCloses accepts only a reset before close (%s)", async (code) => {
+		const { client } = await channel();
+		const closed = hostCloses(client, "the channel", new AbortController().signal);
+		client.destroy(Object.assign(new Error("channel error"), { code }));
+		if (code === "ECONNRESET") await expect(closed).resolves.toBeUndefined();
+		else await expect(closed).rejects.toThrow("the channel failed before the host closed it: channel error");
+	});
+
+	it("hostCloses still requires close after a reset", async () => {
+		const { client } = await channel();
+		const test = new AbortController();
+		const closed = hostCloses(client, "the channel", test.signal);
+		client.emit("error", Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }));
+		test.abort();
+		await expect(closed).rejects.toThrow("still waiting for the host to close the channel when the test ended");
+		expect(client.destroyed).toBe(false);
+	});
+
 	it("hostCloses resolves on the host's close and reports a test that ends first", async () => {
 		const closing = await channel();
 		const closed = hostCloses(closing.client, "the channel", new AbortController().signal);

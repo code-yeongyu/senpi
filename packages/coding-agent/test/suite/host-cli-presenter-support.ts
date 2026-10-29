@@ -65,7 +65,7 @@ export function next(socket: Socket, type: string, signal: AbortSignal): Promise
 	});
 }
 
-/** The host's own close of a channel it refuses; `once` would also reject on the channel's error. */
+/** A refused channel may reset with unread records; require close after either reset or EOF. */
 export function hostCloses(socket: Socket, what: string, signal: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const finish = (error?: Error) => {
@@ -76,7 +76,10 @@ export function hostCloses(socket: Socket, what: string, signal: AbortSignal): P
 			else resolve();
 		};
 		const closed = () => finish();
-		const failed = (cause: Error) => finish(new Error(`${what} failed before the host closed it: ${cause.message}`));
+		const failed = (cause: NodeJS.ErrnoException) => {
+			if (cause.code !== "ECONNRESET")
+				finish(new Error(`${what} failed before the host closed it: ${cause.message}`));
+		};
 		const unwatch = stillWaiting(
 			signal,
 			() => new Error(`still waiting for the host to close ${what} when the test ended; it is open`),
