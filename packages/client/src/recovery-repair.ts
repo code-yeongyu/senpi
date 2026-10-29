@@ -19,6 +19,14 @@ export class RecoveryRepairController {
 	private goneWait: { readonly token: string; readonly until: number } | undefined;
 	private readonly restartedTokens = new Set<string>();
 
+	private rememberRestart(token: string): void {
+		this.restartedTokens.add(token);
+		if (this.restartedTokens.size > 64) {
+			const oldest = this.restartedTokens.values().next();
+			if (!oldest.done) this.restartedTokens.delete(oldest.value);
+		}
+	}
+
 	observe(
 		input: unknown,
 		now: number,
@@ -35,12 +43,12 @@ export class RecoveryRepairController {
 			if (this.restartedTokens.has(context.token)) return { action: "wait", retryAfterMs: delay };
 			if (!this.consecutiveGone) {
 				this.consecutiveGone = true;
-				this.restartedTokens.add(context.token);
+				this.rememberRestart(context.token);
 				return { action: "restart_from_catalog" };
 			}
 			if (this.goneWait?.token !== context.token) this.goneWait = { token: context.token, until: now + delay };
 			if (now >= this.goneWait.until) {
-				this.restartedTokens.add(context.token);
+				this.rememberRestart(context.token);
 				this.goneWait = undefined;
 				return { action: "restart_from_catalog" };
 			}

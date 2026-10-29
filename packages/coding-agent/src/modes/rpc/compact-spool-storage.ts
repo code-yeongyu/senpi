@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import { open, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { RecoveryStorageHealth } from "./compact-storage-health.ts";
+import { recoveryAgentDir, RecoveryStorageHealth } from "./compact-storage-health.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import { createSpoolDir, removeSpoolDir } from "./compact-spool-dir.ts";
 import {
@@ -60,7 +60,7 @@ export abstract class CompactSpoolStorage {
 		};
 	}
 
-	constructor(dir: string, io: CompactStorageIo, health = new RecoveryStorageHealth()) {
+	constructor(dir: string, io: CompactStorageIo, health = new RecoveryStorageHealth(recoveryAgentDir)) {
 		this.dir = dir;
 		this.io = io;
 		this.health = health;

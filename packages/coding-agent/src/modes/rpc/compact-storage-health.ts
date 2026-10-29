@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { constants, lstatSync, mkdirSync } from "node:fs";
-import { open, rename, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getAgentDir } from "../../config.ts";
 import { acquireOwnershipSafeLock } from "./ownership-safe-lock.ts";
 import { privateRootStat } from "./compact-root-owner.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
+
+/** Standalone stores have no host defaults; capture their fallback at module startup, never per session. */
+export const recoveryAgentDir = getAgentDir();
 
 /**
  * RULING-84: shared durable storage-health clock, independent of accepted sequence and freeze generation.
@@ -17,11 +20,21 @@ export class RecoveryStorageHealth {
 	private failures = 0;
 	private cleared = 0;
 	private pending: Promise<string> | undefined;
+	private setup: Promise<void> | undefined;
 
-	constructor(base = getAgentDir()) {
+	constructor(base: string) {
 		this.dir = join(base, `.senpi-recovery-health-${process.getuid?.() ?? "user"}`);
-		mkdirSync(this.dir, { mode: 0o700, recursive: true });
-		if (!privateRootStat(lstatSync(this.dir))) throw new CompactReadError("ownership");
+	}
+
+	private ensureDir(): Promise<void> {
+		this.setup ??= (async () => {
+			await mkdir(this.dir, { mode: 0o700, recursive: true });
+			if (!privateRootStat(await lstat(this.dir))) throw new CompactReadError("ownership");
+		})().catch(() => {
+			this.setup = undefined;
+			throw new CompactReadError("ownership");
+		});
+		return this.setup;
 	}
 
 	get needsRecovery(): boolean {
@@ -32,6 +45,7 @@ export class RecoveryStorageHealth {
 	}
 
 	async revision(): Promise<string> {
+		await this.ensureDir();
 		return (await this.readRevision()) ?? this.advance();
 	}
 
@@ -56,6 +70,7 @@ export class RecoveryStorageHealth {
 
 	/** The operation must actually finish successfully; a refusal leaves both failure and revision unchanged. */
 	async recover(operation: () => Promise<void>): Promise<string> {
+		await this.ensureDir();
 		const through = this.failures;
 		await operation();
 		if (through <= this.cleared) return this.revision();
@@ -73,6 +88,7 @@ export class RecoveryStorageHealth {
 	}
 
 	private async advance(): Promise<string> {
+		await this.ensureDir();
 		const release = await acquireOwnershipSafeLock(join(this.dir, "revision.lock"));
 		const temporary = join(this.dir, `${randomUUID()}.tmp`);
 		try {
