@@ -611,9 +611,6 @@
   "packages/chord/test/services.test.ts": {
     "typescript/no-non-null-assertion": 5
   },
-  "packages/chord/test/state-diff.test.ts": {
-    "typescript/no-non-null-assertion": 5
-  },
   "packages/chord/test/state-draft.test.ts": {
     "typescript/no-non-null-assertion": 1
   },
