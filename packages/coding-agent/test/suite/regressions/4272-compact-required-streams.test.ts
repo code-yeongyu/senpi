@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { MATERIALIZER_ENVELOPE_MAX_BYTES } from "../../../src/modes/rpc/compact-materializer-line.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
 import { heldPeer } from "./4272-legacy-view-support.ts";
 import { recoveryRig } from "./4272-recovery-support.ts";
@@ -52,7 +53,9 @@ it("T2/T5 N overlapping selected admissions share one bounded atomic payload", a
 	expect(units.every(Boolean)).toBe(true);
 	expect(new Set(units.map((unit) => JSON.stringify(unit.payload))).size).toBe(1);
 	expect(units.every((unit) => unit.sequence === lane.acceptedSequence)).toBe(true);
-	expect(frames.every((frame) => Buffer.byteLength(JSON.stringify(frame)) + 1 <= 16_384)).toBe(true);
+	expect(
+		frames.every((frame) => Buffer.byteLength(JSON.stringify(frame)) + 1 <= MATERIALIZER_ENVELOPE_MAX_BYTES),
+	).toBe(true);
 	expect((host.writer.recoveryEvents?.status().contentBytes ?? 0) - before).toBeLessThan(100_000);
 	expect(frames.every((frame) => !("message" in frame) && !("admissions" in frame))).toBe(true);
 }, 120_000);
