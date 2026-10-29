@@ -68,6 +68,11 @@ export interface AgentSessionLaunchProfile {
 	 * another session on the host or the user's settings. Absent means the host's settings decide.
 	 */
 	retryFallback?: SessionRetryFallbackProfile;
+	/**
+	 * Per-session caller env (`open_session.env`, senpi#4381): the variables THIS session's tool
+	 * subprocesses see on top of the process environment. Never the host's own, never another session's.
+	 */
+	sessionEnv?: Readonly<Record<string, string>>;
 }
 
 /** The fallback policy one session runs with, chosen by its opener (e.g. a task child's own chain). */

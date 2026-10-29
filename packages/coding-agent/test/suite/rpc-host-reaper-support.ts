@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { ChildReaperSyscalls } from "../../src/modes/rpc/child-reaper-syscalls.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const reaperModule = fileURLToPath(new URL("../../src/modes/rpc/child-reaper.ts", import.meta.url));
 const syscallsModule = fileURLToPath(new URL("../../src/modes/rpc/child-reaper-syscalls.ts", import.meta.url));
@@ -86,7 +87,7 @@ export function runOrphanReaperFixture(env: Readonly<Record<string, string>>, or
 		const output = execFileSync("bun", [fixture], {
 			encoding: "utf8",
 			timeout: 60_000,
-			env: { ...process.env, ...env },
+			env: { ...hostSpawnEnv(), ...env },
 		});
 		return fixtureResultSchema.parse(JSON.parse(output.trim().split("\n").at(-1) ?? "{}"));
 	} finally {

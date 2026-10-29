@@ -3,7 +3,7 @@ import type { Socket } from "node:net";
 import { expect } from "vitest";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import { enrollmentKey, enrollmentRequest } from "../mcp/fixtures/presenter-enrollment.ts";
-import type { Wire } from "./rpc-public-auth-harness.ts";
+import type { Peer, Wire } from "./rpc-public-auth-harness.ts";
 
 export const enroll = enrollmentRequest();
 
@@ -31,6 +31,45 @@ export function next(socket: Socket, type: string): Promise<Wire> {
 		const timer = setTimeout(() => finish(), 60_000);
 		socket.once("close", closed);
 		socket.once("error", failed);
+	});
+}
+
+/**
+ * Sends a request the host acknowledges with `queued` (`open_session`, senpi#1844; `prompt`) and waits the
+ * way RpcClient does (senpi#2209, #2871): the acknowledgement within the peer deadline, then the answer or a
+ * lost connection. An acknowledged request has no further wall-clock window, because a loaded in-process host
+ * legitimately builds a session for close to a minute; the test timeout bounds a host that goes silent.
+ * It reads the records the peer already parsed, waking on the socket's data, so no second line reader
+ * ever starts mid-record.
+ */
+export function acknowledgedRequest(peer: Peer, request: Wire & { readonly id: string }): Promise<Wire> {
+	const seen = peer.records.length;
+	const failure = (reason: string) =>
+		new Error(`${String(request.type)} ${reason}: ${JSON.stringify(peer.records.slice(seen))}`);
+	return new Promise<Wire>((resolve, reject) => {
+		const finish = (outcome: Wire | Error) => {
+			clearTimeout(unacknowledged);
+			peer.socket.off("data", check);
+			peer.socket.off("close", closed);
+			if (outcome instanceof Error) reject(outcome);
+			else resolve(outcome);
+		};
+		// Registered after the peer's own reader, so every complete record of this chunk is already parsed.
+		const check = () => {
+			const fresh = peer.records.slice(seen);
+			const answer = fresh.find((record) => record.type === "response" && record.id === request.id);
+			if (answer) finish(answer);
+			else if (fresh.some((record) => record.type === "queued" && record.for_request === request.id))
+				clearTimeout(unacknowledged);
+		};
+		const unacknowledged = setTimeout(
+			() => finish(failure(`was not acknowledged within ${peer.deadlineMs} ms`)),
+			peer.deadlineMs,
+		);
+		const closed = () => finish(failure("lost its connection before the answer"));
+		peer.socket.on("data", check);
+		peer.socket.once("close", closed);
+		send(peer.socket, request);
 	});
 }
 

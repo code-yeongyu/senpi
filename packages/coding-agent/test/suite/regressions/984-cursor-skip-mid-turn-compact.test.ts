@@ -6,6 +6,7 @@ import {
 
 function cursorContext(isIdle: boolean): SpeculativeCompactionContext {
 	return {
+		cwd: process.cwd(),
 		model: { provider: "cursor" } as SpeculativeCompactionContext["model"],
 		isIdle: () => isIdle,
 		sessionManager: {} as SpeculativeCompactionContext["sessionManager"],

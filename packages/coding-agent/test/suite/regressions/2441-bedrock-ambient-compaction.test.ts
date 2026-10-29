@@ -99,6 +99,7 @@ function createContext(model: Model<any>, modelRegistry: Awaited<ReturnType<type
 	});
 	sessionManager.appendMessage({ role: "user", content: "latest request", timestamp: Date.now() - 1_000 });
 	const context: SpeculativeCompactionContext = {
+		cwd: process.cwd(),
 		model,
 		modelRegistry,
 		sessionManager,
