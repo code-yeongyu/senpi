@@ -82,6 +82,7 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 			case "cancel_ui":
 			case "cancel_grant":
 			case "subscription_limits":
+			case "owners_retired":
 				break;
 			case "mcp_form_bound":
 			case "mcp_form_availability":

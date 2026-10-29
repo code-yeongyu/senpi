@@ -1,6 +1,21 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#4797": {
+			"additions": [
+				"legacyContracts/test/js-kernel-webview.test.ts/Bun.WebView from an eval cell serves the default backend from the main-thread service on every platform",
+				"legacyContracts/test/js-kernel-webview.test.ts/Bun.WebView from an eval cell walks the default-backend view's history with goBack() and goForward()",
+				"legacyContracts/test/js-kernel-webview.test.ts/Bun.WebView from an eval cell the macOS default (WebKit) backend serves a fresh view after the kernel that opened the first one resets",
+				"legacyContracts/test/js-kernel-webview.test.ts/Bun.WebView from an eval cell the macOS default (WebKit) backend drives views from two kernels at once"
+			],
+			"changes": [
+				{
+					"key": "legacyContracts/test/js-kernel-webview.test.ts/Bun.WebView from an eval cell serves the default backend: native WebKit in the worker on macOS, the main-thread Chrome elsewhere",
+					"reason": "senpi#4797 (Fixes senpi#4794): the macOS default WebKit view is no longer built natively in the kernel worker (Bun binds its WebKit host to one thread; a second kernel corrupted the heap), so this contract is replaced by the main-thread-service contract for every platform."
+				}
+			],
+			"reason": "senpi#4797 (Fixes senpi#4794): replaces the native-worker WebKit contract with one proving every default-backend view is served by the main-thread WebView service, and adds contracts for goBack()/goForward() on a proxied view and, on macOS, a fresh view after a kernel reset and views from two kernels at once. No other baseline cell changes."
+		},
 		"senpi#4390": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/kernels/shared/invocation-authority.ts",

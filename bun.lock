@@ -254,6 +254,16 @@
         "vitest": "5.0.1",
       },
     },
+    "packages/session-backends/sqlite-bun": {
+      "name": "@earendil-works/pi-storage-sqlite-bun",
+      "version": "2026.10.27-2",
+      "dependencies": {
+        "@earendil-works/pi-agent-core": "^2026.10.27-2",
+      },
+      "devDependencies": {
+        "vitest": "5.0.1",
+      },
+    },
     "packages/session-backends/sqlite-node": {
       "name": "@earendil-works/pi-storage-sqlite-node",
       "version": "0.83.0",
@@ -418,6 +428,8 @@
     "@earendil-works/pi-protocol": ["@earendil-works/pi-protocol@workspace:packages/protocol"],
 
     "@earendil-works/pi-pty": ["@earendil-works/pi-pty@workspace:packages/pty"],
+
+    "@earendil-works/pi-storage-sqlite-bun": ["@earendil-works/pi-storage-sqlite-bun@workspace:packages/session-backends/sqlite-bun"],
 
     "@earendil-works/pi-storage-sqlite-node": ["@earendil-works/pi-storage-sqlite-node@workspace:packages/session-backends/sqlite-node"],
 

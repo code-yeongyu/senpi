@@ -78,6 +78,9 @@ export class RouterContext {
 
 	readonly handoffClosed = new Set<string>();
 
+	/** Sessions whose automatic turns this draining generation already held (senpi#3114, `session-drain-hold.ts`). */
+	readonly drainHeldSessions = new Set<string>();
+
 	readonly activeRequests = new Map<string | undefined, number>();
 
 	/** Called after any request for that session settles; a release waits here for the others to finish. */

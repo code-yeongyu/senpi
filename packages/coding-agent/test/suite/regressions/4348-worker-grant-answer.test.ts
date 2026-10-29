@@ -2,6 +2,7 @@
 import { expect, it } from "vitest";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { SessionWorkerClient } from "../../../src/modes/rpc/session-worker-client.ts";
+import { WorkerOwnerGates } from "../../../src/modes/rpc/session-worker-owners.ts";
 
 const sessionId = "synthetic-worker-session";
 const grantId = "synthetic-grant-request";
@@ -27,6 +28,8 @@ async function setup() {
 			return { type: "result" };
 		},
 		post: () => {},
+		// bind captures each command's owner through the client's owner gates (#4728).
+		owners: new WorkerOwnerGates(),
 	} as unknown as SessionWorkerClient;
 	const binding = await SessionWorkerClient.prototype.bind.call(client, sessionId, writer, () => {}, {});
 	const answer = (connection: string, frame: Record<string, unknown>) =>

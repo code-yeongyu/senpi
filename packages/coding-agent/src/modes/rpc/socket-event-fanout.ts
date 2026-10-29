@@ -19,6 +19,8 @@ type QueueEntry = {
 	demotedLine?: string;
 	onWritten?: () => void;
 	reply: boolean;
+	/** A targeted reply's destination check, repeated immediately before its write (#4728). */
+	current?: () => boolean;
 };
 
 // A handful of image tool results is several MiB of base64 each; four of them
@@ -114,7 +116,14 @@ export class SocketEventSinkActor {
 		if (!this.recovery?.pending) this.recovery = undefined;
 	}
 
-	enqueue(line: string, key?: string, onWritten?: () => void, demotedLine?: string, reply = false): void {
+	enqueue(
+		line: string,
+		key?: string,
+		onWritten?: () => void,
+		demotedLine?: string,
+		reply = false,
+		current?: () => boolean,
+	): void {
 		if (this.closed) return;
 		if (this.recovery?.pending && !reply) {
 			onWritten?.();
@@ -123,7 +132,7 @@ export class SocketEventSinkActor {
 		const bytes = Buffer.byteLength(line);
 		if (this.recovery?.pending) {
 			if (this.queuedBytes + bytes <= this.maxQueueBytes) {
-				this.queue.push({ line, bytes, onWritten, reply });
+				this.queue.push({ line, bytes, onWritten, reply, current });
 				this.queuedBytes += bytes;
 			} else {
 				this.recovery.loseReply();
@@ -152,7 +161,7 @@ export class SocketEventSinkActor {
 		if (this.queuedBytes + bytes > this.maxQueueBytes) {
 			if (this.recovery && this.recoveryEnabled) {
 				this.shed("overflow");
-				this.enqueue(line, undefined, onWritten, undefined, reply);
+				this.enqueue(line, undefined, onWritten, undefined, reply, current);
 				void this.drain();
 				return;
 			}
@@ -173,7 +182,7 @@ export class SocketEventSinkActor {
 			this.onFailure(overflow);
 			return;
 		}
-		this.queue.push({ line, bytes, key, demotedLine, onWritten, reply });
+		this.queue.push({ line, bytes, key, demotedLine, onWritten, reply, current });
 		this.queuedBytes += bytes;
 		void this.drain();
 	}
@@ -298,6 +307,10 @@ export class SocketEventSinkActor {
 					}
 					const entry = this.queue.shift()!;
 					this.queuedBytes -= entry.bytes;
+					if (entry.current?.() === false) {
+						entry.onWritten?.();
+						continue;
+					}
 					this.sink.writeRaw(entry.line);
 					await this.waitForDrainOrStall(entry.bytes);
 					entry.onWritten?.();

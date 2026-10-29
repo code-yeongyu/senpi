@@ -1,29 +1,19 @@
-import { type ActiveBlock, type ActiveMessage, adjustBlock, appendBlock, deltaBlock } from "./compact-active-block.ts";
-import type { ComponentRoot } from "./compact-component-roots.ts";
+import { type ActiveBlock, adjustBlock, appendBlock, deltaBlock } from "./compact-active-block.ts";
+import { CompactActiveMessages } from "./compact-active-messages.ts";
+import { type CompactColdFlow, coldFlowOperations } from "./compact-cold-flows.ts";
 import type { CompactColdOperation } from "./compact-cold-operations.ts";
 import { CompactReadError, CompactReadLease } from "./compact-read-lease.ts";
-import { foldSeededBlock, frozenSeededBlock } from "./compact-seeded-block.ts";
+import { foldSeededBlock } from "./compact-seeded-block.ts";
 import { CompactSeededDraft } from "./compact-seeded-draft.ts";
-import { CompactStartIdentity } from "./compact-start-identity.ts";
-import { CompactStateStorage } from "./compact-state-storage.ts";
-import { type FrozenCompactState, type MessageRoot, readCompactState } from "./compact-state-view.ts";
-import { type BlockAddress, type CompactTransition, CompactTransitionError } from "./compact-transition.ts";
+import { recordMessage, seedMessage, updateFields } from "./compact-seeded-messages.ts";
+import { type FrozenCompactState, readCompactState } from "./compact-state-view.ts";
+import { type CompactTransition, CompactTransitionError } from "./compact-transition.ts";
 export type { CompactSessionStateOptions } from "./compact-state-storage.ts";
 
 /** Synchronous acceptance; cuts and settlement transfer persistent component roots (senpi#4272). */
-export class CompactSessionState extends CompactStateStorage {
-	private messages: ComponentRoot<MessageRoot> = { header: undefined, ref: undefined };
-	private readonly active = new Map<string, ActiveMessage>();
-	private readonly identity = new CompactStartIdentity();
-	private sequence = 0;
-	private residentTailBytes = 0;
-	private hotWitnessBytes = 0;
+export class CompactSessionState extends CompactActiveMessages {
 	private frozenTailBytes = 0;
 	private readonly cuts = new WeakMap<FrozenCompactState, CompactReadLease>();
-
-	protected override isActiveKey(key: string): boolean {
-		return this.active.has(key);
-	}
 
 	get acceptedSequence(): number {
 		return this.sequence;
@@ -42,14 +32,21 @@ export class CompactSessionState extends CompactStateStorage {
 				if (!Number.isSafeInteger(address.contentIndex) || address.contentIndex < 0)
 					throw new CompactTransitionError("unknown_block", String(address.contentIndex));
 				const starting =
-					"seed" in t.event || (t.event.type === "message_block_state" && t.event.phase === "insert" && !old);
+					"seed" in t.event ||
+					(t.event.type === "message_block_state" &&
+						t.event.phase === "insert" &&
+						(!old || old.seeded?.phase === "initial"));
 				if (starting) this.identity.validate(t);
 				using draft = new CompactSeededDraft(this.store);
+				const fields = updateFields(draft, this.active.get(t.messageId)?.fields, t);
 				const block = foldSeededBlock(draft, old?.seeded, t.event);
-				this.publish(address, { ...block.body, seeded: block, epoch: t.epoch });
+				this.publish(address, { ...block.body, seeded: block, epoch: t.epoch }, fields);
 				if (starting) this.identity.commit(t);
 				break;
 			}
+			case "seeded_message":
+				this.acceptMessage(t);
+				break;
 			case "block_start":
 				this.start(t);
 				break;
@@ -81,12 +78,7 @@ export class CompactSessionState extends CompactStateStorage {
 				break;
 			}
 			case "message_status":
-				this.settled.set(t.messageId, {
-					messageId: t.messageId,
-					persistence: t.persistence,
-					blocks: this.active.get(t.messageId)?.root.ref,
-				});
-				this.dropActive(t.messageId);
+				this.settle(t.messageId, t.persistence);
 				break;
 			case "message_remove":
 				this.dropActive(t.messageId);
@@ -97,6 +89,11 @@ export class CompactSessionState extends CompactStateStorage {
 
 	applyCold(t: CompactColdOperation) {
 		return this.cold.run(t, this.sequence);
+	}
+
+	/** One ordered cold unit per flow: its operations run back to back after acceptance, each with its outcome. */
+	applyColdFlow(flow: CompactColdFlow) {
+		return this.cold.runAll(coldFlowOperations(flow), this.sequence);
 	}
 
 	freeze(): FrozenCompactState {
@@ -196,58 +193,20 @@ export class CompactSessionState extends CompactStateStorage {
 		this.identity.commit(t);
 	}
 
-	private publish(address: BlockAddress, block: ActiveBlock): void {
-		const message = this.active.get(address.messageId) ?? {
-			order: String(this.sequence).padStart(16, "0"),
-			blocks: new Map<number, ActiveBlock>(),
-			root: { header: undefined, ref: undefined },
-			tailBytes: 0,
-			witnessBytes: 0,
-		};
-		const old = message.blocks.get(address.contentIndex);
-		const tails =
-			(block.tail.length +
-				(block.seeded?.signature.tail.length ?? 0) -
-				(old?.tail.length ?? 0) -
-				(old?.seeded?.signature.tail.length ?? 0)) *
-			2;
-		const witness = (block.witness.length - (old?.witness.length ?? 0)) * 2;
-		message.root = this.blockRoots.set(message.root, String(address.contentIndex).padStart(16, "0"), {
-			contentIndex: address.contentIndex,
-			kind: block.kind,
-			root: block.root,
-			tail: "",
-			tailRoot: block.tailRoot,
-			...(block.seeded ? { seeded: frozenSeededBlock(block.seeded) } : {}),
-		});
-		this.messages = this.messageRoots.set(this.messages, message.order, {
-			messageId: address.messageId,
-			blocks: message.root.ref,
-		});
-		message.blocks.set(address.contentIndex, block);
-		message.tailBytes += tails;
-		message.witnessBytes += witness;
-		this.residentTailBytes += tails;
-		this.hotWitnessBytes += witness;
-		// The only entry into `active`, so every start path voids cold work queued while the key was settled.
-		if (!this.active.has(address.messageId)) this.cold.activate(address.messageId);
-		this.active.set(address.messageId, message);
-	}
-
-	private dropActive(messageId: string): void {
-		const message = this.active.get(messageId);
-		if (!message) return;
-		this.messages = this.messageRoots.set(this.messages, message.order, undefined);
-		this.blockRoots.release(message.root);
-		this.residentTailBytes -= message.tailBytes;
-		this.hotWitnessBytes -= message.witnessBytes;
-		this.active.delete(messageId);
-		this.identity.release(messageId);
-	}
-
-	private block(address: BlockAddress): ActiveBlock {
-		const block = this.active.get(address.messageId)?.blocks.get(address.contentIndex);
-		if (!block) throw new CompactTransitionError("unknown_block", `${address.messageId}#${address.contentIndex}`);
-		return block;
+	/** A start installs initial slots once; a terminal wins whole, and the outer end settles it as pending. */
+	private acceptMessage(t: Extract<CompactTransition, { type: "seeded_message" }>): void {
+		const live = this.active.get(t.messageId);
+		if (live?.epoch !== undefined && live.epoch !== t.epoch)
+			throw new CompactTransitionError("wrong_epoch", t.messageId);
+		const { message, terminal } = recordMessage(t.record);
+		if (!terminal && [...(live?.blocks.values() ?? [])].some((block) => block.seeded?.phase !== "initial"))
+			throw new CompactTransitionError("invalid_phase", "a start cannot rewind streamed blocks");
+		if (!live) this.identity.validate(t);
+		using draft = new CompactSeededDraft(this.store);
+		const next = seedMessage(draft, message, terminal, live?.blocks, t);
+		const correlation = live ? live.correlation : t.correlation && draft.fields(t.correlation);
+		this.install(t.messageId, { fields: next.fields, correlation, epoch: t.epoch }, next.blocks);
+		if (!live) this.identity.commit(t);
+		if (t.record.type === "message_end") this.settle(t.messageId, "pending");
 	}
 }

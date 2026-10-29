@@ -1,14 +1,18 @@
 import type { CompactComponentRoots } from "./compact-component-roots.ts";
 import type { CompactContentIndex, FrozenIndex } from "./compact-content-index.ts";
 import type { CompactContentStore } from "./compact-content-store.ts";
-import { readSeededBlock } from "./compact-seeded-block-view.ts";
+import { readSeededBlock, readSeededFields } from "./compact-seeded-block-view.ts";
+import type { SeededFields } from "./compact-seeded-draft.ts";
 import { type CompactMessageView, type FrozenBlock, readCompactBlocks } from "./compact-text-view.ts";
 import type { CompactPersistence } from "./compact-transition.ts";
 import type { ValueRef } from "./compact-values.ts";
 
 export interface MessageRoot {
 	readonly messageId: string;
-	readonly blocks: ValueRef | undefined;
+	readonly blocks?: ValueRef | undefined;
+	/** Public message fields (assistant content lives in `blocks`); absent for block-only messages. */
+	readonly fields?: SeededFields;
+	readonly correlation?: SeededFields;
 }
 export interface SettledRow extends MessageRoot {
 	readonly persistence: CompactPersistence;
@@ -38,17 +42,23 @@ export async function readCompactState(frozen: FrozenCompactState, components: C
 					text: view[index].text,
 					valid,
 				});
-		return { blocks: view, ...(content.length ? { message: { content } } : {}) };
+		return { blocks: view, content };
+	};
+	const readMessage = async (row: MessageRoot) => {
+		const { blocks, content } = await readBlocks(row.blocks);
+		if (!row.fields) return { blocks, ...(content.length ? { message: { content } } : {}) };
+		const fields = await readSeededFields(components.store, row.fields, valid);
+		return {
+			blocks,
+			message: "content" in fields ? fields : { ...fields, content },
+			...(row.correlation ? { correlation: await readSeededFields(components.store, row.correlation, valid) } : {}),
+		};
 	};
 	const messages: CompactMessageView[] = [];
 	for (const [messageId, row] of await components.settled.entries(frozen.settled))
-		messages.push({ messageId, persistence: row.persistence, ...(await readBlocks(row.blocks)) });
+		messages.push({ messageId, persistence: row.persistence, ...(await readMessage(row)) });
 	for await (const [, row] of components.messageRoots.entries(frozen.active, valid))
-		messages.push({
-			messageId: row.messageId,
-			persistence: undefined,
-			...(await readBlocks(row.blocks)),
-		});
+		messages.push({ messageId: row.messageId, persistence: undefined, ...(await readMessage(row)) });
 	valid();
 	return { sequence: frozen.sequence, messages };
 }

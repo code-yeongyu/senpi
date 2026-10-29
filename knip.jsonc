@@ -757,8 +757,6 @@
       "packages/coding-agent/src/core/extensions/builtin/mcp/errors.ts": ["McpError"],
       // pre-existing at origin main aceb1cc1d9: unused exports MCP_TOOL_NAME_MAX_LENGTH
       "packages/coding-agent/src/core/extensions/builtin/mcp/expose/naming.ts": ["MCP_TOOL_NAME_MAX_LENGTH"],
-      // pre-existing at origin main aceb1cc1d9: unused exports ANTHROPIC_MAX_TOOLS, ANTHROPIC_TOOL_SEARCH_NAME
-      "packages/coding-agent/src/core/extensions/builtin/mcp/expose/native-search.ts": ["ANTHROPIC_MAX_TOOLS", "ANTHROPIC_TOOL_SEARCH_NAME"],
       // pre-existing at origin main aceb1cc1d9: unused exports buildMcpStubDefinition
       "packages/coding-agent/src/core/extensions/builtin/mcp/expose/tier-b.ts": ["buildMcpStubDefinition"],
       // pre-existing at origin main aceb1cc1d9: unused exports MCP_PING_STALE_MS, MCP_PING_TIMEOUT_MS

@@ -1045,6 +1045,11 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    connection occupancy. Clients see `session_closed { reason: "handoff_parked", sessionPath }` before
    their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
    ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
+   A session with no attachment cannot be reached on the drained generation any more, so each drain pass
+   holds its automatic turns (goal continuation, monitor and codemode wakes), exactly as an unattended
+   reopen does: they wait as notices, its running turn is its last on this generation, and it parks once
+   that turn settles. A person's input or `resume_session` releases the hold after the reopen. A session a
+   client is still attached to keeps its automatic turns.
 
 Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 

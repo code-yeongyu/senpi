@@ -1,0 +1,2066 @@
+{
+ "id": "E19",
+ "title": "Cursor resolved call (X7)",
+ "observations": {
+  "O1": [
+   {
+    "method": "POST",
+    "path": "/agent.v1.AgentService/Run",
+    "body": {
+     "frames": [
+      {
+       "flags": 0,
+       "case": "runRequest",
+       "conversationId": "<uuid:1>",
+       "requestId": "<id:1>",
+       "decoded": {
+        "runRequest": {
+         "conversationState": {
+          "rootPromptMessagesJson": [
+           "<id:2>",
+           "<id:3>"
+          ],
+          "turns": [
+           "<id:4>"
+          ]
+         },
+         "action": {
+          "userMessageAction": {
+           "userMessage": {
+            "text": "<system-reminder>\nThis is the first request of the session. Before continuing, call the todo tool with op \"init\" and a phased list covering the whole request end to end, with only the phases this request needs - a question is one task, and its reply is the answer itself, with no handoff block. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.\n</system-reminder>",
+            "messageId": "<uuid:2>"
+           }
+          }
+         },
+         "modelDetails": {
+          "modelId": "cursor-run-qa",
+          "displayModelId": "cursor-run-qa",
+          "displayName": "cursor-run-qa"
+         },
+         "conversationId": "<uuid:1>",
+         "requestedModel": {
+          "modelId": "cursor-run-qa"
+         }
+        }
+       }
+      },
+      {
+       "flags": 0,
+       "case": "execClientMessage",
+       "message": "readResult",
+       "id": 101,
+       "execId": "exec-101",
+       "idIsNumeric": true,
+       "result": "success",
+       "readLines": null,
+       "decoded": {
+        "execClientMessage": {
+         "id": 101,
+         "readResult": {
+          "success": {
+           "path": "<sandbox>/work/cursor-target.txt",
+           "content": "E19-CURSOR-READ\nsecond line\n",
+           "totalLines": 3,
+           "fileSize": "28"
+          }
+         },
+         "execId": "exec-101"
+        }
+       }
+      },
+      {
+       "flags": 0,
+       "case": "execClientControlMessage",
+       "control": "streamClose",
+       "id": 101,
+       "execId": null,
+       "idIsNumeric": true,
+       "decoded": {
+        "execClientControlMessage": {
+         "streamClose": {
+          "id": 101
+         }
+        }
+       }
+      }
+     ]
+    }
+   }
+  ],
+  "O2": [
+   {
+    "api": "cursor-agent",
+    "route": "/agent.v1.AgentService/Run",
+    "model": null
+   }
+  ],
+  "O3": [
+   null
+  ],
+  "O4": [
+   {
+    "authorization": "sha256:16db75d323fd60c6",
+    "authorizationMatchesExpected": true,
+    "clientType": "cli",
+    "clientVersion": "cli-2026.07.23-e383d2b",
+    "contentType": "application/connect+proto",
+    "ghostMode": "true",
+    "path": "/agent.v1.AgentService/Run",
+    "te": "trailers"
+   }
+  ],
+  "O5": {
+   "calls": [
+    {
+     "machine": "local",
+     "op": "read",
+     "path": "cursor-target.txt",
+     "outcome": "ok"
+    }
+   ],
+   "tree": {
+    "cursor-target.txt": {
+     "text": "E19-CURSOR-READ\nsecond line\n"
+    }
+   },
+   "extra": []
+  },
+  "O6": [
+   {
+    "events": [
+     {
+      "type": "settings_source_selected",
+      "path": "<sandbox>/agent/settings.json",
+      "format": "json",
+      "reason": "json-only",
+      "scope": "global"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:1>",
+      "method": "setWidget",
+      "widgetKey": "todo-sidebar"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:2>",
+      "method": "setStatus",
+      "statusKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:3>",
+      "method": "setWidget",
+      "widgetKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:4>",
+      "method": "setStatus",
+      "statusKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:5>",
+      "method": "setWidget",
+      "widgetKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:6>",
+      "method": "setStatus",
+      "statusKey": "monitors"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:7>",
+      "method": "setStatus",
+      "statusKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:8>",
+      "method": "setWidget",
+      "widgetKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:9>",
+      "method": "setStatus",
+      "statusKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:10>",
+      "method": "setWidget",
+      "widgetKey": "pi-webfetch"
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "pi-rules.scan",
+       "data": {
+        "cwd": "<sandbox>/work",
+        "reason": "startup"
+       },
+       "startupBookkeeping": true,
+       "id": "<id:1>",
+       "parentId": "<id:2>",
+       "timestamp": "<ts:entry.timestamp:1>"
+      }
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:11>",
+      "method": "setStatus",
+      "statusKey": "todo-waiting"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:12>",
+      "method": "setStatus",
+      "statusKey": "goal"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:13>",
+      "method": "setWidget",
+      "widgetKey": "prompt-url"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:14>",
+      "method": "setStatus",
+      "statusKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:15>",
+      "method": "setWidget",
+      "widgetKey": "pi-websearch"
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 1,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:1>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:3>",
+       "parentId": "<id:1>",
+       "timestamp": "<ts:entry.timestamp:2>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:1>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:1>"
+      }
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:19>",
+      "method": "setStatus",
+      "statusKey": "todo-waiting"
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:2>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:1>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:2>"
+      }
+     },
+     {
+      "type": "agent_start"
+     },
+     {
+      "type": "turn_start"
+     },
+     {
+      "type": "message_start",
+      "message": {
+       "role": "custom",
+       "customType": "environment-context",
+       "content": "<environment_context>\n  <cwd><sandbox>/work</cwd>\n  <current_date><ts:message.content:1></current_date>\n</environment_context>",
+       "display": false,
+       "details": {
+        "cwd": "<sandbox>/work",
+        "currentDate": "<ts:details.currentDate:1>"
+       },
+       "timestamp": "<ts:message.timestamp:1>"
+      }
+     },
+     {
+      "type": "message_end",
+      "message": {
+       "role": "custom",
+       "customType": "environment-context",
+       "content": "<environment_context>\n  <cwd><sandbox>/work</cwd>\n  <current_date><ts:message.content:2></current_date>\n</environment_context>",
+       "display": false,
+       "details": {
+        "cwd": "<sandbox>/work",
+        "currentDate": "<ts:details.currentDate:2>"
+       },
+       "timestamp": "<ts:message.timestamp:2>"
+      }
+     },
+     {
+      "type": "message_start",
+      "message": {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "read the cursor target"
+        }
+       ],
+       "timestamp": "<ts:message.timestamp:3>"
+      }
+     },
+     {
+      "type": "message_end",
+      "message": {
+       "role": "user",
+       "content": [
+        {
+         "type": "text",
+         "text": "read the cursor target"
+        }
+       ],
+       "timestamp": "<ts:message.timestamp:4>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "message",
+       "id": "<id:4>",
+       "parentId": "<id:5>",
+       "timestamp": "<ts:entry.timestamp:3>",
+       "message": {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "read the cursor target"
+         }
+        ],
+        "timestamp": "<ts:message.timestamp:5>"
+       },
+       "inputSource": "rpc"
+      }
+     },
+     {
+      "type": "message_start",
+      "message": {
+       "role": "custom",
+       "customType": "senpi.todo-first-turn",
+       "content": "<system-reminder>\nThis is the first request of the session. Before continuing, call the todo tool with op \"init\" and a phased list covering the whole request end to end, with only the phases this request needs - a question is one task, and its reply is the answer itself, with no handoff block. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.\n</system-reminder>",
+       "display": false,
+       "timestamp": "<ts:message.timestamp:6>"
+      }
+     },
+     {
+      "type": "message_end",
+      "message": {
+       "role": "custom",
+       "customType": "senpi.todo-first-turn",
+       "content": "<system-reminder>\nThis is the first request of the session. Before continuing, call the todo tool with op \"init\" and a phased list covering the whole request end to end, with only the phases this request needs - a question is one task, and its reply is the answer itself, with no handoff block. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.\n</system-reminder>",
+       "display": false,
+       "timestamp": "<ts:message.timestamp:7>"
+      }
+     },
+     {
+      "type": "message_start",
+      "message": {
+       "role": "assistant",
+       "content": [],
+       "api": "cursor-agent",
+       "provider": "cursor-qa",
+       "model": "cursor-run-qa",
+       "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+         "input": 0,
+         "output": 0,
+         "cacheRead": 0,
+         "cacheWrite": 0,
+         "total": 0
+        }
+       },
+       "stopReason": "stop",
+       "timestamp": "<ts:message.timestamp:8>"
+      },
+      "streaming": true
+     },
+     {
+      "type": "message_update",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "assistantMessageEvent": {
+       "type": "text_start",
+       "contentIndex": 0
+      }
+     },
+     {
+      "type": "message_update",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "assistantMessageEvent": {
+       "type": "text_delta",
+       "contentIndex": 0,
+       "delta": "Reading the QA target file now."
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:3>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 2
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "read",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:2>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:3>"
+      }
+     },
+     {
+      "type": "tool_execution_start",
+      "toolCallId": "<id:6>",
+      "toolName": "read",
+      "args": {
+       "path": "<sandbox>/work/cursor-target.txt"
+      }
+     },
+     {
+      "type": "message_update",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "assistantMessageEvent": {
+       "type": "text_end",
+       "contentIndex": 0,
+       "content": "Reading the QA target file now."
+      }
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:0",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:loop-guard>",
+      "startedAt": "<ts:events.startedAt:1>",
+      "phase": "start",
+      "statusMessage": "running loop-guard"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:0",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:loop-guard>",
+      "startedAt": "<ts:events.startedAt:2>",
+      "phase": "end",
+      "statusMessage": "running loop-guard",
+      "completedAt": "<ts:events.completedAt:1>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:1",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:moved-path-guard>",
+      "startedAt": "<ts:events.startedAt:3>",
+      "phase": "start",
+      "statusMessage": "running moved-path-guard"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:1",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:moved-path-guard>",
+      "startedAt": "<ts:events.startedAt:4>",
+      "phase": "end",
+      "statusMessage": "running moved-path-guard",
+      "completedAt": "<ts:events.completedAt:2>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:2",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:hooks>",
+      "startedAt": "<ts:events.startedAt:5>",
+      "phase": "start",
+      "statusMessage": "running hooks"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:2",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:hooks>",
+      "startedAt": "<ts:events.startedAt:6>",
+      "phase": "end",
+      "statusMessage": "running hooks",
+      "completedAt": "<ts:events.completedAt:3>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:3",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:permission-system>",
+      "startedAt": "<ts:events.startedAt:7>",
+      "phase": "start",
+      "statusMessage": "matching project rules"
+     },
+     {
+      "type": "message_update",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "assistantMessageEvent": {
+       "type": "toolcall_start",
+       "contentIndex": 1,
+       "id": "<id:6>",
+       "toolName": "read"
+      },
+      "resolvedToolName": "read"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:3",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:permission-system>",
+      "startedAt": "<ts:events.startedAt:8>",
+      "phase": "end",
+      "statusMessage": "matching project rules",
+      "completedAt": "<ts:events.completedAt:4>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:4",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:bash-timeout>",
+      "startedAt": "<ts:events.startedAt:9>",
+      "phase": "start",
+      "statusMessage": "applying bash timeout"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:4",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:bash-timeout>",
+      "startedAt": "<ts:events.startedAt:10>",
+      "phase": "end",
+      "statusMessage": "applying bash timeout",
+      "completedAt": "<ts:events.completedAt:5>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:5",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:terminal>",
+      "startedAt": "<ts:events.startedAt:11>",
+      "phase": "start",
+      "statusMessage": "running terminal"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:5",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:terminal>",
+      "startedAt": "<ts:events.startedAt:12>",
+      "phase": "end",
+      "statusMessage": "running terminal",
+      "completedAt": "<ts:events.completedAt:6>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:6",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:compaction>",
+      "startedAt": "<ts:events.startedAt:13>",
+      "phase": "start",
+      "statusMessage": "checking compaction state"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:6",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:compaction>",
+      "startedAt": "<ts:events.startedAt:14>",
+      "phase": "end",
+      "statusMessage": "checking compaction state",
+      "completedAt": "<ts:events.completedAt:7>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:7",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:mcp>",
+      "startedAt": "<ts:events.startedAt:15>",
+      "phase": "start",
+      "statusMessage": "running mcp"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PreToolUse:7",
+      "hookName": "PreToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:mcp>",
+      "startedAt": "<ts:events.startedAt:16>",
+      "phase": "end",
+      "statusMessage": "running mcp",
+      "completedAt": "<ts:events.completedAt:8>",
+      "status": "completed"
+     },
+     {
+      "type": "message_update",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "assistantMessageEvent": {
+       "type": "toolcall_end",
+       "contentIndex": 1,
+       "toolCall": {
+        "type": "toolCall",
+        "id": "<id:6>",
+        "name": "read",
+        "arguments": {
+         "path": "<sandbox>/work/cursor-target.txt"
+        }
+       }
+      },
+      "resolvedToolName": "read"
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:3>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
+      }
+     },
+     {
+      "type": "tool_execution_end",
+      "toolCallId": "<id:6>",
+      "toolName": "read",
+      "result": {
+       "content": [
+        {
+         "type": "text",
+         "text": "E19-CURSOR-READ\nsecond line\n"
+        }
+       ]
+      },
+      "isError": false
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:8",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:hooks>",
+      "startedAt": "<ts:events.startedAt:17>",
+      "phase": "start",
+      "statusMessage": "running hooks"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:8",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:hooks>",
+      "startedAt": "<ts:events.startedAt:18>",
+      "phase": "end",
+      "statusMessage": "running hooks",
+      "completedAt": "<ts:events.completedAt:9>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:9",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:permission-system>",
+      "startedAt": "<ts:events.startedAt:19>",
+      "phase": "start",
+      "statusMessage": "matching project rules"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:9",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:permission-system>",
+      "startedAt": "<ts:events.startedAt:20>",
+      "phase": "end",
+      "statusMessage": "matching project rules",
+      "completedAt": "<ts:events.completedAt:10>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:10",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:gpt-apply-patch>",
+      "startedAt": "<ts:events.startedAt:21>",
+      "phase": "start",
+      "statusMessage": "running gpt-apply-patch"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:10",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:gpt-apply-patch>",
+      "startedAt": "<ts:events.startedAt:22>",
+      "phase": "end",
+      "statusMessage": "running gpt-apply-patch",
+      "completedAt": "<ts:events.completedAt:11>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:11",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:nested-agents-md>",
+      "startedAt": "<ts:events.startedAt:23>",
+      "phase": "start",
+      "statusMessage": "running nested-agents-md"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:20>",
+      "method": "setStatus",
+      "statusKey": "ext:nested-agents:status"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:11",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:nested-agents-md>",
+      "startedAt": "<ts:events.startedAt:24>",
+      "phase": "end",
+      "statusMessage": "running nested-agents-md",
+      "completedAt": "<ts:events.completedAt:12>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:12",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:rules>",
+      "startedAt": "<ts:events.startedAt:25>",
+      "phase": "start",
+      "statusMessage": "running rules"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:12",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:rules>",
+      "startedAt": "<ts:events.startedAt:26>",
+      "phase": "end",
+      "statusMessage": "running rules",
+      "completedAt": "<ts:events.completedAt:13>",
+      "status": "completed"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:13",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:goal>",
+      "startedAt": "<ts:events.startedAt:27>",
+      "phase": "start",
+      "statusMessage": "running goal"
+     },
+     {
+      "type": "tool_hook_status",
+      "hookRunId": "call-cursor-read:PostToolUse:13",
+      "hookName": "PostToolUse",
+      "toolName": "read",
+      "toolCallId": "<id:6>",
+      "extensionPath": "<builtin:goal>",
+      "startedAt": "<ts:events.startedAt:28>",
+      "phase": "end",
+      "statusMessage": "running goal",
+      "completedAt": "<ts:events.completedAt:14>",
+      "status": "completed"
+     },
+     {
+      "type": "message_update",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "assistantMessageEvent": {
+       "type": "text_start",
+       "contentIndex": 2
+      }
+     },
+     {
+      "type": "message_update",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "assistantMessageEvent": {
+       "type": "text_delta",
+       "contentIndex": 2,
+       "delta": "E19-CURSOR-DONE"
+      }
+     },
+     {
+      "type": "message_update",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "assistantMessageEvent": {
+       "type": "text_end",
+       "contentIndex": 2,
+       "content": "E19-CURSOR-DONE"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:5>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 4
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:5>"
+      }
+     },
+     {
+      "type": "message_end",
+      "message": {
+       "role": "assistant",
+       "content": [
+        {
+         "type": "text",
+         "text": "Reading the QA target file now."
+        },
+        {
+         "type": "toolCall",
+         "id": "<id:6>",
+         "name": "read",
+         "arguments": {
+          "path": "<sandbox>/work/cursor-target.txt"
+         }
+        },
+        {
+         "type": "text",
+         "text": "E19-CURSOR-DONE"
+        }
+       ],
+       "api": "cursor-agent",
+       "provider": "cursor-qa",
+       "model": "cursor-run-qa",
+       "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+         "input": 0,
+         "output": 0,
+         "cacheRead": 0,
+         "cacheWrite": 0,
+         "total": 0
+        }
+       },
+       "stopReason": "toolUse",
+       "timestamp": "<ts:message.timestamp:9>",
+       "thinkingLevel": "off",
+       "timing": {
+        "requestedAt": "<ts:timing.requestedAt:1>",
+        "firstTokenAt": "<ts:timing.firstTokenAt:1>",
+        "lastTokenAt": "<ts:timing.lastTokenAt:1>",
+        "endedAt": "<ts:timing.endedAt:1>"
+       }
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "message",
+       "id": "<id:7>",
+       "parentId": "<id:8>",
+       "timestamp": "<ts:entry.timestamp:4>",
+       "message": {
+        "role": "assistant",
+        "content": [
+         {
+          "type": "text",
+          "text": "Reading the QA target file now."
+         },
+         {
+          "type": "toolCall",
+          "id": "<id:6>",
+          "name": "read",
+          "arguments": {
+           "path": "<sandbox>/work/cursor-target.txt"
+          }
+         },
+         {
+          "type": "text",
+          "text": "E19-CURSOR-DONE"
+         }
+        ],
+        "api": "cursor-agent",
+        "provider": "cursor-qa",
+        "model": "cursor-run-qa",
+        "usage": {
+         "input": 0,
+         "output": 0,
+         "cacheRead": 0,
+         "cacheWrite": 0,
+         "totalTokens": 0,
+         "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+         }
+        },
+        "stopReason": "toolUse",
+        "timestamp": "<ts:message.timestamp:10>",
+        "thinkingLevel": "off",
+        "timing": {
+         "requestedAt": "<ts:timing.requestedAt:2>",
+         "firstTokenAt": "<ts:timing.firstTokenAt:2>",
+         "lastTokenAt": "<ts:timing.lastTokenAt:2>",
+         "endedAt": "<ts:timing.endedAt:2>"
+        }
+       }
+      }
+     },
+     {
+      "type": "message_start",
+      "message": {
+       "role": "toolResult",
+       "toolCallId": "<id:6>",
+       "toolName": "read",
+       "content": [
+        {
+         "type": "text",
+         "text": "E19-CURSOR-READ\nsecond line\n"
+        }
+       ],
+       "isError": false,
+       "timestamp": "<ts:message.timestamp:11>"
+      }
+     },
+     {
+      "type": "message_end",
+      "message": {
+       "role": "toolResult",
+       "toolCallId": "<id:6>",
+       "toolName": "read",
+       "content": [
+        {
+         "type": "text",
+         "text": "E19-CURSOR-READ\nsecond line\n"
+        }
+       ],
+       "isError": false,
+       "timestamp": "<ts:message.timestamp:12>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "message",
+       "id": "<id:9>",
+       "parentId": "<id:7>",
+       "timestamp": "<ts:entry.timestamp:5>",
+       "message": {
+        "role": "toolResult",
+        "toolCallId": "<id:6>",
+        "toolName": "read",
+        "content": [
+         {
+          "type": "text",
+          "text": "E19-CURSOR-READ\nsecond line\n"
+         }
+        ],
+        "isError": false,
+        "timestamp": "<ts:message.timestamp:13>"
+       }
+      }
+     },
+     {
+      "type": "turn_end",
+      "message": {
+       "role": "assistant",
+       "content": [
+        {
+         "type": "text",
+         "text": "Reading the QA target file now."
+        },
+        {
+         "type": "toolCall",
+         "id": "<id:6>",
+         "name": "read",
+         "arguments": {
+          "path": "<sandbox>/work/cursor-target.txt"
+         }
+        },
+        {
+         "type": "text",
+         "text": "E19-CURSOR-DONE"
+        }
+       ],
+       "api": "cursor-agent",
+       "provider": "cursor-qa",
+       "model": "cursor-run-qa",
+       "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+         "input": 0,
+         "output": 0,
+         "cacheRead": 0,
+         "cacheWrite": 0,
+         "total": 0
+        }
+       },
+       "stopReason": "toolUse",
+       "timestamp": "<ts:message.timestamp:14>",
+       "thinkingLevel": "off",
+       "timing": {
+        "requestedAt": "<ts:timing.requestedAt:3>",
+        "firstTokenAt": "<ts:timing.firstTokenAt:3>",
+        "lastTokenAt": "<ts:timing.lastTokenAt:3>",
+        "endedAt": "<ts:timing.endedAt:3>"
+       }
+      },
+      "toolResults": [
+       {
+        "role": "toolResult",
+        "toolCallId": "<id:6>",
+        "toolName": "read",
+        "content": [
+         {
+          "type": "text",
+          "text": "E19-CURSOR-READ\nsecond line\n"
+         }
+        ],
+        "isError": false,
+        "timestamp": "<ts:toolResults.timestamp:1>"
+       }
+      ]
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "senpi.hooks.stop-state",
+       "data": {
+        "count": 0,
+        "sessionId": "<uuid:16>",
+        "turnKey": "1:<id:9>"
+       },
+       "id": "<id:10>",
+       "parentId": "<id:9>",
+       "timestamp": "<ts:entry.timestamp:6>"
+      }
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:21>",
+      "method": "setStatus",
+      "statusKey": "goal"
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "turn-end-liveness",
+       "data": {
+        "verdict": {
+         "kind": "stalled",
+         "reason": "aborted"
+        },
+        "openWork": {
+         "kind": "none"
+        }
+       },
+       "id": "<id:11>",
+       "parentId": "<id:10>",
+       "timestamp": "<ts:entry.timestamp:7>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "waiting_human",
+        "seq": 2,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:2>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": [
+          {
+           "kind": "stalled",
+           "originSessionId": "<uuid:16>",
+           "requestId": "<id:12>",
+           "revision": 1,
+           "since": "<ts:human.since:1>"
+          }
+         ]
+        },
+        "holds": [],
+        "lastStop": {
+         "cause": "aborted",
+         "runId": "<uuid:17>",
+         "epoch": 1,
+         "at": "<ts:lastStop.at:1>"
+        },
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 1,
+        "synthetic": [
+         {
+          "key": "stall:1",
+          "wait": {
+           "kind": "stalled",
+           "originSessionId": "<uuid:16>",
+           "requestId": "<id:12>",
+           "revision": 1,
+           "since": "<ts:wait.since:1>"
+          }
+         }
+        ],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "unknown-abort",
+         "budgetSpent": false,
+         "deadlineStop": false
+        },
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:13>",
+       "parentId": "<id:11>",
+       "timestamp": "<ts:entry.timestamp:8>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "waiting_human",
+       "seq": 2,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:6>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": [
+         {
+          "kind": "stalled",
+          "originSessionId": "<uuid:16>",
+          "requestId": "<id:12>",
+          "revision": 1,
+          "since": "<ts:human.since:2>"
+         }
+        ]
+       },
+       "holds": [],
+       "lastStop": {
+        "cause": "aborted",
+        "runId": "<uuid:17>",
+        "epoch": 1,
+        "at": "<ts:lastStop.at:2>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:6>"
+      }
+     },
+     {
+      "type": "agent_end",
+      "messages": [
+       {
+        "role": "custom",
+        "customType": "environment-context",
+        "content": "<environment_context>\n  <cwd><sandbox>/work</cwd>\n  <current_date><ts:messages.content:1></current_date>\n</environment_context>",
+        "display": false,
+        "details": {
+         "cwd": "<sandbox>/work",
+         "currentDate": "<ts:details.currentDate:3>"
+        },
+        "timestamp": "<ts:messages.timestamp:1>"
+       },
+       {
+        "role": "user",
+        "content": [
+         {
+          "type": "text",
+          "text": "read the cursor target"
+         }
+        ],
+        "timestamp": "<ts:messages.timestamp:2>"
+       },
+       {
+        "role": "custom",
+        "customType": "senpi.todo-first-turn",
+        "content": "<system-reminder>\nThis is the first request of the session. Before continuing, call the todo tool with op \"init\" and a phased list covering the whole request end to end, with only the phases this request needs - a question is one task, and its reply is the answer itself, with no handoff block. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.\n</system-reminder>",
+        "display": false,
+        "timestamp": "<ts:messages.timestamp:3>"
+       },
+       {
+        "role": "assistant",
+        "content": [
+         {
+          "type": "text",
+          "text": "Reading the QA target file now."
+         },
+         {
+          "type": "toolCall",
+          "id": "<id:6>",
+          "name": "read",
+          "arguments": {
+           "path": "<sandbox>/work/cursor-target.txt"
+          }
+         },
+         {
+          "type": "text",
+          "text": "E19-CURSOR-DONE"
+         }
+        ],
+        "api": "cursor-agent",
+        "provider": "cursor-qa",
+        "model": "cursor-run-qa",
+        "usage": {
+         "input": 0,
+         "output": 0,
+         "cacheRead": 0,
+         "cacheWrite": 0,
+         "totalTokens": 0,
+         "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+         }
+        },
+        "stopReason": "toolUse",
+        "timestamp": "<ts:messages.timestamp:4>",
+        "thinkingLevel": "off",
+        "timing": {
+         "requestedAt": "<ts:timing.requestedAt:4>",
+         "firstTokenAt": "<ts:timing.firstTokenAt:4>",
+         "lastTokenAt": "<ts:timing.lastTokenAt:4>",
+         "endedAt": "<ts:timing.endedAt:4>"
+        }
+       },
+       {
+        "role": "toolResult",
+        "toolCallId": "<id:6>",
+        "toolName": "read",
+        "content": [
+         {
+          "type": "text",
+          "text": "E19-CURSOR-READ\nsecond line\n"
+         }
+        ],
+        "isError": false,
+        "timestamp": "<ts:messages.timestamp:5>"
+       }
+      ],
+      "willRetry": false
+     },
+     {
+      "type": "agent_settled"
+     },
+     {
+      "type": "agent_idle"
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "waiting_human",
+        "seq": 3,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:3>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": [
+          {
+           "kind": "stalled",
+           "originSessionId": "<uuid:16>",
+           "requestId": "<id:12>",
+           "revision": 1,
+           "since": "<ts:human.since:3>"
+          }
+         ]
+        },
+        "holds": [],
+        "lastStop": {
+         "cause": "aborted",
+         "runId": "<uuid:17>",
+         "epoch": 1,
+         "at": "<ts:lastStop.at:3>"
+        },
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 1,
+        "synthetic": [
+         {
+          "key": "stall:1",
+          "wait": {
+           "kind": "stalled",
+           "originSessionId": "<uuid:16>",
+           "requestId": "<id:12>",
+           "revision": 1,
+           "since": "<ts:wait.since:2>"
+          }
+         }
+        ],
+        "epochSealed": false,
+        "runActive": false,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "unknown-abort",
+         "budgetSpent": false,
+         "deadlineStop": false
+        },
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:14>",
+       "parentId": "<id:13>",
+       "timestamp": "<ts:entry.timestamp:9>"
+      }
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:22>",
+      "method": "setStatus",
+      "statusKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:23>",
+      "method": "setWidget",
+      "widgetKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:24>",
+      "method": "setStatus",
+      "statusKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:25>",
+      "method": "setWidget",
+      "widgetKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:26>",
+      "method": "setStatus",
+      "statusKey": "monitors"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:27>",
+      "method": "setStatus",
+      "statusKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:28>",
+      "method": "setWidget",
+      "widgetKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:29>",
+      "method": "setStatus",
+      "statusKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:30>",
+      "method": "setWidget",
+      "widgetKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:31>",
+      "method": "setStatus",
+      "statusKey": "loop"
+     }
+    ],
+    "surfaces": []
+   }
+  ],
+  "O7": {
+   "nonEmpty": true,
+   "count": 14,
+   "durableIdStable": true,
+   "entries": [
+    {
+     "type": "session",
+     "version": 3,
+     "id": "<uuid:1>",
+     "timestamp": "<ts:entries.timestamp:1>",
+     "cwd": "<sandbox>/work"
+    },
+    {
+     "type": "model_change",
+     "id": "<id:1>",
+     "parentId": null,
+     "timestamp": "<ts:entries.timestamp:2>",
+     "provider": "cursor-qa",
+     "modelId": "cursor-run-qa"
+    },
+    {
+     "type": "thinking_level_change",
+     "id": "<id:2>",
+     "parentId": "<id:1>",
+     "timestamp": "<ts:entries.timestamp:3>",
+     "thinkingLevel": "off",
+     "provider": "cursor-qa",
+     "modelId": "cursor-run-qa"
+    },
+    {
+     "type": "custom",
+     "customType": "pi-rules.scan",
+     "data": {
+      "cwd": "<sandbox>/work",
+      "reason": "startup"
+     },
+     "startupBookkeeping": true,
+     "id": "<id:3>",
+     "parentId": "<id:2>",
+     "timestamp": "<ts:entries.timestamp:4>"
+    },
+    {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "running",
+      "seq": 1,
+      "epoch": 1,
+      "epochOrigin": "human",
+      "humanInputRevision": 1,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:1>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": false,
+      "runActive": true,
+      "interrupted": false,
+      "runId": "<uuid:2>"
+     },
+     "id": "<id:4>",
+     "parentId": "<id:3>",
+     "timestamp": "<ts:entries.timestamp:5>"
+    },
+    {
+     "type": "custom_message",
+     "customType": "environment-context",
+     "content": "<environment_context>\n  <cwd><sandbox>/work</cwd>\n  <current_date><ts:entries.content:1></current_date>\n</environment_context>",
+     "display": false,
+     "details": {
+      "cwd": "<sandbox>/work",
+      "currentDate": "<ts:details.currentDate:1>"
+     },
+     "id": "<id:5>",
+     "parentId": "<id:4>",
+     "timestamp": "<ts:entries.timestamp:6>"
+    },
+    {
+     "type": "message",
+     "id": "<id:6>",
+     "parentId": "<id:5>",
+     "timestamp": "<ts:entries.timestamp:7>",
+     "message": {
+      "role": "user",
+      "content": [
+       {
+        "type": "text",
+        "text": "read the cursor target"
+       }
+      ],
+      "timestamp": "<ts:message.timestamp:1>"
+     },
+     "inputSource": "rpc"
+    },
+    {
+     "type": "custom_message",
+     "customType": "senpi.todo-first-turn",
+     "content": "<system-reminder>\nThis is the first request of the session. Before continuing, call the todo tool with op \"init\" and a phased list covering the whole request end to end, with only the phases this request needs - a question is one task, and its reply is the answer itself, with no handoff block. Give every task a unique 5-10 word label; phase names are short noun phrases. Then continue the request in this same turn - the init is not a turn by itself.\n</system-reminder>",
+     "display": false,
+     "id": "<id:7>",
+     "parentId": "<id:6>",
+     "timestamp": "<ts:entries.timestamp:8>"
+    },
+    {
+     "type": "message",
+     "id": "<id:8>",
+     "parentId": "<id:7>",
+     "timestamp": "<ts:entries.timestamp:9>",
+     "message": {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "Reading the QA target file now."
+       },
+       {
+        "type": "toolCall",
+        "id": "<id:9>",
+        "name": "read",
+        "arguments": {
+         "path": "<sandbox>/work/cursor-target.txt"
+        }
+       },
+       {
+        "type": "text",
+        "text": "E19-CURSOR-DONE"
+       }
+      ],
+      "api": "cursor-agent",
+      "provider": "cursor-qa",
+      "model": "cursor-run-qa",
+      "usage": {
+       "input": 0,
+       "output": 0,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 0,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "toolUse",
+      "timestamp": "<ts:message.timestamp:2>",
+      "thinkingLevel": "off",
+      "timing": {
+       "requestedAt": "<ts:timing.requestedAt:1>",
+       "firstTokenAt": "<ts:timing.firstTokenAt:1>",
+       "lastTokenAt": "<ts:timing.lastTokenAt:1>",
+       "endedAt": "<ts:timing.endedAt:1>"
+      }
+     }
+    },
+    {
+     "type": "message",
+     "id": "<id:10>",
+     "parentId": "<id:8>",
+     "timestamp": "<ts:entries.timestamp:10>",
+     "message": {
+      "role": "toolResult",
+      "toolCallId": "<id:9>",
+      "toolName": "read",
+      "content": [
+       {
+        "type": "text",
+        "text": "E19-CURSOR-READ\nsecond line\n"
+       }
+      ],
+      "isError": false,
+      "timestamp": "<ts:message.timestamp:3>"
+     }
+    },
+    {
+     "type": "custom",
+     "customType": "senpi.hooks.stop-state",
+     "data": {
+      "count": 0,
+      "sessionId": "<uuid:1>",
+      "turnKey": "1:<id:10>"
+     },
+     "id": "<id:11>",
+     "parentId": "<id:10>",
+     "timestamp": "<ts:entries.timestamp:11>"
+    },
+    {
+     "type": "custom",
+     "customType": "turn-end-liveness",
+     "data": {
+      "verdict": {
+       "kind": "stalled",
+       "reason": "aborted"
+      },
+      "openWork": {
+       "kind": "none"
+      }
+     },
+     "id": "<id:12>",
+     "parentId": "<id:11>",
+     "timestamp": "<ts:entries.timestamp:12>"
+    },
+    {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "waiting_human",
+      "seq": 2,
+      "epoch": 1,
+      "epochOrigin": "human",
+      "humanInputRevision": 1,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:2>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": [
+        {
+         "kind": "stalled",
+         "originSessionId": "<uuid:1>",
+         "requestId": "<id:13>",
+         "revision": 1,
+         "since": "<ts:human.since:1>"
+        }
+       ]
+      },
+      "holds": [],
+      "lastStop": {
+       "cause": "aborted",
+       "runId": "<uuid:2>",
+       "epoch": 1,
+       "at": "<ts:lastStop.at:1>"
+      },
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 1,
+      "synthetic": [
+       {
+        "key": "stall:1",
+        "wait": {
+         "kind": "stalled",
+         "originSessionId": "<uuid:1>",
+         "requestId": "<id:13>",
+         "revision": 1,
+         "since": "<ts:wait.since:1>"
+        }
+       }
+      ],
+      "epochSealed": false,
+      "runActive": true,
+      "interrupted": false,
+      "lastTurnEnd": {
+       "endedBy": "unknown-abort",
+       "budgetSpent": false,
+       "deadlineStop": false
+      },
+      "runId": "<uuid:2>"
+     },
+     "id": "<id:14>",
+     "parentId": "<id:12>",
+     "timestamp": "<ts:entries.timestamp:13>"
+    },
+    {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "waiting_human",
+      "seq": 3,
+      "epoch": 1,
+      "epochOrigin": "human",
+      "humanInputRevision": 1,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:3>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": [
+        {
+         "kind": "stalled",
+         "originSessionId": "<uuid:1>",
+         "requestId": "<id:13>",
+         "revision": 1,
+         "since": "<ts:human.since:2>"
+        }
+       ]
+      },
+      "holds": [],
+      "lastStop": {
+       "cause": "aborted",
+       "runId": "<uuid:2>",
+       "epoch": 1,
+       "at": "<ts:lastStop.at:2>"
+      },
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 1,
+      "synthetic": [
+       {
+        "key": "stall:1",
+        "wait": {
+         "kind": "stalled",
+         "originSessionId": "<uuid:1>",
+         "requestId": "<id:13>",
+         "revision": 1,
+         "since": "<ts:wait.since:2>"
+        }
+       }
+      ],
+      "epochSealed": false,
+      "runActive": false,
+      "interrupted": false,
+      "lastTurnEnd": {
+       "endedBy": "unknown-abort",
+       "budgetSpent": false,
+       "deadlineStop": false
+      },
+      "runId": "<uuid:2>"
+     },
+     "id": "<id:15>",
+     "parentId": "<id:14>",
+     "timestamp": "<ts:entries.timestamp:14>"
+    }
+   ]
+  }
+ }
+}
