@@ -8,10 +8,33 @@
  */
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { watch } from "node:fs";
-import { mkdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { basename, dirname, join } from "node:path";
-import { createDaemonDirectories, createHostDaemonPaths } from "../../src/modes/rpc/host-daemon-paths.ts";
+import { hostCrashRecordFile } from "../../src/modes/rpc/host-crash-record.ts";
+import {
+	createDaemonDirectories,
+	createHostDaemonPaths,
+	type HostDaemonPaths,
+} from "../../src/modes/rpc/host-daemon-paths.ts";
+
+/** `pid <n>: <stat> <command>` of a live process, or that it is gone: which child outlived its supervisor. */
+export function processCommand(pid: number): string {
+	try {
+		return `pid ${pid}: ${execFileSync("ps", ["-o", "stat=,command=", "-p", String(pid)], { encoding: "utf8" }).trim()}`;
+	} catch {
+		return `pid ${pid}: gone`;
+	}
+}
+
+/**
+ * How the endpoint's host said it ended - its stderr (shutdown reason, socket-ownership decisions) and the
+ * endpoint's crash records - as an assertion message, so a failure carries its own evidence (senpi#4743).
+ */
+export async function hostEndEvidence(paths: HostDaemonPaths): Promise<string> {
+	const read = (file: string) => readFile(file, "utf8").catch((cause: unknown) => `(unreadable: ${String(cause)})`);
+	return `host stderr:\n${await read(paths.stderrLog)}\ncrash records:\n${await read(hostCrashRecordFile(paths.dir))}`;
+}
 
 export async function deadEndpoint(socket: string, agentDir: string) {
 	const paths = createHostDaemonPaths({ socket, agentDir });

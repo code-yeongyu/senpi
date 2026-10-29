@@ -81,7 +81,7 @@ describe.skipIf(process.platform === "win32")("host stop intent", () => {
 			at: new Date(Date.now() - 10 * 60_000).toISOString(),
 		});
 
-		process.kill(hostChildOf(pid), "SIGKILL");
+		process.kill(await hostChildOf(qa, instanceId), "SIGKILL");
 		await expectGoneWithin(pid, 15_000);
 
 		expect(terminalRecords(qa, instanceId)).toEqual([

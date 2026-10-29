@@ -1,4 +1,3 @@
-import { unwatchFile, watchFile } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { hostEnsureLockTarget } from "../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
@@ -8,16 +7,15 @@ import {
 	ensureSupervised,
 	expectGoneWithin,
 	hostChildOf,
+	parentOf,
 	registeredSupervisor,
 	removeSupervisedScratches,
 	type SupervisedScratch,
-	supervisedDaemonPaths,
 	supervisedScratch,
 	supervisorLaunch,
 	terminalRecords,
 	watchdogRecords,
 } from "./helpers/rpc-supervised-host.ts";
-import { processesUnder, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
 
 /**
  * senpi#2566: a host the engine stops on purpose left no record (the supervisor's exit handler
@@ -34,7 +32,7 @@ describe.skipIf(process.platform === "win32")("host stop records", () => {
 		const qa = await supervisedScratch("engine");
 		await ensureSupervised(qa, { env: NO_STALL_ENV }).then((ensured) => ensured.release());
 		const { pid, instanceId } = await registeredSupervisor(qa);
-		process.kill(hostChildOf(pid), "SIGSTOP");
+		process.kill(await hostChildOf(qa, instanceId), "SIGSTOP");
 
 		process.kill(pid, "SIGTERM");
 		await expectGoneWithin(pid, 15_000);
@@ -56,7 +54,7 @@ describe.skipIf(process.platform === "win32")("host stop records", () => {
 		await ensureSupervised(qa, { env: NO_STALL_ENV }).then((ensured) => ensured.release());
 		const { pid, instanceId } = await registeredSupervisor(qa);
 
-		process.kill(hostChildOf(pid), "SIGKILL");
+		process.kill(await hostChildOf(qa, instanceId), "SIGKILL");
 		await expectGoneWithin(pid, 15_000);
 
 		expect(terminalRecords(qa, instanceId)).toEqual([
@@ -92,14 +90,22 @@ describe.skipIf(process.platform === "win32")("host stop records", () => {
 describe.skipIf(process.platform === "win32")("a supervisor its caller had to SIGKILL", () => {
 	it("is recorded by the ensure whose readiness wait it failed", async () => {
 		const qa = await supervisedScratch("readiness");
-		const frozen = freezeSupervisorOnceRegistered(qa);
+		let frozen: { supervisor: number; child: number; instanceId: string } | undefined;
 		const failure = await ensureSupervised(qa, {
 			behavior: "silent",
 			env: NO_STALL_ENV,
-			test: { readinessTimeoutMs: 3_000, stopTimeoutMs: 300 },
+			test: {
+				readinessTimeoutMs: 3_000,
+				stopTimeoutMs: 300,
+				// Frozen after its readiness wait failed and before the ensure's SIGTERM, so that SIGTERM never runs.
+				beforeReadinessTeardown: async () => {
+					frozen = await freezeRegisteredSupervisor(qa);
+				},
+			},
 		}).catch((error: unknown) => error);
 		expect(failure).toBeInstanceOf(Error);
-		const { supervisor, child, instanceId } = await frozen;
+		if (frozen === undefined) throw new Error("the ensure never reached its readiness teardown");
+		const { supervisor, child, instanceId } = frozen;
 		await expectGoneWithin(supervisor, 5_000);
 		await expectGoneWithin(child, 10_000);
 
@@ -113,10 +119,10 @@ describe.skipIf(process.platform === "win32")("a supervisor its caller had to SI
 			env: NO_STALL_ENV,
 			test: {
 				beforePidFileWrite: async () => {
-					const [supervisor] = processesUnder(qa.root);
-					if (supervisor === undefined) throw new Error("no supervisor under the sandbox");
-					const child = await hostChildWithin(supervisor, 10_000);
-					frozen = { supervisor, child, instanceId: await bootInstanceId(qa) };
+					const instanceId = await bootInstanceId(qa);
+					const child = await hostChildOf(qa, instanceId);
+					const supervisor = parentOf(child);
+					frozen = { supervisor, child, instanceId };
 					process.kill(supervisor, "SIGSTOP");
 					throw new Error("registration failed");
 				},
@@ -142,8 +148,9 @@ describe.skipIf(process.platform === "win32")("a supervisor its caller had to SI
 				launch: supervisorLaunch(),
 				readinessTimeoutMs: 2_000,
 				afterSpawn: async (supervisor) => {
-					const child = await hostChildWithin(supervisor, 10_000);
-					frozen = { supervisor, child, instanceId: await bootInstanceId(qa) };
+					const instanceId = await bootInstanceId(qa);
+					const child = await hostChildOf(qa, instanceId);
+					frozen = { supervisor, child, instanceId };
 					process.kill(supervisor, "SIGSTOP");
 				},
 			},
@@ -174,41 +181,15 @@ function expectCallerRecord(qa: SupervisedScratch, instanceId: string, kind: str
 	expect(watchdogRecords(qa, instanceId)).toHaveLength(1);
 }
 
-/** Freezes the supervisor the moment the ensure registers it, so its own SIGTERM can never run. */
-function freezeSupervisorOnceRegistered(
+/**
+ * Freezes the registered supervisor once its host child exists (its own record of it, written after the key
+ * handoff), so the child's watchdog is guaranteed something to fire on when the caller SIGKILLs the supervisor.
+ */
+async function freezeRegisteredSupervisor(
 	qa: SupervisedScratch,
 ): Promise<{ supervisor: number; child: number; instanceId: string }> {
-	const pointer = supervisedDaemonPaths(qa).pointerFile;
-	return new Promise((resolve, reject) => {
-		const onChange = (): void => {
-			void registeredSupervisor(qa)
-				.then(
-					async ({ pid, instanceId }) => {
-						unwatchFile(pointer, onChange);
-						const child = await hostChildWithin(pid, 10_000);
-						process.kill(pid, "SIGSTOP");
-						resolve({ supervisor: pid, child, instanceId });
-					},
-					() => {},
-				)
-				.catch(reject);
-		};
-		watchFile(pointer, { interval: 25 }, onChange);
-		setTimeout(() => {
-			unwatchFile(pointer, onChange);
-			reject(new Error("the ensure never registered its supervisor"));
-		}, 20_000).unref();
-	});
-}
-
-/** The host child appears in the process table only once the supervisor spawned it. */
-async function hostChildWithin(supervisor: number, timeoutMs: number): Promise<number> {
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		try {
-			return hostChildOf(supervisor);
-		} catch (cause) {
-			if (Date.now() > deadline || (await waitForPidGone(supervisor, 25))) throw cause;
-		}
-	}
+	const { pid, instanceId } = await registeredSupervisor(qa);
+	const child = await hostChildOf(qa, instanceId);
+	process.kill(pid, "SIGSTOP");
+	return { supervisor: pid, child, instanceId };
 }

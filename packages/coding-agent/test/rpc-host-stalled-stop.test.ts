@@ -29,7 +29,7 @@ const NO_STALL_ENV = { SENPI_RPC_LOOP_LAG_ERROR_MS: "600000" };
 async function stallChild(qa: SupervisedScratch, env: Record<string, string>) {
 	await ensureSupervised(qa, { env }).then((ensured) => ensured.release());
 	const { pid, instanceId } = await registeredSupervisor(qa);
-	const child = hostChildOf(pid);
+	const child = await hostChildOf(qa, instanceId);
 	await writeGenerationFile(qa, instanceId, "host-stalled.json", {
 		at: new Date().toISOString(),
 		driftMs: 6_000,
@@ -90,7 +90,7 @@ describe.skipIf(process.platform === "win32")("a graceful stop of a stalled host
 					observed.instanceId = instanceId;
 					// The stall `stopChild` reads is a heartbeat that STOPPED: it must have started first.
 					await fileAppears(join(generationDir(qa, instanceId), "host-alive.json"), 10_000);
-					const child = hostChildOf(pid);
+					const child = await hostChildOf(qa, instanceId);
 					process.kill(child, "SIGSTOP");
 					checkpoints = (async () => {
 						await delay(8_000);

@@ -13,6 +13,7 @@ import { type HostCrashRecord, readHostCrashRecords } from "../../src/modes/rpc/
 import { readHostRegistration } from "../../src/modes/rpc/host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY } from "../../src/modes/rpc/host-decision.ts";
 import { createHostDaemonPaths, type EnsureHostOptions, ensureHost } from "../../src/modes/rpc/host-ensure.ts";
+import { generationPaths } from "../../src/modes/rpc/host-generation-paths.ts";
 import { processAlive, reapProcessesUnder, waitForPidGone } from "./spawned-host-reaper.ts";
 
 export const SUPERVISED_CAPABILITIES = `multi_session,extension_events,session_context,session_kind,${GENERATION_HANDOFF_CAPABILITY}`;
@@ -67,6 +68,13 @@ export function supervisorLaunch(behavior: "answer" | "silent" = "answer") {
 
 export type SupervisedTestOptions = NonNullable<EnsureHostOptions["_test"]>;
 
+/**
+ * How long a host this rig STARTS may take to answer and to advertise its drain watch - setup, not the behaviour
+ * under test, so it is sized for a loaded runner like `realHost` (senpi#4742: the production 10 s readiness and a
+ * 10 s drain-watch wait failed the setup under load). A case about readiness passes its own `readinessTimeoutMs`.
+ */
+const SETUP_WAIT_MS = 60_000;
+
 export async function ensureSupervised(
 	qa: SupervisedScratch,
 	options: { env?: Record<string, string>; behavior?: "answer" | "silent"; test?: SupervisedTestOptions } = {},
@@ -79,6 +87,7 @@ export async function ensureSupervised(
 			agentDir: qa.agentDir,
 			env: { PI_OFFLINE: "1", PI_TELEMETRY: "0", ...options.env },
 			_test: {
+				readinessTimeoutMs: SETUP_WAIT_MS,
 				...options.test,
 				launch: (args) => {
 					// Settings created this generation directory BEFORE spawn. Socket readiness alone
@@ -88,7 +97,7 @@ export async function ensureSupervised(
 					);
 					advertised = fileAppears(
 						join(generationDir(qa, settings.instanceId), "drain-watch.json"),
-						10_000,
+						SETUP_WAIT_MS,
 						controller.signal,
 					);
 					// A failed ensure cancels this wait; observe its rejection even before readiness returns.
@@ -116,18 +125,27 @@ export async function registeredSupervisor(qa: SupervisedScratch): Promise<{ pid
 }
 
 /**
- * The supervisor's HOST child, matched by its command line: the supervisor also runs short-lived
- * helpers of its own (`ps -o lstart=` for its and its child's start time), and the first child
- * `pgrep -P` lists can be one of those, which exits at once and would stand in for the host.
+ * The supervisor's HOST child, as the supervisor itself recorded it in `host-child.pid`, which it writes
+ * only after the spawn and the key handoff. Never matched by command line (senpi#4742): until it execs,
+ * every helper the supervisor forks (`ps -o lstart=`, `mkfifo` on Linux) still carries the supervisor's
+ * own argv, which names the fixture in `--child-args`, so `pgrep -P <supervisor> -f` returned a helper
+ * that exited at once and stood in for a host child that might not even exist yet.
  */
-export function hostChildOf(supervisorPid: number): number {
-	const output = execFileSync("pgrep", ["-P", String(supervisorPid), "-f", basename(childFixture)], {
-		encoding: "utf8",
-	});
-	const pid = Number(output.split("\n")[0]?.trim());
-	if (!Number.isInteger(pid) || pid <= 0) throw new Error(`supervisor ${supervisorPid} has no host child`);
+export async function hostChildOf(qa: SupervisedScratch, instanceId: string, timeoutMs = 10_000): Promise<number> {
+	const file = generationPaths(supervisedDaemonPaths(qa), instanceId).childPidFile;
+	await fileAppears(file, timeoutMs);
+	const record: unknown = JSON.parse(await readFile(file, "utf8"));
+	const pid = typeof record === "object" && record !== null ? Reflect.get(record, "pid") : undefined;
+	if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) throw new Error(`${file} names no host child`);
 	observedChildren.add(pid);
 	return pid;
+}
+
+/** A live process's parent: a recorded host child's parent is the supervisor that spawned it. */
+export function parentOf(pid: number): number {
+	const parent = Number(execFileSync("ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8" }).trim());
+	if (!Number.isInteger(parent) || parent <= 1) throw new Error(`pid ${pid} has no parent to name`);
+	return parent;
 }
 
 export async function expectGoneWithin(pid: number, timeoutMs: number): Promise<void> {

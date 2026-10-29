@@ -33,6 +33,8 @@ import {
 	deadEndpoint,
 	fileAppears,
 	gate,
+	hostEndEvidence,
+	processCommand,
 	refusingSocket,
 	siblingPath,
 	writeJson,
@@ -90,13 +92,22 @@ describe.skipIf(process.platform === "win32")("gc against real supervised hosts"
 		const children = hostChildren(supervisor);
 		expect(children.length).toBeGreaterThan(0);
 
+		const paths = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
+
 		process.kill(supervisor, "SIGKILL");
-		for (const child of children) expect(await waitForPidGone(child, 30_000)).toBe(true);
+		for (const child of children) {
+			const gone = await waitForPidGone(child, 30_000);
+			// A failure names the process that outlived its supervisor and how the host said it ended.
+			expect(gone, gone ? undefined : `${processCommand(child)}\n${await hostEndEvidence(paths)}`).toBe(true);
+		}
 		const row = endpointRow((await statusAll(qa)).endpoints, qa.legacy);
 		expect(row).toMatchObject({ identity: "endpoint", reachable: false, generations: [] });
-		const paths = createHostDaemonPaths({ socket: qa.legacy, agentDir: qa.agentDir });
-		// The watchdog releases the public socket along with the registration.
-		await expect(stat(qa.legacy)).rejects.toEqual(gone);
+		// The watchdog releases the public socket along with the registration. A failure names how the host ended.
+		const publicSocket = await stat(qa.legacy).then(
+			() => "still present",
+			(cause: unknown) => cause,
+		);
+		expect(publicSocket, await hostEndEvidence(paths)).toEqual(gone);
 
 		expect(await gcHostEndpoints(qa.agentDir)).toEqual({
 			removed: [{ socket: qa.legacy, dir: paths.dir, reason: "socket_absent" }],
