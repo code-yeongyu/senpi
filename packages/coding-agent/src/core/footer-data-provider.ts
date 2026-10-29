@@ -148,9 +148,9 @@ export class FooterDataProvider {
 		}
 	}
 
-	/** Internal: clear extension statuses */
-	clearExtensionStatuses(): void {
-		this.extensionStatuses.clear();
+	/** Internal: clear extension statuses, keeping the host-owned keys in `keep` */
+	clearExtensionStatuses(keep: ReadonlySet<string> = new Set()): void {
+		for (const key of this.extensionStatuses.keys()) if (!keep.has(key)) this.extensionStatuses.delete(key);
 		this.subagentCost = undefined;
 	}
 

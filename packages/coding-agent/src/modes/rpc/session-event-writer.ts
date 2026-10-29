@@ -1,5 +1,6 @@
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
 import type { RpcHostLifecycleEvent, RpcOpenQueuedEvent } from "./rpc-types.ts";
 import type { RpcRecord } from "./session-event-writer-compaction.ts";
 import { SessionEventWriterDestinations } from "./session-event-writer-destinations.ts";
@@ -66,15 +67,11 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 		if (this.sealedSessions.has(sessionId)) return false;
 		const targetId = this.connectionContext.getStore();
 		const record = normalizeJsonValue(value).value as RpcRecord;
-		const isTargeted =
-			record.type === "response" ||
-			record.type === "bash_execution_update" ||
-			// Relocation records belong to the one connection that offers it (session-relocation-channel.ts).
-			record.type === "host_request" ||
-			record.type === "relocation_due" ||
-			(record.type === "extension_ui_request" &&
-				["select", "confirm", "input", "editor"].includes(String(record.method)));
-		const tagged = { ...record, sessionId } as RpcRecord;
+		const isTargeted = this.isTargetedRecord(record);
+		// A stale reply is consumed, not a session failure: the worker still gets its output credit.
+		const current = isTargeted ? this.connectionContext.currentGuard() : undefined;
+		if (current?.() === false) return true;
+		const tagged = { ...observeLifecycleDelivery(record), sessionId } as RpcRecord;
 		const line = serializeJsonLine(tagged);
 		// Observation records are per-subscription opt-ins on the subscriber's own actor FIFO: never attachments,
 		// the attach replay, response broadcast, or the stdio lane, which cannot subscribe.
@@ -109,7 +106,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 		// Mirroring is an explicit per-subscription opt-in; it adds destinations, never an attachment.
 		const mirrors = isTargeted ? [] : this.status.mirrorTargets(sessionId, String(record.type));
 		const targets = mirrors.length === 0 ? attached : [...new Set([...attached, ...mirrors])];
-		this.deliver(sessionId, record, tagged, line, targets, mirrors, isTargeted);
+		this.deliver(sessionId, record, tagged, line, targets, mirrors, isTargeted, current);
 		// After the causing record is on every destination's FIFO, never before (ordering contract).
 		const cause = isTargeted ? undefined : causeOfRecord(record);
 		if (cause !== undefined) this.status.publish(sessionId, cause, this.changeActor("agent"));

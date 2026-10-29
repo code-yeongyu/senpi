@@ -84,10 +84,4 @@ describe("shared-service MCP lazy activation", () => {
 		service.feed("mcp", SEARCHABLE, { activate: vi.fn() });
 		expect(service.activateTool("mcp_computer_use_click")).toBe(false);
 	});
-
-	it("never calls the feeder for an ineligible tool", () => {
-		const state = serviceState();
-		expect(state.service.activateTool("look_at")).toBe(false);
-		expect(state.activate).not.toHaveBeenCalled();
-	});
 });

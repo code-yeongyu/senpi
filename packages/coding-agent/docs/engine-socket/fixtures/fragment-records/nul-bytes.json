@@ -1,0 +1,69 @@
+{
+	"caseId": "nul-bytes",
+	"kind": "valid",
+	"contractIds": [
+		"R4.B3"
+	],
+	"description": "0x00 runs at offsets 4-7, 131068-131075 (straddling the D boundary) and at the end.",
+	"digestAlgorithm": "sha256",
+	"limits": {
+		"D": 131072,
+		"F": 262144,
+		"H": 16384
+	},
+	"source": {
+		"generator": {
+			"kind": "segments",
+			"params": {
+				"segments": [
+					{
+						"kind": "bytes",
+						"base64": "aGVhZA=="
+					},
+					{
+						"kind": "repeat",
+						"patternBase64": "AA==",
+						"length": 4
+					},
+					{
+						"kind": "repeat",
+						"patternBase64": "bg==",
+						"length": 131060
+					},
+					{
+						"kind": "repeat",
+						"patternBase64": "AA==",
+						"length": 8
+					},
+					{
+						"kind": "bytes",
+						"base64": "dGFpbA=="
+					},
+					{
+						"kind": "repeat",
+						"patternBase64": "AA==",
+						"length": 2
+					}
+				]
+			}
+		}
+	},
+	"sourceLength": 131082,
+	"sourceDigest": "1cb9336623851c149b7cd85d3ba018dfdb2f5a0d63c9416b38233e24134da5ed",
+	"expectedRecords": [
+		{
+			"offset": 0,
+			"length": 131072,
+			"digest": "1c684b754a1e6096d80631f6efa3033cbd3f3614cf5501257ca10a1312d5fa10",
+			"next": 131072,
+			"complete": false
+		},
+		{
+			"offset": 131072,
+			"length": 10,
+			"digest": "28a57c37a49fb7ca9fb3083097520d6d7cbc2e1922944571fabd76f1bc42e99d",
+			"next": null,
+			"complete": true
+		}
+	]
+}

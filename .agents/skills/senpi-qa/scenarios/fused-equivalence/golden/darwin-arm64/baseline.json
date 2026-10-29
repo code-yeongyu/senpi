@@ -1,0 +1,19 @@
+{
+ "repo": {
+  "head": "bd43555dff12684940c3713cbe4e722e6d953337",
+  "dirty": false
+ },
+ "platform": "darwin-arm64",
+ "runtimes": {
+  "harness": "node@24.22.0",
+  "child": "bun@1.4.4"
+ },
+ "hashes": {
+  "harness": "sha256:3e1746aa5d5f225e37aabb8ce4378084c21bcff752f929d1c0254dfac8390354",
+  "normalizer": "sha256:ea21279187e358d6c3ff12ecc9430fd14f0ef91e0ce51f7847976ebf232b4b79",
+  "fakeModelServer": "sha256:cab5b6866b7854287218de51d1fafcc242a8602b2c83fb85572abe332f9f6560",
+  "cases": "sha256:e2bc37d116a15a32620304d4c6f139c57ff3683c3dbe131b88a157d5aa027a46",
+  "fixtures": "sha256:40f9e14a19251c338614b3c0d2d2ecfce9f543aca9df5a389bd7bf5bd8f6b038"
+ },
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --repeat 3 --evidence eq-rec-darwin-regen-rec1"
+}

@@ -1,3 +1,58 @@
+## 2026-10-27 - Shared seed frontier contract (part of #4272)
+
+### What changed
+
+- `packages/ai/src/index.ts` exports the shared seed frontier validator and typed error.
+
+### Why
+
+- `packages/ai/src/index.ts` gives the producer and session projector one frontier contract.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/index.ts` owns the package surface used by the session projector.
+
+### Expected merge conflict zones
+
+- The capture export block in `packages/ai/src/index.ts`.
+
+## 2026-10-26 - AssistantMessage.credentialServedRecently (senpi#2491)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `credentialServedRecently?: true`, set by the coding-agent model runtime on a failed response whose credential (provider, endpoint and key) served a response moments before.
+
+### Why
+
+- `packages/ai/src/types.ts`: a 401 right after the same key served is a gateway refusing that one request, not a dead key; consumers need a typed mark to tell the two apart without reading `errorMessage`.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the mark rides the core message type that the agent loop, `agent_end.failure` and the fallback decision all read; an extension cannot add a typed field to it.
+
+### Expected merge conflict zones
+
+- LOW: `packages/ai/src/types.ts` `AssistantMessage`, beside `failureSource`.
+
+## 2026-10-25 - errorCause names a model configuration error (senpi#4282)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage.errorCause` also accepts `{ type: "model_config"; model: string }`.
+- `packages/ai/src/index.ts`: exports `utils/provider-error.ts` (`isModelConfigError`, `redactSecrets`, `redactCredentialShapes`, `sanitizeProviderErrorMessage`).
+
+### Why
+
+- Clients and task hosts read a typed cause instead of matching provider text when a configured model id is not served by its route.
+
+### Why an extension could not handle it
+
+- The assistant message shape is defined here.
+
+### Expected merge conflict zones
+
+- LOW: the `errorCause` field of `AssistantMessage`; one export line in `index.ts`.
+
 ## 2026-10-26 - Reader note on the capture index (senpi#4349, part of #4272)
 
 ### What changed

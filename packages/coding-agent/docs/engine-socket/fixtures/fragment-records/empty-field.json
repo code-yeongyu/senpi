@@ -1,0 +1,29 @@
+{
+	"caseId": "empty-field",
+	"kind": "valid",
+	"contractIds": [
+		"R4.B3"
+	],
+	"description": "Zero raw bytes: exactly one record of length 0, complete, next null.",
+	"digestAlgorithm": "sha256",
+	"limits": {
+		"D": 131072,
+		"F": 262144,
+		"H": 16384
+	},
+	"source": {
+		"base64": ""
+	},
+	"sourceLength": 0,
+	"sourceDigest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+	"expectedRecords": [
+		{
+			"offset": 0,
+			"length": 0,
+			"digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			"next": null,
+			"complete": true,
+			"data": ""
+		}
+	]
+}

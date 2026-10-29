@@ -1,9 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 /**
@@ -19,11 +18,18 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
  *   of times extensions were loaded;
  * - `models-store.json` exists only if the model runtime was constructed;
  * - the project directory must stay untouched by a help screen.
+ *
+ * The child runs the source entry under Bun, as `4753-agent-directory-command.test.ts` does. Under
+ * Node the source tree needs the tsx loader, which resolves and transforms every module of the
+ * engine graph (about 3,240) in each child: one cache-miss launch measured 15-22s in a 6-CPU amd64
+ * container, so the three cases that launch twice crossed the 30s budget (senpi#4554). Bun runs the
+ * same `src/cli.ts` natively (about 2s per miss there). The assertions below are runtime-independent;
+ * the product's extension loading is not: Bun uses its native importer with a prepared module cache,
+ * Node uses jiti (`src/core/extensions/loader.ts`). `test/help-flags-cache.test.ts` covers the
+ * cache-invalidation contract in process on Node.
  */
 
 const CLI_PATH = fileURLToPath(new URL("../../../src/cli.ts", import.meta.url));
-// The child runs in a temp project directory, where a bare `tsx` specifier cannot resolve.
-const TSX_LOADER_URL = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
 function probeExtensionSource(flagName: string): string {
 	return `import { appendFileSync } from "node:fs";
@@ -58,15 +64,14 @@ function runHelp(args: readonly string[] = ["--help"]): HelpRun {
 	const env: Record<string, string> = {};
 	for (const [key, value] of Object.entries(process.env)) {
 		if (value === undefined) continue;
-		if (key === "SENPI_BRAND" || key.endsWith("_CODING_AGENT_DIR")) continue;
+		if (key === "SENPI_BRAND" || key === "NODE_OPTIONS" || key.endsWith("_CODING_AGENT_DIR")) continue;
 		env[key] = value;
 	}
-	env.NODE_OPTIONS = `--import ${TSX_LOADER_URL}`;
 	env.SENPI_CODING_AGENT_DIR = agentDir;
 	env.SENPI_HELP_PROBE_REPORT = reportPath;
 	env.PI_OFFLINE = "1";
 
-	const result = spawnSync(process.execPath, [CLI_PATH, ...args], {
+	const result = spawnSync("bun", [CLI_PATH, ...args], {
 		encoding: "utf8",
 		cwd: projectDir,
 		env,

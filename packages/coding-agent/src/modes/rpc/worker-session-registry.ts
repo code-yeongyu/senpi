@@ -167,6 +167,7 @@ export class WorkerSessionRegistry {
 				context: publishedSessionContext(entry.context, entry.contextOverlay),
 				// A closing entry has already released its last attachment; never publish that as negative.
 				attachments: Math.max(0, entry.attachments),
+				retain_on_disconnect: entry.retainOnDisconnect === true,
 				status: entry.state === "quarantined" ? "closing" : entry.state,
 				idleMs: Math.max(0, now - entry.lastCommandAt),
 				// A worker isolate's session has no tool child of its own yet (senpi#3566 todo 4 serves the in-process host).
