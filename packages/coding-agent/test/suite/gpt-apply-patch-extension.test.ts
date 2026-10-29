@@ -535,8 +535,8 @@ describe("gpt-apply-patch builtin extension", () => {
 				"/tmp",
 			),
 		).toEqual([
-			{ permission: "edit", patterns: ["src/app.ts"], always: ["src/app.ts"] },
-			{ permission: "edit", patterns: ["src/new.ts"], always: ["src/new.ts"] },
+			{ permission: "edit", patterns: ["src/app.ts"], always: ["src/app.ts"], executed: ["/tmp/src/app.ts"] },
+			{ permission: "edit", patterns: ["src/new.ts"], always: ["src/new.ts"], executed: ["/tmp/src/new.ts"] },
 		]);
 	});
 
@@ -840,7 +840,9 @@ describe("gpt-apply-patch builtin extension", () => {
 		if (!jsonTool.prepareArguments || !freeformTool.prepareArguments) throw new Error("prepareArguments missing");
 		const jsonArgs = jsonTool.prepareArguments({ input: patch });
 		const freeformArgs = freeformTool.prepareArguments(patch);
-		const expected = [{ permission: "edit", patterns: ["src/app.ts"], always: ["src/app.ts"] }];
+		const expected = [
+			{ permission: "edit", patterns: ["src/app.ts"], always: ["src/app.ts"], executed: ["/tmp/src/app.ts"] },
+		];
 
 		expect(parserRegistry.parse("apply_patch", jsonArgs, "/tmp")).toEqual(expected);
 		expect(parserRegistry.parse("apply_patch", freeformArgs, "/tmp")).toEqual(expected);

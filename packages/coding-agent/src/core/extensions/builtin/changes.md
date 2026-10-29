@@ -1,3 +1,22 @@
+## 2026-10-27 - Kimi recommendations and the look-at chain move to K3.1 Pro (senpi#4443)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Kimi rung of `RECOMMENDED_DEFAULT_MODELS` is `kimi-k3.1-pro` at `max` (was `kimi-k3`); `canonicalModelId` maps Kimi Code's bare `k3.1-pro` to `kimi-k3.1-pro` as it maps `k3` to `kimi-k3`.
+- `packages/coding-agent/src/core/extensions/builtin/look-at/model-selector.ts`: `DEFAULT_LOOK_AT_CHAIN` ends at `kimi-k3.1-pro` (was `kimi-k3`).
+
+### Why
+
+- Kimi K3.1 Pro replaces K3 as Moonshot's flagship (senpi#4441); implicit Kimi picks should land on it.
+
+### Why an extension could not handle it
+
+- These are the builtin extensions' own shipped defaults.
+
+### Expected merge conflict zones
+
+- LOW: the `RECOMMENDED_DEFAULT_MODELS` table and `DEFAULT_LOOK_AT_CHAIN`.
+
 ## 2026-10-26 - vertex-garden ambient auth carries a resolved project (senpi#4339)
 
 ### What changed

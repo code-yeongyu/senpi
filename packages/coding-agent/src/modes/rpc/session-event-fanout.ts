@@ -7,6 +7,7 @@ import { legacyAttachView } from "./compact-legacy-view.ts";
 import { RecoveryPageRequests } from "./compact-recovery-requests.ts";
 import { RecoveryCheckpoints } from "./compact-recovery-state.ts";
 import { COMPACT_EVENTS_CAPABILITY, MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
+import { ExtensionTransportOwner } from "./extension-owner.ts";
 import { LegacyReplayStore } from "./legacy-replay-store.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import { admissionOf, SessionRecoveryPins } from "./session-recovery-pins.ts";
@@ -42,6 +43,7 @@ type RegisteredConnection = {
 	readonly actor: SocketEventSinkActor;
 	/** This registration's incarnation of the peer: the owner every checkpoint it freezes is bound to. */
 	readonly socketEpoch: string;
+	readonly owner: ExtensionTransportOwner;
 };
 
 export class SessionEventFanout {
@@ -87,12 +89,15 @@ export class SessionEventFanout {
 		connection: SessionEventWriterConnection,
 		options: { readonly maxQueueBytes?: number; readonly stallMs?: number } = {},
 	): void {
+		this.unregisterConnection(id);
+		const owner = new ExtensionTransportOwner();
 		const socketEpoch = `socket-${++this.socketEpochs}`;
 		const Actor = this.pages ? AdmissionRoutingActor : SocketEventSinkActor;
 		const actor = new Actor(
 			connection,
 			(cause) => {
 				if (this.connections.get(id)?.actor === actor) {
+					owner.retire();
 					this.connections.delete(id);
 					this.connectionCapabilities.delete(id);
 					this.connectionSessions.delete(id);
@@ -112,7 +117,7 @@ export class SessionEventFanout {
 			this.shedMode,
 		);
 		if (actor instanceof AdmissionRoutingActor) actor.bind(this.checkpoints, socketEpoch, id);
-		this.connections.set(id, { connection, actor, socketEpoch });
+		this.connections.set(id, { connection, actor, socketEpoch, owner });
 		this.connectionCapabilities.set(id, new Set());
 		this.connectionSessions.set(id, new Map());
 	}
@@ -120,6 +125,7 @@ export class SessionEventFanout {
 	unregisterConnection(id: string): void {
 		const registered = this.connections.get(id);
 		if (!registered) return;
+		registered.owner.retire();
 		registered.actor.close();
 		this.pages?.forgetPeer(registered.socketEpoch);
 		this.checkpoints.forgetPeer(registered.socketEpoch);

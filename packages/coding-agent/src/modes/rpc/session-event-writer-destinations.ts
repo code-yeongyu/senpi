@@ -45,6 +45,8 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 		targets: readonly (string | undefined)[],
 		mirrors: readonly string[],
 		isTargeted: boolean,
+		/** A targeted reply's destination check, repeated immediately before its write (#4728). */
+		current?: () => boolean,
 	): void {
 		// A record is only walked and re-serialized when a target asked for placeholders;
 		// otherwise this is byte-for-byte today's path, with serializeJsonLine called once.
@@ -75,6 +77,7 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 					mirrors.includes(target)
 						? undefined
 						: this.fanout.attachmentOf(target, sessionId, isTargeted, record.type),
+					current,
 				);
 			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
 		}
