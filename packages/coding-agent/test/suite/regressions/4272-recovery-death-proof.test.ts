@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { currentRootOwner } from "../../../src/modes/rpc/compact-root-owner.ts";
 import { sweepRecoveryRoots } from "../../../src/modes/rpc/compact-recovery-cleanup.ts";
-import { readProcessIdentity } from "../../../src/utils/process-identity.ts";
 
 const probe = vi.hoisted(() => ({ absent: false }));
 vi.mock("node:child_process", async (importOriginal) => {
@@ -29,7 +28,9 @@ afterEach(async () => {
 	if (base) await rm(base, { recursive: true, force: true });
 });
 
-// #4272 S14 L4/RULING-87: a failed process query cannot authorize deleting a live owner's bytes.
+// #4272 S14 L4/RULING-87: a failed process query cannot authorize deleting a live owner's bytes; only kill(pid, 0)
+// answering ESRCH proves death (EPERM means the process exists). The check lives in the root-owner proof, so the
+// shared process-identity probe and the host supervisor keep their behaviour.
 it.each(["exists", "EPERM", "ESRCH"] as const)(
 	"requires ESRCH when ps reports absent but kill answers %s",
 	async (kill) => {
@@ -47,10 +48,8 @@ it.each(["exists", "EPERM", "ESRCH"] as const)(
 			return true;
 		});
 
-		const identity = await readProcessIdentity(owner.pid);
 		const result = await sweepRecoveryRoots(base);
 
-		expect(identity.kind).toBe(kill === "ESRCH" ? "absent" : "error");
 		expect(result.removed).toBe(kill === "ESRCH" ? 1 : 0);
 		expect(signal).toHaveBeenCalledWith(owner.pid, 0);
 	},
