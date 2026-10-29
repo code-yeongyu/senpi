@@ -247,6 +247,7 @@ export async function contextHost(
 		inbox: (connection: string): readonly WireRecord[] => inboxes.get(connect(connection)) ?? [],
 		connect,
 		send,
+		waitFor,
 		async prompt(connection: string, sessionId: string, message: string): Promise<void> {
 			const idle = waitFor((record) => record.type === "agent_idle" && record.sessionId === sessionId);
 			const record = await send(connection, { type: "prompt", sessionId, message });

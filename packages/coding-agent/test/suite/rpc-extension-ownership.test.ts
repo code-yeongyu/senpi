@@ -5,6 +5,19 @@ import { contextHost, responseData } from "./rpc-session-context-support.ts";
 // #4728: observe contexts the real transport supplies, never fabricate them in a mock.
 const extension = `export default function (pi) {
 	const contexts = new Map();
+	pi.rpc.handle("probe.wait", async (_data, context) => {
+		if (!context) {
+			pi.rpc.emit("probe.waiting", { supported: false });
+			return { supported: false };
+		}
+		const ended = new Promise(resolve => {
+			if (context.disconnectSignal.aborted) resolve();
+			else context.disconnectSignal.addEventListener("abort", () => resolve(), { once: true });
+		});
+		pi.rpc.emit("probe.waiting", { supported: true });
+		await ended;
+		return { supported: true, aborted: context.disconnectSignal.aborted };
+	});
 	pi.rpc.handle("probe.owner", (_data, context) => {
 		if (!context) return { supported: false };
 		contexts.set(context.ownerId, context);
@@ -47,6 +60,33 @@ it("isolates real connection owners despite identical caller-supplied ownership 
 	expect(b.ownerId).not.toBe(a.ownerId);
 	expect(again.ownerId).toBe(a.ownerId);
 	expect(again.aborted).toBe(false);
+}, 120_000);
+
+it("retires captured ownership during an asynchronous handler without waiting for handler completion", async () => {
+	// Given: B keeps the session alive while A's extension request remains suspended.
+	await using host = await contextHost({ extension });
+	await host.send("client-a", { type: "set_client_info", width: 80, capabilities: ["extension_events"] });
+	const sessionPath = join(host.scratch, "inflight.jsonl");
+	const opened = await host.open("client-a", { sessionPath });
+	const sessionId = String(opened.sessionId);
+	await host.open("client-b", { sessionPath });
+	const ready = host.waitFor(
+		(record) => record.type === "extension_event" && record.name === "probe.waiting",
+	);
+	const waiting = host.send("client-a", {
+		type: "extension_request",
+		sessionId,
+		name: "probe.wait",
+	});
+	const started = await ready;
+
+	// When: the transport disconnects during the handler's own asynchronous wait.
+	await host.router.releaseConnection("client-a");
+	const finished = await waiting;
+
+	// Then: trusted context was present and its retirement unblocked the handler.
+	expect(started.data).toEqual({ supported: true });
+	expect(finished?.success).not.toBe(true);
 }, 120_000);
 
 it("aborts only the departed owner's context while another attachment keeps the session alive", async () => {
