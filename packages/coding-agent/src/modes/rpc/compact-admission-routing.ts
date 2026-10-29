@@ -1,4 +1,5 @@
 import { serializeJsonLine } from "./jsonl.ts";
+import { replyAdmission } from "./compact-admission-reply.ts";
 import type { RecoveryCheckpoints } from "./compact-recovery-state.ts";
 import type { RecoveryStreamState } from "./compact-recovery-types.ts";
 import { SocketEventSinkActor } from "./socket-event-fanout.ts";
@@ -7,6 +8,7 @@ import { SocketEventSinkActor } from "./socket-event-fanout.ts";
  * IDs are a subset of the bounded epoch attempt index; GlobalResync's legacy cursor bypasses enqueue.
  */
 export class AdmissionRoutingActor extends SocketEventSinkActor {
+	private peer: string | undefined;
 	readonly admissions = new Set<string>();
 	// Terminal reply debt can enqueue after S08 retires the stream. Headers only, bounded by epoch admission IDs;
 	// this is neither another counter nor an attempt index, and cancelled answers never consult it.
@@ -14,9 +16,10 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 
 	remember(sessionId: string, checkpoints: RecoveryCheckpoints, socketEpoch: string): RecoveryStreamState | undefined {
 		const stream = checkpoints.stream({ socketEpoch, sessionId });
-		const routes = stream?.routes.filter((id) => this.admissions.has(id)) ?? [];
+		const remembered = stream ?? this.terminal.get(sessionId);
+		const routes = remembered?.routes.filter((id) => this.admissions.has(id)) ?? [];
 		if (stream && routes.length > 0) this.terminal.set(sessionId, { ...stream, routes });
-		return stream ? { ...stream, routes } : this.terminal.get(sessionId);
+		return remembered ? { ...remembered, routes } : undefined;
 	}
 
 	route(line: string, checkpoints: RecoveryCheckpoints, socketEpoch: string): readonly string[] {
@@ -26,12 +29,19 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 		if (typeof record.subscriptionId === "string") return [line];
 		const stream = this.remember(record.sessionId, checkpoints, socketEpoch);
 		const routes = stream?.routes.filter((id) => this.admissions.has(id)) ?? [];
+		if (record.type === "response" && typeof record.id === "string") {
+			const admissionId = replyAdmission(record.id, this.peer, routes);
+			return admissionId === undefined
+				? [line]
+				: [serializeJsonLine({ ...record, admissionId, generation: stream?.generation })];
+		}
 		return routes.length === 0
 			? [line]
 			: routes.map((admissionId) => serializeJsonLine({ ...record, admissionId, generation: stream?.generation }));
 	}
 
-	bind(checkpoints: RecoveryCheckpoints, socketEpoch: string): void {
+	bind(checkpoints: RecoveryCheckpoints, socketEpoch: string, peer: string): void {
+		this.peer = peer;
 		const enqueue = super.enqueue.bind(this);
 		this.enqueue = (line, key, written, demoted, reply, held) => {
 			const lines = this.route(line, checkpoints, socketEpoch);

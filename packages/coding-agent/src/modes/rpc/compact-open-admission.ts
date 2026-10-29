@@ -59,6 +59,7 @@ export async function compactOpen(
 			let result:
 				| { readonly answer: Readonly<Record<string, unknown>>; readonly release: () => Promise<void> }
 				| undefined;
+			let physicalSucceeded = false;
 			const response = await physical(async (opened) => {
 				const sessionId = opened.sessionId;
 				const lane = host.writer.recoveryLane(sessionId);
@@ -94,15 +95,27 @@ export async function compactOpen(
 						},
 					},
 					release: async () => {
+						if (!active) return;
 						active = false;
 						checkpoints.retireRoute(caller, admissionId);
-						releaseOwnerAttachment(host, peer, sessionId);
-						await releaseDisconnectAttachment(host, sessionId);
+						host.writer.unregisterAdmission(peer, admissionId);
+						// A failed physical open already rolled back its attachment.
+						if (physicalSucceeded) {
+							releaseOwnerAttachment(host, peer, sessionId);
+							await releaseDisconnectAttachment(host, sessionId);
+						}
 					},
 				};
-			}, signal);
-			if (response !== undefined) throw new OpenRefused(response);
+			}, signal).catch(async (cause: unknown) => {
+				await result?.release();
+				throw cause;
+			});
+			if (response !== undefined) {
+				await result?.release();
+				throw new OpenRefused(response);
+			}
 			if (result === undefined) throw new CompactAdmissionError("storage_unavailable");
+			physicalSucceeded = true;
 			return result;
 		});
 		const response = (await cancelledAnswer()) ?? { ...answer, id: command.id };

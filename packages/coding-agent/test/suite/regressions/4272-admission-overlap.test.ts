@@ -87,8 +87,8 @@ it("T2 every suffix and final close instance keeps both S08 routes after reset a
 	const from = peer.inbox.length;
 	for (const type of ["agent_idle", "extension_ui_request", "agent_event", "event_lease"])
 		host.writer.enqueue(sessionId, { type });
-	await peer.request({ type: "close_session", sessionId });
-	await peer.request({ type: "close_session", sessionId });
+	const closeA = await peer.request({ type: "close_session", sessionId, admissionId: "a" });
+	const closeB = await peer.request({ type: "close_session", sessionId, admissionId: "b" });
 	await host.writer.flush();
 	const frames = peer.inbox.slice(from).filter((frame) => frame.sessionId === sessionId);
 	expect(frames.some((frame) => frame.type === "session_closed")).toBe(true);
@@ -103,5 +103,25 @@ it("T2 every suffix and final close instance keeps both S08 routes after reset a
 				.map((frame) => frame.admissionId)
 				.sort(),
 		).toEqual(["a", "b"]);
-	expect(frames.filter((frame) => frame.command === "close_session")).toHaveLength(4);
+	expect(frames.filter((frame) => frame.command === "close_session")).toHaveLength(2);
+	expect(closeA).toMatchObject({ admissionId: "a", generation: reset.generation });
+	expect(closeB).toMatchObject({ admissionId: "b", generation: reset.generation });
+}, 120_000);
+
+it("RULING-92 a reply reaches only its requester, never a sibling admission or connection", async () => {
+	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+	await using host = await statusHost();
+	const peer = host.client("peer");
+	const foreign = host.client("foreign");
+	const sessionPath = join(host.cwd, "reply.jsonl");
+	const a = await peer.request({ type: "open_session", sessionPath, admissionId: "a" });
+	await peer.request({ type: "open_session", sessionPath, admissionId: "b" });
+	await foreign.request({ type: "open_session", sessionPath, admissionId: "foreign" });
+	const fromPeer = peer.inbox.length;
+	const fromForeign = foreign.inbox.length;
+	const answer = await peer.request({ type: "close_session", sessionId: a.sessionId, admissionId: "b" });
+	await host.writer.flush();
+	expect(answer).toMatchObject({ admissionId: "b", generation: 1 });
+	expect(peer.inbox.slice(fromPeer).filter((frame) => frame.type === "response")).toEqual([answer]);
+	expect(foreign.inbox.slice(fromForeign).filter((frame) => frame.type === "response")).toEqual([]);
 }, 120_000);

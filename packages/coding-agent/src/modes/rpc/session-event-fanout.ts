@@ -111,7 +111,7 @@ export class SessionEventFanout {
 			options.stallMs,
 			this.shedMode,
 		);
-		if (actor instanceof AdmissionRoutingActor) actor.bind(this.checkpoints, socketEpoch);
+		if (actor instanceof AdmissionRoutingActor) actor.bind(this.checkpoints, socketEpoch, id);
 		this.connections.set(id, { connection, actor, socketEpoch });
 		this.connectionCapabilities.set(id, new Set());
 		this.connectionSessions.set(id, new Map());

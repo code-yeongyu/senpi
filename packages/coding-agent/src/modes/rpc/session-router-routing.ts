@@ -1,6 +1,7 @@
 import { detachConnection } from "./connection-detach.ts";
 import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
 import { invalidCompactAdmission } from "./compact-admission-validation.ts";
+import { withAdmissionRequest } from "./compact-admission-reply.ts";
 import { resetStream } from "./compact-reset-stream.ts";
 
 import { answerEffectFromTranscript } from "./effect-commands.ts";
@@ -54,13 +55,16 @@ export function handle(host: RouterContext, command: RpcCommand): Promise<RpcRes
 			hostContext: host.defaults.hostContext,
 		});
 	host.activeRequests.set(sessionId, (host.activeRequests.get(sessionId) ?? 0) + 1);
-	return runWithSessionAttribution({ sessionId }, () => dispatch(host, command)).finally(() => {
-		const remaining = (host.activeRequests.get(sessionId) ?? 1) - 1;
-		if (remaining > 0) host.activeRequests.set(sessionId, remaining);
-		else host.activeRequests.delete(sessionId);
-		if (sessionId !== undefined) for (const listener of host.requestSettledListeners.get(sessionId) ?? []) listener();
-		if (host.draining) sweepDrain(host);
-	});
+	return withAdmissionRequest(command, host.writer.currentConnection(), () =>
+		runWithSessionAttribution({ sessionId }, () => dispatch(host, command)).finally(() => {
+			const remaining = (host.activeRequests.get(sessionId) ?? 1) - 1;
+			if (remaining > 0) host.activeRequests.set(sessionId, remaining);
+			else host.activeRequests.delete(sessionId);
+			if (sessionId !== undefined)
+				for (const listener of host.requestSettledListeners.get(sessionId) ?? []) listener();
+			if (host.draining) sweepDrain(host);
+		}),
+	);
 }
 
 /** Attachments held by connections other than the caller: every one of the caller's own holds is excluded. */
