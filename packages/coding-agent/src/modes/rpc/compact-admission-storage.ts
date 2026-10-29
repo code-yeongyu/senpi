@@ -8,6 +8,7 @@ export const ADMISSION_LIMITS = { entries: 128, bytes: 16 * 1024 * 1024, hot: 16
 const rowSchema = z.object({
 	fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
 	state: z.enum(["pending", "complete", "cancelled", "failed"]),
+	failure: z.literal("storage_unavailable").optional(),
 	answer: z.string().max(65_536).optional(),
 });
 export type AdmissionRow = z.infer<typeof rowSchema>;

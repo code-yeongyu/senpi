@@ -1,6 +1,12 @@
 import type { AdmissionProducerLifetime } from "./compact-admission-producer.ts";
 
 export type Answer = Readonly<Record<string, unknown>>;
+export type AdmissionIdentity = {
+	readonly socketEpoch: string;
+	readonly peer: string;
+	readonly admissionId: string;
+	readonly fingerprint: string;
+};
 export type Produced = {
 	readonly answer: Answer;
 	readonly release: () => Promise<void>;

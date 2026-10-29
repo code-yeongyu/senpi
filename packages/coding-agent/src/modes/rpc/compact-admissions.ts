@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { parseBoundedId } from "./compact-recovery-ids.ts";
 import { CompactAdmissionError } from "./compact-admission-error.ts";
-import type { Answer, Epoch, Produced } from "./compact-admission-types.ts";
+import type { AdmissionIdentity, Answer, Epoch, Produced } from "./compact-admission-types.ts";
 import {
 	ADMISSION_LIMITS,
 	type AdmissionRow as Row,
@@ -78,15 +78,7 @@ export class CompactAdmissions {
 		}
 	}
 
-	async run(
-		identity: {
-			readonly socketEpoch: string;
-			readonly peer: string;
-			readonly admissionId: string;
-			readonly fingerprint: string;
-		},
-		produce: (signal: AbortSignal) => Promise<Produced>,
-	): Promise<Answer> {
+	async run(identity: AdmissionIdentity, produce: (signal: AbortSignal) => Promise<Produced>): Promise<Answer> {
 		const key = this.key(identity.admissionId);
 		const epoch = this.epoch(identity.socketEpoch, identity.peer);
 		const registered = await this.serial(epoch, async () => {
@@ -102,8 +94,9 @@ export class CompactAdmissions {
 							answer: z.record(z.string(), z.unknown()).parse(JSON.parse(row.answer)),
 						} as const;
 					case "cancelled":
-					case "failed":
 						throw new CompactAdmissionError("admission_retired");
+					case "failed":
+						throw new CompactAdmissionError(row.failure ?? "admission_retired");
 					case "pending": {
 						const pending = epoch.hot.get(key);
 						if (!pending) throw new CompactAdmissionError("storage_unavailable");
@@ -130,6 +123,7 @@ export class CompactAdmissions {
 				break;
 		}
 		let produced: Produced | undefined;
+		let failed = false;
 		try {
 			produced = await runAdmissionProducer(
 				epoch.producer.signal,
@@ -163,8 +157,16 @@ export class CompactAdmissions {
 				// between them ends this connection, which retires its subscription and pending buffer.
 				try {
 					produced?.activate?.();
-				} catch {
-					process.stderr.write("senpi rpc admission activation failed; releasing subscription\n");
+				} catch (cause) {
+					process.stderr.write(
+						`senpi rpc admission activation failed; releasing subscription: ${cause instanceof Error ? cause.message : String(cause)}\n`,
+					);
+					await writeAdmissionRow(epoch, key, {
+						state: "failed",
+						fingerprint: identity.fingerprint,
+						failure: "storage_unavailable",
+					});
+					failed = true;
 					throw new CompactAdmissionError("storage_unavailable");
 				}
 				return false;
@@ -179,9 +181,10 @@ export class CompactAdmissions {
 		} catch (cause) {
 			if (produced) await produced.release();
 			try {
-				await this.serial(epoch, () =>
-					writeAdmissionRow(epoch, key, { state: "failed", fingerprint: identity.fingerprint }),
-				);
+				if (!failed)
+					await this.serial(epoch, () =>
+						writeAdmissionRow(epoch, key, { state: "failed", fingerprint: identity.fingerprint }),
+					);
 			} finally {
 				registered.pending.reject(cause);
 			}
