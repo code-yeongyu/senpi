@@ -16,7 +16,7 @@ compare there first, and then per row applies the patch, runs `fused-equivalence
 
 | Patch | Plan row | Observation | Cases | What it changes |
 |---|---|---|---|---|
-| `o1-dropped-prompt-segment.patch` | dropped prompt segment | O1 | E01 | removes the "Judgment asks" line from the intent-gate system prompt segment |
+| `o1-dropped-prompt-segment.patch` | dropped prompt segment | O1 | E01, E19 | removes the "Judgment asks" line from the intent-gate system prompt segment (E19 sees it through its raw-hash blobs, VER-E19-RAW) |
 | `o2-swapped-model.patch` | swapped model | O2 | E01 | OpenAI-completions requests name `mock-model-b` instead of `mock-model` |
 | `o3-dropped-declaration.patch` | dropped declaration | O3 | E01 | the last tool declaration is dropped from each request |
 | `o4-dropped-custom-header.patch` | dropped custom header | O4 | E01 | senpi's own `User-Agent` header is no longer sent (the SDK default goes out) |

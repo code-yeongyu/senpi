@@ -95,7 +95,7 @@ test("content-addressed blob ids map one-to-one by field, and only at those fiel
 	});
 });
 
-test("durations are dropped, measurement values become <measured> with their keys kept, nothing else changes", () => {
+test("durations become <duration> and measurements <measured>, both with their keys kept; nothing else changes", () => {
 	const normalize = createNormalizer();
 	const out = normalize({
 		durationMs: 12,
@@ -109,7 +109,12 @@ test("durations are dropped, measurement values become <measured> with their key
 		text: "took 12ms",
 	});
 	assert.deepEqual(out, {
-		structuredContent: { exit_code: 0 },
+		durationMs: "<duration>",
+		elapsed: "<duration>",
+		toolDurationMs: "<duration>",
+		generationMs: "<duration>",
+		queued_ms: "<duration>",
+		structuredContent: { exit_code: 0, wall_time_seconds: "<duration>" },
 		memory: {
 			liveBytes: "<measured>",
 			rssBytes: "<measured>",
@@ -122,6 +127,18 @@ test("durations are dropped, measurement values become <measured> with their key
 	});
 	// A measurement that appears in one observation and not the other is a difference.
 	assert.equal(diffNormalized(normalize({ memory: { liveBytes: 7 } }), normalize({ memory: {} })).length, 1);
+});
+
+test("a duration key one path drops fails the compare; a different measured value does not (senpi#4739)", () => {
+	const normalize = createNormalizer();
+	const golden = normalize({ event: { type: "tool_execution_end", durationMs: 12 } });
+	assert.deepEqual(diffNormalized(golden, normalize({ event: { type: "tool_execution_end", durationMs: 480 } })), []);
+	assert.deepEqual(diffNormalized(golden, normalize({ event: { type: "tool_execution_end" } })), [
+		{ path: "$.event.durationMs", golden: "<duration>", actual: undefined },
+	]);
+	assert.deepEqual(diffNormalized(normalize({ elapsed: 1 }), normalize({ elapsed: 1, queuedMs: 2 })), [
+		{ path: "$.queuedMs", golden: undefined, actual: "<duration>" },
+	]);
 });
 
 test("the detached-cell elapsed label in a status text becomes <elapsed>; nothing else in a status text changes", () => {

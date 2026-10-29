@@ -7,8 +7,9 @@
 //   key (`<ts:entry.timestamp:3>` is the third entry timestamp). Wall-clock values themselves are never compared:
 //   neighbouring events land in the same millisecond or not by chance, and a value assigned before an event is emitted
 //   can trail one emitted after it, so even their relative order is a race; event and entry order are compared directly;
-// - durations are dropped (duration/elapsed/latency/queued keys); resource measurements (kernel memory byte counts)
-//   keep their key and compare as `<measured>`, so a measurement that appears or disappears is still a difference;
+// - measured durations (duration/elapsed/latency/queued keys) keep their key and compare as `<duration>`, and resource
+//   measurements (kernel memory byte counts) keep their key and compare as `<measured>`: a measurement one path adds or
+//   drops is still a difference (senpi#4739);
 // - the wall-clock elapsed label of the codemode detached-cell status (`\u2197 js \u00b7 <summary> (1s)`, formatElapsedSeconds in
 //   packages/senpi-codemode/src/extension/eval-status.ts) becomes `(<elapsed>)`, under the statusText key only: a cell that
 //   detaches at its 1 s timeout reads `(0s)` or `(1s)` depending on host load;
@@ -59,6 +60,7 @@ const DURATION_KEY =
 /** Measured resource quantities (a kernel's live heap after a cell): the key is compared, the value is `<measured>`. */
 const MEASUREMENT_KEY = /^(liveBytes|rssBytes|heapUsedBytes|heapTotalBytes|externalBytes)$/;
 const MEASURED = "<measured>";
+const DURATION = "<duration>";
 /** The detached-cell status text with its trailing elapsed label, in exactly the forms formatElapsedSeconds emits. */
 const EVAL_STATUS_ELAPSED = /^(\u2197 .* )\((?:\d+s|\d+m|\d+h(?: \d+m)?|\d+d \d+h \d+m)\)$/u;
 // Epoch numbers under a time key: seconds or milliseconds between 2001 and 2286.
@@ -184,9 +186,12 @@ export function createNormalizer({ roots = [], hostFacts = [] } = {}) {
 			if (node && typeof node === "object") {
 				const out = {};
 				for (const [childKey, child] of Object.entries(node)) {
-					if (DURATION_KEY.test(childKey)) continue;
 					const outKey = rewriteString(childKey);
-					out[outKey] = MEASUREMENT_KEY.test(childKey) ? MEASURED : walk(child, childKey, key ?? parent);
+					out[outKey] = DURATION_KEY.test(childKey)
+						? DURATION
+						: MEASUREMENT_KEY.test(childKey)
+							? MEASURED
+							: walk(child, childKey, key ?? parent);
 				}
 				return out;
 			}
