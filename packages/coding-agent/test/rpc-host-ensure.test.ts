@@ -34,6 +34,7 @@ import {
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
+const diagnosticCleanups = new Set<() => void>();
 const fixture = join(import.meta.dirname, "fixtures", "rpc-host-fixture.mjs");
 const incompatibleProtocolFixture = join(import.meta.dirname, "fixtures", "rpc-incompatible-protocol-host.ts");
 const readinessDiagnosticFixture = join(import.meta.dirname, "fixtures", "rpc-readiness-diagnostic.mjs");
@@ -43,6 +44,7 @@ const CAPABILITIES = "multi_session,extension_events,session_context,session_kin
 const HANDOFF_CAPABILITIES = `${CAPABILITIES},${GENERATION_HANDOFF_CAPABILITY}`;
 
 afterEach(async () => {
+	for (const cleanup of diagnosticCleanups) cleanup();
 	const spawned = children.splice(0);
 	const pending = roots.splice(0);
 	// Most hosts here are spawned by PRODUCTION code: detached, with only a pid handed back, and
@@ -898,11 +900,6 @@ async function waitForDiagnosticMarker(
 	}
 }
 
-const diagnosticCleanups = new Set<() => void>();
-afterEach(() => {
-	for (const cleanup of diagnosticCleanups) cleanup();
-});
-
 // #4708: marker existence must survive missed and coalesced watcher notifications.
 describe("diagnostic marker wait", () => {
 	it.each(["before-watch", null, "unrelated", "watch-ended"] as const)(
@@ -912,8 +909,8 @@ describe("diagnostic marker wait", () => {
 			const controller = new AbortController();
 			if (filename === "before-watch") await writeFile(join(qa.root, "stderr-ready"), "");
 			const watchMarker = () =>
-				(async function* () {
-					if (filename === "watch-ended") return;
+				(async function* (): AsyncGenerator<{ eventType: "rename"; filename: string | null }, undefined> {
+					if (filename === "watch-ended") return undefined;
 					if (filename !== "before-watch") {
 						// Let the initial existence check and one event re-check observe absence.
 						yield { eventType: "rename" as const, filename: "before-marker" };
