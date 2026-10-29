@@ -6,6 +6,7 @@ import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { MirroredLimits } from "../../core/subscription-limits/limit-store.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { CanonicalRecord } from "./compact-lane-transitions.ts";
+import type { ExtensionOwnerIdentity, ExtensionOwnerWire } from "./extension-owner.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
 import type { SessionBootstrap } from "./session-acceptance-lane.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
@@ -83,7 +84,17 @@ export type HostToSessionWorker =
 	| { type: "mcp_form_bound"; id: string; epoch: string; version?: string }
 	| { type: "mcp_form_availability"; epoch: string; version?: string; id?: string }
 	| { type: "mcp_form_settlement"; id: string; epoch: string; settlementId: string; outcome: McpFormOutcome }
-	| { type: "command"; request: number; command: object; connection?: string; roles?: readonly string[] }
+	| {
+			type: "command";
+			request: number;
+			command: object;
+			connection?: string;
+			roles?: readonly string[];
+			/** The gate the host captured at ingress, before its first await (#4728). */
+			owner?: ExtensionOwnerWire;
+	  }
+	/** Gates the host already retired atomically; the isolate only wakes their waiters. */
+	| { type: "owners_retired"; owners: readonly ExtensionOwnerIdentity[] }
 	| { type: "prompt_surface"; request: number; surface: PromptSurface }
 	| { type: "browser_engine"; request: number; engine: BrowserEngine }
 	| { type: "permission_preset"; request: number; preset: string }
@@ -128,6 +139,8 @@ export type SessionWorkerToHost =
 			canonicalRefused?: true;
 			firstOrdinal?: number;
 			connection?: string;
+			/** The command's captured incarnation; targeted output never downgrades to the routing string. */
+			owner?: ExtensionOwnerIdentity;
 			signal: SharedArrayBuffer;
 			activity: Pick<WorkerSnapshot, "busy" | "handoffBusy" | "streaming">;
 			snapshot?: WorkerSnapshot;

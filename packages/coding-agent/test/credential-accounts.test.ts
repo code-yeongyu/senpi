@@ -9,6 +9,8 @@ import {
 	removeCredentialAccount,
 } from "../src/core/credential-accounts.ts";
 import { CredentialSlotRepository } from "../src/core/credential-pool/state-store.ts";
+import { getProviderAccounts } from "../src/core/extensions/builtin/anthropic-subscription/account-management.ts";
+import { emptyCredential } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 
 const NOW_FAR_FUTURE = 4_102_444_800_000;
 
@@ -74,6 +76,125 @@ describe("provider-neutral credential accounts", () => {
 		expect(accounts.find((account) => account.name === "work")?.blocked).toBe(true);
 		expect(accounts.find((account) => account.name === "default")?.blocked).toBe(false);
 		expect(readFileSync(join(dir, "auth.json"), "utf-8")).not.toContain("blockedUntil");
+	});
+
+	test("a known-bad key reports auth_error with its re-probe time, apart from a cooldown (senpi#4327)", async () => {
+		await seedPool("openai");
+		for (const [name, key, blockReason] of [
+			["default", "key-default", "auth_error"],
+			["work", "key-work", "rate_limit"],
+		] as const) {
+			const credentialRevision = await repository.storedCredentialRevision("openai", name, { key });
+			await repository.mutateSlotState("openai", "stored", name, () => ({
+				blockedUntil: NOW_FAR_FUTURE,
+				blockReason,
+				credentialRevision,
+			}));
+		}
+
+		const accounts = await getCredentialAccounts(storage, "openai", {}, repository);
+
+		expect(accounts).toEqual([
+			{
+				name: "default",
+				source: "login",
+				blocked: true,
+				blockedReason: "auth_error",
+				blockedUntil: NOW_FAR_FUTURE,
+				pinned: false,
+			},
+			{
+				name: "work",
+				source: "login",
+				blocked: true,
+				blockedReason: "rate_limit",
+				blockedUntil: NOW_FAR_FUTURE,
+				pinned: false,
+			},
+		]);
+	});
+
+	test("a slot blocked in both sources reports the later expiry (senpi#4365 review)", async () => {
+		const slotUntil = NOW_FAR_FUTURE + 60_000;
+		await storage.modify("openai", async () => ({
+			type: "api_key",
+			key: "key-default",
+			accounts: [
+				{
+					name: "default",
+					key: "key-default",
+					source: "login",
+					blockedUntil: slotUntil,
+					blockReason: "rate_limit",
+				},
+			],
+		}));
+		const credentialRevision = await repository.storedCredentialRevision("openai", "default", { key: "key-default" });
+		await repository.mutateSlotState("openai", "stored", "default", () => ({
+			blockedUntil: NOW_FAR_FUTURE,
+			blockReason: "auth_error",
+			credentialRevision,
+		}));
+
+		const [account] = await getCredentialAccounts(storage, "openai", {}, repository);
+
+		// The rejected key stays the reason: the account is usable only once both blocks lift.
+		expect(account).toMatchObject({ blocked: true, blockedReason: "auth_error", blockedUntil: slotUntil });
+	});
+
+	test("a disabled account reports disabled with no re-probe time", async () => {
+		await storage.modify("openai", async () => ({
+			type: "api_key",
+			key: "key-default",
+			accounts: [{ name: "default", key: "key-default", source: "login", blockReason: "account_disabled" }],
+		}));
+
+		const [account] = await getCredentialAccounts(storage, "openai", {}, repository);
+
+		expect(account).toMatchObject({ blocked: true, blockedReason: "disabled" });
+		expect(account).not.toHaveProperty("blockedUntil");
+	});
+
+	test("the Claude lane listing agrees with the generic one for a disabled account", async () => {
+		await storage.modify("anthropic-subscription", async () => ({
+			...emptyCredential(),
+			accounts: [
+				{
+					name: "default",
+					access: "fake-a",
+					refresh: "fake-r",
+					expires: NOW_FAR_FUTURE,
+					source: "login",
+					blockReason: "account_disabled",
+				},
+			],
+		}));
+
+		const generic = await getCredentialAccounts(storage, "anthropic-subscription", {}, repository);
+
+		expect(generic[0]).toMatchObject({ blocked: true, blockedReason: "disabled" });
+		expect(getProviderAccounts(storage, "anthropic-subscription", {})).toEqual(generic);
+	});
+
+	test("an env key blocked for auth reports auth_error; an expired block reports no reason", async () => {
+		const env = { OPENAI_API_KEY: "sk-one", OPENAI_API_KEY_2: "sk-two" };
+		const bad = await repository.envCredentialRevision("OPENAI_API_KEY", "sk-one");
+		await repository.mutateSlotState("openai", "env", "env", () => ({
+			blockedUntil: NOW_FAR_FUTURE,
+			blockReason: "auth_error",
+			credentialRevision: bad,
+		}));
+		const lapsed = await repository.envCredentialRevision("OPENAI_API_KEY_2", "sk-two");
+		await repository.mutateSlotState("openai", "env", "env-2", () => ({
+			blockedUntil: 1,
+			blockReason: "auth_error",
+			credentialRevision: lapsed,
+		}));
+
+		const accounts = await getCredentialAccounts(storage, "openai", env, repository);
+
+		expect(accounts[0]).toMatchObject({ blocked: true, blockedReason: "auth_error", blockedUntil: NOW_FAR_FUTURE });
+		expect(Object.keys(accounts[1] ?? {}).sort()).toEqual(["blocked", "name", "pinned", "source"]);
 	});
 
 	test("pinning marks exactly one account and unpinning clears it", async () => {

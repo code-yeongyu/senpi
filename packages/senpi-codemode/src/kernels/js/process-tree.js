@@ -10,6 +10,14 @@ const EXIT_POLL_MS = 25;
 // A hung `ps` must not hold a cell's retirement; empty output then means nothing is signalled.
 const PS_LOOKUP_TIMEOUT_MS = 2_000;
 const ZOMBIE_CHECK_INTERVAL_MS = 250;
+let cleanupExecFile = execFile;
+let initializedCleanup = false;
+
+export function initializeProcessCleanup(original) {
+	if (initializedCleanup) throw new Error("Process cleanup already initialized");
+	initializedCleanup = true;
+	cleanupExecFile = original;
+}
 
 export function isProcessAlive(pid) {
 	if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -184,7 +192,7 @@ async function withoutZombies(pids) {
 // `ps -p` exits non-zero when any listed pid is gone but still prints the rest.
 function ps(args, options = {}) {
 	return new Promise((resolve) => {
-		execFile("ps", args, { maxBuffer: PS_MAX_BUFFER, windowsHide: true, ...options }, (_error, output) =>
+		cleanupExecFile("ps", args, { maxBuffer: PS_MAX_BUFFER, windowsHide: true, ...options }, (_error, output) =>
 			resolve(typeof output === "string" ? output : String(output ?? "")),
 		);
 	});

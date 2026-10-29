@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+import { SessionConnectionContext } from "./session-connection-context.ts";
 import type { ExtensionUIContext, SessionKind } from "../../core/extensions/types.ts";
 import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-types.ts";
 import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
@@ -8,6 +8,7 @@ import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { SessionStructuredLanes } from "./session-structured-lanes.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
 import { type MediaPersister, omitNormalInlineMedia } from "./media-placeholders.ts";
 import type {
 	RpcHostLifecycleEvent,
@@ -55,20 +56,16 @@ function compactDelta(value: RpcRecord): { type: CompactDeltaType; contentIndex:
 	if (value.type !== "message_update" || !Object.hasOwn(value, "message")) return undefined;
 	const event = value.assistantMessageEvent;
 	if (typeof event !== "object" || event === null) return undefined;
-	const typedEvent = event as Record<string, unknown>;
+	const { type, contentIndex, delta } = event as Record<string, unknown>;
 	if (
-		typeof typedEvent.type !== "string" ||
-		!COMPACT_DELTA_TYPES.has(typedEvent.type as CompactDeltaType) ||
-		typeof typedEvent.contentIndex !== "number" ||
-		typeof typedEvent.delta !== "string"
+		typeof type !== "string" ||
+		!COMPACT_DELTA_TYPES.has(type as CompactDeltaType) ||
+		typeof contentIndex !== "number" ||
+		typeof delta !== "string"
 	) {
 		return undefined;
 	}
-	return {
-		type: typedEvent.type as CompactDeltaType,
-		contentIndex: typedEvent.contentIndex,
-		delta: typedEvent.delta,
-	};
+	return { type: type as CompactDeltaType, contentIndex, delta };
 }
 
 /** The delta-only form of a compact message_update: cumulative snapshot fields blanked, delta kept. */
@@ -184,7 +181,7 @@ export class SessionEventWriter {
 	private readonly records = new SessionRecordAccounting();
 	private readonly queues = new Map<string, RecordQueue>();
 	private readonly fanout = new SessionEventFanout();
-	private readonly connectionContext = new AsyncLocalStorage<string>();
+	readonly connectionContext = new SessionConnectionContext((id) => this.fanout.get(id)?.owner);
 	private readonly securityPresentations = new RpcSecurityPresentations(
 		this.fanout,
 		(id, task) => this.withConnection(id, task),
@@ -444,7 +441,10 @@ export class SessionEventWriter {
 			record.type === "relocation_due" ||
 			(record.type === "extension_ui_request" &&
 				["select", "confirm", "input", "editor"].includes(String(record.method)));
-		const tagged = { ...record, sessionId } as RpcRecord;
+		// A stale reply is consumed, not a session failure: the worker still gets its output credit.
+		const current = isTargeted ? this.connectionContext.currentGuard() : undefined;
+		if (current?.() === false) return true;
+		const tagged = { ...observeLifecycleDelivery(record), sessionId } as RpcRecord;
 		const line = serializeJsonLine(tagged);
 		// Observation records are per-subscription opt-ins on the subscriber's own actor FIFO: never attachments,
 		// the attach replay, response broadcast, or the stdio lane, which cannot subscribe.
@@ -505,6 +505,7 @@ export class SessionEventWriter {
 					mirrors.includes(target)
 						? undefined
 						: this.fanout.attachmentOf(target, sessionId, isTargeted, record.type),
+					current,
 				);
 			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
 		}

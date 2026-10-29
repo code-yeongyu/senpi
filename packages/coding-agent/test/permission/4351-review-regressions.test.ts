@@ -224,6 +224,49 @@ describe("4351 binding review regressions", () => {
 		}
 	}
 
+	// senpi#4316: de-duplicating by canonical target must keep the lexical alias of every spelling.
+	const patch = (paths: readonly string[]) =>
+		[
+			"*** Begin Patch",
+			...paths.flatMap((path) => [`*** Update File: ${path}`, "@@", "-fixture", "+x"]),
+			"*** End Patch",
+		].join("\n");
+	const manyPathInputs: Record<string, (paths: readonly string[]) => Record<string, unknown>> = {
+		bash: (paths) => ({ command: `cat ${paths.map((path) => `"${path}"`).join(" ")}` }),
+		grep: (paths) => ({ pattern: "fixture", path: [...paths] }),
+		multiedit: (paths) => ({ input: patch(paths) }),
+		apply_patch: (paths) => ({ input: patch(paths) }),
+	};
+	for (const [tool, toInput] of Object.entries(manyPathInputs)) {
+		for (const [ordering, spellings] of [
+			["real first", ["real", "link"]],
+			["link first", ["link", "real"]],
+			["both twice", ["real", "link", "real", "link"]],
+		] as const) {
+			it(`${tool} keeps the symlink alias when one call names both spellings (${ordering})`, () => {
+				const link = join(root, "link");
+				symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
+				const real = join(outside, "File.txt");
+				const lexical = join(link, "File.txt");
+				const request = external(
+					tool,
+					toInput(spellings.map((spelling) => (spelling === "real" ? real : lexical))),
+					cwd,
+				);
+				expect(request.patterns).toEqual([real]);
+				expect(request.ruleAliases).toEqual([lexical]);
+				const service = new PermissionService(
+					[
+						{ permission: "external_directory", pattern: "*", action: "allow" },
+						{ permission: "external_directory", pattern: `${link}/*`, action: "deny" },
+					],
+					[],
+				);
+				expect(service.dispatchDecision(request.permission, request.patterns, request).action).toBe("deny");
+			});
+		}
+	}
+
 	it("does not widen a wildcard lexical allow to the symlink target", async () => {
 		const data = join(root, "data");
 		mkdirSync(join(data, "a"), { recursive: true });
