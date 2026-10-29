@@ -119,6 +119,7 @@ type SessionEnvSource = {
 	cwd?: string;
 	goalStoreFile?: string;
 	browserEngine?: string;
+	sessionEnv?: Readonly<Record<string, string>>;
 };
 
 function sessionSpawnContext(ctx: TerminalToolContext): TerminalToolContext {
@@ -137,7 +138,7 @@ function sessionSpawnContext(ctx: TerminalToolContext): TerminalToolContext {
 export function sessionEnvOverrides(ctx: TerminalToolContext, execCtx?: SessionEnvSource): Record<string, string> {
 	const session = execCtx ?? ctx.getSessionContext?.();
 	if (!session?.sessionManager) return {};
-	const env: Record<string, string> = {};
+	const env: Record<string, string> = { ...session.sessionEnv };
 	env.PI_SESSION_ID = session.sessionManager.getSessionId();
 	if (session.cwd) env.PI_SESSION_CWD = session.cwd;
 	if (session.goalStoreFile) env.PI_GOAL_STORE_FILE = session.goalStoreFile;

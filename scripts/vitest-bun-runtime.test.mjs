@@ -19,6 +19,8 @@ for (const name of ["client", "protocol", "server", "telemetry"]) {
 	test(`${name} test script runs Vitest and its fork on Bun (#4763)`, { timeout: 90_000 }, () => {
 		const fixture = mkdtempSync(join(tmpdir(), "vb-"));
 		try {
+			// Probe outputs belong to the fixture, not the nested runner's temp parent.
+			const temporary = mkdtempSync(join(fixture, "tmp-"));
 			const coordinator = join(fixture, "coordinator.json");
 			const worker = join(fixture, "worker.json");
 			writeFileSync(
@@ -54,7 +56,7 @@ test("worker runtime", () => {
 			);
 			const result = spawnSync(invocation.command, invocation.args, {
 				cwd: join(root, "packages", name),
-				env: { ...process.env, TMPDIR: fixture, TEMP: fixture, TMP: fixture },
+				env: { ...process.env, TMPDIR: temporary, TEMP: temporary, TMP: temporary },
 				encoding: "utf8",
 				timeout: 60_000,
 			});

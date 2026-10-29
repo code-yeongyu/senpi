@@ -39,7 +39,7 @@ const HOST_METHODS = new Set(
  */
 const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
 	get_protocol_info:
-		"ok{agentDir,capabilities,engineOrdinal,engineVersion,generation,instanceId,launch_profile,memory_pressure,mode,protocolVersion,serverVersion}",
+		"ok{agentDir,capabilities,engineOrdinal,engineVersion,generation,instanceId,launch_profile,memory_pressure,mode,path_identity_resolver,protocolVersion,serverVersion}",
 	open_session: "ok{sessionId,state}",
 	close_session: '{"sessionId":"$SID"} => ok{}',
 	release_session: '{"sessionId":"$SID","reason":"takeover"} => ok{attachments,dropped,released,session_path}',

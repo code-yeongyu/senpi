@@ -1,9 +1,10 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ExtensionContext } from "../../../src/core/extensions/types.ts";
+import { DefaultResourceLoader } from "../../../src/core/resource-loader.ts";
+import { SessionManager } from "../../../src/core/session-manager.ts";
 
 const CODEMODE_ENTRY = resolve(process.cwd(), "..", "senpi-codemode", "src", "index.ts");
 const CODEMODE_PACKAGE_NAME = "@code-yeongyu/senpi-codemode";
@@ -30,89 +31,74 @@ describe("bundled codemode identity and precedence", () => {
 		cwd = join(root, "project");
 		mkdirSync(agentDir, { recursive: true });
 		mkdirSync(cwd, { recursive: true });
+		vi.stubEnv("HOME", root);
+		vi.stubEnv("SENPI_CODEMODE_PY", "0");
+		vi.stubEnv("SENPI_CODEMODE_JS", "1");
+		vi.stubEnv("SENPI_CODEMODE_RB", "0");
+		vi.stubEnv("SENPI_CODEMODE_JL", "0");
 	});
 
 	afterEach(() => {
+		vi.unstubAllEnvs();
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	function runProbe(settings: Record<string, unknown>): ProbeResult {
-		const probePath = join(root, "codemode-builtin-probe.mts");
-		const resourceLoaderUrl = pathToFileURL(join(process.cwd(), "src", "core", "resource-loader.ts")).href;
-		const sessionManagerUrl = pathToFileURL(join(process.cwd(), "src", "core", "session-manager.ts")).href;
-		writeFileSync(
-			probePath,
-			`import { readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { DefaultResourceLoader } from ${JSON.stringify(resourceLoaderUrl)};
-import { SessionManager } from ${JSON.stringify(sessionManagerUrl)};
-
-const [agentDir, cwd] = process.argv.slice(2);
-const artifactDirsBefore = new Set(readdirSync(tmpdir()).filter((entry) => entry.startsWith("senpi-codemode-")));
-const loader = new DefaultResourceLoader({
-	cwd,
-	agentDir,
-	noSkills: true,
-	noPromptTemplates: true,
-	noThemes: true,
-	noContextFiles: true,
-});
-await loader.reload();
-const result = loader.getExtensions();
-const evalExtensions = result.extensions.filter((extension) => extension.tools.has("eval"));
-let sessionStartRefreshes = 0;
-const evalExtension = evalExtensions[0];
-if (evalExtension) {
-	result.runtime.getActiveTools = () => [];
-	result.runtime.executeTool = async () => ({ content: [], details: {} });
-	result.runtime.refreshTools = () => {
-		sessionStartRefreshes += 1;
-	};
-	const sessionStart = evalExtension.handlers.get("session_start")?.[0];
-	if (sessionStart) {
-		await sessionStart({ type: "session_start", reason: "startup" }, { cwd, sessionManager: SessionManager.inMemory(), model: undefined });
-	}
-	const sessionShutdown = evalExtension.handlers.get("session_shutdown")?.[0];
-	if (sessionShutdown) {
-		await sessionShutdown({ type: "session_shutdown", reason: "exit" }, {});
-	}
-}
-for (const entry of readdirSync(tmpdir())) {
-	if (entry.startsWith("senpi-codemode-") && !artifactDirsBefore.has(entry)) {
-		rmSync(join(tmpdir(), entry), { recursive: true, force: true });
-	}
-}
-process.stdout.write(JSON.stringify({
-	errors: result.errors,
-	evalExtensions: evalExtensions.map((extension) => ({
-		path: extension.path,
-		sourceInfo: extension.sourceInfo,
-		description: extension.tools.get("eval")?.definition.description,
-		sessionStartHandlers: extension.handlers.get("session_start")?.length ?? 0,
-	})),
-	sessionStartRefreshes,
-}));
-`,
-		);
+	async function runProbe(settings: Record<string, unknown>): Promise<ProbeResult> {
 		writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify(settings)}\n`);
-		const output = execFileSync(process.execPath, ["--import", "tsx", probePath, agentDir, cwd], {
-			cwd: process.cwd(),
-			encoding: "utf8",
-			env: {
-				...process.env,
-				HOME: root,
-				SENPI_CODEMODE_PY: "0",
-				SENPI_CODEMODE_JS: "1",
-				SENPI_CODEMODE_RB: "0",
-				SENPI_CODEMODE_JL: "0",
-			},
+		const loader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			noSkills: true,
+			noPromptTemplates: true,
+			noThemes: true,
+			noContextFiles: true,
 		});
-		return JSON.parse(output) as ProbeResult;
+		await loader.reload();
+		const result = loader.getExtensions();
+		const evalExtensions = result.extensions.filter((extension) => extension.tools.has("eval"));
+		let sessionStartRefreshes = 0;
+		const evalExtension = evalExtensions[0];
+		if (evalExtension) {
+			result.runtime.getActiveTools = () => [];
+			result.runtime.executeTool = async () => {
+				throw new Error("Unexpected tool execution during registration");
+			};
+			result.runtime.refreshTools = () => {
+				sessionStartRefreshes += 1;
+			};
+			const ctx: Partial<ExtensionContext> = {
+				cwd,
+				// Keep artifacts under this test's root rather than sweeping the shared temp directory.
+				sessionManager: SessionManager.create(cwd, join(root, "sessions")),
+				model: undefined,
+			};
+			try {
+				await evalExtension.handlers.get("session_start")?.[0]?.(
+					{ type: "session_start" },
+					ctx as ExtensionContext,
+				);
+			} finally {
+				await evalExtension.handlers.get("session_shutdown")?.[0]?.(
+					{ type: "session_shutdown" },
+					ctx as ExtensionContext,
+				);
+			}
+		}
+		return {
+			errors: result.errors,
+			evalExtensions: evalExtensions.map((extension) => ({
+				path: extension.path,
+				sourceInfo: extension.sourceInfo,
+				description: extension.tools.get("eval")?.definition.description,
+				sessionStartHandlers: extension.handlers.get("session_start")?.length ?? 0,
+			})),
+			sessionStartRefreshes,
+		};
 	}
 
-	it("registers eval at session start from the default bundled package path", () => {
-		const result = runProbe({ enabledBuiltinExtensions: ["codemode"] });
+	// #4798: exercise the real loader and lifecycle without cold-booting another interpreter per case.
+	it("registers eval at session start from the default bundled package path", async () => {
+		const result = await runProbe({ enabledBuiltinExtensions: ["codemode"] });
 
 		expect(result.errors).toEqual([]);
 		expect(result.evalExtensions).toHaveLength(1);
@@ -125,7 +111,7 @@ process.stdout.write(JSON.stringify({
 		expect(result.sessionStartRefreshes).toBe(1);
 	});
 
-	it("keeps exactly one eval registration when the npm package is configured by the user", () => {
+	it("keeps exactly one eval registration when the npm package is configured by the user", async () => {
 		const userPackageDir = join(agentDir, "npm", "node_modules", "@code-yeongyu", "senpi-codemode");
 		mkdirSync(userPackageDir, { recursive: true });
 		writeFileSync(
@@ -146,7 +132,7 @@ export default function(pi) {
 `,
 		);
 
-		const result = runProbe({
+		const result = await runProbe({
 			enabledBuiltinExtensions: ["codemode"],
 			packages: [`npm:${CODEMODE_PACKAGE_NAME}@2026.7.26`],
 		});

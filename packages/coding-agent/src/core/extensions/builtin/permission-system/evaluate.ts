@@ -13,8 +13,28 @@ declare global {
 }
 
 export function evaluate(permission: string, pattern: string | readonly string[], ...rulesets: Ruleset[]): Rule {
-	const matchesExternalPath = permission === "external_directory" ? createExternalPathMatcher() : undefined;
-	return evaluatePatterns(permission, pattern, rulesets, matchesExternalPath);
+	return evaluatePatterns(permission, pattern, rulesets, externalPathMatcherFor(permission));
+}
+
+/** `external_directory` always carries its on-disk identity matcher, whichever evaluate form decides it. */
+function externalPathMatcherFor(permission: string): ((value: string, pattern: string) => boolean) | undefined {
+	return permission === "external_directory" ? createExternalPathMatcher() : undefined;
+}
+
+/** A rule matches when it covers a pattern as written, as executed, or by file identity of the request. */
+export type IdentityMatcher = (rulePattern: string) => boolean;
+
+/**
+ * `evaluate` plus the identity route (design 6.2): the predicate takes the RULE only and tests every
+ * canonical path of the request. The external-path matcher stays in place; identity is added to it.
+ */
+export function evaluateWithIdentity(
+	permission: string,
+	pattern: string | readonly string[],
+	ruleset: Ruleset,
+	matchesIdentity: IdentityMatcher | undefined,
+): Rule {
+	return evaluatePatterns(permission, pattern, [ruleset], externalPathMatcherFor(permission), matchesIdentity);
 }
 
 /** Evaluate a lexical spelling without letting a resolved rule erase its ancestry. */
@@ -31,12 +51,14 @@ function evaluatePatterns(
 	pattern: string | readonly string[],
 	rulesets: Ruleset[],
 	matchesExternalPath?: (value: string, pattern: string) => boolean,
+	matchesIdentity?: IdentityMatcher,
 ): Rule {
 	const patterns = typeof pattern === "string" ? [pattern] : pattern;
 	const matchedRule = rulesets.flat().findLast((rule) => {
 		return (
 			Wildcard.match(permission, rule.permission) &&
-			patterns.some((value) => matchesPattern(value, rule.pattern) || matchesExternalPath?.(value, rule.pattern))
+			(patterns.some((value) => matchesPattern(value, rule.pattern) || matchesExternalPath?.(value, rule.pattern)) ||
+				(matchesIdentity?.(rule.pattern) ?? false))
 		);
 	});
 

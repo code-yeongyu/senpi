@@ -114,6 +114,16 @@ export type RpcCommand =
 			 * when the open creates the session; an attach keeps the session's existing policy.
 			 */
 			retryFallback?: SessionRetryFallbackProfile;
+			/**
+			 * Environment variables for THIS session's tool subprocesses only (senpi#4381): applied to that
+			 * one session after the daemon's own allowlist, never merged into the host process or carried to
+			 * a successor generation, never seen by another session. Names must be on the host's
+			 * caller-passable set (`OMOCAT_LANE` by default, plus `SENPI_RPC_CALLER_ENV_NAMES`); anything
+			 * else is refused with `invalid_session_env`. A task child (`spawnedBy`) inherits its parent's
+			 * entries unless it names them here. Applied when the open creates the session; an attach keeps
+			 * the session's existing env. Requires the host capability `session_env`.
+			 */
+			env?: Record<string, string>;
 	  }
 	| { id?: string; type: "close_session"; sessionId: string }
 	| RpcMoveSessionCommand

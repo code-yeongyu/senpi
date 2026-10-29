@@ -81,7 +81,7 @@ export function createWorkerCore(transport, options) {
 					callTool: async (toolName, args) => await callTool(toolName, args),
 				}),
 			);
-			const run = options.runAuthority ? options.runAuthority(message.authority, execute) : execute();
+			const run = options.runAuthority ? options.runAuthority(message.authority, execute, message.code) : execute();
 			const value = await Promise.race([run, release.promise]);
 			rejections.finishCell(cell);
 			emit({ type: "result", cellId: message.cellId, ok: true, valueRepr: valueRepr(value), durationMs: durationMs(startedAtMs), ...memoryReport() });
@@ -176,6 +176,7 @@ export function createWorkerCore(transport, options) {
 				parallelPoolWidth: options.parallelPoolWidth,
 				localRoots: message.connection.localRoots,
 				artifactsDir: message.connection.artifactsDir,
+				permissionIO: options.permissionIO,
 				kernelGeneration: message.kernelGeneration ?? 1,
 				hostToolNames: message.hostToolNames ?? [],
 				foreignLanguageNames: message.foreignLanguageNames ?? [],

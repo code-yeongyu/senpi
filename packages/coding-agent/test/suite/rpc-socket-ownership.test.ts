@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hermeticProviderEnv } from "../helpers/rpc-hermetic.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 const children = new Set<ChildProcessWithoutNullStreams>();
@@ -124,7 +125,7 @@ async function startHost(supervised: boolean): Promise<{
 		// hermetic scratch directories above carry every path the host touches.
 		cwd: packageRoot,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...hermeticProviderEnv(),
 			PI_OFFLINE: "1",
 			PI_TELEMETRY: "0",
