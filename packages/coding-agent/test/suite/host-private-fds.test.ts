@@ -14,20 +14,25 @@ async function exchange(mode: string, table = '{"sample-channel":5}') {
 			SENPI_PRIVATE_FDS: table,
 			PI_OFFLINE: "1",
 		},
-		stdio: ["ignore", "ignore", "pipe", "ignore", "ignore", "pipe"],
+		stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", "pipe"],
 	});
 	const closed = once(child, "close", { signal: AbortSignal.timeout(15_000) });
 	const channel = child.stdio[5];
 	if (!(channel instanceof Socket)) throw new Error("fixture did not receive a duplex");
 	let received = "";
 	let stderr = "";
-	channel.on("data", (chunk: Buffer) => { received += chunk.toString(); });
+	let stdout = "";
+	child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+	channel.on("data", (chunk: Buffer) => {
+		received += chunk.toString();
+		if (mode === "receiver" && received === "claimed:ping") channel.end();
+	});
 	channel.on("error", () => channel.destroy());
 	child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
 	channel.write("ping");
 	try {
 		const [code] = await closed;
-		return { code, received, stderr };
+		return { code, received, stderr, stdout };
 	} finally {
 		channel.destroy();
 		if (child.exitCode === null && child.signalCode === null) child.kill();
@@ -48,6 +53,26 @@ describe("private host descriptors", () => {
 		const result = await exchange("unrelated");
 		// then both descriptor authority and the environment selector are absent
 		expect(JSON.parse(result.received)).toEqual({ childExit: 2, leakedTable: false });
+	});
+
+	it.skipIf(process.platform === "win32")("claims the named channel only once", async () => {
+		const result = await exchange("receiver");
+		expect(JSON.parse(result.stdout)).toEqual({ available: true, repeated: false });
+		expect(result.received).toBe("claimed:ping");
+	});
+
+	it.each([
+		"",
+		"not-json",
+		'{"sample-channel":4}',
+		'{"sample-channel":5,"alias":5}',
+		'{"sample-channel":65}',
+		'{"sample-channel":6}',
+		'{"bad name":5}',
+	])("refuses an absent or invalid table %s", async (table) => {
+		const result = await exchange("receiver", table);
+		expect(JSON.parse(result.stdout)).toEqual({ available: false, repeated: false });
+		expect(result.received).toBe("");
 	});
 
 	it.runIf(process.platform === "win32")("does not forward unsupported Windows descriptors", async () => {

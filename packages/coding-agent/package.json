@@ -36,6 +36,10 @@
 			"types": "./dist/core/pending-input-public.d.ts",
 			"import": "./dist/core/pending-input-public.js"
 		},
+		"./private-fds": {
+			"types": "./dist/private-fds.d.ts",
+			"import": "./dist/private-fds.js"
+		},
 		"./mcp-env-grants": {
 			"types": "./dist/core/extensions/builtin/mcp/env-grants-store.d.ts",
 			"import": "./dist/core/extensions/builtin/mcp/env-grants-store.js"

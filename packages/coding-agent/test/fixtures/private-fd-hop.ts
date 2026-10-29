@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { closeSync, createReadStream, writeSync } from "node:fs";
 import { spawnHostChild } from "../../src/modes/rpc/host-lifecycle-launch.ts";
+import { takeInheritedPrivateChannel } from "../../src/private-fds.ts";
 
 const mode = process.argv[2];
 
@@ -14,6 +15,15 @@ if (mode === "engine") {
 		});
 	} catch {
 		process.exit(2);
+	}
+} else if (mode === "receiver") {
+	const stream = takeInheritedPrivateChannel("sample-channel");
+	const again = takeInheritedPrivateChannel("sample-channel");
+	writeSync(1, JSON.stringify({ available: stream !== undefined, repeated: again !== undefined }));
+	if (stream) {
+		stream.once("data", (chunk) => {
+			stream.end(`claimed:${chunk.toString()}`, () => stream.destroy());
+		});
 	}
 } else if (mode === "supervisor") {
 	const child = spawnHostChild({

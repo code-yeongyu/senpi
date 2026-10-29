@@ -3,7 +3,8 @@
  * argv it parses, and the host child it spawns. Split out of `host-lifecycle.ts`, which keeps the
  * supervisor's orchestration; every name stays re-exported there for existing importers.
  */
-import childProcess, { type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnWithPrivateFds } from "../../private-fd-spawn.ts";
 import { Socket } from "node:net";
 import { extname } from "node:path";
 import { isBunBinary } from "../../config.ts";
@@ -271,7 +272,7 @@ export function spawnHostChild(options: {
 	const bootstrap = launch.presenterBootstrapFd !== undefined && !childLaunch.shell;
 	if (bootstrap) childLaunch.args.push("--mcp-presenter-fd", "4");
 	// Property access also preserves OS-level instrumentation on runtimes with captured builtin exports.
-	const child = childProcess.spawn(childLaunch.command, childLaunch.args, {
+	const child = spawnWithPrivateFds(childLaunch.command, childLaunch.args, {
 		env: {
 			...process.env,
 			...(launch.agentDir ? { SENPI_CODING_AGENT_DIR: launch.agentDir } : {}),

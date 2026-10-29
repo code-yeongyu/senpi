@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import "./valid-cwd.ts";
+import "./private-fds.ts";
 // Second, and before anything that can touch process.stdin: the guard above only changes directory.
 import "./modes/rpc/internal-bootstrap.ts";
 import "./internal-role.ts";
