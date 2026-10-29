@@ -6,6 +6,9 @@
 //   node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --pipeline legacy \
 //     --placement fused [--cases E01,E02] [--surface rpc] [--repeat N] [--child node|binary:<path>] --evidence <slug>
 //
+// `--surface tui` (EQ.tui, plan P0-05c) runs the cases that list O8 through the real interactive TUI instead
+// (lib/equivalence-tui-cases.mjs) and compares their TUI captures against `golden-tui/<platform>`.
+//
 // The CLI child runs on Bun unless `--child` says otherwise (lib/common.mjs). Exit code 0 only when every selected
 // case matches its golden on every declared observable and its witness matches `--pipeline`.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -15,13 +18,16 @@ import { startCaseRun } from "../../scenarios/fused-equivalence/cases/support/ca
 import { baselineManifest, goldenDir, observe } from "../../scenarios/fused-equivalence/cases/support/observe.mjs";
 import { ownTsxCache } from "../../scenarios/fused-equivalence/cases/support/tsx-cache.mjs";
 import { expectedWitness, readWitness } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
+import { goldenPlatform } from "../../scenarios/fused-equivalence/cases/support/host.mjs";
 import { childRuntime, evidenceDir, guardRealAuth, installCleanupHooks, repoRoot } from "../lib/common.mjs";
 import { diffNormalized } from "../lib/equivalence-normalize.mjs";
+import { tuiCaptureHash, tuiGoldenDir } from "../lib/equivalence-tui-capture.mjs";
+import { runTuiCase, TUI_CASE_IDS } from "../lib/equivalence-tui-cases.mjs";
 
 /** Placements and surfaces whose producers come later in the plan; asking for them is an error, never a PASS. */
 const DEFERRED = {
 	placement: { "split-local": "S27a", "split-remote": "DM1", hosted: "V4" },
-	surface: { tui: "P0-05c", desktop: "P0-07b" },
+	surface: { desktop: "P0-07b" },
 };
 
 function parseArgs(argv) {
@@ -41,7 +47,8 @@ function parseArgs(argv) {
 		if (owner) throw new Error(`--${kind} ${requested} is DEFERRED(${owner}): its producer has not landed`);
 	}
 	if (placement !== "fused") throw new Error(`unknown --placement ${placement}`);
-	if (surface !== "rpc" && surface !== "headless") throw new Error(`unknown --surface ${surface}`);
+	if (surface !== "rpc" && surface !== "headless" && surface !== "tui")
+		throw new Error(`unknown --surface ${surface}`);
 	const pipeline = value("--pipeline") ?? "default";
 	expectedWitness(pipeline);
 	const selected = value("--cases")
@@ -49,6 +56,9 @@ function parseArgs(argv) {
 		.map((id) => id.trim().toUpperCase());
 	const unknown = (selected ?? []).filter((id) => !cases.some((c) => c.id === id));
 	if (unknown.length) throw new Error(`unknown case(s): ${unknown.join(", ")}`);
+	const noTui = surface === "tui" ? (selected ?? []).filter((id) => !TUI_CASE_IDS.includes(id)) : [];
+	if (noTui.length)
+		throw new Error(`no TUI drive for case(s): ${noTui.join(", ")} (EQ.tui: ${TUI_CASE_IDS.join(", ")})`);
 	const repeat = Number.parseInt(value("--repeat") ?? "1", 10);
 	if (!Number.isInteger(repeat) || repeat < 1) throw new Error("--repeat must be a positive integer");
 	return { mode, placement, surface, pipeline, selected, repeat, evidence: value("--evidence") };
@@ -56,6 +66,10 @@ function parseArgs(argv) {
 
 async function runCase(testCase, { pipeline, surface }) {
 	const env = pipeline === "default" ? {} : { SENPI_EXECUTION_PIPELINE: pipeline };
+	if (surface === "tui") {
+		const { observations, sessionFile } = await runTuiCase(testCase, env);
+		return { observations, witness: readWitness(sessionFile) };
+	}
 	const spec = typeof testCase.spec === "function" ? testCase.spec() : testCase.spec;
 	const run = await startCaseRun({ ...spec, label: testCase.id.toLowerCase(), env: { ...spec.env, ...env } });
 	try {
@@ -84,8 +98,11 @@ async function main() {
 	installCleanupHooks();
 	const options = parseArgs(process.argv.slice(2));
 	const guard = guardRealAuth();
-	const selected = cases.filter((c) => !options.selected || options.selected.includes(c.id));
-	const dir = goldenDir();
+	const tui = options.surface === "tui";
+	const selected = cases.filter((c) =>
+		options.selected ? options.selected.includes(c.id) : !tui || TUI_CASE_IDS.includes(c.id),
+	);
+	const dir = tui ? tuiGoldenDir(goldenPlatform()) : goldenDir();
 	const command = `node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs ${process.argv.slice(2).join(" ")}`;
 	// Read before any golden is written: the manifest names the tree the goldens were recorded from, so a record run's own
 	// output must not mark that tree dirty.
@@ -145,6 +162,7 @@ async function main() {
 		results.push(result);
 	}
 	guard.assertUnchanged();
+	if (tui) manifest.hashes.tuiCapture = tuiCaptureHash();
 	if (options.mode === "record") writeFileSync(join(dir, "baseline.json"), `${JSON.stringify(manifest, null, 1)}\n`);
 	const passed = results.filter((r) => r.pass).length;
 	process.stdout.write(

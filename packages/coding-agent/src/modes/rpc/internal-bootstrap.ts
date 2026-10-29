@@ -2,8 +2,8 @@
 // so an OS failure injected with syncBuiltinESMExports reaches this read path only by property access.
 import fs from "node:fs";
 import { Worker } from "node:worker_threads";
+import { INTERNAL_KEY_STDIN_ENV } from "./host-identity-env.ts";
 
-const INTERNAL_KEY_STDIN_ENV = "SENPI_RPC_INTERNAL_KEY_STDIN";
 const INTERNAL_KEY_DEADLINE_MS = 2000;
 // Runs on its own thread: a launcher that keeps stdin open without sending the key leaves the main thread blocked in
 // read(2) (child stdio is a blocking socketpair and neither runtime can make it non-blocking), so only another thread can

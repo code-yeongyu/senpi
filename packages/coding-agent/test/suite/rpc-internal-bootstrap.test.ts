@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const children: ChildProcess[] = [];
 afterEach(async () => {
@@ -24,7 +25,7 @@ function start(runtime: string, args: string[] = [], env: Readonly<Record<string
 			...args,
 		],
 		{
-			env: { ...process.env, ...env, SENPI_RPC_INTERNAL_KEY_STDIN: "1" },
+			env: { ...hostSpawnEnv(), ...env, SENPI_RPC_INTERNAL_KEY_STDIN: "1" },
 			stdio: ["pipe", "ignore", "pipe", "pipe", "ipc"],
 		},
 	);

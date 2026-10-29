@@ -28,7 +28,8 @@ function shadowBun(real, WebView) {
 	return new Proxy(
 		{},
 		{
-			get: (_target, key) => (key === "WebView" ? WebView : Reflect.get(real, key)),
+			get: (_target, key) => key === "WebView" ? WebView
+				: key === "plugin" ? globalThis[Symbol.for("senpi.kernel.permissionBunPlugin")] ?? real.plugin : Reflect.get(real, key),
 			set: (_target, key, value) => Reflect.set(real, key, value),
 			has: (_target, key) => key === "WebView" || Reflect.has(real, key),
 			ownKeys: () => Reflect.ownKeys(real),
