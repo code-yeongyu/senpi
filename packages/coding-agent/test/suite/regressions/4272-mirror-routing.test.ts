@@ -65,7 +65,7 @@ it.each(["get_recovery_page", "release_recovery"])(
 		const denied: string[] = [];
 		for (const route of [
 			{},
-			{ sessionId: "unknown", admissionId: "unknown" },
+			{ sessionId: "unknown" },
 			{ sessionId: "../malformed", admissionId: "bad/id" },
 			{ admissionId: undefined },
 		]) {
@@ -74,8 +74,10 @@ it.each(["get_recovery_page", "release_recovery"])(
 			await host.writer.flush();
 			denied.push(foreign.received.slice(from).join(""));
 		}
-		expect(denied[0]).toContain('"errorCode":"session_not_attached"');
-		expect(denied).toEqual(Array(4).fill(denied[0]));
+		expect(denied[0]).toContain('"errorCode":"unknown_admission"');
+		expect(denied[1]).toBe(denied[0]);
+		expect(denied[2]).toContain('"reason":"malformed_request"');
+		expect(denied[3]).toContain('"errorCode":"session_not_attached"');
 		expect(page).not.toHaveBeenCalled();
 		expect(release).not.toHaveBeenCalled();
 		expect(await peer.request({ ...command, peer: "foreign", connectionId: "foreign" })).not.toMatchObject({
@@ -109,11 +111,14 @@ it("T2/Y07 peer end removes the old actor subscription, prevents stale routing a
 		componentRef: "record",
 		requestId: "stale",
 	});
-	expect(refused).toMatchObject({ success: false, errorCode: "session_not_attached" });
+	expect(refused).toMatchObject({ success: false, errorCode: "unknown_admission" });
 	expect(refused).not.toHaveProperty("generation");
 	host.writer.enqueue(String(dataOf(opened).sessionId), { type: "agent_start" });
 	await host.writer.flush();
 	expect(
-		replacement.inbox.some((frame) => frame.admissionId === "old" || frame.subscriptionId === subscriptionId),
+		replacement.inbox.some(
+			(frame) =>
+				frame.type !== "response" && (frame.admissionId === "old" || frame.subscriptionId === subscriptionId),
+		),
 	).toBe(false);
 }, 120_000);

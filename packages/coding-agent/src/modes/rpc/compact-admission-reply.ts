@@ -10,10 +10,15 @@ export function withAdmissionRequest<T>(command: RpcCommand, peer: string | unde
 	return requests.run({ command, peer }, action);
 }
 
-export function replyAdmission(id: string, peer: string | undefined, routes: readonly string[]): string | undefined {
+export function replyAdmission(
+	id: string,
+	peer: string | undefined,
+	routes: readonly string[],
+): string | null | undefined {
 	const request = requests.getStore();
-	if (!request || request.command.id !== id) return routes[0];
-	if (request.peer !== peer) return undefined;
+	// No matching request scope means ownership cannot be proved. Drop (null), never guess routes[0];
+	// undefined is reserved for a matching legacy request that did not select an admission.
+	if (!request || request.command.id !== id || request.peer !== peer) return null;
 	const admissionId = request.command.admissionId;
-	return admissionId === undefined ? routes[0] : routes.find((route) => route === admissionId);
+	return admissionId === undefined ? undefined : (routes.find((route) => route === admissionId) ?? null);
 }

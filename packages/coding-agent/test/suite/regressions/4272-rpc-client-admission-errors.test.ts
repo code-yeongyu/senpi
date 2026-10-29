@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { RpcClientAdmissions } from "../../../src/modes/rpc/rpc-client-admissions.ts";
+import { RpcCommandError } from "../../../src/modes/rpc/rpc-command-error.ts";
 import { admissionClient } from "./4272-rpc-client-admission-support.ts";
 
 afterEach(() => {
@@ -19,6 +20,40 @@ it("does not inspect an incoming frame when no compact routes exist", () => {
 	client.receive(Object.defineProperty({}, "sessionId", { get: read }));
 	expect(read).not.toHaveBeenCalled();
 });
+
+it("RULING-94 RpcClient surfaces local unknown and server-retired admissions as typed errors", async () => {
+	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+	await using fixture = await admissionClient();
+	const { host, client, requests, frames, failures } = fixture;
+	const events = vi.fn();
+	client.onEvent(events);
+	const local = await client.admissions.page("never-opened", "manifest").catch((cause: unknown) => cause);
+	expect(local).toBeInstanceOf(RpcCommandError);
+	expect.soft(local).toMatchObject({
+		errorCode: "unknown_admission",
+		errorData: { code: "unknown_admission", admissionId: "never-opened" },
+	});
+	const opened = await client.openSession({ cwd: host.cwd, admissionId: "retired" });
+	host.writer.recoveryCheckpoints.retireRoute(
+		{
+			socketEpoch: host.writer.socketEpochOf("rpc-client") ?? "",
+			sessionId: opened.sessionId,
+		},
+		"retired",
+	);
+	host.writer.unregisterAdmission("rpc-client", "retired");
+	const from = frames.length;
+	const remote = await client.admissions.page("retired", "manifest").catch((cause: unknown) => cause);
+	expect(remote).toBeInstanceOf(RpcCommandError);
+	expect(remote).toMatchObject({
+		errorCode: "unknown_admission",
+		errorData: { code: "unknown_admission", admissionId: "retired" },
+	});
+	expect(frames.slice(from).filter((line) => JSON.parse(line).type === "response")).toHaveLength(1);
+	expect(requests.filter((request) => request.type === "reset_stream")).toHaveLength(0);
+	expect(events.mock.calls.map(([event]) => event)).not.toContainEqual(expect.objectContaining({ type: "response" }));
+	expect(failures).toEqual([]);
+}, 120_000);
 
 it("turns a page refusal without errorData into RpcCommandError", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");

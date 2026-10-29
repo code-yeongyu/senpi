@@ -5,7 +5,7 @@ import { OPEN_AFTER_QUEUED_DEADLINE_MS } from "./rpc-request-deadline.ts";
 export function runAdmissionProducer<T>(
 	signal: AbortSignal,
 	produce: () => Promise<T>,
-	release?: (value: T) => Promise<void>,
+	release: (value: T) => Promise<void>,
 ): Promise<T> {
 	return new Promise((resolve, reject) => {
 		const abort = () => reject(signal.reason);
@@ -13,7 +13,7 @@ export function runAdmissionProducer<T>(
 		signal.addEventListener("abort", abort, { once: true });
 		void produce()
 			.then(async (value) => {
-				if (signal.aborted) await release?.(value);
+				if (signal.aborted) await release(value);
 				else resolve(value);
 			}, reject)
 			.finally(() => signal.removeEventListener("abort", abort))
@@ -21,6 +21,21 @@ export function runAdmissionProducer<T>(
 				// The caller already observed the abort; late cleanup cannot answer it again.
 			});
 	});
+}
+
+export type ProducerLosses = { abandoned: number; releaseFailed: number };
+
+/** Abandoned producers and failed late releases are leak signals: counted and logged, never silent. */
+export function recordProducerLoss(
+	losses: ProducerLosses,
+	kind: keyof ProducerLosses,
+	count: number,
+	cause?: unknown,
+): void {
+	if (count <= 0) return;
+	losses[kind] += count;
+	const detail = cause === undefined ? "" : `: ${cause instanceof Error ? cause.message : String(cause)}`;
+	process.stderr.write(`senpi rpc admission producer ${kind} ${count}${detail}\n`);
 }
 
 /** One deadline per ending epoch, shared by all its bounded producers and duplicate teardown calls. */

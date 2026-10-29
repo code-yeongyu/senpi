@@ -5,51 +5,35 @@ import { join } from "node:path";
 import { z } from "zod";
 import { parseBoundedId } from "./compact-recovery-ids.ts";
 import { CompactAdmissionError } from "./compact-admission-error.ts";
-import { AdmissionProducerLifetime, runAdmissionProducer } from "./compact-admission-producer.ts";
+import type { Answer, Epoch, Produced } from "./compact-admission-types.ts";
 import {
 	ADMISSION_LIMITS,
 	type AdmissionRow as Row,
 	readAdmissionRow,
 	writeAdmissionRow,
-} from "./compact-admission-row.ts";
+} from "./compact-admission-storage.ts";
+import {
+	AdmissionProducerLifetime,
+	type ProducerLosses,
+	recordProducerLoss,
+	runAdmissionProducer,
+} from "./compact-admission-producer.ts";
 export { CompactAdmissionError } from "./compact-admission-error.ts";
-export { ADMISSION_LIMITS } from "./compact-admission-row.ts";
-type Answer = Readonly<Record<string, unknown>>;
-type Produced = {
-	readonly answer: Answer;
-	readonly release: () => Promise<void>;
-	readonly activate?: () => void;
-	readonly refusal?: () => Answer | undefined;
-};
-type Pending = ReturnType<typeof Promise.withResolvers<Answer>>;
-type Epoch = {
-	readonly producer: AdmissionProducerLifetime;
-	readonly peer: string;
-	readonly directory: Promise<string>;
-	readonly hot: Map<string, Pending>;
-	tail: Promise<void>;
-	entries: number;
-	ended: boolean;
-	waiting: number;
-};
+export { ADMISSION_LIMITS } from "./compact-admission-storage.ts";
 
 /** Host-owned epoch index. Hash-file lookup is bounded by one <=131,584-byte row; hot results are never history. */
 export class CompactAdmissions {
 	private readonly epochs = new Map<string, Epoch>();
 	private readonly limits: Readonly<{ entries: number; bytes: number }>;
-	private abandoned = 0;
+	private readonly losses: ProducerLosses = { abandoned: 0, releaseFailed: 0 };
 
 	status() {
-		return { abandoned: this.abandoned };
+		return { ...this.losses };
 	}
 
 	private end(epoch: Epoch): void {
 		epoch.ended = true;
-		epoch.producer.end(() => {
-			const count = epoch.hot.size;
-			this.abandoned += count;
-			if (count > 0) process.stderr.write(`senpi rpc abandoned ${count} admission producer(s) at open deadline\n`);
-		});
+		epoch.producer.end(() => recordProducerLoss(this.losses, "abandoned", epoch.hot.size));
 	}
 
 	constructor(limits: Readonly<{ entries: number; bytes: number }> = ADMISSION_LIMITS) {
@@ -150,7 +134,8 @@ export class CompactAdmissions {
 			produced = await runAdmissionProducer(
 				epoch.producer.signal,
 				() => produce(epoch.producer.signal),
-				(value) => value.release(),
+				(value) =>
+					value.release().catch((cause: unknown) => recordProducerLoss(this.losses, "releaseFailed", 1, cause)),
 			);
 			let value = produced.answer;
 			const cancelled = await this.serial(epoch, async () => {
@@ -204,6 +189,13 @@ export class CompactAdmissions {
 		} finally {
 			epoch.hot.delete(key);
 		}
+	}
+
+	async pending(socketEpoch: string, admissionId: string): Promise<boolean> {
+		const key = this.key(admissionId);
+		const epoch = this.epochs.get(socketEpoch);
+		if (!epoch || epoch.ended) return false;
+		return this.serial(epoch, async () => (await readAdmissionRow(epoch, key))?.state === "pending");
 	}
 
 	async cancel(socketEpoch: string, admissionId: string): Promise<"cancelled" | "already_complete" | "unknown"> {

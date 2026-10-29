@@ -38,7 +38,8 @@ it("T2/X04 a streamed host snapshot spans bounded pages, rejects a foreign peer 
 	};
 	expect(await foreign.request({ ...request, requestId: "foreign" })).toMatchObject({
 		success: false,
-		errorData: { reason: "unknown_token" },
+		code: "unknown_admission",
+		admissionId: "large",
 	});
 	const pages: Buffer[] = [];
 	let cursor: string | undefined;
@@ -106,12 +107,14 @@ it("T2/X04 golden f: returned subscription id owns every snapshot page and live 
 	);
 	expect(delta).toMatchObject({ admissionId: "golden-f", generation: 0, seq: 1 });
 	await peer.request({ type: "unsubscribe_sessions", subscriptionId });
-	await peer.request({
-		type: "release_recovery",
-		sessionId: subscriptionId,
-		admissionId: "golden-f",
-		lease: baseline.eventLease,
-	});
+	expect(
+		await peer.request({
+			type: "release_recovery",
+			sessionId: subscriptionId,
+			admissionId: "golden-f",
+			lease: baseline.eventLease,
+		}),
+	).toMatchObject({ success: false, code: "unknown_admission" });
 	expect(host.writer.status.connectionSize("peer")).toBe(0);
 	expect(host.writer.recoveryEvents?.status().open).toBe(0);
 	await compareAdmissionGoldens(
