@@ -867,6 +867,75 @@ async function scratch(label: string): Promise<Qa> {
 	return { root, agentDir: join(root, "agent"), socket: join(root, "rpc.sock") };
 }
 
+async function waitForDiagnosticMarker(
+	root: string,
+	signal: AbortSignal,
+	watchMarker = (watchSignal: AbortSignal) => watch(root, { signal: watchSignal }),
+) {
+	const controller = new AbortController();
+	const events = watchMarker(AbortSignal.any([signal, controller.signal]));
+	// fs/promises.watch is lazy: next() attaches the watcher before the existence check.
+	let next = events.next();
+	void next.catch(() => {});
+	const markerExists = () =>
+		access(join(root, "stderr-ready")).then(
+			() => true,
+			() => false,
+		);
+	try {
+		// The marker may predate watcher attachment; notifications can omit or coalesce names.
+		if (await markerExists()) return;
+		while (!(await next).done) {
+			if (await markerExists()) return;
+			next = events.next();
+			void next.catch(() => {});
+		}
+		if (await markerExists()) return;
+		throw new Error("diagnostic marker watch ended before stderr-ready appeared");
+	} finally {
+		controller.abort();
+		await events.return?.();
+	}
+}
+
+const diagnosticCleanups = new Set<() => void>();
+afterEach(() => {
+	for (const cleanup of diagnosticCleanups) cleanup();
+});
+
+// #4708: marker existence must survive missed and coalesced watcher notifications.
+describe("diagnostic marker wait", () => {
+	it.each(["before-watch", null, "unrelated", "watch-ended"] as const)(
+		"settles the marker wait with %s notification",
+		async (filename) => {
+			const qa = await scratch("marker-notification");
+			const controller = new AbortController();
+			if (filename === "before-watch") await writeFile(join(qa.root, "stderr-ready"), "");
+			const watchMarker = () =>
+				(async function* () {
+					if (filename === "watch-ended") return;
+					if (filename !== "before-watch") {
+						// Let the initial existence check and one event re-check observe absence.
+						yield { eventType: "rename" as const, filename: "before-marker" };
+						await writeFile(join(qa.root, "stderr-ready"), "");
+						yield { eventType: "rename" as const, filename };
+					}
+					throw new Error("marker was missed");
+				})();
+			try {
+				const ready = waitForDiagnosticMarker(qa.root, controller.signal, watchMarker);
+				if (filename === "watch-ended") {
+					await expect(ready).rejects.toThrow("diagnostic marker watch ended before stderr-ready appeared");
+				} else {
+					await expect(ready).resolves.toBeUndefined();
+				}
+			} finally {
+				controller.abort();
+			}
+		},
+	);
+});
+
 async function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
 	const controller = new AbortController();
 	// Arm before spawn. These cases time protocol readiness, not the runtime's first instruction:
@@ -874,11 +943,7 @@ async function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
 	// #4708: fixture startup is bounded by the test, not a second wall-clock readiness budget.
 	const markerReady =
 		overrides.spawn?.args[0] === readinessDiagnosticFixture
-			? (async () => {
-					for await (const event of watch(qa.root, { signal: controller.signal })) {
-						if (event.filename === "stderr-ready") return;
-					}
-				})()
+			? waitForDiagnosticMarker(qa.root, controller.signal)
 			: undefined;
 	let diagnosticReady = markerReady;
 	// Startup may fail before the pidfile hook awaits the fixture; cancellation must still be observed.
@@ -903,6 +968,14 @@ async function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
 		: undefined;
 	// ensureHost imports the native named export; observe its real child without a product seam.
 	if (spawnSpy) syncBuiltinESMExports();
+	const cleanup = () => {
+		if (!diagnosticCleanups.delete(cleanup)) return;
+		controller.abort();
+		spawnSpy?.mockRestore();
+		if (spawnSpy) syncBuiltinESMExports();
+	};
+	// A Vitest timeout does not unwind a pending ensureHost await.
+	diagnosticCleanups.add(cleanup);
 	try {
 		return await ensureHost({
 			agentDir: qa.agentDir,
@@ -927,9 +1000,7 @@ async function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
 		if (diagnostic.child && diagnostic.child.pid === undefined) await diagnosticReady;
 		throw error;
 	} finally {
-		controller.abort();
-		spawnSpy?.mockRestore();
-		if (spawnSpy) syncBuiltinESMExports();
+		cleanup();
 	}
 }
 
