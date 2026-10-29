@@ -87,6 +87,8 @@ export type RpcHostCommandResponse =
 					status: "opening" | "open" | "closing" | "closed";
 					/** Live client attachments; `0` is a retained session with no client attached. */
 					attachments: number;
+					/** The session outlives its last attachment; absent from hosts older than this field. */
+					retain_on_disconnect?: boolean;
 					/** Milliseconds since the session's idle window was last refreshed. */
 					idleMs?: number;
 					/** The session's tool child (senpi#3566): `none` until its first job, then `live` or `exited`. */

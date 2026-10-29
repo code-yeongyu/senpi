@@ -399,7 +399,9 @@ describe("a custom provider's unknown or transient error shapes never persist a 
 		],
 		[
 			"an unknown, codeless error",
-			errorEvent("The provider returned an error that could not be classified (custom-gateway, no code)"),
+			errorEvent(
+				"The provider returned an unexpected error. Action: send the message again; if it repeats, choose another model.",
+			),
 		],
 	] as const)("%s leaves every slot usable for the next request", async (_label, failure) => {
 		const run = async (event: AssistantMessageEvent): Promise<AssistantMessageEvent | undefined> => {

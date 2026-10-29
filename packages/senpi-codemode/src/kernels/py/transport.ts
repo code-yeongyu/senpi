@@ -27,6 +27,7 @@ import {
 	waitForExit,
 } from "./process.ts";
 import { PythonStartup, type PythonStartupStage } from "./startup.ts";
+import type { PythonPermissionHost } from "./permission-host.ts";
 
 export type PythonTransportResult = Extract<KernelToHostMessage, { type: "result" }>;
 
@@ -41,6 +42,7 @@ export interface PythonTransportRunInput {
 }
 
 export interface PythonTransportOptions {
+	readonly permission?: PythonPermissionHost;
 	readonly interpreterPath: string;
 	readonly sessionId: string;
 	readonly cwd: string;
@@ -256,18 +258,23 @@ export class PythonKernelTransport {
 			this.#onPipeError(error instanceof Error ? error : new Error(String(error))),
 		);
 		const { sessionId, connection, memory, kernelGeneration } = this.#options;
-		this.#write({
-			type: "init",
-			sessionId,
-			connection,
-			...(memory === undefined ? {} : { memory }),
-			...(kernelGeneration === undefined ? {} : { kernelGeneration }),
-		});
+		this.#write(
+			Object.assign(
+				{
+					type: "init",
+					sessionId,
+					connection,
+					...(memory === undefined ? {} : { memory }),
+					...(kernelGeneration === undefined ? {} : { kernelGeneration }),
+				} as const,
+				this.#options.permission ? { permission: this.#options.permission.bootstrap() } : {},
+			),
+		);
 		await startup.ready;
 	}
 
 	#write(message: HostToKernelMessage): void {
-		this.#child.stdin.write(encodeBridgeFrame(message));
+		this.#child.stdin.write(encodeBridgeFrame(this.#options.permission?.frame(message) ?? message));
 	}
 
 	#onStdout(chunk: string): void {

@@ -32,6 +32,7 @@ const STATUS_FIELDS = [
 	"lifecycle",
 	"memory_pressure",
 	"open_fds",
+	"path_identity_resolver",
 	"pid",
 	"pointer",
 	"processStartTime",

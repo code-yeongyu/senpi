@@ -1,4 +1,5 @@
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
+import type { WireAuthority } from "./permission-authority.mjs";
 
 export interface WorkerCoreTransport {
 	send(message: KernelToHostMessage): void;
@@ -9,6 +10,7 @@ export interface WorkerCoreTransport {
 export interface WorkerCoreOptions {
 	cwd: string;
 	parallelPoolWidth: number;
+	runAuthority?<T>(token: WireAuthority | undefined, run: () => T | Promise<T>): Promise<T>;
 }
 
 export interface WorkerCoreHandle {

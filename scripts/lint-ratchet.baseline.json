@@ -611,9 +611,6 @@
   "packages/chord/test/services.test.ts": {
     "typescript/no-non-null-assertion": 5
   },
-  "packages/chord/test/state-diff.test.ts": {
-    "typescript/no-non-null-assertion": 5
-  },
   "packages/chord/test/state-draft.test.ts": {
     "typescript/no-non-null-assertion": 1
   },
@@ -1181,7 +1178,7 @@
     "typescript/no-explicit-any": 10
   },
   "packages/coding-agent/test/package-manager.test.ts": {
-    "typescript/no-explicit-any": 86
+    "typescript/no-explicit-any": 85
   },
   "packages/coding-agent/test/prompt-templates.test.ts": {
     "typescript/no-non-null-assertion": 7

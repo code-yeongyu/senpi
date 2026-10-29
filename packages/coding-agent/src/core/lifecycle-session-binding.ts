@@ -24,6 +24,7 @@ import { isRecord } from "./work-custody-record.ts";
 interface LifecycleBindingHost {
 	append(type: string, data: unknown): string;
 	emit(event: SessionLifecycleEvent): void;
+	holdInterruptedRun(): void;
 	factsFailed(error: unknown): void;
 }
 
@@ -279,6 +280,9 @@ export class LifecycleSessionBinding {
 			this.recordInterruptedTools(transcript?.id ?? record.transcriptEntryId);
 		}
 		this.restored = true;
+		// Recovery may discover interruption after bindExtensions' initial hold check. Install the hold before
+		// publishing restored state or replaying custody; a saved Resume directive is not new human input.
+		this.host.holdInterruptedRun();
 		this.controller.obligations.retireRestoredSources();
 		this.controller.restoreComplete();
 		for (const record of this.controller.obligations.active) {
