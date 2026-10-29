@@ -4272,7 +4272,7 @@
   },
   "O6": [
    {
-    "turn": [
+    "events": [
      {
       "type": "extension_ui_request",
       "id": "<uuid:1>",
@@ -4379,8 +4379,73 @@
       "widgetKey": "pi-websearch"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 1,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:1>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:3>",
+       "parentId": "<id:1>",
+       "timestamp": "<ts:entry.timestamp:2>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:1>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:1>"
+      }
+     },
+     {
       "type": "extension_ui_request",
-      "id": "<uuid:16>",
+      "id": "<uuid:19>",
       "method": "setStatus",
       "statusKey": "todo-waiting"
      },
@@ -4448,9 +4513,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:3>",
-       "parentId": "<id:4>",
-       "timestamp": "<ts:entry.timestamp:2>",
+       "id": "<id:4>",
+       "parentId": "<id:5>",
+       "timestamp": "<ts:entry.timestamp:3>",
        "message": {
         "role": "user",
         "content": [
@@ -4485,13 +4550,45 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:2>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:1>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:2>"
+      }
+     },
+     {
       "type": "message_start",
       "message": {
        "role": "assistant",
        "content": [
         {
          "type": "toolCall",
-         "id": "<id:5>",
+         "id": "<id:6>",
          "name": "mcp_fxstdio_tool_1",
          "arguments": {
           "value": "from-stdio"
@@ -4519,7 +4616,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:8>",
-       "responseId": "<id:6>"
+       "responseId": "<id:7>"
       },
       "streaming": true
      },
@@ -4542,7 +4639,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_start",
        "contentIndex": 0,
-       "id": "<id:5>",
+       "id": "<id:6>",
        "toolName": "mcp_fxstdio_tool_1"
       },
       "resolvedToolName": "mcp_fxstdio_tool_1"
@@ -4590,7 +4687,7 @@
        "contentIndex": 0,
        "toolCall": {
         "type": "toolCall",
-        "id": "<id:5>",
+        "id": "<id:6>",
         "name": "mcp_fxstdio_tool_1",
         "arguments": {
          "value": "from-stdio"
@@ -4600,13 +4697,76 @@
       "resolvedToolName": "mcp_fxstdio_tool_1"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:3>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 2
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:3>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "mcp_fxstdio_tool_1",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:2>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
+      }
+     },
+     {
       "type": "message_end",
       "message": {
        "role": "assistant",
        "content": [
         {
          "type": "toolCall",
-         "id": "<id:5>",
+         "id": "<id:6>",
          "name": "mcp_fxstdio_tool_1",
          "arguments": {
           "value": "from-stdio"
@@ -4632,7 +4792,7 @@
        },
        "stopReason": "toolUse",
        "timestamp": "<ts:message.timestamp:9>",
-       "responseId": "<id:6>",
+       "responseId": "<id:7>",
        "rawStopReason": "tool_calls",
        "thinkingLevel": "off",
        "timing": {
@@ -4647,15 +4807,15 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:7>",
-       "parentId": "<id:8>",
-       "timestamp": "<ts:entry.timestamp:3>",
+       "id": "<id:8>",
+       "parentId": "<id:9>",
+       "timestamp": "<ts:entry.timestamp:4>",
        "message": {
         "role": "assistant",
         "content": [
          {
           "type": "toolCall",
-          "id": "<id:5>",
+          "id": "<id:6>",
           "name": "mcp_fxstdio_tool_1",
           "arguments": {
            "value": "from-stdio"
@@ -4681,7 +4841,7 @@
         },
         "stopReason": "toolUse",
         "timestamp": "<ts:message.timestamp:10>",
-        "responseId": "<id:6>",
+        "responseId": "<id:7>",
         "rawStopReason": "tool_calls",
         "thinkingLevel": "off",
         "timing": {
@@ -4695,7 +4855,7 @@
      },
      {
       "type": "tool_execution_start",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "toolName": "mcp_fxstdio_tool_1",
       "args": {
        "value": "from-stdio"
@@ -4706,9 +4866,9 @@
       "hookRunId": "call_stdio:PreToolUse:0",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:1>",
+      "startedAt": "<ts:events.startedAt:1>",
       "phase": "start",
       "statusMessage": "running loop-guard"
      },
@@ -4717,12 +4877,12 @@
       "hookRunId": "call_stdio:PreToolUse:0",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:2>",
+      "startedAt": "<ts:events.startedAt:2>",
       "phase": "end",
       "statusMessage": "running loop-guard",
-      "completedAt": "<ts:turn.completedAt:1>",
+      "completedAt": "<ts:events.completedAt:1>",
       "status": "completed"
      },
      {
@@ -4730,9 +4890,9 @@
       "hookRunId": "call_stdio:PreToolUse:1",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:3>",
+      "startedAt": "<ts:events.startedAt:3>",
       "phase": "start",
       "statusMessage": "running moved-path-guard"
      },
@@ -4741,12 +4901,12 @@
       "hookRunId": "call_stdio:PreToolUse:1",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:4>",
+      "startedAt": "<ts:events.startedAt:4>",
       "phase": "end",
       "statusMessage": "running moved-path-guard",
-      "completedAt": "<ts:turn.completedAt:2>",
+      "completedAt": "<ts:events.completedAt:2>",
       "status": "completed"
      },
      {
@@ -4754,9 +4914,9 @@
       "hookRunId": "call_stdio:PreToolUse:2",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:5>",
+      "startedAt": "<ts:events.startedAt:5>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
@@ -4765,12 +4925,12 @@
       "hookRunId": "call_stdio:PreToolUse:2",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:6>",
+      "startedAt": "<ts:events.startedAt:6>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:3>",
+      "completedAt": "<ts:events.completedAt:3>",
       "status": "completed"
      },
      {
@@ -4778,9 +4938,9 @@
       "hookRunId": "call_stdio:PreToolUse:3",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:7>",
+      "startedAt": "<ts:events.startedAt:7>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
@@ -4789,12 +4949,12 @@
       "hookRunId": "call_stdio:PreToolUse:3",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:8>",
+      "startedAt": "<ts:events.startedAt:8>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:4>",
+      "completedAt": "<ts:events.completedAt:4>",
       "status": "completed"
      },
      {
@@ -4802,9 +4962,9 @@
       "hookRunId": "call_stdio:PreToolUse:4",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:9>",
+      "startedAt": "<ts:events.startedAt:9>",
       "phase": "start",
       "statusMessage": "applying bash timeout"
      },
@@ -4813,12 +4973,12 @@
       "hookRunId": "call_stdio:PreToolUse:4",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:10>",
+      "startedAt": "<ts:events.startedAt:10>",
       "phase": "end",
       "statusMessage": "applying bash timeout",
-      "completedAt": "<ts:turn.completedAt:5>",
+      "completedAt": "<ts:events.completedAt:5>",
       "status": "completed"
      },
      {
@@ -4826,9 +4986,9 @@
       "hookRunId": "call_stdio:PreToolUse:5",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:11>",
+      "startedAt": "<ts:events.startedAt:11>",
       "phase": "start",
       "statusMessage": "running terminal"
      },
@@ -4837,12 +4997,12 @@
       "hookRunId": "call_stdio:PreToolUse:5",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:12>",
+      "startedAt": "<ts:events.startedAt:12>",
       "phase": "end",
       "statusMessage": "running terminal",
-      "completedAt": "<ts:turn.completedAt:6>",
+      "completedAt": "<ts:events.completedAt:6>",
       "status": "completed"
      },
      {
@@ -4850,9 +5010,9 @@
       "hookRunId": "call_stdio:PreToolUse:6",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:13>",
+      "startedAt": "<ts:events.startedAt:13>",
       "phase": "start",
       "statusMessage": "checking compaction state"
      },
@@ -4861,12 +5021,12 @@
       "hookRunId": "call_stdio:PreToolUse:6",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:14>",
+      "startedAt": "<ts:events.startedAt:14>",
       "phase": "end",
       "statusMessage": "checking compaction state",
-      "completedAt": "<ts:turn.completedAt:7>",
+      "completedAt": "<ts:events.completedAt:7>",
       "status": "completed"
      },
      {
@@ -4874,9 +5034,9 @@
       "hookRunId": "call_stdio:PreToolUse:7",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:15>",
+      "startedAt": "<ts:events.startedAt:15>",
       "phase": "start",
       "statusMessage": "running mcp"
      },
@@ -4885,12 +5045,12 @@
       "hookRunId": "call_stdio:PreToolUse:7",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:16>",
+      "startedAt": "<ts:events.startedAt:16>",
       "phase": "end",
       "statusMessage": "running mcp",
-      "completedAt": "<ts:turn.completedAt:8>",
+      "completedAt": "<ts:events.completedAt:8>",
       "status": "completed"
      },
      {
@@ -4898,9 +5058,9 @@
       "hookRunId": "call_stdio:PostToolUse:8",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:17>",
+      "startedAt": "<ts:events.startedAt:17>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
@@ -4909,12 +5069,12 @@
       "hookRunId": "call_stdio:PostToolUse:8",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:18>",
+      "startedAt": "<ts:events.startedAt:18>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:9>",
+      "completedAt": "<ts:events.completedAt:9>",
       "status": "completed"
      },
      {
@@ -4922,9 +5082,9 @@
       "hookRunId": "call_stdio:PostToolUse:9",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:19>",
+      "startedAt": "<ts:events.startedAt:19>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
@@ -4933,12 +5093,12 @@
       "hookRunId": "call_stdio:PostToolUse:9",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:20>",
+      "startedAt": "<ts:events.startedAt:20>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:10>",
+      "completedAt": "<ts:events.completedAt:10>",
       "status": "completed"
      },
      {
@@ -4946,9 +5106,9 @@
       "hookRunId": "call_stdio:PostToolUse:10",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:21>",
+      "startedAt": "<ts:events.startedAt:21>",
       "phase": "start",
       "statusMessage": "running gpt-apply-patch"
      },
@@ -4957,12 +5117,12 @@
       "hookRunId": "call_stdio:PostToolUse:10",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:22>",
+      "startedAt": "<ts:events.startedAt:22>",
       "phase": "end",
       "statusMessage": "running gpt-apply-patch",
-      "completedAt": "<ts:turn.completedAt:11>",
+      "completedAt": "<ts:events.completedAt:11>",
       "status": "completed"
      },
      {
@@ -4970,9 +5130,9 @@
       "hookRunId": "call_stdio:PostToolUse:11",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:23>",
+      "startedAt": "<ts:events.startedAt:23>",
       "phase": "start",
       "statusMessage": "running nested-agents-md"
      },
@@ -4981,12 +5141,12 @@
       "hookRunId": "call_stdio:PostToolUse:11",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:24>",
+      "startedAt": "<ts:events.startedAt:24>",
       "phase": "end",
       "statusMessage": "running nested-agents-md",
-      "completedAt": "<ts:turn.completedAt:12>",
+      "completedAt": "<ts:events.completedAt:12>",
       "status": "completed"
      },
      {
@@ -4994,9 +5154,9 @@
       "hookRunId": "call_stdio:PostToolUse:12",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:25>",
+      "startedAt": "<ts:events.startedAt:25>",
       "phase": "start",
       "statusMessage": "running rules"
      },
@@ -5005,12 +5165,12 @@
       "hookRunId": "call_stdio:PostToolUse:12",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:26>",
+      "startedAt": "<ts:events.startedAt:26>",
       "phase": "end",
       "statusMessage": "running rules",
-      "completedAt": "<ts:turn.completedAt:13>",
+      "completedAt": "<ts:events.completedAt:13>",
       "status": "completed"
      },
      {
@@ -5018,9 +5178,9 @@
       "hookRunId": "call_stdio:PostToolUse:13",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:27>",
+      "startedAt": "<ts:events.startedAt:27>",
       "phase": "start",
       "statusMessage": "running goal"
      },
@@ -5029,17 +5189,45 @@
       "hookRunId": "call_stdio:PostToolUse:13",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxstdio_tool_1",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:28>",
+      "startedAt": "<ts:events.startedAt:28>",
       "phase": "end",
       "statusMessage": "running goal",
-      "completedAt": "<ts:turn.completedAt:14>",
+      "completedAt": "<ts:events.completedAt:14>",
       "status": "completed"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:5>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 4
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:5>"
+      }
+     },
+     {
       "type": "tool_execution_end",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "toolName": "mcp_fxstdio_tool_1",
       "result": {
        "content": [
@@ -5060,7 +5248,7 @@
       "type": "message_start",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:5>",
+       "toolCallId": "<id:6>",
        "toolName": "mcp_fxstdio_tool_1",
        "content": [
         {
@@ -5081,7 +5269,7 @@
       "type": "message_end",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:5>",
+       "toolCallId": "<id:6>",
        "toolName": "mcp_fxstdio_tool_1",
        "content": [
         {
@@ -5102,12 +5290,12 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:9>",
-       "parentId": "<id:7>",
-       "timestamp": "<ts:entry.timestamp:4>",
+       "id": "<id:10>",
+       "parentId": "<id:8>",
+       "timestamp": "<ts:entry.timestamp:5>",
        "message": {
         "role": "toolResult",
-        "toolCallId": "<id:5>",
+        "toolCallId": "<id:6>",
         "toolName": "mcp_fxstdio_tool_1",
         "content": [
          {
@@ -5132,7 +5320,7 @@
        "content": [
         {
          "type": "toolCall",
-         "id": "<id:5>",
+         "id": "<id:6>",
          "name": "mcp_fxstdio_tool_1",
          "arguments": {
           "value": "from-stdio"
@@ -5158,7 +5346,7 @@
        },
        "stopReason": "toolUse",
        "timestamp": "<ts:message.timestamp:14>",
-       "responseId": "<id:6>",
+       "responseId": "<id:7>",
        "rawStopReason": "tool_calls",
        "thinkingLevel": "off",
        "timing": {
@@ -5171,7 +5359,7 @@
       "toolResults": [
        {
         "role": "toolResult",
-        "toolCallId": "<id:5>",
+        "toolCallId": "<id:6>",
         "toolName": "mcp_fxstdio_tool_1",
         "content": [
          {
@@ -5191,6 +5379,38 @@
      },
      {
       "type": "turn_start"
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:6>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 5
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:3>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:6>"
+      }
      },
      {
       "type": "message_start",
@@ -5216,7 +5436,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:15>",
-       "responseId": "<id:6>"
+       "responseId": "<id:7>"
       },
       "streaming": true
      },
@@ -5239,7 +5459,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_start",
        "contentIndex": 0,
-       "id": "<id:10>",
+       "id": "<id:11>",
        "toolName": "mcp_fxhttp_tool_1"
       },
       "resolvedToolName": "mcp_fxhttp_tool_1"
@@ -5287,7 +5507,7 @@
        "contentIndex": 0,
        "toolCall": {
         "type": "toolCall",
-        "id": "<id:10>",
+        "id": "<id:11>",
         "name": "mcp_fxhttp_tool_1",
         "arguments": {
          "value": "from-http"
@@ -5297,13 +5517,76 @@
       "resolvedToolName": "mcp_fxhttp_tool_1"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:7>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 6
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:7>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:8>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 7
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "mcp_fxhttp_tool_1",
+        "toolCallId": "<id:11>",
+        "since": "<ts:activity.since:4>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:8>"
+      }
+     },
+     {
       "type": "message_end",
       "message": {
        "role": "assistant",
        "content": [
         {
          "type": "toolCall",
-         "id": "<id:10>",
+         "id": "<id:11>",
          "name": "mcp_fxhttp_tool_1",
          "arguments": {
           "value": "from-http"
@@ -5329,7 +5612,7 @@
        },
        "stopReason": "toolUse",
        "timestamp": "<ts:message.timestamp:16>",
-       "responseId": "<id:6>",
+       "responseId": "<id:7>",
        "rawStopReason": "tool_calls",
        "thinkingLevel": "off",
        "timing": {
@@ -5344,15 +5627,15 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:11>",
-       "parentId": "<id:9>",
-       "timestamp": "<ts:entry.timestamp:5>",
+       "id": "<id:12>",
+       "parentId": "<id:10>",
+       "timestamp": "<ts:entry.timestamp:6>",
        "message": {
         "role": "assistant",
         "content": [
          {
           "type": "toolCall",
-          "id": "<id:10>",
+          "id": "<id:11>",
           "name": "mcp_fxhttp_tool_1",
           "arguments": {
            "value": "from-http"
@@ -5378,7 +5661,7 @@
         },
         "stopReason": "toolUse",
         "timestamp": "<ts:message.timestamp:17>",
-        "responseId": "<id:6>",
+        "responseId": "<id:7>",
         "rawStopReason": "tool_calls",
         "thinkingLevel": "off",
         "timing": {
@@ -5392,7 +5675,7 @@
      },
      {
       "type": "tool_execution_start",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "toolName": "mcp_fxhttp_tool_1",
       "args": {
        "value": "from-http"
@@ -5403,9 +5686,9 @@
       "hookRunId": "call_http:PreToolUse:14",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:29>",
+      "startedAt": "<ts:events.startedAt:29>",
       "phase": "start",
       "statusMessage": "running loop-guard"
      },
@@ -5414,12 +5697,12 @@
       "hookRunId": "call_http:PreToolUse:14",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:30>",
+      "startedAt": "<ts:events.startedAt:30>",
       "phase": "end",
       "statusMessage": "running loop-guard",
-      "completedAt": "<ts:turn.completedAt:15>",
+      "completedAt": "<ts:events.completedAt:15>",
       "status": "completed"
      },
      {
@@ -5427,9 +5710,9 @@
       "hookRunId": "call_http:PreToolUse:15",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:31>",
+      "startedAt": "<ts:events.startedAt:31>",
       "phase": "start",
       "statusMessage": "running moved-path-guard"
      },
@@ -5438,12 +5721,12 @@
       "hookRunId": "call_http:PreToolUse:15",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:32>",
+      "startedAt": "<ts:events.startedAt:32>",
       "phase": "end",
       "statusMessage": "running moved-path-guard",
-      "completedAt": "<ts:turn.completedAt:16>",
+      "completedAt": "<ts:events.completedAt:16>",
       "status": "completed"
      },
      {
@@ -5451,9 +5734,9 @@
       "hookRunId": "call_http:PreToolUse:16",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:33>",
+      "startedAt": "<ts:events.startedAt:33>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
@@ -5462,12 +5745,12 @@
       "hookRunId": "call_http:PreToolUse:16",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:34>",
+      "startedAt": "<ts:events.startedAt:34>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:17>",
+      "completedAt": "<ts:events.completedAt:17>",
       "status": "completed"
      },
      {
@@ -5475,9 +5758,9 @@
       "hookRunId": "call_http:PreToolUse:17",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:35>",
+      "startedAt": "<ts:events.startedAt:35>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
@@ -5486,12 +5769,12 @@
       "hookRunId": "call_http:PreToolUse:17",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:36>",
+      "startedAt": "<ts:events.startedAt:36>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:18>",
+      "completedAt": "<ts:events.completedAt:18>",
       "status": "completed"
      },
      {
@@ -5499,9 +5782,9 @@
       "hookRunId": "call_http:PreToolUse:18",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:37>",
+      "startedAt": "<ts:events.startedAt:37>",
       "phase": "start",
       "statusMessage": "applying bash timeout"
      },
@@ -5510,12 +5793,12 @@
       "hookRunId": "call_http:PreToolUse:18",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:38>",
+      "startedAt": "<ts:events.startedAt:38>",
       "phase": "end",
       "statusMessage": "applying bash timeout",
-      "completedAt": "<ts:turn.completedAt:19>",
+      "completedAt": "<ts:events.completedAt:19>",
       "status": "completed"
      },
      {
@@ -5523,9 +5806,9 @@
       "hookRunId": "call_http:PreToolUse:19",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:39>",
+      "startedAt": "<ts:events.startedAt:39>",
       "phase": "start",
       "statusMessage": "running terminal"
      },
@@ -5534,12 +5817,12 @@
       "hookRunId": "call_http:PreToolUse:19",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:40>",
+      "startedAt": "<ts:events.startedAt:40>",
       "phase": "end",
       "statusMessage": "running terminal",
-      "completedAt": "<ts:turn.completedAt:20>",
+      "completedAt": "<ts:events.completedAt:20>",
       "status": "completed"
      },
      {
@@ -5547,9 +5830,9 @@
       "hookRunId": "call_http:PreToolUse:20",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:41>",
+      "startedAt": "<ts:events.startedAt:41>",
       "phase": "start",
       "statusMessage": "checking compaction state"
      },
@@ -5558,12 +5841,12 @@
       "hookRunId": "call_http:PreToolUse:20",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:42>",
+      "startedAt": "<ts:events.startedAt:42>",
       "phase": "end",
       "statusMessage": "checking compaction state",
-      "completedAt": "<ts:turn.completedAt:21>",
+      "completedAt": "<ts:events.completedAt:21>",
       "status": "completed"
      },
      {
@@ -5571,9 +5854,9 @@
       "hookRunId": "call_http:PreToolUse:21",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:43>",
+      "startedAt": "<ts:events.startedAt:43>",
       "phase": "start",
       "statusMessage": "running mcp"
      },
@@ -5582,12 +5865,12 @@
       "hookRunId": "call_http:PreToolUse:21",
       "hookName": "PreToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:44>",
+      "startedAt": "<ts:events.startedAt:44>",
       "phase": "end",
       "statusMessage": "running mcp",
-      "completedAt": "<ts:turn.completedAt:22>",
+      "completedAt": "<ts:events.completedAt:22>",
       "status": "completed"
      },
      {
@@ -5595,9 +5878,9 @@
       "hookRunId": "call_http:PostToolUse:22",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:45>",
+      "startedAt": "<ts:events.startedAt:45>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
@@ -5606,12 +5889,12 @@
       "hookRunId": "call_http:PostToolUse:22",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:46>",
+      "startedAt": "<ts:events.startedAt:46>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:23>",
+      "completedAt": "<ts:events.completedAt:23>",
       "status": "completed"
      },
      {
@@ -5619,9 +5902,9 @@
       "hookRunId": "call_http:PostToolUse:23",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:47>",
+      "startedAt": "<ts:events.startedAt:47>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
@@ -5630,12 +5913,12 @@
       "hookRunId": "call_http:PostToolUse:23",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:48>",
+      "startedAt": "<ts:events.startedAt:48>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:24>",
+      "completedAt": "<ts:events.completedAt:24>",
       "status": "completed"
      },
      {
@@ -5643,9 +5926,9 @@
       "hookRunId": "call_http:PostToolUse:24",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:49>",
+      "startedAt": "<ts:events.startedAt:49>",
       "phase": "start",
       "statusMessage": "running gpt-apply-patch"
      },
@@ -5654,12 +5937,12 @@
       "hookRunId": "call_http:PostToolUse:24",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:50>",
+      "startedAt": "<ts:events.startedAt:50>",
       "phase": "end",
       "statusMessage": "running gpt-apply-patch",
-      "completedAt": "<ts:turn.completedAt:25>",
+      "completedAt": "<ts:events.completedAt:25>",
       "status": "completed"
      },
      {
@@ -5667,9 +5950,9 @@
       "hookRunId": "call_http:PostToolUse:25",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:51>",
+      "startedAt": "<ts:events.startedAt:51>",
       "phase": "start",
       "statusMessage": "running nested-agents-md"
      },
@@ -5678,12 +5961,12 @@
       "hookRunId": "call_http:PostToolUse:25",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:52>",
+      "startedAt": "<ts:events.startedAt:52>",
       "phase": "end",
       "statusMessage": "running nested-agents-md",
-      "completedAt": "<ts:turn.completedAt:26>",
+      "completedAt": "<ts:events.completedAt:26>",
       "status": "completed"
      },
      {
@@ -5691,9 +5974,9 @@
       "hookRunId": "call_http:PostToolUse:26",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:53>",
+      "startedAt": "<ts:events.startedAt:53>",
       "phase": "start",
       "statusMessage": "running rules"
      },
@@ -5702,12 +5985,12 @@
       "hookRunId": "call_http:PostToolUse:26",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:54>",
+      "startedAt": "<ts:events.startedAt:54>",
       "phase": "end",
       "statusMessage": "running rules",
-      "completedAt": "<ts:turn.completedAt:27>",
+      "completedAt": "<ts:events.completedAt:27>",
       "status": "completed"
      },
      {
@@ -5715,9 +5998,9 @@
       "hookRunId": "call_http:PostToolUse:27",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:55>",
+      "startedAt": "<ts:events.startedAt:55>",
       "phase": "start",
       "statusMessage": "running goal"
      },
@@ -5726,17 +6009,45 @@
       "hookRunId": "call_http:PostToolUse:27",
       "hookName": "PostToolUse",
       "toolName": "mcp_fxhttp_tool_1",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:56>",
+      "startedAt": "<ts:events.startedAt:56>",
       "phase": "end",
       "statusMessage": "running goal",
-      "completedAt": "<ts:turn.completedAt:28>",
+      "completedAt": "<ts:events.completedAt:28>",
       "status": "completed"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:9>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 8
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:9>"
+      }
+     },
+     {
       "type": "tool_execution_end",
-      "toolCallId": "<id:10>",
+      "toolCallId": "<id:11>",
       "toolName": "mcp_fxhttp_tool_1",
       "result": {
        "content": [
@@ -5757,7 +6068,7 @@
       "type": "message_start",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:10>",
+       "toolCallId": "<id:11>",
        "toolName": "mcp_fxhttp_tool_1",
        "content": [
         {
@@ -5778,7 +6089,7 @@
       "type": "message_end",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:10>",
+       "toolCallId": "<id:11>",
        "toolName": "mcp_fxhttp_tool_1",
        "content": [
         {
@@ -5799,12 +6110,12 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:12>",
-       "parentId": "<id:11>",
-       "timestamp": "<ts:entry.timestamp:6>",
+       "id": "<id:13>",
+       "parentId": "<id:12>",
+       "timestamp": "<ts:entry.timestamp:7>",
        "message": {
         "role": "toolResult",
-        "toolCallId": "<id:10>",
+        "toolCallId": "<id:11>",
         "toolName": "mcp_fxhttp_tool_1",
         "content": [
          {
@@ -5829,7 +6140,7 @@
        "content": [
         {
          "type": "toolCall",
-         "id": "<id:10>",
+         "id": "<id:11>",
          "name": "mcp_fxhttp_tool_1",
          "arguments": {
           "value": "from-http"
@@ -5855,7 +6166,7 @@
        },
        "stopReason": "toolUse",
        "timestamp": "<ts:message.timestamp:21>",
-       "responseId": "<id:6>",
+       "responseId": "<id:7>",
        "rawStopReason": "tool_calls",
        "thinkingLevel": "off",
        "timing": {
@@ -5868,7 +6179,7 @@
       "toolResults": [
        {
         "role": "toolResult",
-        "toolCallId": "<id:10>",
+        "toolCallId": "<id:11>",
         "toolName": "mcp_fxhttp_tool_1",
         "content": [
          {
@@ -5888,6 +6199,38 @@
      },
      {
       "type": "turn_start"
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:10>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 9
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:5>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:10>"
+      }
      },
      {
       "type": "message_start",
@@ -5913,7 +6256,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:22>",
-       "responseId": "<id:6>"
+       "responseId": "<id:7>"
       },
       "streaming": true
      },
@@ -5983,6 +6326,34 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:11>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 10
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:11>"
+      }
+     },
+     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -6011,7 +6382,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:23>",
-       "responseId": "<id:6>",
+       "responseId": "<id:7>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -6026,9 +6397,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:13>",
-       "parentId": "<id:12>",
-       "timestamp": "<ts:entry.timestamp:7>",
+       "id": "<id:14>",
+       "parentId": "<id:13>",
+       "timestamp": "<ts:entry.timestamp:8>",
        "message": {
         "role": "assistant",
         "content": [
@@ -6056,7 +6427,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:message.timestamp:24>",
-        "responseId": "<id:6>",
+        "responseId": "<id:7>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -6097,7 +6468,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:25>",
-       "responseId": "<id:6>",
+       "responseId": "<id:7>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -6116,17 +6487,17 @@
        "customType": "senpi.hooks.stop-state",
        "data": {
         "count": 0,
-        "sessionId": "<uuid:17>",
-        "turnKey": "1:<id:13>"
+        "sessionId": "<uuid:16>",
+        "turnKey": "1:<id:14>"
        },
-       "id": "<id:14>",
-       "parentId": "<id:13>",
-       "timestamp": "<ts:entry.timestamp:8>"
+       "id": "<id:15>",
+       "parentId": "<id:14>",
+       "timestamp": "<ts:entry.timestamp:9>"
       }
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:18>",
+      "id": "<uuid:20>",
       "method": "setStatus",
       "statusKey": "goal"
      },
@@ -6166,7 +6537,7 @@
         "content": [
          {
           "type": "toolCall",
-          "id": "<id:5>",
+          "id": "<id:6>",
           "name": "mcp_fxstdio_tool_1",
           "arguments": {
            "value": "from-stdio"
@@ -6192,7 +6563,7 @@
         },
         "stopReason": "toolUse",
         "timestamp": "<ts:messages.timestamp:4>",
-        "responseId": "<id:6>",
+        "responseId": "<id:7>",
         "rawStopReason": "tool_calls",
         "thinkingLevel": "off",
         "timing": {
@@ -6204,7 +6575,7 @@
        },
        {
         "role": "toolResult",
-        "toolCallId": "<id:5>",
+        "toolCallId": "<id:6>",
         "toolName": "mcp_fxstdio_tool_1",
         "content": [
          {
@@ -6225,7 +6596,7 @@
         "content": [
          {
           "type": "toolCall",
-          "id": "<id:10>",
+          "id": "<id:11>",
           "name": "mcp_fxhttp_tool_1",
           "arguments": {
            "value": "from-http"
@@ -6251,7 +6622,7 @@
         },
         "stopReason": "toolUse",
         "timestamp": "<ts:messages.timestamp:6>",
-        "responseId": "<id:6>",
+        "responseId": "<id:7>",
         "rawStopReason": "tool_calls",
         "thinkingLevel": "off",
         "timing": {
@@ -6263,7 +6634,7 @@
        },
        {
         "role": "toolResult",
-        "toolCallId": "<id:10>",
+        "toolCallId": "<id:11>",
         "toolName": "mcp_fxhttp_tool_1",
         "content": [
          {
@@ -6306,7 +6677,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:messages.timestamp:8>",
-        "responseId": "<id:6>",
+        "responseId": "<id:7>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -6326,439 +6697,6 @@
       "type": "agent_idle"
      },
      {
-      "type": "extension_ui_request",
-      "id": "<uuid:19>",
-      "method": "setStatus",
-      "statusKey": "anthropic-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:20>",
-      "method": "setWidget",
-      "widgetKey": "anthropic-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:21>",
-      "method": "setStatus",
-      "statusKey": "openai-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:22>",
-      "method": "setWidget",
-      "widgetKey": "openai-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:23>",
-      "method": "setStatus",
-      "statusKey": "monitors"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:24>",
-      "method": "setStatus",
-      "statusKey": "pi-websearch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:25>",
-      "method": "setWidget",
-      "widgetKey": "pi-websearch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:26>",
-      "method": "setStatus",
-      "statusKey": "pi-webfetch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:27>",
-      "method": "setWidget",
-      "widgetKey": "pi-webfetch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:28>",
-      "method": "setStatus",
-      "statusKey": "loop"
-     }
-    ],
-    "lifecycle": [
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 1,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:1>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:29>"
-       },
-       "id": "<id:15>",
-       "parentId": "<id:1>",
-       "timestamp": "<ts:entry.timestamp:9>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:1>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:1>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:2>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 1
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:1>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:2>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:3>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 2
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:3>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "mcp_fxstdio_tool_1",
-        "toolCallId": "<id:5>",
-        "since": "<ts:activity.since:2>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:5>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 4
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:5>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:6>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 5
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:3>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:6>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:7>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 6
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:7>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:8>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 7
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "mcp_fxhttp_tool_1",
-        "toolCallId": "<id:10>",
-        "since": "<ts:activity.since:4>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:8>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:9>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 8
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:9>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:10>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 9
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:5>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:10>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:11>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 10
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:11>"
-      }
-     },
-     {
       "type": "entry_appended",
       "entry": {
        "type": "custom",
@@ -6775,19 +6713,19 @@
         "runPaused": false,
         "since": "<ts:data.since:2>",
         "role": "root",
-        "rootSessionId": "<uuid:17>",
+        "rootSessionId": "<uuid:16>",
         "waitingOn": {
          "children": 0,
          "background": [],
          "human": []
         },
         "holds": [],
-        "completionId": "<uuid:17>:1",
+        "completionId": "<uuid:16>:1",
         "completion": {
          "kind": "reply",
          "at": "<ts:completion.at:1>"
         },
-        "sessionId": "<uuid:17>",
+        "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": true,
@@ -6798,10 +6736,10 @@
          "budgetSpent": false,
          "deadlineStop": false
         },
-        "runId": "<uuid:29>"
+        "runId": "<uuid:17>"
        },
        "id": "<id:16>",
-       "parentId": "<id:14>",
+       "parentId": "<id:15>",
        "timestamp": "<ts:entry.timestamp:10>"
       }
      },
@@ -6819,9 +6757,9 @@
        "runPaused": false,
        "since": "<ts:lifecycle.since:12>",
        "role": "root",
-       "rootSessionId": "<uuid:17>",
+       "rootSessionId": "<uuid:16>",
        "activityRevision": {
-        "instanceId": "<uuid:30>",
+        "instanceId": "<uuid:18>",
         "revision": 0
        },
        "waitingOn": {
@@ -6830,13 +6768,73 @@
         "human": []
        },
        "holds": [],
-       "completionId": "<uuid:17>:1",
+       "completionId": "<uuid:16>:1",
        "completion": {
         "kind": "reply",
         "at": "<ts:completion.at:2>"
        },
        "observedAt": "<ts:lifecycle.observedAt:12>"
       }
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:21>",
+      "method": "setStatus",
+      "statusKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:22>",
+      "method": "setWidget",
+      "widgetKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:23>",
+      "method": "setStatus",
+      "statusKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:24>",
+      "method": "setWidget",
+      "widgetKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:25>",
+      "method": "setStatus",
+      "statusKey": "monitors"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:26>",
+      "method": "setStatus",
+      "statusKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:27>",
+      "method": "setWidget",
+      "widgetKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:28>",
+      "method": "setStatus",
+      "statusKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:29>",
+      "method": "setWidget",
+      "widgetKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:30>",
+      "method": "setStatus",
+      "statusKey": "loop"
      }
     ],
     "surfaces": [
@@ -6891,6 +6889,40 @@
      "timestamp": "<ts:entries.timestamp:4>"
     },
     {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "running",
+      "seq": 1,
+      "epoch": 1,
+      "epochOrigin": "human",
+      "humanInputRevision": 1,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:1>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": false,
+      "runActive": true,
+      "interrupted": false,
+      "runId": "<uuid:2>"
+     },
+     "id": "<id:4>",
+     "parentId": "<id:3>",
+     "timestamp": "<ts:entries.timestamp:5>"
+    },
+    {
      "type": "custom_message",
      "customType": "environment-context",
      "content": "<environment_context>\n  <cwd><sandbox>/work</cwd>\n  <current_date><ts:entries.content:1></current_date>\n</environment_context>",
@@ -6899,15 +6931,15 @@
       "cwd": "<sandbox>/work",
       "currentDate": "<ts:details.currentDate:1>"
      },
-     "id": "<id:4>",
-     "parentId": "<id:5>",
-     "timestamp": "<ts:entries.timestamp:5>"
+     "id": "<id:5>",
+     "parentId": "<id:4>",
+     "timestamp": "<ts:entries.timestamp:6>"
     },
     {
      "type": "message",
      "id": "<id:6>",
-     "parentId": "<id:4>",
-     "timestamp": "<ts:entries.timestamp:6>",
+     "parentId": "<id:5>",
+     "timestamp": "<ts:entries.timestamp:7>",
      "message": {
       "role": "user",
       "content": [
@@ -6927,13 +6959,13 @@
      "display": false,
      "id": "<id:7>",
      "parentId": "<id:6>",
-     "timestamp": "<ts:entries.timestamp:7>"
+     "timestamp": "<ts:entries.timestamp:8>"
     },
     {
      "type": "message",
      "id": "<id:8>",
      "parentId": "<id:7>",
-     "timestamp": "<ts:entries.timestamp:8>",
+     "timestamp": "<ts:entries.timestamp:9>",
      "message": {
       "role": "assistant",
       "content": [
@@ -6980,7 +7012,7 @@
      "type": "message",
      "id": "<id:11>",
      "parentId": "<id:8>",
-     "timestamp": "<ts:entries.timestamp:9>",
+     "timestamp": "<ts:entries.timestamp:10>",
      "message": {
       "role": "toolResult",
       "toolCallId": "<id:9>",
@@ -7004,7 +7036,7 @@
      "type": "message",
      "id": "<id:12>",
      "parentId": "<id:11>",
-     "timestamp": "<ts:entries.timestamp:10>",
+     "timestamp": "<ts:entries.timestamp:11>",
      "message": {
       "role": "assistant",
       "content": [
@@ -7051,7 +7083,7 @@
      "type": "message",
      "id": "<id:14>",
      "parentId": "<id:12>",
-     "timestamp": "<ts:entries.timestamp:11>",
+     "timestamp": "<ts:entries.timestamp:12>",
      "message": {
       "role": "toolResult",
       "toolCallId": "<id:13>",
@@ -7075,7 +7107,7 @@
      "type": "message",
      "id": "<id:15>",
      "parentId": "<id:14>",
-     "timestamp": "<ts:entries.timestamp:12>",
+     "timestamp": "<ts:entries.timestamp:13>",
      "message": {
       "role": "assistant",
       "content": [
@@ -7124,43 +7156,7 @@
      },
      "id": "<id:16>",
      "parentId": "<id:15>",
-     "timestamp": "<ts:entries.timestamp:13>"
-    }
-   ],
-   "lifecycleEntries": [
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "running",
-      "seq": 1,
-      "epoch": 1,
-      "epochOrigin": "human",
-      "humanInputRevision": 1,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:1>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": false,
-      "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
-     },
-     "id": "<id:5>",
-     "parentId": "<id:3>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:1>"
+     "timestamp": "<ts:entries.timestamp:14>"
     },
     {
      "type": "custom",
@@ -7204,7 +7200,7 @@
      },
      "id": "<id:17>",
      "parentId": "<id:16>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:2>"
+     "timestamp": "<ts:entries.timestamp:15>"
     }
    ]
   }

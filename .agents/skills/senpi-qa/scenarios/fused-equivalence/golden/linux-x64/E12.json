@@ -5640,7 +5640,7 @@
   },
   "O6": [
    {
-    "turn": [
+    "events": [
      {
       "type": "settings_source_selected",
       "path": "<sandbox>/agent/settings.json",
@@ -5754,8 +5754,73 @@
       "widgetKey": "pi-websearch"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 1,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:1>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:3>",
+       "parentId": "<id:1>",
+       "timestamp": "<ts:entry.timestamp:2>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:1>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:1>"
+      }
+     },
+     {
       "type": "extension_ui_request",
-      "id": "<uuid:16>",
+      "id": "<uuid:19>",
       "method": "setStatus",
       "statusKey": "todo-waiting"
      },
@@ -5823,9 +5888,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:3>",
-       "parentId": "<id:4>",
-       "timestamp": "<ts:entry.timestamp:2>",
+       "id": "<id:4>",
+       "parentId": "<id:5>",
+       "timestamp": "<ts:entry.timestamp:3>",
        "message": {
         "role": "user",
         "content": [
@@ -5860,6 +5925,38 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:2>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:1>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:2>"
+      }
+     },
+     {
       "type": "message_start",
       "message": {
        "role": "assistant",
@@ -5888,7 +5985,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:8>",
-       "responseId": "<id:5>"
+       "responseId": "<id:6>"
       },
       "streaming": true
      },
@@ -5958,6 +6055,34 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:3>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 2
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:3>"
+      }
+     },
+     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -5986,7 +6111,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:9>",
-       "responseId": "<id:5>",
+       "responseId": "<id:6>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -6001,9 +6126,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:6>",
-       "parentId": "<id:7>",
-       "timestamp": "<ts:entry.timestamp:3>",
+       "id": "<id:7>",
+       "parentId": "<id:8>",
+       "timestamp": "<ts:entry.timestamp:4>",
        "message": {
         "role": "assistant",
         "content": [
@@ -6031,7 +6156,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:message.timestamp:10>",
-        "responseId": "<id:5>",
+        "responseId": "<id:6>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -6072,7 +6197,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:11>",
-       "responseId": "<id:5>",
+       "responseId": "<id:6>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -6091,17 +6216,17 @@
        "customType": "senpi.hooks.stop-state",
        "data": {
         "count": 0,
-        "sessionId": "<uuid:17>",
-        "turnKey": "1:<id:6>"
+        "sessionId": "<uuid:16>",
+        "turnKey": "1:<id:7>"
        },
-       "id": "<id:8>",
-       "parentId": "<id:6>",
-       "timestamp": "<ts:entry.timestamp:4>"
+       "id": "<id:9>",
+       "parentId": "<id:7>",
+       "timestamp": "<ts:entry.timestamp:5>"
       }
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:18>",
+      "id": "<uuid:20>",
       "method": "setStatus",
       "statusKey": "goal"
      },
@@ -6163,7 +6288,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:messages.timestamp:4>",
-        "responseId": "<id:5>",
+        "responseId": "<id:6>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -6183,20 +6308,165 @@
       "type": "agent_idle"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "done",
+        "seq": 2,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:2>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "completionId": "<uuid:16>:1",
+        "completion": {
+         "kind": "reply",
+         "at": "<ts:completion.at:1>"
+        },
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": true,
+        "runActive": false,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "clean",
+         "budgetSpent": false,
+         "deadlineStop": false
+        },
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:10>",
+       "parentId": "<id:9>",
+       "timestamp": "<ts:entry.timestamp:6>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "done",
+       "seq": 2,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "completionId": "<uuid:16>:1",
+       "completion": {
+        "kind": "reply",
+        "at": "<ts:completion.at:2>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
+      }
+     },
+     {
       "type": "extension_ui_request",
-      "id": "<uuid:19>",
+      "id": "<uuid:21>",
       "method": "setStatus",
       "statusKey": "pi-websearch"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:20>",
+      "id": "<uuid:22>",
       "method": "setWidget",
       "widgetKey": "pi-websearch"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 3,
+        "epoch": 2,
+        "epochOrigin": "human",
+        "humanInputRevision": 2,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:3>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "runId": "<uuid:23>"
+       },
+       "id": "<id:11>",
+       "parentId": "<id:10>",
+       "timestamp": "<ts:entry.timestamp:7>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 3,
+       "epoch": 2,
+       "epochOrigin": "human",
+       "humanInputRevision": 2,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:5>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:5>"
+      }
+     },
+     {
       "type": "extension_ui_request",
-      "id": "<uuid:21>",
+      "id": "<uuid:24>",
       "method": "setStatus",
       "statusKey": "todo-waiting"
      },
@@ -6236,9 +6506,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:9>",
-       "parentId": "<id:10>",
-       "timestamp": "<ts:entry.timestamp:5>",
+       "id": "<id:12>",
+       "parentId": "<id:11>",
+       "timestamp": "<ts:entry.timestamp:8>",
        "message": {
         "role": "user",
         "content": [
@@ -6250,6 +6520,38 @@
         "timestamp": "<ts:message.timestamp:14>"
        },
        "inputSource": "rpc"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 3,
+       "epoch": 2,
+       "epochOrigin": "human",
+       "humanInputRevision": 2,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:6>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:2>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:6>"
       }
      },
      {
@@ -6276,7 +6578,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:15>",
-       "responseId": "<id:5>"
+       "responseId": "<id:6>"
       },
       "streaming": true
      },
@@ -6346,6 +6648,34 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 3,
+       "epoch": 2,
+       "epochOrigin": "human",
+       "humanInputRevision": 2,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:7>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 2
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:7>"
+      }
+     },
+     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -6374,7 +6704,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:16>",
-       "responseId": "<id:5>",
+       "responseId": "<id:6>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -6389,9 +6719,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:11>",
-       "parentId": "<id:9>",
-       "timestamp": "<ts:entry.timestamp:6>",
+       "id": "<id:13>",
+       "parentId": "<id:12>",
+       "timestamp": "<ts:entry.timestamp:9>",
        "message": {
         "role": "assistant",
         "content": [
@@ -6419,7 +6749,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:message.timestamp:17>",
-        "responseId": "<id:5>",
+        "responseId": "<id:6>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -6460,7 +6790,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:18>",
-       "responseId": "<id:5>",
+       "responseId": "<id:6>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -6479,17 +6809,17 @@
        "customType": "senpi.hooks.stop-state",
        "data": {
         "count": 0,
-        "sessionId": "<uuid:17>",
-        "turnKey": "2:<id:11>"
+        "sessionId": "<uuid:16>",
+        "turnKey": "2:<id:13>"
        },
-       "id": "<id:12>",
-       "parentId": "<id:11>",
-       "timestamp": "<ts:entry.timestamp:7>"
+       "id": "<id:14>",
+       "parentId": "<id:13>",
+       "timestamp": "<ts:entry.timestamp:10>"
       }
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:22>",
+      "id": "<uuid:25>",
       "method": "setStatus",
       "statusKey": "goal"
      },
@@ -6533,7 +6863,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:messages.timestamp:6>",
-        "responseId": "<id:5>",
+        "responseId": "<id:6>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -6553,20 +6883,165 @@
       "type": "agent_idle"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "done",
+        "seq": 4,
+        "epoch": 2,
+        "epochOrigin": "human",
+        "humanInputRevision": 2,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:4>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "completionId": "<uuid:16>:2",
+        "completion": {
+         "kind": "reply",
+         "at": "<ts:completion.at:3>"
+        },
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": true,
+        "runActive": false,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "clean",
+         "budgetSpent": false,
+         "deadlineStop": false
+        },
+        "runId": "<uuid:23>"
+       },
+       "id": "<id:15>",
+       "parentId": "<id:14>",
+       "timestamp": "<ts:entry.timestamp:11>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "done",
+       "seq": 4,
+       "epoch": 2,
+       "epochOrigin": "human",
+       "humanInputRevision": 2,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:8>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "completionId": "<uuid:16>:2",
+       "completion": {
+        "kind": "reply",
+        "at": "<ts:completion.at:4>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:8>"
+      }
+     },
+     {
       "type": "extension_ui_request",
-      "id": "<uuid:23>",
+      "id": "<uuid:26>",
       "method": "setStatus",
       "statusKey": "pi-websearch"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:24>",
+      "id": "<uuid:27>",
       "method": "setWidget",
       "widgetKey": "pi-websearch"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 5,
+        "epoch": 3,
+        "epochOrigin": "human",
+        "humanInputRevision": 3,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:5>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "runId": "<uuid:28>"
+       },
+       "id": "<id:16>",
+       "parentId": "<id:15>",
+       "timestamp": "<ts:entry.timestamp:12>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 5,
+       "epoch": 3,
+       "epochOrigin": "human",
+       "humanInputRevision": 3,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:9>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:9>"
+      }
+     },
+     {
       "type": "extension_ui_request",
-      "id": "<uuid:25>",
+      "id": "<uuid:29>",
       "method": "setStatus",
       "statusKey": "todo-waiting"
      },
@@ -6606,9 +7081,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:13>",
-       "parentId": "<id:14>",
-       "timestamp": "<ts:entry.timestamp:8>",
+       "id": "<id:17>",
+       "parentId": "<id:16>",
+       "timestamp": "<ts:entry.timestamp:13>",
        "message": {
         "role": "user",
         "content": [
@@ -6620,6 +7095,38 @@
         "timestamp": "<ts:message.timestamp:21>"
        },
        "inputSource": "rpc"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 5,
+       "epoch": 3,
+       "epochOrigin": "human",
+       "humanInputRevision": 3,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:10>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:3>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:10>"
       }
      },
      {
@@ -6646,7 +7153,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:22>",
-       "responseId": "<id:5>"
+       "responseId": "<id:6>"
       },
       "streaming": true
      },
@@ -6716,6 +7223,34 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 5,
+       "epoch": 3,
+       "epochOrigin": "human",
+       "humanInputRevision": 3,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:11>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 2
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:11>"
+      }
+     },
+     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -6744,7 +7279,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:23>",
-       "responseId": "<id:5>",
+       "responseId": "<id:6>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -6759,9 +7294,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:15>",
-       "parentId": "<id:13>",
-       "timestamp": "<ts:entry.timestamp:9>",
+       "id": "<id:18>",
+       "parentId": "<id:17>",
+       "timestamp": "<ts:entry.timestamp:14>",
        "message": {
         "role": "assistant",
         "content": [
@@ -6789,7 +7324,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:message.timestamp:24>",
-        "responseId": "<id:5>",
+        "responseId": "<id:6>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -6830,7 +7365,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:25>",
-       "responseId": "<id:5>",
+       "responseId": "<id:6>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -6849,17 +7384,17 @@
        "customType": "senpi.hooks.stop-state",
        "data": {
         "count": 0,
-        "sessionId": "<uuid:17>",
-        "turnKey": "3:<id:15>"
+        "sessionId": "<uuid:16>",
+        "turnKey": "3:<id:18>"
        },
-       "id": "<id:16>",
-       "parentId": "<id:15>",
-       "timestamp": "<ts:entry.timestamp:10>"
+       "id": "<id:19>",
+       "parentId": "<id:18>",
+       "timestamp": "<ts:entry.timestamp:15>"
       }
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:26>",
+      "id": "<uuid:30>",
       "method": "setStatus",
       "statusKey": "goal"
      },
@@ -6903,7 +7438,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:messages.timestamp:8>",
-        "responseId": "<id:5>",
+        "responseId": "<id:6>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -6923,9 +7458,159 @@
       "type": "agent_idle"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "done",
+        "seq": 6,
+        "epoch": 3,
+        "epochOrigin": "human",
+        "humanInputRevision": 3,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:6>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "completionId": "<uuid:16>:3",
+        "completion": {
+         "kind": "reply",
+         "at": "<ts:completion.at:5>"
+        },
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": true,
+        "runActive": false,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "clean",
+         "budgetSpent": false,
+         "deadlineStop": false
+        },
+        "runId": "<uuid:28>"
+       },
+       "id": "<id:20>",
+       "parentId": "<id:19>",
+       "timestamp": "<ts:entry.timestamp:16>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "done",
+       "seq": 6,
+       "epoch": 3,
+       "epochOrigin": "human",
+       "humanInputRevision": 3,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:12>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "completionId": "<uuid:16>:3",
+       "completion": {
+        "kind": "reply",
+        "at": "<ts:completion.at:6>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:12>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 7,
+        "epoch": 3,
+        "epochOrigin": "human",
+        "humanInputRevision": 3,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:7>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": true,
+        "runActive": false,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "clean",
+         "budgetSpent": false,
+         "deadlineStop": false
+        },
+        "runId": "<uuid:28>"
+       },
+       "id": "<id:21>",
+       "parentId": "<id:20>",
+       "timestamp": "<ts:entry.timestamp:17>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 7,
+       "epoch": 3,
+       "epochOrigin": "human",
+       "humanInputRevision": 3,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:13>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:13>"
+      }
+     },
+     {
       "type": "compaction_start",
       "reason": "manual",
-      "requestId": "<uuid:27>"
+      "requestId": "<uuid:31>"
      },
      {
       "type": "compaction_progress",
@@ -6937,14 +7622,164 @@
       "reason": "manual",
       "aborted": true,
       "willRetry": false,
-      "requestId": "<uuid:27>",
+      "requestId": "<uuid:31>",
       "accepted": false,
       "rejectionCause": "cancelled-by-extension"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "done",
+        "seq": 8,
+        "epoch": 3,
+        "epochOrigin": "human",
+        "humanInputRevision": 3,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:8>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "completionId": "<uuid:16>:3",
+        "completion": {
+         "kind": "reply",
+         "at": "<ts:completion.at:7>"
+        },
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": true,
+        "runActive": false,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "clean",
+         "budgetSpent": false,
+         "deadlineStop": false
+        },
+        "runId": "<uuid:28>"
+       },
+       "id": "<id:22>",
+       "parentId": "<id:21>",
+       "timestamp": "<ts:entry.timestamp:18>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "done",
+       "seq": 8,
+       "epoch": 3,
+       "epochOrigin": "human",
+       "humanInputRevision": 3,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:14>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "completionId": "<uuid:16>:3",
+       "completion": {
+        "kind": "reply",
+        "at": "<ts:completion.at:8>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:14>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 9,
+        "epoch": 3,
+        "epochOrigin": "human",
+        "humanInputRevision": 3,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:9>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": true,
+        "runActive": false,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "clean",
+         "budgetSpent": false,
+         "deadlineStop": false
+        },
+        "runId": "<uuid:28>"
+       },
+       "id": "<id:23>",
+       "parentId": "<id:22>",
+       "timestamp": "<ts:entry.timestamp:19>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 9,
+       "epoch": 3,
+       "epochOrigin": "human",
+       "humanInputRevision": 3,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:15>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:15>"
+      }
+     },
+     {
       "type": "compaction_start",
       "reason": "manual",
-      "requestId": "<uuid:28>"
+      "requestId": "<uuid:32>"
      },
      {
       "type": "compaction_progress",
@@ -6956,15 +7791,15 @@
       "reason": "manual",
       "result": {
        "summary": "E12-SUMMARY of the conversation",
-       "firstKeptEntryId": "<id:15>",
+       "firstKeptEntryId": "<id:18>",
        "tokensBefore": 2,
        "details": {
         "schema": "senpi.compaction.summary.v1",
         "promptVariant": "turn_prefix",
         "tokenEstimate": 12,
         "structuralYield": {
-         "savedTokens": 163,
-         "savingsRatio": 81.5,
+         "savedTokens": 181,
+         "savingsRatio": 90.5,
          "tokensBefore": 2
         },
         "origin": "core-route"
@@ -6973,7 +7808,7 @@
       },
       "aborted": false,
       "willRetry": false,
-      "requestId": "<uuid:28>",
+      "requestId": "<uuid:32>",
       "accepted": true
      },
      {
@@ -7032,9 +7867,9 @@
          }
         }
        },
-       "id": "<id:17>",
-       "parentId": "<id:18>",
-       "timestamp": "<ts:entry.timestamp:11>"
+       "id": "<id:24>",
+       "parentId": "<id:25>",
+       "timestamp": "<ts:entry.timestamp:20>"
       }
      },
      {
@@ -7047,14 +7882,14 @@
         "todos": [],
         "capturedAt": "<ts:data.capturedAt:1>"
        },
-       "id": "<id:19>",
-       "parentId": "<id:17>",
-       "timestamp": "<ts:entry.timestamp:12>"
+       "id": "<id:26>",
+       "parentId": "<id:24>",
+       "timestamp": "<ts:entry.timestamp:21>"
       }
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:29>",
+      "id": "<uuid:33>",
       "method": "setStatus",
       "statusKey": "ext:nested-agents:status"
      },
@@ -7067,9 +7902,9 @@
         "cwd": "<sandbox>/work",
         "reason": "compact"
        },
-       "id": "<id:20>",
-       "parentId": "<id:19>",
-       "timestamp": "<ts:entry.timestamp:13>"
+       "id": "<id:27>",
+       "parentId": "<id:26>",
+       "timestamp": "<ts:entry.timestamp:22>"
       }
      },
      {
@@ -7082,906 +7917,9 @@
         "invalidated": true,
         "reason": "compaction"
        },
-       "id": "<id:21>",
-       "parentId": "<id:20>",
-       "timestamp": "<ts:entry.timestamp:14>"
-      }
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:30>",
-      "method": "setStatus",
-      "statusKey": "anthropic-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:31>",
-      "method": "setWidget",
-      "widgetKey": "anthropic-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:32>",
-      "method": "setStatus",
-      "statusKey": "openai-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:33>",
-      "method": "setWidget",
-      "widgetKey": "openai-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:34>",
-      "method": "setStatus",
-      "statusKey": "monitors"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:35>",
-      "method": "setStatus",
-      "statusKey": "pi-websearch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:36>",
-      "method": "setWidget",
-      "widgetKey": "pi-websearch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:37>",
-      "method": "setStatus",
-      "statusKey": "pi-webfetch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:38>",
-      "method": "setWidget",
-      "widgetKey": "pi-webfetch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:39>",
-      "method": "setStatus",
-      "statusKey": "loop"
-     }
-    ],
-    "lifecycle": [
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 1,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:1>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:40>"
-       },
-       "id": "<id:22>",
-       "parentId": "<id:1>",
-       "timestamp": "<ts:entry.timestamp:15>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:1>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:1>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:2>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 1
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:1>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:2>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:3>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 2
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:3>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "done",
-        "seq": 2,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:2>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "completionId": "<uuid:17>:1",
-        "completion": {
-         "kind": "reply",
-         "at": "<ts:completion.at:1>"
-        },
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": true,
-        "runActive": false,
-        "interrupted": false,
-        "lastTurnEnd": {
-         "endedBy": "clean",
-         "budgetSpent": false,
-         "deadlineStop": false
-        },
-        "runId": "<uuid:40>"
-       },
-       "id": "<id:23>",
-       "parentId": "<id:8>",
-       "timestamp": "<ts:entry.timestamp:16>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "done",
-       "seq": 2,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "completionId": "<uuid:17>:1",
-       "completion": {
-        "kind": "reply",
-        "at": "<ts:completion.at:2>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 3,
-        "epoch": 2,
-        "epochOrigin": "human",
-        "humanInputRevision": 2,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:3>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:42>"
-       },
-       "id": "<id:10>",
-       "parentId": "<id:23>",
-       "timestamp": "<ts:entry.timestamp:17>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 3,
-       "epoch": 2,
-       "epochOrigin": "human",
-       "humanInputRevision": 2,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:5>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:5>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 3,
-       "epoch": 2,
-       "epochOrigin": "human",
-       "humanInputRevision": 2,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:6>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 1
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:2>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:6>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 3,
-       "epoch": 2,
-       "epochOrigin": "human",
-       "humanInputRevision": 2,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:7>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 2
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:7>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "done",
-        "seq": 4,
-        "epoch": 2,
-        "epochOrigin": "human",
-        "humanInputRevision": 2,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:4>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "completionId": "<uuid:17>:2",
-        "completion": {
-         "kind": "reply",
-         "at": "<ts:completion.at:3>"
-        },
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": true,
-        "runActive": false,
-        "interrupted": false,
-        "lastTurnEnd": {
-         "endedBy": "clean",
-         "budgetSpent": false,
-         "deadlineStop": false
-        },
-        "runId": "<uuid:42>"
-       },
-       "id": "<id:24>",
-       "parentId": "<id:12>",
-       "timestamp": "<ts:entry.timestamp:18>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "done",
-       "seq": 4,
-       "epoch": 2,
-       "epochOrigin": "human",
-       "humanInputRevision": 2,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:8>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "completionId": "<uuid:17>:2",
-       "completion": {
-        "kind": "reply",
-        "at": "<ts:completion.at:4>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:8>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 5,
-        "epoch": 3,
-        "epochOrigin": "human",
-        "humanInputRevision": 3,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:5>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:43>"
-       },
-       "id": "<id:14>",
-       "parentId": "<id:24>",
-       "timestamp": "<ts:entry.timestamp:19>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 5,
-       "epoch": 3,
-       "epochOrigin": "human",
-       "humanInputRevision": 3,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:9>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:9>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 5,
-       "epoch": 3,
-       "epochOrigin": "human",
-       "humanInputRevision": 3,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:10>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 1
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:3>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:10>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 5,
-       "epoch": 3,
-       "epochOrigin": "human",
-       "humanInputRevision": 3,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:11>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 2
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:11>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "done",
-        "seq": 6,
-        "epoch": 3,
-        "epochOrigin": "human",
-        "humanInputRevision": 3,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:6>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "completionId": "<uuid:17>:3",
-        "completion": {
-         "kind": "reply",
-         "at": "<ts:completion.at:5>"
-        },
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": true,
-        "runActive": false,
-        "interrupted": false,
-        "lastTurnEnd": {
-         "endedBy": "clean",
-         "budgetSpent": false,
-         "deadlineStop": false
-        },
-        "runId": "<uuid:43>"
-       },
-       "id": "<id:25>",
-       "parentId": "<id:16>",
-       "timestamp": "<ts:entry.timestamp:20>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "done",
-       "seq": 6,
-       "epoch": 3,
-       "epochOrigin": "human",
-       "humanInputRevision": 3,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:12>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "completionId": "<uuid:17>:3",
-       "completion": {
-        "kind": "reply",
-        "at": "<ts:completion.at:6>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:12>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 7,
-        "epoch": 3,
-        "epochOrigin": "human",
-        "humanInputRevision": 3,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:7>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": true,
-        "runActive": false,
-        "interrupted": false,
-        "lastTurnEnd": {
-         "endedBy": "clean",
-         "budgetSpent": false,
-         "deadlineStop": false
-        },
-        "runId": "<uuid:43>"
-       },
-       "id": "<id:26>",
-       "parentId": "<id:25>",
-       "timestamp": "<ts:entry.timestamp:21>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 7,
-       "epoch": 3,
-       "epochOrigin": "human",
-       "humanInputRevision": 3,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:13>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:13>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "done",
-        "seq": 8,
-        "epoch": 3,
-        "epochOrigin": "human",
-        "humanInputRevision": 3,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:8>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "completionId": "<uuid:17>:3",
-        "completion": {
-         "kind": "reply",
-         "at": "<ts:completion.at:7>"
-        },
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": true,
-        "runActive": false,
-        "interrupted": false,
-        "lastTurnEnd": {
-         "endedBy": "clean",
-         "budgetSpent": false,
-         "deadlineStop": false
-        },
-        "runId": "<uuid:43>"
-       },
-       "id": "<id:27>",
-       "parentId": "<id:26>",
-       "timestamp": "<ts:entry.timestamp:22>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "done",
-       "seq": 8,
-       "epoch": 3,
-       "epochOrigin": "human",
-       "humanInputRevision": 3,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:14>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "completionId": "<uuid:17>:3",
-       "completion": {
-        "kind": "reply",
-        "at": "<ts:completion.at:8>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:14>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 9,
-        "epoch": 3,
-        "epochOrigin": "human",
-        "humanInputRevision": 3,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:9>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": true,
-        "runActive": false,
-        "interrupted": false,
-        "lastTurnEnd": {
-         "endedBy": "clean",
-         "budgetSpent": false,
-         "deadlineStop": false
-        },
-        "runId": "<uuid:43>"
-       },
        "id": "<id:28>",
        "parentId": "<id:27>",
        "timestamp": "<ts:entry.timestamp:23>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 9,
-       "epoch": 3,
-       "epochOrigin": "human",
-       "humanInputRevision": 3,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:15>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:41>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:15>"
       }
      },
      {
@@ -8001,19 +7939,19 @@
         "runPaused": false,
         "since": "<ts:data.since:10>",
         "role": "root",
-        "rootSessionId": "<uuid:17>",
+        "rootSessionId": "<uuid:16>",
         "waitingOn": {
          "children": 0,
          "background": [],
          "human": []
         },
         "holds": [],
-        "completionId": "<uuid:17>:3",
+        "completionId": "<uuid:16>:3",
         "completion": {
          "kind": "reply",
          "at": "<ts:completion.at:9>"
         },
-        "sessionId": "<uuid:17>",
+        "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": true,
@@ -8024,10 +7962,10 @@
          "budgetSpent": false,
          "deadlineStop": false
         },
-        "runId": "<uuid:43>"
+        "runId": "<uuid:28>"
        },
        "id": "<id:29>",
-       "parentId": "<id:21>",
+       "parentId": "<id:28>",
        "timestamp": "<ts:entry.timestamp:24>"
       }
      },
@@ -8045,9 +7983,9 @@
        "runPaused": false,
        "since": "<ts:lifecycle.since:16>",
        "role": "root",
-       "rootSessionId": "<uuid:17>",
+       "rootSessionId": "<uuid:16>",
        "activityRevision": {
-        "instanceId": "<uuid:41>",
+        "instanceId": "<uuid:18>",
         "revision": 0
        },
        "waitingOn": {
@@ -8056,19 +7994,79 @@
         "human": []
        },
        "holds": [],
-       "completionId": "<uuid:17>:3",
+       "completionId": "<uuid:16>:3",
        "completion": {
         "kind": "reply",
         "at": "<ts:completion.at:10>"
        },
        "observedAt": "<ts:lifecycle.observedAt:16>"
       }
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:34>",
+      "method": "setStatus",
+      "statusKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:35>",
+      "method": "setWidget",
+      "widgetKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:36>",
+      "method": "setStatus",
+      "statusKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:37>",
+      "method": "setWidget",
+      "widgetKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:38>",
+      "method": "setStatus",
+      "statusKey": "monitors"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:39>",
+      "method": "setStatus",
+      "statusKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:40>",
+      "method": "setWidget",
+      "widgetKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:41>",
+      "method": "setStatus",
+      "statusKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:42>",
+      "method": "setWidget",
+      "widgetKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:43>",
+      "method": "setStatus",
+      "statusKey": "loop"
      }
     ],
     "surfaces": []
    },
    {
-    "turn": [
+    "events": [
      {
       "type": "settings_source_selected",
       "path": "<sandbox>/agent/settings.json",
@@ -8170,6 +8168,53 @@
       "widgetKey": "prompt-url"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "done",
+        "seq": 11,
+        "epoch": 3,
+        "epochOrigin": "human",
+        "humanInputRevision": 3,
+        "selfSettleEligible": true,
+        "runPaused": false,
+        "since": "<ts:data.since:11>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "restoring": false,
+        "persisted": true,
+        "completionId": "<uuid:16>:3",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "completion": {
+         "kind": "reply",
+         "at": "<ts:completion.at:11>"
+        },
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": true,
+        "runActive": false,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "clean",
+         "budgetSpent": false,
+         "deadlineStop": false
+        },
+        "runId": "<uuid:28>"
+       },
+       "id": "<id:31>",
+       "parentId": "<id:30>",
+       "timestamp": "<ts:entry.timestamp:26>"
+      }
+     },
+     {
       "type": "extension_ui_request",
       "id": "<uuid:57>",
       "method": "setStatus",
@@ -8230,55 +8275,6 @@
       "statusKey": "loop"
      }
     ],
-    "lifecycle": [
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "done",
-        "seq": 11,
-        "epoch": 3,
-        "epochOrigin": "human",
-        "humanInputRevision": 3,
-        "selfSettleEligible": true,
-        "runPaused": false,
-        "since": "<ts:data.since:11>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "restoring": false,
-        "persisted": true,
-        "completionId": "<uuid:17>:3",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "completion": {
-         "kind": "reply",
-         "at": "<ts:completion.at:11>"
-        },
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": true,
-        "runActive": false,
-        "interrupted": false,
-        "lastTurnEnd": {
-         "endedBy": "clean",
-         "budgetSpent": false,
-         "deadlineStop": false
-        },
-        "runId": "<uuid:43>"
-       },
-       "id": "<id:31>",
-       "parentId": "<id:30>",
-       "timestamp": "<ts:entry.timestamp:26>"
-      }
-     }
-    ],
     "surfaces": []
    }
   ],
@@ -8324,6 +8320,40 @@
      "timestamp": "<ts:entries.timestamp:4>"
     },
     {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "running",
+      "seq": 1,
+      "epoch": 1,
+      "epochOrigin": "human",
+      "humanInputRevision": 1,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:1>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": false,
+      "runActive": true,
+      "interrupted": false,
+      "runId": "<uuid:2>"
+     },
+     "id": "<id:4>",
+     "parentId": "<id:3>",
+     "timestamp": "<ts:entries.timestamp:5>"
+    },
+    {
      "type": "custom_message",
      "customType": "environment-context",
      "content": "<environment_context>\n  <cwd><sandbox>/work</cwd>\n  <current_date><ts:entries.content:1></current_date>\n</environment_context>",
@@ -8332,15 +8362,15 @@
       "cwd": "<sandbox>/work",
       "currentDate": "<ts:details.currentDate:1>"
      },
-     "id": "<id:4>",
-     "parentId": "<id:5>",
-     "timestamp": "<ts:entries.timestamp:5>"
+     "id": "<id:5>",
+     "parentId": "<id:4>",
+     "timestamp": "<ts:entries.timestamp:6>"
     },
     {
      "type": "message",
      "id": "<id:6>",
-     "parentId": "<id:4>",
-     "timestamp": "<ts:entries.timestamp:6>",
+     "parentId": "<id:5>",
+     "timestamp": "<ts:entries.timestamp:7>",
      "message": {
       "role": "user",
       "content": [
@@ -8360,13 +8390,13 @@
      "display": false,
      "id": "<id:7>",
      "parentId": "<id:6>",
-     "timestamp": "<ts:entries.timestamp:7>"
+     "timestamp": "<ts:entries.timestamp:8>"
     },
     {
      "type": "message",
      "id": "<id:8>",
      "parentId": "<id:7>",
-     "timestamp": "<ts:entries.timestamp:8>",
+     "timestamp": "<ts:entries.timestamp:9>",
      "message": {
       "role": "assistant",
       "content": [
@@ -8415,13 +8445,91 @@
      },
      "id": "<id:10>",
      "parentId": "<id:8>",
-     "timestamp": "<ts:entries.timestamp:9>"
+     "timestamp": "<ts:entries.timestamp:10>"
+    },
+    {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "done",
+      "seq": 2,
+      "epoch": 1,
+      "epochOrigin": "human",
+      "humanInputRevision": 1,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:2>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "completionId": "<uuid:1>:1",
+      "completion": {
+       "kind": "reply",
+       "at": "<ts:completion.at:1>"
+      },
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": true,
+      "runActive": false,
+      "interrupted": false,
+      "lastTurnEnd": {
+       "endedBy": "clean",
+       "budgetSpent": false,
+       "deadlineStop": false
+      },
+      "runId": "<uuid:2>"
+     },
+     "id": "<id:11>",
+     "parentId": "<id:10>",
+     "timestamp": "<ts:entries.timestamp:11>"
+    },
+    {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "running",
+      "seq": 3,
+      "epoch": 2,
+      "epochOrigin": "human",
+      "humanInputRevision": 2,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:3>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": false,
+      "runActive": true,
+      "interrupted": false,
+      "runId": "<uuid:3>"
+     },
+     "id": "<id:12>",
+     "parentId": "<id:11>",
+     "timestamp": "<ts:entries.timestamp:12>"
     },
     {
      "type": "message",
-     "id": "<id:11>",
+     "id": "<id:13>",
      "parentId": "<id:12>",
-     "timestamp": "<ts:entries.timestamp:10>",
+     "timestamp": "<ts:entries.timestamp:13>",
      "message": {
       "role": "user",
       "content": [
@@ -8436,9 +8544,9 @@
     },
     {
      "type": "message",
-     "id": "<id:13>",
-     "parentId": "<id:11>",
-     "timestamp": "<ts:entries.timestamp:11>",
+     "id": "<id:14>",
+     "parentId": "<id:13>",
+     "timestamp": "<ts:entries.timestamp:14>",
      "message": {
       "role": "assistant",
       "content": [
@@ -8483,17 +8591,95 @@
      "data": {
       "count": 0,
       "sessionId": "<uuid:1>",
-      "turnKey": "2:<id:13>"
+      "turnKey": "2:<id:14>"
      },
-     "id": "<id:14>",
-     "parentId": "<id:13>",
-     "timestamp": "<ts:entries.timestamp:12>"
+     "id": "<id:15>",
+     "parentId": "<id:14>",
+     "timestamp": "<ts:entries.timestamp:15>"
+    },
+    {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "done",
+      "seq": 4,
+      "epoch": 2,
+      "epochOrigin": "human",
+      "humanInputRevision": 2,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:4>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "completionId": "<uuid:1>:2",
+      "completion": {
+       "kind": "reply",
+       "at": "<ts:completion.at:2>"
+      },
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": true,
+      "runActive": false,
+      "interrupted": false,
+      "lastTurnEnd": {
+       "endedBy": "clean",
+       "budgetSpent": false,
+       "deadlineStop": false
+      },
+      "runId": "<uuid:3>"
+     },
+     "id": "<id:16>",
+     "parentId": "<id:15>",
+     "timestamp": "<ts:entries.timestamp:16>"
+    },
+    {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "running",
+      "seq": 5,
+      "epoch": 3,
+      "epochOrigin": "human",
+      "humanInputRevision": 3,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:5>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": false,
+      "runActive": true,
+      "interrupted": false,
+      "runId": "<uuid:4>"
+     },
+     "id": "<id:17>",
+     "parentId": "<id:16>",
+     "timestamp": "<ts:entries.timestamp:17>"
     },
     {
      "type": "message",
-     "id": "<id:15>",
-     "parentId": "<id:16>",
-     "timestamp": "<ts:entries.timestamp:13>",
+     "id": "<id:18>",
+     "parentId": "<id:17>",
+     "timestamp": "<ts:entries.timestamp:18>",
      "message": {
       "role": "user",
       "content": [
@@ -8508,9 +8694,9 @@
     },
     {
      "type": "message",
-     "id": "<id:17>",
-     "parentId": "<id:15>",
-     "timestamp": "<ts:entries.timestamp:14>",
+     "id": "<id:19>",
+     "parentId": "<id:18>",
+     "timestamp": "<ts:entries.timestamp:19>",
      "message": {
       "role": "assistant",
       "content": [
@@ -8555,27 +8741,193 @@
      "data": {
       "count": 0,
       "sessionId": "<uuid:1>",
-      "turnKey": "3:<id:17>"
+      "turnKey": "3:<id:19>"
      },
-     "id": "<id:18>",
-     "parentId": "<id:17>",
-     "timestamp": "<ts:entries.timestamp:15>"
+     "id": "<id:20>",
+     "parentId": "<id:19>",
+     "timestamp": "<ts:entries.timestamp:20>"
+    },
+    {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "done",
+      "seq": 6,
+      "epoch": 3,
+      "epochOrigin": "human",
+      "humanInputRevision": 3,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:6>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "completionId": "<uuid:1>:3",
+      "completion": {
+       "kind": "reply",
+       "at": "<ts:completion.at:3>"
+      },
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": true,
+      "runActive": false,
+      "interrupted": false,
+      "lastTurnEnd": {
+       "endedBy": "clean",
+       "budgetSpent": false,
+       "deadlineStop": false
+      },
+      "runId": "<uuid:4>"
+     },
+     "id": "<id:21>",
+     "parentId": "<id:20>",
+     "timestamp": "<ts:entries.timestamp:21>"
+    },
+    {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "running",
+      "seq": 7,
+      "epoch": 3,
+      "epochOrigin": "human",
+      "humanInputRevision": 3,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:7>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": true,
+      "runActive": false,
+      "interrupted": false,
+      "lastTurnEnd": {
+       "endedBy": "clean",
+       "budgetSpent": false,
+       "deadlineStop": false
+      },
+      "runId": "<uuid:4>"
+     },
+     "id": "<id:22>",
+     "parentId": "<id:21>",
+     "timestamp": "<ts:entries.timestamp:22>"
+    },
+    {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "done",
+      "seq": 8,
+      "epoch": 3,
+      "epochOrigin": "human",
+      "humanInputRevision": 3,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:8>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "completionId": "<uuid:1>:3",
+      "completion": {
+       "kind": "reply",
+       "at": "<ts:completion.at:4>"
+      },
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": true,
+      "runActive": false,
+      "interrupted": false,
+      "lastTurnEnd": {
+       "endedBy": "clean",
+       "budgetSpent": false,
+       "deadlineStop": false
+      },
+      "runId": "<uuid:4>"
+     },
+     "id": "<id:23>",
+     "parentId": "<id:22>",
+     "timestamp": "<ts:entries.timestamp:23>"
+    },
+    {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "running",
+      "seq": 9,
+      "epoch": 3,
+      "epochOrigin": "human",
+      "humanInputRevision": 3,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:9>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": true,
+      "runActive": false,
+      "interrupted": false,
+      "lastTurnEnd": {
+       "endedBy": "clean",
+       "budgetSpent": false,
+       "deadlineStop": false
+      },
+      "runId": "<uuid:4>"
+     },
+     "id": "<id:24>",
+     "parentId": "<id:23>",
+     "timestamp": "<ts:entries.timestamp:24>"
     },
     {
      "type": "compaction",
-     "id": "<id:19>",
-     "parentId": "<id:20>",
-     "timestamp": "<ts:entries.timestamp:16>",
+     "id": "<id:25>",
+     "parentId": "<id:24>",
+     "timestamp": "<ts:entries.timestamp:25>",
      "summary": "E12-SUMMARY of the conversation",
-     "firstKeptEntryId": "<id:17>",
+     "firstKeptEntryId": "<id:19>",
      "tokensBefore": 2,
      "details": {
       "schema": "senpi.compaction.summary.v1",
       "promptVariant": "turn_prefix",
       "tokenEstimate": 12,
       "structuralYield": {
-       "savedTokens": 163,
-       "savingsRatio": 81.5,
+       "savedTokens": 181,
+       "savingsRatio": 90.5,
        "tokensBefore": 2
       },
       "origin": "core-route"
@@ -8636,9 +8988,9 @@
        }
       }
      },
-     "id": "<id:21>",
-     "parentId": "<id:19>",
-     "timestamp": "<ts:entries.timestamp:17>"
+     "id": "<id:26>",
+     "parentId": "<id:25>",
+     "timestamp": "<ts:entries.timestamp:26>"
     },
     {
      "type": "custom",
@@ -8648,9 +9000,9 @@
       "todos": [],
       "capturedAt": "<ts:data.capturedAt:1>"
      },
-     "id": "<id:22>",
-     "parentId": "<id:21>",
-     "timestamp": "<ts:entries.timestamp:18>"
+     "id": "<id:27>",
+     "parentId": "<id:26>",
+     "timestamp": "<ts:entries.timestamp:27>"
     },
     {
      "type": "custom",
@@ -8659,9 +9011,9 @@
       "cwd": "<sandbox>/work",
       "reason": "compact"
      },
-     "id": "<id:23>",
-     "parentId": "<id:22>",
-     "timestamp": "<ts:entries.timestamp:19>"
+     "id": "<id:28>",
+     "parentId": "<id:27>",
+     "timestamp": "<ts:entries.timestamp:28>"
     },
     {
      "type": "custom",
@@ -8671,379 +9023,9 @@
       "invalidated": true,
       "reason": "compaction"
      },
-     "id": "<id:24>",
-     "parentId": "<id:23>",
-     "timestamp": "<ts:entries.timestamp:20>"
-    },
-    {
-     "type": "custom",
-     "customType": "pi-rules.scan",
-     "data": {
-      "cwd": "<sandbox>/work",
-      "reason": "startup"
-     },
-     "startupBookkeeping": true,
-     "id": "<id:25>",
-     "parentId": "<id:26>",
-     "timestamp": "<ts:entries.timestamp:21>"
-    }
-   ],
-   "lifecycleEntries": [
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "running",
-      "seq": 1,
-      "epoch": 1,
-      "epochOrigin": "human",
-      "humanInputRevision": 1,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:1>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": false,
-      "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
-     },
-     "id": "<id:5>",
-     "parentId": "<id:3>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:1>"
-    },
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "done",
-      "seq": 2,
-      "epoch": 1,
-      "epochOrigin": "human",
-      "humanInputRevision": 1,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:2>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "completionId": "<uuid:1>:1",
-      "completion": {
-       "kind": "reply",
-       "at": "<ts:completion.at:1>"
-      },
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": true,
-      "runActive": false,
-      "interrupted": false,
-      "lastTurnEnd": {
-       "endedBy": "clean",
-       "budgetSpent": false,
-       "deadlineStop": false
-      },
-      "runId": "<uuid:2>"
-     },
-     "id": "<id:27>",
-     "parentId": "<id:10>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:2>"
-    },
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "running",
-      "seq": 3,
-      "epoch": 2,
-      "epochOrigin": "human",
-      "humanInputRevision": 2,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:3>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": false,
-      "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:3>"
-     },
-     "id": "<id:12>",
-     "parentId": "<id:27>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:3>"
-    },
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "done",
-      "seq": 4,
-      "epoch": 2,
-      "epochOrigin": "human",
-      "humanInputRevision": 2,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:4>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "completionId": "<uuid:1>:2",
-      "completion": {
-       "kind": "reply",
-       "at": "<ts:completion.at:2>"
-      },
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": true,
-      "runActive": false,
-      "interrupted": false,
-      "lastTurnEnd": {
-       "endedBy": "clean",
-       "budgetSpent": false,
-       "deadlineStop": false
-      },
-      "runId": "<uuid:3>"
-     },
-     "id": "<id:28>",
-     "parentId": "<id:14>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:4>"
-    },
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "running",
-      "seq": 5,
-      "epoch": 3,
-      "epochOrigin": "human",
-      "humanInputRevision": 3,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:5>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": false,
-      "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:4>"
-     },
-     "id": "<id:16>",
-     "parentId": "<id:28>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:5>"
-    },
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "done",
-      "seq": 6,
-      "epoch": 3,
-      "epochOrigin": "human",
-      "humanInputRevision": 3,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:6>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "completionId": "<uuid:1>:3",
-      "completion": {
-       "kind": "reply",
-       "at": "<ts:completion.at:3>"
-      },
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": true,
-      "runActive": false,
-      "interrupted": false,
-      "lastTurnEnd": {
-       "endedBy": "clean",
-       "budgetSpent": false,
-       "deadlineStop": false
-      },
-      "runId": "<uuid:4>"
-     },
      "id": "<id:29>",
-     "parentId": "<id:18>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:6>"
-    },
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "running",
-      "seq": 7,
-      "epoch": 3,
-      "epochOrigin": "human",
-      "humanInputRevision": 3,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:7>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": true,
-      "runActive": false,
-      "interrupted": false,
-      "lastTurnEnd": {
-       "endedBy": "clean",
-       "budgetSpent": false,
-       "deadlineStop": false
-      },
-      "runId": "<uuid:4>"
-     },
-     "id": "<id:30>",
-     "parentId": "<id:29>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:7>"
-    },
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "done",
-      "seq": 8,
-      "epoch": 3,
-      "epochOrigin": "human",
-      "humanInputRevision": 3,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:8>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "completionId": "<uuid:1>:3",
-      "completion": {
-       "kind": "reply",
-       "at": "<ts:completion.at:4>"
-      },
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": true,
-      "runActive": false,
-      "interrupted": false,
-      "lastTurnEnd": {
-       "endedBy": "clean",
-       "budgetSpent": false,
-       "deadlineStop": false
-      },
-      "runId": "<uuid:4>"
-     },
-     "id": "<id:31>",
-     "parentId": "<id:30>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:8>"
-    },
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "running",
-      "seq": 9,
-      "epoch": 3,
-      "epochOrigin": "human",
-      "humanInputRevision": 3,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:9>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": true,
-      "runActive": false,
-      "interrupted": false,
-      "lastTurnEnd": {
-       "endedBy": "clean",
-       "budgetSpent": false,
-       "deadlineStop": false
-      },
-      "runId": "<uuid:4>"
-     },
-     "id": "<id:20>",
-     "parentId": "<id:31>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:9>"
+     "parentId": "<id:28>",
+     "timestamp": "<ts:entries.timestamp:29>"
     },
     {
      "type": "custom",
@@ -9085,9 +9067,21 @@
       },
       "runId": "<uuid:4>"
      },
-     "id": "<id:26>",
-     "parentId": "<id:24>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:10>"
+     "id": "<id:30>",
+     "parentId": "<id:29>",
+     "timestamp": "<ts:entries.timestamp:30>"
+    },
+    {
+     "type": "custom",
+     "customType": "pi-rules.scan",
+     "data": {
+      "cwd": "<sandbox>/work",
+      "reason": "startup"
+     },
+     "startupBookkeeping": true,
+     "id": "<id:31>",
+     "parentId": "<id:30>",
+     "timestamp": "<ts:entries.timestamp:31>"
     },
     {
      "type": "custom",
@@ -9130,8 +9124,8 @@
       "runId": "<uuid:4>"
      },
      "id": "<id:32>",
-     "parentId": "<id:25>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:11>"
+     "parentId": "<id:31>",
+     "timestamp": "<ts:entries.timestamp:32>"
     }
    ]
   },

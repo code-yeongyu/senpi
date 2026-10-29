@@ -5,6 +5,7 @@
 // `{legacy:"7"}` is blocked by hook2, so its body never runs. trace.log (O5 tree) holds the order; the replaced result
 // and the block reason reach the next request (O1) and the transcript (O7).
 import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { resolveBun } from "../../../scripts/lib/common.mjs";
 import { FIXTURES } from "./support/case-run.mjs";
@@ -29,10 +30,15 @@ export default {
 		],
 	},
 	async drive(run) {
-		const node = process.execPath;
-		const hook = join(E04, "shell-hook.mjs");
-		const trace = join(run.box.cwd, "trace.log");
-		const command = (kind) => `${JSON.stringify(node)} ${JSON.stringify(hook)} ${kind} ${JSON.stringify(trace)}`;
+		// The hook command is the hook's status message, which the product cuts at a fixed width before anything is
+		// normalized; written with absolute paths it carried the host's node install and checkout path, and where the cut
+		// landed followed their length. Hooks run in the session cwd, so the command is fixed relative text instead: the
+		// harness node linked and the hook copied under the project's `.senpi/` (configuration, outside the O5 tree).
+		const local = join(run.box.cwd, ".senpi");
+		mkdirSync(local, { recursive: true });
+		symlinkSync(process.execPath, join(local, "eq-node"));
+		copyFileSync(join(E04, "shell-hook.mjs"), join(local, "eq-hook.mjs"));
+		const command = (kind) => `.senpi/eq-node .senpi/eq-hook.mjs ${kind} trace.log`;
 		const setup = spawnSync(
 			resolveBun().command,
 			[join(E04, "write-hooks.ts"), run.box.cwd, command("pre"), command("post")],

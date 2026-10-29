@@ -3583,7 +3583,7 @@
   },
   "O6": [
    {
-    "turn": [
+    "events": [
      {
       "type": "extension_ui_request",
       "id": "<uuid:1>",
@@ -3619,14 +3619,6 @@
       "id": "<uuid:6>",
       "method": "setStatus",
       "statusKey": "monitors"
-     },
-     {
-      "type": "extension_event",
-      "name": "terminal_monitor_state",
-      "data": {
-       "activeCount": 0,
-       "monitors": []
-      }
      },
      {
       "type": "extension_ui_request",
@@ -3680,15 +3672,6 @@
       "statusKey": "goal"
      },
      {
-      "type": "extension_event",
-      "name": "wake_source_state",
-      "data": {
-       "source": "senpi-codemode",
-       "activeCount": 0,
-       "items": []
-      }
-     },
-     {
       "type": "extension_ui_request",
       "id": "<uuid:13>",
       "method": "setWidget",
@@ -3707,8 +3690,73 @@
       "widgetKey": "pi-websearch"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 1,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:1>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:3>",
+       "parentId": "<id:1>",
+       "timestamp": "<ts:entry.timestamp:2>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:1>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:1>"
+      }
+     },
+     {
       "type": "extension_ui_request",
-      "id": "<uuid:16>",
+      "id": "<uuid:19>",
       "method": "setStatus",
       "statusKey": "todo-waiting"
      },
@@ -3776,9 +3824,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:3>",
-       "parentId": "<id:4>",
-       "timestamp": "<ts:entry.timestamp:2>",
+       "id": "<id:4>",
+       "parentId": "<id:5>",
+       "timestamp": "<ts:entry.timestamp:3>",
        "message": {
         "role": "user",
         "content": [
@@ -3813,13 +3861,45 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:2>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:1>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:2>"
+      }
+     },
+     {
       "type": "message_start",
       "message": {
        "role": "assistant",
        "content": [
         {
          "type": "toolCall",
-         "id": "<id:5>",
+         "id": "<id:6>",
          "name": "eval",
          "arguments": {
           "language": "js",
@@ -3849,7 +3929,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:8>",
-       "responseId": "<id:6>"
+       "responseId": "<id:7>"
       },
       "streaming": true
      },
@@ -3872,7 +3952,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_start",
        "contentIndex": 0,
-       "id": "<id:5>",
+       "id": "<id:6>",
        "toolName": "eval"
       },
       "resolvedToolName": "eval"
@@ -3920,7 +4000,7 @@
        "contentIndex": 0,
        "toolCall": {
         "type": "toolCall",
-        "id": "<id:5>",
+        "id": "<id:6>",
         "name": "eval",
         "arguments": {
          "language": "js",
@@ -3932,13 +4012,76 @@
       "resolvedToolName": "eval"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:3>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 2
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:3>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "eval",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:2>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
+      }
+     },
+     {
       "type": "message_end",
       "message": {
        "role": "assistant",
        "content": [
         {
          "type": "toolCall",
-         "id": "<id:5>",
+         "id": "<id:6>",
          "name": "eval",
          "arguments": {
           "language": "js",
@@ -3966,7 +4109,7 @@
        },
        "stopReason": "toolUse",
        "timestamp": "<ts:message.timestamp:9>",
-       "responseId": "<id:6>",
+       "responseId": "<id:7>",
        "rawStopReason": "tool_calls",
        "thinkingLevel": "off",
        "timing": {
@@ -3981,15 +4124,15 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:7>",
-       "parentId": "<id:8>",
-       "timestamp": "<ts:entry.timestamp:3>",
+       "id": "<id:8>",
+       "parentId": "<id:9>",
+       "timestamp": "<ts:entry.timestamp:4>",
        "message": {
         "role": "assistant",
         "content": [
          {
           "type": "toolCall",
-          "id": "<id:5>",
+          "id": "<id:6>",
           "name": "eval",
           "arguments": {
            "language": "js",
@@ -4017,7 +4160,7 @@
         },
         "stopReason": "toolUse",
         "timestamp": "<ts:message.timestamp:10>",
-        "responseId": "<id:6>",
+        "responseId": "<id:7>",
         "rawStopReason": "tool_calls",
         "thinkingLevel": "off",
         "timing": {
@@ -4031,7 +4174,7 @@
      },
      {
       "type": "tool_execution_start",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "toolName": "eval",
       "args": {
        "language": "js",
@@ -4041,199 +4184,199 @@
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:0",
+      "hookRunId": "<id:6>:PreToolUse:0",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:1>",
+      "startedAt": "<ts:events.startedAt:1>",
       "phase": "start",
       "statusMessage": "running loop-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:0",
+      "hookRunId": "<id:6>:PreToolUse:0",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:2>",
+      "startedAt": "<ts:events.startedAt:2>",
       "phase": "end",
       "statusMessage": "running loop-guard",
-      "completedAt": "<ts:turn.completedAt:1>",
+      "completedAt": "<ts:events.completedAt:1>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:1",
+      "hookRunId": "<id:6>:PreToolUse:1",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:3>",
+      "startedAt": "<ts:events.startedAt:3>",
       "phase": "start",
       "statusMessage": "running moved-path-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:1",
+      "hookRunId": "<id:6>:PreToolUse:1",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:4>",
+      "startedAt": "<ts:events.startedAt:4>",
       "phase": "end",
       "statusMessage": "running moved-path-guard",
-      "completedAt": "<ts:turn.completedAt:2>",
+      "completedAt": "<ts:events.completedAt:2>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:2",
+      "hookRunId": "<id:6>:PreToolUse:2",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:5>",
+      "startedAt": "<ts:events.startedAt:5>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:2",
+      "hookRunId": "<id:6>:PreToolUse:2",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:6>",
+      "startedAt": "<ts:events.startedAt:6>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:3>",
+      "completedAt": "<ts:events.completedAt:3>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:3",
+      "hookRunId": "<id:6>:PreToolUse:3",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:7>",
+      "startedAt": "<ts:events.startedAt:7>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:3",
+      "hookRunId": "<id:6>:PreToolUse:3",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:8>",
+      "startedAt": "<ts:events.startedAt:8>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:4>",
+      "completedAt": "<ts:events.completedAt:4>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:4",
+      "hookRunId": "<id:6>:PreToolUse:4",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:9>",
+      "startedAt": "<ts:events.startedAt:9>",
       "phase": "start",
       "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:4",
+      "hookRunId": "<id:6>:PreToolUse:4",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:10>",
+      "startedAt": "<ts:events.startedAt:10>",
       "phase": "end",
       "statusMessage": "applying bash timeout",
-      "completedAt": "<ts:turn.completedAt:5>",
+      "completedAt": "<ts:events.completedAt:5>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:5",
+      "hookRunId": "<id:6>:PreToolUse:5",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:11>",
+      "startedAt": "<ts:events.startedAt:11>",
       "phase": "start",
       "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:5",
+      "hookRunId": "<id:6>:PreToolUse:5",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:12>",
+      "startedAt": "<ts:events.startedAt:12>",
       "phase": "end",
       "statusMessage": "running terminal",
-      "completedAt": "<ts:turn.completedAt:6>",
+      "completedAt": "<ts:events.completedAt:6>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:6",
+      "hookRunId": "<id:6>:PreToolUse:6",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:13>",
+      "startedAt": "<ts:events.startedAt:13>",
       "phase": "start",
       "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:6",
+      "hookRunId": "<id:6>:PreToolUse:6",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:14>",
+      "startedAt": "<ts:events.startedAt:14>",
       "phase": "end",
       "statusMessage": "checking compaction state",
-      "completedAt": "<ts:turn.completedAt:7>",
+      "completedAt": "<ts:events.completedAt:7>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:7",
+      "hookRunId": "<id:6>:PreToolUse:7",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:15>",
+      "startedAt": "<ts:events.startedAt:15>",
       "phase": "start",
       "statusMessage": "running mcp"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:7",
+      "hookRunId": "<id:6>:PreToolUse:7",
       "hookName": "PreToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:16>",
+      "startedAt": "<ts:events.startedAt:16>",
       "phase": "end",
       "statusMessage": "running mcp",
-      "completedAt": "<ts:turn.completedAt:8>",
+      "completedAt": "<ts:events.completedAt:8>",
       "status": "completed"
      },
      {
       "type": "tool_execution_update",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "toolName": "eval",
       "args": {
        "language": "js",
@@ -4255,7 +4398,7 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "/Users/yeongyu/.bun/bin/bun"
+         "path": "<host:bun-path>"
         },
         "summary": "G4 detached nested calls",
         "toolCallCount": 0,
@@ -4270,7 +4413,7 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "/Users/yeongyu/.bun/bin/bun"
+           "path": "<host:bun-path>"
           },
           "output": "",
           "status": "queued",
@@ -4282,7 +4425,7 @@
      },
      {
       "type": "tool_execution_update",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "toolName": "eval",
       "args": {
        "language": "js",
@@ -4304,7 +4447,7 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "/Users/yeongyu/.bun/bin/bun"
+         "path": "<host:bun-path>"
         },
         "summary": "G4 detached nested calls",
         "toolCallCount": 0,
@@ -4319,7 +4462,7 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "/Users/yeongyu/.bun/bin/bun"
+           "path": "<host:bun-path>"
           },
           "output": "",
           "status": "running",
@@ -4331,7 +4474,7 @@
      },
      {
       "type": "tool_execution_update",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "toolName": "eval",
       "args": {
        "language": "js",
@@ -4353,7 +4496,7 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "/Users/yeongyu/.bun/bin/bun"
+         "path": "<host:bun-path>"
         },
         "summary": "G4 detached nested calls",
         "toolCallCount": 0,
@@ -4368,7 +4511,7 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "/Users/yeongyu/.bun/bin/bun"
+           "path": "<host:bun-path>"
           },
           "output": "Note: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n",
           "status": "running",
@@ -4380,179 +4523,326 @@
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:17>",
+      "id": "<uuid:20>",
       "method": "setStatus",
       "statusKey": "eval-cells",
       "statusText": "↗ js · G4 detached nested calls (1s)"
      },
      {
-      "type": "extension_event",
-      "name": "wake_source_state",
-      "data": {
-       "source": "senpi-codemode",
-       "activeCount": 1,
-       "items": [
-        {
-         "id": "<id:5>",
-         "description": "G4 detached nested calls",
-         "startedAtMs": "<ts:items.startedAtMs:1>"
-        }
-       ]
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "work-custody",
+       "data": {
+        "id": "<uuid:21>",
+        "key": "wake-source:senpi-codemode",
+        "source": "senpi-codemode",
+        "kind": "background",
+        "activeCount": 1,
+        "items": [
+         {
+          "id": "<id:6>",
+          "description": "G4 detached nested calls",
+          "startedAtMs": "<ts:items.startedAtMs:1>"
+         }
+        ],
+        "state": "open",
+        "sessionId": "<uuid:16>"
+       },
+       "id": "<id:10>",
+       "parentId": "<id:8>",
+       "timestamp": "<ts:entry.timestamp:5>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 2,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:2>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [
+          {
+           "source": "senpi-codemode",
+           "activeCount": 1,
+           "items": [
+            {
+             "id": "<id:6>",
+             "label": "G4 detached nested calls",
+             "startedAt": "<ts:items.startedAt:1>"
+            }
+           ]
+          }
+         ],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:11>",
+       "parentId": "<id:10>",
+       "timestamp": "<ts:entry.timestamp:6>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 2,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:5>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [
+         {
+          "source": "senpi-codemode",
+          "activeCount": 1,
+          "items": [
+           {
+            "id": "<id:6>",
+            "label": "G4 detached nested calls",
+            "startedAt": "<ts:items.startedAt:2>"
+           }
+          ]
+         }
+        ],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "eval",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:3>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:5>"
       }
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:8",
+      "hookRunId": "<id:6>:PostToolUse:8",
       "hookName": "PostToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:17>",
+      "startedAt": "<ts:events.startedAt:17>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:8",
+      "hookRunId": "<id:6>:PostToolUse:8",
       "hookName": "PostToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:18>",
+      "startedAt": "<ts:events.startedAt:18>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:9>",
+      "completedAt": "<ts:events.completedAt:9>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:9",
+      "hookRunId": "<id:6>:PostToolUse:9",
       "hookName": "PostToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:19>",
+      "startedAt": "<ts:events.startedAt:19>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:9",
+      "hookRunId": "<id:6>:PostToolUse:9",
       "hookName": "PostToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:20>",
+      "startedAt": "<ts:events.startedAt:20>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:10>",
+      "completedAt": "<ts:events.completedAt:10>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:10",
+      "hookRunId": "<id:6>:PostToolUse:10",
       "hookName": "PostToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:21>",
+      "startedAt": "<ts:events.startedAt:21>",
       "phase": "start",
       "statusMessage": "running gpt-apply-patch"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:10",
+      "hookRunId": "<id:6>:PostToolUse:10",
       "hookName": "PostToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:22>",
+      "startedAt": "<ts:events.startedAt:22>",
       "phase": "end",
       "statusMessage": "running gpt-apply-patch",
-      "completedAt": "<ts:turn.completedAt:11>",
+      "completedAt": "<ts:events.completedAt:11>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:11",
+      "hookRunId": "<id:6>:PostToolUse:11",
       "hookName": "PostToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:23>",
+      "startedAt": "<ts:events.startedAt:23>",
       "phase": "start",
       "statusMessage": "running nested-agents-md"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:11",
+      "hookRunId": "<id:6>:PostToolUse:11",
       "hookName": "PostToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:24>",
+      "startedAt": "<ts:events.startedAt:24>",
       "phase": "end",
       "statusMessage": "running nested-agents-md",
-      "completedAt": "<ts:turn.completedAt:12>",
+      "completedAt": "<ts:events.completedAt:12>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:12",
+      "hookRunId": "<id:6>:PostToolUse:12",
       "hookName": "PostToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:25>",
+      "startedAt": "<ts:events.startedAt:25>",
       "phase": "start",
       "statusMessage": "running rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:12",
+      "hookRunId": "<id:6>:PostToolUse:12",
       "hookName": "PostToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:26>",
+      "startedAt": "<ts:events.startedAt:26>",
       "phase": "end",
       "statusMessage": "running rules",
-      "completedAt": "<ts:turn.completedAt:13>",
+      "completedAt": "<ts:events.completedAt:13>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:13",
+      "hookRunId": "<id:6>:PostToolUse:13",
       "hookName": "PostToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:27>",
+      "startedAt": "<ts:events.startedAt:27>",
       "phase": "start",
       "statusMessage": "running goal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:13",
+      "hookRunId": "<id:6>:PostToolUse:13",
       "hookName": "PostToolUse",
       "toolName": "eval",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:28>",
+      "startedAt": "<ts:events.startedAt:28>",
       "phase": "end",
       "statusMessage": "running goal",
-      "completedAt": "<ts:turn.completedAt:14>",
+      "completedAt": "<ts:events.completedAt:14>",
       "status": "completed"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 2,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:6>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [
+         {
+          "source": "senpi-codemode",
+          "activeCount": 1,
+          "items": [
+           {
+            "id": "<id:6>",
+            "label": "G4 detached nested calls",
+            "startedAt": "<ts:items.startedAt:3>"
+           }
+          ]
+         }
+        ],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:6>"
+      }
+     },
+     {
       "type": "tool_execution_end",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "toolName": "eval",
       "result": {
        "content": [
         {
          "type": "text",
-         "text": "Eval cell <id:5> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
+         "text": "Eval cell <id:6> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
         }
        ],
        "details": {
@@ -4563,7 +4853,7 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "/Users/yeongyu/.bun/bin/bun"
+         "path": "<host:bun-path>"
         },
         "summary": "G4 detached nested calls",
         "toolCallCount": 0,
@@ -4578,7 +4868,7 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "/Users/yeongyu/.bun/bin/bun"
+           "path": "<host:bun-path>"
           },
           "output": "Note: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n",
           "status": "detached",
@@ -4593,12 +4883,12 @@
       "type": "message_start",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:5>",
+       "toolCallId": "<id:6>",
        "toolName": "eval",
        "content": [
         {
          "type": "text",
-         "text": "Eval cell <id:5> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
+         "text": "Eval cell <id:6> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
         }
        ],
        "details": {
@@ -4609,7 +4899,7 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "/Users/yeongyu/.bun/bin/bun"
+         "path": "<host:bun-path>"
         },
         "summary": "G4 detached nested calls",
         "toolCallCount": 0,
@@ -4624,7 +4914,7 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "/Users/yeongyu/.bun/bin/bun"
+           "path": "<host:bun-path>"
           },
           "output": "Note: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n",
           "status": "detached",
@@ -4640,12 +4930,12 @@
       "type": "message_end",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:5>",
+       "toolCallId": "<id:6>",
        "toolName": "eval",
        "content": [
         {
          "type": "text",
-         "text": "Eval cell <id:5> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
+         "text": "Eval cell <id:6> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
         }
        ],
        "details": {
@@ -4656,7 +4946,7 @@
         "runtime": {
          "name": "bun",
          "version": "1.4.4",
-         "path": "/Users/yeongyu/.bun/bin/bun"
+         "path": "<host:bun-path>"
         },
         "summary": "G4 detached nested calls",
         "toolCallCount": 0,
@@ -4671,7 +4961,7 @@
           "runtime": {
            "name": "bun",
            "version": "1.4.4",
-           "path": "/Users/yeongyu/.bun/bin/bun"
+           "path": "<host:bun-path>"
           },
           "output": "Note: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n",
           "status": "detached",
@@ -4687,17 +4977,17 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:9>",
-       "parentId": "<id:10>",
-       "timestamp": "<ts:entry.timestamp:4>",
+       "id": "<id:12>",
+       "parentId": "<id:11>",
+       "timestamp": "<ts:entry.timestamp:7>",
        "message": {
         "role": "toolResult",
-        "toolCallId": "<id:5>",
+        "toolCallId": "<id:6>",
         "toolName": "eval",
         "content": [
          {
           "type": "text",
-          "text": "Eval cell <id:5> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
+          "text": "Eval cell <id:6> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
          }
         ],
         "details": {
@@ -4708,7 +4998,7 @@
          "runtime": {
           "name": "bun",
           "version": "1.4.4",
-          "path": "/Users/yeongyu/.bun/bin/bun"
+          "path": "<host:bun-path>"
          },
          "summary": "G4 detached nested calls",
          "toolCallCount": 0,
@@ -4723,7 +5013,7 @@
            "runtime": {
             "name": "bun",
             "version": "1.4.4",
-            "path": "/Users/yeongyu/.bun/bin/bun"
+            "path": "<host:bun-path>"
            },
            "output": "Note: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n",
            "status": "detached",
@@ -4743,7 +5033,7 @@
        "content": [
         {
          "type": "toolCall",
-         "id": "<id:5>",
+         "id": "<id:6>",
          "name": "eval",
          "arguments": {
           "language": "js",
@@ -4771,7 +5061,7 @@
        },
        "stopReason": "toolUse",
        "timestamp": "<ts:message.timestamp:14>",
-       "responseId": "<id:6>",
+       "responseId": "<id:7>",
        "rawStopReason": "tool_calls",
        "thinkingLevel": "off",
        "timing": {
@@ -4784,12 +5074,12 @@
       "toolResults": [
        {
         "role": "toolResult",
-        "toolCallId": "<id:5>",
+        "toolCallId": "<id:6>",
         "toolName": "eval",
         "content": [
          {
           "type": "text",
-          "text": "Eval cell <id:5> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
+          "text": "Eval cell <id:6> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
          }
         ],
         "details": {
@@ -4800,7 +5090,7 @@
          "runtime": {
           "name": "bun",
           "version": "1.4.4",
-          "path": "/Users/yeongyu/.bun/bin/bun"
+          "path": "<host:bun-path>"
          },
          "summary": "G4 detached nested calls",
          "toolCallCount": 0,
@@ -4815,7 +5105,7 @@
            "runtime": {
             "name": "bun",
             "version": "1.4.4",
-            "path": "/Users/yeongyu/.bun/bin/bun"
+            "path": "<host:bun-path>"
            },
            "output": "Note: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n",
            "status": "detached",
@@ -4830,6 +5120,50 @@
      },
      {
       "type": "turn_start"
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 2,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:7>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 2
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [
+         {
+          "source": "senpi-codemode",
+          "activeCount": 1,
+          "items": [
+           {
+            "id": "<id:6>",
+            "label": "G4 detached nested calls",
+            "startedAt": "<ts:items.startedAt:4>"
+           }
+          ]
+         }
+        ],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:4>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:7>"
+      }
      },
      {
       "type": "message_start",
@@ -4855,7 +5189,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:15>",
-       "responseId": "<id:6>"
+       "responseId": "<id:7>"
       },
       "streaming": true
      },
@@ -4925,6 +5259,46 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 2,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:8>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [
+         {
+          "source": "senpi-codemode",
+          "activeCount": 1,
+          "items": [
+           {
+            "id": "<id:6>",
+            "label": "G4 detached nested calls",
+            "startedAt": "<ts:items.startedAt:5>"
+           }
+          ]
+         }
+        ],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:8>"
+      }
+     },
+     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -4953,7 +5327,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:16>",
-       "responseId": "<id:6>",
+       "responseId": "<id:7>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -4968,9 +5342,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:11>",
-       "parentId": "<id:9>",
-       "timestamp": "<ts:entry.timestamp:5>",
+       "id": "<id:13>",
+       "parentId": "<id:12>",
+       "timestamp": "<ts:entry.timestamp:8>",
        "message": {
         "role": "assistant",
         "content": [
@@ -4998,7 +5372,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:message.timestamp:17>",
-        "responseId": "<id:6>",
+        "responseId": "<id:7>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -5039,7 +5413,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:18>",
-       "responseId": "<id:6>",
+       "responseId": "<id:7>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -5053,25 +5427,9 @@
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:18>",
+      "id": "<uuid:22>",
       "method": "setStatus",
       "statusKey": "goal"
-     },
-     {
-      "type": "extension_event",
-      "name": "turn_end_liveness",
-      "data": {
-       "sessionId": "<uuid:19>",
-       "verdict": {
-        "kind": "waiting",
-        "on": [
-         {
-          "kind": "wake-source",
-          "source": "senpi-codemode"
-         }
-        ]
-       }
-      }
      },
      {
       "type": "agent_end",
@@ -5109,7 +5467,7 @@
         "content": [
          {
           "type": "toolCall",
-          "id": "<id:5>",
+          "id": "<id:6>",
           "name": "eval",
           "arguments": {
            "language": "js",
@@ -5137,7 +5495,7 @@
         },
         "stopReason": "toolUse",
         "timestamp": "<ts:messages.timestamp:4>",
-        "responseId": "<id:6>",
+        "responseId": "<id:7>",
         "rawStopReason": "tool_calls",
         "thinkingLevel": "off",
         "timing": {
@@ -5149,12 +5507,12 @@
        },
        {
         "role": "toolResult",
-        "toolCallId": "<id:5>",
+        "toolCallId": "<id:6>",
         "toolName": "eval",
         "content": [
          {
           "type": "text",
-          "text": "Eval cell <id:5> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
+          "text": "Eval cell <id:6> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
          }
         ],
         "details": {
@@ -5165,7 +5523,7 @@
          "runtime": {
           "name": "bun",
           "version": "1.4.4",
-          "path": "/Users/yeongyu/.bun/bin/bun"
+          "path": "<host:bun-path>"
          },
          "summary": "G4 detached nested calls",
          "toolCallCount": 0,
@@ -5180,7 +5538,7 @@
            "runtime": {
             "name": "bun",
             "version": "1.4.4",
-            "path": "/Users/yeongyu/.bun/bin/bun"
+            "path": "<host:bun-path>"
            },
            "output": "Note: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n",
            "status": "detached",
@@ -5218,7 +5576,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:messages.timestamp:6>",
-        "responseId": "<id:6>",
+        "responseId": "<id:7>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -5238,740 +5596,1030 @@
       "type": "agent_idle"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "waiting_background",
+        "seq": 3,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:3>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [
+          {
+           "source": "senpi-codemode",
+           "activeCount": 1,
+           "items": [
+            {
+             "id": "<id:6>",
+             "label": "G4 detached nested calls",
+             "startedAt": "<ts:items.startedAt:6>"
+            }
+           ]
+          }
+         ],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": false,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "clean",
+         "budgetSpent": false,
+         "deadlineStop": false
+        },
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:14>",
+       "parentId": "<id:13>",
+       "timestamp": "<ts:entry.timestamp:9>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "waiting_background",
+       "seq": 3,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:9>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [
+         {
+          "source": "senpi-codemode",
+          "activeCount": 1,
+          "items": [
+           {
+            "id": "<id:6>",
+            "label": "G4 detached nested calls",
+            "startedAt": "<ts:items.startedAt:7>"
+           }
+          ]
+         }
+        ],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:9>"
+      }
+     },
+     {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:14",
+      "hookRunId": "<id:15>:PreToolUse:14",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:29>",
+      "startedAt": "<ts:events.startedAt:29>",
       "phase": "start",
       "statusMessage": "running loop-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:14",
+      "hookRunId": "<id:15>:PreToolUse:14",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:30>",
+      "startedAt": "<ts:events.startedAt:30>",
       "phase": "end",
       "statusMessage": "running loop-guard",
-      "completedAt": "<ts:turn.completedAt:15>",
+      "completedAt": "<ts:events.completedAt:15>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:15",
+      "hookRunId": "<id:15>:PreToolUse:15",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:31>",
+      "startedAt": "<ts:events.startedAt:31>",
       "phase": "start",
       "statusMessage": "running moved-path-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:15",
+      "hookRunId": "<id:15>:PreToolUse:15",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:32>",
+      "startedAt": "<ts:events.startedAt:32>",
       "phase": "end",
       "statusMessage": "running moved-path-guard",
-      "completedAt": "<ts:turn.completedAt:16>",
+      "completedAt": "<ts:events.completedAt:16>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:16",
+      "hookRunId": "<id:15>:PreToolUse:16",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:33>",
+      "startedAt": "<ts:events.startedAt:33>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:16",
+      "hookRunId": "<id:15>:PreToolUse:16",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:34>",
+      "startedAt": "<ts:events.startedAt:34>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:17>",
+      "completedAt": "<ts:events.completedAt:17>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:17",
+      "hookRunId": "<id:15>:PreToolUse:17",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:35>",
+      "startedAt": "<ts:events.startedAt:35>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:17",
+      "hookRunId": "<id:15>:PreToolUse:17",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:36>",
+      "startedAt": "<ts:events.startedAt:36>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:18>",
+      "completedAt": "<ts:events.completedAt:18>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:18",
+      "hookRunId": "<id:15>:PreToolUse:18",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:37>",
+      "startedAt": "<ts:events.startedAt:37>",
       "phase": "start",
       "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:18",
+      "hookRunId": "<id:15>:PreToolUse:18",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:38>",
+      "startedAt": "<ts:events.startedAt:38>",
       "phase": "end",
       "statusMessage": "applying bash timeout",
-      "completedAt": "<ts:turn.completedAt:19>",
+      "completedAt": "<ts:events.completedAt:19>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:19",
+      "hookRunId": "<id:15>:PreToolUse:19",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:39>",
+      "startedAt": "<ts:events.startedAt:39>",
       "phase": "start",
       "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:19",
+      "hookRunId": "<id:15>:PreToolUse:19",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:40>",
+      "startedAt": "<ts:events.startedAt:40>",
       "phase": "end",
       "statusMessage": "running terminal",
-      "completedAt": "<ts:turn.completedAt:20>",
+      "completedAt": "<ts:events.completedAt:20>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:20",
+      "hookRunId": "<id:15>:PreToolUse:20",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:41>",
+      "startedAt": "<ts:events.startedAt:41>",
       "phase": "start",
       "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:20",
+      "hookRunId": "<id:15>:PreToolUse:20",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:42>",
+      "startedAt": "<ts:events.startedAt:42>",
       "phase": "end",
       "statusMessage": "checking compaction state",
-      "completedAt": "<ts:turn.completedAt:21>",
+      "completedAt": "<ts:events.completedAt:21>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:21",
+      "hookRunId": "<id:15>:PreToolUse:21",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:43>",
+      "startedAt": "<ts:events.startedAt:43>",
       "phase": "start",
       "statusMessage": "running mcp"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PreToolUse:21",
+      "hookRunId": "<id:15>:PreToolUse:21",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:44>",
+      "startedAt": "<ts:events.startedAt:44>",
       "phase": "end",
       "statusMessage": "running mcp",
-      "completedAt": "<ts:turn.completedAt:22>",
+      "completedAt": "<ts:events.completedAt:22>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PostToolUse:22",
+      "hookRunId": "<id:15>:PostToolUse:22",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:45>",
+      "startedAt": "<ts:events.startedAt:45>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PostToolUse:22",
+      "hookRunId": "<id:15>:PostToolUse:22",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:46>",
+      "startedAt": "<ts:events.startedAt:46>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:23>",
+      "completedAt": "<ts:events.completedAt:23>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PostToolUse:23",
+      "hookRunId": "<id:15>:PostToolUse:23",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:47>",
+      "startedAt": "<ts:events.startedAt:47>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PostToolUse:23",
+      "hookRunId": "<id:15>:PostToolUse:23",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:48>",
+      "startedAt": "<ts:events.startedAt:48>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:24>",
+      "completedAt": "<ts:events.completedAt:24>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PostToolUse:24",
+      "hookRunId": "<id:15>:PostToolUse:24",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:49>",
+      "startedAt": "<ts:events.startedAt:49>",
       "phase": "start",
       "statusMessage": "running gpt-apply-patch"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PostToolUse:24",
+      "hookRunId": "<id:15>:PostToolUse:24",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:50>",
+      "startedAt": "<ts:events.startedAt:50>",
       "phase": "end",
       "statusMessage": "running gpt-apply-patch",
-      "completedAt": "<ts:turn.completedAt:25>",
+      "completedAt": "<ts:events.completedAt:25>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PostToolUse:25",
+      "hookRunId": "<id:15>:PostToolUse:25",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:51>",
+      "startedAt": "<ts:events.startedAt:51>",
       "phase": "start",
       "statusMessage": "running nested-agents-md"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PostToolUse:25",
+      "hookRunId": "<id:15>:PostToolUse:25",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:52>",
+      "startedAt": "<ts:events.startedAt:52>",
       "phase": "end",
       "statusMessage": "running nested-agents-md",
-      "completedAt": "<ts:turn.completedAt:26>",
+      "completedAt": "<ts:events.completedAt:26>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PostToolUse:26",
+      "hookRunId": "<id:15>:PostToolUse:26",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:53>",
+      "startedAt": "<ts:events.startedAt:53>",
       "phase": "start",
       "statusMessage": "running rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PostToolUse:26",
+      "hookRunId": "<id:15>:PostToolUse:26",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:54>",
+      "startedAt": "<ts:events.startedAt:54>",
       "phase": "end",
       "statusMessage": "running rules",
-      "completedAt": "<ts:turn.completedAt:27>",
+      "completedAt": "<ts:events.completedAt:27>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PostToolUse:27",
+      "hookRunId": "<id:15>:PostToolUse:27",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:55>",
+      "startedAt": "<ts:events.startedAt:55>",
       "phase": "start",
       "statusMessage": "running goal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:12>:PostToolUse:27",
+      "hookRunId": "<id:15>:PostToolUse:27",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:12>",
+      "toolCallId": "<id:15>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:56>",
+      "startedAt": "<ts:events.startedAt:56>",
       "phase": "end",
       "statusMessage": "running goal",
-      "completedAt": "<ts:turn.completedAt:28>",
+      "completedAt": "<ts:events.completedAt:28>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:28",
+      "hookRunId": "<id:16>:PreToolUse:28",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:57>",
+      "startedAt": "<ts:events.startedAt:57>",
       "phase": "start",
       "statusMessage": "running loop-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:28",
+      "hookRunId": "<id:16>:PreToolUse:28",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:58>",
+      "startedAt": "<ts:events.startedAt:58>",
       "phase": "end",
       "statusMessage": "running loop-guard",
-      "completedAt": "<ts:turn.completedAt:29>",
+      "completedAt": "<ts:events.completedAt:29>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:29",
+      "hookRunId": "<id:16>:PreToolUse:29",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:59>",
+      "startedAt": "<ts:events.startedAt:59>",
       "phase": "start",
       "statusMessage": "running moved-path-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:29",
+      "hookRunId": "<id:16>:PreToolUse:29",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:60>",
+      "startedAt": "<ts:events.startedAt:60>",
       "phase": "end",
       "statusMessage": "running moved-path-guard",
-      "completedAt": "<ts:turn.completedAt:30>",
+      "completedAt": "<ts:events.completedAt:30>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:30",
+      "hookRunId": "<id:16>:PreToolUse:30",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:61>",
+      "startedAt": "<ts:events.startedAt:61>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:30",
+      "hookRunId": "<id:16>:PreToolUse:30",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:62>",
+      "startedAt": "<ts:events.startedAt:62>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:31>",
+      "completedAt": "<ts:events.completedAt:31>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:31",
+      "hookRunId": "<id:16>:PreToolUse:31",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:63>",
+      "startedAt": "<ts:events.startedAt:63>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:31",
+      "hookRunId": "<id:16>:PreToolUse:31",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:64>",
+      "startedAt": "<ts:events.startedAt:64>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:32>",
+      "completedAt": "<ts:events.completedAt:32>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:32",
+      "hookRunId": "<id:16>:PreToolUse:32",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:65>",
+      "startedAt": "<ts:events.startedAt:65>",
       "phase": "start",
       "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:32",
+      "hookRunId": "<id:16>:PreToolUse:32",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:66>",
+      "startedAt": "<ts:events.startedAt:66>",
       "phase": "end",
       "statusMessage": "applying bash timeout",
-      "completedAt": "<ts:turn.completedAt:33>",
+      "completedAt": "<ts:events.completedAt:33>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:33",
+      "hookRunId": "<id:16>:PreToolUse:33",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:67>",
+      "startedAt": "<ts:events.startedAt:67>",
       "phase": "start",
       "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:33",
+      "hookRunId": "<id:16>:PreToolUse:33",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:68>",
+      "startedAt": "<ts:events.startedAt:68>",
       "phase": "end",
       "statusMessage": "running terminal",
-      "completedAt": "<ts:turn.completedAt:34>",
+      "completedAt": "<ts:events.completedAt:34>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:34",
+      "hookRunId": "<id:16>:PreToolUse:34",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:69>",
+      "startedAt": "<ts:events.startedAt:69>",
       "phase": "start",
       "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:34",
+      "hookRunId": "<id:16>:PreToolUse:34",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:70>",
+      "startedAt": "<ts:events.startedAt:70>",
       "phase": "end",
       "statusMessage": "checking compaction state",
-      "completedAt": "<ts:turn.completedAt:35>",
+      "completedAt": "<ts:events.completedAt:35>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:35",
+      "hookRunId": "<id:16>:PreToolUse:35",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:71>",
+      "startedAt": "<ts:events.startedAt:71>",
       "phase": "start",
       "statusMessage": "running mcp"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PreToolUse:35",
+      "hookRunId": "<id:16>:PreToolUse:35",
       "hookName": "PreToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:72>",
+      "startedAt": "<ts:events.startedAt:72>",
       "phase": "end",
       "statusMessage": "running mcp",
-      "completedAt": "<ts:turn.completedAt:36>",
+      "completedAt": "<ts:events.completedAt:36>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PostToolUse:36",
+      "hookRunId": "<id:16>:PostToolUse:36",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:73>",
+      "startedAt": "<ts:events.startedAt:73>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PostToolUse:36",
+      "hookRunId": "<id:16>:PostToolUse:36",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:74>",
+      "startedAt": "<ts:events.startedAt:74>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:37>",
+      "completedAt": "<ts:events.completedAt:37>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PostToolUse:37",
+      "hookRunId": "<id:16>:PostToolUse:37",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:75>",
+      "startedAt": "<ts:events.startedAt:75>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PostToolUse:37",
+      "hookRunId": "<id:16>:PostToolUse:37",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:76>",
+      "startedAt": "<ts:events.startedAt:76>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:38>",
+      "completedAt": "<ts:events.completedAt:38>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PostToolUse:38",
+      "hookRunId": "<id:16>:PostToolUse:38",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:77>",
+      "startedAt": "<ts:events.startedAt:77>",
       "phase": "start",
       "statusMessage": "running gpt-apply-patch"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PostToolUse:38",
+      "hookRunId": "<id:16>:PostToolUse:38",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:78>",
+      "startedAt": "<ts:events.startedAt:78>",
       "phase": "end",
       "statusMessage": "running gpt-apply-patch",
-      "completedAt": "<ts:turn.completedAt:39>",
+      "completedAt": "<ts:events.completedAt:39>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PostToolUse:39",
+      "hookRunId": "<id:16>:PostToolUse:39",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:79>",
+      "startedAt": "<ts:events.startedAt:79>",
       "phase": "start",
       "statusMessage": "running nested-agents-md"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PostToolUse:39",
+      "hookRunId": "<id:16>:PostToolUse:39",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:80>",
+      "startedAt": "<ts:events.startedAt:80>",
       "phase": "end",
       "statusMessage": "running nested-agents-md",
-      "completedAt": "<ts:turn.completedAt:40>",
+      "completedAt": "<ts:events.completedAt:40>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PostToolUse:40",
+      "hookRunId": "<id:16>:PostToolUse:40",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:81>",
+      "startedAt": "<ts:events.startedAt:81>",
       "phase": "start",
       "statusMessage": "running rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PostToolUse:40",
+      "hookRunId": "<id:16>:PostToolUse:40",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:82>",
+      "startedAt": "<ts:events.startedAt:82>",
       "phase": "end",
       "statusMessage": "running rules",
-      "completedAt": "<ts:turn.completedAt:41>",
+      "completedAt": "<ts:events.completedAt:41>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PostToolUse:41",
+      "hookRunId": "<id:16>:PostToolUse:41",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:83>",
+      "startedAt": "<ts:events.startedAt:83>",
       "phase": "start",
       "statusMessage": "running goal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:13>:PostToolUse:41",
+      "hookRunId": "<id:16>:PostToolUse:41",
       "hookName": "PostToolUse",
       "toolName": "task",
-      "toolCallId": "<id:13>",
+      "toolCallId": "<id:16>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:84>",
+      "startedAt": "<ts:events.startedAt:84>",
       "phase": "end",
       "statusMessage": "running goal",
-      "completedAt": "<ts:turn.completedAt:42>",
+      "completedAt": "<ts:events.completedAt:42>",
       "status": "completed"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:20>",
+      "id": "<uuid:23>",
       "method": "setStatus",
       "statusKey": "eval-cells"
      },
      {
-      "type": "extension_event",
-      "name": "wake_source_state",
-      "data": {
-       "source": "senpi-codemode",
-       "activeCount": 0,
-       "items": []
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "work-custody",
+       "data": {
+        "id": "<uuid:21>",
+        "key": "wake-source:senpi-codemode",
+        "source": "senpi-codemode",
+        "kind": "background",
+        "activeCount": 1,
+        "items": [
+         {
+          "id": "<id:6>",
+          "description": "G4 detached nested calls",
+          "startedAtMs": "<ts:items.startedAtMs:2>"
+         }
+        ],
+        "state": "passive",
+        "sessionId": "<uuid:16>"
+       },
+       "id": "<id:17>",
+       "parentId": "<id:14>",
+       "timestamp": "<ts:entry.timestamp:10>"
       }
      },
      {
-      "type": "extension_event",
-      "name": "senpi.eval.execution",
-      "data": {
-       "version": 1,
-       "detailLevel": "metadata",
-       "rpcTruncated": false,
-       "cellId": "<id:5>",
-       "language": "js",
-       "ok": true,
-       "startedAt": "<ts:data.startedAt:1>",
-       "completedAt": "<ts:data.completedAt:1>",
-       "detached": true,
-       "toolCallCount": 3,
-       "pendingToolCallCount": 0,
-       "toolCalls": [
-        {
-         "name": "completion",
-         "ok": true
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "waiting_background",
+        "seq": 4,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:4>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [
+          {
+           "source": "senpi-codemode",
+           "activeCount": 1
+          }
+         ],
+         "human": []
         },
-        {
-         "name": "__agent__",
-         "ok": true
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": false,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "clean",
+         "budgetSpent": false,
+         "deadlineStop": false
         },
-        {
-         "name": "__agent__",
-         "ok": true
-        }
-       ],
-       "distinctToolsCalled": [
-        "completion",
-        "__agent__"
-       ],
-       "toolAggregates": {
-        "completion": {
-         "count": 1,
-         "okCount": 1,
-         "errorCount": 0,
-         "pendingCount": 0
-        },
-        "__agent__": {
-         "count": 2,
-         "okCount": 2,
-         "errorCount": 0,
-         "pendingCount": 0
-        }
+        "runId": "<uuid:17>"
        },
-       "toolAggregatesTruncated": false
+       "id": "<id:18>",
+       "parentId": "<id:17>",
+       "timestamp": "<ts:entry.timestamp:11>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "waiting_background",
+       "seq": 4,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:10>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [
+         {
+          "source": "senpi-codemode",
+          "activeCount": 1
+         }
+        ],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:10>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "work-custody",
+       "data": {
+        "id": "<uuid:24>",
+        "key": "delivery:senpi-codemode:notification:<uuid:25>",
+        "kind": "background",
+        "state": "open",
+        "sessionId": "<uuid:16>"
+       },
+       "id": "<id:19>",
+       "parentId": "<id:18>",
+       "timestamp": "<ts:entry.timestamp:12>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "waiting_background",
+        "seq": 5,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:5>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [
+          {
+           "source": "delivery:senpi-codemode:notification:<uuid:25>",
+           "activeCount": 1
+          },
+          {
+           "source": "senpi-codemode",
+           "activeCount": 1
+          }
+         ],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": false,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "clean",
+         "budgetSpent": false,
+         "deadlineStop": false
+        },
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:20>",
+       "parentId": "<id:19>",
+       "timestamp": "<ts:entry.timestamp:13>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "waiting_background",
+       "seq": 5,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:11>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [
+         {
+          "source": "delivery:senpi-codemode:notification:<uuid:25>",
+          "activeCount": 1
+         },
+         {
+          "source": "senpi-codemode",
+          "activeCount": 1
+         }
+        ],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:11>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "work-custody",
+       "data": {
+        "id": "<uuid:24>",
+        "key": "delivery:senpi-codemode:notification:<uuid:25>",
+        "kind": "background",
+        "state": "queued",
+        "ticketId": "<uuid:26>",
+        "sessionId": "<uuid:16>"
+       },
+       "id": "<id:21>",
+       "parentId": "<id:20>",
+       "timestamp": "<ts:entry.timestamp:14>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "work-custody",
+       "data": {
+        "id": "<uuid:24>",
+        "key": "delivery:senpi-codemode:notification:<uuid:25>",
+        "kind": "background",
+        "state": "queued",
+        "ticketId": "<uuid:26>",
+        "payload": {
+         "message": {
+          "customType": "senpi-codemode:notification",
+          "content": "<system-reminder>Detached eval cell <id:6> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
+          "display": false
+         },
+         "deliverAs": "steer"
+        },
+        "sessionId": "<uuid:16>"
+       },
+       "id": "<id:22>",
+       "parentId": "<id:21>",
+       "timestamp": "<ts:entry.timestamp:15>"
       }
      },
      {
@@ -5982,30 +6630,133 @@
        "data": {
         "customType": "senpi-codemode:notification"
        },
-       "id": "<id:14>",
-       "parentId": "<id:15>",
-       "timestamp": "<ts:entry.timestamp:6>"
+       "id": "<id:23>",
+       "parentId": "<id:22>",
+       "timestamp": "<ts:entry.timestamp:16>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 6,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:6>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [
+          {
+           "source": "delivery:senpi-codemode:notification:<uuid:25>",
+           "activeCount": 1
+          }
+         ],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "runId": "<uuid:27>"
+       },
+       "id": "<id:24>",
+       "parentId": "<id:23>",
+       "timestamp": "<ts:entry.timestamp:17>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 6,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:12>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [
+         {
+          "source": "delivery:senpi-codemode:notification:<uuid:25>",
+          "activeCount": 1
+         }
+        ],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:12>"
       }
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:21>",
+      "id": "<uuid:28>",
       "method": "setStatus",
       "statusKey": "todo-waiting"
      },
      {
       "type": "entry_appended",
       "entry": {
+       "type": "custom",
+       "customType": "work-custody",
+       "data": {
+        "id": "<uuid:24>",
+        "key": "delivery:senpi-codemode:notification:<uuid:25>",
+        "kind": "background",
+        "state": "consumed",
+        "ticketId": "<uuid:26>",
+        "payload": {
+         "message": {
+          "customType": "senpi-codemode:notification",
+          "content": "<system-reminder>Detached eval cell <id:6> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
+          "display": false
+         },
+         "deliverAs": "steer"
+        },
+        "runId": "<uuid:27>",
+        "transcriptEntryId": "<id:26>",
+        "sessionId": "<uuid:16>"
+       },
+       "id": "<id:25>",
+       "parentId": "<id:26>",
+       "timestamp": "<ts:entry.timestamp:18>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
        "type": "custom_message",
        "customType": "senpi-codemode:notification",
-       "content": "<system-reminder>Detached eval cell <id:5> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
+       "content": "<system-reminder>Detached eval cell <id:6> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
        "display": false,
        "details": {
-        "ticketId": "<uuid:22>"
+        "ticketId": "<uuid:26>"
        },
-       "id": "<id:16>",
-       "parentId": "<id:17>",
-       "timestamp": "<ts:entry.timestamp:7>"
+       "id": "<id:26>",
+       "parentId": "<id:24>",
+       "timestamp": "<ts:entry.timestamp:19>"
       }
      },
      {
@@ -6019,10 +6770,10 @@
       "message": {
        "role": "custom",
        "customType": "senpi-codemode:notification",
-       "content": "<system-reminder>Detached eval cell <id:5> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
+       "content": "<system-reminder>Detached eval cell <id:6> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
        "display": false,
        "details": {
-        "ticketId": "<uuid:22>"
+        "ticketId": "<uuid:26>"
        },
        "timestamp": "<ts:message.timestamp:19>"
       }
@@ -6032,12 +6783,49 @@
       "message": {
        "role": "custom",
        "customType": "senpi-codemode:notification",
-       "content": "<system-reminder>Detached eval cell <id:5> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
+       "content": "<system-reminder>Detached eval cell <id:6> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
        "display": false,
        "details": {
-        "ticketId": "<uuid:22>"
+        "ticketId": "<uuid:26>"
        },
        "timestamp": "<ts:message.timestamp:20>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 6,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:13>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [
+         {
+          "source": "delivery:senpi-codemode:notification:<uuid:25>",
+          "activeCount": 1
+         }
+        ],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:5>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:13>"
       }
      },
      {
@@ -6064,7 +6852,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:21>",
-       "responseId": "<id:6>"
+       "responseId": "<id:7>"
       },
       "streaming": true
      },
@@ -6134,6 +6922,39 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 6,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:14>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 2
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [
+         {
+          "source": "delivery:senpi-codemode:notification:<uuid:25>",
+          "activeCount": 1
+         }
+        ],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:14>"
+      }
+     },
+     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -6162,7 +6983,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:22>",
-       "responseId": "<id:6>",
+       "responseId": "<id:7>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -6177,9 +6998,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:18>",
-       "parentId": "<id:19>",
-       "timestamp": "<ts:entry.timestamp:8>",
+       "id": "<id:27>",
+       "parentId": "<id:25>",
+       "timestamp": "<ts:entry.timestamp:20>",
        "message": {
         "role": "assistant",
         "content": [
@@ -6207,7 +7028,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:message.timestamp:23>",
-        "responseId": "<id:6>",
+        "responseId": "<id:7>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -6248,7 +7069,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:24>",
-       "responseId": "<id:6>",
+       "responseId": "<id:7>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -6267,29 +7088,19 @@
        "customType": "senpi.hooks.stop-state",
        "data": {
         "count": 0,
-        "sessionId": "<uuid:19>",
-        "turnKey": "1:<id:18>"
+        "sessionId": "<uuid:16>",
+        "turnKey": "1:<id:27>"
        },
-       "id": "<id:20>",
-       "parentId": "<id:18>",
-       "timestamp": "<ts:entry.timestamp:9>"
+       "id": "<id:28>",
+       "parentId": "<id:27>",
+       "timestamp": "<ts:entry.timestamp:21>"
       }
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:23>",
+      "id": "<uuid:29>",
       "method": "setStatus",
       "statusKey": "goal"
-     },
-     {
-      "type": "extension_event",
-      "name": "turn_end_liveness",
-      "data": {
-       "sessionId": "<uuid:19>",
-       "verdict": {
-        "kind": "done"
-       }
-      }
      },
      {
       "type": "agent_end",
@@ -6297,10 +7108,10 @@
        {
         "role": "custom",
         "customType": "senpi-codemode:notification",
-        "content": "<system-reminder>Detached eval cell <id:5> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
+        "content": "<system-reminder>Detached eval cell <id:6> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
         "display": false,
         "details": {
-         "ticketId": "<uuid:22>"
+         "ticketId": "<uuid:26>"
         },
         "timestamp": "<ts:messages.timestamp:7>"
        },
@@ -6331,7 +7142,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:messages.timestamp:8>",
-        "responseId": "<id:6>",
+        "responseId": "<id:7>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -6351,1020 +7162,30 @@
       "type": "agent_idle"
      },
      {
-      "type": "extension_ui_request",
-      "id": "<uuid:24>",
-      "method": "setStatus",
-      "statusKey": "anthropic-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:25>",
-      "method": "setWidget",
-      "widgetKey": "anthropic-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:26>",
-      "method": "setStatus",
-      "statusKey": "openai-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:27>",
-      "method": "setWidget",
-      "widgetKey": "openai-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:28>",
-      "method": "setStatus",
-      "statusKey": "monitors"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:29>",
-      "method": "setStatus",
-      "statusKey": "pi-websearch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:30>",
-      "method": "setWidget",
-      "widgetKey": "pi-websearch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:31>",
-      "method": "setStatus",
-      "statusKey": "pi-webfetch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:32>",
-      "method": "setWidget",
-      "widgetKey": "pi-webfetch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:33>",
-      "method": "setStatus",
-      "statusKey": "loop"
-     }
-    ],
-    "lifecycle": [
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 1,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:1>",
-        "role": "root",
-        "rootSessionId": "<uuid:19>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:19>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:34>"
-       },
-       "id": "<id:21>",
-       "parentId": "<id:1>",
-       "timestamp": "<ts:entry.timestamp:10>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:1>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:1>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:2>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 1
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:1>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:2>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:3>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 2
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:3>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "eval",
-        "toolCallId": "<id:5>",
-        "since": "<ts:activity.since:2>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      }
-     },
-     {
       "type": "entry_appended",
       "entry": {
        "type": "custom",
        "customType": "work-custody",
        "data": {
-        "id": "<uuid:36>",
-        "key": "wake-source:senpi-codemode",
-        "source": "senpi-codemode",
-        "kind": "background",
-        "activeCount": 1,
-        "items": [
-         {
-          "id": "<id:5>",
-          "description": "G4 detached nested calls",
-          "startedAtMs": "<ts:items.startedAtMs:2>"
-         }
-        ],
-        "state": "open",
-        "sessionId": "<uuid:19>"
-       },
-       "id": "<id:22>",
-       "parentId": "<id:7>",
-       "timestamp": "<ts:entry.timestamp:11>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 2,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:2>",
-        "role": "root",
-        "rootSessionId": "<uuid:19>",
-        "waitingOn": {
-         "children": 0,
-         "background": [
-          {
-           "source": "senpi-codemode",
-           "activeCount": 1,
-           "items": [
-            {
-             "id": "<id:5>",
-             "label": "G4 detached nested calls",
-             "startedAt": "<ts:items.startedAt:1>"
-            }
-           ]
-          }
-         ],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:19>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:34>"
-       },
-       "id": "<id:10>",
-       "parentId": "<id:22>",
-       "timestamp": "<ts:entry.timestamp:12>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 2,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:5>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [
-         {
-          "source": "senpi-codemode",
-          "activeCount": 1,
-          "items": [
-           {
-            "id": "<id:5>",
-            "label": "G4 detached nested calls",
-            "startedAt": "<ts:items.startedAt:2>"
-           }
-          ]
-         }
-        ],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "eval",
-        "toolCallId": "<id:5>",
-        "since": "<ts:activity.since:3>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:5>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 2,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:6>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 1
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [
-         {
-          "source": "senpi-codemode",
-          "activeCount": 1,
-          "items": [
-           {
-            "id": "<id:5>",
-            "label": "G4 detached nested calls",
-            "startedAt": "<ts:items.startedAt:3>"
-           }
-          ]
-         }
-        ],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:6>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 2,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:7>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 2
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [
-         {
-          "source": "senpi-codemode",
-          "activeCount": 1,
-          "items": [
-           {
-            "id": "<id:5>",
-            "label": "G4 detached nested calls",
-            "startedAt": "<ts:items.startedAt:4>"
-           }
-          ]
-         }
-        ],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:4>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:7>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 2,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:8>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [
-         {
-          "source": "senpi-codemode",
-          "activeCount": 1,
-          "items": [
-           {
-            "id": "<id:5>",
-            "label": "G4 detached nested calls",
-            "startedAt": "<ts:items.startedAt:5>"
-           }
-          ]
-         }
-        ],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:8>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "waiting_background",
-        "seq": 3,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:3>",
-        "role": "root",
-        "rootSessionId": "<uuid:19>",
-        "waitingOn": {
-         "children": 0,
-         "background": [
-          {
-           "source": "senpi-codemode",
-           "activeCount": 1,
-           "items": [
-            {
-             "id": "<id:5>",
-             "label": "G4 detached nested calls",
-             "startedAt": "<ts:items.startedAt:6>"
-            }
-           ]
-          }
-         ],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:19>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": false,
-        "interrupted": false,
-        "lastTurnEnd": {
-         "endedBy": "clean",
-         "budgetSpent": false,
-         "deadlineStop": false
-        },
-        "runId": "<uuid:34>"
-       },
-       "id": "<id:23>",
-       "parentId": "<id:11>",
-       "timestamp": "<ts:entry.timestamp:13>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "waiting_background",
-       "seq": 3,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:9>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [
-         {
-          "source": "senpi-codemode",
-          "activeCount": 1,
-          "items": [
-           {
-            "id": "<id:5>",
-            "label": "G4 detached nested calls",
-            "startedAt": "<ts:items.startedAt:7>"
-           }
-          ]
-         }
-        ],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:9>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "work-custody",
-       "data": {
-        "id": "<uuid:36>",
-        "key": "wake-source:senpi-codemode",
-        "source": "senpi-codemode",
-        "kind": "background",
-        "activeCount": 1,
-        "items": [
-         {
-          "id": "<id:5>",
-          "description": "G4 detached nested calls",
-          "startedAtMs": "<ts:items.startedAtMs:3>"
-         }
-        ],
-        "state": "passive",
-        "sessionId": "<uuid:19>"
-       },
-       "id": "<id:24>",
-       "parentId": "<id:23>",
-       "timestamp": "<ts:entry.timestamp:14>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "waiting_background",
-        "seq": 4,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:4>",
-        "role": "root",
-        "rootSessionId": "<uuid:19>",
-        "waitingOn": {
-         "children": 0,
-         "background": [
-          {
-           "source": "senpi-codemode",
-           "activeCount": 1
-          }
-         ],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:19>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": false,
-        "interrupted": false,
-        "lastTurnEnd": {
-         "endedBy": "clean",
-         "budgetSpent": false,
-         "deadlineStop": false
-        },
-        "runId": "<uuid:34>"
-       },
-       "id": "<id:25>",
-       "parentId": "<id:24>",
-       "timestamp": "<ts:entry.timestamp:15>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "waiting_background",
-       "seq": 4,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:10>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [
-         {
-          "source": "senpi-codemode",
-          "activeCount": 1
-         }
-        ],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:10>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "work-custody",
-       "data": {
-        "id": "<uuid:37>",
-        "key": "delivery:senpi-codemode:notification:<uuid:38>",
-        "kind": "background",
-        "state": "open",
-        "sessionId": "<uuid:19>"
-       },
-       "id": "<id:26>",
-       "parentId": "<id:25>",
-       "timestamp": "<ts:entry.timestamp:16>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "waiting_background",
-        "seq": 5,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:5>",
-        "role": "root",
-        "rootSessionId": "<uuid:19>",
-        "waitingOn": {
-         "children": 0,
-         "background": [
-          {
-           "source": "delivery:senpi-codemode:notification:<uuid:38>",
-           "activeCount": 1
-          },
-          {
-           "source": "senpi-codemode",
-           "activeCount": 1
-          }
-         ],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:19>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": false,
-        "interrupted": false,
-        "lastTurnEnd": {
-         "endedBy": "clean",
-         "budgetSpent": false,
-         "deadlineStop": false
-        },
-        "runId": "<uuid:34>"
-       },
-       "id": "<id:27>",
-       "parentId": "<id:26>",
-       "timestamp": "<ts:entry.timestamp:17>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "waiting_background",
-       "seq": 5,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:11>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [
-         {
-          "source": "delivery:senpi-codemode:notification:<uuid:38>",
-          "activeCount": 1
-         },
-         {
-          "source": "senpi-codemode",
-          "activeCount": 1
-         }
-        ],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:11>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "work-custody",
-       "data": {
-        "id": "<uuid:37>",
-        "key": "delivery:senpi-codemode:notification:<uuid:38>",
-        "kind": "background",
-        "state": "queued",
-        "ticketId": "<uuid:22>",
-        "sessionId": "<uuid:19>"
-       },
-       "id": "<id:28>",
-       "parentId": "<id:27>",
-       "timestamp": "<ts:entry.timestamp:18>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "work-custody",
-       "data": {
-        "id": "<uuid:37>",
-        "key": "delivery:senpi-codemode:notification:<uuid:38>",
-        "kind": "background",
-        "state": "queued",
-        "ticketId": "<uuid:22>",
-        "payload": {
-         "message": {
-          "customType": "senpi-codemode:notification",
-          "content": "<system-reminder>Detached eval cell <id:5> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
-          "display": false
-         },
-         "deliverAs": "steer"
-        },
-        "sessionId": "<uuid:19>"
-       },
-       "id": "<id:15>",
-       "parentId": "<id:28>",
-       "timestamp": "<ts:entry.timestamp:19>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 6,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:6>",
-        "role": "root",
-        "rootSessionId": "<uuid:19>",
-        "waitingOn": {
-         "children": 0,
-         "background": [
-          {
-           "source": "delivery:senpi-codemode:notification:<uuid:38>",
-           "activeCount": 1
-          }
-         ],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:19>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:39>"
-       },
-       "id": "<id:17>",
-       "parentId": "<id:14>",
-       "timestamp": "<ts:entry.timestamp:20>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 6,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:12>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [
-         {
-          "source": "delivery:senpi-codemode:notification:<uuid:38>",
-          "activeCount": 1
-         }
-        ],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:12>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "work-custody",
-       "data": {
-        "id": "<uuid:37>",
-        "key": "delivery:senpi-codemode:notification:<uuid:38>",
-        "kind": "background",
-        "state": "consumed",
-        "ticketId": "<uuid:22>",
-        "payload": {
-         "message": {
-          "customType": "senpi-codemode:notification",
-          "content": "<system-reminder>Detached eval cell <id:5> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
-          "display": false
-         },
-         "deliverAs": "steer"
-        },
-        "runId": "<uuid:39>",
-        "transcriptEntryId": "<id:16>",
-        "sessionId": "<uuid:19>"
-       },
-       "id": "<id:19>",
-       "parentId": "<id:16>",
-       "timestamp": "<ts:entry.timestamp:21>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 6,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:13>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 1
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [
-         {
-          "source": "delivery:senpi-codemode:notification:<uuid:38>",
-          "activeCount": 1
-         }
-        ],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:5>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:13>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 6,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:14>",
-       "role": "root",
-       "rootSessionId": "<uuid:19>",
-       "activityRevision": {
-        "instanceId": "<uuid:35>",
-        "revision": 2
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [
-         {
-          "source": "delivery:senpi-codemode:notification:<uuid:38>",
-          "activeCount": 1
-         }
-        ],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:14>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "work-custody",
-       "data": {
-        "id": "<uuid:37>",
-        "key": "delivery:senpi-codemode:notification:<uuid:38>",
+        "id": "<uuid:24>",
+        "key": "delivery:senpi-codemode:notification:<uuid:25>",
         "kind": "background",
         "state": "settled",
-        "ticketId": "<uuid:22>",
+        "ticketId": "<uuid:26>",
         "payload": {
          "message": {
           "customType": "senpi-codemode:notification",
-          "content": "<system-reminder>Detached eval cell <id:5> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
+          "content": "<system-reminder>Detached eval cell <id:6> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
           "display": false
          },
          "deliverAs": "steer"
         },
-        "runId": "<uuid:39>",
-        "transcriptEntryId": "<id:16>",
-        "sessionId": "<uuid:19>"
+        "runId": "<uuid:27>",
+        "transcriptEntryId": "<id:26>",
+        "sessionId": "<uuid:16>"
        },
        "id": "<id:29>",
-       "parentId": "<id:20>",
+       "parentId": "<id:28>",
        "timestamp": "<ts:entry.timestamp:22>"
       }
      },
@@ -7385,19 +7206,19 @@
         "runPaused": false,
         "since": "<ts:data.since:7>",
         "role": "root",
-        "rootSessionId": "<uuid:19>",
+        "rootSessionId": "<uuid:16>",
         "waitingOn": {
          "children": 0,
          "background": [],
          "human": []
         },
         "holds": [],
-        "completionId": "<uuid:19>:1",
+        "completionId": "<uuid:16>:1",
         "completion": {
          "kind": "reply",
          "at": "<ts:completion.at:1>"
         },
-        "sessionId": "<uuid:19>",
+        "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": true,
@@ -7408,7 +7229,7 @@
          "budgetSpent": false,
          "deadlineStop": false
         },
-        "runId": "<uuid:39>"
+        "runId": "<uuid:27>"
        },
        "id": "<id:30>",
        "parentId": "<id:29>",
@@ -7429,9 +7250,9 @@
        "runPaused": false,
        "since": "<ts:lifecycle.since:15>",
        "role": "root",
-       "rootSessionId": "<uuid:19>",
+       "rootSessionId": "<uuid:16>",
        "activityRevision": {
-        "instanceId": "<uuid:35>",
+        "instanceId": "<uuid:18>",
         "revision": 0
        },
        "waitingOn": {
@@ -7440,13 +7261,73 @@
         "human": []
        },
        "holds": [],
-       "completionId": "<uuid:19>:1",
+       "completionId": "<uuid:16>:1",
        "completion": {
         "kind": "reply",
         "at": "<ts:completion.at:2>"
        },
        "observedAt": "<ts:lifecycle.observedAt:15>"
       }
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:30>",
+      "method": "setStatus",
+      "statusKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:31>",
+      "method": "setWidget",
+      "widgetKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:32>",
+      "method": "setStatus",
+      "statusKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:33>",
+      "method": "setWidget",
+      "widgetKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:34>",
+      "method": "setStatus",
+      "statusKey": "monitors"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:35>",
+      "method": "setStatus",
+      "statusKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:36>",
+      "method": "setWidget",
+      "widgetKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:37>",
+      "method": "setStatus",
+      "statusKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:38>",
+      "method": "setWidget",
+      "widgetKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:39>",
+      "method": "setStatus",
+      "statusKey": "loop"
      }
     ],
     "surfaces": []
@@ -7494,6 +7375,40 @@
      "timestamp": "<ts:entries.timestamp:4>"
     },
     {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "running",
+      "seq": 1,
+      "epoch": 1,
+      "epochOrigin": "human",
+      "humanInputRevision": 1,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:1>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": false,
+      "runActive": true,
+      "interrupted": false,
+      "runId": "<uuid:2>"
+     },
+     "id": "<id:4>",
+     "parentId": "<id:3>",
+     "timestamp": "<ts:entries.timestamp:5>"
+    },
+    {
      "type": "custom_message",
      "customType": "environment-context",
      "content": "<environment_context>\n  <cwd><sandbox>/work</cwd>\n  <current_date><ts:entries.content:1></current_date>\n</environment_context>",
@@ -7502,15 +7417,15 @@
       "cwd": "<sandbox>/work",
       "currentDate": "<ts:details.currentDate:1>"
      },
-     "id": "<id:4>",
-     "parentId": "<id:5>",
-     "timestamp": "<ts:entries.timestamp:5>"
+     "id": "<id:5>",
+     "parentId": "<id:4>",
+     "timestamp": "<ts:entries.timestamp:6>"
     },
     {
      "type": "message",
      "id": "<id:6>",
-     "parentId": "<id:4>",
-     "timestamp": "<ts:entries.timestamp:6>",
+     "parentId": "<id:5>",
+     "timestamp": "<ts:entries.timestamp:7>",
      "message": {
       "role": "user",
       "content": [
@@ -7530,13 +7445,13 @@
      "display": false,
      "id": "<id:7>",
      "parentId": "<id:6>",
-     "timestamp": "<ts:entries.timestamp:7>"
+     "timestamp": "<ts:entries.timestamp:8>"
     },
     {
      "type": "message",
      "id": "<id:8>",
      "parentId": "<id:7>",
-     "timestamp": "<ts:entries.timestamp:8>",
+     "timestamp": "<ts:entries.timestamp:9>",
      "message": {
       "role": "assistant",
       "content": [
@@ -7582,216 +7497,10 @@
      }
     },
     {
-     "type": "message",
-     "id": "<id:11>",
-     "parentId": "<id:12>",
-     "timestamp": "<ts:entries.timestamp:9>",
-     "message": {
-      "role": "toolResult",
-      "toolCallId": "<id:9>",
-      "toolName": "eval",
-      "content": [
-       {
-        "type": "text",
-        "text": "Eval cell <id:9> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
-       }
-      ],
-      "details": {
-       "language": "js",
-       "languages": [
-        "js"
-       ],
-       "runtime": {
-        "name": "bun",
-        "version": "1.4.4",
-        "path": "/Users/yeongyu/.bun/bin/bun"
-       },
-       "summary": "G4 detached nested calls",
-       "toolCallCount": 0,
-       "toolCalls": [],
-       "truncated": false,
-       "cells": [
-        {
-         "index": 0,
-         "summary": "G4 detached nested calls",
-         "code": "await fetch(process.env.EQ_BARRIER_ORIGIN + \"/__barrier/g4-detach\").then((r) => r.text());\nconst reply = await completion(\"G4 completion prompt\");\nconst answer = await agent(\"G4 agent prompt\");\nconst handle = await agent({ prompt: \"G4 handle prompt\", handle: true });\nprint(JSON.stringify({ reply, answer, handle }));",
-         "language": "js",
-         "runtime": {
-          "name": "bun",
-          "version": "1.4.4",
-          "path": "/Users/yeongyu/.bun/bin/bun"
-         },
-         "output": "Note: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n",
-         "status": "detached",
-         "startedAt": "<ts:cells.startedAt:1>"
-        }
-       ]
-      },
-      "isError": false,
-      "timestamp": "<ts:message.timestamp:3>"
-     }
-    },
-    {
-     "type": "message",
-     "id": "<id:13>",
-     "parentId": "<id:11>",
-     "timestamp": "<ts:entries.timestamp:10>",
-     "message": {
-      "role": "assistant",
-      "content": [
-       {
-        "type": "text",
-        "text": "E08-WAITING"
-       }
-      ],
-      "api": "openai-completions",
-      "provider": "mock",
-      "model": "mock-model",
-      "usage": {
-       "input": 1,
-       "output": 1,
-       "cacheRead": 0,
-       "cacheWrite": 0,
-       "totalTokens": 2,
-       "cost": {
-        "input": 0,
-        "output": 0,
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "total": 0
-       }
-      },
-      "stopReason": "stop",
-      "timestamp": "<ts:message.timestamp:4>",
-      "responseId": "<id:10>",
-      "rawStopReason": "stop",
-      "thinkingLevel": "off",
-      "timing": {
-       "requestedAt": "<ts:timing.requestedAt:2>",
-       "firstTokenAt": "<ts:timing.firstTokenAt:2>",
-       "lastTokenAt": "<ts:timing.lastTokenAt:2>",
-       "endedAt": "<ts:timing.endedAt:2>"
-      }
-     }
-    },
-    {
-     "type": "custom",
-     "customType": "engine-turn-start",
-     "data": {
-      "customType": "senpi-codemode:notification"
-     },
-     "id": "<id:14>",
-     "parentId": "<id:15>",
-     "timestamp": "<ts:entries.timestamp:11>"
-    },
-    {
-     "type": "custom_message",
-     "customType": "senpi-codemode:notification",
-     "content": "<system-reminder>Detached eval cell <id:9> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
-     "display": false,
-     "details": {
-      "ticketId": "<uuid:2>"
-     },
-     "id": "<id:16>",
-     "parentId": "<id:17>",
-     "timestamp": "<ts:entries.timestamp:12>"
-    },
-    {
-     "type": "message",
-     "id": "<id:18>",
-     "parentId": "<id:19>",
-     "timestamp": "<ts:entries.timestamp:13>",
-     "message": {
-      "role": "assistant",
-      "content": [
-       {
-        "type": "text",
-        "text": "E08-WOKE"
-       }
-      ],
-      "api": "openai-completions",
-      "provider": "mock",
-      "model": "mock-model",
-      "usage": {
-       "input": 1,
-       "output": 1,
-       "cacheRead": 0,
-       "cacheWrite": 0,
-       "totalTokens": 2,
-       "cost": {
-        "input": 0,
-        "output": 0,
-        "cacheRead": 0,
-        "cacheWrite": 0,
-        "total": 0
-       }
-      },
-      "stopReason": "stop",
-      "timestamp": "<ts:message.timestamp:5>",
-      "responseId": "<id:10>",
-      "rawStopReason": "stop",
-      "thinkingLevel": "off",
-      "timing": {
-       "requestedAt": "<ts:timing.requestedAt:3>",
-       "firstTokenAt": "<ts:timing.firstTokenAt:3>",
-       "lastTokenAt": "<ts:timing.lastTokenAt:3>",
-       "endedAt": "<ts:timing.endedAt:3>"
-      }
-     }
-    },
-    {
-     "type": "custom",
-     "customType": "senpi.hooks.stop-state",
-     "data": {
-      "count": 0,
-      "sessionId": "<uuid:1>",
-      "turnKey": "1:<id:18>"
-     },
-     "id": "<id:20>",
-     "parentId": "<id:18>",
-     "timestamp": "<ts:entries.timestamp:14>"
-    }
-   ],
-   "lifecycleEntries": [
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "running",
-      "seq": 1,
-      "epoch": 1,
-      "epochOrigin": "human",
-      "humanInputRevision": 1,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:1>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": false,
-      "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:3>"
-     },
-     "id": "<id:5>",
-     "parentId": "<id:3>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:1>"
-    },
-    {
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
+      "id": "<uuid:3>",
       "key": "wake-source:senpi-codemode",
       "source": "senpi-codemode",
       "kind": "background",
@@ -7806,9 +7515,9 @@
       "state": "open",
       "sessionId": "<uuid:1>"
      },
-     "id": "<id:21>",
+     "id": "<id:11>",
      "parentId": "<id:8>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:2>"
+     "timestamp": "<ts:entries.timestamp:10>"
     },
     {
      "type": "custom",
@@ -7850,11 +7559,104 @@
       "epochSealed": false,
       "runActive": true,
       "interrupted": false,
-      "runId": "<uuid:3>"
+      "runId": "<uuid:2>"
      },
      "id": "<id:12>",
-     "parentId": "<id:21>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:3>"
+     "parentId": "<id:11>",
+     "timestamp": "<ts:entries.timestamp:11>"
+    },
+    {
+     "type": "message",
+     "id": "<id:13>",
+     "parentId": "<id:12>",
+     "timestamp": "<ts:entries.timestamp:12>",
+     "message": {
+      "role": "toolResult",
+      "toolCallId": "<id:9>",
+      "toolName": "eval",
+      "content": [
+       {
+        "type": "text",
+        "text": "Eval cell <id:9> detached and is running in the js kernel (0 other live cells). Completion arrives as a notification; do not re-run it. eval({ action: \"peek\" | \"stop\", cell_id }) or eval({ action: \"list\" })."
+       }
+      ],
+      "details": {
+       "language": "js",
+       "languages": [
+        "js"
+       ],
+       "runtime": {
+        "name": "bun",
+        "version": "1.4.4",
+        "path": "<host:bun-path>"
+       },
+       "summary": "G4 detached nested calls",
+       "toolCallCount": 0,
+       "toolCalls": [],
+       "truncated": false,
+       "cells": [
+        {
+         "index": 0,
+         "summary": "G4 detached nested calls",
+         "code": "await fetch(process.env.EQ_BARRIER_ORIGIN + \"/__barrier/g4-detach\").then((r) => r.text());\nconst reply = await completion(\"G4 completion prompt\");\nconst answer = await agent(\"G4 agent prompt\");\nconst handle = await agent({ prompt: \"G4 handle prompt\", handle: true });\nprint(JSON.stringify({ reply, answer, handle }));",
+         "language": "js",
+         "runtime": {
+          "name": "bun",
+          "version": "1.4.4",
+          "path": "<host:bun-path>"
+         },
+         "output": "Note: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n",
+         "status": "detached",
+         "startedAt": "<ts:cells.startedAt:1>"
+        }
+       ]
+      },
+      "isError": false,
+      "timestamp": "<ts:message.timestamp:3>"
+     }
+    },
+    {
+     "type": "message",
+     "id": "<id:14>",
+     "parentId": "<id:13>",
+     "timestamp": "<ts:entries.timestamp:13>",
+     "message": {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "E08-WAITING"
+       }
+      ],
+      "api": "openai-completions",
+      "provider": "mock",
+      "model": "mock-model",
+      "usage": {
+       "input": 1,
+       "output": 1,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 2,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "stop",
+      "timestamp": "<ts:message.timestamp:4>",
+      "responseId": "<id:10>",
+      "rawStopReason": "stop",
+      "thinkingLevel": "off",
+      "timing": {
+       "requestedAt": "<ts:timing.requestedAt:2>",
+       "firstTokenAt": "<ts:timing.firstTokenAt:2>",
+       "lastTokenAt": "<ts:timing.lastTokenAt:2>",
+       "endedAt": "<ts:timing.endedAt:2>"
+      }
+     }
     },
     {
      "type": "custom",
@@ -7901,17 +7703,17 @@
        "budgetSpent": false,
        "deadlineStop": false
       },
-      "runId": "<uuid:3>"
+      "runId": "<uuid:2>"
      },
-     "id": "<id:22>",
-     "parentId": "<id:13>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:4>"
+     "id": "<id:15>",
+     "parentId": "<id:14>",
+     "timestamp": "<ts:entries.timestamp:14>"
     },
     {
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:4>",
+      "id": "<uuid:3>",
       "key": "wake-source:senpi-codemode",
       "source": "senpi-codemode",
       "kind": "background",
@@ -7926,9 +7728,9 @@
       "state": "passive",
       "sessionId": "<uuid:1>"
      },
-     "id": "<id:23>",
-     "parentId": "<id:22>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:5>"
+     "id": "<id:16>",
+     "parentId": "<id:15>",
+     "timestamp": "<ts:entries.timestamp:15>"
     },
     {
      "type": "custom",
@@ -7968,25 +7770,25 @@
        "budgetSpent": false,
        "deadlineStop": false
       },
-      "runId": "<uuid:3>"
+      "runId": "<uuid:2>"
      },
-     "id": "<id:24>",
-     "parentId": "<id:23>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:6>"
+     "id": "<id:17>",
+     "parentId": "<id:16>",
+     "timestamp": "<ts:entries.timestamp:16>"
     },
     {
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:5>",
-      "key": "delivery:senpi-codemode:notification:<uuid:6>",
+      "id": "<uuid:4>",
+      "key": "delivery:senpi-codemode:notification:<uuid:5>",
       "kind": "background",
       "state": "open",
       "sessionId": "<uuid:1>"
      },
-     "id": "<id:25>",
-     "parentId": "<id:24>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:7>"
+     "id": "<id:18>",
+     "parentId": "<id:17>",
+     "timestamp": "<ts:entries.timestamp:17>"
     },
     {
      "type": "custom",
@@ -8008,7 +7810,7 @@
        "children": 0,
        "background": [
         {
-         "source": "delivery:senpi-codemode:notification:<uuid:6>",
+         "source": "delivery:senpi-codemode:notification:<uuid:5>",
          "activeCount": 1
         },
         {
@@ -8030,36 +7832,36 @@
        "budgetSpent": false,
        "deadlineStop": false
       },
-      "runId": "<uuid:3>"
+      "runId": "<uuid:2>"
      },
-     "id": "<id:26>",
-     "parentId": "<id:25>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:8>"
+     "id": "<id:19>",
+     "parentId": "<id:18>",
+     "timestamp": "<ts:entries.timestamp:18>"
     },
     {
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:5>",
-      "key": "delivery:senpi-codemode:notification:<uuid:6>",
+      "id": "<uuid:4>",
+      "key": "delivery:senpi-codemode:notification:<uuid:5>",
       "kind": "background",
       "state": "queued",
-      "ticketId": "<uuid:2>",
+      "ticketId": "<uuid:6>",
       "sessionId": "<uuid:1>"
      },
-     "id": "<id:27>",
-     "parentId": "<id:26>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:9>"
+     "id": "<id:20>",
+     "parentId": "<id:19>",
+     "timestamp": "<ts:entries.timestamp:19>"
     },
     {
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:5>",
-      "key": "delivery:senpi-codemode:notification:<uuid:6>",
+      "id": "<uuid:4>",
+      "key": "delivery:senpi-codemode:notification:<uuid:5>",
       "kind": "background",
       "state": "queued",
-      "ticketId": "<uuid:2>",
+      "ticketId": "<uuid:6>",
       "payload": {
        "message": {
         "customType": "senpi-codemode:notification",
@@ -8070,9 +7872,19 @@
       },
       "sessionId": "<uuid:1>"
      },
-     "id": "<id:15>",
-     "parentId": "<id:27>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:10>"
+     "id": "<id:21>",
+     "parentId": "<id:20>",
+     "timestamp": "<ts:entries.timestamp:20>"
+    },
+    {
+     "type": "custom",
+     "customType": "engine-turn-start",
+     "data": {
+      "customType": "senpi-codemode:notification"
+     },
+     "id": "<id:22>",
+     "parentId": "<id:21>",
+     "timestamp": "<ts:entries.timestamp:21>"
     },
     {
      "type": "custom",
@@ -8094,7 +7906,7 @@
        "children": 0,
        "background": [
         {
-         "source": "delivery:senpi-codemode:notification:<uuid:6>",
+         "source": "delivery:senpi-codemode:notification:<uuid:5>",
          "activeCount": 1
         }
        ],
@@ -8109,19 +7921,31 @@
       "interrupted": false,
       "runId": "<uuid:7>"
      },
-     "id": "<id:17>",
-     "parentId": "<id:14>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:11>"
+     "id": "<id:23>",
+     "parentId": "<id:22>",
+     "timestamp": "<ts:entries.timestamp:22>"
+    },
+    {
+     "type": "custom_message",
+     "customType": "senpi-codemode:notification",
+     "content": "<system-reminder>Detached eval cell <id:9> (js) completed.\nNote: `handle` shadows a kernel or platform global in your later cells; the kernel and imported libraries keep the original. `delete handle` restores it.\n{\"reply\":\"E08-COMPLETION-REPLY\",\"answer\":\"TASK_RESULT:G4 agent prompt\",\"handle\":\"TASK_RESULT:[object Object]\"}\nKernel state updated - variables are available to the next eval cell.</system-reminder>",
+     "display": false,
+     "details": {
+      "ticketId": "<uuid:6>"
+     },
+     "id": "<id:24>",
+     "parentId": "<id:23>",
+     "timestamp": "<ts:entries.timestamp:23>"
     },
     {
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:5>",
-      "key": "delivery:senpi-codemode:notification:<uuid:6>",
+      "id": "<uuid:4>",
+      "key": "delivery:senpi-codemode:notification:<uuid:5>",
       "kind": "background",
       "state": "consumed",
-      "ticketId": "<uuid:2>",
+      "ticketId": "<uuid:6>",
       "payload": {
        "message": {
         "customType": "senpi-codemode:notification",
@@ -8131,22 +7955,77 @@
        "deliverAs": "steer"
       },
       "runId": "<uuid:7>",
-      "transcriptEntryId": "<id:16>",
+      "transcriptEntryId": "<id:24>",
       "sessionId": "<uuid:1>"
      },
-     "id": "<id:19>",
-     "parentId": "<id:16>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:12>"
+     "id": "<id:25>",
+     "parentId": "<id:24>",
+     "timestamp": "<ts:entries.timestamp:24>"
+    },
+    {
+     "type": "message",
+     "id": "<id:26>",
+     "parentId": "<id:25>",
+     "timestamp": "<ts:entries.timestamp:25>",
+     "message": {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "E08-WOKE"
+       }
+      ],
+      "api": "openai-completions",
+      "provider": "mock",
+      "model": "mock-model",
+      "usage": {
+       "input": 1,
+       "output": 1,
+       "cacheRead": 0,
+       "cacheWrite": 0,
+       "totalTokens": 2,
+       "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "total": 0
+       }
+      },
+      "stopReason": "stop",
+      "timestamp": "<ts:message.timestamp:5>",
+      "responseId": "<id:10>",
+      "rawStopReason": "stop",
+      "thinkingLevel": "off",
+      "timing": {
+       "requestedAt": "<ts:timing.requestedAt:3>",
+       "firstTokenAt": "<ts:timing.firstTokenAt:3>",
+       "lastTokenAt": "<ts:timing.lastTokenAt:3>",
+       "endedAt": "<ts:timing.endedAt:3>"
+      }
+     }
+    },
+    {
+     "type": "custom",
+     "customType": "senpi.hooks.stop-state",
+     "data": {
+      "count": 0,
+      "sessionId": "<uuid:1>",
+      "turnKey": "1:<id:26>"
+     },
+     "id": "<id:27>",
+     "parentId": "<id:26>",
+     "timestamp": "<ts:entries.timestamp:26>"
     },
     {
      "type": "custom",
      "customType": "work-custody",
      "data": {
-      "id": "<uuid:5>",
-      "key": "delivery:senpi-codemode:notification:<uuid:6>",
+      "id": "<uuid:4>",
+      "key": "delivery:senpi-codemode:notification:<uuid:5>",
       "kind": "background",
       "state": "settled",
-      "ticketId": "<uuid:2>",
+      "ticketId": "<uuid:6>",
       "payload": {
        "message": {
         "customType": "senpi-codemode:notification",
@@ -8156,12 +8035,12 @@
        "deliverAs": "steer"
       },
       "runId": "<uuid:7>",
-      "transcriptEntryId": "<id:16>",
+      "transcriptEntryId": "<id:24>",
       "sessionId": "<uuid:1>"
      },
      "id": "<id:28>",
-     "parentId": "<id:20>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:13>"
+     "parentId": "<id:27>",
+     "timestamp": "<ts:entries.timestamp:27>"
     },
     {
      "type": "custom",
@@ -8205,7 +8084,7 @@
      },
      "id": "<id:29>",
      "parentId": "<id:28>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:14>"
+     "timestamp": "<ts:entries.timestamp:28>"
     }
    ]
   }

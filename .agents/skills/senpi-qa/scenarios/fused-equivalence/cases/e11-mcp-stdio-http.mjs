@@ -2,8 +2,8 @@
 //
 // Two real MCP servers from the repo's MCP fixtures (packages/coding-agent/test/mcp/fixtures): one over stdio, spawned
 // by the CLI, and one over Streamable HTTP, started by the case. Both are configured in the sandbox's global mcp.json with
-// the default lazy lifecycle, so each connects when its tool is first called (an eager connect would race the
-// session's own startup events); one model turn calls a tool on each. The HTTP server's origin is a run-scoped root like the sandbox.
+// the eager lifecycle, and the case waits until both report connected before the prompt; one model turn calls a tool on
+// each. The HTTP server's origin is a run-scoped root like the sandbox.
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";

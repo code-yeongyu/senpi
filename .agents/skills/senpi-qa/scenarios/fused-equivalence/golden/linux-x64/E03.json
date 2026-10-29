@@ -2685,7 +2685,7 @@
   },
   "O6": [
    {
-    "turn": [
+    "events": [
      {
       "type": "extension_ui_request",
       "id": "<uuid:1>",
@@ -2792,8 +2792,73 @@
       "widgetKey": "pi-websearch"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 1,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:1>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:3>",
+       "parentId": "<id:1>",
+       "timestamp": "<ts:entry.timestamp:2>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:1>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:1>"
+      }
+     },
+     {
       "type": "extension_ui_request",
-      "id": "<uuid:16>",
+      "id": "<uuid:19>",
       "method": "setStatus",
       "statusKey": "todo-waiting"
      },
@@ -2861,9 +2926,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:3>",
-       "parentId": "<id:4>",
-       "timestamp": "<ts:entry.timestamp:2>",
+       "id": "<id:4>",
+       "parentId": "<id:5>",
+       "timestamp": "<ts:entry.timestamp:3>",
        "message": {
         "role": "user",
         "content": [
@@ -2898,48 +2963,70 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:2>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:1>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:2>"
+      }
+     },
+     {
       "type": "message_start",
       "message": {
        "role": "assistant",
        "content": [
         {
          "type": "toolCall",
-         "id": "<id:5>",
+         "id": "<id:6>",
          "name": "eq_write",
          "arguments": {
           "path": "out/w1.txt",
-          "text": "<id:5>\n",
+          "text": "<id:6>\n",
           "barrier": "wave-w1"
          }
         },
         {
          "type": "toolCall",
-         "id": "<id:6>",
+         "id": "<id:7>",
          "name": "eq_write",
          "arguments": {
           "path": "out/w2.txt",
-          "text": "<id:6>\n",
+          "text": "<id:7>\n",
           "barrier": "wave-w2"
          }
         },
         {
          "type": "toolCall",
-         "id": "<id:7>",
+         "id": "<id:8>",
          "name": "eq_seq",
          "arguments": {
           "path": "out/s3.txt",
-          "text": "<id:7>\n",
-          "barrier": "wave-s3"
-         }
-        },
-        {
-         "type": "toolCall",
-         "id": "<id:8>",
-         "name": "eq_write",
-         "arguments": {
-          "path": "out/w4.txt",
           "text": "<id:8>\n",
-          "barrier": "wave-w4"
+          "barrier": "wave-s3"
          }
         },
         {
@@ -2947,11 +3034,21 @@
          "id": "<id:9>",
          "name": "eq_write",
          "arguments": {
-          "path": "out/w5.txt",
+          "path": "out/w4.txt",
           "text": "<id:9>\n",
+          "barrier": "wave-w4"
+         }
+        },
+        {
+         "type": "toolCall",
+         "id": "<id:10>",
+         "name": "eq_write",
+         "arguments": {
+          "path": "out/w5.txt",
+          "text": "<id:10>\n",
           "barrier": "wave-w5"
          },
-         "partialArgs": "{\"path\":\"out/w5.txt\",\"text\":\"<id:9>\\n\",\"barrier\":\"wave-w5\"}",
+         "partialArgs": "{\"path\":\"out/w5.txt\",\"text\":\"<id:10>\\n\",\"barrier\":\"wave-w5\"}",
          "streamIndex": 4
         }
        ],
@@ -2974,7 +3071,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:8>",
-       "responseId": "<id:10>"
+       "responseId": "<id:11>"
       },
       "streaming": true
      },
@@ -2997,7 +3094,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_start",
        "contentIndex": 0,
-       "id": "<id:5>",
+       "id": "<id:6>",
        "toolName": "eq_write"
       },
       "resolvedToolName": "eq_write"
@@ -3021,7 +3118,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_delta",
        "contentIndex": 0,
-       "delta": "{\"path\":\"out/w1.txt\",\"text\":\"<id:5>\\n\",\"barrier\":\"wave-w1\"}"
+       "delta": "{\"path\":\"out/w1.txt\",\"text\":\"<id:6>\\n\",\"barrier\":\"wave-w1\"}"
       }
      },
      {
@@ -3045,11 +3142,11 @@
        "contentIndex": 0,
        "toolCall": {
         "type": "toolCall",
-        "id": "<id:5>",
+        "id": "<id:6>",
         "name": "eq_write",
         "arguments": {
          "path": "out/w1.txt",
-         "text": "<id:5>\n",
+         "text": "<id:6>\n",
          "barrier": "wave-w1"
         }
        }
@@ -3075,7 +3172,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_start",
        "contentIndex": 1,
-       "id": "<id:6>",
+       "id": "<id:7>",
        "toolName": "eq_write"
       },
       "resolvedToolName": "eq_write"
@@ -3099,7 +3196,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_delta",
        "contentIndex": 1,
-       "delta": "{\"path\":\"out/w2.txt\",\"text\":\"<id:6>\\n\",\"barrier\":\"wave-w2\"}"
+       "delta": "{\"path\":\"out/w2.txt\",\"text\":\"<id:7>\\n\",\"barrier\":\"wave-w2\"}"
       }
      },
      {
@@ -3123,11 +3220,11 @@
        "contentIndex": 1,
        "toolCall": {
         "type": "toolCall",
-        "id": "<id:6>",
+        "id": "<id:7>",
         "name": "eq_write",
         "arguments": {
          "path": "out/w2.txt",
-         "text": "<id:6>\n",
+         "text": "<id:7>\n",
          "barrier": "wave-w2"
         }
        }
@@ -3153,7 +3250,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_start",
        "contentIndex": 2,
-       "id": "<id:7>",
+       "id": "<id:8>",
        "toolName": "eq_seq"
       },
       "resolvedToolName": "eq_seq"
@@ -3177,7 +3274,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_delta",
        "contentIndex": 2,
-       "delta": "{\"path\":\"out/s3.txt\",\"text\":\"<id:7>\\n\",\"barrier\":\"wave-s3\"}"
+       "delta": "{\"path\":\"out/s3.txt\",\"text\":\"<id:8>\\n\",\"barrier\":\"wave-s3\"}"
       }
      },
      {
@@ -3201,11 +3298,11 @@
        "contentIndex": 2,
        "toolCall": {
         "type": "toolCall",
-        "id": "<id:7>",
+        "id": "<id:8>",
         "name": "eq_seq",
         "arguments": {
          "path": "out/s3.txt",
-         "text": "<id:7>\n",
+         "text": "<id:8>\n",
          "barrier": "wave-s3"
         }
        }
@@ -3231,7 +3328,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_start",
        "contentIndex": 3,
-       "id": "<id:8>",
+       "id": "<id:9>",
        "toolName": "eq_write"
       },
       "resolvedToolName": "eq_write"
@@ -3255,7 +3352,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_delta",
        "contentIndex": 3,
-       "delta": "{\"path\":\"out/w4.txt\",\"text\":\"<id:8>\\n\",\"barrier\":\"wave-w4\"}"
+       "delta": "{\"path\":\"out/w4.txt\",\"text\":\"<id:9>\\n\",\"barrier\":\"wave-w4\"}"
       }
      },
      {
@@ -3279,11 +3376,11 @@
        "contentIndex": 3,
        "toolCall": {
         "type": "toolCall",
-        "id": "<id:8>",
+        "id": "<id:9>",
         "name": "eq_write",
         "arguments": {
          "path": "out/w4.txt",
-         "text": "<id:8>\n",
+         "text": "<id:9>\n",
          "barrier": "wave-w4"
         }
        }
@@ -3309,7 +3406,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_start",
        "contentIndex": 4,
-       "id": "<id:9>",
+       "id": "<id:10>",
        "toolName": "eq_write"
       },
       "resolvedToolName": "eq_write"
@@ -3333,7 +3430,7 @@
       "assistantMessageEvent": {
        "type": "toolcall_delta",
        "contentIndex": 4,
-       "delta": "{\"path\":\"out/w5.txt\",\"text\":\"<id:9>\\n\",\"barrier\":\"wave-w5\"}"
+       "delta": "{\"path\":\"out/w5.txt\",\"text\":\"<id:10>\\n\",\"barrier\":\"wave-w5\"}"
       }
      },
      {
@@ -3357,16 +3454,79 @@
        "contentIndex": 4,
        "toolCall": {
         "type": "toolCall",
-        "id": "<id:9>",
+        "id": "<id:10>",
         "name": "eq_write",
         "arguments": {
          "path": "out/w5.txt",
-         "text": "<id:9>\n",
+         "text": "<id:10>\n",
          "barrier": "wave-w5"
         }
        }
       },
       "resolvedToolName": "eq_write"
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:3>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 2
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:3>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 3
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_write",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:2>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
+      }
      },
      {
       "type": "message_end",
@@ -3375,42 +3535,32 @@
        "content": [
         {
          "type": "toolCall",
-         "id": "<id:5>",
+         "id": "<id:6>",
          "name": "eq_write",
          "arguments": {
           "path": "out/w1.txt",
-          "text": "<id:5>\n",
+          "text": "<id:6>\n",
           "barrier": "wave-w1"
          }
         },
         {
          "type": "toolCall",
-         "id": "<id:6>",
+         "id": "<id:7>",
          "name": "eq_write",
          "arguments": {
           "path": "out/w2.txt",
-          "text": "<id:6>\n",
+          "text": "<id:7>\n",
           "barrier": "wave-w2"
          }
         },
         {
          "type": "toolCall",
-         "id": "<id:7>",
+         "id": "<id:8>",
          "name": "eq_seq",
          "arguments": {
           "path": "out/s3.txt",
-          "text": "<id:7>\n",
-          "barrier": "wave-s3"
-         }
-        },
-        {
-         "type": "toolCall",
-         "id": "<id:8>",
-         "name": "eq_write",
-         "arguments": {
-          "path": "out/w4.txt",
           "text": "<id:8>\n",
-          "barrier": "wave-w4"
+          "barrier": "wave-s3"
          }
         },
         {
@@ -3418,8 +3568,18 @@
          "id": "<id:9>",
          "name": "eq_write",
          "arguments": {
-          "path": "out/w5.txt",
+          "path": "out/w4.txt",
           "text": "<id:9>\n",
+          "barrier": "wave-w4"
+         }
+        },
+        {
+         "type": "toolCall",
+         "id": "<id:10>",
+         "name": "eq_write",
+         "arguments": {
+          "path": "out/w5.txt",
+          "text": "<id:10>\n",
           "barrier": "wave-w5"
          }
         }
@@ -3443,7 +3603,7 @@
        },
        "stopReason": "toolUse",
        "timestamp": "<ts:message.timestamp:9>",
-       "responseId": "<id:10>",
+       "responseId": "<id:11>",
        "rawStopReason": "tool_calls",
        "thinkingLevel": "off",
        "timing": {
@@ -3458,50 +3618,40 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:11>",
-       "parentId": "<id:12>",
-       "timestamp": "<ts:entry.timestamp:3>",
+       "id": "<id:12>",
+       "parentId": "<id:13>",
+       "timestamp": "<ts:entry.timestamp:4>",
        "message": {
         "role": "assistant",
         "content": [
          {
           "type": "toolCall",
-          "id": "<id:5>",
+          "id": "<id:6>",
           "name": "eq_write",
           "arguments": {
            "path": "out/w1.txt",
-           "text": "<id:5>\n",
+           "text": "<id:6>\n",
            "barrier": "wave-w1"
           }
          },
          {
           "type": "toolCall",
-          "id": "<id:6>",
+          "id": "<id:7>",
           "name": "eq_write",
           "arguments": {
            "path": "out/w2.txt",
-           "text": "<id:6>\n",
+           "text": "<id:7>\n",
            "barrier": "wave-w2"
           }
          },
          {
           "type": "toolCall",
-          "id": "<id:7>",
+          "id": "<id:8>",
           "name": "eq_seq",
           "arguments": {
            "path": "out/s3.txt",
-           "text": "<id:7>\n",
-           "barrier": "wave-s3"
-          }
-         },
-         {
-          "type": "toolCall",
-          "id": "<id:8>",
-          "name": "eq_write",
-          "arguments": {
-           "path": "out/w4.txt",
            "text": "<id:8>\n",
-           "barrier": "wave-w4"
+           "barrier": "wave-s3"
           }
          },
          {
@@ -3509,8 +3659,18 @@
           "id": "<id:9>",
           "name": "eq_write",
           "arguments": {
-           "path": "out/w5.txt",
+           "path": "out/w4.txt",
            "text": "<id:9>\n",
+           "barrier": "wave-w4"
+          }
+         },
+         {
+          "type": "toolCall",
+          "id": "<id:10>",
+          "name": "eq_write",
+          "arguments": {
+           "path": "out/w5.txt",
+           "text": "<id:10>\n",
            "barrier": "wave-w5"
           }
          }
@@ -3534,7 +3694,7 @@
         },
         "stopReason": "toolUse",
         "timestamp": "<ts:message.timestamp:10>",
-        "responseId": "<id:10>",
+        "responseId": "<id:11>",
         "rawStopReason": "tool_calls",
         "thinkingLevel": "off",
         "timing": {
@@ -3548,1161 +3708,1336 @@
      },
      {
       "type": "tool_execution_start",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "toolName": "eq_write",
       "args": {
        "path": "out/w1.txt",
-       "text": "<id:5>\n",
+       "text": "<id:6>\n",
        "barrier": "wave-w1"
       }
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:0",
+      "hookRunId": "<id:6>:PreToolUse:0",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:1>",
+      "startedAt": "<ts:events.startedAt:1>",
       "phase": "start",
       "statusMessage": "running loop-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:0",
+      "hookRunId": "<id:6>:PreToolUse:0",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:2>",
+      "startedAt": "<ts:events.startedAt:2>",
       "phase": "end",
       "statusMessage": "running loop-guard",
-      "completedAt": "<ts:turn.completedAt:1>",
+      "completedAt": "<ts:events.completedAt:1>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:1",
+      "hookRunId": "<id:6>:PreToolUse:1",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:3>",
+      "startedAt": "<ts:events.startedAt:3>",
       "phase": "start",
       "statusMessage": "running moved-path-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:1",
+      "hookRunId": "<id:6>:PreToolUse:1",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:4>",
+      "startedAt": "<ts:events.startedAt:4>",
       "phase": "end",
       "statusMessage": "running moved-path-guard",
-      "completedAt": "<ts:turn.completedAt:2>",
+      "completedAt": "<ts:events.completedAt:2>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:2",
+      "hookRunId": "<id:6>:PreToolUse:2",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:5>",
+      "startedAt": "<ts:events.startedAt:5>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:2",
+      "hookRunId": "<id:6>:PreToolUse:2",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:6>",
+      "startedAt": "<ts:events.startedAt:6>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:3>",
+      "completedAt": "<ts:events.completedAt:3>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:3",
+      "hookRunId": "<id:6>:PreToolUse:3",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:7>",
+      "startedAt": "<ts:events.startedAt:7>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:3",
+      "hookRunId": "<id:6>:PreToolUse:3",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:8>",
+      "startedAt": "<ts:events.startedAt:8>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:4>",
+      "completedAt": "<ts:events.completedAt:4>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:4",
+      "hookRunId": "<id:6>:PreToolUse:4",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:9>",
+      "startedAt": "<ts:events.startedAt:9>",
       "phase": "start",
       "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:4",
+      "hookRunId": "<id:6>:PreToolUse:4",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:10>",
+      "startedAt": "<ts:events.startedAt:10>",
       "phase": "end",
       "statusMessage": "applying bash timeout",
-      "completedAt": "<ts:turn.completedAt:5>",
+      "completedAt": "<ts:events.completedAt:5>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:5",
+      "hookRunId": "<id:6>:PreToolUse:5",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:11>",
+      "startedAt": "<ts:events.startedAt:11>",
       "phase": "start",
       "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:5",
+      "hookRunId": "<id:6>:PreToolUse:5",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:12>",
+      "startedAt": "<ts:events.startedAt:12>",
       "phase": "end",
       "statusMessage": "running terminal",
-      "completedAt": "<ts:turn.completedAt:6>",
+      "completedAt": "<ts:events.completedAt:6>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:6",
+      "hookRunId": "<id:6>:PreToolUse:6",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:13>",
+      "startedAt": "<ts:events.startedAt:13>",
       "phase": "start",
       "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:6",
+      "hookRunId": "<id:6>:PreToolUse:6",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:14>",
+      "startedAt": "<ts:events.startedAt:14>",
       "phase": "end",
       "statusMessage": "checking compaction state",
-      "completedAt": "<ts:turn.completedAt:7>",
+      "completedAt": "<ts:events.completedAt:7>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:7",
+      "hookRunId": "<id:6>:PreToolUse:7",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:15>",
+      "startedAt": "<ts:events.startedAt:15>",
       "phase": "start",
       "statusMessage": "running mcp"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PreToolUse:7",
+      "hookRunId": "<id:6>:PreToolUse:7",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:16>",
+      "startedAt": "<ts:events.startedAt:16>",
       "phase": "end",
       "statusMessage": "running mcp",
-      "completedAt": "<ts:turn.completedAt:8>",
+      "completedAt": "<ts:events.completedAt:8>",
       "status": "completed"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:5>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 4
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_write",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:3>",
+        "outstanding": 2
+       },
+       "observedAt": "<ts:lifecycle.observedAt:5>"
+      }
+     },
+     {
       "type": "tool_execution_start",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "toolName": "eq_write",
       "args": {
        "path": "out/w2.txt",
-       "text": "<id:6>\n",
+       "text": "<id:7>\n",
        "barrier": "wave-w2"
       }
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:8",
+      "hookRunId": "<id:7>:PreToolUse:8",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:17>",
+      "startedAt": "<ts:events.startedAt:17>",
       "phase": "start",
       "statusMessage": "running loop-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:8",
+      "hookRunId": "<id:7>:PreToolUse:8",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:18>",
+      "startedAt": "<ts:events.startedAt:18>",
       "phase": "end",
       "statusMessage": "running loop-guard",
-      "completedAt": "<ts:turn.completedAt:9>",
+      "completedAt": "<ts:events.completedAt:9>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:9",
+      "hookRunId": "<id:7>:PreToolUse:9",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:19>",
+      "startedAt": "<ts:events.startedAt:19>",
       "phase": "start",
       "statusMessage": "running moved-path-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:9",
+      "hookRunId": "<id:7>:PreToolUse:9",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:20>",
+      "startedAt": "<ts:events.startedAt:20>",
       "phase": "end",
       "statusMessage": "running moved-path-guard",
-      "completedAt": "<ts:turn.completedAt:10>",
+      "completedAt": "<ts:events.completedAt:10>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:10",
+      "hookRunId": "<id:7>:PreToolUse:10",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:21>",
+      "startedAt": "<ts:events.startedAt:21>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:10",
+      "hookRunId": "<id:7>:PreToolUse:10",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:22>",
+      "startedAt": "<ts:events.startedAt:22>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:11>",
+      "completedAt": "<ts:events.completedAt:11>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:11",
+      "hookRunId": "<id:7>:PreToolUse:11",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:23>",
+      "startedAt": "<ts:events.startedAt:23>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:11",
+      "hookRunId": "<id:7>:PreToolUse:11",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:24>",
+      "startedAt": "<ts:events.startedAt:24>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:12>",
+      "completedAt": "<ts:events.completedAt:12>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:12",
+      "hookRunId": "<id:7>:PreToolUse:12",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:25>",
+      "startedAt": "<ts:events.startedAt:25>",
       "phase": "start",
       "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:12",
+      "hookRunId": "<id:7>:PreToolUse:12",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:26>",
+      "startedAt": "<ts:events.startedAt:26>",
       "phase": "end",
       "statusMessage": "applying bash timeout",
-      "completedAt": "<ts:turn.completedAt:13>",
+      "completedAt": "<ts:events.completedAt:13>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:13",
+      "hookRunId": "<id:7>:PreToolUse:13",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:27>",
+      "startedAt": "<ts:events.startedAt:27>",
       "phase": "start",
       "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:13",
+      "hookRunId": "<id:7>:PreToolUse:13",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:28>",
+      "startedAt": "<ts:events.startedAt:28>",
       "phase": "end",
       "statusMessage": "running terminal",
-      "completedAt": "<ts:turn.completedAt:14>",
+      "completedAt": "<ts:events.completedAt:14>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:14",
+      "hookRunId": "<id:7>:PreToolUse:14",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:29>",
+      "startedAt": "<ts:events.startedAt:29>",
       "phase": "start",
       "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:14",
+      "hookRunId": "<id:7>:PreToolUse:14",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:30>",
+      "startedAt": "<ts:events.startedAt:30>",
       "phase": "end",
       "statusMessage": "checking compaction state",
-      "completedAt": "<ts:turn.completedAt:15>",
+      "completedAt": "<ts:events.completedAt:15>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:15",
+      "hookRunId": "<id:7>:PreToolUse:15",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:31>",
+      "startedAt": "<ts:events.startedAt:31>",
       "phase": "start",
       "statusMessage": "running mcp"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PreToolUse:15",
+      "hookRunId": "<id:7>:PreToolUse:15",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:32>",
+      "startedAt": "<ts:events.startedAt:32>",
       "phase": "end",
       "statusMessage": "running mcp",
-      "completedAt": "<ts:turn.completedAt:16>",
+      "completedAt": "<ts:events.completedAt:16>",
       "status": "completed"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:6>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 5
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_write",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:4>",
+        "outstanding": 3
+       },
+       "observedAt": "<ts:lifecycle.observedAt:6>"
+      }
+     },
+     {
       "type": "tool_execution_start",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "toolName": "eq_seq",
       "args": {
        "path": "out/s3.txt",
-       "text": "<id:7>\n",
+       "text": "<id:8>\n",
        "barrier": "wave-s3"
       }
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:16",
+      "hookRunId": "<id:8>:PreToolUse:16",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:33>",
+      "startedAt": "<ts:events.startedAt:33>",
       "phase": "start",
       "statusMessage": "running loop-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:16",
+      "hookRunId": "<id:8>:PreToolUse:16",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:34>",
+      "startedAt": "<ts:events.startedAt:34>",
       "phase": "end",
       "statusMessage": "running loop-guard",
-      "completedAt": "<ts:turn.completedAt:17>",
+      "completedAt": "<ts:events.completedAt:17>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:17",
+      "hookRunId": "<id:8>:PreToolUse:17",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:35>",
+      "startedAt": "<ts:events.startedAt:35>",
       "phase": "start",
       "statusMessage": "running moved-path-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:17",
+      "hookRunId": "<id:8>:PreToolUse:17",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:36>",
+      "startedAt": "<ts:events.startedAt:36>",
       "phase": "end",
       "statusMessage": "running moved-path-guard",
-      "completedAt": "<ts:turn.completedAt:18>",
+      "completedAt": "<ts:events.completedAt:18>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:18",
+      "hookRunId": "<id:8>:PreToolUse:18",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:37>",
+      "startedAt": "<ts:events.startedAt:37>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:18",
+      "hookRunId": "<id:8>:PreToolUse:18",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:38>",
+      "startedAt": "<ts:events.startedAt:38>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:19>",
+      "completedAt": "<ts:events.completedAt:19>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:19",
+      "hookRunId": "<id:8>:PreToolUse:19",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:39>",
+      "startedAt": "<ts:events.startedAt:39>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:19",
+      "hookRunId": "<id:8>:PreToolUse:19",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:40>",
+      "startedAt": "<ts:events.startedAt:40>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:20>",
+      "completedAt": "<ts:events.completedAt:20>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:20",
+      "hookRunId": "<id:8>:PreToolUse:20",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:41>",
+      "startedAt": "<ts:events.startedAt:41>",
       "phase": "start",
       "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:20",
+      "hookRunId": "<id:8>:PreToolUse:20",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:42>",
+      "startedAt": "<ts:events.startedAt:42>",
       "phase": "end",
       "statusMessage": "applying bash timeout",
-      "completedAt": "<ts:turn.completedAt:21>",
+      "completedAt": "<ts:events.completedAt:21>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:21",
+      "hookRunId": "<id:8>:PreToolUse:21",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:43>",
+      "startedAt": "<ts:events.startedAt:43>",
       "phase": "start",
       "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:21",
+      "hookRunId": "<id:8>:PreToolUse:21",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:44>",
+      "startedAt": "<ts:events.startedAt:44>",
       "phase": "end",
       "statusMessage": "running terminal",
-      "completedAt": "<ts:turn.completedAt:22>",
+      "completedAt": "<ts:events.completedAt:22>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:22",
+      "hookRunId": "<id:8>:PreToolUse:22",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:45>",
+      "startedAt": "<ts:events.startedAt:45>",
       "phase": "start",
       "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:22",
+      "hookRunId": "<id:8>:PreToolUse:22",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:46>",
+      "startedAt": "<ts:events.startedAt:46>",
       "phase": "end",
       "statusMessage": "checking compaction state",
-      "completedAt": "<ts:turn.completedAt:23>",
+      "completedAt": "<ts:events.completedAt:23>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:23",
+      "hookRunId": "<id:8>:PreToolUse:23",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:47>",
+      "startedAt": "<ts:events.startedAt:47>",
       "phase": "start",
       "statusMessage": "running mcp"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PreToolUse:23",
+      "hookRunId": "<id:8>:PreToolUse:23",
       "hookName": "PreToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:48>",
+      "startedAt": "<ts:events.startedAt:48>",
       "phase": "end",
       "statusMessage": "running mcp",
-      "completedAt": "<ts:turn.completedAt:24>",
+      "completedAt": "<ts:events.completedAt:24>",
       "status": "completed"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:7>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 6
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_write",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:5>",
+        "outstanding": 4
+       },
+       "observedAt": "<ts:lifecycle.observedAt:7>"
+      }
+     },
+     {
       "type": "tool_execution_start",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "toolName": "eq_write",
       "args": {
        "path": "out/w4.txt",
-       "text": "<id:8>\n",
+       "text": "<id:9>\n",
        "barrier": "wave-w4"
       }
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:24",
+      "hookRunId": "<id:9>:PreToolUse:24",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:49>",
+      "startedAt": "<ts:events.startedAt:49>",
       "phase": "start",
       "statusMessage": "running loop-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:24",
+      "hookRunId": "<id:9>:PreToolUse:24",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:50>",
+      "startedAt": "<ts:events.startedAt:50>",
       "phase": "end",
       "statusMessage": "running loop-guard",
-      "completedAt": "<ts:turn.completedAt:25>",
+      "completedAt": "<ts:events.completedAt:25>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:25",
+      "hookRunId": "<id:9>:PreToolUse:25",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:51>",
+      "startedAt": "<ts:events.startedAt:51>",
       "phase": "start",
       "statusMessage": "running moved-path-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:25",
+      "hookRunId": "<id:9>:PreToolUse:25",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:52>",
+      "startedAt": "<ts:events.startedAt:52>",
       "phase": "end",
       "statusMessage": "running moved-path-guard",
-      "completedAt": "<ts:turn.completedAt:26>",
+      "completedAt": "<ts:events.completedAt:26>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:26",
+      "hookRunId": "<id:9>:PreToolUse:26",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:53>",
+      "startedAt": "<ts:events.startedAt:53>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:26",
+      "hookRunId": "<id:9>:PreToolUse:26",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:54>",
+      "startedAt": "<ts:events.startedAt:54>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:27>",
+      "completedAt": "<ts:events.completedAt:27>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:27",
+      "hookRunId": "<id:9>:PreToolUse:27",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:55>",
+      "startedAt": "<ts:events.startedAt:55>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:27",
+      "hookRunId": "<id:9>:PreToolUse:27",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:56>",
+      "startedAt": "<ts:events.startedAt:56>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:28>",
+      "completedAt": "<ts:events.completedAt:28>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:28",
+      "hookRunId": "<id:9>:PreToolUse:28",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:57>",
+      "startedAt": "<ts:events.startedAt:57>",
       "phase": "start",
       "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:28",
+      "hookRunId": "<id:9>:PreToolUse:28",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:58>",
+      "startedAt": "<ts:events.startedAt:58>",
       "phase": "end",
       "statusMessage": "applying bash timeout",
-      "completedAt": "<ts:turn.completedAt:29>",
+      "completedAt": "<ts:events.completedAt:29>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:29",
+      "hookRunId": "<id:9>:PreToolUse:29",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:59>",
+      "startedAt": "<ts:events.startedAt:59>",
       "phase": "start",
       "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:29",
+      "hookRunId": "<id:9>:PreToolUse:29",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:60>",
+      "startedAt": "<ts:events.startedAt:60>",
       "phase": "end",
       "statusMessage": "running terminal",
-      "completedAt": "<ts:turn.completedAt:30>",
+      "completedAt": "<ts:events.completedAt:30>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:30",
+      "hookRunId": "<id:9>:PreToolUse:30",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:61>",
+      "startedAt": "<ts:events.startedAt:61>",
       "phase": "start",
       "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:30",
+      "hookRunId": "<id:9>:PreToolUse:30",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:62>",
+      "startedAt": "<ts:events.startedAt:62>",
       "phase": "end",
       "statusMessage": "checking compaction state",
-      "completedAt": "<ts:turn.completedAt:31>",
+      "completedAt": "<ts:events.completedAt:31>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:31",
+      "hookRunId": "<id:9>:PreToolUse:31",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:63>",
+      "startedAt": "<ts:events.startedAt:63>",
       "phase": "start",
       "statusMessage": "running mcp"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PreToolUse:31",
+      "hookRunId": "<id:9>:PreToolUse:31",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:64>",
+      "startedAt": "<ts:events.startedAt:64>",
       "phase": "end",
       "statusMessage": "running mcp",
-      "completedAt": "<ts:turn.completedAt:32>",
+      "completedAt": "<ts:events.completedAt:32>",
       "status": "completed"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:8>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 7
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_write",
+        "toolCallId": "<id:6>",
+        "since": "<ts:activity.since:6>",
+        "outstanding": 5
+       },
+       "observedAt": "<ts:lifecycle.observedAt:8>"
+      }
+     },
+     {
       "type": "tool_execution_start",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "toolName": "eq_write",
       "args": {
        "path": "out/w5.txt",
-       "text": "<id:9>\n",
+       "text": "<id:10>\n",
        "barrier": "wave-w5"
       }
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:32",
+      "hookRunId": "<id:10>:PreToolUse:32",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:65>",
+      "startedAt": "<ts:events.startedAt:65>",
       "phase": "start",
       "statusMessage": "running loop-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:32",
+      "hookRunId": "<id:10>:PreToolUse:32",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:loop-guard>",
-      "startedAt": "<ts:turn.startedAt:66>",
+      "startedAt": "<ts:events.startedAt:66>",
       "phase": "end",
       "statusMessage": "running loop-guard",
-      "completedAt": "<ts:turn.completedAt:33>",
+      "completedAt": "<ts:events.completedAt:33>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:33",
+      "hookRunId": "<id:10>:PreToolUse:33",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:67>",
+      "startedAt": "<ts:events.startedAt:67>",
       "phase": "start",
       "statusMessage": "running moved-path-guard"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:33",
+      "hookRunId": "<id:10>:PreToolUse:33",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:moved-path-guard>",
-      "startedAt": "<ts:turn.startedAt:68>",
+      "startedAt": "<ts:events.startedAt:68>",
       "phase": "end",
       "statusMessage": "running moved-path-guard",
-      "completedAt": "<ts:turn.completedAt:34>",
+      "completedAt": "<ts:events.completedAt:34>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:34",
+      "hookRunId": "<id:10>:PreToolUse:34",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:69>",
+      "startedAt": "<ts:events.startedAt:69>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:34",
+      "hookRunId": "<id:10>:PreToolUse:34",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:70>",
+      "startedAt": "<ts:events.startedAt:70>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:35>",
+      "completedAt": "<ts:events.completedAt:35>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:35",
+      "hookRunId": "<id:10>:PreToolUse:35",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:71>",
+      "startedAt": "<ts:events.startedAt:71>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:35",
+      "hookRunId": "<id:10>:PreToolUse:35",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:72>",
+      "startedAt": "<ts:events.startedAt:72>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:36>",
+      "completedAt": "<ts:events.completedAt:36>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:36",
+      "hookRunId": "<id:10>:PreToolUse:36",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:73>",
+      "startedAt": "<ts:events.startedAt:73>",
       "phase": "start",
       "statusMessage": "applying bash timeout"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:36",
+      "hookRunId": "<id:10>:PreToolUse:36",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:bash-timeout>",
-      "startedAt": "<ts:turn.startedAt:74>",
+      "startedAt": "<ts:events.startedAt:74>",
       "phase": "end",
       "statusMessage": "applying bash timeout",
-      "completedAt": "<ts:turn.completedAt:37>",
+      "completedAt": "<ts:events.completedAt:37>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:37",
+      "hookRunId": "<id:10>:PreToolUse:37",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:75>",
+      "startedAt": "<ts:events.startedAt:75>",
       "phase": "start",
       "statusMessage": "running terminal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:37",
+      "hookRunId": "<id:10>:PreToolUse:37",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:terminal>",
-      "startedAt": "<ts:turn.startedAt:76>",
+      "startedAt": "<ts:events.startedAt:76>",
       "phase": "end",
       "statusMessage": "running terminal",
-      "completedAt": "<ts:turn.completedAt:38>",
+      "completedAt": "<ts:events.completedAt:38>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:38",
+      "hookRunId": "<id:10>:PreToolUse:38",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:77>",
+      "startedAt": "<ts:events.startedAt:77>",
       "phase": "start",
       "statusMessage": "checking compaction state"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:38",
+      "hookRunId": "<id:10>:PreToolUse:38",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:compaction>",
-      "startedAt": "<ts:turn.startedAt:78>",
+      "startedAt": "<ts:events.startedAt:78>",
       "phase": "end",
       "statusMessage": "checking compaction state",
-      "completedAt": "<ts:turn.completedAt:39>",
+      "completedAt": "<ts:events.completedAt:39>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:39",
+      "hookRunId": "<id:10>:PreToolUse:39",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:79>",
+      "startedAt": "<ts:events.startedAt:79>",
       "phase": "start",
       "statusMessage": "running mcp"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PreToolUse:39",
+      "hookRunId": "<id:10>:PreToolUse:39",
       "hookName": "PreToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:mcp>",
-      "startedAt": "<ts:turn.startedAt:80>",
+      "startedAt": "<ts:events.startedAt:80>",
       "phase": "end",
       "statusMessage": "running mcp",
-      "completedAt": "<ts:turn.completedAt:40>",
+      "completedAt": "<ts:events.completedAt:40>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:40",
+      "hookRunId": "<id:6>:PostToolUse:40",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:81>",
+      "startedAt": "<ts:events.startedAt:81>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:40",
+      "hookRunId": "<id:6>:PostToolUse:40",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:82>",
+      "startedAt": "<ts:events.startedAt:82>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:41>",
+      "completedAt": "<ts:events.completedAt:41>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:41",
+      "hookRunId": "<id:6>:PostToolUse:41",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:83>",
+      "startedAt": "<ts:events.startedAt:83>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:41",
+      "hookRunId": "<id:6>:PostToolUse:41",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:84>",
+      "startedAt": "<ts:events.startedAt:84>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:42>",
+      "completedAt": "<ts:events.completedAt:42>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:42",
+      "hookRunId": "<id:6>:PostToolUse:42",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:85>",
+      "startedAt": "<ts:events.startedAt:85>",
       "phase": "start",
       "statusMessage": "running gpt-apply-patch"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:42",
+      "hookRunId": "<id:6>:PostToolUse:42",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:86>",
+      "startedAt": "<ts:events.startedAt:86>",
       "phase": "end",
       "statusMessage": "running gpt-apply-patch",
-      "completedAt": "<ts:turn.completedAt:43>",
+      "completedAt": "<ts:events.completedAt:43>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:43",
+      "hookRunId": "<id:6>:PostToolUse:43",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:87>",
+      "startedAt": "<ts:events.startedAt:87>",
       "phase": "start",
       "statusMessage": "running nested-agents-md"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:43",
+      "hookRunId": "<id:6>:PostToolUse:43",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:88>",
+      "startedAt": "<ts:events.startedAt:88>",
       "phase": "end",
       "statusMessage": "running nested-agents-md",
-      "completedAt": "<ts:turn.completedAt:44>",
+      "completedAt": "<ts:events.completedAt:44>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:44",
+      "hookRunId": "<id:6>:PostToolUse:44",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:89>",
+      "startedAt": "<ts:events.startedAt:89>",
       "phase": "start",
       "statusMessage": "running rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:44",
+      "hookRunId": "<id:6>:PostToolUse:44",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:90>",
+      "startedAt": "<ts:events.startedAt:90>",
       "phase": "end",
       "statusMessage": "running rules",
-      "completedAt": "<ts:turn.completedAt:45>",
+      "completedAt": "<ts:events.completedAt:45>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:45",
+      "hookRunId": "<id:6>:PostToolUse:45",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:91>",
+      "startedAt": "<ts:events.startedAt:91>",
       "phase": "start",
       "statusMessage": "running goal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:5>:PostToolUse:45",
+      "hookRunId": "<id:6>:PostToolUse:45",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:92>",
+      "startedAt": "<ts:events.startedAt:92>",
       "phase": "end",
       "statusMessage": "running goal",
-      "completedAt": "<ts:turn.completedAt:46>",
+      "completedAt": "<ts:events.completedAt:46>",
       "status": "completed"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:9>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 8
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_write",
+        "toolCallId": "<id:7>",
+        "since": "<ts:activity.since:7>",
+        "outstanding": 4
+       },
+       "observedAt": "<ts:lifecycle.observedAt:9>"
+      }
+     },
+     {
       "type": "tool_execution_end",
-      "toolCallId": "<id:5>",
+      "toolCallId": "<id:6>",
       "toolName": "eq_write",
       "result": {
        "content": [
@@ -4717,151 +5052,186 @@
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:46",
+      "hookRunId": "<id:7>:PostToolUse:46",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:93>",
+      "startedAt": "<ts:events.startedAt:93>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:46",
+      "hookRunId": "<id:7>:PostToolUse:46",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:94>",
+      "startedAt": "<ts:events.startedAt:94>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:47>",
+      "completedAt": "<ts:events.completedAt:47>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:47",
+      "hookRunId": "<id:7>:PostToolUse:47",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:95>",
+      "startedAt": "<ts:events.startedAt:95>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:47",
+      "hookRunId": "<id:7>:PostToolUse:47",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:96>",
+      "startedAt": "<ts:events.startedAt:96>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:48>",
+      "completedAt": "<ts:events.completedAt:48>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:48",
+      "hookRunId": "<id:7>:PostToolUse:48",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:97>",
+      "startedAt": "<ts:events.startedAt:97>",
       "phase": "start",
       "statusMessage": "running gpt-apply-patch"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:48",
+      "hookRunId": "<id:7>:PostToolUse:48",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:98>",
+      "startedAt": "<ts:events.startedAt:98>",
       "phase": "end",
       "statusMessage": "running gpt-apply-patch",
-      "completedAt": "<ts:turn.completedAt:49>",
+      "completedAt": "<ts:events.completedAt:49>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:49",
+      "hookRunId": "<id:7>:PostToolUse:49",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:99>",
+      "startedAt": "<ts:events.startedAt:99>",
       "phase": "start",
       "statusMessage": "running nested-agents-md"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:49",
+      "hookRunId": "<id:7>:PostToolUse:49",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:100>",
+      "startedAt": "<ts:events.startedAt:100>",
       "phase": "end",
       "statusMessage": "running nested-agents-md",
-      "completedAt": "<ts:turn.completedAt:50>",
+      "completedAt": "<ts:events.completedAt:50>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:50",
+      "hookRunId": "<id:7>:PostToolUse:50",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:101>",
+      "startedAt": "<ts:events.startedAt:101>",
       "phase": "start",
       "statusMessage": "running rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:50",
+      "hookRunId": "<id:7>:PostToolUse:50",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:102>",
+      "startedAt": "<ts:events.startedAt:102>",
       "phase": "end",
       "statusMessage": "running rules",
-      "completedAt": "<ts:turn.completedAt:51>",
+      "completedAt": "<ts:events.completedAt:51>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:51",
+      "hookRunId": "<id:7>:PostToolUse:51",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:103>",
+      "startedAt": "<ts:events.startedAt:103>",
       "phase": "start",
       "statusMessage": "running goal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:6>:PostToolUse:51",
+      "hookRunId": "<id:7>:PostToolUse:51",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:104>",
+      "startedAt": "<ts:events.startedAt:104>",
       "phase": "end",
       "statusMessage": "running goal",
-      "completedAt": "<ts:turn.completedAt:52>",
+      "completedAt": "<ts:events.completedAt:52>",
       "status": "completed"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:10>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 9
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_seq",
+        "toolCallId": "<id:8>",
+        "since": "<ts:activity.since:8>",
+        "outstanding": 3
+       },
+       "observedAt": "<ts:lifecycle.observedAt:10>"
+      }
+     },
+     {
       "type": "tool_execution_end",
-      "toolCallId": "<id:6>",
+      "toolCallId": "<id:7>",
       "toolName": "eq_write",
       "result": {
        "content": [
@@ -4876,151 +5246,186 @@
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PostToolUse:52",
+      "hookRunId": "<id:8>:PostToolUse:52",
       "hookName": "PostToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:105>",
+      "startedAt": "<ts:events.startedAt:105>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PostToolUse:52",
+      "hookRunId": "<id:8>:PostToolUse:52",
       "hookName": "PostToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:106>",
+      "startedAt": "<ts:events.startedAt:106>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:53>",
+      "completedAt": "<ts:events.completedAt:53>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PostToolUse:53",
+      "hookRunId": "<id:8>:PostToolUse:53",
       "hookName": "PostToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:107>",
+      "startedAt": "<ts:events.startedAt:107>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PostToolUse:53",
+      "hookRunId": "<id:8>:PostToolUse:53",
       "hookName": "PostToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:108>",
+      "startedAt": "<ts:events.startedAt:108>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:54>",
+      "completedAt": "<ts:events.completedAt:54>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PostToolUse:54",
+      "hookRunId": "<id:8>:PostToolUse:54",
       "hookName": "PostToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:109>",
+      "startedAt": "<ts:events.startedAt:109>",
       "phase": "start",
       "statusMessage": "running gpt-apply-patch"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PostToolUse:54",
+      "hookRunId": "<id:8>:PostToolUse:54",
       "hookName": "PostToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:110>",
+      "startedAt": "<ts:events.startedAt:110>",
       "phase": "end",
       "statusMessage": "running gpt-apply-patch",
-      "completedAt": "<ts:turn.completedAt:55>",
+      "completedAt": "<ts:events.completedAt:55>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PostToolUse:55",
+      "hookRunId": "<id:8>:PostToolUse:55",
       "hookName": "PostToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:111>",
+      "startedAt": "<ts:events.startedAt:111>",
       "phase": "start",
       "statusMessage": "running nested-agents-md"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PostToolUse:55",
+      "hookRunId": "<id:8>:PostToolUse:55",
       "hookName": "PostToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:112>",
+      "startedAt": "<ts:events.startedAt:112>",
       "phase": "end",
       "statusMessage": "running nested-agents-md",
-      "completedAt": "<ts:turn.completedAt:56>",
+      "completedAt": "<ts:events.completedAt:56>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PostToolUse:56",
+      "hookRunId": "<id:8>:PostToolUse:56",
       "hookName": "PostToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:113>",
+      "startedAt": "<ts:events.startedAt:113>",
       "phase": "start",
       "statusMessage": "running rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PostToolUse:56",
+      "hookRunId": "<id:8>:PostToolUse:56",
       "hookName": "PostToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:114>",
+      "startedAt": "<ts:events.startedAt:114>",
       "phase": "end",
       "statusMessage": "running rules",
-      "completedAt": "<ts:turn.completedAt:57>",
+      "completedAt": "<ts:events.completedAt:57>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PostToolUse:57",
+      "hookRunId": "<id:8>:PostToolUse:57",
       "hookName": "PostToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:115>",
+      "startedAt": "<ts:events.startedAt:115>",
       "phase": "start",
       "statusMessage": "running goal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:7>:PostToolUse:57",
+      "hookRunId": "<id:8>:PostToolUse:57",
       "hookName": "PostToolUse",
       "toolName": "eq_seq",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:116>",
+      "startedAt": "<ts:events.startedAt:116>",
       "phase": "end",
       "statusMessage": "running goal",
-      "completedAt": "<ts:turn.completedAt:58>",
+      "completedAt": "<ts:events.completedAt:58>",
       "status": "completed"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:11>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 10
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_write",
+        "toolCallId": "<id:9>",
+        "since": "<ts:activity.since:9>",
+        "outstanding": 2
+       },
+       "observedAt": "<ts:lifecycle.observedAt:11>"
+      }
+     },
+     {
       "type": "tool_execution_end",
-      "toolCallId": "<id:7>",
+      "toolCallId": "<id:8>",
       "toolName": "eq_seq",
       "result": {
        "content": [
@@ -5035,151 +5440,186 @@
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PostToolUse:58",
+      "hookRunId": "<id:9>:PostToolUse:58",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:117>",
+      "startedAt": "<ts:events.startedAt:117>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PostToolUse:58",
+      "hookRunId": "<id:9>:PostToolUse:58",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:118>",
+      "startedAt": "<ts:events.startedAt:118>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:59>",
+      "completedAt": "<ts:events.completedAt:59>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PostToolUse:59",
+      "hookRunId": "<id:9>:PostToolUse:59",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:119>",
+      "startedAt": "<ts:events.startedAt:119>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PostToolUse:59",
+      "hookRunId": "<id:9>:PostToolUse:59",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:120>",
+      "startedAt": "<ts:events.startedAt:120>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:60>",
+      "completedAt": "<ts:events.completedAt:60>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PostToolUse:60",
+      "hookRunId": "<id:9>:PostToolUse:60",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:121>",
+      "startedAt": "<ts:events.startedAt:121>",
       "phase": "start",
       "statusMessage": "running gpt-apply-patch"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PostToolUse:60",
+      "hookRunId": "<id:9>:PostToolUse:60",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:122>",
+      "startedAt": "<ts:events.startedAt:122>",
       "phase": "end",
       "statusMessage": "running gpt-apply-patch",
-      "completedAt": "<ts:turn.completedAt:61>",
+      "completedAt": "<ts:events.completedAt:61>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PostToolUse:61",
+      "hookRunId": "<id:9>:PostToolUse:61",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:123>",
+      "startedAt": "<ts:events.startedAt:123>",
       "phase": "start",
       "statusMessage": "running nested-agents-md"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PostToolUse:61",
+      "hookRunId": "<id:9>:PostToolUse:61",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:124>",
+      "startedAt": "<ts:events.startedAt:124>",
       "phase": "end",
       "statusMessage": "running nested-agents-md",
-      "completedAt": "<ts:turn.completedAt:62>",
+      "completedAt": "<ts:events.completedAt:62>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PostToolUse:62",
+      "hookRunId": "<id:9>:PostToolUse:62",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:125>",
+      "startedAt": "<ts:events.startedAt:125>",
       "phase": "start",
       "statusMessage": "running rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PostToolUse:62",
+      "hookRunId": "<id:9>:PostToolUse:62",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:126>",
+      "startedAt": "<ts:events.startedAt:126>",
       "phase": "end",
       "statusMessage": "running rules",
-      "completedAt": "<ts:turn.completedAt:63>",
+      "completedAt": "<ts:events.completedAt:63>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PostToolUse:63",
+      "hookRunId": "<id:9>:PostToolUse:63",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:127>",
+      "startedAt": "<ts:events.startedAt:127>",
       "phase": "start",
       "statusMessage": "running goal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:8>:PostToolUse:63",
+      "hookRunId": "<id:9>:PostToolUse:63",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:128>",
+      "startedAt": "<ts:events.startedAt:128>",
       "phase": "end",
       "statusMessage": "running goal",
-      "completedAt": "<ts:turn.completedAt:64>",
+      "completedAt": "<ts:events.completedAt:64>",
       "status": "completed"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:12>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 11
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "tool",
+        "toolName": "eq_write",
+        "toolCallId": "<id:10>",
+        "since": "<ts:activity.since:10>",
+        "outstanding": 1
+       },
+       "observedAt": "<ts:lifecycle.observedAt:12>"
+      }
+     },
+     {
       "type": "tool_execution_end",
-      "toolCallId": "<id:8>",
+      "toolCallId": "<id:9>",
       "toolName": "eq_write",
       "result": {
        "content": [
@@ -5194,151 +5634,179 @@
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PostToolUse:64",
+      "hookRunId": "<id:10>:PostToolUse:64",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:129>",
+      "startedAt": "<ts:events.startedAt:129>",
       "phase": "start",
       "statusMessage": "running hooks"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PostToolUse:64",
+      "hookRunId": "<id:10>:PostToolUse:64",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:hooks>",
-      "startedAt": "<ts:turn.startedAt:130>",
+      "startedAt": "<ts:events.startedAt:130>",
       "phase": "end",
       "statusMessage": "running hooks",
-      "completedAt": "<ts:turn.completedAt:65>",
+      "completedAt": "<ts:events.completedAt:65>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PostToolUse:65",
+      "hookRunId": "<id:10>:PostToolUse:65",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:131>",
+      "startedAt": "<ts:events.startedAt:131>",
       "phase": "start",
       "statusMessage": "matching project rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PostToolUse:65",
+      "hookRunId": "<id:10>:PostToolUse:65",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:permission-system>",
-      "startedAt": "<ts:turn.startedAt:132>",
+      "startedAt": "<ts:events.startedAt:132>",
       "phase": "end",
       "statusMessage": "matching project rules",
-      "completedAt": "<ts:turn.completedAt:66>",
+      "completedAt": "<ts:events.completedAt:66>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PostToolUse:66",
+      "hookRunId": "<id:10>:PostToolUse:66",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:133>",
+      "startedAt": "<ts:events.startedAt:133>",
       "phase": "start",
       "statusMessage": "running gpt-apply-patch"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PostToolUse:66",
+      "hookRunId": "<id:10>:PostToolUse:66",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:gpt-apply-patch>",
-      "startedAt": "<ts:turn.startedAt:134>",
+      "startedAt": "<ts:events.startedAt:134>",
       "phase": "end",
       "statusMessage": "running gpt-apply-patch",
-      "completedAt": "<ts:turn.completedAt:67>",
+      "completedAt": "<ts:events.completedAt:67>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PostToolUse:67",
+      "hookRunId": "<id:10>:PostToolUse:67",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:135>",
+      "startedAt": "<ts:events.startedAt:135>",
       "phase": "start",
       "statusMessage": "running nested-agents-md"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PostToolUse:67",
+      "hookRunId": "<id:10>:PostToolUse:67",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:nested-agents-md>",
-      "startedAt": "<ts:turn.startedAt:136>",
+      "startedAt": "<ts:events.startedAt:136>",
       "phase": "end",
       "statusMessage": "running nested-agents-md",
-      "completedAt": "<ts:turn.completedAt:68>",
+      "completedAt": "<ts:events.completedAt:68>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PostToolUse:68",
+      "hookRunId": "<id:10>:PostToolUse:68",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:137>",
+      "startedAt": "<ts:events.startedAt:137>",
       "phase": "start",
       "statusMessage": "running rules"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PostToolUse:68",
+      "hookRunId": "<id:10>:PostToolUse:68",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:rules>",
-      "startedAt": "<ts:turn.startedAt:138>",
+      "startedAt": "<ts:events.startedAt:138>",
       "phase": "end",
       "statusMessage": "running rules",
-      "completedAt": "<ts:turn.completedAt:69>",
+      "completedAt": "<ts:events.completedAt:69>",
       "status": "completed"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PostToolUse:69",
+      "hookRunId": "<id:10>:PostToolUse:69",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:139>",
+      "startedAt": "<ts:events.startedAt:139>",
       "phase": "start",
       "statusMessage": "running goal"
      },
      {
       "type": "tool_hook_status",
-      "hookRunId": "<id:9>:PostToolUse:69",
+      "hookRunId": "<id:10>:PostToolUse:69",
       "hookName": "PostToolUse",
       "toolName": "eq_write",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "extensionPath": "<builtin:goal>",
-      "startedAt": "<ts:turn.startedAt:140>",
+      "startedAt": "<ts:events.startedAt:140>",
       "phase": "end",
       "statusMessage": "running goal",
-      "completedAt": "<ts:turn.completedAt:70>",
+      "completedAt": "<ts:events.completedAt:70>",
       "status": "completed"
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:13>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 12
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:13>"
+      }
+     },
+     {
       "type": "tool_execution_end",
-      "toolCallId": "<id:9>",
+      "toolCallId": "<id:10>",
       "toolName": "eq_write",
       "result": {
        "content": [
@@ -5355,7 +5823,7 @@
       "type": "message_start",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:5>",
+       "toolCallId": "<id:6>",
        "toolName": "eq_write",
        "content": [
         {
@@ -5372,7 +5840,7 @@
       "type": "message_end",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:5>",
+       "toolCallId": "<id:6>",
        "toolName": "eq_write",
        "content": [
         {
@@ -5389,12 +5857,12 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:13>",
-       "parentId": "<id:11>",
-       "timestamp": "<ts:entry.timestamp:4>",
+       "id": "<id:14>",
+       "parentId": "<id:12>",
+       "timestamp": "<ts:entry.timestamp:5>",
        "message": {
         "role": "toolResult",
-        "toolCallId": "<id:5>",
+        "toolCallId": "<id:6>",
         "toolName": "eq_write",
         "content": [
          {
@@ -5412,7 +5880,7 @@
       "type": "message_start",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:6>",
+       "toolCallId": "<id:7>",
        "toolName": "eq_write",
        "content": [
         {
@@ -5429,7 +5897,7 @@
       "type": "message_end",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:6>",
+       "toolCallId": "<id:7>",
        "toolName": "eq_write",
        "content": [
         {
@@ -5446,12 +5914,12 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:14>",
-       "parentId": "<id:13>",
-       "timestamp": "<ts:entry.timestamp:5>",
+       "id": "<id:15>",
+       "parentId": "<id:14>",
+       "timestamp": "<ts:entry.timestamp:6>",
        "message": {
         "role": "toolResult",
-        "toolCallId": "<id:6>",
+        "toolCallId": "<id:7>",
         "toolName": "eq_write",
         "content": [
          {
@@ -5469,7 +5937,7 @@
       "type": "message_start",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:7>",
+       "toolCallId": "<id:8>",
        "toolName": "eq_seq",
        "content": [
         {
@@ -5486,7 +5954,7 @@
       "type": "message_end",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:7>",
+       "toolCallId": "<id:8>",
        "toolName": "eq_seq",
        "content": [
         {
@@ -5503,12 +5971,12 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:15>",
-       "parentId": "<id:14>",
-       "timestamp": "<ts:entry.timestamp:6>",
+       "id": "<id:16>",
+       "parentId": "<id:15>",
+       "timestamp": "<ts:entry.timestamp:7>",
        "message": {
         "role": "toolResult",
-        "toolCallId": "<id:7>",
+        "toolCallId": "<id:8>",
         "toolName": "eq_seq",
         "content": [
          {
@@ -5526,7 +5994,7 @@
       "type": "message_start",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:8>",
+       "toolCallId": "<id:9>",
        "toolName": "eq_write",
        "content": [
         {
@@ -5543,7 +6011,7 @@
       "type": "message_end",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:8>",
+       "toolCallId": "<id:9>",
        "toolName": "eq_write",
        "content": [
         {
@@ -5560,12 +6028,12 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:16>",
-       "parentId": "<id:15>",
-       "timestamp": "<ts:entry.timestamp:7>",
+       "id": "<id:17>",
+       "parentId": "<id:16>",
+       "timestamp": "<ts:entry.timestamp:8>",
        "message": {
         "role": "toolResult",
-        "toolCallId": "<id:8>",
+        "toolCallId": "<id:9>",
         "toolName": "eq_write",
         "content": [
          {
@@ -5583,7 +6051,7 @@
       "type": "message_start",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:9>",
+       "toolCallId": "<id:10>",
        "toolName": "eq_write",
        "content": [
         {
@@ -5600,7 +6068,7 @@
       "type": "message_end",
       "message": {
        "role": "toolResult",
-       "toolCallId": "<id:9>",
+       "toolCallId": "<id:10>",
        "toolName": "eq_write",
        "content": [
         {
@@ -5617,12 +6085,12 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:17>",
-       "parentId": "<id:16>",
-       "timestamp": "<ts:entry.timestamp:8>",
+       "id": "<id:18>",
+       "parentId": "<id:17>",
+       "timestamp": "<ts:entry.timestamp:9>",
        "message": {
         "role": "toolResult",
-        "toolCallId": "<id:9>",
+        "toolCallId": "<id:10>",
         "toolName": "eq_write",
         "content": [
          {
@@ -5643,42 +6111,32 @@
        "content": [
         {
          "type": "toolCall",
-         "id": "<id:5>",
+         "id": "<id:6>",
          "name": "eq_write",
          "arguments": {
           "path": "out/w1.txt",
-          "text": "<id:5>\n",
+          "text": "<id:6>\n",
           "barrier": "wave-w1"
          }
         },
         {
          "type": "toolCall",
-         "id": "<id:6>",
+         "id": "<id:7>",
          "name": "eq_write",
          "arguments": {
           "path": "out/w2.txt",
-          "text": "<id:6>\n",
+          "text": "<id:7>\n",
           "barrier": "wave-w2"
          }
         },
         {
          "type": "toolCall",
-         "id": "<id:7>",
+         "id": "<id:8>",
          "name": "eq_seq",
          "arguments": {
           "path": "out/s3.txt",
-          "text": "<id:7>\n",
-          "barrier": "wave-s3"
-         }
-        },
-        {
-         "type": "toolCall",
-         "id": "<id:8>",
-         "name": "eq_write",
-         "arguments": {
-          "path": "out/w4.txt",
           "text": "<id:8>\n",
-          "barrier": "wave-w4"
+          "barrier": "wave-s3"
          }
         },
         {
@@ -5686,8 +6144,18 @@
          "id": "<id:9>",
          "name": "eq_write",
          "arguments": {
-          "path": "out/w5.txt",
+          "path": "out/w4.txt",
           "text": "<id:9>\n",
+          "barrier": "wave-w4"
+         }
+        },
+        {
+         "type": "toolCall",
+         "id": "<id:10>",
+         "name": "eq_write",
+         "arguments": {
+          "path": "out/w5.txt",
+          "text": "<id:10>\n",
           "barrier": "wave-w5"
          }
         }
@@ -5711,7 +6179,7 @@
        },
        "stopReason": "toolUse",
        "timestamp": "<ts:message.timestamp:26>",
-       "responseId": "<id:10>",
+       "responseId": "<id:11>",
        "rawStopReason": "tool_calls",
        "thinkingLevel": "off",
        "timing": {
@@ -5724,7 +6192,7 @@
       "toolResults": [
        {
         "role": "toolResult",
-        "toolCallId": "<id:5>",
+        "toolCallId": "<id:6>",
         "toolName": "eq_write",
         "content": [
          {
@@ -5738,7 +6206,7 @@
        },
        {
         "role": "toolResult",
-        "toolCallId": "<id:6>",
+        "toolCallId": "<id:7>",
         "toolName": "eq_write",
         "content": [
          {
@@ -5752,7 +6220,7 @@
        },
        {
         "role": "toolResult",
-        "toolCallId": "<id:7>",
+        "toolCallId": "<id:8>",
         "toolName": "eq_seq",
         "content": [
          {
@@ -5766,7 +6234,7 @@
        },
        {
         "role": "toolResult",
-        "toolCallId": "<id:8>",
+        "toolCallId": "<id:9>",
         "toolName": "eq_write",
         "content": [
          {
@@ -5780,7 +6248,7 @@
        },
        {
         "role": "toolResult",
-        "toolCallId": "<id:9>",
+        "toolCallId": "<id:10>",
         "toolName": "eq_write",
         "content": [
          {
@@ -5796,6 +6264,38 @@
      },
      {
       "type": "turn_start"
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:14>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 13
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:11>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:14>"
+      }
      },
      {
       "type": "message_start",
@@ -5821,7 +6321,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:27>",
-       "responseId": "<id:10>"
+       "responseId": "<id:11>"
       },
       "streaming": true
      },
@@ -5891,6 +6391,34 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:15>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 14
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:15>"
+      }
+     },
+     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -5919,7 +6447,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:28>",
-       "responseId": "<id:10>",
+       "responseId": "<id:11>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -5934,9 +6462,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:18>",
-       "parentId": "<id:17>",
-       "timestamp": "<ts:entry.timestamp:9>",
+       "id": "<id:19>",
+       "parentId": "<id:18>",
+       "timestamp": "<ts:entry.timestamp:10>",
        "message": {
         "role": "assistant",
         "content": [
@@ -5964,7 +6492,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:message.timestamp:29>",
-        "responseId": "<id:10>",
+        "responseId": "<id:11>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -6005,7 +6533,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:30>",
-       "responseId": "<id:10>",
+       "responseId": "<id:11>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -6024,17 +6552,17 @@
        "customType": "senpi.hooks.stop-state",
        "data": {
         "count": 0,
-        "sessionId": "<uuid:17>",
-        "turnKey": "1:<id:18>"
+        "sessionId": "<uuid:16>",
+        "turnKey": "1:<id:19>"
        },
-       "id": "<id:19>",
-       "parentId": "<id:18>",
-       "timestamp": "<ts:entry.timestamp:10>"
+       "id": "<id:20>",
+       "parentId": "<id:19>",
+       "timestamp": "<ts:entry.timestamp:11>"
       }
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:18>",
+      "id": "<uuid:20>",
       "method": "setStatus",
       "statusKey": "goal"
      },
@@ -6074,42 +6602,32 @@
         "content": [
          {
           "type": "toolCall",
-          "id": "<id:5>",
+          "id": "<id:6>",
           "name": "eq_write",
           "arguments": {
            "path": "out/w1.txt",
-           "text": "<id:5>\n",
+           "text": "<id:6>\n",
            "barrier": "wave-w1"
           }
          },
          {
           "type": "toolCall",
-          "id": "<id:6>",
+          "id": "<id:7>",
           "name": "eq_write",
           "arguments": {
            "path": "out/w2.txt",
-           "text": "<id:6>\n",
+           "text": "<id:7>\n",
            "barrier": "wave-w2"
           }
          },
          {
           "type": "toolCall",
-          "id": "<id:7>",
+          "id": "<id:8>",
           "name": "eq_seq",
           "arguments": {
            "path": "out/s3.txt",
-           "text": "<id:7>\n",
-           "barrier": "wave-s3"
-          }
-         },
-         {
-          "type": "toolCall",
-          "id": "<id:8>",
-          "name": "eq_write",
-          "arguments": {
-           "path": "out/w4.txt",
            "text": "<id:8>\n",
-           "barrier": "wave-w4"
+           "barrier": "wave-s3"
           }
          },
          {
@@ -6117,8 +6635,18 @@
           "id": "<id:9>",
           "name": "eq_write",
           "arguments": {
-           "path": "out/w5.txt",
+           "path": "out/w4.txt",
            "text": "<id:9>\n",
+           "barrier": "wave-w4"
+          }
+         },
+         {
+          "type": "toolCall",
+          "id": "<id:10>",
+          "name": "eq_write",
+          "arguments": {
+           "path": "out/w5.txt",
+           "text": "<id:10>\n",
            "barrier": "wave-w5"
           }
          }
@@ -6142,7 +6670,7 @@
         },
         "stopReason": "toolUse",
         "timestamp": "<ts:messages.timestamp:4>",
-        "responseId": "<id:10>",
+        "responseId": "<id:11>",
         "rawStopReason": "tool_calls",
         "thinkingLevel": "off",
         "timing": {
@@ -6154,7 +6682,7 @@
        },
        {
         "role": "toolResult",
-        "toolCallId": "<id:5>",
+        "toolCallId": "<id:6>",
         "toolName": "eq_write",
         "content": [
          {
@@ -6168,7 +6696,7 @@
        },
        {
         "role": "toolResult",
-        "toolCallId": "<id:6>",
+        "toolCallId": "<id:7>",
         "toolName": "eq_write",
         "content": [
          {
@@ -6182,7 +6710,7 @@
        },
        {
         "role": "toolResult",
-        "toolCallId": "<id:7>",
+        "toolCallId": "<id:8>",
         "toolName": "eq_seq",
         "content": [
          {
@@ -6196,7 +6724,7 @@
        },
        {
         "role": "toolResult",
-        "toolCallId": "<id:8>",
+        "toolCallId": "<id:9>",
         "toolName": "eq_write",
         "content": [
          {
@@ -6210,7 +6738,7 @@
        },
        {
         "role": "toolResult",
-        "toolCallId": "<id:9>",
+        "toolCallId": "<id:10>",
         "toolName": "eq_write",
         "content": [
          {
@@ -6249,7 +6777,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:messages.timestamp:10>",
-        "responseId": "<id:10>",
+        "responseId": "<id:11>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -6269,596 +6797,6 @@
       "type": "agent_idle"
      },
      {
-      "type": "extension_ui_request",
-      "id": "<uuid:19>",
-      "method": "setStatus",
-      "statusKey": "anthropic-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:20>",
-      "method": "setWidget",
-      "widgetKey": "anthropic-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:21>",
-      "method": "setStatus",
-      "statusKey": "openai-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:22>",
-      "method": "setWidget",
-      "widgetKey": "openai-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:23>",
-      "method": "setStatus",
-      "statusKey": "monitors"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:24>",
-      "method": "setStatus",
-      "statusKey": "pi-websearch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:25>",
-      "method": "setWidget",
-      "widgetKey": "pi-websearch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:26>",
-      "method": "setStatus",
-      "statusKey": "pi-webfetch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:27>",
-      "method": "setWidget",
-      "widgetKey": "pi-webfetch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:28>",
-      "method": "setStatus",
-      "statusKey": "loop"
-     }
-    ],
-    "lifecycle": [
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 1,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:1>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:29>"
-       },
-       "id": "<id:20>",
-       "parentId": "<id:1>",
-       "timestamp": "<ts:entry.timestamp:11>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:1>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:1>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:2>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 1
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:1>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:2>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:3>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 2
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:3>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 3
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_write",
-        "toolCallId": "<id:5>",
-        "since": "<ts:activity.since:2>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:5>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 4
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_write",
-        "toolCallId": "<id:5>",
-        "since": "<ts:activity.since:3>",
-        "outstanding": 2
-       },
-       "observedAt": "<ts:lifecycle.observedAt:5>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:6>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 5
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_write",
-        "toolCallId": "<id:5>",
-        "since": "<ts:activity.since:4>",
-        "outstanding": 3
-       },
-       "observedAt": "<ts:lifecycle.observedAt:6>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:7>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 6
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_write",
-        "toolCallId": "<id:5>",
-        "since": "<ts:activity.since:5>",
-        "outstanding": 4
-       },
-       "observedAt": "<ts:lifecycle.observedAt:7>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:8>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 7
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_write",
-        "toolCallId": "<id:5>",
-        "since": "<ts:activity.since:6>",
-        "outstanding": 5
-       },
-       "observedAt": "<ts:lifecycle.observedAt:8>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:9>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 8
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_write",
-        "toolCallId": "<id:6>",
-        "since": "<ts:activity.since:7>",
-        "outstanding": 4
-       },
-       "observedAt": "<ts:lifecycle.observedAt:9>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:10>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 9
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_seq",
-        "toolCallId": "<id:7>",
-        "since": "<ts:activity.since:8>",
-        "outstanding": 3
-       },
-       "observedAt": "<ts:lifecycle.observedAt:10>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:11>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 10
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_write",
-        "toolCallId": "<id:8>",
-        "since": "<ts:activity.since:9>",
-        "outstanding": 2
-       },
-       "observedAt": "<ts:lifecycle.observedAt:11>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:12>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 11
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "tool",
-        "toolName": "eq_write",
-        "toolCallId": "<id:9>",
-        "since": "<ts:activity.since:10>",
-        "outstanding": 1
-       },
-       "observedAt": "<ts:lifecycle.observedAt:12>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:13>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 12
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:13>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:14>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 13
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:11>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:14>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:15>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:30>",
-        "revision": 14
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:15>"
-      }
-     },
-     {
       "type": "entry_appended",
       "entry": {
        "type": "custom",
@@ -6875,19 +6813,19 @@
         "runPaused": false,
         "since": "<ts:data.since:2>",
         "role": "root",
-        "rootSessionId": "<uuid:17>",
+        "rootSessionId": "<uuid:16>",
         "waitingOn": {
          "children": 0,
          "background": [],
          "human": []
         },
         "holds": [],
-        "completionId": "<uuid:17>:1",
+        "completionId": "<uuid:16>:1",
         "completion": {
          "kind": "reply",
          "at": "<ts:completion.at:1>"
         },
-        "sessionId": "<uuid:17>",
+        "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": true,
@@ -6898,10 +6836,10 @@
          "budgetSpent": false,
          "deadlineStop": false
         },
-        "runId": "<uuid:29>"
+        "runId": "<uuid:17>"
        },
        "id": "<id:21>",
-       "parentId": "<id:19>",
+       "parentId": "<id:20>",
        "timestamp": "<ts:entry.timestamp:12>"
       }
      },
@@ -6919,9 +6857,9 @@
        "runPaused": false,
        "since": "<ts:lifecycle.since:16>",
        "role": "root",
-       "rootSessionId": "<uuid:17>",
+       "rootSessionId": "<uuid:16>",
        "activityRevision": {
-        "instanceId": "<uuid:30>",
+        "instanceId": "<uuid:18>",
         "revision": 0
        },
        "waitingOn": {
@@ -6930,13 +6868,73 @@
         "human": []
        },
        "holds": [],
-       "completionId": "<uuid:17>:1",
+       "completionId": "<uuid:16>:1",
        "completion": {
         "kind": "reply",
         "at": "<ts:completion.at:2>"
        },
        "observedAt": "<ts:lifecycle.observedAt:16>"
       }
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:21>",
+      "method": "setStatus",
+      "statusKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:22>",
+      "method": "setWidget",
+      "widgetKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:23>",
+      "method": "setStatus",
+      "statusKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:24>",
+      "method": "setWidget",
+      "widgetKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:25>",
+      "method": "setStatus",
+      "statusKey": "monitors"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:26>",
+      "method": "setStatus",
+      "statusKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:27>",
+      "method": "setWidget",
+      "widgetKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:28>",
+      "method": "setStatus",
+      "statusKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:29>",
+      "method": "setWidget",
+      "widgetKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:30>",
+      "method": "setStatus",
+      "statusKey": "loop"
      }
     ],
     "surfaces": []
@@ -6984,6 +6982,40 @@
      "timestamp": "<ts:entries.timestamp:4>"
     },
     {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "running",
+      "seq": 1,
+      "epoch": 1,
+      "epochOrigin": "human",
+      "humanInputRevision": 1,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:1>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": false,
+      "runActive": true,
+      "interrupted": false,
+      "runId": "<uuid:2>"
+     },
+     "id": "<id:4>",
+     "parentId": "<id:3>",
+     "timestamp": "<ts:entries.timestamp:5>"
+    },
+    {
      "type": "custom_message",
      "customType": "environment-context",
      "content": "<environment_context>\n  <cwd><sandbox>/work</cwd>\n  <current_date><ts:entries.content:1></current_date>\n</environment_context>",
@@ -6992,15 +7024,15 @@
       "cwd": "<sandbox>/work",
       "currentDate": "<ts:details.currentDate:1>"
      },
-     "id": "<id:4>",
-     "parentId": "<id:5>",
-     "timestamp": "<ts:entries.timestamp:5>"
+     "id": "<id:5>",
+     "parentId": "<id:4>",
+     "timestamp": "<ts:entries.timestamp:6>"
     },
     {
      "type": "message",
      "id": "<id:6>",
-     "parentId": "<id:4>",
-     "timestamp": "<ts:entries.timestamp:6>",
+     "parentId": "<id:5>",
+     "timestamp": "<ts:entries.timestamp:7>",
      "message": {
       "role": "user",
       "content": [
@@ -7020,13 +7052,13 @@
      "display": false,
      "id": "<id:7>",
      "parentId": "<id:6>",
-     "timestamp": "<ts:entries.timestamp:7>"
+     "timestamp": "<ts:entries.timestamp:8>"
     },
     {
      "type": "message",
      "id": "<id:8>",
      "parentId": "<id:7>",
-     "timestamp": "<ts:entries.timestamp:8>",
+     "timestamp": "<ts:entries.timestamp:9>",
      "message": {
       "role": "assistant",
       "content": [
@@ -7115,7 +7147,7 @@
      "type": "message",
      "id": "<id:15>",
      "parentId": "<id:8>",
-     "timestamp": "<ts:entries.timestamp:9>",
+     "timestamp": "<ts:entries.timestamp:10>",
      "message": {
       "role": "toolResult",
       "toolCallId": "<id:9>",
@@ -7135,7 +7167,7 @@
      "type": "message",
      "id": "<id:16>",
      "parentId": "<id:15>",
-     "timestamp": "<ts:entries.timestamp:10>",
+     "timestamp": "<ts:entries.timestamp:11>",
      "message": {
       "role": "toolResult",
       "toolCallId": "<id:10>",
@@ -7155,7 +7187,7 @@
      "type": "message",
      "id": "<id:17>",
      "parentId": "<id:16>",
-     "timestamp": "<ts:entries.timestamp:11>",
+     "timestamp": "<ts:entries.timestamp:12>",
      "message": {
       "role": "toolResult",
       "toolCallId": "<id:11>",
@@ -7175,7 +7207,7 @@
      "type": "message",
      "id": "<id:18>",
      "parentId": "<id:17>",
-     "timestamp": "<ts:entries.timestamp:12>",
+     "timestamp": "<ts:entries.timestamp:13>",
      "message": {
       "role": "toolResult",
       "toolCallId": "<id:12>",
@@ -7195,7 +7227,7 @@
      "type": "message",
      "id": "<id:19>",
      "parentId": "<id:18>",
-     "timestamp": "<ts:entries.timestamp:13>",
+     "timestamp": "<ts:entries.timestamp:14>",
      "message": {
       "role": "toolResult",
       "toolCallId": "<id:13>",
@@ -7215,7 +7247,7 @@
      "type": "message",
      "id": "<id:20>",
      "parentId": "<id:19>",
-     "timestamp": "<ts:entries.timestamp:14>",
+     "timestamp": "<ts:entries.timestamp:15>",
      "message": {
       "role": "assistant",
       "content": [
@@ -7264,43 +7296,7 @@
      },
      "id": "<id:21>",
      "parentId": "<id:20>",
-     "timestamp": "<ts:entries.timestamp:15>"
-    }
-   ],
-   "lifecycleEntries": [
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "running",
-      "seq": 1,
-      "epoch": 1,
-      "epochOrigin": "human",
-      "humanInputRevision": 1,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:1>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": false,
-      "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
-     },
-     "id": "<id:5>",
-     "parentId": "<id:3>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:1>"
+     "timestamp": "<ts:entries.timestamp:16>"
     },
     {
      "type": "custom",
@@ -7344,7 +7340,7 @@
      },
      "id": "<id:22>",
      "parentId": "<id:21>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:2>"
+     "timestamp": "<ts:entries.timestamp:17>"
     }
    ]
   }

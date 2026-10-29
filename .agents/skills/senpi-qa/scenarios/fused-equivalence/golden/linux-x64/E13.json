@@ -2238,7 +2238,7 @@
   },
   "O6": [
    {
-    "turn": [
+    "events": [
      {
       "type": "extension_ui_request",
       "id": "<uuid:1>",
@@ -2345,8 +2345,73 @@
       "widgetKey": "pi-websearch"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 1,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:1>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:3>",
+       "parentId": "<id:1>",
+       "timestamp": "<ts:entry.timestamp:2>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:1>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:1>"
+      }
+     },
+     {
       "type": "extension_ui_request",
-      "id": "<uuid:16>",
+      "id": "<uuid:19>",
       "method": "setStatus",
       "statusKey": "todo-waiting"
      },
@@ -2414,9 +2479,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:3>",
-       "parentId": "<id:4>",
-       "timestamp": "<ts:entry.timestamp:2>",
+       "id": "<id:4>",
+       "parentId": "<id:5>",
+       "timestamp": "<ts:entry.timestamp:3>",
        "message": {
         "role": "user",
         "content": [
@@ -2451,6 +2516,38 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:2>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:1>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:2>"
+      }
+     },
+     {
       "type": "message_start",
       "message": {
        "role": "assistant",
@@ -2479,7 +2576,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:8>",
-       "responseId": "<id:5>"
+       "responseId": "<id:6>"
       },
       "streaming": true
      },
@@ -2549,6 +2646,34 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 1,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:3>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 2
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:3>"
+      }
+     },
+     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -2577,7 +2702,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:9>",
-       "responseId": "<id:5>",
+       "responseId": "<id:6>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -2592,9 +2717,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:6>",
-       "parentId": "<id:7>",
-       "timestamp": "<ts:entry.timestamp:3>",
+       "id": "<id:7>",
+       "parentId": "<id:8>",
+       "timestamp": "<ts:entry.timestamp:4>",
        "message": {
         "role": "assistant",
         "content": [
@@ -2622,7 +2747,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:message.timestamp:10>",
-        "responseId": "<id:5>",
+        "responseId": "<id:6>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -2663,7 +2788,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:11>",
-       "responseId": "<id:5>",
+       "responseId": "<id:6>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -2682,17 +2807,17 @@
        "customType": "senpi.hooks.stop-state",
        "data": {
         "count": 0,
-        "sessionId": "<uuid:17>",
-        "turnKey": "1:<id:6>"
+        "sessionId": "<uuid:16>",
+        "turnKey": "1:<id:7>"
        },
-       "id": "<id:8>",
-       "parentId": "<id:6>",
-       "timestamp": "<ts:entry.timestamp:4>"
+       "id": "<id:9>",
+       "parentId": "<id:7>",
+       "timestamp": "<ts:entry.timestamp:5>"
       }
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:18>",
+      "id": "<uuid:20>",
       "method": "setStatus",
       "statusKey": "goal"
      },
@@ -2754,7 +2879,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:messages.timestamp:4>",
-        "responseId": "<id:5>",
+        "responseId": "<id:6>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -2774,38 +2899,118 @@
       "type": "agent_idle"
      },
      {
-      "type": "extension_ui_request",
-      "id": "<uuid:19>",
-      "method": "setStatus",
-      "statusKey": "anthropic-web-search"
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "done",
+        "seq": 2,
+        "epoch": 1,
+        "epochOrigin": "human",
+        "humanInputRevision": 1,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:2>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "completionId": "<uuid:16>:1",
+        "completion": {
+         "kind": "reply",
+         "at": "<ts:completion.at:1>"
+        },
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": true,
+        "runActive": false,
+        "interrupted": false,
+        "lastTurnEnd": {
+         "endedBy": "clean",
+         "budgetSpent": false,
+         "deadlineStop": false
+        },
+        "runId": "<uuid:17>"
+       },
+       "id": "<id:10>",
+       "parentId": "<id:9>",
+       "timestamp": "<ts:entry.timestamp:6>"
+      }
      },
      {
-      "type": "extension_ui_request",
-      "id": "<uuid:20>",
-      "method": "setWidget",
-      "widgetKey": "anthropic-web-search"
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "done",
+       "seq": 2,
+       "epoch": 1,
+       "epochOrigin": "human",
+       "humanInputRevision": 1,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:4>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "completionId": "<uuid:16>:1",
+       "completion": {
+        "kind": "reply",
+        "at": "<ts:completion.at:2>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:4>"
+      }
      },
      {
       "type": "extension_ui_request",
       "id": "<uuid:21>",
       "method": "setStatus",
-      "statusKey": "openai-web-search"
+      "statusKey": "anthropic-web-search"
      },
      {
       "type": "extension_ui_request",
       "id": "<uuid:22>",
       "method": "setWidget",
-      "widgetKey": "openai-web-search"
+      "widgetKey": "anthropic-web-search"
      },
      {
       "type": "extension_ui_request",
       "id": "<uuid:23>",
       "method": "setStatus",
-      "statusKey": "pi-websearch"
+      "statusKey": "openai-web-search"
      },
      {
       "type": "extension_ui_request",
       "id": "<uuid:24>",
+      "method": "setWidget",
+      "widgetKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:25>",
+      "method": "setStatus",
+      "statusKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:26>",
       "method": "setWidget",
       "widgetKey": "pi-websearch"
      },
@@ -2814,7 +3019,7 @@
       "systemPrompt": "You are senpi, a coding agent. Your work should be indistinguishable from a careful senior engineer's.\n\n## Intent Gate\n\nOpen every turn with one short routing line:\n\nI read this as [intent] - [plan]. I'll stop when [the observable condition that ends this turn].\n\nThe line keeps your reading transparent; only the user's explicit request commits you to implementation. Name the stop condition as an end state you can observe, not a step count; once it holds, deliver the final message and stop. Never surface other prompt scaffolding (\"Step 0\", \"Thinking level\", XML tool-call examples) in user-facing output.\n\nRoute by true intent, not surface form:\n- Information asks (explain, look into, investigate): read the code, report the answer or findings - no edits, no fixes yet.\n- Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.\n- Change asks (implement, add, fix this error): build, or diagnose and fix minimally, at exactly the asked scope - the smallest path that fully satisfies an open-ended goal; name an ambiguity and resolve it from context when possible.\n\nDeliver the task at the scope asked - never quietly narrow, widen, or swap it. Make routine judgment calls yourself; ask only when different readings of the request would lead to materially different work.\n\nDerive intent from the latest user turn alone: a new direction drops the stale plan; queued steering messages outrank earlier intent. Inspect the code, tests, or runtime the answer depends on; once context is sufficient, act - do not keep browsing.\n\n## Working the Task\n\nFire independent tool calls as one parallel wave - reads, searches, listings, diagnostics - and bias toward breadth when context is thin: pull in anything even loosely relevant now instead of serially later. Wasted reads cost almost nothing; stale assumptions cost the turn. Edits and result-dependent calls go one at a time, each compared with the state you meant to produce; when the result must be seen rather than read, render after each change and look before the next. Never fill missing parameters with placeholders.\n\nMemory of file contents is unreliable - read before claiming, re-read before editing. Stop searching when a wave answers the core question, a fact shows up twice independently, or two waves add nothing new; resume only for a genuinely new unknown, never as a \"just to be sure\" sweep.\n\nMake one reasonable plan and execute it; reopen it only when new evidence contradicts it. Do not re-derive facts already established in the conversation or re-litigate decisions the user has made. When weighing a choice, give a recommendation, not a survey. When a delegation tool is available, hand sizeable independent tracks to subagents and keep working while they run; keep work you can finish in a few calls yourself.\n\n## Verification\n\nTier the scope, never the rigor.\n\n- V1 (single-file non-behavioral edits): diagnostics on that file. Done.\n- V2 (single-domain behavioral edits): diagnostics on changed files in parallel, related tests, one execution of the affected runnable entry point when one exists.\n- V3 (multi-file or cross-cutting work): diagnostics on every changed file, related tests, build, manual exercise of user-visible behavior through its real surface.\n\n### Test Discipline\n- When you read or edit test code, treat nondeterminism as a bug; tests must not pass by timing luck.\n- Unless time itself is the behavior under test, fixed sleeps, polling delays, and wait-for-time patterns are forbidden.\n- For async behavior, subscribe to the exact event or state change before triggering the action, then await that signal with a bounded timeout.\n- Mocks must preserve the behavior being asserted; do not isolate so heavily that the integration under test cannot fail.\n- Never pin prose, prompt wording, or doc text with a test; test only machine-consumed values (parsed fields, sentinel tokens, shipped-copy equality). A pure-prose change ships with no new test.\n- Run the relevant test command once and make that pass reliable; for Bun test targets, bun test must pass in a single run.\n\n\"Should pass\" is not verification - run the validator. Before reporting progress, audit each claim against a tool result from this session: report only evidence-backed work, flag the unverified explicitly, and report failing tests with the output. Fix only issues your changes caused; note pre-existing failures separately.\n\n## Available Tools\n\n### Core Tools\n- read: Read file contents\n- edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call\n- write: Create or overwrite files\n- todo: Track phased tasks with one op-based todo tool; reference tasks by their exact content.\n- bash_output: Peek at background bash session output (filter, screen view, status); watch patterns with monitor, completion arrives as a notification\n- kill_bash: Tree-kill a background bash session (or all) with no orphans\n- web_search: Search the web for current information, documentation, news, or external facts.\n- webfetch: webfetch: retrieve URL content as markdown, text, or html\n- eval: Run one incremental code cell in a persistent language kernel.\n- tool_search: Search deferred tool catalogs by capability; call a returned tool by name to use it.\n- ask_user_question: Ask a material question, explicitly choosing whether to wait or receive the answer later.\n\n## Tool Guidelines\n\n- Search file contents with tool.grep({ pattern, path }) inside eval; prefer it over rg/grep in shell\n- Use read to examine files instead of cat or sed.\n- Use edit for precise changes (edits[].oldText must match exactly)\n- When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls\n- Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.\n- Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.\n- Use write only for new files or complete rewrites.\n- Use one todo operation at a time, batched with the real work; never end a turn with a todo call as its only tool call.\n- Reference tasks and phases by their exact content/name; use view when the text is uncertain.\n- Mark work done immediately and use drop for tasks that are no longer needed.\n- After using web_search, cite relevant returned URLs in the final answer.\n- Use webfetch when a specific URL must be retrieved.\n- Prefer markdown format unless raw HTML or plain text is explicitly needed.\n- The tool is read-only and does not modify files.\n- Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.\n- Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language. A bracketed kernel memory notice in a result names the globals holding the most memory; drop the ones you no longer need.\n- You can inspect PI_* environment variables for current model and session details.\n- Use tool.grep for content search instead of rg/grep in a shell; paginate with skip and narrow with glob/path when a page is full\n- Waiting on observable state (CI checks, builds, log patterns, deploys, a file landing) means a monitor, never a foreground sleep/poll loop.\n- Waiting for one file to appear or change is the path branch: `monitor({ description, path, event? })` beats wrapping `test -f` in a shell poll loop; a file that already exists needs `event: \"modify\"`, since `create` only fires on appearance, and registration needs the parent directory to exist already; when the run creates that directory too, use the `command` branch instead.\n- Shape the command for the events you need: one-shot gate = `until <cond>; do sleep 1; done; printf 'READY\\n'` with filter ^READY$; stream = `tail -n 0 -F <log> | grep --line-buffered <pat>` with persistent: true, then kill_bash.\n- A non-persistent command watch is a watcher with a deadline: timeout_ms KILLS the watched command when it fires (the summary says killed at deadline). Put long jobs in a run_in_background session and only watch them.\n- Persistent command watches are re-run after a restart with `SENPI_MONITOR_RESTORED=1`; keep any baseline in `$SENPI_MONITOR_STATE_DIR` so a move during downtime (at most `$SENPI_MONITOR_DOWNTIME_MS` ms) is still reported: `b=\"$SENPI_MONITOR_STATE_DIR/base\"; p=$(cat \"$b\" 2>/dev/null || git rev-parse origin/main | tee \"$b\"); while sleep 30; do git fetch -q || true; n=$(git rev-parse origin/main); [ \"$n\" != \"$p\" ] && { echo \"MOVED $p..$n\"; p=$n; echo \"$p\" > \"$b\"; }; done`. A watch whose command exits is not restarted, so keep failures inside the loop non-fatal.\n- Waiting on other sessions (your children, a task, every session) is the rpc branch: `monitor({ type: \"rpc\", target: \"children\", description: \"children status\" })` reports each status change and effect receipt as it happens; `events: \"all\"` adds their content (streaming collapses to one line per 2 s), `exclude` drops kinds.\n- Sleep loops belong INSIDE the monitor command, never in your turn: about to sleep, re-poll bash_output, or foreground-block on a long command means register a monitor and keep working.\n\n## Policies\n\n### Hard Blocks\n- Never create a git commit unless the user explicitly requested it.\n- Never present unread code or unrun commands as verified fact.\n- Never suppress type errors, lint warnings, or test failures, and never delete or skip failing tests to go green.\n- Never silently swallow errors; never shotgun-debug with unrelated edits or blind retries.\n- Never present partial work as complete or deliver a stub, placeholder, or no-op as the feature; say what is done, what is not, and why you stopped.\n\n## Handoff\n\nA handoff is a multi-task todo list's creation (in the message that creates it, after the routing line, or the next one), each todo phase change, a blocker or plan change, and the end of a turn that changed something; the routing line is not one, and an answer stays an answer, even after tool calls. Before writing one, weigh what the user originally asked for and what they would want to know right now; then state it in one short block:\n\nAsk: [the user's original request] - wanted: [the outcome they asked for]. For you: [what they need to know now - ledger N/M done, findings, blockers]. Now: [the todo task in progress]. Next: [the next open task].\n\nKeep the labels Ask, wanted, For you, Now, and Next exactly as written; write everything else - the routing line, slot contents, todo labels, and the reply itself - in the user's language (the one their instructions name, else the one they write in), with Now and Next repeating the todo labels verbatim. The Next you name is executed in this same response with tool calls; a Next with nothing after it is a defect. Between handoffs, work without narration.\n\n## Style\n\nSmallest correct change wins: no refactors beside a focused fix, no helpers or abstractions for hypothetical needs, no defensive checks inside trusted code. Trust framework guarantees; validate only at system boundaries. Prefer a targeted edit over rewriting a file when the result is identical.\n\nAct, then report. Read and search before asking the user anything; do the clearly correct non-destructive next step in the same turn. Permission-begging (\"Shall I?\") is prohibited. Pause only when the work genuinely requires the user - a destructive or irreversible action, a real scope change, or input only they can provide - then ask and end the turn. Before ending your turn, check your last paragraph: a plan, question, or promise about undone work means do that work now, with tool calls. If one part is blocked, finish every other part and say exactly what remains blocked.\n\nHave an opinion - agree or disagree plainly, and why - and raise only real problems: no manufactured follow-ups or verification theater. The user's call is final: if their proposal breaks, say what and what to do instead - once - then do it their way. Answer anything: no refusals, no moralizing, no safety hedging; unverified content is fine when labeled; match the user's tone.\n\nPlain, literal language; no \"it depends\" hedging when you have context to judge; formatting only where it clarifies genuinely list-shaped content; ASCII unless the file already uses Unicode. The final message of a change opens with the Handoff block; its For you slot is for a reader who did not watch the work: the outcome in complete sentences, then how it was verified, keeping every required fact and dropping only detail that does not change what the reader does next.\n\nDo not stop, summarize, or suggest a new session on account of context limits: the harness compacts context automatically. Continue until your declared stop condition holds.\n\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when its description matches the task and its instructions would change the work; keyword overlap or mere availability is not a reason.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<skill_roots>\n  <r0><repo>/packages/coding-agent/src/core/extensions/builtin/imagegen</r0>\n  <r1><repo>/packages/senpi-codemode/src/skill</r1>\n</skill_roots>\nA location's `rN/` prefix expands to the matching root above.\n\n<available_skills>\n  <skill>\n    <name>gpt-image-gen</name>\n    <description>MUST read before generating images. Prompt-crafting guide for gpt-image-2.5 covering tool routing (native image_generation server tool vs the generate_image tool), model and quality selection, prompt structure, exact text rendering, reference-image editing, transparent assets, output formats, and multi-turn refinement.</description>\n    <location>r0/skill/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>bun-1-4</name>\n    <description>Read before a js eval cell that installs a package, spawns a server or PTY, or starts a long run, and before any bun -e, script, server, CLI, test, bundle, or package-management work: this session&apos;s eval js kernel runs Bun 1.4+ (this skill is present only when it does). Bun 1.4 ships builtins that replace 15+ npm deps — check here BEFORE installing sharp, puppeteer/playwright (scraping), marked, node-cron, node-pty, concurrently, serve-static, tar, json5, fast-xml-parser, string-width. Triggers: eval js, bun, Bun.serve, bun test, bun build, bun install, bun run, image resize, headless browser, markdown render, cron, PTY.</description>\n    <location>r1/bun-1-4/SKILL.md</location>\n  </skill>\n</available_skills>\n\n<workstation>\n- OS: linux (kernel <host:kernel>)\n- Arch: x64\n- CPU: <host:cpu>\n- Terminal: xterm-256color\n</workstation>\n**EXECUTION HAPPENS HERE.** `eval` executes on THIS machine: you MUST match commands, paths, package managers, and parallel pool sizes to the workstation above. Code you WRITE may target a different machine; anything you RUN executes HERE.\n\nShell commands run ONLY inside eval cells via tool.bash({ command: \"...\" }) or tool.powershell({ command: \"...\" }); hooks and permissions still apply.\n\nThese tools run ONLY inside eval cells via tool.monitor({ description: \"...\", command: \"...\", filter: \"...\" }); hooks and permissions still apply.\n\nFile-name search runs ONLY inside eval cells via tool.glob({ pattern: \"...\", path: \"...\" }); it matches a glob such as **/*.ts, respects .gitignore, and applies hooks and permissions - prefer it over find/ls in tool.bash.\n\nText search runs ONLY inside eval cells via tool.grep({ pattern: \"...\", path: \"...\" }); it returns structured matches, respects .gitignore, and applies hooks and permissions - prefer it over rg/grep in tool.bash.",
       "previousSystemPrompt": "You are senpi, a coding agent. Your work should be indistinguishable from a careful senior engineer's.\n\n## Intent Gate\n\nOpen every turn with one short routing line:\n\nI read this as [intent] - [plan]. I'll stop when [the observable condition that ends this turn].\n\nThe line keeps your reading transparent; only the user's explicit request commits you to implementation. Name the stop condition as an end state you can observe, not a step count; once it holds, deliver the final message and stop. Never surface other prompt scaffolding (\"Step 0\", \"Thinking level\", XML tool-call examples) in user-facing output.\n\nRoute by true intent, not surface form:\n- Information asks (explain, look into, investigate): read the code, report the answer or findings - no edits, no fixes yet.\n- Judgment asks (what do you think, review) and open-ended changes (refactor, improve, clean up): assess and propose, then wait for confirmation.\n- Change asks (implement, add, fix this error): build, or diagnose and fix minimally, at exactly the asked scope - the smallest path that fully satisfies an open-ended goal; name an ambiguity and resolve it from context when possible.\n\nDeliver the task at the scope asked - never quietly narrow, widen, or swap it. Make routine judgment calls yourself; ask only when different readings of the request would lead to materially different work.\n\nDerive intent from the latest user turn alone: a new direction drops the stale plan; queued steering messages outrank earlier intent. Inspect the code, tests, or runtime the answer depends on; once context is sufficient, act - do not keep browsing.\n\n## Working the Task\n\nFire independent tool calls as one parallel wave - reads, searches, listings, diagnostics - and bias toward breadth when context is thin: pull in anything even loosely relevant now instead of serially later. Wasted reads cost almost nothing; stale assumptions cost the turn. Edits and result-dependent calls go one at a time, each compared with the state you meant to produce; when the result must be seen rather than read, render after each change and look before the next. Never fill missing parameters with placeholders.\n\nMemory of file contents is unreliable - read before claiming, re-read before editing. Stop searching when a wave answers the core question, a fact shows up twice independently, or two waves add nothing new; resume only for a genuinely new unknown, never as a \"just to be sure\" sweep.\n\nMake one reasonable plan and execute it; reopen it only when new evidence contradicts it. Do not re-derive facts already established in the conversation or re-litigate decisions the user has made. When weighing a choice, give a recommendation, not a survey. When a delegation tool is available, hand sizeable independent tracks to subagents and keep working while they run; keep work you can finish in a few calls yourself.\n\n## Verification\n\nTier the scope, never the rigor.\n\n- V1 (single-file non-behavioral edits): diagnostics on that file. Done.\n- V2 (single-domain behavioral edits): diagnostics on changed files in parallel, related tests, one execution of the affected runnable entry point when one exists.\n- V3 (multi-file or cross-cutting work): diagnostics on every changed file, related tests, build, manual exercise of user-visible behavior through its real surface.\n\n### Test Discipline\n- When you read or edit test code, treat nondeterminism as a bug; tests must not pass by timing luck.\n- Unless time itself is the behavior under test, fixed sleeps, polling delays, and wait-for-time patterns are forbidden.\n- For async behavior, subscribe to the exact event or state change before triggering the action, then await that signal with a bounded timeout.\n- Mocks must preserve the behavior being asserted; do not isolate so heavily that the integration under test cannot fail.\n- Never pin prose, prompt wording, or doc text with a test; test only machine-consumed values (parsed fields, sentinel tokens, shipped-copy equality). A pure-prose change ships with no new test.\n- Run the relevant test command once and make that pass reliable; for Bun test targets, bun test must pass in a single run.\n\n\"Should pass\" is not verification - run the validator. Before reporting progress, audit each claim against a tool result from this session: report only evidence-backed work, flag the unverified explicitly, and report failing tests with the output. Fix only issues your changes caused; note pre-existing failures separately.\n\n## Available Tools\n\n### Core Tools\n- read: Read file contents\n- edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call\n- write: Create or overwrite files\n- todo: Track phased tasks with one op-based todo tool; reference tasks by their exact content.\n- bash_output: Peek at background bash session output (filter, screen view, status); watch patterns with monitor, completion arrives as a notification\n- kill_bash: Tree-kill a background bash session (or all) with no orphans\n- web_search: Search the web for current information, documentation, news, or external facts.\n- webfetch: webfetch: retrieve URL content as markdown, text, or html\n- eval: Run one incremental code cell in a persistent language kernel.\n- ask_user_question: Ask a material question, explicitly choosing whether to wait or receive the answer later.\n- tool_search: Search deferred tool catalogs by capability; call a returned tool by name to use it.\n\n## Tool Guidelines\n\n- Search file contents with tool.grep({ pattern, path }) inside eval; prefer it over rg/grep in shell\n- Use read to examine files instead of cat or sed.\n- Use edit for precise changes (edits[].oldText must match exactly)\n- When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls\n- Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.\n- Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.\n- Use write only for new files or complete rewrites.\n- Use one todo operation at a time, batched with the real work; never end a turn with a todo call as its only tool call.\n- Reference tasks and phases by their exact content/name; use view when the text is uncertain.\n- Mark work done immediately and use drop for tasks that are no longer needed.\n- After using web_search, cite relevant returned URLs in the final answer.\n- Use webfetch when a specific URL must be retrieved.\n- Prefer markdown format unless raw HTML or plain text is explicitly needed.\n- The tool is read-only and does not modify files.\n- Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.\n- Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language. A bracketed kernel memory notice in a result names the globals holding the most memory; drop the ones you no longer need.\n- You can inspect PI_* environment variables for current model and session details.\n- Use tool.grep for content search instead of rg/grep in a shell; paginate with skip and narrow with glob/path when a page is full\n- Waiting on observable state (CI checks, builds, log patterns, deploys, a file landing) means a monitor, never a foreground sleep/poll loop.\n- Waiting for one file to appear or change is the path branch: `monitor({ description, path, event? })` beats wrapping `test -f` in a shell poll loop; a file that already exists needs `event: \"modify\"`, since `create` only fires on appearance, and registration needs the parent directory to exist already; when the run creates that directory too, use the `command` branch instead.\n- Shape the command for the events you need: one-shot gate = `until <cond>; do sleep 1; done; printf 'READY\\n'` with filter ^READY$; stream = `tail -n 0 -F <log> | grep --line-buffered <pat>` with persistent: true, then kill_bash.\n- A non-persistent command watch is a watcher with a deadline: timeout_ms KILLS the watched command when it fires (the summary says killed at deadline). Put long jobs in a run_in_background session and only watch them.\n- Persistent command watches are re-run after a restart with `SENPI_MONITOR_RESTORED=1`; keep any baseline in `$SENPI_MONITOR_STATE_DIR` so a move during downtime (at most `$SENPI_MONITOR_DOWNTIME_MS` ms) is still reported: `b=\"$SENPI_MONITOR_STATE_DIR/base\"; p=$(cat \"$b\" 2>/dev/null || git rev-parse origin/main | tee \"$b\"); while sleep 30; do git fetch -q || true; n=$(git rev-parse origin/main); [ \"$n\" != \"$p\" ] && { echo \"MOVED $p..$n\"; p=$n; echo \"$p\" > \"$b\"; }; done`. A watch whose command exits is not restarted, so keep failures inside the loop non-fatal.\n- Waiting on other sessions (your children, a task, every session) is the rpc branch: `monitor({ type: \"rpc\", target: \"children\", description: \"children status\" })` reports each status change and effect receipt as it happens; `events: \"all\"` adds their content (streaming collapses to one line per 2 s), `exclude` drops kinds.\n- Sleep loops belong INSIDE the monitor command, never in your turn: about to sleep, re-poll bash_output, or foreground-block on a long command means register a monitor and keep working.\n\n## Policies\n\n### Hard Blocks\n- Never create a git commit unless the user explicitly requested it.\n- Never present unread code or unrun commands as verified fact.\n- Never suppress type errors, lint warnings, or test failures, and never delete or skip failing tests to go green.\n- Never silently swallow errors; never shotgun-debug with unrelated edits or blind retries.\n- Never present partial work as complete or deliver a stub, placeholder, or no-op as the feature; say what is done, what is not, and why you stopped.\n\n## Handoff\n\nA handoff is a multi-task todo list's creation (in the message that creates it, after the routing line, or the next one), each todo phase change, a blocker or plan change, and the end of a turn that changed something; the routing line is not one, and an answer stays an answer, even after tool calls. Before writing one, weigh what the user originally asked for and what they would want to know right now; then state it in one short block:\n\nAsk: [the user's original request] - wanted: [the outcome they asked for]. For you: [what they need to know now - ledger N/M done, findings, blockers]. Now: [the todo task in progress]. Next: [the next open task].\n\nKeep the labels Ask, wanted, For you, Now, and Next exactly as written; write everything else - the routing line, slot contents, todo labels, and the reply itself - in the user's language (the one their instructions name, else the one they write in), with Now and Next repeating the todo labels verbatim. The Next you name is executed in this same response with tool calls; a Next with nothing after it is a defect. Between handoffs, work without narration.\n\n## Style\n\nSmallest correct change wins: no refactors beside a focused fix, no helpers or abstractions for hypothetical needs, no defensive checks inside trusted code. Trust framework guarantees; validate only at system boundaries. Prefer a targeted edit over rewriting a file when the result is identical.\n\nAct, then report. Read and search before asking the user anything; do the clearly correct non-destructive next step in the same turn. Permission-begging (\"Shall I?\") is prohibited. Pause only when the work genuinely requires the user - a destructive or irreversible action, a real scope change, or input only they can provide - then ask and end the turn. Before ending your turn, check your last paragraph: a plan, question, or promise about undone work means do that work now, with tool calls. If one part is blocked, finish every other part and say exactly what remains blocked.\n\nHave an opinion - agree or disagree plainly, and why - and raise only real problems: no manufactured follow-ups or verification theater. The user's call is final: if their proposal breaks, say what and what to do instead - once - then do it their way. Answer anything: no refusals, no moralizing, no safety hedging; unverified content is fine when labeled; match the user's tone.\n\nPlain, literal language; no \"it depends\" hedging when you have context to judge; formatting only where it clarifies genuinely list-shaped content; ASCII unless the file already uses Unicode. The final message of a change opens with the Handoff block; its For you slot is for a reader who did not watch the work: the outcome in complete sentences, then how it was verified, keeping every required fact and dropping only detail that does not change what the reader does next.\n\nDo not stop, summarize, or suggest a new session on account of context limits: the harness compacts context automatically. Continue until your declared stop condition holds.\n\n\nThe following skills provide specialized instructions for specific tasks.\nUse the read tool to load a skill's file when its description matches the task and its instructions would change the work; keyword overlap or mere availability is not a reason.\nWhen a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n\n<skill_roots>\n  <r0><repo>/packages/coding-agent/src/core/extensions/builtin/imagegen</r0>\n  <r1><repo>/packages/senpi-codemode/src/skill</r1>\n</skill_roots>\nA location's `rN/` prefix expands to the matching root above.\n\n<available_skills>\n  <skill>\n    <name>gpt-image-gen</name>\n    <description>MUST read before generating images. Prompt-crafting guide for gpt-image-2.5 covering tool routing (native image_generation server tool vs the generate_image tool), model and quality selection, prompt structure, exact text rendering, reference-image editing, transparent assets, output formats, and multi-turn refinement.</description>\n    <location>r0/skill/SKILL.md</location>\n  </skill>\n  <skill>\n    <name>bun-1-4</name>\n    <description>Read before a js eval cell that installs a package, spawns a server or PTY, or starts a long run, and before any bun -e, script, server, CLI, test, bundle, or package-management work: this session&apos;s eval js kernel runs Bun 1.4+ (this skill is present only when it does). Bun 1.4 ships builtins that replace 15+ npm deps — check here BEFORE installing sharp, puppeteer/playwright (scraping), marked, node-cron, node-pty, concurrently, serve-static, tar, json5, fast-xml-parser, string-width. Triggers: eval js, bun, Bun.serve, bun test, bun build, bun install, bun run, image resize, headless browser, markdown render, cron, PTY.</description>\n    <location>r1/bun-1-4/SKILL.md</location>\n  </skill>\n</available_skills>\n\n<workstation>\n- OS: linux (kernel <host:kernel>)\n- Arch: x64\n- CPU: <host:cpu>\n- Terminal: xterm-256color\n</workstation>\n**EXECUTION HAPPENS HERE.** `eval` executes on THIS machine: you MUST match commands, paths, package managers, and parallel pool sizes to the workstation above. Code you WRITE may target a different machine; anything you RUN executes HERE.\n\nShell commands run ONLY inside eval cells via tool.bash({ command: \"...\" }) or tool.powershell({ command: \"...\" }); hooks and permissions still apply.\n\nThese tools run ONLY inside eval cells via tool.monitor({ description: \"...\", command: \"...\", filter: \"...\" }); hooks and permissions still apply.\n\nFile-name search runs ONLY inside eval cells via tool.glob({ pattern: \"...\", path: \"...\" }); it matches a glob such as **/*.ts, respects .gitignore, and applies hooks and permissions - prefer it over find/ls in tool.bash.\n\nText search runs ONLY inside eval cells via tool.grep({ pattern: \"...\", path: \"...\" }); it returns structured matches, respects .gitignore, and applies hooks and permissions - prefer it over rg/grep in tool.bash.\n\n## Image Generation\n\nWhen image generation tooling is present, read the gpt-image-gen skill before generating.\nUse the image generation tool currently available in this session.\n\n\n<Task_Management>\n## Todo Management\n\nA request with three or more distinct steps gets a phased todo before the first edit - investigation, implementation, verification, final report - in the todo tool; its description carries the operations, anatomy, and rules. Mark each item done the moment it finishes and reconcile the list against the newest user message before ending a turn.\n\n## Evidence\n- File edit: inspect the changed files and diagnostics.\n- Build command: require exit code 0.\n- Test run: require passing output, or state the pre-existing failure.\n</Task_Management>\n\n## Bash Tool Timeout Policy\n\nThe `bash` tool's `timeout` parameter is the process kill deadline, not how long you wait for output: the command is killed when it reaches the deadline.\n\n- Default timeout: 1800s (30 min). Applied automatically when you do not set `timeout`.\n- Recommended maximum timeout: 1800s (30 min). Explicit `timeout` values are preserved because different hosts may use different timeout units.\n- Foreground blocking stops at the ~60s window. A command still running then auto-detaches alive to a background session with a `bash_id` and keeps running until it exits or hits the kill deadline; the session tools in the terminal section steer or stop it.\n\n## Persistent terminal sessions\n\nThe `bash` tool is PTY-backed. For long-running or interactive work, do NOT use tmux or\nmanual `&` backgrounding; use the built-in session tools:\n\n- `tool.bash({ command, run_in_background: true })` starts a persistent session and returns a\n  `bash_id` immediately. Foreground calls still block and return output; their `timeout`\n  (seconds) is a kill deadline. Background sessions ignore `timeout` and live until they\n  exit or you call `kill_bash`. Backgrounding is not a session: a plain `&` job dies with the\n  call's PTY hangup (native backend), `nohup` at best leaves an untracked orphan (no `bash_id`,\n  no log) that the call's timeout still group-kills; only `run_in_background` creates a\n  session that outlives the call.\n- `bash_output({ bash_id, filter, view })` peeks at a session without blocking: new output\n  since the last read, the status line, or a rendered full-screen snapshot of TUIs via\n  `view: \"screen\"`. Completion arrives as a notification carrying the exit code and output\n  tail: peeking is for steering, never for waiting.\n- `tool.monitor` subscribes you to a change. Pass exactly one source (`command`, `path` or\n  `target`; one branch per call, never two):\n  - `tool.monitor({ description, command, filter?, timeout_ms?, persistent? })` watches a command:\n    newline-terminated PTY output lines (stderr included) matching `filter` arrive as injected\n    events while you keep working; command exit always delivers a summary. `timeout_ms` is\n    that watch's own deadline: it KILLS the watched command when it fires (the summary says\n    `killed at deadline`); for a job longer than the watch, start it with `run_in_background`\n    and only watch it. One-shot gate: wait\n    inside the command and print one sentinel (`until <cond>; do sleep 1; done;\n    printf 'READY\\n'`). Stream: `tail -n 0 -F | grep --line-buffered`. Filter noise at the\n    source and stop with `kill_bash`. Persistent command watches are re-run after a restart with\n    `SENPI_MONITOR_RESTORED=1`; keep any baseline in `$SENPI_MONITOR_STATE_DIR` so a move during\n    downtime (at most `$SENPI_MONITOR_DOWNTIME_MS` ms) is still reported:\n    `b=\"$SENPI_MONITOR_STATE_DIR/base\"; p=$(cat \"$b\" 2>/dev/null || git rev-parse origin/main | tee \"$b\"); while sleep 30; do git fetch -q || true; n=$(git rev-parse origin/main); [ \"$n\" != \"$p\" ] && { echo \"MOVED $p..$n\"; p=$n; echo \"$p\" > \"$b\"; }; done`.\n    A watch whose command exits is not restarted, so keep failures inside the loop non-fatal.\n  - `tool.monitor({ description, path, event?, persistent? })` natively watches one regular file and\n    fires once: prefer it over a shell poll loop. `\"create\"` (the default) fires only when the file\n    appears after registration, so watch an already-existing file with `\"modify\"`; registration needs\n    the parent directory to exist already, so poll with a `command` when the run creates that\n    directory too. This branch takes no `filter`.\n  - `tool.monitor({ type: \"rpc\", target, events?, exclude?, filter?, persistent? })` watches other\n    sessions over every RPC host and terminal: `target: \"children\"` (sessions you spawned, including\n    later ones), `\"all\"`, or one session id, path or `st_` task id. The result lists each matched\n    session as it is now; then each status change (`rpc <label> status running -> idle ...`) and\n    effect receipt arrives as an event. `events: \"all\"` adds their content, streaming collapsed to one\n    line per 2 s; `exclude` drops kinds. Watching never attaches to a session.\n  A standing watch is marked `persistent: true`: it has no deadline, survives a session restart\n  (the file is rescanned and any change missed while detached reported), expires 7 days after\n  creation, has no per-session cap unless the `terminal.maxDurableMonitors` setting sets one,\n  and is accounted for in one restart-report line on session start.\n  Identical updates are deduped; repeated monitor-only wakes pause the noisy monitor(s) that\n  caused them, not all monitors. Completion still wakes the session, and\n  `tool.monitor({ action: \"rearm\", bash_id })` resumes one while `tool.monitor({ action: \"rearm\" })`\n  resumes all paused monitors; real user input also resumes paused monitors.\n- `bash_input({ bash_id, input, keys, submit })` sends stdin or named keys (e.g.\n  `[\"ctrl+c\"]`, `[\"enter\"]`) to steer a REPL or interrupt a process.\n- `bash_resize({ bash_id, cols, rows })` resizes the PTY so full-screen programs reflow.\n- `kill_bash({ bash_id })` (or `{ all: true }`) tears the session tree down with no orphans.\n",
       "model": {
-       "id": "<id:9>",
+       "id": "<id:11>",
        "name": "mock-model-b",
        "api": "openai-completions",
        "provider": "mock",
@@ -2833,7 +3038,7 @@
        "maxTokens": 4096
       },
       "previousModel": {
-       "id": "<id:10>",
+       "id": "<id:12>",
        "name": "mock-model",
        "api": "openai-completions",
        "provider": "mock",
@@ -2856,7 +3061,7 @@
      {
       "type": "model_changed",
       "model": {
-       "id": "<id:9>",
+       "id": "<id:11>",
        "name": "mock-model-b",
        "api": "openai-completions",
        "provider": "mock",
@@ -2880,7 +3085,7 @@
        "source": "rpc"
       },
       "previousModel": {
-       "id": "<id:10>",
+       "id": "<id:12>",
        "name": "mock-model",
        "api": "openai-completions",
        "provider": "mock",
@@ -2902,19 +3107,84 @@
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:25>",
+      "id": "<uuid:27>",
       "method": "setStatus",
       "statusKey": "pi-websearch"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:26>",
+      "id": "<uuid:28>",
       "method": "setWidget",
       "widgetKey": "pi-websearch"
      },
      {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "session-lifecycle",
+       "data": {
+        "state": "running",
+        "seq": 3,
+        "epoch": 2,
+        "epochOrigin": "human",
+        "humanInputRevision": 2,
+        "selfSettleEligible": true,
+        "restoring": false,
+        "persisted": true,
+        "runPaused": false,
+        "since": "<ts:data.since:3>",
+        "role": "root",
+        "rootSessionId": "<uuid:16>",
+        "waitingOn": {
+         "children": 0,
+         "background": [],
+         "human": []
+        },
+        "holds": [],
+        "sessionId": "<uuid:16>",
+        "attentionSeq": 0,
+        "synthetic": [],
+        "epochSealed": false,
+        "runActive": true,
+        "interrupted": false,
+        "runId": "<uuid:29>"
+       },
+       "id": "<id:13>",
+       "parentId": "<id:14>",
+       "timestamp": "<ts:entry.timestamp:7>"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 3,
+       "epoch": 2,
+       "epochOrigin": "human",
+       "humanInputRevision": 2,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:5>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 0
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:5>"
+      }
+     },
+     {
       "type": "extension_ui_request",
-      "id": "<uuid:27>",
+      "id": "<uuid:30>",
       "method": "setStatus",
       "statusKey": "todo-waiting"
      },
@@ -2954,9 +3224,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:11>",
-       "parentId": "<id:12>",
-       "timestamp": "<ts:entry.timestamp:5>",
+       "id": "<id:15>",
+       "parentId": "<id:13>",
+       "timestamp": "<ts:entry.timestamp:8>",
        "message": {
         "role": "user",
         "content": [
@@ -2968,6 +3238,38 @@
         "timestamp": "<ts:message.timestamp:14>"
        },
        "inputSource": "rpc"
+      }
+     },
+     {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 3,
+       "epoch": 2,
+       "epochOrigin": "human",
+       "humanInputRevision": 2,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:6>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 1
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "activity": {
+        "kind": "model",
+        "since": "<ts:activity.since:2>"
+       },
+       "observedAt": "<ts:lifecycle.observedAt:6>"
       }
      },
      {
@@ -2994,7 +3296,7 @@
        },
        "stopReason": "pending",
        "timestamp": "<ts:message.timestamp:15>",
-       "responseId": "<id:5>"
+       "responseId": "<id:6>"
       },
       "streaming": true
      },
@@ -3064,6 +3366,34 @@
       }
      },
      {
+      "type": "session_lifecycle",
+      "lifecycle": {
+       "state": "running",
+       "seq": 3,
+       "epoch": 2,
+       "epochOrigin": "human",
+       "humanInputRevision": 2,
+       "selfSettleEligible": true,
+       "restoring": false,
+       "persisted": true,
+       "runPaused": false,
+       "since": "<ts:lifecycle.since:7>",
+       "role": "root",
+       "rootSessionId": "<uuid:16>",
+       "activityRevision": {
+        "instanceId": "<uuid:18>",
+        "revision": 2
+       },
+       "waitingOn": {
+        "children": 0,
+        "background": [],
+        "human": []
+       },
+       "holds": [],
+       "observedAt": "<ts:lifecycle.observedAt:7>"
+      }
+     },
+     {
       "type": "message_end",
       "message": {
        "role": "assistant",
@@ -3092,7 +3422,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:16>",
-       "responseId": "<id:5>",
+       "responseId": "<id:6>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -3107,9 +3437,9 @@
       "type": "entry_appended",
       "entry": {
        "type": "message",
-       "id": "<id:13>",
-       "parentId": "<id:11>",
-       "timestamp": "<ts:entry.timestamp:6>",
+       "id": "<id:16>",
+       "parentId": "<id:15>",
+       "timestamp": "<ts:entry.timestamp:9>",
        "message": {
         "role": "assistant",
         "content": [
@@ -3137,7 +3467,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:message.timestamp:17>",
-        "responseId": "<id:5>",
+        "responseId": "<id:6>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -3178,7 +3508,7 @@
        },
        "stopReason": "stop",
        "timestamp": "<ts:message.timestamp:18>",
-       "responseId": "<id:5>",
+       "responseId": "<id:6>",
        "rawStopReason": "stop",
        "thinkingLevel": "off",
        "timing": {
@@ -3197,17 +3527,17 @@
        "customType": "senpi.hooks.stop-state",
        "data": {
         "count": 0,
-        "sessionId": "<uuid:17>",
-        "turnKey": "2:<id:13>"
+        "sessionId": "<uuid:16>",
+        "turnKey": "2:<id:16>"
        },
-       "id": "<id:14>",
-       "parentId": "<id:13>",
-       "timestamp": "<ts:entry.timestamp:7>"
+       "id": "<id:17>",
+       "parentId": "<id:16>",
+       "timestamp": "<ts:entry.timestamp:10>"
       }
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:28>",
+      "id": "<uuid:31>",
       "method": "setStatus",
       "statusKey": "goal"
      },
@@ -3251,7 +3581,7 @@
         },
         "stopReason": "stop",
         "timestamp": "<ts:messages.timestamp:6>",
-        "responseId": "<id:5>",
+        "responseId": "<id:6>",
         "rawStopReason": "stop",
         "thinkingLevel": "off",
         "timing": {
@@ -3271,398 +3601,6 @@
       "type": "agent_idle"
      },
      {
-      "type": "extension_ui_request",
-      "id": "<uuid:29>",
-      "method": "setStatus",
-      "statusKey": "anthropic-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:30>",
-      "method": "setWidget",
-      "widgetKey": "anthropic-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:31>",
-      "method": "setStatus",
-      "statusKey": "openai-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:32>",
-      "method": "setWidget",
-      "widgetKey": "openai-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:33>",
-      "method": "setStatus",
-      "statusKey": "monitors"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:34>",
-      "method": "setStatus",
-      "statusKey": "pi-websearch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:35>",
-      "method": "setWidget",
-      "widgetKey": "pi-websearch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:36>",
-      "method": "setStatus",
-      "statusKey": "pi-webfetch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:37>",
-      "method": "setWidget",
-      "widgetKey": "pi-webfetch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:38>",
-      "method": "setStatus",
-      "statusKey": "loop"
-     }
-    ],
-    "lifecycle": [
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 1,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:1>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:39>"
-       },
-       "id": "<id:15>",
-       "parentId": "<id:1>",
-       "timestamp": "<ts:entry.timestamp:8>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:1>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:40>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:1>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:2>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:40>",
-        "revision": 1
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:1>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:2>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 1,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:3>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:40>",
-        "revision": 2
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:3>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "done",
-        "seq": 2,
-        "epoch": 1,
-        "epochOrigin": "human",
-        "humanInputRevision": 1,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:2>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "completionId": "<uuid:17>:1",
-        "completion": {
-         "kind": "reply",
-         "at": "<ts:completion.at:1>"
-        },
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": true,
-        "runActive": false,
-        "interrupted": false,
-        "lastTurnEnd": {
-         "endedBy": "clean",
-         "budgetSpent": false,
-         "deadlineStop": false
-        },
-        "runId": "<uuid:39>"
-       },
-       "id": "<id:16>",
-       "parentId": "<id:8>",
-       "timestamp": "<ts:entry.timestamp:9>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "done",
-       "seq": 2,
-       "epoch": 1,
-       "epochOrigin": "human",
-       "humanInputRevision": 1,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:4>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:40>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "completionId": "<uuid:17>:1",
-       "completion": {
-        "kind": "reply",
-        "at": "<ts:completion.at:2>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:4>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "session-lifecycle",
-       "data": {
-        "state": "running",
-        "seq": 3,
-        "epoch": 2,
-        "epochOrigin": "human",
-        "humanInputRevision": 2,
-        "selfSettleEligible": true,
-        "restoring": false,
-        "persisted": true,
-        "runPaused": false,
-        "since": "<ts:data.since:3>",
-        "role": "root",
-        "rootSessionId": "<uuid:17>",
-        "waitingOn": {
-         "children": 0,
-         "background": [],
-         "human": []
-        },
-        "holds": [],
-        "sessionId": "<uuid:17>",
-        "attentionSeq": 0,
-        "synthetic": [],
-        "epochSealed": false,
-        "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:41>"
-       },
-       "id": "<id:12>",
-       "parentId": "<id:17>",
-       "timestamp": "<ts:entry.timestamp:10>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 3,
-       "epoch": 2,
-       "epochOrigin": "human",
-       "humanInputRevision": 2,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:5>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:40>",
-        "revision": 0
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:5>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 3,
-       "epoch": 2,
-       "epochOrigin": "human",
-       "humanInputRevision": 2,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:6>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:40>",
-        "revision": 1
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "activity": {
-        "kind": "model",
-        "since": "<ts:activity.since:2>"
-       },
-       "observedAt": "<ts:lifecycle.observedAt:6>"
-      }
-     },
-     {
-      "type": "session_lifecycle",
-      "lifecycle": {
-       "state": "running",
-       "seq": 3,
-       "epoch": 2,
-       "epochOrigin": "human",
-       "humanInputRevision": 2,
-       "selfSettleEligible": true,
-       "restoring": false,
-       "persisted": true,
-       "runPaused": false,
-       "since": "<ts:lifecycle.since:7>",
-       "role": "root",
-       "rootSessionId": "<uuid:17>",
-       "activityRevision": {
-        "instanceId": "<uuid:40>",
-        "revision": 2
-       },
-       "waitingOn": {
-        "children": 0,
-        "background": [],
-        "human": []
-       },
-       "holds": [],
-       "observedAt": "<ts:lifecycle.observedAt:7>"
-      }
-     },
-     {
       "type": "entry_appended",
       "entry": {
        "type": "custom",
@@ -3679,19 +3617,19 @@
         "runPaused": false,
         "since": "<ts:data.since:4>",
         "role": "root",
-        "rootSessionId": "<uuid:17>",
+        "rootSessionId": "<uuid:16>",
         "waitingOn": {
          "children": 0,
          "background": [],
          "human": []
         },
         "holds": [],
-        "completionId": "<uuid:17>:2",
+        "completionId": "<uuid:16>:2",
         "completion": {
          "kind": "reply",
          "at": "<ts:completion.at:3>"
         },
-        "sessionId": "<uuid:17>",
+        "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": true,
@@ -3702,10 +3640,10 @@
          "budgetSpent": false,
          "deadlineStop": false
         },
-        "runId": "<uuid:41>"
+        "runId": "<uuid:29>"
        },
        "id": "<id:18>",
-       "parentId": "<id:14>",
+       "parentId": "<id:17>",
        "timestamp": "<ts:entry.timestamp:11>"
       }
      },
@@ -3723,9 +3661,9 @@
        "runPaused": false,
        "since": "<ts:lifecycle.since:8>",
        "role": "root",
-       "rootSessionId": "<uuid:17>",
+       "rootSessionId": "<uuid:16>",
        "activityRevision": {
-        "instanceId": "<uuid:40>",
+        "instanceId": "<uuid:18>",
         "revision": 0
        },
        "waitingOn": {
@@ -3734,13 +3672,73 @@
         "human": []
        },
        "holds": [],
-       "completionId": "<uuid:17>:2",
+       "completionId": "<uuid:16>:2",
        "completion": {
         "kind": "reply",
         "at": "<ts:completion.at:4>"
        },
        "observedAt": "<ts:lifecycle.observedAt:8>"
       }
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:32>",
+      "method": "setStatus",
+      "statusKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:33>",
+      "method": "setWidget",
+      "widgetKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:34>",
+      "method": "setStatus",
+      "statusKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:35>",
+      "method": "setWidget",
+      "widgetKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:36>",
+      "method": "setStatus",
+      "statusKey": "monitors"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:37>",
+      "method": "setStatus",
+      "statusKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:38>",
+      "method": "setWidget",
+      "widgetKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:39>",
+      "method": "setStatus",
+      "statusKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:40>",
+      "method": "setWidget",
+      "widgetKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:41>",
+      "method": "setStatus",
+      "statusKey": "loop"
      }
     ],
     "surfaces": []
@@ -3788,6 +3786,40 @@
      "timestamp": "<ts:entries.timestamp:4>"
     },
     {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "running",
+      "seq": 1,
+      "epoch": 1,
+      "epochOrigin": "human",
+      "humanInputRevision": 1,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:1>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": false,
+      "runActive": true,
+      "interrupted": false,
+      "runId": "<uuid:2>"
+     },
+     "id": "<id:4>",
+     "parentId": "<id:3>",
+     "timestamp": "<ts:entries.timestamp:5>"
+    },
+    {
      "type": "custom_message",
      "customType": "environment-context",
      "content": "<environment_context>\n  <cwd><sandbox>/work</cwd>\n  <current_date><ts:entries.content:1></current_date>\n</environment_context>",
@@ -3796,15 +3828,15 @@
       "cwd": "<sandbox>/work",
       "currentDate": "<ts:details.currentDate:1>"
      },
-     "id": "<id:4>",
-     "parentId": "<id:5>",
-     "timestamp": "<ts:entries.timestamp:5>"
+     "id": "<id:5>",
+     "parentId": "<id:4>",
+     "timestamp": "<ts:entries.timestamp:6>"
     },
     {
      "type": "message",
      "id": "<id:6>",
-     "parentId": "<id:4>",
-     "timestamp": "<ts:entries.timestamp:6>",
+     "parentId": "<id:5>",
+     "timestamp": "<ts:entries.timestamp:7>",
      "message": {
       "role": "user",
       "content": [
@@ -3824,13 +3856,13 @@
      "display": false,
      "id": "<id:7>",
      "parentId": "<id:6>",
-     "timestamp": "<ts:entries.timestamp:7>"
+     "timestamp": "<ts:entries.timestamp:8>"
     },
     {
      "type": "message",
      "id": "<id:8>",
      "parentId": "<id:7>",
-     "timestamp": "<ts:entries.timestamp:8>",
+     "timestamp": "<ts:entries.timestamp:9>",
      "message": {
       "role": "assistant",
       "content": [
@@ -3879,13 +3911,57 @@
      },
      "id": "<id:10>",
      "parentId": "<id:8>",
-     "timestamp": "<ts:entries.timestamp:9>"
+     "timestamp": "<ts:entries.timestamp:10>"
+    },
+    {
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "done",
+      "seq": 2,
+      "epoch": 1,
+      "epochOrigin": "human",
+      "humanInputRevision": 1,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:2>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "completionId": "<uuid:1>:1",
+      "completion": {
+       "kind": "reply",
+       "at": "<ts:completion.at:1>"
+      },
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": true,
+      "runActive": false,
+      "interrupted": false,
+      "lastTurnEnd": {
+       "endedBy": "clean",
+       "budgetSpent": false,
+       "deadlineStop": false
+      },
+      "runId": "<uuid:2>"
+     },
+     "id": "<id:11>",
+     "parentId": "<id:10>",
+     "timestamp": "<ts:entries.timestamp:11>"
     },
     {
      "type": "model_change",
-     "id": "<id:11>",
-     "parentId": "<id:12>",
-     "timestamp": "<ts:entries.timestamp:10>",
+     "id": "<id:12>",
+     "parentId": "<id:11>",
+     "timestamp": "<ts:entries.timestamp:12>",
      "provider": "mock",
      "modelId": "mock-model-b",
      "originalProvider": "mock",
@@ -3893,10 +3969,44 @@
      "source": "rpc"
     },
     {
-     "type": "message",
+     "type": "custom",
+     "customType": "session-lifecycle",
+     "data": {
+      "state": "running",
+      "seq": 3,
+      "epoch": 2,
+      "epochOrigin": "human",
+      "humanInputRevision": 2,
+      "selfSettleEligible": true,
+      "restoring": false,
+      "persisted": true,
+      "runPaused": false,
+      "since": "<ts:data.since:3>",
+      "role": "root",
+      "rootSessionId": "<uuid:1>",
+      "waitingOn": {
+       "children": 0,
+       "background": [],
+       "human": []
+      },
+      "holds": [],
+      "sessionId": "<uuid:1>",
+      "attentionSeq": 0,
+      "synthetic": [],
+      "epochSealed": false,
+      "runActive": true,
+      "interrupted": false,
+      "runId": "<uuid:3>"
+     },
      "id": "<id:13>",
-     "parentId": "<id:14>",
-     "timestamp": "<ts:entries.timestamp:11>",
+     "parentId": "<id:12>",
+     "timestamp": "<ts:entries.timestamp:13>"
+    },
+    {
+     "type": "message",
+     "id": "<id:14>",
+     "parentId": "<id:13>",
+     "timestamp": "<ts:entries.timestamp:14>",
      "message": {
       "role": "user",
       "content": [
@@ -3912,8 +4022,8 @@
     {
      "type": "message",
      "id": "<id:15>",
-     "parentId": "<id:13>",
-     "timestamp": "<ts:entries.timestamp:12>",
+     "parentId": "<id:14>",
+     "timestamp": "<ts:entries.timestamp:15>",
      "message": {
       "role": "assistant",
       "content": [
@@ -3962,121 +4072,7 @@
      },
      "id": "<id:16>",
      "parentId": "<id:15>",
-     "timestamp": "<ts:entries.timestamp:13>"
-    }
-   ],
-   "lifecycleEntries": [
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "running",
-      "seq": 1,
-      "epoch": 1,
-      "epochOrigin": "human",
-      "humanInputRevision": 1,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:1>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": false,
-      "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
-     },
-     "id": "<id:5>",
-     "parentId": "<id:3>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:1>"
-    },
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "done",
-      "seq": 2,
-      "epoch": 1,
-      "epochOrigin": "human",
-      "humanInputRevision": 1,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:2>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "completionId": "<uuid:1>:1",
-      "completion": {
-       "kind": "reply",
-       "at": "<ts:completion.at:1>"
-      },
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": true,
-      "runActive": false,
-      "interrupted": false,
-      "lastTurnEnd": {
-       "endedBy": "clean",
-       "budgetSpent": false,
-       "deadlineStop": false
-      },
-      "runId": "<uuid:2>"
-     },
-     "id": "<id:12>",
-     "parentId": "<id:10>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:2>"
-    },
-    {
-     "type": "custom",
-     "customType": "session-lifecycle",
-     "data": {
-      "state": "running",
-      "seq": 3,
-      "epoch": 2,
-      "epochOrigin": "human",
-      "humanInputRevision": 2,
-      "selfSettleEligible": true,
-      "restoring": false,
-      "persisted": true,
-      "runPaused": false,
-      "since": "<ts:data.since:3>",
-      "role": "root",
-      "rootSessionId": "<uuid:1>",
-      "waitingOn": {
-       "children": 0,
-       "background": [],
-       "human": []
-      },
-      "holds": [],
-      "sessionId": "<uuid:1>",
-      "attentionSeq": 0,
-      "synthetic": [],
-      "epochSealed": false,
-      "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:3>"
-     },
-     "id": "<id:14>",
-     "parentId": "<id:11>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:3>"
+     "timestamp": "<ts:entries.timestamp:16>"
     },
     {
      "type": "custom",
@@ -4120,7 +4116,7 @@
      },
      "id": "<id:17>",
      "parentId": "<id:16>",
-     "timestamp": "<ts:lifecycleEntries.timestamp:4>"
+     "timestamp": "<ts:entries.timestamp:17>"
     }
    ]
   }

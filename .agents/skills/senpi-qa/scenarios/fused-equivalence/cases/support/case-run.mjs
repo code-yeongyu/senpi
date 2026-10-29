@@ -1,6 +1,7 @@
 // One EQ case run: a sandbox, the fake model server, and the real CLI (`--mode rpc`, persisted session) on the
 // driver's child runtime. Everything a case does goes through this object, so every case is observed the same way.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { childRuntime, makeSandbox, repoRoot } from "../../../../scripts/lib/common.mjs";
 import { startFakeModelServer } from "../../../../scripts/lib/fake-model-server.mjs";
@@ -16,13 +17,37 @@ const OPEN_TIMEOUT_MS = 300_000;
 const TERMINAL_ENV = ["TERM_PROGRAM", "TERM_PROGRAM_VERSION", "COLORTERM", "TERM_SESSION_ID", "ITERM_SESSION_ID"];
 
 /**
+ * Character length of every EQ sandbox root, on every host. The normalizer replaces the root with `<sandbox>`, but some
+ * observed values are derived from the raw text before any normalization: a compaction's `structuralYield` counts the
+ * characters of the summarized environment-context message, whose cwd is the sandbox path (E12), and the Cursor wire
+ * log cuts each frame's JSON at a fixed width, so where the cut lands follows the path (E19). With the OS temp dir's
+ * length in those values, the same case observed 156, 163, 169 and 170 saved tokens on four temp roots. Padding the
+ * sandbox label to one fixed root length keeps every such value equal across hosts and runs.
+ */
+const SANDBOX_ROOT_LENGTH = 128;
+/** `mkdtemp` appends six random characters to the prefix. */
+const MKDTEMP_SUFFIX_LENGTH = 6;
+
+/** The `makeSandbox` label whose root (`<tmpdir>/<label>-XXXXXX`) is exactly SANDBOX_ROOT_LENGTH characters. */
+function fixedLengthLabel(label) {
+	// The child resolves its cwd through symlinks, so the length that reaches derived values is the real path's.
+	const prefix = join(realpathSync(tmpdir()), `${label}-`);
+	const pad = SANDBOX_ROOT_LENGTH - prefix.length - MKDTEMP_SUFFIX_LENGTH;
+	if (pad < 0)
+		throw new Error(
+			`the OS temp dir ${JSON.stringify(tmpdir())} is too long for a ${SANDBOX_ROOT_LENGTH}-character EQ sandbox root; point TMPDIR at a shorter directory`,
+		);
+	return `${label}${"_".repeat(pad)}`;
+}
+
+/**
  * @param {{ label: string, turns: object[], api?: string, models?: object[], files?: Record<string,string>,
  *   settings?: object, extensions?: string[], extraArgs?: string[], env?: Record<string,string> }} spec
  */
 export async function startCaseRun(spec) {
 	const api = spec.api ?? "openai-completions";
 	const preset = API_PRESETS[api];
-	const box = makeSandbox(`eq-${spec.label}`);
+	const box = makeSandbox(fixedLengthLabel(`eq-${spec.label}`));
 	const server = await startFakeModelServer({ turns: spec.turns });
 	writeMockModelsJson(box.agentDir, server, api, {}, { models: spec.models ?? [] });
 	if (spec.settings) writeFileSync(join(box.agentDir, "settings.json"), JSON.stringify(spec.settings, null, 2));

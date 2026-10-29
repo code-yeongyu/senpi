@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { createNormalizer, diffNormalized } from "./equivalence-normalize.mjs";
+import { createNormalizer, diffNormalized, directoryRoots } from "./equivalence-normalize.mjs";
 
 const U1 = "01a18140-5eea-72cf-aab6-4bbe9aa427cc";
 const U2 = "9d3636a4-3e1f-4346-9fa5-23e139d0478b";
@@ -75,7 +78,24 @@ test("wall-clock values never cause a difference: ties, gaps and clock races nor
 	assert.deepEqual(normalize([{ at: 1 }]), [{ at: 1 }]);
 });
 
-test("durations and resource measurements are dropped and nothing else is", () => {
+test("content-addressed blob ids map one-to-one by field, and only at those fields", () => {
+	const normalize = createNormalizer();
+	const out = normalize({
+		id: "entry-1",
+		conversationState: {
+			rootPromptMessagesJson: ["L7/T3UHG6bQTLK3q=", "KJu71vy2TD317VOe="],
+			turns: ["L7/T3UHG6bQTLK3q="],
+		},
+		spec: { turns: ["E12-FIRST"] },
+	});
+	assert.deepEqual(out, {
+		id: "<id:1>",
+		conversationState: { rootPromptMessagesJson: ["<id:2>", "<id:3>"], turns: ["<id:2>"] },
+		spec: { turns: ["E12-FIRST"] },
+	});
+});
+
+test("durations are dropped, measurement values become <measured> with their keys kept, nothing else changes", () => {
 	const normalize = createNormalizer();
 	const out = normalize({
 		durationMs: 12,
@@ -83,11 +103,23 @@ test("durations and resource measurements are dropped and nothing else is", () =
 		toolDurationMs: 9,
 		generationMs: 25,
 		queued_ms: 4,
-		memory: { liveBytes: 7 },
+		memory: { liveBytes: 7, rssBytes: 9, heapUsedBytes: 1, heapTotalBytes: 2, externalBytes: 3 },
 		timeoutMs: 5000,
 		text: "took 12ms",
 	});
-	assert.deepEqual(out, { memory: {}, timeoutMs: 5000, text: "took 12ms" });
+	assert.deepEqual(out, {
+		memory: {
+			liveBytes: "<measured>",
+			rssBytes: "<measured>",
+			heapUsedBytes: "<measured>",
+			heapTotalBytes: "<measured>",
+			externalBytes: "<measured>",
+		},
+		timeoutMs: 5000,
+		text: "took 12ms",
+	});
+	// A measurement that appears in one observation and not the other is a difference.
+	assert.equal(diffNormalized(normalize({ memory: { liveBytes: 7 } }), normalize({ memory: {} })).length, 1);
 });
 
 test("roots and host facts are replaced longest first; other text is never masked", () => {
@@ -114,6 +146,24 @@ test("roots and host facts are replaced longest first; other text is never maske
 		os: "- OS: darwin (kernel <host:kernel>)",
 		hex: "deadbeef cafe0001",
 	});
+});
+
+test("a directory root reached through a symlink tokenizes in its allocated and its resolved form", (t) => {
+	const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), "eq-roots-")));
+	t.after(() => rmSync(scratch, { recursive: true, force: true }));
+	const real = join(scratch, "real");
+	const link = join(scratch, "link");
+	mkdirSync(real);
+	symlinkSync(real, link);
+	const normalize = createNormalizer({ roots: directoryRoots(link, "<sandbox>", { keyed: "<sandbox-key>" }) });
+	assert.deepEqual(
+		normalize({
+			allocated: `${link}/work`,
+			resolved: `${real}/work`,
+			sessionKey: `--${real.replaceAll("/", "-")}-work--`,
+		}),
+		{ allocated: "<sandbox>/work", resolved: "<sandbox>/work", sessionKey: "--<sandbox-key>-work--" },
+	);
 });
 
 test("token maps and ranks are scoped to one normalize() call", () => {

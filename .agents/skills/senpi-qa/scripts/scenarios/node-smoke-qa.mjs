@@ -14,32 +14,42 @@ import { fileURLToPath } from "node:url";
 import { startCaseRun } from "../../scenarios/fused-equivalence/cases/support/case-run.mjs";
 import { writeCodemodeSettings } from "../../scenarios/fused-equivalence/cases/support/codemode.mjs";
 import { observe } from "../../scenarios/fused-equivalence/cases/support/observe.mjs";
+import { ownTsxCache } from "../../scenarios/fused-equivalence/cases/support/tsx-cache.mjs";
 import { childRuntime, evidenceDir, guardRealAuth, installCleanupHooks } from "../lib/common.mjs";
 import { diffNormalized } from "../lib/equivalence-normalize.mjs";
 
 const OBSERVABLES = ["O1", "O2", "O7"];
 /**
- * The one designed Node/Bun difference in today's prompt: senpi-codemode contributes its bun-1-4 skill only when the
- * process itself runs on Bun >= 1.4 (packages/senpi-codemode/src/extension/skill-contribution.ts activeBunSkillPath),
- * whatever the eval settings. Exactly that skill root and that skill entry are removed from the Bun run before the
- * comparison, every removal is counted in the receipt, and nothing else is touched.
+ * The two designed Node/Bun differences in today's prompt, removed per runtime before the comparison; every removal is
+ * counted in the receipt and nothing else is touched:
+ * - senpi-codemode contributes its bun-1-4 skill only when the process itself runs on Bun >= 1.4
+ *   (packages/senpi-codemode/src/extension/skill-contribution.ts activeBunSkillPath): that skill root and skill entry;
+ * - the eval tool's description carries one line naming the runtime its js kernel runs on (`JS runs under Node.js
+ *   worker: ...` / `JS runs in-process on Bun <version>: ...`): that one line, on each runtime.
  */
-const RUNTIME_GATED = [
-	/\n {2}<r(\d+)><repo>\/packages\/senpi-codemode\/src\/skill<\/r\1>/g,
-	/\n {2}<skill>\n {4}<name>bun-1-4<\/name>\n {4}<description>[^<]*<\/description>\n {4}<location>r\d+\/bun-1-4\/SKILL\.md<\/location>\n {2}<\/skill>/g,
-];
+const RUNTIME_GATED = {
+	bun: [
+		["removedSkillRoots", /\n {2}<r(\d+)><repo>\/packages\/senpi-codemode\/src\/skill<\/r\1>/g],
+		[
+			"removedSkillEntries",
+			/\n {2}<skill>\n {4}<name>bun-1-4<\/name>\n {4}<description>[^<]*<\/description>\n {4}<location>r\d+\/bun-1-4\/SKILL\.md<\/location>\n {2}<\/skill>/g,
+		],
+		["removedKernelRuntimeLines", /\nJS runs in-process on Bun \d+\.\d+\.\d+: [^\n]*/g],
+	],
+	node: [["removedKernelRuntimeLines", /\nJS runs under Node\.js worker: [^\n]*/g]],
+};
 
-function withoutRuntimeGated(value, counts) {
+function withoutRuntimeGated(value, patterns, counts) {
 	if (typeof value === "string") {
-		return RUNTIME_GATED.reduce((text, pattern, index) => {
+		return patterns.reduce((text, [name, pattern]) => {
 			const matches = text.match(pattern)?.length ?? 0;
-			counts[index] += matches;
+			counts[name] += matches;
 			return matches ? text.replace(pattern, "") : text;
 		}, value);
 	}
-	if (Array.isArray(value)) return value.map((item) => withoutRuntimeGated(item, counts));
+	if (Array.isArray(value)) return value.map((item) => withoutRuntimeGated(item, patterns, counts));
 	if (value && typeof value === "object")
-		return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, withoutRuntimeGated(v, counts)]));
+		return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, withoutRuntimeGated(v, patterns, counts)]));
 	return value;
 }
 const RUNTIMES = new Set(["node", "bun"]);
@@ -55,10 +65,8 @@ async function runOne(outFile) {
 		turns: [{ text: "SMOKE-FIRST" }, { text: "SMOKE-SECOND" }, { text: "SMOKE-SUMMARY of the conversation" }],
 	});
 	try {
-		// The eval js kernel runs on the CLI's own runtime by design and describes that runtime to the model (Bun builtins
-		// vs Node); that is eval-kernel behavior, outside the open/send/resume/compact path Z1.n compares, so the smoke
-		// turns the js kernel off on both runtimes. See RUNTIME_GATED for the one difference that setting cannot remove.
-		writeCodemodeSettings(run.box.cwd, { languages: { js: false } });
+		// The js kernel stays on in both runs; the runtime description it gives the model is stripped in RUNTIME_GATED.
+		writeCodemodeSettings(run.box.cwd, {});
 		await run.open();
 		await run.prompt("first");
 		await run.close();
@@ -87,6 +95,16 @@ function driver(runtime, outFile) {
 }
 
 async function compare() {
+	// The Node runs' CLI children run through the tsx CLI; the comparing process owns their cache for the whole step.
+	const releaseTsxCache = ownTsxCache();
+	try {
+		await compareRuntimes();
+	} finally {
+		releaseTsxCache();
+	}
+}
+
+async function compareRuntimes() {
 	const guard = guardRealAuth();
 	const runtimes = (value("--runtimes") ?? "node,bun").split(",");
 	if (runtimes.length < 2 || runtimes.some((runtime) => !RUNTIMES.has(runtime)))
@@ -101,10 +119,10 @@ async function compare() {
 	}
 	const runtimeGated = {};
 	for (const run of runs) {
-		if (run.runtime !== "bun") continue;
-		const counts = RUNTIME_GATED.map(() => 0);
-		run.observations = withoutRuntimeGated(run.observations, counts);
-		runtimeGated[run.runtime] = { removedSkillRoots: counts[0], removedSkillEntries: counts[1] };
+		const patterns = RUNTIME_GATED[run.runtime];
+		const counts = Object.fromEntries(patterns.map(([name]) => [name, 0]));
+		run.observations = withoutRuntimeGated(run.observations, patterns, counts);
+		runtimeGated[run.runtime] = counts;
 	}
 	const [base, ...others] = runs;
 	const comparisons = others.map((other) => ({
@@ -113,7 +131,9 @@ async function compare() {
 	}));
 	guard.assertUnchanged();
 	for (const run of runs) process.stdout.write(`child_runtime ${run.runtime}: ${run.child_runtime}\n`);
-	process.stdout.write(`runtime-gated (bun-1-4 skill, removed before comparing): ${JSON.stringify(runtimeGated)}\n`);
+	process.stdout.write(
+		`runtime-gated (bun-1-4 skill, kernel runtime line; removed before comparing): ${JSON.stringify(runtimeGated)}\n`,
+	);
 	for (const { pair, diffs } of comparisons) {
 		process.stdout.write(
 			`[${diffs.length === 0 ? "PASS" : "FAIL"}] ${pair}: ${diffs.length} difference(s) in ${OBSERVABLES.join(", ")}\n`,

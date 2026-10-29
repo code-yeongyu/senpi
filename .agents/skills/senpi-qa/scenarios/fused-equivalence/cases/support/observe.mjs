@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createNormalizer } from "../../../../scripts/lib/equivalence-normalize.mjs";
+import { createNormalizer, directoryRoots } from "../../../../scripts/lib/equivalence-normalize.mjs";
 import { collectors } from "./collectors.mjs";
 import { childRuntimeFacts, goldenPlatform, hostFacts } from "./host.mjs";
 
@@ -15,10 +15,10 @@ const EQ_DIR = join(SKILL, "scenarios", "fused-equivalence");
 export function observe(run, observables) {
 	const normalize = createNormalizer({
 		roots: [
-			{ prefix: run.box.dir, token: "<sandbox>" },
-			// The same root as a session-directory key (a host files sessions under `--<cwd with / as ->--`).
-			{ prefix: run.box.dir.replaceAll("/", "-"), token: "<sandbox-key>" },
-			{ prefix: run.repo, token: "<repo>" },
+			// The sandbox as allocated and as resolved (the child reports its resolved cwd; macOS temp dirs are symlinked), each
+			// also as a session-directory key (a host files sessions under `--<cwd with / as ->--`).
+			...directoryRoots(run.box.dir, "<sandbox>", { keyed: "<sandbox-key>" }),
+			...directoryRoots(run.repo, "<repo>"),
 			{ prefix: run.server.origin, token: "<model-server>" },
 			{ prefix: run.server.origin.replace(/^http:\/\//, ""), token: "<model-server-host>" },
 			...run.extraRoots,

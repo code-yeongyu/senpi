@@ -1,19 +1,19 @@
 {
  "repo": {
-  "head": "3193335ec50eb966dbf7a80fd427cc5c9a09eb62",
-  "dirty": true
+  "head": "cf116461ac636513654b8d973e85814a2b7ea445",
+  "dirty": false
  },
  "platform": "darwin-arm64",
  "runtimes": {
-  "harness": "node@24.22.1",
+  "harness": "node@24.22.0",
   "child": "bun@1.4.4"
  },
  "hashes": {
-  "harness": "sha256:18fd4dd9bfbd92a312f618a0d5a30416e7f2980435e39b8227ea76022f12f635",
-  "normalizer": "sha256:7d676cd57a4ba44323a5997bb81b7ffb7e70b0d1df7de05d08325c6901ca2dd9",
+  "harness": "sha256:3e1746aa5d5f225e37aabb8ce4378084c21bcff752f929d1c0254dfac8390354",
+  "normalizer": "sha256:568e958ec47174d275363492e1ecd1dd38dbd85be3511f673c84747d34ba7023",
   "fakeModelServer": "sha256:cab5b6866b7854287218de51d1fafcc242a8602b2c83fb85572abe332f9f6560",
-  "cases": "sha256:e68ea9ebca5392d8d948d17cd2aa122d0215fbc9cc83e5fabe9f130cd20f43c8",
+  "cases": "sha256:b9975118edb132eb55974abbe30efd7acabfee4d79636a7df05fd5b8e3e75355",
   "fixtures": "sha256:40f9e14a19251c338614b3c0d2d2ecfce9f543aca9df5a389bd7bf5bd8f6b038"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --cases E20 --repeat 3 --evidence eq-record-darwin-E20"
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --repeat 3 --evidence eq-rec-darwin-arm64-rec1"
 }

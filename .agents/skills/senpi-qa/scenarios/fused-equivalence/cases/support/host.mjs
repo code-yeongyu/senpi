@@ -4,8 +4,10 @@
 // kernel, CPU, GPU). Those values name the runner, like the sandbox path does, so they are replaced by tokens. What the
 // CLI does differently per platform (which lines exist, which tools register) is behavior, so goldens are keyed by
 // `<platform>-<arch>` and never shared across platforms.
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import * as os from "node:os";
+import { childRuntime } from "../../../../scripts/lib/common.mjs";
 
 function cpuModel() {
 	if (process.platform === "linux") {
@@ -32,7 +34,29 @@ export function hostFacts() {
 		facts.push({ value: cpu, token: "<host:cpu-model>" });
 	}
 	facts.push({ value: ` ${os.availableParallelism()} cores`, token: " <host:cores> cores" });
+	// Where the runtimes are installed names the machine and its user, like the CPU does: the CLI child's executable
+	// (a tool result's `runtime.path`) and the harness's own node.
+	const child = childRuntime();
+	if (child.kind !== "binary")
+		for (const value of new Set([child.command, runtimeExecPath(child.command)]))
+			facts.push({ value, token: `<host:${child.kind}-path>` });
+	facts.push({ value: process.execPath, token: "<host:node-path>" });
 	return facts;
+}
+
+let execPaths;
+/**
+ * The executable a runtime reports for itself (`process.execPath`), which is what the CLI puts in a tool result's
+ * `runtime.path`. It differs from the resolved command when the command is a version-manager shim.
+ */
+function runtimeExecPath(command) {
+	execPaths ??= new Map();
+	if (!execPaths.has(command))
+		execPaths.set(
+			command,
+			execFileSync(command, ["-e", "process.stdout.write(process.execPath)"], { encoding: "utf8" }).trim(),
+		);
+	return execPaths.get(command);
 }
 
 /**
