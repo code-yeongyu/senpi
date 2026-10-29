@@ -1,4 +1,5 @@
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { CompactAdmissionError } from "./compact-admission-error.ts";
 import { parseBoundedId } from "./compact-recovery-ids.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RouterContext } from "./session-router-context.ts";
@@ -46,6 +47,16 @@ export function unknownCompactAdmission(
 	};
 	// Only an unaccepted producer needs an async index read; live-route cancellation stays synchronous.
 	return command.type === "cancel_attempt" && epoch !== undefined
-		? host.admissions.pending(epoch, admissionId).then((pending) => (pending ? undefined : refusal))
+		? host.admissions.pending(epoch, admissionId).then(
+				(pending) => (pending ? undefined : refusal),
+				(cause: unknown) => {
+					if (!(cause instanceof CompactAdmissionError)) throw cause;
+					return error(command.id, command.type, `admission_${cause.reason}`, {
+						kind: "request_refused",
+						reason: cause.reason,
+						hint: "new_request",
+					});
+				},
+			)
 		: refusal;
 }
