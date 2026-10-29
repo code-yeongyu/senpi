@@ -26,7 +26,11 @@ test("job-final guard detects new entries without deleting baseline or leaked fi
 		mkdirSync(directory);
 		writeFileSync(join(directory, "baseline"), "keep");
 		const receipt = join(parent, "snapshot.json");
-		const options = { env: { ...process.env, TMPDIR: directory, TEMP: directory, TMP: directory }, encoding: "utf8", timeout: 10_000 };
+		const options = {
+			env: { ...process.env, TMPDIR: directory, TEMP: directory, TMP: directory },
+			encoding: "utf8",
+			timeout: 10_000,
+		};
 		const snapshot = spawnSync(process.execPath, [guard, "snapshot", receipt], options);
 		assert.ifError(snapshot.error);
 		assert.equal(snapshot.status, 0, snapshot.stderr);
@@ -46,6 +50,39 @@ test("job-final guard detects new entries without deleting baseline or leaked fi
 	}
 });
 
+for (const unexpected of [false, true]) {
+	test(`job-owned jiti cache is retired without hiding unexpected directories (${unexpected}) (#4918)`, () => {
+		const parent = mkdtempSync(join(tmpdir(), "senpi-jiti-cache-proof-"));
+		let scope;
+		try {
+			const receipt = join(parent, "snapshot.json");
+			const options = {
+				env: { ...process.env, TMPDIR: parent, TEMP: parent, TMP: parent, GITHUB_ENV: join(parent, "github.env") },
+				encoding: "utf8",
+				timeout: 10_000,
+			};
+			const snapshot = spawnSync(process.execPath, [guard, "snapshot", receipt, "--export-env"], options);
+			assert.ifError(snapshot.error);
+			assert.equal(snapshot.status, 0, snapshot.stderr);
+			({ scope } = JSON.parse(readFileSync(receipt, "utf8")));
+			isolateSystemChecks(receipt, parent);
+			mkdirSync(join(scope, "jiti"), { recursive: true });
+			writeFileSync(join(scope, "jiti", "transform.cjs"), "job-owned cache");
+			if (unexpected) mkdirSync(join(scope, "unexpected-cache"));
+			const checked = spawnSync(process.execPath, [guard, "check", receipt], options);
+			assert.ifError(checked.error);
+			assert.equal(checked.status, unexpected ? 1 : 0, checked.stderr);
+			assert.match(checked.stdout, unexpected ? /after teardown: 1/ : /after teardown: 0/);
+			assert.doesNotMatch(checked.stderr, /leftover: "jiti"/);
+			if (unexpected) assert.match(checked.stderr, /leftover: "unexpected-cache"/);
+			assert.equal(existsSync(scope), false, "the job parent and its jiti cache are retired even on leak failure");
+		} finally {
+			if (scope) rmSync(scope, { recursive: true, force: true });
+			rmSync(parent, { recursive: true, force: true });
+		}
+	});
+}
+
 test("job teardown retires only recorded run roots, including a late recreated root (#3064)", () => {
 	const parent = mkdtempSync(join(tmpdir(), "senpi-job-owner-proof-"));
 	try {
@@ -55,7 +92,8 @@ test("job teardown retires only recorded run roots, including a late recreated r
 		const environmentFile = join(parent, "github.env");
 		const options = {
 			env: { ...process.env, TMPDIR: directory, TEMP: directory, TMP: directory, GITHUB_ENV: environmentFile },
-			encoding: "utf8", timeout: 10_000,
+			encoding: "utf8",
+			timeout: 10_000,
 		};
 		const snapshot = spawnSync(process.execPath, [guard, "snapshot", receipt], options);
 		assert.ifError(snapshot.error);
@@ -66,10 +104,14 @@ test("job teardown retires only recorded run roots, including a late recreated r
 		assert.equal(exported.status, 0, exported.stderr);
 		const { registry, scope, environment } = JSON.parse(readFileSync(receipt, "utf8"));
 		isolateSystemChecks(receipt, directory);
-		assert.equal(readFileSync(environmentFile, "utf8"), `TMPDIR=${scope}\nTEMP=${scope}\nTMP=${scope}\nSENPI_TEST_TEMP_REGISTRY=${registry}\n`);
+		assert.equal(
+			readFileSync(environmentFile, "utf8"),
+			`TMPDIR=${scope}\nTEMP=${scope}\nTMP=${scope}\nSENPI_TEST_TEMP_REGISTRY=${registry}\n`,
+		);
 		writeFileSync(join(scope, "node-compile-cache", "npm-cache"), "job-owned cache");
 		const ran = spawnSync(process.execPath, [runner, process.execPath, "-e", ""], {
-			...options, env: { ...options.env, TMPDIR: scope, TEMP: scope, TMP: scope, SENPI_TEST_TEMP_REGISTRY: registry },
+			...options,
+			env: { ...options.env, TMPDIR: scope, TEMP: scope, TMP: scope, SENPI_TEST_TEMP_REGISTRY: registry },
 		});
 		assert.ifError(ran.error);
 		assert.equal(ran.status, 0, ran.stderr);
@@ -82,52 +124,67 @@ test("job teardown retires only recorded run roots, including a late recreated r
 		assert.match(checked.stdout, /recorded owned roots retired at job teardown: 1/);
 		assert.match(checked.stderr, /late-worker-write/);
 		assert.equal(existsSync(scope), false, "the exclusive job parent is removed even on leak failure");
-		assert.equal(readFileSync(environmentFile, "utf8"),
+		assert.equal(
+			readFileSync(environmentFile, "utf8"),
 			`TMPDIR=${scope}\nTEMP=${scope}\nTMP=${scope}\nSENPI_TEST_TEMP_REGISTRY=${registry}\n` +
-			Object.entries(environment).map(([name, value]) => `${name}=${value}\n`).join(""));
+				Object.entries(environment)
+					.map(([name, value]) => `${name}=${value}\n`)
+					.join(""),
+		);
 	} finally {
 		rmSync(parent, { recursive: true, force: true });
 	}
 });
 
-test("a surviving child fails the guard; an awaited child leaves a clean run (#3064)", { timeout: 20_000 }, async () => {
-	const parent = mkdtempSync(join(tmpdir(), "senpi-survivor-proof-"));
-	const receipt = join(parent, "snapshot.json");
-	const env = { ...process.env, TMPDIR: parent, TEMP: parent, TMP: parent, GITHUB_ENV: join(parent, "github.env") };
-	const options = { env, encoding: "utf8", timeout: 10_000 };
-	let child;
-	let closed;
-	try {
-		assert.equal(spawnSync(process.execPath, [guard, "snapshot", receipt, "--export-env"], options).status, 0);
-		const { registry, scope } = JSON.parse(readFileSync(receipt, "utf8"));
-		isolateSystemChecks(receipt, parent);
-		const root = join(scope, "st-surviving-child");
-		writeFileSync(registry, `${JSON.stringify(root)}\n`);
-		child = spawn(process.execPath, ["-e", `
+test(
+	"a surviving child fails the guard; an awaited child leaves a clean run (#3064)",
+	{ timeout: 20_000 },
+	async () => {
+		const parent = mkdtempSync(join(tmpdir(), "senpi-survivor-proof-"));
+		const receipt = join(parent, "snapshot.json");
+		const env = { ...process.env, TMPDIR: parent, TEMP: parent, TMP: parent, GITHUB_ENV: join(parent, "github.env") };
+		const options = { env, encoding: "utf8", timeout: 10_000 };
+		let child;
+		let closed;
+		try {
+			assert.equal(spawnSync(process.execPath, [guard, "snapshot", receipt, "--export-env"], options).status, 0);
+			const { registry, scope } = JSON.parse(readFileSync(receipt, "utf8"));
+			isolateSystemChecks(receipt, parent);
+			const root = join(scope, "st-surviving-child");
+			writeFileSync(registry, `${JSON.stringify(root)}\n`);
+			child = spawn(
+				process.execPath,
+				[
+					"-e",
+					`
 			const fs = require("node:fs");
 			fs.mkdirSync(${JSON.stringify(root)});
 			fs.writeFileSync(${JSON.stringify(join(root, "child-still-alive"))}, "leak");
 			process.send("created");
 			process.on("message", () => process.exit(0));
-		`], { stdio: ["ignore", "ignore", "ignore", "ipc"], env });
-		closed = once(child, "close");
-		await once(child, "message", { signal: AbortSignal.timeout(5_000) });
-		const leaked = spawnSync(process.execPath, [guard, "check", receipt], options);
-		assert.equal(leaked.status, 1, leaked.stdout);
-		assert.match(leaked.stderr, /child-still-alive/);
-		child.send("stop");
-		await closed;
-		assert.equal(spawnSync(process.execPath, [guard, "snapshot", receipt, "--export-env"], options).status, 0);
-		isolateSystemChecks(receipt, parent);
-		const clean = spawnSync(process.execPath, [guard, "check", receipt], options);
-		assert.equal(clean.status, 0, clean.stderr);
-		assert.match(clean.stdout, /after teardown: 0/);
-	} finally {
-		if (child?.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-		if (closed) await closed;
-		rmSync(parent, { recursive: true, force: true });
-	}
-});
+		`,
+				],
+				{ stdio: ["ignore", "ignore", "ignore", "ipc"], env },
+			);
+			closed = once(child, "close");
+			await once(child, "message", { signal: AbortSignal.timeout(5_000) });
+			const leaked = spawnSync(process.execPath, [guard, "check", receipt], options);
+			assert.equal(leaked.status, 1, leaked.stdout);
+			assert.match(leaked.stderr, /child-still-alive/);
+			child.send("stop");
+			await closed;
+			assert.equal(spawnSync(process.execPath, [guard, "snapshot", receipt, "--export-env"], options).status, 0);
+			isolateSystemChecks(receipt, parent);
+			const clean = spawnSync(process.execPath, [guard, "check", receipt], options);
+			assert.equal(clean.status, 0, clean.stderr);
+			assert.match(clean.stdout, /after teardown: 0/);
+		} finally {
+			if (child?.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+			if (closed) await closed;
+			rmSync(parent, { recursive: true, force: true });
+		}
+	},
+);
 
 test("a journal cannot authorize removal of a pre-existing temp entry (#3064)", () => {
 	const parent = mkdtempSync(join(tmpdir(), "senpi-job-baseline-proof-"));
@@ -137,7 +194,11 @@ test("a journal cannot authorize removal of a pre-existing temp entry (#3064)", 
 		const baseline = join(directory, "st-baseline");
 		mkdirSync(baseline);
 		const receipt = join(parent, "snapshot.json");
-		const options = { env: { ...process.env, TMPDIR: directory, TEMP: directory, TMP: directory }, encoding: "utf8", timeout: 10_000 };
+		const options = {
+			env: { ...process.env, TMPDIR: directory, TEMP: directory, TMP: directory },
+			encoding: "utf8",
+			timeout: 10_000,
+		};
 		const snapshot = spawnSync(process.execPath, [guard, "snapshot", receipt], options);
 		assert.ifError(snapshot.error);
 		assert.equal(snapshot.status, 0, snapshot.stderr);
@@ -158,8 +219,11 @@ test("the system baseline also protects a recorded root outside the job scope (#
 		const baseline = join(parent, "st-baseline");
 		mkdirSync(baseline);
 		const receipt = join(parent, "snapshot.json");
-		const options = { env: { ...process.env, TMPDIR: parent, TEMP: parent, TMP: parent,
-			GITHUB_ENV: join(parent, "github.env") }, encoding: "utf8", timeout: 10_000 };
+		const options = {
+			env: { ...process.env, TMPDIR: parent, TEMP: parent, TMP: parent, GITHUB_ENV: join(parent, "github.env") },
+			encoding: "utf8",
+			timeout: 10_000,
+		};
 		assert.equal(spawnSync(process.execPath, [guard, "snapshot", receipt, "--export-env"], options).status, 0);
 		isolateSystemChecks(receipt, parent);
 		const { registry } = JSON.parse(readFileSync(receipt, "utf8"));
