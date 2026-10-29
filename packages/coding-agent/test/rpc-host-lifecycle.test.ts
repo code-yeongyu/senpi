@@ -40,6 +40,7 @@ import {
 import { processIsLive, processMatchesPidFile, readProcessStartTime } from "../src/utils/process-identity.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 import { processAlive, reapProcessesUnder } from "./helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 const peers: JsonlPeer[] = [];
@@ -680,7 +681,7 @@ function clockSupervisor(qa: Scratch): { supervisor: ChildProcess; exited: Promi
 		["--import", "tsx", join(import.meta.dirname, "fixtures", "rpc-lifecycle-clock.ts"), qa.socket, qa.agentDir],
 		{
 			env: {
-				...process.env,
+				...hostSpawnEnv(),
 				...hermeticProviderEnv(),
 				SENPI_CODING_AGENT_DIR: qa.agentDir,
 				SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
@@ -835,7 +836,7 @@ async function fireWatchdogOnPipeEof(options: {
 			...(options.cleanupPaths ?? []),
 		],
 		{
-			env: { ...process.env, ...(options.sidecar ? { WATCHDOG_SIDECAR: options.sidecar } : {}) },
+			env: { ...hostSpawnEnv(), ...(options.sidecar ? { WATCHDOG_SIDECAR: options.sidecar } : {}) },
 			stdio: ["ignore", "ignore", "inherit", "pipe", "ipc"],
 		},
 	);

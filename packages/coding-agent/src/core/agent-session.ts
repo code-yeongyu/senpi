@@ -6962,7 +6962,8 @@ export class AgentSession {
 		options: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" } | undefined,
 	): boolean {
 		return (
-			customTurnOrigin(customType) === "engine" &&
+			(customTurnOrigin(customType) === "engine" ||
+				this._lifecycleBinding.controller.requiresHumanContinuation) &&
 			options?.deliverAs !== "nextTurn" &&
 			options?.triggerTurn !== false &&
 			(this.isStreaming || options?.triggerTurn === true)
@@ -7818,6 +7819,15 @@ export class AgentSession {
 		return { messages, commands: run };
 	}
 
+	/**
+	 * A superseded host generation draining a session nobody is attached to (senpi#3114): automatic turns wait as
+	 * notices from here on, exactly as on an unattended reopen, so the running turn is the session's last on this
+	 * host and it parks when that turn settles. A person's input or resume_session releases the hold.
+	 */
+	holdAutomaticTurns(): void {
+		this._engineTurnHold.addHold("unattended");
+	}
+
 	/** A parent's Stop reaching this child (senpi#3811): hold every automatic turn until the parent's run Resume. */
 	async pauseForRun(owner: {
 		parentSessionId: string;
@@ -7954,6 +7964,9 @@ export class AgentSession {
 				return id;
 			},
 			emit: (event) => this._emit(event),
+			holdInterruptedRun: () => {
+				this._holdForInterruptedRun({ triggerTurn: true });
+			},
 			factsFailed: (error) => this._sessionLogger.warn("lifecycle_goal_read_failed", { error: String(error) }),
 		});
 	}

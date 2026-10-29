@@ -25,6 +25,7 @@ import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode, isBunRuntime,
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @code-yeongyu/senpi.
 import * as _bundledPiCodingAgent from "../../index.ts";
+import * as _bundledSessionWorkerData from "../../modes/rpc/session-worker-data.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
@@ -53,6 +54,7 @@ import {
 	extensionModuleImporter,
 	rememberExtensionFactory,
 } from "./extension-module-cache.ts";
+import { kernelToolInvokerStorage } from "./kernel-tools-context.ts";
 import { createLifecycleApi } from "./lifecycle-api.ts";
 import { withProviderLoginStart } from "./provider-login-start.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
@@ -65,6 +67,7 @@ import type {
 	EntryRendererOptions,
 	Extension,
 	ExtensionAPI,
+	ExtensionContext,
 	ExtensionFactory,
 	ExtensionRuntime,
 	ExtensionSessionProfile,
@@ -76,6 +79,7 @@ import type {
 	MemoryReporter,
 	MessageRenderer,
 	PendingProviderRegistration,
+	ProjectTrustContext,
 	ProviderConfig,
 	RegisteredChildModule,
 	RegisteredCommand,
@@ -130,6 +134,7 @@ const VIRTUAL_MODULES: Record<string, Record<string, unknown>> = {
 	"@mariozechner/pi-ai/providers/all": _bundledPiAiProviders,
 	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
 	"@code-yeongyu/senpi": _bundledPiCodingAgent,
+	"@code-yeongyu/senpi/session-worker-data": _bundledSessionWorkerData,
 };
 
 const require = createRequire(import.meta.url);
@@ -186,6 +191,10 @@ function getAliases(): Record<string, string> {
 	const piCodingAgentDistEntry = path.join(codingAgentPackageRoot, "dist/index.js");
 	const piCodingAgentSourceEntry = path.join(codingAgentPackageRoot, "src/index.ts");
 	const piCodingAgentEntry = fs.existsSync(piCodingAgentDistEntry) ? piCodingAgentDistEntry : piCodingAgentSourceEntry;
+	const sessionWorkerDataDistEntry = path.join(codingAgentPackageRoot, "dist/modes/rpc/session-worker-data.js");
+	const sessionWorkerDataEntry = fs.existsSync(sessionWorkerDataDistEntry)
+		? sessionWorkerDataDistEntry
+		: path.join(codingAgentPackageRoot, "src/modes/rpc/session-worker-data.ts");
 	const piAgentCoreEntry = resolveWorkspaceOrBundled(
 		"@earendil-works/pi-agent-core",
 		"dist/index.js",
@@ -231,6 +240,7 @@ function getAliases(): Record<string, string> {
 		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
 		"@earendil-works/pi-ai": piAiCompatEntry,
 		"@code-yeongyu/senpi": piCodingAgentEntry,
+		"@code-yeongyu/senpi/session-worker-data": sessionWorkerDataEntry,
 		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
 		"@mariozechner/pi-agent-core": piAgentCoreEntry,
 		"@mariozechner/pi-tui": piTuiEntry,
@@ -396,6 +406,21 @@ export function drainPendingProviderRegistrations(runtime: ExtensionRuntime): Pe
  * Registration methods write to the extension object.
  * Action methods delegate to the shared runtime.
  */
+/**
+ * The session a handler's host context belongs to. A stale context (session replacement still reports
+ * `session_extensions_removed` on the invalidated runner) has none: its handler runs with no ambient
+ * invoker, and its own guarded getters, kernelTools included, still refuse it.
+ */
+function handlerSessionId(context: ExtensionContext | ProjectTrustContext | undefined): string | undefined {
+	if (!context || !("sessionManager" in context)) return undefined;
+	try {
+		return context.sessionManager?.getSessionId();
+	} catch (error) {
+		if (error instanceof StaleExtensionContextError) return undefined;
+		throw error;
+	}
+}
+
 function createExtensionAPI(
 	extension: Extension,
 	runtime: ExtensionRuntime,
@@ -435,7 +460,15 @@ function createExtensionAPI(
 			options?: BeforeAgentStartHandlerOptions & ContextHandlerOptions,
 		): () => void {
 			assertActive();
-			const registeredHandler: HandlerFn = ownedBy(extension, (...args: unknown[]) => handler(...args));
+			const registeredHandler: HandlerFn = ownedBy(extension, (...args: unknown[]) => {
+				// A child event can run inside its parent's task-tool async scope.
+				// Bind the host context here, preserving registered-handler metadata.
+				const sessionId = handlerSessionId(args[1] as ExtensionContext | ProjectTrustContext | undefined);
+				const invoke = () => handler(...args);
+				return sessionId
+					? kernelToolInvokerStorage.run({ sessionId }, invoke)
+					: kernelToolInvokerStorage.exit(invoke);
+			});
 			const list = extension.handlers.get(event) ?? [];
 			list.push(registeredHandler);
 			extension.handlers.set(event, list);

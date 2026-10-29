@@ -3,6 +3,9 @@ use napi_derive::napi;
 pub mod answers;
 pub mod classify;
 mod owner_dacl;
+pub mod presence;
+#[cfg(windows)]
+pub mod presence_windows;
 pub mod publish;
 pub mod session;
 pub mod volume;

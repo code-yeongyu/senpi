@@ -6,6 +6,7 @@ import type {
 	KernelToolsInvokeRequest,
 } from "../js/kernel-tools-types.ts";
 import { inputAtStart } from "../shared/cell-source-at-start.ts";
+import { invocationSession, registerInvocationSession } from "../shared/invocation-authority.ts";
 import { KernelMemoryHost } from "../shared/kernel-memory-host.ts";
 import { KernelPreludeTracker } from "../shared/kernel-prelude-plan.ts";
 import { pythonDeathReason } from "./death-reason.ts";
@@ -47,9 +48,14 @@ export class PythonKernel {
 	#closed = false;
 	readonly #tools: PythonKernelTools;
 	#dead = false;
+	readonly #releaseSession: () => void;
 
 	private constructor(options: PythonKernelStartOptions) {
 		this.#options = options;
+		this.#releaseSession = registerInvocationSession(options.sessionId, () => ({
+			cwd: options.cwd,
+			state: options.permissions?.state() ?? { epoch: 0, active: false, rules: [] },
+		}));
 		this.#memory = options.memory === undefined ? null : new KernelMemoryHost("py", options.memory);
 		this.#tools = new PythonKernelTools({
 			post: (message) => this.#transport?.post(message),
@@ -60,8 +66,13 @@ export class PythonKernel {
 
 	static async start(options: PythonKernelStartOptions): Promise<PythonKernel> {
 		const kernel = new PythonKernel(options);
-		await kernel.#spawn(kernel.#generation);
-		return kernel;
+		try {
+			await kernel.#spawn(kernel.#generation);
+			return kernel;
+		} catch (error) {
+			kernel.#releaseSession();
+			throw error;
+		}
 	}
 
 	listKernelToolNames(): readonly string[] {
@@ -88,11 +99,20 @@ export class PythonKernel {
 		return this.#tools.describe(names);
 	}
 
-	invokeKernelTool(
+	async invokeKernelTool(
 		request: KernelToolsInvokeRequest,
 		options?: AbortSignal | KernelToolsInvokeOptions,
 	): Promise<unknown> {
-		return this.#tools.invoke(request, options);
+		invocationSession(
+			this.#options.sessionId,
+			{
+				cwd: this.#options.cwd,
+				state: this.#options.permissions?.state() ?? { epoch: 0, active: false, rules: [] },
+			},
+			options,
+			this.#options.permissions?.resolveSession,
+		);
+		return await this.#tools.invoke(request, options);
 	}
 
 	run(input: PythonKernelRunOptions): Promise<ResultMessage> {
@@ -185,6 +205,7 @@ export class PythonKernel {
 	async close(): Promise<void> {
 		if (this.#closePromise) return await this.#closePromise;
 		this.#closed = true;
+		this.#releaseSession();
 		this.#generation += 1;
 		this.#tools.retire("tools_unavailable", "Python kernel is closed");
 		this.#settleAllPending("Python kernel closed");

@@ -1414,6 +1414,10 @@ Optional subscription-only hook for host-authenticated activity. `ctx.onUserActi
 
 Cache prewarm consumes the first activity per session generation. It is opt-in via `promptCache.keepAlive.enabled` (default `false`): a first draft edit may prewarm, while prompt admission uses the real request instead of issuing an extra warm call. This one-shot policy does not gate the existing idle keep-alive loop after completed turns.
 
+### ctx.afterSessionStart()
+
+Optional hook for work a `session_start` handler must not publish until startup is prepared. `ctx.afterSessionStart(publish)` runs `publish` synchronously once every `session_start` handler of the current dispatch has returned, in the order calls were made (the same point where turns requested during `session_start` start). Outside a `session_start` dispatch it runs `publish` immediately. If the session is switched, replaced, reloaded or disposed before the dispatch ends, `publish` does not run, because its `ctx` is stale. `publish` may return a promise; a rejection is reported as an extension error instead of becoming an unhandled rejection. It never waits for anything `publish` starts: use it to publish a question, not to await its answer. The built-in ask-user extension uses it for questions recovered on resume or reload. Hand-built contexts and older hosts may omit it; call `publish` directly then.
+
 ### ctx.modelRegistry / ctx.model / ctx.thinkingLevel / ctx.scopedModels
 
 Access to models, providers, and resolved authentication. `ctx.modelRegistry.getProvider(id)` returns the effective pi-ai provider, while `getProviderAuth(id)` resolves its current API key, headers, base URL, and provider-scoped environment without requiring a loaded model. `ctx.model` is the active model, and `ctx.thinkingLevel` is its current effective thinking level.
@@ -2796,7 +2800,7 @@ pi.registerProvider("local-server", {
   }
 });
 
-// Override baseUrl for an existing provider (keeps all models)
+// Override baseUrl for an existing provider (keeps all models; a models.json baseUrl still wins)
 pi.registerProvider("anthropic", {
   baseUrl: "https://proxy.example.com"
 });
@@ -2830,7 +2834,7 @@ The object form accepts a complete pi-ai `Provider`, including native `auth`, `g
 
 **Legacy config options:**
 - `name` - Display name for the provider in UI such as `/login`.
-- `baseUrl` - API endpoint URL. Required when defining models.
+- `baseUrl` - API endpoint URL. Required when defining models. A user's `models.json` `baseUrl` for the provider, or `models[i].baseUrl` for one model, takes precedence over this value and over model-level `baseUrl` values, for chat, image, and classifier models alike, and also becomes the provider's reported `baseUrl`.
 - `apiKey` - API key literal, environment interpolation (`$ENV_VAR` or `${ENV_VAR}`), or leading `!command`. Required when defining models (unless `oauth` provided). `$$` escapes `$`, and `$!` escapes a literal `!` without triggering command execution.
 - `api` - API type: `"anthropic-messages"`, `"openai-completions"`, `"openai-responses"`, etc.
 - `headers` - Custom headers to include in requests.
@@ -2839,6 +2843,10 @@ The object form accepts a complete pi-ai `Provider`, including native `auth`, `g
 - `refreshModels` - Async dynamic discovery callback. Its returned models replace extension-provided models. `context.stored` contains the persisted provider snapshot; use generation-checked `context.publish({ persist: entry })` only when updated catalog data should persist. Use `persist: null` to delete that snapshot.
 - `oauth` - OAuth provider config for `/login` support. When provided, the provider appears in the login menu.
 - `streamSimple` - Custom streaming implementation for non-standard APIs.
+
+When `models.json` sets a `baseUrl` for a provider (or `models[i].baseUrl` for a model), every model of that provider carries it, whichever extension registered the provider. An extension that supplies its own transport (`streamSimple`, `images`, `classifiers`, or a native `Provider`'s `stream`) must send requests to `model.baseUrl`; a transport that builds its own URL ignores the user's setting.
+
+The built-in `cursor-cli-oauth` provider is the one exception: it runs the Cursor CLI, which has no base-URL option. When `models.json` sets a `baseUrl` for it (provider-level or `models[i].baseUrl`), senpi shows a notice at startup that Cursor does not support changing the address, and requests still go to Cursor.
 
 See [custom-provider.md](custom-provider.md) for advanced topics: custom streaming APIs, OAuth details, model definition reference.
 

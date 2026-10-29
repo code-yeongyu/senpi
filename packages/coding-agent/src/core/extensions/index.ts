@@ -103,6 +103,7 @@ export type {
 	ExtensionHandler,
 	ExtensionMode,
 	ExtensionRpcRequestHandler,
+	ExtensionRpcRequestContext,
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,
