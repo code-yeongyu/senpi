@@ -589,7 +589,10 @@ describe("account_reset unblocks one account over RPC", () => {
 
 	beforeEach(() => {
 		dir = mkdtempSync(join(tmpdir(), "rpc-account-reset-4203-"));
-		envBefore = { ...process.env };
+		envBefore = {
+			OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+			OPENAI_API_KEY_2: process.env.OPENAI_API_KEY_2,
+		};
 		harness = makeHarness(dir);
 		collected = makeSink();
 		handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
