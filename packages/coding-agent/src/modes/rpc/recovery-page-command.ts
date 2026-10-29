@@ -122,6 +122,9 @@ export function answerReleaseRecovery(
 	if (kind !== "event" || typeof lease?.id !== "string" || typeof admissionId !== "string")
 		return refused(id, type, "malformed_request");
 	const outcome = events.release(caller, lease.id, admissionId);
-	if (outcome.ok) return { id, type: "response", command: type, success: true, data: outcome.value };
+	if (outcome.ok) {
+		writer.unregisterSubscription(writer.currentConnection() ?? "", caller.sessionId);
+		return { id, type: "response", command: type, success: true, data: outcome.value };
+	}
 	return error(id, type, codeOf(outcome.failure), { ...outcome.failure });
 }

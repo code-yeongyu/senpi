@@ -151,6 +151,7 @@ it("T2/X04 cancellation racing subscribe cleans the actual returned subscription
 	const answer = await pending;
 	expect(dataOf(answer).subscriptionId).toBe(actual);
 	expect(unsubscribe).toHaveBeenCalledExactlyOnceWith("peer", actual);
+	expect(host.writer.isCompactSubscription("peer", "late-client-id", actual)).toBe(false);
 	expect(host.writer.status.connectionSize("peer")).toBe(0);
 	expect(host.writer.recoveryEvents?.status().open).toBe(0);
 	expect(peer.inbox.some((frame) => frame.type === "recovery_manifest")).toBe(false);
@@ -163,9 +164,14 @@ it("T2/X04 compact subscribe owns a pageable seq-zero snapshot and releases it o
 	vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", "1");
 	await using host = await statusHost();
 	const owner = host.client("owner");
-	await owner.request({ type: "open_session", cwd: host.cwd });
+	const opened = await owner.request({ type: "open_session", cwd: host.cwd });
 	const peer = host.client("peer");
-	const answer = await peer.request({ type: "subscribe_sessions", admissionId: "status-all" });
+	const answer = await peer.request({
+		type: "subscribe_sessions",
+		admissionId: "status-all",
+		include_context: true,
+		effects: true,
+	});
 	const data = dataOf(answer);
 	expect(data.snapshot).toBeUndefined();
 	expect(data.subscriptionId).toEqual(expect.any(String));
@@ -197,4 +203,21 @@ it("T2/X04 compact subscribe owns a pageable seq-zero snapshot and releases it o
 		lease: baseline.eventLease,
 	});
 	expect(host.writer.recoveryEvents?.status().open).toBe(0);
+	expect(host.writer.isCompactSubscription("peer", "status-all", String(baseline.sessionId))).toBe(false);
+	await owner.request({
+		type: "set_session_context",
+		sessionId: dataOf(opened).sessionId,
+		patch: { task_status: "after-consumption" },
+	});
+	expect(
+		await peer.waitFor((frame) => frame.type === "session_status" && frame.subscriptionId === baseline.sessionId),
+	).toMatchObject({ admissionId: "status-all", generation: 0 });
+	await owner.request({
+		type: "abort",
+		sessionId: dataOf(opened).sessionId,
+		effectId: "after-consumption",
+	});
+	expect(
+		await peer.waitFor((frame) => frame.type === "effect_status" && frame.effectId === "after-consumption"),
+	).toMatchObject({ admissionId: "status-all", generation: 0 });
 }, 120_000);

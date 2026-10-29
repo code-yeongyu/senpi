@@ -1,13 +1,11 @@
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { error } from "./session-router-errors.ts";
 
 /** Effect-based reads only. New session commands require attachment by default. */
 export const ATTACH_GATE_EXEMPT: ReadonlySet<RpcCommand["type"]> = new Set<RpcCommand["type"]>([
 	"get_protocol_info",
-	// Recovery owners validate the peer + admission + lease; host snapshots and mirrors have no attachment.
-	"get_recovery_page",
-	"release_recovery",
 	"list_sessions",
 	"subscribe_sessions",
 	"unsubscribe_sessions",
@@ -54,6 +52,12 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 	const owner = host.writer.currentConnection();
 	if (owner === undefined || ATTACH_GATE_EXEMPT.has(command.type)) return undefined;
 	if (!("sessionId" in command) || command.sessionId === undefined) return undefined;
+	if (
+		compactUpdatesEnabled() &&
+		(command.type === "get_recovery_page" || command.type === "release_recovery") &&
+		host.writer.isCompactSubscription(owner, command.admissionId, command.sessionId)
+	)
+		return undefined;
 	if (
 		command.type === "close_session" ||
 		command.type === "set_session_context" ||

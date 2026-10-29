@@ -19,5 +19,8 @@ export function statusRecord(
 		...(subscription.options.includeContext ? { context } : {}),
 		...(lastEffect !== undefined ? { lastEffect } : {}),
 		lastChange,
+		...(subscription.seq > 0 && subscription.options.admissionId !== undefined
+			? { admissionId: subscription.options.admissionId, generation: 0 }
+			: {}),
 	};
 }

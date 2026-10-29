@@ -15,6 +15,13 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 	// this is neither another counter nor an attempt index, and cancelled answers never consult it.
 	private readonly terminal = new Map<string, RecoveryStreamState>();
 
+	override close(): void {
+		this.subscriptions.clear();
+		this.admissions.clear();
+		this.terminal.clear();
+		super.close();
+	}
+
 	remember(sessionId: string, checkpoints: RecoveryCheckpoints, socketEpoch: string): RecoveryStreamState | undefined {
 		const stream = checkpoints.stream({ socketEpoch, sessionId });
 		const remembered = stream ?? this.terminal.get(sessionId);

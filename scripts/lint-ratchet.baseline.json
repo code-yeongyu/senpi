@@ -904,7 +904,7 @@
     "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/src/modes/rpc/rpc-client.ts": {
-    "typescript/no-non-null-assertion": 2
+    "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts": {
     "typescript/no-explicit-any": 2

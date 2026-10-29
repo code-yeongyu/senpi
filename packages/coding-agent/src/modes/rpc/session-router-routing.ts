@@ -40,7 +40,12 @@ import { unloadSession } from "./session-unload.ts";
  * caused it - and anything the command starts inherits the attribution.
  */
 export function handle(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
-	const refusal = invalidCompactAdmission(command) ?? attachmentGate(host, command);
+	// Recovery ownership precedes ID validation and token/source lookup: foreign, unknown and malformed
+	// unattached routes must be indistinguishable (RULING-56).
+	const recovery = command.type === "get_recovery_page" || command.type === "release_recovery";
+	const refusal = recovery
+		? (attachmentGate(host, command) ?? invalidCompactAdmission(command))
+		: (invalidCompactAdmission(command) ?? attachmentGate(host, command));
 	if (refusal) return Promise.resolve(refusal);
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;
 	// A parked handle is answered by its terminal record and connection close, never unknown_session.
@@ -205,8 +210,12 @@ export async function dispatch(
 		}
 		return answer;
 	}
-	if (command.type === "unsubscribe_sessions")
-		return answerUnsubscribeSessions(command, host.writer.currentConnection(), host.writer.status);
+	if (command.type === "unsubscribe_sessions") {
+		const peer = host.writer.currentConnection();
+		const answer = answerUnsubscribeSessions(command, peer, host.writer.status);
+		if (answer.success && peer !== undefined) host.writer.unregisterSubscription(peer, command.subscriptionId);
+		return answer;
+	}
 	// A receipt of a session this host has not loaded is read from its transcript, never by loading it.
 	if (command.type === "get_effect_status" && !command.sessionId && command.sessionPath !== undefined)
 		return answerEffectFromTranscript(command.id, command.sessionPath, command.effectId);

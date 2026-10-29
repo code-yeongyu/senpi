@@ -41,6 +41,7 @@ export class RpcClientAdmissions {
 	}
 
 	receive(input: unknown): void {
+		if (this.routes.size === 0) return;
 		const parsed = routeSchema.safeParse(input);
 		if (!parsed.success) return;
 		const frame = parsed.data;
@@ -55,11 +56,12 @@ export class RpcClientAdmissions {
 		if (!response.success) throw new RpcCommandError(response.error, response.errorCode, response.errorData);
 		const parsed = answerSchema.parse(response);
 		this.receive({ ...parsed, token: parsed.data.recovery.token });
+		const current = this.routes.get(parsed.admissionId);
 		return {
-			sessionId: parsed.sessionId,
+			sessionId: current?.sessionId ?? parsed.sessionId,
 			admissionId: parsed.admissionId,
-			generation: parsed.generation,
-			recovery: parsed.data.recovery,
+			generation: current?.generation ?? parsed.generation,
+			recovery: { ...parsed.data.recovery, token: current?.token ?? parsed.data.recovery.token },
 		};
 	}
 
@@ -69,8 +71,10 @@ export class RpcClientAdmissions {
 			this.routes.set(options.admissionId, { repair: new RecoveryRepairController(), generation: 0, notBefore: 0 });
 		try {
 			const opened = this.accept(await this.send({ ...options, type: "open_session" }));
-			await this.page(options.admissionId, "manifest");
-			return opened;
+			// open returns routing identity, not page content. page retains wait/backoff state;
+			// a catalog restart replaces that identity before the caller can use it.
+			const manifest = await this.page(options.admissionId, "manifest");
+			return manifest.action === "restart_from_catalog" ? manifest.identity : opened;
 		} catch (cause) {
 			if (!existing) this.routes.delete(options.admissionId);
 			throw cause;
@@ -93,9 +97,14 @@ export class RpcClientAdmissions {
 			requestId: `page-${++this.serial}`,
 			...(cursor === undefined ? {} : { cursor }),
 		});
-		const body = z
+		const parsed = z
 			.object({ repair: z.unknown(), reason: z.string().optional() })
-			.parse(response.success ? ("data" in response ? response.data : undefined) : response.errorData);
+			.safeParse(response.success ? ("data" in response ? response.data : undefined) : response.errorData);
+		if (!parsed.success) {
+			if (!response.success) throw new RpcCommandError(response.error, response.errorCode, response.errorData);
+			throw parsed.error;
+		}
+		const body = parsed.data;
 		const received = Date.now();
 		const action = route.repair.observe(body.repair, received, { token, reason: body.reason ?? "" });
 		switch (action.action) {
@@ -106,8 +115,8 @@ export class RpcClientAdmissions {
 				return action;
 			case "restart_from_catalog": {
 				const reset = await this.send({ type: "reset_stream", sessionId: route.sessionId, admissionId });
-				this.accept(reset);
-				return { action: "restart_from_catalog", response: reset } as const;
+				const identity = this.accept(reset);
+				return { action: "restart_from_catalog", response: reset, identity } as const;
 			}
 		}
 	}

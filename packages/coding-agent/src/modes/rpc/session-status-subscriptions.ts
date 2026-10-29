@@ -18,6 +18,8 @@ export type MirrorSelection =
 	| { readonly kind: "types"; readonly types: ReadonlySet<string> };
 
 export interface SubscriptionOptions {
+	/** Internal compact routing identity; set only for the streamed snapshot path. */
+	readonly admissionId?: string;
 	readonly selector: SessionSelector;
 	readonly includeWorkers: boolean;
 	readonly includeContext: boolean;

@@ -56,6 +56,7 @@ export async function compactSubscribe(
 				answer: { ...subscribed.answer, ...identity, data: { ...data, recovery: eventLease } },
 				release: async () => {
 					live = false;
+					host.writer.unregisterSubscription(peer, subscriptionId);
 					host.writer.status.unsubscribe(peer, subscriptionId);
 					events.abandon(socketEpoch, eventLease.id);
 				},

@@ -22,9 +22,17 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 		const actor = this.fanout.get(peer)?.actor;
 		if (actor instanceof AdmissionRoutingActor) actor.subscriptions.set(subscriptionId, admissionId);
 	}
+	unregisterSubscription(peer: string, subscriptionId: string): void {
+		const actor = this.fanout.get(peer)?.actor;
+		if (actor instanceof AdmissionRoutingActor) actor.subscriptions.delete(subscriptionId);
+	}
 	isCompactSubscription(peer: string, admissionId: string, subscriptionId: string): boolean {
 		const actor = this.fanout.get(peer)?.actor;
-		return actor instanceof AdmissionRoutingActor && actor.subscriptions.get(subscriptionId) === admissionId;
+		return (
+			typeof admissionId === "string" &&
+			actor instanceof AdmissionRoutingActor &&
+			actor.subscriptions.get(subscriptionId) === admissionId
+		);
 	}
 	registerAdmission(peer: string, admissionId: string, sessionId: string): void {
 		const registered = this.fanout.get(peer);

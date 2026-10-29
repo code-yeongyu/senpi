@@ -21,6 +21,7 @@ import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
 import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
 import { RpcCommandError } from "./rpc-command-error.ts";
+import { handleRpcReply } from "./rpc-client-replies.ts";
 import {
 	RpcClientAdmissions,
 	type CompactOpenResult,
@@ -1349,19 +1350,8 @@ export class RpcClient {
 	private handleLine(line: string): void {
 		try {
 			const data = JSON.parse(line);
+			if (handleRpcReply(data, this.pendingRequests, this.admissions)) return;
 			this.admissions.receive(data);
-
-			// Check if it's a response to a pending request
-			if (data.type === "response" && data.id && this.pendingRequests.has(data.id)) {
-				const pending = this.pendingRequests.get(data.id)!;
-				this.pendingRequests.delete(data.id);
-				// Response hooks run synchronously inside the frame dispatch so ordering-sensitive
-				// contracts (e.g. optimistic-echo disposition) settle before the NEXT frame —
-				// never through the microtask scheduled by resolve().
-				pending.onResponse?.(data as RpcResponse);
-				pending.resolve(data as RpcResponse);
-				return;
-			}
 
 			if (data.type === "queued" && typeof data.for_request === "string")
 				this.pendingRequests.get(data.for_request)?.onQueued?.(data.position);

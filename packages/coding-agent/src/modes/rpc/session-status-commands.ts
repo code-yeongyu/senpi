@@ -69,7 +69,8 @@ export function answerSubscribeSessions(
 	const parsed = parseSubscription(command);
 	if ("refusal" in parsed)
 		return { answer: refusal(command.id, command.type, RPC_ERROR_INVALID_SUBSCRIPTION, parsed.refusal) };
-	const subscribed = stream.subscribe(connectionId, parsed.options, snapshotSink);
+	const options = snapshotSink ? { ...parsed.options, admissionId: command.admissionId } : parsed.options;
+	const subscribed = stream.subscribe(connectionId, options, snapshotSink);
 	// The response must reach the connection's writer actor before the subscription goes live: a delta
 	// published while this dispatch was awaiting the route then queues behind it, and `seq 0` (the
 	// snapshot) is always the first record the client reads for this subscription id.

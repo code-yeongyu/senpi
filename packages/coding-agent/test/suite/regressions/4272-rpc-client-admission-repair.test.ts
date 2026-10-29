@@ -66,7 +66,11 @@ it("T2/T5 an identical client retry keeps the repaired generation and a conflict
 	host.writer.recoveryCheckpoints.release(token);
 	expect((await client.admissions.page("client-retry", "manifest")).action).toBe("restart_from_catalog");
 	expect((await client.admissions.page("client-retry", "manifest")).action).toBe("ready");
-	await client.openSession(options);
+	const retried = await client.openSession(options);
+	expect(retried).toMatchObject({ generation: 2 });
+	expect(retried).toMatchObject({
+		recovery: { token: host.writer.recoveryCheckpoints.tokens()[0]?.id },
+	});
 	expect(requests.filter((request) => request.type === "reset_stream")).toHaveLength(1);
 	expect(
 		host.writer.recoveryCheckpoints.stream({
