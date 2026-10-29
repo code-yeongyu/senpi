@@ -29,6 +29,25 @@ function accountStateLines(accounts: readonly BlockedAccountState[]): string[] {
 	});
 }
 
+/**
+ * The pool context of a failure that left no other account (senpi#4671): the failure stays the error, and this
+ * names the soonest retry (which goal mode reads) and every account's state. No refusal note: the pool did not
+ * refuse the request, the account failed it.
+ */
+export function exhaustedPoolGuidance(
+	soonestUnblockAt: number | undefined,
+	accounts: readonly BlockedAccountState[],
+): string {
+	const eta =
+		soonestUnblockAt !== undefined && Number.isFinite(soonestUnblockAt)
+			? new Date(soonestUnblockAt).toISOString()
+			: "after re-login";
+	return [
+		`  No other Claude account is available. Soonest automatic retry: ${eta}.`,
+		...accountStateLines(accounts),
+	].join("\n");
+}
+
 export function allAccountsBlockedGuidance(
 	soonestUnblockAt: number | undefined,
 	blockReason?: "auth_error",

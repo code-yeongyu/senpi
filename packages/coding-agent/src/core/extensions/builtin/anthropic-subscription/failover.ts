@@ -163,7 +163,10 @@ export class ClassifiedSdkError extends Error {
 		poolState?: AllAccountsBlockedError,
 	) {
 		const detail = original instanceof Error ? original.message : String(original);
-		super(`${suppressTurnRetry ? TURN_RETRY_SUPPRESSION_PREFIX : ""}${detail}`);
+		super(
+			`${suppressTurnRetry ? TURN_RETRY_SUPPRESSION_PREFIX : ""}${detail}`,
+			poolState === undefined ? undefined : { cause: poolState },
+		);
 		this.name = "ClassifiedSdkError";
 		this.classification = classification;
 		this.original = original;

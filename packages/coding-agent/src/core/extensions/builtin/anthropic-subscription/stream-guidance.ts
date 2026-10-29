@@ -6,6 +6,7 @@ import { ClassifiedSdkError } from "./failover.ts";
 import {
 	allAccountsBlockedGuidance,
 	claudeCodeVersionFloorGuidance,
+	exhaustedPoolGuidance,
 	sdkErrorGuidance,
 	singleAccountUnavailableGuidance,
 	switchAccountLine,
@@ -28,6 +29,8 @@ export function withAuthGuidance(error: unknown, message: string, ran?: ClaudeCo
 		guidance = `${selected} ${action}`;
 	}
 	const versionGuidance = claudeCodeVersionFloorGuidance(message, ran);
-	const hints = [guidance, versionGuidance].filter((hint): hint is string => hint !== undefined);
+	const pool = error instanceof ClassifiedSdkError ? error.poolState : undefined;
+	const poolGuidance = pool && exhaustedPoolGuidance(pool.soonestUnblockAt, pool.accounts);
+	const hints = [guidance, versionGuidance, poolGuidance].filter((hint): hint is string => hint !== undefined);
 	return hints.length > 0 ? `${message}\n${hints.join("\n")}` : message;
 }
