@@ -1,15 +1,25 @@
 import { CompactAdmissionError } from "./compact-admission-error.ts";
 import { OPEN_AFTER_QUEUED_DEADLINE_MS } from "./rpc-request-deadline.ts";
 
-/** Join the operation or its epoch abort. A late settle cannot settle the caller or write an index row. */
-export function runAdmissionProducer<T>(signal: AbortSignal, produce: () => Promise<T>): Promise<T> {
+/** Join the operation or its epoch abort, releasing late results without publishing them. */
+export function runAdmissionProducer<T>(
+	signal: AbortSignal,
+	produce: () => Promise<T>,
+	release?: (value: T) => Promise<void>,
+): Promise<T> {
 	return new Promise((resolve, reject) => {
 		const abort = () => reject(signal.reason);
 		if (signal.aborted) return abort();
 		signal.addEventListener("abort", abort, { once: true });
 		void produce()
-			.then(resolve, reject)
-			.finally(() => signal.removeEventListener("abort", abort));
+			.then(async (value) => {
+				if (signal.aborted) await release?.(value);
+				else resolve(value);
+			}, reject)
+			.finally(() => signal.removeEventListener("abort", abort))
+			.catch(() => {
+				// The caller already observed the abort; late cleanup cannot answer it again.
+			});
 	});
 }
 
@@ -24,6 +34,7 @@ export class AdmissionProducerLifetime {
 			abandoned();
 			this.controller.abort(new CompactAdmissionError("storage_unavailable"));
 		}, OPEN_AFTER_QUEUED_DEADLINE_MS);
+		this.timer.unref();
 	}
 
 	close(): void {
