@@ -72,6 +72,45 @@ it.each(["forgetPeer", "dispose"] as const)(
 	},
 );
 
+// #4272 RULING-90 final (2): a late release that fails is a leak signal: counted and logged, never swallowed.
+it("T2/X04 counts and logs a failed late release after the abort", async () => {
+	const index = new CompactAdmissions();
+	const entered = Promise.withResolvers<void>();
+	const finish = Promise.withResolvers<void>();
+	const release = vi.fn(async () => {
+		throw new Error("close failed");
+	});
+	const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+	const pending = index.run(
+		{ socketEpoch: "epoch", peer: "peer", admissionId: "held", fingerprint: "a".repeat(64) },
+		async () => {
+			entered.resolve();
+			await finish.promise;
+			return { answer: {}, release };
+		},
+	);
+	void pending.catch(() => {});
+	await entered.promise;
+	vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+	const ending = index.forgetPeer("epoch");
+	try {
+		await vi.advanceTimersByTimeAsync(OPEN_AFTER_QUEUED_DEADLINE_MS);
+		await bounded(ending);
+		finish.resolve();
+		await nextTurn();
+		await nextTurn();
+		expect(release).toHaveBeenCalledTimes(1);
+		expect(index.status()).toEqual({ abandoned: 1, releaseFailed: 1 });
+		expect(stderr.mock.calls.map(([line]) => String(line))).toContain(
+			"senpi rpc admission producer releaseFailed 1: close failed\n",
+		);
+	} finally {
+		finish.resolve();
+		await Promise.allSettled([pending, ending]);
+		await index.dispose();
+	}
+});
+
 it.each(["connection release", "host dispose"] as const)(
 	"T2/X04 %s finishes while physical open remains held",
 	async (operation) => {

@@ -57,7 +57,9 @@ function openPhysicalWithBarrier(
 			in_flight: inFlight,
 		});
 	const start = () => open(host, command, owner, accept === undefined ? undefined : { accept, signal });
-	const opened = signal === undefined ? start() : runAdmissionProducer(signal, start);
+	// A late open's physical session is released by its admission (the accept/rollback path, 4272-admission-
+	// abandonment), so the late response itself owns nothing to release here.
+	const opened = signal === undefined ? start() : runAdmissionProducer(signal, start, async () => {});
 	// A manual reopen-by-path supersedes the handover auto-reopen for that session: clear its
 	// record entry, or a later generation would reopen a second copy (MEDIUM-1, senpi#3282 review).
 	// Cleared only after the open SUCCEEDS (MEDIUM-A): if the open fails - a session_path_in_use
