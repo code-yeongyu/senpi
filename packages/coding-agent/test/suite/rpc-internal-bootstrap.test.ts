@@ -37,22 +37,26 @@ function start(runtime: string, args: string[] = [], env: Readonly<Record<string
 	return { child, stderr: () => stderr };
 }
 
-// senpi#4737: reject at exit even if a descendant holds stderr; retain late output when close follows.
+// senpi#4737: reject failures at exit, but let clean exits drain IPC through close.
 function message(child: ChildProcess, stderr: () => string): Promise<unknown> {
 	return new Promise((resolve, reject) => {
 		const received = (value: unknown) => {
 			cleanup();
 			resolve(value);
 		};
-		const exited = (code: number | null, signal: NodeJS.Signals | null) => {
+		const exited = (code: number | null, signal: NodeJS.Signals | null, drained = false) => {
+			if (!drained && code === 0 && signal === null) return;
 			cleanup();
 			const reason = `bootstrap exited ${code} (signal ${signal ?? "none"}) before reporting`;
 			const error = new Error(`${reason}\n${stderr() || "(no stderr)"}`);
-			child.once("close", () => {
-				error.message = `${reason}\n${stderr() || "(no stderr)"}`;
-			});
+			if (!drained) {
+				child.once("close", () => {
+					error.message = `${reason}\n${stderr() || "(no stderr)"}`;
+				});
+			}
 			reject(error);
 		};
+		const closed = (code: number | null, signal: NodeJS.Signals | null) => exited(code, signal, true);
 		const failed = (cause: Error) => {
 			cleanup();
 			reject(new Error(`bootstrap failed to spawn before reporting\n${stderr() || "(no stderr)"}`, { cause }));
@@ -60,16 +64,81 @@ function message(child: ChildProcess, stderr: () => string): Promise<unknown> {
 		const cleanup = () => {
 			child.off("message", received);
 			child.off("exit", exited);
+			child.off("close", closed);
 			child.off("error", failed);
 		};
 		child.once("message", received);
 		child.once("exit", exited);
+		child.once("close", closed);
 		child.once("error", failed);
 	});
 }
 
 // senpi#3795: real socketpair stdin, on both runtimes; no inherited agent profile.
 describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => {
+	// senpi#4737: exit may precede the last IPC message; close is the clean-exit boundary.
+	it("delivers IPC delayed until after a clean exit", async () => {
+		const child = spawn("node", ["-e", 'process.send({ type: "eof" }); process.exit(0);'], {
+			stdio: ["ignore", "ignore", "pipe", "ipc"],
+		});
+		children.push(child);
+		const emit = child.emit.bind(child);
+		let pending: unknown[] | undefined;
+		let exitDelivered = false;
+		let messageAfterExit = false;
+		// Delay only delivery, not the real child or its IPC bytes. Preserve message-before-close ordering.
+		child.emit = (event: string | symbol, ...args: unknown[]) => {
+			if (event === "message" && !exitDelivered) {
+				pending = args;
+				return true;
+			}
+			if (event === "message") messageAfterExit = exitDelivered;
+			const result = emit(event, ...args);
+			if (event === "exit") {
+				exitDelivered = true;
+				if (pending !== undefined) {
+					messageAfterExit = true;
+					emit("message", ...pending);
+					pending = undefined;
+				}
+			}
+			return result;
+		};
+		const close = once(child, "close");
+		try {
+			await expect(message(child, () => "")).resolves.toEqual({ type: "eof" });
+			expect(messageAfterExit).toBe(true);
+		} finally {
+			await close;
+			child.emit = emit;
+		}
+	});
+
+	it("rejects a clean exit without a report only after close", async () => {
+		const child = spawn("node", ["-e", "process.exit(0);"], {
+			stdio: ["ignore", "ignore", "pipe", "ipc"],
+		});
+		children.push(child);
+		let closed = false;
+		child.once("close", () => {
+			closed = true;
+		});
+		const close = once(child, "close");
+		try {
+			await message(child, () => "").then(
+				() => {
+					throw new Error("missing report accepted");
+				},
+				(error: unknown) => {
+					expect(error).toBeInstanceOf(Error);
+					expect(closed).toBe(true);
+				},
+			);
+		} finally {
+			await close;
+		}
+	});
+
 	// senpi#4737: a descendant owns stderr until explicitly released, independently of its parent's exit.
 	it("rejects on exit while a descendant holds stderr open", async () => {
 		const holder = `
