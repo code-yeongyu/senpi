@@ -123,6 +123,7 @@ it.each(["connection release", "host dispose"] as const)(
 			await bounded(ending);
 			expect(ended, "public teardown must observe the bounded admission producer").toBe(true);
 			vi.useRealTimers();
+			const beforeLateOpen = peer.received.length;
 			finish.resolve();
 			await bounded(closed.promise);
 			await nextTurn();
@@ -130,6 +131,7 @@ it.each(["connection release", "host dispose"] as const)(
 			expect(host.core.router.sessionCount).toBe(0);
 			expect(peer.inbox.some((record) => record.type === "session_opened")).toBe(false);
 			expect(peer.inbox.some((record) => record.type === "response" && record.success === true)).toBe(false);
+			expect(peer.received.slice(beforeLateOpen)).toEqual([]);
 		} finally {
 			vi.useRealTimers();
 			finish.resolve();

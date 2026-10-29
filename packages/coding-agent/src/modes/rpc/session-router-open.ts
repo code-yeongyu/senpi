@@ -281,7 +281,7 @@ export async function open(
 			} catch {
 				/* The open rollback has already removed the entry. */
 			}
-			if (!opened.attached) host.writer.forgetSession(opened.sessionId);
+			if (!opened.attached || !compactUpdatesEnabled()) host.writer.forgetSession(opened.sessionId);
 		}
 		return error(command.id, "open_session", code(cause), detail(cause));
 	}

@@ -7,6 +7,10 @@ import { SessionEventWriterLifecycle } from "./session-event-writer-lifecycle.ts
 
 /** The writer's recovery accessors (senpi#4272): legacy views, checkpoint tokens, page requests, peer epochs. */
 export abstract class SessionEventWriterRecovery extends SessionEventWriterLifecycle {
+	unregisterAdmission(peer: string, admissionId: string): void {
+		const actor = this.fanout.get(peer)?.actor;
+		if (actor instanceof AdmissionRoutingActor) actor.admissions.delete(admissionId);
+	}
 	ordinaryRoute(peer: string, sessionId: string) {
 		const registered = this.fanout.get(peer);
 		const actor = registered?.actor;

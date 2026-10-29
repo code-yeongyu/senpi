@@ -15,7 +15,7 @@ import type { RpcSessionCommand } from "./rpc-session-command-types.ts";
 import type { RpcMoveSessionCommand } from "./session-move-wire.ts";
 
 /** Every established command accepts an additive routing envelope. */
-export type RpcCommand =
+type RpcCommandBody =
 	| RpcAttachmentCommand
 	| (RpcSessionCommand & { sessionId?: string })
 	| {
@@ -232,6 +232,9 @@ export type RpcCommand =
 			kind?: SessionKind;
 			context?: Record<string, string>;
 	  };
+
+/** Compact callers may identify their own admission on any correlated session request. */
+export type RpcCommand = RpcCommandBody & { readonly admissionId?: string };
 
 /** Stdin records: session/host commands plus extension-UI replies and progress, and host-request answers. */
 export type RpcInboundRecord = RpcCommand | RpcExtensionUIResponse | RpcExtensionUIProgress | RpcHostResponse;
