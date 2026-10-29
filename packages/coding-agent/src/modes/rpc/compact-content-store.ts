@@ -1,5 +1,11 @@
-import { CompactSpoolStorage, RECLAIM_WORK_ALLOWANCE_BYTES } from "./compact-spool-storage.ts";
-import { type CompactStorageFailure, type CompactStorageIo, nodeCompactStorageIo } from "./compact-storage-io.ts";
+import { type CompactPlacement, CompactSegmentStorage, type CompactSlot } from "./compact-segment-storage.ts";
+import { RECLAIM_WORK_ALLOWANCE_BYTES } from "./compact-spool-storage.ts";
+import {
+	type CompactStorageFailure,
+	type CompactStorageIo,
+	type CompactStorageOperation,
+	nodeCompactStorageIo,
+} from "./compact-storage-io.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import { CompactTextRoots } from "./compact-text-roots.ts";
 
@@ -14,6 +20,8 @@ import { CompactTextRoots } from "./compact-text-roots.ts";
 
 /** 32,768 UTF-16 code units (64 KiB as UTF-16LE), so a split surrogate survives a leaf boundary exactly. */
 export const COMPACT_LEAF_CODE_UNITS = 32_768;
+/** Structural leaves committed per segment: one compaction round's selection, never one file per leaf. */
+const VALUE_FLUSH_BATCH = 128;
 
 export type LeafId = number;
 
@@ -60,11 +68,11 @@ interface Leaf {
 	live: number;
 	pins: number;
 	state: "ram" | "pending" | "committed";
-	path?: string;
+	slot?: CompactSlot;
 	file?: { readonly path: string; readonly bytes: number };
 }
 
-export class CompactContentStore extends CompactSpoolStorage {
+export class CompactContentStore extends CompactSegmentStorage {
 	private readonly spillAboveBytes: number;
 	private readonly spillTargetBytes: number;
 	private readonly leaves = new Map<LeafId, Leaf>();
@@ -140,10 +148,10 @@ export class CompactContentStore extends CompactSpoolStorage {
 		this.leaves.delete(id);
 		if (leaf.file) this.discard(leaf.file.path, leaf.file.bytes);
 		(leaf.value ? this.ramValues : this.ramLeaves).delete(id);
-		if (leaf.state === "committed" && leaf.path) {
+		if (leaf.state === "committed" && leaf.slot) {
 			if (leaf.value) this.structuredBytes.spilled -= leaf.units * 2;
 			else this.spilledLiveBytes -= leaf.units * 2;
-			this.discard(leaf.path, leaf.units * 2);
+			this.leave(id, leaf.slot);
 			return;
 		}
 		if (leaf.value) this.structuredBytes.resident -= leaf.units * 2;
@@ -163,7 +171,8 @@ export class CompactContentStore extends CompactSpoolStorage {
 		this.adjust(id, 0, 1);
 		try {
 			if (leaf.text !== undefined) return leaf.text;
-			return (await this.readFile(leaf.path ?? "", leaf.units * 2, "leaf_read")).toString("utf16le");
+			if (!leaf.slot) throw new CompactReadError("ownership");
+			return (await this.readSlot(leaf.slot)).toString("utf16le");
 		} finally {
 			this.adjust(id, 0, -1);
 		}
@@ -195,9 +204,8 @@ export class CompactContentStore extends CompactSpoolStorage {
 		) {
 			this.valueQueued = true;
 			this.enqueue("value_write", async () => {
-				const [id] = this.ramValues;
 				try {
-					if (id !== undefined) await this.flushLeaf(id);
+					await this.flushValues();
 				} finally {
 					this.valueQueued = false;
 				}
@@ -221,53 +229,77 @@ export class CompactContentStore extends CompactSpoolStorage {
 		}
 	}
 
-	/** Commit at most one batch of structural leaves ahead of a cold-index rewrite. */
+	/** Commits at most one batch of structural leaves, in page-bounded segments, ahead of a cold-index rewrite. */
 	async flushValues(): Promise<void> {
 		// Amortize a cold-index rewrite across a bounded batch, without waiting for every pending owner.
-		for (let n = 0; n < 128 && !this.spillStopped; n++) {
-			const [id] = this.ramValues;
-			if (id === undefined) break;
-			await this.flushLeaf(id);
+		if (this.spillStopped) return;
+		const batch: (readonly [LeafId, number])[] = [];
+		for (const id of this.ramValues) {
+			batch.push([id, this.leafUnits(id) * 2]);
+			if (batch.length === VALUE_FLUSH_BATCH) break;
 		}
+		// A failed run halts spilling, so flushLeaves leaves the later runs resident.
+		for (const run of this.segmentRuns(batch)) await this.flushLeaves(run);
 	}
 
 	/** Serial storage jobs can flush one newly built structural page without waiting on their own queue. */
-	async flushLeaf(id: LeafId): Promise<void> {
-		const leaf = this.leaves.get(id);
-		if (!leaf || leaf.state !== "ram" || leaf.text === undefined || !this.spillAllowed) return;
-		const bytes = leaf.units * 2;
-		leaf.state = "pending";
-		const ram = leaf.value ? this.ramValues : this.ramLeaves;
-		ram.delete(id);
-		let path: string | undefined;
+	flushLeaf(id: LeafId): Promise<void> {
+		return this.flushLeaves([id]);
+	}
+
+	/**
+	 * Writes the resident leaves among `ids`, all of one kind, as segment files of at most 64 KiB each, then
+	 * publishes them in one synchronous step once the last file is durable: that step is the batch's commit
+	 * record, so no leaf is committed and no file is reachable before every file of the batch exists. A
+	 * compaction round passes `node_write`; its files get the `node-` prefix.
+	 */
+	async flushLeaves(ids: Iterable<LeafId>, operation?: CompactStorageOperation): Promise<void> {
+		if (!this.spillAllowed) return;
+		const batch: [LeafId, Leaf, string][] = [];
+		for (const id of ids) {
+			const leaf = this.leaves.get(id);
+			if (leaf?.state !== "ram" || leaf.text === undefined) continue;
+			leaf.state = "pending";
+			(leaf.value ? this.ramValues : this.ramLeaves).delete(id);
+			batch.push([id, leaf, leaf.text]);
+		}
+		if (!batch.length) return;
+		let placements: readonly CompactPlacement[] | undefined;
 		try {
-			path = await this.writeFile(
-				Buffer.from(leaf.text, "utf16le"),
-				leaf.value ? "value_write" : "spill_write",
-				bytes,
-			);
+			const texts = batch.map(([, , text]) => text);
+			placements = await this.writeSegments(texts, operation ?? (batch[0][1].value ? "value_write" : "spill_write"));
 		} finally {
-			// A failed write, or a failure report that threw, keeps the leaf resident and spillable.
-			if (path === undefined) {
+			// A failed write, or a failure report that threw, keeps the leaves resident and spillable.
+			for (const [id, leaf] of placements ? [] : batch) {
 				leaf.state = "ram";
-				if (this.leaves.get(id) === leaf) ram.add(id);
+				if (this.leaves.get(id) === leaf) (leaf.value ? this.ramValues : this.ramLeaves).add(id);
 			}
 		}
-		const owned = this.leaves.get(id) === leaf;
-		if (path !== undefined && (!owned || this.retired)) {
-			this.discard(path, bytes);
-		} else if (path !== undefined) {
-			leaf.state = "committed";
-			leaf.path = path;
-			leaf.text = undefined;
-			if (leaf.value) {
-				this.structuredBytes.resident -= bytes;
-				this.structuredBytes.spilled += bytes;
-			} else {
-				this.residentPayloadBytes -= bytes;
-				this.spilledLiveBytes += bytes;
+		if (!placements) return;
+		// Publication point: every file of the batch is durable and nothing below awaits, so the batch becomes
+		// visible here as a whole. The commit record is this in-memory step; the spool is never crash-recovery state
+		// (a crashed epoch directory is refused as pre_existing and the state is rebuilt from the transcript).
+		// If a future slice ever adopts a spool for crash recovery, it must first add a durable commit record written last.
+		const placed: LeafId[] = [];
+		for (const [n, [id, leaf]] of batch.entries()) {
+			const [segment, offset] = placements[n];
+			const bytes = leaf.units * 2;
+			// A leaf released during the write, or any leaf once retirement began, is not published.
+			if (this.leaves.get(id) === leaf && !this.retired) {
+				leaf.state = "committed";
+				leaf.text = undefined;
+				leaf.slot = this.place(segment, id, offset, bytes);
+				if (leaf.value) {
+					this.structuredBytes.resident -= bytes;
+					this.structuredBytes.spilled += bytes;
+				} else {
+					this.residentPayloadBytes -= bytes;
+					this.spilledLiveBytes += bytes;
+				}
+				placed.push(id);
 			}
-			this.committed(id);
 		}
+		for (const segment of new Set(placements.map(([segment]) => segment))) this.settle(segment);
+		for (const id of placed) this.committed(id);
 	}
 }

@@ -38,6 +38,7 @@ import {
 	withinFrameLimit,
 } from "./session-worker-protocol.ts";
 import { createSessionWorkerRegistry } from "./session-worker-registry.ts";
+import { IssuedWorkerOwners } from "./session-worker-owners.ts";
 import { McpFormWorker } from "./mcp-form-worker.ts";
 
 if (isBunBinary) {
@@ -120,6 +121,8 @@ class WorkerEventWriter extends SessionEventWriter {
 		if (replacement && Buffer.byteLength(JSON.stringify(replacement)) > SESSION_WORKER_LIMITS.outputBytes)
 			failWorker("session_worker_snapshot_limit");
 		const replaced = "type" in record && record.type === "session_replaced";
+		const issued = this.connectionContext.owner?.wire;
+		const owner = issued && { ownerId: issued.ownerId, bindingGeneration: issued.bindingGeneration };
 		if (ordered && replaced) {
 			journaled = session.sessionManager;
 			stamp.forget();
@@ -155,6 +158,7 @@ class WorkerEventWriter extends SessionEventWriter {
 				? { record: {}, recordText: line }
 				: { record: JSON.parse(line) as object }),
 			connection: this.currentConnection(),
+			...(owner === undefined ? {} : { owner }),
 			signal,
 			activity,
 			snapshot: replacement,
@@ -181,6 +185,7 @@ class WorkerEventWriter extends SessionEventWriter {
 }
 
 const writer = new WorkerEventWriter();
+const issuedOwners = new IssuedWorkerOwners();
 // One session per isolate: the roles of the connections it serves, adopted from the host before each command.
 const connectionRoles = new ConnectionRoles();
 let prepared: Extract<HostToSessionWorker, { type: "prepare" }> | undefined;
@@ -322,9 +327,13 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			if (!binding || (closing && !privileged)) throw new Error("session_closing");
 			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
 			const activeBinding = binding;
-			await (message.connection === undefined
-				? activeBinding.handle(message.command)
-				: writer.withConnection(message.connection, () => activeBinding.handle(message.command)));
+			const run = () => activeBinding.handle(message.command);
+			const connection = message.connection;
+			await (connection === undefined
+				? run()
+				: message.owner === undefined
+					? writer.withConnection(connection, run)
+					: writer.connectionContext.runIssued(connection, issuedOwners.adopt(message.owner), run));
 			publishSnapshot();
 			send({ type: "result", request: message.request });
 			return;
@@ -346,6 +355,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			return;
 		case "subscription_limits":
 			for (const limits of message.accounts) subscriptionLimits.adopt(limits);
+			return;
+		case "owners_retired":
+			issuedOwners.retire(message.owners);
 			return;
 		case "cancel_ui":
 			binding?.cancelPendingExtensionUiRequests?.();

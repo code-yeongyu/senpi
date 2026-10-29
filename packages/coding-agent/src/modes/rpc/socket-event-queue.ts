@@ -15,6 +15,8 @@ export type QueueEntry = {
 	reply: boolean;
 	/** Set on a record captured behind a pending cut: it reaches the peer only while the peer still holds its session. */
 	held?: () => boolean;
+	/** A targeted reply's destination check, repeated immediately before its write (#4728). */
+	current?: () => boolean;
 };
 
 /** A late peer's attach baseline in its FIFO position. */

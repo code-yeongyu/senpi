@@ -12,7 +12,12 @@ export const parseReadPermission: ToolPermissionParser = (_toolName, input, cwd)
 
 	const readPath = resolveReadPath(filePath, cwd);
 	const target = realpathWithoutOpen(readPath);
-	const request: PermissionRequest = { permission: "read", patterns: [filePath], always: [filePath] };
+	const request: PermissionRequest = {
+		permission: "read",
+		patterns: [filePath],
+		always: [filePath],
+		executed: [readPath],
+	};
 	if (getBundledResourceRoots().some((root) => !isExternalPath(target, root))) {
 		// The service still evaluates denial rules; only an ask result is auto-approved.
 		return [

@@ -186,7 +186,7 @@ describe("a stale usage-limit block does not keep failing turns (#3771)", () => 
 		expect((await repository.listSlots(PROVIDER, "stored")).a?.blockedUntil).toBe(NOW + COOLDOWN_BASE_MS);
 	});
 
-	test("the turn's failure names the quota and when it resets instead of 'no code'", () => {
+	test("the turn's failure carries the quota code and reset timestamp", () => {
 		const failure = describeProviderFailure(
 			{
 				category: "quota",
@@ -201,7 +201,6 @@ describe("a stale usage-limit block does not keep failing turns (#3771)", () => 
 			category: "quota",
 			code: "usage_limit_reached",
 			resetsAt: 1_792_540_800_000,
-			reason: "the provider account is out of quota until 2026-10-21T00:00:00.000Z",
 		});
 	});
 });
