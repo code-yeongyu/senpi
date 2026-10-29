@@ -5,6 +5,7 @@ import { afterAll, afterEach, describe, expect, onTestFinished, test, vi } from 
 import { isRecoverableInspectorVmImportError } from "../../../src/inspector-policy.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { windowsTreeKillArgs } from "../../../../../scripts/windows-process-tree.mjs";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
 
@@ -138,7 +139,7 @@ describe("Inspector VM dynamic import crash handling", () => {
 				process.execPath,
 				["--import", "tsx", fixturePath, cliPath, "--help"],
 				{
-					...process.env,
+					...hostSpawnEnv(),
 					NODE_OPTIONS: "--inspect=127.0.0.1:0",
 					PI_OFFLINE: "1",
 				},
@@ -199,7 +200,7 @@ describe("Inspector VM dynamic import crash handling", () => {
 	test(
 		"does not enable recovery when the environment changes after policy import",
 		async () => {
-			const env = { ...process.env };
+			const env = { ...hostSpawnEnv() };
 			delete env.SENPI_RECOVER_INSPECTOR_VM_IMPORT;
 			const args = ["--import", "tsx", fixturePathFor("inspector-recovery-env")];
 			const result = await runUntilClose(process.execPath, args, env);
@@ -210,7 +211,7 @@ describe("Inspector VM dynamic import crash handling", () => {
 		FIXTURE_CHILD_BUDGET_MS,
 	);
 
-	const recoveryEnv = { ...process.env, SENPI_RECOVER_INSPECTOR_VM_IMPORT: "1" };
+	const recoveryEnv = { ...hostSpawnEnv(), SENPI_RECOVER_INSPECTOR_VM_IMPORT: "1" };
 	const earlyRecoveryArgs = (mode: "recoverable" | "fatal") => [fixturePathFor("inspector-early-recovery"), mode];
 
 	test(

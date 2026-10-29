@@ -555,6 +555,7 @@ export class ExtensionRunner {
 		timeoutMinutes: 30,
 	});
 	private getBrowserEngineFn: NonNullable<ExtensionContextActions["getBrowserEngine"]> = () => undefined;
+	private getSessionEnvFn: NonNullable<ExtensionContextActions["getSessionEnv"]> = () => undefined;
 	private getImageSettingsFn: ExtensionContextActions["getImageSettings"] = () => ({
 		autoResize: true,
 		blockImages: false,
@@ -728,6 +729,7 @@ export class ExtensionRunner {
 		this.getLookAtSettingsFn = contextActions.getLookAtSettings;
 		if (contextActions.getAskUserSettings) this.getAskUserSettingsFn = contextActions.getAskUserSettings;
 		if (contextActions.getBrowserEngine) this.getBrowserEngineFn = contextActions.getBrowserEngine;
+		if (contextActions.getSessionEnv) this.getSessionEnvFn = contextActions.getSessionEnv;
 		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
 		this.compactFn = contextActions.compact;
@@ -1146,6 +1148,29 @@ export class ExtensionRunner {
 		return this.staleMessage === undefined;
 	}
 
+	/**
+	 * Deferred `ctx.afterSessionStart` work runs only while this generation still owns its session: a switch,
+	 * new session, reload or dispose during the `session_start` dispatch retires it, and its ctx would throw
+	 * `StaleExtensionContextError` on first use. A returned promise is observed here so its rejection is
+	 * reported, never unhandled; a stale error raised by a retirement mid-publish is dropped the same way.
+	 */
+	private runAfterSessionStart(publish: () => void | Promise<void>): void {
+		if (this.staleMessage) return;
+		const report = (error: unknown) => {
+			if (error instanceof StaleExtensionContextError) return;
+			this.emitError({
+				extensionPath: RUNTIME_EXTENSION_PATH,
+				event: "session_start",
+				error: error instanceof Error ? error.message : String(error),
+			});
+		};
+		try {
+			void Promise.resolve(publish()).catch(report);
+		} catch (error) {
+			report(error);
+		}
+	}
+
 	private assertActive(): void {
 		if (this.staleMessage) {
 			throw new StaleExtensionContextError(this.staleMessage);
@@ -1501,6 +1526,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getBrowserEngineFn();
 			},
+			get sessionEnv() {
+				runner.assertActive();
+				return runner.getSessionEnvFn();
+			},
 			get modelRegistry() {
 				runner.assertActive();
 				return runner.modelRegistry;
@@ -1659,6 +1688,10 @@ export class ExtensionRunner {
 			getAskUserSettings: () => {
 				runner.assertActive();
 				return runner.getAskUserSettingsFn();
+			},
+			afterSessionStart: (publish) => {
+				runner.assertActive();
+				runner.sessionStartTurns.admit(() => runner.runAfterSessionStart(publish));
 			},
 			getImageSettings: () => {
 				runner.assertActive();

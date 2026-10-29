@@ -902,6 +902,8 @@ export interface AgentSessionConfig {
 	promptSurface?: PromptSurface;
 	/** Browser engine this session's skills drive; omitted means none was chosen. */
 	browserEngine?: BrowserEngine;
+	/** Caller env for this session's tool subprocesses (`open_session.env`, senpi#4381); omitted means none. */
+	sessionEnv?: Readonly<Record<string, string>>;
 	/** Tool runtime for this session (senpi#3566); absent means `in-process`. */
 	toolRuntime?: ToolRuntimeKind;
 	/** Where the startup thinking level came from (senpi#3819); absent means `default`. */
@@ -1766,10 +1768,12 @@ export class AgentSession {
 	private _systemPromptOverride?: string;
 	private _promptSurface: PromptSurface | undefined;
 	private _browserEngine: BrowserEngine | undefined;
+	private readonly _sessionEnv: Readonly<Record<string, string>> | undefined;
 
 	constructor(config: AgentSessionConfig) {
 		this._promptSurface = config.promptSurface;
 		this._browserEngine = config.browserEngine;
+		this._sessionEnv = config.sessionEnv;
 		this.agent = config.agent;
 		this._structuredLane = new StructuredSessionLane(config.internalChannel, (deliver) => {
 			if (!this._unsubscribeAgent) return;
@@ -5004,6 +5008,10 @@ export class AgentSession {
 		return this._browserEngine;
 	}
 
+	get sessionEnv(): Readonly<Record<string, string>> | undefined {
+		return this._sessionEnv;
+	}
+
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
 		return this.agent.state.systemPrompt;
@@ -7817,6 +7825,15 @@ export class AgentSession {
 				return message;
 			});
 		return { messages, commands: run };
+	}
+
+	/**
+	 * A superseded host generation draining a session nobody is attached to (senpi#3114): automatic turns wait as
+	 * notices from here on, exactly as on an unattended reopen, so the running turn is the session's last on this
+	 * host and it parks when that turn settles. A person's input or resume_session releases the hold.
+	 */
+	holdAutomaticTurns(): void {
+		this._engineTurnHold.addHold("unattended");
 	}
 
 	/** A parent's Stop reaching this child (senpi#3811): hold every automatic turn until the parent's run Resume. */
@@ -11924,6 +11941,7 @@ export class AgentSession {
 				},
 				getAskUserSettings: () => this.settingsManager.getAskUserSettings(),
 				getBrowserEngine: () => this._browserEngine,
+				getSessionEnv: () => this._sessionEnv,
 				getImageSettings: () => ({
 					autoResize: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),

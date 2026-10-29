@@ -893,6 +893,7 @@ parsing a version string:
 - `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
   above `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
   reports it per endpoint. Classic hosts and hosts released before the field omit it.
+- `path_identity_resolver` - multi-session hosts only: `{ state: "not_started" | "ready" | "unavailable", detail }`, the permission system's path identity worker. `not_started` means no worker has published its first mount snapshot yet (the first path request spawns it); `ready` means one has; `unavailable` names why it could not start; path rules for `read`/`edit`/`list`/`grep` then match by spelling only (a JS cell's own canonical path still decides exactly).
 
 Compatibility is decided from `protocolVersion` + `capabilities`, and "is my build newer?" from `engineOrdinal`.
 A `serverVersion` string comparison is never a compatibility test: two hosts with different version strings can
@@ -1045,6 +1046,11 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    connection occupancy. Clients see `session_closed { reason: "handoff_parked", sessionPath }` before
    their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
    ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
+   A session with no attachment cannot be reached on the drained generation any more, so each drain pass
+   holds its automatic turns (goal continuation, monitor and codemode wakes), exactly as an unattended
+   reopen does: they wait as notices, its running turn is its last on this generation, and it parks once
+   that turn settles. A person's input or `resume_session` releases the hold after the reopen. A session a
+   client is still attached to keeps its automatic turns.
 
 Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 
@@ -1351,7 +1357,7 @@ which prints the bare socket path).
   `senpi host handoff` command.
 - `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
-  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, env_keys, generations, pointer, crashes, shard, session_rows,
+  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, path_identity_resolver, env_keys, generations, pointer, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. The additive `lifecycle` field is
   `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
@@ -1391,6 +1397,7 @@ which prints the bare socket path).
     `get_protocol_info`; `null` when nothing answers or the host predates the field. It lives in the host process
     alone, so a draining predecessor's state is not reported, and it is observability only: a pressured endpoint
     admits every open.
+  - `path_identity_resolver`: the ANSWERING generation's path identity resolver, `{ state, detail }` as `get_protocol_info` reports it; `null` when nothing answers or the host predates the field.
   - `crashes`: records in the endpoint's `crashes.jsonl` that are deaths - supervised host children that died
     rather than stopped, `engine_stop` and watchdog lines excluded; `0` when the file is absent. Each line of that
     file is `{ at, signal?, code?, uptimeMs, kind?, generation?, detection?, sender?, chain?, reason?, stopIntent?,
@@ -1992,6 +1999,31 @@ also when the attach lands while one of them is still building the replacement. 
 `get_protocol_info` before sending the field; the capability is advertised only because the value reaches every
 consumer above. Any other value is refused with `invalid_launch_profile`.
 
+#### Caller env per session (`session_env`)
+
+`open_session.env: Record<string, string>` is the per-spawn caller env channel (senpi#4381): the small, explicit set
+of variables THIS session's tool subprocesses (the bash tool and everything it spawns, in-process or in the tool
+child) see on top of the process environment. It is applied to that one session only, after the daemon's own name
+allowlist: the values are never merged into the host process environment, never carried to a successor generation
+through it, and never visible to a session that neither received them on its own open nor inherited them as a task
+child (below), so two clients opening through one daemon with different values each get only their own and a later
+open without the field gets none. Names are checked against the host's caller-passable set: exactly
+`OMOCAT_LANE` by default (the lane identity a task tree's tools label their posts with), plus whatever names the host
+process was started with in `SENPI_RPC_CALLER_ENV_NAMES` (comma-separated; a session-owned or host-owned name such
+as `PI_SESSION_ID` is never accepted). A name outside that set, a non-string value, a name that is not `[A-Z_][A-Z0-9_]*`,
+more than 16 entries, a value over 4096 characters or one containing NUL is refused with `invalid_session_env: <detail>`
+naming the offender (a name longer than 64 characters is cut to its first 64 plus `...`) and the passable set; values
+are never echoed. A task child (`open_session.spawnedBy` naming, by `durableSessionId` or `sessionId`, a parent this
+host holds open and bound, the same rule attach uses) inherits its parent's entries, and its own `env` entries win
+over them; a `spawnedBy` naming a parent that is opening, closing, quarantined, closed or not on this host inherits
+nothing. Inheritance follows the same trust boundary as
+attach: the host does not tie the opening connection to the parent, so any client on the host that could attach to
+the parent (and run its tools there) can open a child that inherits the parent's entries, which grants it nothing
+attach does not. Applied when the open
+creates the session; an attach keeps the session's existing env. A session parked for a generation handoff carries
+its env into the successor's reopen as part of its own record, not through the successor's process environment.
+Probe `session_env` in `get_protocol_info` before sending the field.
+
 A skill that must tell the client what the browser is doing publishes it as that session's own event: an extension
 registers a tool that calls `pi.rpc.emit(name, data)`, an eval cell reaches it as `tool.<name>(...)`, and the host adds
 the owning `sessionId` to the `extension_event` record. Only clients that advertised `extension_events` receive it.
@@ -2017,7 +2049,7 @@ Startup: `senpi --mode rpc --multi-session` → NO default session is constructe
 
 ### Session replacement
 
-A replacement (`new_session`, `switch_session`, `fork`) responds as soon as the swap is committed; the derived-surface refresh that rebinds extensions continues afterwards. That refresh does not disturb work the client starts against the committed session: tool activation performed while extensions are still binding no longer cancels an in-flight compaction or invalidates its context. `loaded_surfaces_changed` is emitted only when the surface digest actually changes, so it is NOT a settle barrier clients can wait on.
+A replacement (`new_session`, `switch_session`, `fork`) responds as soon as the swap is committed; the derived-surface refresh that rebinds extensions continues afterwards. That refresh does not disturb work the client starts against the committed session: tool activation performed while extensions are still binding no longer cancels an in-flight compaction or invalidates its context. Outside an MCP startup window, `loaded_surfaces_changed` is emitted only when the surface digest actually changes, so it is NOT a settle barrier for the extension rebind; the one settle point it does carry is the end of the MCP startup window described under [loaded_surfaces_changed](#loaded_surfaces_changed).
 
 #### Replacement identity event
 
@@ -2809,7 +2841,7 @@ names a valid preset.
 | `release_attachment` | `sessionId` | `{ deferred: boolean }` | Releases exactly one caller hold with disconnect semantics; `deferred` is true only when settlement owns the final release, and false while draining. Capability `release_attachment`. |
 | `reclaim_session` | `sessionPath`, `durableSessionId`, `expectedHostInstance` | `{ reclaimed: true, sessionId }` | Atomic attach-and-claim of every caller hold; refuses other connections before aborting. Capability `reclaim_session`. |
 | `get_protocol_info` | - | `{ protocolVersion: 1, serverVersion: string, capabilities: string[], mode: "classic"\|"multi", instanceId: string, generation: number, engineVersion: string, engineOrdinal: [y, m, d, n, epoch], launch_profile: { profile_id, core }, memory_pressure?: boolean }` | Answered in BOTH modes; side-effect-free; the capability probe. Multi-session hosts include `multi_session`, `session_held` (the active foreign-holder admission guard, in both runtimes), `retain_on_disconnect`, `session_kind`, `session_context`, `auto_title_per_session`, `durable_session_id`, `moved_path_guard` (senpi resolves and guards paths the OmO desktop moved with its data home), `prompt_surface` and `prompt_surface_chat` plus the negotiated launch capabilities. Those are HOST capabilities (a client never sends them) and are advertised only in multi-session mode, where the host owns the attachment refcount and the per-session launch profile. The identity fields are described under "Host identity" above; compatibility is decided from `protocolVersion`, `capabilities` and `engineOrdinal`, NEVER from `serverVersion`. |
-| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?`, `retryFallback?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
+| `open_session` | `sessionPath?`, `cwd?`, `provider?`, `modelId?`, `thinkingLevel?`, `permissionPreset?`, `retain_on_disconnect?`, `kind?`, `context?`, `auto_title?`, `durableSessionId?`, `promptSurface?`, `browserEngine?`, `retryFallback?`, `env?` (all optional; paths MUST be absolute) | `{ sessionId, state: RpcSessionState, attached?: true }` | `sessionPath` = today's `--session` semantics (open-if-exists else create persisting there, `session-manager.ts:926-940`); `provider`/`modelId` applied only on create (resume restores the session's model — mirrors `SenpiSessionRuntime.ts:198-200`); params form the immutable launch profile (D8). When the path is already held by a fully-open session, the open ATTACHES to it: same routing handle, `attached: true`, one more attachment counted; the runtime is torn down only when the last attachment closes. Idle sessions past the eviction window are closed by the host itself. `retain_on_disconnect: true` (default false) makes a dropped connection DETACH from this session instead of closing it — see "Retained sessions" below. `kind` (default `interactive`) and the opaque `context` map are described under "Session kind and context" above; both are stored frozen for the session's life and never influence auth, model or resource resolution. |
 | `close_session` | `sessionId` | `{}` | Refused with `unknown_session` when the requesting connection never attached to that handle (a close releases the CALLER's attachment, and `list_sessions` publishes every handle). Otherwise aborts active work, awaits agent idle + settled persistence for up to the host grace window (default 10s), then quarantines any worker that has not exited without releasing its path reservation; its response is the LAST record tagged with that handle for the first closer — no events after (test-pinned). An admitted concurrent close joins the same teardown and receives its own successful response; output saturation rejects admission with the bounded close-overflow/resync notice described above. |
 | `list_sessions` | `include_workers?` (default false) | `{ sessions: [{ sessionId, durableSessionId, sessionPath, cwd, name, status, attachments, retain_on_disconnect, kind, context? }] }` | Includes `opening`/`closing` entries. `retain_on_disconnect` is true when the session outlives its last attachment (an open or attach asked for it; retention is never revoked), so no client's release or disconnect can end it. Internally quarantined workers remain externally `closing` until exit. `attachments` is the session's live client attachment count; `0` on an `open` row is a retained session with no client attached. Every row carries `kind`. Rows with `kind: "worker"` are omitted unless `include_workers: true`, and `context` is published ONLY on that listing — a default listing carries no `context` at all. |
 | `detach_connection` | - | `{ deferred: string[] }` | Multi-session hosts that advertise `detach_connection`. Meant as the connection's last request: the host releases every session attachment this connection holds and answers only after that, so another connection's next `list_sessions` no longer counts it. `deferred` names the sessions that still count it (see `#### detach_connection`). Closing the socket afterwards releases nothing more. `senpi host session` sends it before closing, bounded at 5 s; on a host without the capability, or after a request timed out or the connection was lost, it relies on the release at socket close. |
@@ -3008,6 +3040,7 @@ codes or code prefixes in `error`:
 - `unsupported_transport: <reason>` (`subscribe_sessions` or `unsubscribe_sessions` on the stdio transport, which has no per-connection identity to deliver a subscription to; `errorData { reason, action }`)
 - `invalid_session_context: <reason>` from `set_session_context` (a reserved host or lineage key, a bad key or value, or a patched context over 4096 bytes; `errorData { reason, action }`)
 - `invalid_session_kind: <detail>` (`open_session.kind` other than `interactive` or `worker`)
+- `invalid_session_env: <detail>` (`open_session.env` malformed, or naming a variable outside the host's caller-passable set; see "Caller env per session")
 - `invalid_launch_profile: <detail>` (`open_session.auto_title` present but not a boolean, `open_session.promptSurface` other than `terminal`, `app` or `chat`, `open_session.browserEngine` other than `connected`, `builtin` or `none`, a malformed `open_session.retryFallback`, an empty or non-string `open_session.expectedHostInstance`, or `open_session.provider` without `modelId` or the reverse)
 - `host_memory_pressure` (sent only by hosts released before #2207, which declined to CREATE a `kind: "worker"` session above `SENPI_RPC_HOST_RSS_REFUSE_MB`; `errorData { rssMb, retry_after_ms }` says when to ask again. Current hosts never refuse an open for memory; a client talking to an older generation waits and retries, it never starts a second host or a per-child process)
 - `warm_failed: <detail>` (`warm` could not load its profile, for example a `cwd` that does not exist; not remembered, so a retry loads again)
@@ -5570,6 +5603,16 @@ Emitted without a request id when the loaded skill, extension, or MCP inventory 
 ```json
 {"type": "loaded_surfaces_changed"}
 ```
+
+**MCP startup window.** Every MCP attach of a session (session start, a new, resumed or forked session, a reload) opens a startup window. It stays open until every MCP server connect that attach started has settled: connected with its tools registered, failed, or timed out by the server's `connectTimeoutMs`. The count of startup events is fixed by this contract, not by how parallel connects interleave or how often the client reads:
+
+- While the window is open, MCP inventory changes emit no `loaded_surfaces_changed`. `get_loaded_surfaces` still answers with the current inventory, which may show servers still connecting.
+- When the window closes after starting at least one connect, each connection attached to the session receives exactly one `loaded_surfaces_changed`, even when its last `get_loaded_surfaces` already showed the final inventory. Re-reading after it gives the settled startup inventory. A multi-session host applies the per-connection dedupe above: sessions that settle onto the same inventory share one event.
+- An attach that starts no connect (no server configured, servers disabled, or every connection reused) emits no startup event; if its inventory changed, that change is announced once, like any other.
+- A connection that attaches after the window closed receives no startup event; it reads the inventory.
+- After the window, each MCP inventory change emits as before. Skill and extension changes are not held by the window.
+
+`get_loaded_surfaces` never emits `loaded_surfaces_changed`: a read answers with the inventory and records nothing, so polling during startup adds no events.
 
 ### transcript_write_failed
 
