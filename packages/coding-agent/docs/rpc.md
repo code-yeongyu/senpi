@@ -2017,7 +2017,7 @@ Startup: `senpi --mode rpc --multi-session` → NO default session is constructe
 
 ### Session replacement
 
-A replacement (`new_session`, `switch_session`, `fork`) responds as soon as the swap is committed; the derived-surface refresh that rebinds extensions continues afterwards. That refresh does not disturb work the client starts against the committed session: tool activation performed while extensions are still binding no longer cancels an in-flight compaction or invalidates its context. `loaded_surfaces_changed` is emitted only when the surface digest actually changes, so it is NOT a settle barrier clients can wait on.
+A replacement (`new_session`, `switch_session`, `fork`) responds as soon as the swap is committed; the derived-surface refresh that rebinds extensions continues afterwards. That refresh does not disturb work the client starts against the committed session: tool activation performed while extensions are still binding no longer cancels an in-flight compaction or invalidates its context. Tools added after binding while a compaction runs, such as an MCP server finishing its connect, do not cancel it either; only revoking a tool that was active when the compaction started does. `loaded_surfaces_changed` is emitted only when the surface digest actually changes, so it is NOT a settle barrier clients can wait on.
 
 #### Replacement identity event
 

@@ -141,6 +141,11 @@ import { isTurnStuckOnContextOverflow } from "./compaction/stuck-overflow.ts";
 import { isWarmSummaryAnchorValid } from "./compaction/warm-anchor.ts";
 import type { CompactionModelSelector } from "./compaction-settings-access.ts";
 import {
+	type CompactionToolBaseline,
+	captureCompactionToolBaseline,
+	toolChangeInvalidatesCompaction,
+} from "./compaction-tool-baseline.ts";
+import {
 	CONTINUE_FROM_LEAF_CUSTOM_TYPE,
 	CONTINUE_FROM_LEAF_DIRECTIVE,
 	ContinueFromLeafError,
@@ -1526,6 +1531,8 @@ export class AgentSession {
 	// Compaction state
 	// Each abort controller below is an isCompacting fact; setting or clearing one is a lifecycle edge (senpi#3980).
 	private _compactionAbortControllerValue: AbortController | undefined = undefined;
+	/** The active tool names when the current compaction claim was taken (senpi#4706). */
+	private _compactionToolBaseline: CompactionToolBaseline | undefined = undefined;
 	private _autoCompactionAbortControllerValue: AbortController | undefined = undefined;
 	private get _compactionAbortController(): AbortController | undefined {
 		return this._compactionAbortControllerValue;
@@ -5377,7 +5384,13 @@ export class AgentSession {
 			// binding itself, not to a mid-session change. The session was already
 			// committed to the client, so cancelling or invalidating work it started
 			// against that session would be spurious.
-			if (this._extensionBindingPromptReadiness === undefined) {
+			// senpi#4706: a tool added while a compaction runs (an MCP server finishing its connect,
+			// a tool_search promotion) cannot invalidate a summary of history that never called it.
+			// Only revoking a tool the compaction started with does.
+			if (
+				this._extensionBindingPromptReadiness === undefined &&
+				toolChangeInvalidatesCompaction(this._currentCompactionToolBaseline(), validToolNames)
+			) {
 				this.abortCompaction();
 				this._incrementMessageRevision();
 			}
@@ -9757,6 +9770,17 @@ export class AgentSession {
 		} else {
 			this._compactionAbortController = controller;
 		}
+		if (this._compactionToolBaseline?.claim !== controller) {
+			this._compactionToolBaseline = captureCompactionToolBaseline(controller, this.agent.state.tools);
+		}
+	}
+
+	/** The baseline of the compaction claim that currently owns the route, if one is live. */
+	private _currentCompactionToolBaseline(): CompactionToolBaseline | undefined {
+		const claim = this._compactionAbortController ?? this._autoCompactionAbortController;
+		if (claim === undefined || claim.signal.aborted) return undefined;
+		const baseline = this._compactionToolBaseline;
+		return baseline?.claim === claim ? baseline : undefined;
 	}
 
 	private _ownsCompactionController(controller: AbortController, owner: "auto" | "compaction"): boolean {
