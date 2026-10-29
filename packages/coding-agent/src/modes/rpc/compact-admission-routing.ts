@@ -44,6 +44,7 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 		const routes = stream?.routes.filter((id) => this.admissions.has(id)) ?? [];
 		if (record.type === "response" && typeof record.id === "string") {
 			const admissionId = replyAdmission(record.id, this.peer, routes);
+			if (admissionId === null) return [];
 			return admissionId === undefined
 				? [line]
 				: [serializeJsonLine({ ...record, admissionId, generation: stream?.generation })];
@@ -58,6 +59,10 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 		const enqueue = super.enqueue.bind(this);
 		this.enqueue = (line, key, written, demoted, reply, held) => {
 			const lines = this.route(line, checkpoints, socketEpoch);
+			if (lines.length === 0) {
+				written?.(false);
+				return;
+			}
 			const replacements = demoted === undefined ? undefined : this.route(demoted, checkpoints, socketEpoch);
 			let remaining = lines.length;
 			let delivered = false;

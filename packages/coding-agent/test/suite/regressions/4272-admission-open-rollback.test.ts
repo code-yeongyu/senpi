@@ -1,11 +1,87 @@
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { CompactAdmissions } from "../../../src/modes/rpc/compact-admissions.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
 
 afterEach(() => {
 	vi.restoreAllMocks();
 	vi.unstubAllEnvs();
 });
+
+// #4272: open() normally converts attach failures to refusals; a rollback dependency can itself throw.
+it("releases the accepted cut and route exactly once when physical open actually throws", async () => {
+	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+	await using host = await statusHost();
+	host.client("peer");
+	const checkpoints = host.writer.recoveryCheckpoints;
+	const retired = vi.spyOn(checkpoints, "retireRoute");
+	const unregistered = vi.spyOn(host.writer, "unregisterAdmission");
+	const failure = new Error("rollback writer failed");
+	vi.spyOn(host.writer, "attachConnectionToSession").mockImplementationOnce(() => {
+		throw new Error("after acceptance");
+	});
+	vi.spyOn(host.writer, "forgetSession").mockImplementationOnce(() => {
+		throw failure;
+	});
+	await expect(
+		host.writer.withConnection("peer", () =>
+			host.core.router.handle({
+				type: "open_session",
+				sessionPath: join(host.cwd, "throw.jsonl"),
+				admissionId: "failed",
+			}),
+		),
+	).rejects.toBe(failure);
+	expect(retired).toHaveBeenCalledTimes(1);
+	expect(retired).toHaveBeenCalledWith(
+		{ socketEpoch: host.writer.socketEpochOf("peer"), sessionId: expect.any(String) },
+		"failed",
+	);
+	expect(unregistered).toHaveBeenCalledExactlyOnceWith("peer", "failed");
+	expect(checkpoints.status().open).toBe(0);
+	expect(host.writer.ordinaryRoute("peer", retired.mock.calls[0]?.[0].sessionId ?? "")?.routes ?? []).toEqual([]);
+	expect(host.core.router.sessionCount).toBe(0);
+}, 120_000);
+
+// #4272: exercise the real accepted producer's release twice, not two independent failed attempts.
+it("makes a second accepted release a no-op for cuts routes and attachment ownership", async () => {
+	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+	await using host = await statusHost();
+	const peer = host.client("peer");
+	const sessionPath = join(host.cwd, "release.jsonl");
+	await peer.request({ type: "open_session", sessionPath, admissionId: "survivor" });
+	let release: (() => Promise<void>) | undefined;
+	const run = CompactAdmissions.prototype.run;
+	vi.spyOn(CompactAdmissions.prototype, "run").mockImplementation(function (
+		this: CompactAdmissions,
+		identity,
+		produce,
+	) {
+		return run.call(this, identity, async (signal) => {
+			const produced = await produce(signal);
+			release = produced.release;
+			return produced;
+		});
+	});
+	const opened = await peer.request({
+		type: "open_session",
+		sessionPath,
+		admissionId: "accepted",
+	});
+	const retired = vi.spyOn(host.writer.recoveryCheckpoints, "retireRoute");
+	const unregistered = vi.spyOn(host.writer, "unregisterAdmission");
+	const releaseAccepted = release ?? expect.unreachable("no accepted producer");
+	await releaseAccepted();
+	expect(host.writer.recoveryCheckpoints.status().open).toBe(1);
+	expect(host.writer.ordinaryRoute("peer", String(opened.sessionId))?.routes).toEqual(["survivor"]);
+	expect(host.core.router.sessionCount).toBe(1);
+	await releaseAccepted();
+	expect(retired).toHaveBeenCalledTimes(1);
+	expect(unregistered).toHaveBeenCalledExactlyOnceWith("peer", "accepted");
+	expect(dataOf(await peer.request({ type: "list_sessions" })).sessions).toEqual([
+		expect.objectContaining({ sessionId: opened.sessionId, attachments: 1 }),
+	]);
+}, 120_000);
 
 it("releases the accepted cut and route once when an attached open fails after acceptance", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
