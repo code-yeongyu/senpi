@@ -1,7 +1,4 @@
 import { execFile, execFileSync } from "node:child_process";
-import { ProcessIdentityUnreadableError } from "./process-identity-error.ts";
-
-export { ProcessIdentityUnreadableError } from "./process-identity-error.ts";
 
 const WINDOWS_FILETIME_EPOCH = 116444736000000000n;
 export const PROCESS_START_TOLERANCE_MS = 3_000;
@@ -91,6 +88,23 @@ export type ProcessIdentityResult =
 	| { readonly kind: "absent" }
 	| { readonly kind: "error"; readonly error: unknown };
 
+/** Thrown when a live process refuses to yield an identity after the retry budget. */
+export class ProcessIdentityUnreadableError extends Error {
+	readonly pid: number;
+	readonly attempts: number;
+	override readonly cause: unknown;
+
+	constructor(pid: number, attempts: number, cause: unknown) {
+		super(
+			`process identity for live pid ${pid} stayed unreadable after ${attempts} probe attempt(s): ${cause instanceof Error ? cause.message : String(cause)}`,
+		);
+		this.name = "ProcessIdentityUnreadableError";
+		this.pid = pid;
+		this.attempts = attempts;
+		this.cause = cause;
+	}
+}
+
 export interface IdentityProbeRetry {
 	/** Probe attempts against a live pid before giving up (default 5). */
 	readonly attempts?: number;
@@ -176,9 +190,11 @@ export async function readProcessIdentity(
 			},
 			(error, stdout) => {
 				if (error) {
-					// A failed query, including ps exit 1, proves absence only when kill(pid, 0)
-					// confirms ESRCH. EPERM still means the process exists.
-					if (!isLive(pid)) {
+					const code = "code" in error ? error.code : undefined;
+					// ps exits 1 for an unknown pid; on every platform a query that fails against a
+					// pid that is no longer live has answered the question. Only a failure against a
+					// LIVE pid is an observation error the caller must treat as unknown.
+					if ((platform !== "win32" && code === 1) || !isLive(pid)) {
 						resolve({ kind: "absent" });
 						return;
 					}
