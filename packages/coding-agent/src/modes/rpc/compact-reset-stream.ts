@@ -12,13 +12,18 @@ export async function resetStream(host: RouterContext, command: Extract<RpcComma
 		error(command.id, command.type, "recovery_unknown_token", { kind: "repair_needed", reason: "unknown_token" });
 	if (!host.admissions || peer === undefined || socketEpoch === undefined || sessionId === undefined) return refused();
 	const result = await host.admissions.result(socketEpoch, admissionId);
-	if (result?.state !== "complete" || result.answer.sessionId !== sessionId) return refused();
+	if (
+		result?.state !== "complete" ||
+		(result.answer.sessionId !== sessionId && !host.writer.isCompactSubscription(peer, admissionId, sessionId))
+	)
+		return refused();
 	const checkpoints = host.writer.recoveryCheckpoints;
 	const caller = { socketEpoch, sessionId };
 	const stream = checkpoints.stream(caller);
 	const lane = host.writer.recoveryLane(sessionId);
 	if (!lane || !stream?.routes.includes(admissionId)) return refused();
-	const frozen = checkpoints.freeze({ ...caller, peer, admissionId, routeKind: "ordinary" }, lane);
+	const routeKind = host.writer.isCompactSubscription(peer, admissionId, sessionId) ? "mirror" : "ordinary";
+	const frozen = checkpoints.freeze({ ...caller, peer, admissionId, routeKind }, lane);
 	if (!frozen.ok) return error(command.id, command.type, `recovery_${frozen.failure.kind}`, { ...frozen.failure });
 	const token = frozen.value.token;
 	const generation = token.admission.generation;

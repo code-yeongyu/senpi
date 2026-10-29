@@ -13,12 +13,14 @@ it("T2/X04 every real leased suffix copy can page and release through its client
 	const sessionPath = join(host.cwd, "leased.jsonl");
 	const opened = await peer.request({ type: "open_session", cwd: host.cwd, sessionPath, admissionId: "a" });
 	await peer.request({ type: "open_session", cwd: host.cwd, sessionPath, admissionId: "b" });
+	await host.writer.flush();
+	const from = peer.inbox.length;
 	const pi = [...host.extensionApis.values()].at(-1) ?? expect.unreachable("no real extension bus");
 	const delivered = peer.waitFor((frame) => frame.type === "message_end" && frame.eventLease !== undefined);
 	await pi.sendMessage({ customType: "admission", content: "z".repeat(300_000), display: true });
 	await delivered;
 	await host.writer.flush();
-	const envelopes = peer.inbox.filter((frame) => frame.eventLease !== undefined);
+	const envelopes = peer.inbox.slice(from).filter((frame) => frame.eventLease !== undefined);
 	for (const frame of envelopes)
 		expect(frame).toMatchObject({ generation: 1, admissionId: expect.stringMatching(/^[ab]$/) });
 	const end = envelopes.find((frame) => frame.type === "message_end") ?? expect.unreachable();
@@ -34,17 +36,25 @@ it("T2/X04 every real leased suffix copy can page and release through its client
 		});
 		expect(page).toMatchObject({ success: true, sessionId: opened.sessionId, admissionId, generation: 1 });
 	}
-	const unique = new Map(envelopes.map((frame) => [(frame.eventLease as EventLease).id, frame.eventLease]));
-	for (const eventLease of unique.values())
-		for (const admissionId of ["a", "b"])
-			expect(
-				await peer.request({
-					type: "release_recovery",
-					sessionId: opened.sessionId,
-					admissionId,
-					lease: eventLease,
-				}),
-			).toMatchObject({ success: true });
+	// S16 also leases small startup records before b joins; release only their actual owning routes.
+	const unique = new Map<string, { lease: EventLease; admissions: Set<string> }>();
+	for (const frame of peer.inbox) {
+		if (frame.eventLease === undefined) continue;
+		const lease = frame.eventLease as EventLease;
+		const held = unique.get(lease.id) ?? { lease, admissions: new Set<string>() };
+		held.admissions.add(String(frame.admissionId));
+		unique.set(lease.id, held);
+	}
+	for (const held of unique.values())
+		for (const admissionId of held.admissions) {
+			const response = await peer.request({
+				type: "release_recovery",
+				sessionId: opened.sessionId,
+				admissionId,
+				lease: held.lease,
+			});
+			expect(response, JSON.stringify(response)).toMatchObject({ success: true });
+		}
 	expect(host.writer.recoveryEvents?.status().open).toBe(0);
 }, 120_000);
 

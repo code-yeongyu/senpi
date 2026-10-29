@@ -19,6 +19,7 @@ export abstract class SessionEventWriterLifecycle extends SessionEventWriterPres
 	 * workers (invariant I4). `context` travels only to subscribers that asked for it.
 	 */
 	publishSessionOpened(record: SessionOpenedRecord): void {
+		this.prepareDelivery(record.sessionId);
 		if (this.fanout.isEmpty()) {
 			const { context: _context, ...wire } = record;
 			this.appendSessionRecord(record.sessionId, { ...wire });

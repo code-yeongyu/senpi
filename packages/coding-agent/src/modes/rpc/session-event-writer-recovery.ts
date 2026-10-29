@@ -1,5 +1,6 @@
 import type { EventLeases } from "./compact-event-leases.ts";
 import { AdmissionRoutingActor } from "./compact-admission-routing.ts";
+import { CompactRequiredStreams } from "./compact-required-streams.ts";
 import type { LegacyViewCursor } from "./legacy-view-cursor.ts";
 import type { RecoveryPageRequests } from "./compact-recovery-requests.ts";
 import type { RecoveryCheckpoints } from "./compact-recovery-state.ts";
@@ -7,6 +8,12 @@ import { SessionEventWriterLifecycle } from "./session-event-writer-lifecycle.ts
 
 /** The writer's recovery accessors (senpi#4272): legacy views, checkpoint tokens, page requests, peer epochs. */
 export abstract class SessionEventWriterRecovery extends SessionEventWriterLifecycle {
+	protected readonly required = new CompactRequiredStreams(this.fanout, this.status);
+	protected prepareDelivery(sessionId: string, record?: object): void {
+		this.fanout.requiredSessions = (peer) => this.required.sessions(peer);
+		this.fanout.onSessionForgotten = (id) => this.required.forgetSession(id);
+		this.required.prepare(sessionId, record);
+	}
 	unregisterAdmission(peer: string, admissionId: string): void {
 		const actor = this.fanout.get(peer)?.actor;
 		if (actor instanceof AdmissionRoutingActor) actor.admissions.delete(admissionId);
@@ -25,6 +32,7 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 		actor.mirrorOwners.set(subscriptionId, admissionId);
 		const pending = this.status.pendingBuffer(subscriptionId);
 		if (pending) actor.pendingMirrors.set(admissionId, pending);
+		for (const sessionId of this.status.requiredSessions(peer)) this.prepareDelivery(sessionId);
 		this.status.onSubscriptionEnd = (owner, id) => this.retireMirror(owner, id);
 		actor.mirrorAdmissions = (sessionId, type) => {
 			const ids = this.status.mirrorAdmissions(peer, sessionId, type);

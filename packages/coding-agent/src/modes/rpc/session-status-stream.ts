@@ -33,6 +33,7 @@ import {
 } from "./session-status.ts";
 import {
 	matchingMirrors,
+	matchingStatusConnections,
 	type PendingStatusSubscription as PendingSubscription,
 	type StatusSubscription as Subscription,
 	type SessionStatusSource,
@@ -248,22 +249,23 @@ export class SessionStatusStream {
 			[...this.pendings.values(), ...this.subscriptions.values()],
 			sessionId,
 			recordType,
-			this.source?.entryView(sessionId) ?? this.lastViews.get(sessionId)?.entry,
+			() => this.source?.entryView(sessionId) ?? this.lastViews.get(sessionId)?.entry,
 			dialogs,
 		);
 	}
 
 	matchingConnections(sessionId: string): ReadonlyMap<string, boolean> {
-		const view = this.currentView(sessionId);
-		const matches = new Map<string, boolean>();
-		if (view === undefined) return matches;
-		for (const subscription of this.subscriptions.values())
-			if (subscriptionMatches(subscription.options, sessionId, view.entry))
-				matches.set(
-					subscription.connectionId,
-					(matches.get(subscription.connectionId) ?? false) || subscription.options.includeContext,
-				);
-		return matches;
+		return matchingStatusConnections(this.subscriptions.values(), sessionId, this.currentView(sessionId)?.entry);
+	}
+
+	requiredAdmissions(peer: string, sessionId: string): readonly string[] {
+		return this.mirrorSubscriptions(sessionId, "snapshot_marker").flatMap((s) =>
+			s.connectionId === peer && s.options.admissionId !== undefined ? [s.options.admissionId] : [],
+		);
+	}
+
+	requiredSessions(peer: string): readonly string[] {
+		return (this.source?.sessionIds() ?? []).filter((id) => this.requiredAdmissions(peer, id).length > 0);
 	}
 
 	/** The live view, falling back to the last one seen once the registry has dropped a sealed entry. */

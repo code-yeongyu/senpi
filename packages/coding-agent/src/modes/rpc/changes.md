@@ -1,3 +1,10 @@
+## 2026-10-30 - Required compact streams and atomic producer envelopes (S16a, part of #4272)
+
+- Required destinations include pending and active mirrors, without attachment holds or activity updates.
+- A pre-accept observer freezes filter-repair cuts before dependent records mutate accepted state. Bounded per-admission envelopes share one S13 payload lease; actor demotion cannot split an atomic delivery.
+- Recovery includes mirror-only streams, mirror reset uses existing admission authority, and terminal markers retain surviving route identities. The attachment exemption set is unchanged.
+- Status-only selectors avoid rebuilding entry views. These are host routing and storage ownership changes below the extension API. Rollout remains disabled by default.
+
 ## 2026-10-26 - Shared bounded text ownership for compact current state (S03b-1a, part of #4272)
 
 ### What changed

@@ -52,7 +52,15 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 		const mirrors =
 			record.type === "response" ? [] : (this.mirrorAdmissions?.(record.sessionId, String(record.type)) ?? []);
 		const stream = this.remember(record.sessionId, checkpoints, socketEpoch);
-		const routes = [...new Set([...(stream?.routes ?? []), ...mirrors])];
+		const terminal = record.type === "session_closed" || record.type === "session_parked";
+		const routes = [
+			...new Set([
+				...(stream?.routes ?? []).filter(
+					(id) => this.admissions.has(id) || (terminal && [...this.mirrorOwners.values()].includes(id)),
+				),
+				...mirrors,
+			]),
+		];
 		if (record.type === "response" && typeof record.id === "string") {
 			const admissionId = replyAdmission(record.id, this.peer, routes);
 			return admissionId === undefined

@@ -6,6 +6,7 @@ import { omitNormalInlineMedia } from "./media-placeholders.ts";
 import { compactDelta, demoteToDeltaOnly, MESSAGE_KEY, type RpcRecord } from "./session-event-writer-compaction.ts";
 import { SessionEventWriterRecovery } from "./session-event-writer-recovery.ts";
 import { isCorrelatedReply } from "./socket-peer-recovery.ts";
+import { materializerLine } from "./compact-materializer-line.ts";
 
 /** A record's legacy line, encoded on first use: a record no legacy destination needs never builds it (RULING-81 X06). */
 export class RecordLine {
@@ -32,6 +33,7 @@ export class RecordLine {
 interface EventLine {
 	readonly line: string;
 	readonly undelivered?: (written: boolean) => void;
+	readonly atomic?: boolean;
 }
 
 /** Per-destination delivery of one session record, moved verbatim out of `session-event-writer.ts` (S13w0, #4272). */
@@ -64,8 +66,8 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 			const wants =
 				placeholderLine !== undefined && this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY);
 			if (registered && target !== undefined) {
-				const keyed = compactDelta(tagged) !== undefined && tagged.message !== null;
 				const out = this.eventLine(target, sessionId, wants ? redacted : tagged, wants ? placeholder : line);
+				const keyed = !out.atomic && compactDelta(tagged) !== undefined && tagged.message !== null;
 				registered.actor.enqueue(
 					out.line,
 					keyed ? MESSAGE_KEY : undefined,
@@ -90,10 +92,13 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 	private eventLine(target: string, sessionId: string, record: object, line: RecordLine): EventLine {
 		const events = this.fanout.events;
 		const lane = this.fanout.acceptance.get(sessionId);
-		const admissionId = this.fanout.admissionOf(target, sessionId);
+		const admissionId =
+			this.ordinaryRoute(target, sessionId)?.routes[0] ?? this.fanout.admissionOf(target, sessionId);
 		const socketEpoch = this.fanout.get(target)?.socketEpoch;
 		if (!events || !lane || admissionId === undefined || socketEpoch === undefined) return { line: line.text };
 		if (!this.fanout.connectionHas(target, COMPACT_EVENTS_CAPABILITY)) return { line: line.text };
+		const materializer = materializerLine(this.fanout, this.required, target, sessionId, record);
+		if (materializer) return materializer;
 		const built = line.built;
 		const size =
 			built === undefined ? jsonSize(record) : { bytes: Buffer.byteLength(built) - 1, units: built.length - 1 };

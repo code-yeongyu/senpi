@@ -54,7 +54,9 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 	if (!("sessionId" in command) || command.sessionId === undefined) return undefined;
 	if (
 		compactUpdatesEnabled() &&
-		(command.type === "get_recovery_page" || command.type === "release_recovery") &&
+		(command.type === "get_recovery_page" ||
+			command.type === "release_recovery" ||
+			command.type === "reset_stream") &&
 		host.writer.isCompactSubscription(owner, command.admissionId, command.sessionId)
 	)
 		return undefined;

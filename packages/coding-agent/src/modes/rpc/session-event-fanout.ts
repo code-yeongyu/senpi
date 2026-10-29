@@ -45,6 +45,8 @@ type RegisteredConnection = {
 };
 
 export class SessionEventFanout {
+	requiredSessions?: (peer: string) => readonly string[];
+	onSessionForgotten?: (sessionId: string) => void;
 	readonly startupCleanup = compactUpdatesEnabled() ? startRecoveryCleanup(tmpdir()) : undefined;
 	onConnectionClosed?: (id: string) => void;
 	/** Each routing session's acceptance lane; retired when the session is sealed or forgotten. */
@@ -77,6 +79,7 @@ export class SessionEventFanout {
 		{
 			socketEpoch: (id) => this.connections.get(id)?.socketEpoch,
 			ordinals: (id) => this.connectionSessions.get(id),
+			required: (id) => this.requiredSessions?.(id) ?? [],
 			has: (id, capability) => this.connectionHas(id, capability),
 		},
 		this.shedMode,
@@ -271,7 +274,8 @@ export class SessionEventFanout {
 	deliverToSession(sessionId: string, line: string): void {
 		for (const [id, { actor }] of this.connections) {
 			const held = this.attachment(id, sessionId);
-			if (held) actor.enqueue(line, undefined, undefined, undefined, false, held);
+			if (held || this.requiredSessions?.(id).includes(sessionId))
+				actor.enqueue(line, undefined, undefined, undefined, false, held);
 		}
 	}
 
@@ -285,6 +289,7 @@ export class SessionEventFanout {
 	 * (a queued attach view keeps its root) and the session's stream records go on every peer (RULING-56 (2)).
 	 */
 	forgetSession(sessionId: string): void {
+		this.onSessionForgotten?.(sessionId);
 		for (const { actor, socketEpoch } of this.connections.values())
 			if (actor instanceof AdmissionRoutingActor) actor.remember(sessionId, this.checkpoints, socketEpoch);
 		this.checkpoints.forgetSession(sessionId);

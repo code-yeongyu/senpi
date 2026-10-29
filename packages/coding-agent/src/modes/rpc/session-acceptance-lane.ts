@@ -182,6 +182,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	): AcceptedRef | undefined {
 		const type = field(record, "type");
 		if (this.retired || this.epoch === "" || typeof type !== "string" || !SEQUENCED.has(type)) return undefined;
+		this.beforeAccept?.(record);
 		const folds = !canonicalRefused && this.current.admits(record, type);
 		// The calls component decides first, before the lane commits anything for this record, its correlation change
 		// included (RULING-13 Q9); a correlation change takes the sequence just before its record.
@@ -220,6 +221,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	/** A block control has no legacy record; it is a unit of its own at the next sequence. */
 	acceptControl(unit: CanonicalUnit | undefined): number | undefined {
 		if (this.retired || this.epoch === "" || !unit) return undefined;
+		this.beforeAccept?.({ type: "materializer_control" });
 		this.sequence += 1;
 		this.current.fold(unit, this.sequence);
 		return this.sequence;

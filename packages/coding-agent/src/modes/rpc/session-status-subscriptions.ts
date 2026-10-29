@@ -37,18 +37,19 @@ export function matchingMirrors(
 	subscriptions: Iterable<StatusSubscription>,
 	sessionId: string,
 	recordType: string,
-	entry: SessionStatusEntryView | undefined,
+	entry: () => SessionStatusEntryView | undefined,
 	dialogs = false,
 ): StatusSubscription[] {
-	if (!entry) return [];
-	return [...subscriptions].filter(
+	const candidates = [...subscriptions].filter(
 		(subscription) =>
 			(!dialogs || subscription.options.dialogs === true) &&
 			(recordType === "snapshot_marker" || dialogs
 				? subscription.options.mirror.kind !== "none"
-				: mirrorsRecord(subscription.options.mirror, recordType)) &&
-			subscriptionMatches(subscription.options, sessionId, entry),
+				: mirrorsRecord(subscription.options.mirror, recordType)),
 	);
+	if (candidates.length === 0) return [];
+	const view = entry();
+	return view ? candidates.filter((s) => subscriptionMatches(s.options, sessionId, view)) : [];
 }
 
 export type SessionSelector =
@@ -209,4 +210,20 @@ export function mirrorsRecord(mirror: MirrorSelection, recordType: string): bool
 			throw new Error(`unexpected mirror ${String(exhaustive)}`);
 		}
 	}
+}
+
+export function matchingStatusConnections(
+	subscriptions: Iterable<StatusSubscription>,
+	sessionId: string,
+	entry: SessionStatusEntryView | undefined,
+): ReadonlyMap<string, boolean> {
+	const matches = new Map<string, boolean>();
+	if (entry)
+		for (const subscription of subscriptions)
+			if (subscriptionMatches(subscription.options, sessionId, entry))
+				matches.set(
+					subscription.connectionId,
+					(matches.get(subscription.connectionId) ?? false) || subscription.options.includeContext,
+				);
+	return matches;
 }
