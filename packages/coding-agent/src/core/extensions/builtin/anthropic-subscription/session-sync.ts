@@ -149,6 +149,9 @@ export function configFingerprint(
 			// Claude Code reads its window once at spawn, so a switch to a model planned at another window
 			// restarts the resident process at that window instead of keeping the old one (senpi#3801).
 			contextWindow: options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+			// Claude Code reads its endpoint once at spawn, so a changed models.json baseUrl restarts the resident
+			// process; unset (no override) drops out of the digest and leaves existing fingerprints unchanged.
+			baseUrl: options.env?.ANTHROPIC_BASE_URL,
 			extraArgs: options.extraArgs,
 			pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
 			includePartialMessages: options.includePartialMessages,

@@ -30,14 +30,33 @@ const isMain = import.meta.url === pathToFileURL(process.argv[1] || "").href;
  * reasoning on the identical chunking/delay path for abort and steering QA.
  * `usage.promptTokens` sets the prompt-token count the completions route
  * reports for that turn, so a scenario can seed provider-reported context size.
+ *
+ * Barriers (EQ harness): `GET /__barrier/<name>` is held open until `releaseBarrier(name)`; a fixture tool calls it
+ * to stay in flight, and `barrierArrived(name)` resolves once it has. A turn with `holdUntil: "<name>"` answers only
+ * after that barrier is released. Each request also records its full header set in `headers`.
  */
 export function startFakeModelServer({ port = 0, turns = [{ text: "OK" }] } = {}) {
 	validateScriptedTurns(turns);
 	const requests = [];
 	const streamLog = [];
 	let callIndex = 0;
+	const barriers = new Map();
+	const barrier = (name) => {
+		if (!barriers.has(name)) {
+			const entry = {};
+			entry.arrived = new Promise((resolve) => (entry.arrive = resolve));
+			entry.released = new Promise((resolve) => (entry.release = resolve));
+			barriers.set(name, entry);
+		}
+		return barriers.get(name);
+	};
 
 	const server = createServer((req, res) => {
+		if (req.url?.startsWith("/__barrier/")) {
+			const entry = barrier(decodeURIComponent(req.url.slice("/__barrier/".length)));
+			entry.arrive();
+			return void entry.released.then(() => sendJson(res, 200, { released: true }));
+		}
 		const chunks = [];
 		req.on("data", (c) => chunks.push(c));
 		req.on("end", () => {
@@ -52,6 +71,7 @@ export function startFakeModelServer({ port = 0, turns = [{ text: "OK" }] } = {}
 				url: req.url,
 				raw,
 				body,
+				headers: { ...req.headers },
 				authorization: req.headers.authorization || null,
 				apiKeyHeader: req.headers["x-api-key"] || null,
 				routingHint: req.headers["x-codex-routing-hint"] || null,
@@ -79,11 +99,17 @@ export function startFakeModelServer({ port = 0, turns = [{ text: "OK" }] } = {}
 			if (!titleRequest) callIndex++;
 			const modelId = body.model || "mock";
 
-			if (turn.error) return sendProviderError(res, turn.error);
-			if (url.includes("/chat/completions")) return writeCompletionsSse(res, turn, modelId, streamLog, streamId);
-			if (url.includes("/messages")) return writeAnthropicSse(res, turn, modelId, streamLog, streamId);
-			if (url.includes("/responses")) return writeResponsesSse(res, turn, modelId, streamLog, streamId);
-			return sendJson(res, 404, { error: { message: `no route: ${req.method} ${url}` } });
+			const answer = () => {
+				if (turn.error) return sendProviderError(res, turn.error);
+				if (url.includes("/chat/completions")) return writeCompletionsSse(res, turn, modelId, streamLog, streamId);
+				if (url.includes("/messages")) return writeAnthropicSse(res, turn, modelId, streamLog, streamId);
+				if (url.includes("/responses")) return writeResponsesSse(res, turn, modelId, streamLog, streamId);
+				return sendJson(res, 404, { error: { message: `no route: ${req.method} ${url}` } });
+			};
+			if (typeof turn.holdUntil !== "string") return answer();
+			const held = barrier(turn.holdUntil);
+			held.arrive();
+			void held.released.then(answer);
 		});
 	});
 
@@ -98,7 +124,13 @@ export function startFakeModelServer({ port = 0, turns = [{ text: "OK" }] } = {}
 				port: actual,
 				requests,
 				streamLog,
-				stop: () => new Promise((r) => server.close(() => r())),
+				barrierArrived: (name) => barrier(name).arrived,
+				releaseBarrier: (name) => barrier(name).release(),
+				stop: () => {
+					for (const entry of barriers.values()) entry.release();
+					server.closeAllConnections?.();
+					return new Promise((r) => server.close(() => r()));
+				},
 			});
 		});
 	});
@@ -449,6 +481,18 @@ async function selfTest() {
 		}
 		checks.push(malformedErrorRejected);
 		process.stdout.write(`[${malformedErrorRejected ? "PASS" : "FAIL"}] malformed scripted error reports a clear validation error\n`);
+		let barrierReleased = false;
+		const held = fetch(`${srv.origin}/__barrier/self-test`).then(() => barrierReleased);
+		await srv.barrierArrived("self-test");
+		const heldBeforeRelease = !barrierReleased;
+		barrierReleased = true;
+		srv.releaseBarrier("self-test");
+		const barrierOk = heldBeforeRelease && (await held);
+		checks.push(barrierOk);
+		process.stdout.write(`[${barrierOk ? "PASS" : "FAIL"}] a barrier request is held until it is released\n`);
+		const headersOk = srv.requests.every((request) => request.headers && typeof request.headers["content-type"] === "string");
+		checks.push(headersOk);
+		process.stdout.write(`[${headersOk ? "PASS" : "FAIL"}] every request records its full header set\n`);
 		const loggedReasoning = srv.streamLog.filter((entry) => entry.kind === "reasoning_delta").map((entry) => entry.delta);
 		const logComplete = loggedReasoning.join("") === reasoning.repeat(3);
 		checks.push(logComplete);

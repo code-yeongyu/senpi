@@ -25,6 +25,7 @@ import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode, isBunRuntime,
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @code-yeongyu/senpi.
 import * as _bundledPiCodingAgent from "../../index.ts";
+import * as _bundledSessionWorkerData from "../../modes/rpc/session-worker-data.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
@@ -133,6 +134,7 @@ const VIRTUAL_MODULES: Record<string, Record<string, unknown>> = {
 	"@mariozechner/pi-ai/providers/all": _bundledPiAiProviders,
 	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
 	"@code-yeongyu/senpi": _bundledPiCodingAgent,
+	"@code-yeongyu/senpi/session-worker-data": _bundledSessionWorkerData,
 };
 
 const require = createRequire(import.meta.url);
@@ -189,6 +191,10 @@ function getAliases(): Record<string, string> {
 	const piCodingAgentDistEntry = path.join(codingAgentPackageRoot, "dist/index.js");
 	const piCodingAgentSourceEntry = path.join(codingAgentPackageRoot, "src/index.ts");
 	const piCodingAgentEntry = fs.existsSync(piCodingAgentDistEntry) ? piCodingAgentDistEntry : piCodingAgentSourceEntry;
+	const sessionWorkerDataDistEntry = path.join(codingAgentPackageRoot, "dist/modes/rpc/session-worker-data.js");
+	const sessionWorkerDataEntry = fs.existsSync(sessionWorkerDataDistEntry)
+		? sessionWorkerDataDistEntry
+		: path.join(codingAgentPackageRoot, "src/modes/rpc/session-worker-data.ts");
 	const piAgentCoreEntry = resolveWorkspaceOrBundled(
 		"@earendil-works/pi-agent-core",
 		"dist/index.js",
@@ -234,6 +240,7 @@ function getAliases(): Record<string, string> {
 		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
 		"@earendil-works/pi-ai": piAiCompatEntry,
 		"@code-yeongyu/senpi": piCodingAgentEntry,
+		"@code-yeongyu/senpi/session-worker-data": sessionWorkerDataEntry,
 		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
 		"@mariozechner/pi-agent-core": piAgentCoreEntry,
 		"@mariozechner/pi-tui": piTuiEntry,

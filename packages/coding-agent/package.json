@@ -36,6 +36,10 @@
 			"types": "./dist/core/pending-input-public.d.ts",
 			"import": "./dist/core/pending-input-public.js"
 		},
+		"./session-worker-data": {
+			"types": "./dist/modes/rpc/session-worker-data.d.ts",
+			"import": "./dist/modes/rpc/session-worker-data.js"
+		},
 		"./private-fds": {
 			"types": "./dist/private-fds.d.ts",
 			"import": "./dist/private-fds.js"

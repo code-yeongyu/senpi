@@ -239,6 +239,7 @@ describe("tool-search bm25 malformed input and determinism", () => {
 		expect(index.search("   ")).toEqual([]);
 		expect(index.search("--- !!! ???")).toEqual([]);
 		expect(index.search("the and or")).toEqual([]);
+		expect(index.search("zzzz qqqq xyzzy")).toEqual([]);
 		expect(index.search("bare")[0]?.name).toBe("bare_tool");
 		expect(buildBm25Index([]).search("anything")).toEqual([]);
 	});
@@ -256,6 +257,31 @@ describe("tool-search bm25 malformed input and determinism", () => {
 		expect(JSON.stringify(first)).toBe(JSON.stringify(second));
 		expect(resultNames(first)).toEqual(["a_tool", "b_tool", "c_tool"]);
 		expect(corpus.map((doc) => doc.name)).toEqual(["b_tool", "a_tool", "c_tool"]);
+	});
+
+	it("5k-tool corpus search is under 100ms (loose bound)", () => {
+		const corpus: ToolSearchDocument[] = [];
+		for (let i = 0; i < 5000; i += 1) {
+			corpus.push(
+				mcpDoc(
+					`mcp_s${i % 20}_tool-number-${i}`,
+					`synthetic tool ${i} performing operation ${i % 7} on resource ${i % 13}`,
+					`s${i % 20}`,
+				),
+			);
+		}
+		const index = buildBm25Index(corpus);
+		// Warm up (JIT + first-query index touch).
+		index.search("operation resource tool", 10);
+		const start = performance.now();
+		const results = index.search("operation resource tool", 10);
+		const elapsed = performance.now() - start;
+		expect(results.length).toBeGreaterThan(0);
+		// Guards against algorithmic regressions (a naive O(n²) rescan of the 5k
+		// corpus would take seconds), not micro-latency. The bound is generous so a
+		// busy dev machine or a loaded CI/release runner does not flake it; a warm
+		// search here is ~1ms on an idle host and tens of ms under heavy load.
+		expect(elapsed).toBeLessThan(100);
 	});
 });
 

@@ -2842,6 +2842,8 @@ The object form accepts a complete pi-ai `Provider`, including native `auth`, `g
 
 When `models.json` sets a `baseUrl` for a provider (or `models[i].baseUrl` for a model), every model of that provider carries it, whichever extension registered the provider. An extension that supplies its own transport (`streamSimple`, `images`, `classifiers`, or a native `Provider`'s `stream`) must send requests to `model.baseUrl`; a transport that builds its own URL ignores the user's setting.
 
+The built-in `cursor-cli-oauth` provider is the one exception: it runs the Cursor CLI, which has no base-URL option. When `models.json` sets a `baseUrl` for it (provider-level or `models[i].baseUrl`), senpi shows a notice at startup that Cursor does not support changing the address, and requests still go to Cursor.
+
 See [custom-provider.md](custom-provider.md) for advanced topics: custom streaming APIs, OAuth details, model definition reference.
 
 ### pi.unregisterProvider(name)
