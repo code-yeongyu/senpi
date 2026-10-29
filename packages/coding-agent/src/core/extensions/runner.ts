@@ -3,6 +3,8 @@
  */
 
 import { basename } from "node:path";
+import type { ExtensionRpcRequestContext } from "./rpc-context.ts";
+import { requestExtensionRpc } from "./rpc-request.ts";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
@@ -127,12 +129,7 @@ import type {
 } from "./types.ts";
 import { RUNTIME_EXTENSION_PATH } from "./types.ts";
 
-export class ExtensionRpcRequestNotFoundError extends Error {
-	constructor(name: string) {
-		super(`Unknown extension RPC request: ${name}`);
-		this.name = "ExtensionRpcRequestNotFoundError";
-	}
-}
+export { ExtensionRpcRequestNotFoundError } from "./rpc-request.ts";
 
 // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
 // Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
@@ -1433,25 +1430,8 @@ export class ExtensionRunner {
 		return this.resolveRegisteredCommands().find((command) => command.invocationName === name);
 	}
 
-	async requestRpc(name: string, data: unknown): Promise<unknown> {
-		this.assertActive();
-		const normalizedName = name.trim();
-		if (normalizedName.length === 0) {
-			throw new Error("Extension RPC request name must not be empty");
-		}
-		const matches = this.extensions.flatMap((extension) => {
-			const handler = extension.rpcHandlers?.get(normalizedName);
-			return handler === undefined ? [] : [handler];
-		});
-		if (matches.length === 0) {
-			throw new ExtensionRpcRequestNotFoundError(normalizedName);
-		}
-		if (matches.length > 1) {
-			throw new Error(`Multiple extension RPC request handlers registered: ${normalizedName}`);
-		}
-		const result = await matches[0]?.(data);
-		this.assertActive();
-		return result;
+	async requestRpc(name: string, data: unknown, context?: ExtensionRpcRequestContext): Promise<unknown> {
+		return requestExtensionRpc(this.extensions, name, data, context, () => this.assertActive());
 	}
 
 	/**

@@ -365,6 +365,12 @@ interface WorkingStatusEditor extends EditorComponent {
 	setWorkingStatusIndicator(indicator: StatusIndicator | undefined): void;
 }
 
+/** Copy the default editor's action handlers (clear, suspend, model switching, etc.) onto a custom editor. */
+function adoptDefaultEditorActions(defaultEditor: CustomEditor, editor: EditorComponent): void {
+	if (editor === defaultEditor || !("actionHandlers" in editor) || !(editor.actionHandlers instanceof Map)) return;
+	for (const [action, handler] of defaultEditor.actionHandlers) editor.actionHandlers.set(action, handler);
+}
+
 function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatusEditor {
 	return (
 		"embedWorkingStatus" in editor &&
@@ -1791,13 +1797,6 @@ export class InteractiveMode {
 		this.fdPath = fdPath;
 		time("ensureTools", "tui");
 
-		// Enable the remaining input handlers only after managed-tool setup completes.
-		this.setupKeyHandlers();
-		this.setupEditorSubmitHandler();
-		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
-		this.ui.requestRender();
-		time("keyHandlers", "tui");
-
 		// Initialize extensions first so resources are shown before messages
 		await this.rebindCurrentSession();
 		time("rebindSession", "tui");
@@ -1806,6 +1805,15 @@ export class InteractiveMode {
 		this.renderInitialMessages();
 		this.session.releaseSettledSessionMemory();
 		time("renderInitial", "tui");
+
+		// Enable the remaining input handlers only once the restored transcript is rendered (senpi#4826): a
+		// submit accepted earlier painted its echo above the history that startup appended afterwards.
+		this.setupKeyHandlers();
+		this.setupEditorSubmitHandler();
+		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
+		adoptDefaultEditorActions(this.defaultEditor, this.editor);
+		this.ui.requestRender();
+		time("keyHandlers", "tui");
 
 		// Set up theme file watcher
 		onThemeChange(() => {
@@ -4442,7 +4450,7 @@ export class InteractiveMode {
 			newEditor.onSubmit = (text) => {
 				this.defaultEditor.onSubmit?.(expandSubmittedText(newEditor, text));
 			};
-			newEditor.onChange = this.defaultEditor.onChange;
+			newEditor.onChange = (text) => this.defaultEditor.onChange?.(text);
 			observeComposerActivity(newEditor, () => emitUserActivity(this.session, "draft"));
 
 			// Copy text (and any collapsed paste/image markers) from previous editor.
@@ -4494,10 +4502,7 @@ export class InteractiveMode {
 				if (!customEditor.onExtensionShortcut) {
 					customEditor.onExtensionShortcut = (data: string) => this.defaultEditor.onExtensionShortcut?.(data);
 				}
-				// Copy action handlers (clear, suspend, model switching, etc.)
-				for (const [action, handler] of this.defaultEditor.actionHandlers) {
-					(customEditor.actionHandlers as Map<string, () => void>).set(action, handler);
-				}
+				adoptDefaultEditorActions(this.defaultEditor, customEditor);
 			}
 
 			this.editor = newEditor;

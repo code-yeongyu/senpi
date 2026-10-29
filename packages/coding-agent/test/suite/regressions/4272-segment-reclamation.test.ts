@@ -83,7 +83,7 @@ it("keeps a round's nodes in RAM and the previous base readable when the segment
 		io: {
 			...control.io,
 			async writeFile(path, data) {
-				if (failing && /[/\\]value-/.test(path)) throw new Error("ENOSPC: segment");
+				if (failing && /[/\\]node-/.test(path)) throw new Error("ENOSPC: segment");
 				return control.io.writeFile(path, data);
 			},
 		},
@@ -97,10 +97,10 @@ it("keeps a round's nodes in RAM and the previous base readable when the segment
 		const pages = [...index.pages];
 		const flushLeaves = store.flushLeaves.bind(store);
 		const kept: boolean[] = [];
-		vi.spyOn(store, "flushLeaves").mockImplementation(async (ids) => {
+		vi.spyOn(store, "flushLeaves").mockImplementation(async (ids, operation) => {
 			const batch = [...ids].filter((id) => leaves.has(id));
-			failing = batch.length > 1;
-			await flushLeaves(batch);
+			failing = operation === "node_write" && batch.length > 1;
+			await flushLeaves(batch, operation);
 			if (failing) kept.push(...batch.map((id) => leaves.get(id)?.state === "ram"));
 		});
 		index.set("00064", { n: -1 });
@@ -110,7 +110,7 @@ it("keeps a round's nodes in RAM and the previous base readable when the segment
 		expect(kept.every(Boolean)).toBe(true);
 		expect(store.status()).toMatchObject({ spillHalted: true });
 		expect(store.status().failures).toEqual(
-			expect.arrayContaining([expect.objectContaining({ operation: "value_write" })]),
+			expect.arrayContaining([expect.objectContaining({ operation: "node_write" })]),
 		);
 		expect(index.base).toBe(base);
 		expect([...index.pages]).toEqual(pages);

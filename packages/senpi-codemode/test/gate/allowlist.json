@@ -1,6 +1,21 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#4797": {
+			"additions": [
+				"legacyContracts/test/js-kernel-webview.test.ts/Bun.WebView from an eval cell serves the default backend from the main-thread service on every platform",
+				"legacyContracts/test/js-kernel-webview.test.ts/Bun.WebView from an eval cell walks the default-backend view's history with goBack() and goForward()",
+				"legacyContracts/test/js-kernel-webview.test.ts/Bun.WebView from an eval cell the macOS default (WebKit) backend serves a fresh view after the kernel that opened the first one resets",
+				"legacyContracts/test/js-kernel-webview.test.ts/Bun.WebView from an eval cell the macOS default (WebKit) backend drives views from two kernels at once"
+			],
+			"changes": [
+				{
+					"key": "legacyContracts/test/js-kernel-webview.test.ts/Bun.WebView from an eval cell serves the default backend: native WebKit in the worker on macOS, the main-thread Chrome elsewhere",
+					"reason": "senpi#4797 (Fixes senpi#4794): the macOS default WebKit view is no longer built natively in the kernel worker (Bun binds its WebKit host to one thread; a second kernel corrupted the heap), so this contract is replaced by the main-thread-service contract for every platform."
+				}
+			],
+			"reason": "senpi#4797 (Fixes senpi#4794): replaces the native-worker WebKit contract with one proving every default-backend view is served by the main-thread WebView service, and adds contracts for goBack()/goForward() on a proxied view and, on macOS, a fresh view after a kernel reset and views from two kernels at once. No other baseline cell changes."
+		},
 		"senpi#4390": {
 			"additions": [
 				"imports/extension/packages/senpi-codemode/src/kernels/shared/invocation-authority.ts",
@@ -79,6 +94,43 @@
 				"legacyContracts/test/permission-slots.test.ts/permission slot ownership (#4309) refuses an oversized request without waking the host"
 			],
 			"reason": "senpi#4387: reviewed permission host/session/slot/worker-frame imports and first-kernel interposition/authority/runtime imports; exact regression cases cover denied effects, inactive continuation parity (including timed-out and interrupted cells), Worker frames/data/events, transferred MessagePorts and unforwardable frames, slot ownership, and revocation. Existing baseline cells and gate comparisons remain unchanged."
+		},
+		"senpi#4391": {
+			"additions": [
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/interpose-bun.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/interpose-capabilities.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/interpose-code.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/interpose-fs.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/interpose-modules.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/interpose-paths.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/interpose-process.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/interpose-resources.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/interpose-sqlite.js",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/js/worker-file-helpers.js",
+				"legacyContracts/test/js-kernel-permission-boundaries.test.ts/enforces resource grants, capability refusals and relative module reads",
+				"legacyContracts/test/js-kernel-permission-eval.test.ts/literal evaluation compatibility (active=true) retains direct eval lexical scope",
+				"legacyContracts/test/js-kernel-permission-eval.test.ts/literal evaluation compatibility (active=false) retains direct eval lexical scope",
+				"legacyContracts/test/js-kernel-permission-native-loader.test.ts/retains spawn and write enforcement through native plugin and eval routes",
+				"legacyContracts/test/js-kernel-permission-open-flags.test.ts/open flag grants (worker) decides readonly without widening or narrowing the mode",
+				"legacyContracts/test/js-kernel-permission-open-flags.test.ts/open flag grants (worker) decides write-only without widening or narrowing the mode",
+				"legacyContracts/test/js-kernel-permission-open-flags.test.ts/open flag grants (worker) decides read-write without widening or narrowing the mode",
+				"legacyContracts/test/js-kernel-permission-open-flags.test.ts/open flag grants (worker) decides readonly with truncation without widening or narrowing the mode",
+				"legacyContracts/test/js-kernel-permission-open-flags.test.ts/open flag grants (inline) decides readonly without widening or narrowing the mode",
+				"legacyContracts/test/js-kernel-permission-open-flags.test.ts/open flag grants (inline) decides write-only without widening or narrowing the mode",
+				"legacyContracts/test/js-kernel-permission-open-flags.test.ts/open flag grants (inline) decides read-write without widening or narrowing the mode",
+				"legacyContracts/test/js-kernel-permission-open-flags.test.ts/open flag grants (inline) decides readonly with truncation without widening or narrowing the mode",
+				"legacyContracts/test/js-kernel-permission-operations.test.ts/decides every filesystem, process, Bun and SQLite operation in worker and inline modes",
+				"legacyContracts/test/js-kernel-permission-sink-mutations.test.ts/refuses every file sink, and reopens each one when its own decision is removed",
+				"legacyContracts/test/js-kernel-permission-bootstrap-engine.test.ts/keeps the worker bootstrap and the engine hooks as separate runtime arguments",
+				"legacyContracts/test/kernel-invocation-token.test.ts/kernel invocation tokens drops an invoker binding once its retained continuation ends",
+				"legacyContracts/test/permission-slots.test.ts/permission slot ownership (#4309) keeps waiting when a park ends on something other than the answer",
+				"legacyContracts/test/js-kernel-permission-module-surface.test.ts/hands a cell the engine's own worker_threads module unless the decision refuses it",
+				"legacyContracts/test/permission-slots.test.ts/permission slot ownership (#4309) parks again on the slot the host claimed before answering",
+				"imports/firstKernel/packages/senpi-codemode/src/kernels/shared/path-identity.mjs",
+				"legacyContracts/test/js-kernel-permission-path-identity.test.ts/decides path rules by file identity across spellings and reports written plus executed paths",
+				"legacyContracts/test/js-kernel-permission-module-chain.test.ts/decides nested imports and module bodies under the importing cell's authority"
+			],
+			"reason": "senpi#4391: operation interposition and engine file helpers are new first-kernel modules; the operation, boundary, lexical-eval, numeric-open and native-loader proof contracts exercise the added JS enforcement. The bootstrap/engine contract added while restacking onto #4390 proves the worker bootstrap and the engine hooks stay separate runtime arguments and that dropping either one is caught. Inherited imports and contracts belong to the earlier stack PRs and are not approved here. The shared path-identity module is the kernel thread's canonicalizer for the executed path it now reports beside the written one; the path-identity and module-chain contracts prove identity decisions across spellings and nested-import attribution."
 		},
 		"senpi#3612": {
 			"additions": [

@@ -7,9 +7,10 @@ const INTERNAL_KEY_STDIN_ENV = "SENPI_RPC_INTERNAL_KEY_STDIN";
 const INTERNAL_KEY_DEADLINE_MS = 2000;
 // Runs on its own thread: a launcher that keeps stdin open without sending the key leaves the main thread blocked in
 // read(2) (child stdio is a blocking socketpair and neither runtime can make it non-blocking), so only another thread can
-// enforce the bound. It stops as soon as the main thread reports the read finished. Its first statement reports that
-// its startup (event loop, descriptors) is complete, so the main thread never frees fd 0 while this thread may still
-// claim the lowest free descriptor.
+// enforce the bound. Its first statement reports that its startup (event loop, descriptors) is complete; it then stays
+// parked, doing no descriptor work, until the main thread releases it. The release comes only after fd 0 is /dev/null
+// again: on release the worker exits, and its exit opens files (the compile-cache flush under NODE_COMPILE_CACHE), so a
+// release before the restore let that open take the free fd 0 and failed the host (senpi#4528).
 const KEY_DEADLINE_WORKER = `const { workerData } = require("node:worker_threads");
 const state = new Int32Array(workerData.state);
 Atomics.store(state, 1, 1);
@@ -21,18 +22,27 @@ if (Atomics.wait(state, 0, 0, workerData.ms) === "timed-out") {
 
 const KEY_DEADLINE_WORKER_START_MS = 5000;
 
-// Slot 0: the read finished. Slot 1: the worker finished starting.
-function armKeyDeadline(): () => void {
+// Slot 0: the main thread released the worker. Slot 1: the worker finished starting and parked.
+interface KeyDeadline {
+	/** Waits, bounded, until the worker has started and parked; a parked worker allocates no descriptor. */
+	parked(): void;
+	/** Lets the worker go: it exits, and its exit may open files, so this follows the fd 0 restore. */
+	release(): void;
+}
+
+function armKeyDeadline(): KeyDeadline {
 	const state = new Int32Array(new SharedArrayBuffer(8));
 	new Worker(KEY_DEADLINE_WORKER, {
 		eval: true,
 		workerData: { state: state.buffer, ms: INTERNAL_KEY_DEADLINE_MS },
 	}).unref();
-	return () => {
-		Atomics.store(state, 0, 1);
-		Atomics.notify(state, 0);
+	return {
 		// Bounded: a worker that never starts cannot hold the host; the restore check below still guards fd 0.
-		Atomics.wait(state, 1, 0, KEY_DEADLINE_WORKER_START_MS);
+		parked: () => void Atomics.wait(state, 1, 0, KEY_DEADLINE_WORKER_START_MS),
+		release: () => {
+			Atomics.store(state, 0, 1);
+			Atomics.notify(state, 0);
+		},
 	};
 }
 export interface InternalHostBootstrap {
@@ -46,7 +56,7 @@ function bootstrap(): InternalHostBootstrap | undefined {
 	delete process.env[INTERNAL_KEY_STDIN_ENV];
 	const key = Buffer.alloc(32);
 	const deadline = Date.now() + INTERNAL_KEY_DEADLINE_MS;
-	const readFinished = armKeyDeadline();
+	const keyWorker = armKeyDeadline();
 	const pause = new Int32Array(new SharedArrayBuffer(4));
 	let offset = 0;
 	let lifetimeFd: number | undefined;
@@ -76,10 +86,13 @@ function bootstrap(): InternalHostBootstrap | undefined {
 	} catch (cause) {
 		failure = cause;
 	}
-	readFinished();
-	// Runs on success and failure alike: descendants must inherit /dev/null, never the key pipe.
+	// Runs on success and failure alike: descendants must inherit /dev/null, never the key pipe. fd 0 is free between
+	// the close and the open, and the lowest free descriptor goes to whichever thread opens next, so the deadline worker
+	// stays parked until fd 0 is /dev/null again and is released only then.
+	keyWorker.parked();
 	fs.closeSync(0);
 	const restored = fs.openSync("/dev/null", "r");
+	keyWorker.release();
 	// Fatal by design: a host whose fd 0 is not /dev/null would hand the key pipe to every descendant, so it refuses
 	// to start rather than run with stdin it cannot account for.
 	if (restored !== 0) throw new Error("internal_key_unavailable: cannot restore stdin");

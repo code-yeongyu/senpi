@@ -159,6 +159,7 @@ async function unaddressableStatus(dir: string): Promise<Omit<HostStatusReport, 
 		host_footprint_mb: null,
 		open_fds: null,
 		memory_pressure: null,
+		path_identity_resolver: null,
 		env_keys: [],
 		generations,
 		pointer: current

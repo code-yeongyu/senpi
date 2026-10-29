@@ -49,10 +49,13 @@ describe("subscription lanes win the automatic default over their metered API tw
 		expect(initial.provenance).toBe("provider-default");
 	});
 
-	it("falls back to the ChatGPT subscription when a saved session model has no auth", async () => {
+	it("falls back to the ChatGPT subscription when a saved session model no longer exists", async () => {
 		const runtime = await runtimeWithChatGptSignInAndOpenAiKey();
+		// A saved model that still exists is kept on resume even when its provider is signed out (#4410);
+		// only a retired id, absent from every catalog, falls back to the automatic default.
+		expect(runtime.getModel("deepseek", "deepseek-retired-4412")).toBeUndefined();
 
-		const restored = await restoreModelFromSession("deepseek", "deepseek-v4-pro", undefined, false, runtime);
+		const restored = await restoreModelFromSession("deepseek", "deepseek-retired-4412", undefined, false, runtime);
 
 		expect(restored.model).toMatchObject({ provider: "chatgpt-subscription", id: "gpt-6.1-sol" });
 	});
