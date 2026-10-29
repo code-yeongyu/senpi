@@ -229,7 +229,7 @@ export class CompactContentStore extends CompactSegmentStorage {
 		}
 	}
 
-	/** Commits at most one batch of structural leaves, in page-bounded segments, ahead of a cold-index rewrite. */
+	/** Commits one page-bounded batch of structural leaves ahead of a cold-index rewrite. */
 	async flushValues(): Promise<void> {
 		// Amortize a cold-index rewrite across a bounded batch, without waiting for every pending owner.
 		if (this.spillStopped) return;
@@ -238,8 +238,8 @@ export class CompactContentStore extends CompactSegmentStorage {
 			batch.push([id, this.leafUnits(id) * 2]);
 			if (batch.length === VALUE_FLUSH_BATCH) break;
 		}
-		// A failed run halts spilling, so flushLeaves leaves the later runs resident.
-		for (const run of this.segmentRuns(batch)) await this.flushLeaves(run);
+		// Count alone does not bound bytes; later runs stay resident for the next serial job.
+		await this.flushLeaves(this.segmentRuns(batch)[0] ?? []);
 	}
 
 	/** Serial storage jobs can flush one newly built structural page without waiting on their own queue. */
