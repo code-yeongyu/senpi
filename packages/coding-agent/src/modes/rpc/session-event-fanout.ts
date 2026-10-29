@@ -133,7 +133,7 @@ export class SessionEventFanout {
 	 * baseline barrier before the session is live for it; a repeated hold adds nothing. The attempt dies with a
 	 * detach, the peer, or a replacement (new lane epoch), and releases its checkpoint in every case.
 	 */
-	attachConnectionToSession(id: string, sessionId: string): void {
+	attachConnectionToSession(id: string, sessionId: string, compact = false): void {
 		const registered = this.connections.get(id);
 		if (!registered) return;
 		const sessions = this.connectionSessions.get(id) ?? new Map<string, number>();
@@ -141,6 +141,7 @@ export class SessionEventFanout {
 		const ordinal = ++this.attachOrdinal;
 		sessions.set(sessionId, ordinal);
 		this.connectionSessions.set(id, sessions);
+		if (compact) return;
 		const pinned = this.pins.pin(id, [sessionId]);
 		const first = pinned[0];
 		const source = first?.outcome.ok ? first.outcome.value : undefined;

@@ -1,4 +1,6 @@
 import { buildRpcSessionState } from "./connection-handler.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { compactOpen, type OpenAcceptance } from "./compact-open-admission.ts";
 
 import { clearHandoverParkedSession, type HandoverParkedEntry } from "./host-handover-parked.ts";
 import { parkedOpenCommand } from "./host-handover-parked-open.ts";
@@ -19,6 +21,16 @@ import { liveToolMediaScope, toolMediaPersister } from "./tool-media-store.ts";
 export function openWithBarrier(
 	host: RouterContext,
 	command: Extract<RpcCommand, { type: "open_session" }>,
+): Promise<RpcResponse | undefined> {
+	if (compactUpdatesEnabled() && command.admissionId !== undefined)
+		return compactOpen(host, command, (accept) => openPhysicalWithBarrier(host, command, accept));
+	return openPhysicalWithBarrier(host, command);
+}
+
+function openPhysicalWithBarrier(
+	host: RouterContext,
+	command: Extract<RpcCommand, { type: "open_session" }>,
+	accept?: OpenAcceptance,
 ): Promise<RpcResponse | undefined> {
 	const owner = host.writer.currentConnection();
 	if (owner === undefined) return open(host, command);
@@ -42,7 +54,7 @@ export function openWithBarrier(
 			position: inFlight + 1,
 			in_flight: inFlight,
 		});
-	const opened = open(host, command, owner);
+	const opened = open(host, command, owner, accept === undefined ? undefined : { accept });
 	// A manual reopen-by-path supersedes the handover auto-reopen for that session: clear its
 	// record entry, or a later generation would reopen a second copy (MEDIUM-1, senpi#3282 review).
 	// Cleared only after the open SUCCEEDS (MEDIUM-A): if the open fails - a session_path_in_use
@@ -87,6 +99,7 @@ export async function open(
 	owner?: string,
 	options?: {
 		readonly reply?: boolean;
+		readonly accept?: OpenAcceptance;
 		readonly defaults?: boolean;
 		readonly contextOverlay?: HandoverParkedEntry["contextOverlay"];
 	},
@@ -145,7 +158,7 @@ export async function open(
 					owner,
 					host.pendingCapabilities.get(owner) ?? host.connectionOptions?.capabilities ?? [],
 				);
-			host.writer.attachConnectionToSession(owner, openedSession.sessionId);
+			host.writer.attachConnectionToSession(owner, openedSession.sessionId, options?.accept !== undefined);
 		}
 		// A client that dies without close_session (terminal closed, SIGKILL, dropped
 		// SSH) still holds this handle's attachment and its path reservation. Remember
@@ -220,9 +233,13 @@ export async function open(
 			});
 			host.writer.status.publish(openedSession.sessionId, "open", "client");
 		}
-		if (!host.draining && owner !== undefined && host.releasedConnections.has(owner)) {
+		if (!options?.accept && !host.draining && owner !== undefined && host.releasedConnections.has(owner)) {
 			releaseOwnerAttachment(host, owner, openedSession.sessionId);
 			await releaseOwnedSession(host, openedSession.sessionId);
+		}
+		if (options?.accept) {
+			await options.accept(openedSession);
+			return undefined;
 		}
 		const replyState =
 			entry.worker?.snapshot?.state ?? (entry.runtime ? buildRpcSessionState(entry.runtime.session) : undefined);

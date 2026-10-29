@@ -29,6 +29,7 @@ export type RpcCommand =
 	| {
 			id?: string;
 			type: "open_session";
+			admissionId?: string;
 			/** An observational/unattended open; attaching never releases an existing hold. */
 			attended?: false;
 			spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;

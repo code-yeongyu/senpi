@@ -21,6 +21,7 @@ import {
 import type { CheckpointToken, RecoveryRouteKind } from "./compact-recovery-types.ts";
 import { CompactValues } from "./compact-values.ts";
 import { VerifiedComponents } from "./compact-verified-components.ts";
+import { manifestPage } from "./compact-manifest-page.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 
 /** A manifest string: inline when it is a bounded protocol id, otherwise a ref to its exact stored value. */
@@ -132,13 +133,19 @@ export class RecoveryManifests {
 	 * verifies the component inside this request under its `signal`; it is cached only while the token still holds it.
 	 */
 	page(
-		tokenId: string,
+		token: CheckpointToken,
 		lane: SessionAcceptanceLane,
 		root: FrozenAcceptedRoot,
 		ref: string,
 		offset: number,
 		signal?: AbortSignal,
 	): Promise<RecoveryPage> {
+		if (ref === "manifest")
+			return manifestPage(
+				this.manifest(token, lane, root, () => {}),
+				offset,
+			);
+		const tokenId = token.id;
 		const parsed = parseContentRef(ref);
 		const built = this.ready.get(tokenId);
 		if (!parsed.ok || !built) throw new CompactReadError("range");

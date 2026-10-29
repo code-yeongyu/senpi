@@ -1,10 +1,16 @@
 import type { EventLeases } from "./compact-event-leases.ts";
+import type { LegacyViewCursor } from "./legacy-view-cursor.ts";
 import type { RecoveryPageRequests } from "./compact-recovery-requests.ts";
 import type { RecoveryCheckpoints } from "./compact-recovery-state.ts";
 import { SessionEventWriterLifecycle } from "./session-event-writer-lifecycle.ts";
 
 /** The writer's recovery accessors (senpi#4272): legacy views, checkpoint tokens, page requests, peer epochs. */
 export abstract class SessionEventWriterRecovery extends SessionEventWriterLifecycle {
+	installAdmissionBaseline(peer: string, cursor: LegacyViewCursor, live: () => boolean): void {
+		const actor = this.fanout.get(peer)?.actor;
+		if (actor) actor.installBaseline(cursor, live);
+		else cursor.release();
+	}
 	/** Internal S14 source identity; callers must establish the requesting token's scoped claim first. */
 	recoveryLane(sessionId: string) {
 		return this.fanout.acceptance.get(sessionId);

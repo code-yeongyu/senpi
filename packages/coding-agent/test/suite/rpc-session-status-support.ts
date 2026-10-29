@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import { parseArgs } from "../../src/cli/args.ts";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
+import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
@@ -19,6 +20,8 @@ export type WireRecord = Record<string, unknown> & { id?: string; type?: string;
 export interface RawClient {
 	readonly name: string;
 	readonly inbox: readonly WireRecord[];
+	readonly sent: readonly string[];
+	readonly received: readonly string[];
 	request(command: Record<string, unknown>): Promise<WireRecord>;
 	waitFor(predicate: (record: WireRecord) => boolean, ms?: number): Promise<WireRecord>;
 }
@@ -33,6 +36,13 @@ export async function statusHost() {
 	await mkdir(agentDir);
 	const faux = fauxProvider({ models: [{ id: "faux-a" }, { id: "faux-b" }] });
 	const model = faux.getModel();
+	// Provider discovery belongs to fixture setup, not a protocol response deadline.
+	const modelRuntime = await ModelRuntime.create({
+		authPath: join(agentDir, "auth.json"),
+		modelsPath: null,
+		allowModelNetwork: false,
+	});
+	await modelRuntime.registerNativeProvider(faux.provider);
 	/** Each session's extension API, by durable session id: how a test reaches a session's own event bus. */
 	const extensionApis = new Map<string, ExtensionAPI>();
 	const parsed = parseArgs([
@@ -52,6 +62,7 @@ export async function statusHost() {
 	const createRuntime = createCliRuntimeFactory(
 		{ parsed, cwd, agentDir, appMode: "rpc" },
 		{
+			modelRuntime,
 			extensionFactories: [
 				(pi) => {
 					pi.registerProvider(faux.provider);
@@ -70,14 +81,20 @@ export async function statusHost() {
 		emptyExitMs: 1e12,
 		closeGraceMs: 1_000,
 	});
+	// Use the host's real warm barrier before starting any wire-response deadline.
+	const warmed = await core.router.handle({ type: "warm", cwd });
+	if (warmed?.success !== true) throw new Error(`fixture warm failed: ${JSON.stringify(warmed)}`);
 	const listeners = new Set<(record: WireRecord) => void>();
 	const clients: RawClient[] = [];
 	let serial = 0;
 
 	const client = (name: string): RawClient => {
 		const inbox: WireRecord[] = [];
+		const sent: string[] = [];
+		const received: string[] = [];
 		writer.registerConnection(name, {
 			writeRaw: (line) => {
+				received.push(line);
 				for (const text of line.split("\n")) {
 					if (text === "") continue;
 					const record = JSON.parse(text) as WireRecord;
@@ -109,12 +126,16 @@ export async function statusHost() {
 		const created: RawClient = {
 			name,
 			inbox,
+			sent,
+			received,
 			waitFor,
 			async request(command) {
 				const id = `${name}-${++serial}`;
 				const answered = waitFor((record) => record.type === "response" && record.id === id);
-				await writer.withConnection(name, () => core.handle(JSON.stringify({ ...command, id })));
-				return answered;
+				const line = JSON.stringify({ ...command, id });
+				sent.push(`${line}\n`);
+				const [, response] = await Promise.all([writer.withConnection(name, () => core.handle(line)), answered]);
+				return response;
 			},
 		};
 		clients.push(created);

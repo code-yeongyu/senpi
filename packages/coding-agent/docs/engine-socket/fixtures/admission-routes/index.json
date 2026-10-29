@@ -1,0 +1,7 @@
+{
+	"format": "senpi-admission-routes",
+	"version": 1,
+	"cases": [
+		"h-legacy.json"
+	]
+}

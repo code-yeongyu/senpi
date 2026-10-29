@@ -22,19 +22,8 @@ import { unknownCommandErrorFromWire } from "../../core/unknown-command.ts";
 import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
 import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
-
-/** A command the host refused; `errorCode` carries the typed code when the command defines one. */
-export class RpcCommandError extends Error {
-	readonly errorCode: string | undefined;
-	readonly errorData: unknown;
-
-	constructor(message: string, errorCode: string | undefined, errorData: unknown) {
-		super(message);
-		this.name = "RpcCommandError";
-		this.errorCode = errorCode;
-		this.errorData = errorData;
-	}
-}
+import { RpcCommandError } from "./rpc-command-error.ts";
+export { RpcCommandError } from "./rpc-command-error.ts";
 
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
 import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";

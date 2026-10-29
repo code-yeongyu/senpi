@@ -1,5 +1,6 @@
 import { detachConnection } from "./connection-detach.ts";
 import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
+import { invalidCompactAdmission } from "./compact-admission-validation.ts";
 
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 
@@ -36,7 +37,7 @@ import { unloadSession } from "./session-unload.ts";
  * caused it - and anything the command starts inherits the attribution.
  */
 export function handle(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
-	const refusal = attachmentGate(host, command);
+	const refusal = invalidCompactAdmission(command) ?? attachmentGate(host, command);
 	if (refusal) return Promise.resolve(refusal);
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;
 	// A parked handle is answered by its terminal record and connection close, never unknown_session.
@@ -71,6 +72,13 @@ export async function dispatch(
 	host: RouterContext,
 	command: Exclude<RpcCommand, { type: "warm" }>,
 ): Promise<RpcResponse | undefined> {
+	if (command.type === "cancel_attempt" && host.admissions !== undefined) {
+		const peer = host.writer.currentConnection();
+		const epoch = peer === undefined ? undefined : host.writer.socketEpochOf(peer);
+		if (epoch === undefined) return error(command.id, command.type, "unsupported_transport");
+		const outcome = await host.admissions.cancel(epoch, command.admissionId);
+		return { id: command.id, type: "response", command: "cancel_attempt", success: true, data: { outcome } };
+	}
 	if (command.type === "get_protocol_info") return answerProtocolInfo(host, command);
 	if (command.type === "get_subscription_limits") return answerSubscriptionLimits(command);
 	if (command.type === "list_sessions") return answerListSessions(host, command);

@@ -63,6 +63,16 @@ export function recordAttachment(host: RouterContext, owner: string, sessionId: 
  * their running turn settles, or every owned one while the host drains.
  */
 export async function releaseConnection(host: RouterContext, connectionId: string): Promise<string[]> {
+	if (!host.admissions) return releaseConnectionHolds(host, connectionId);
+	host.admissions.endConnection(connectionId);
+	try {
+		return await releaseConnectionHolds(host, connectionId);
+	} finally {
+		await host.admissions.forgetConnection(connectionId);
+	}
+}
+
+async function releaseConnectionHolds(host: RouterContext, connectionId: string): Promise<string[]> {
 	host.releasedConnections.add(connectionId);
 	host.writer.clearConnectionCapabilities(connectionId);
 	host.connectionRoles.release(connectionId);

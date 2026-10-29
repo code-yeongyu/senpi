@@ -8,6 +8,13 @@ export type RpcHostCommandResponse =
 	| {
 			id?: string;
 			type: "response";
+			command: "cancel_attempt";
+			success: true;
+			data: { outcome: "cancelled" | "already_complete" | "unknown" };
+	  }
+	| {
+			id?: string;
+			type: "response";
 			command: "get_protocol_info";
 			success: true;
 			data: RpcProtocolInfo;

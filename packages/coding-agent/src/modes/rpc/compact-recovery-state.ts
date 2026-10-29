@@ -247,7 +247,7 @@ export class RecoveryCheckpoints {
 	 * the request's budget: a first open's verification is charged to it and stops, typed `aborted`, when it aborts.
 	 */
 	readCatalogPage(token: RecoveryToken, caller: RecoveryCaller, ref: string, offset: number, signal?: AbortSignal) {
-		return this.read(token, caller, (lane, root) => this.manifests.page(token.id, lane, root, ref, offset, signal));
+		return this.read(token, caller, (lane, root) => this.manifests.page(token, lane, root, ref, offset, signal));
 	}
 
 	/** Components verified under the live frozen roots (RULING-69 (2)); a root's entries go with its lease. */

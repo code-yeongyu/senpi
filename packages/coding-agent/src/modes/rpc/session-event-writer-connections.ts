@@ -49,8 +49,8 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 		this.surfaceDedupe.dropConnection(id);
 	}
 
-	attachConnectionToSession(id: string, sessionId: string): void {
-		this.fanout.attachConnectionToSession(id, sessionId);
+	attachConnectionToSession(id: string, sessionId: string, compact = false): void {
+		this.fanout.attachConnectionToSession(id, sessionId, compact);
 		if (this.hasConnection(id)) this.securityPresentations.attach(id, sessionId);
 		const sender = this.presenterConnections.get(id);
 		const binding = this.presenterBindings.get(sessionId);

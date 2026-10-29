@@ -82,7 +82,17 @@ export async function answerRecoveryPage(
 		hint: "restart_from_catalog",
 		retryAfterMs: outcome.ok ? 0 : randomInt(100, 2_001),
 	};
-	if (outcome.ok) return { id, type: "response", command: type, success: true, data: { ...outcome.value, repair } };
+	if (outcome.ok)
+		return {
+			id,
+			type: "response",
+			command: type,
+			success: true,
+			...("generation" in outcome.value
+				? { sessionId: caller.sessionId, admissionId: command.admissionId, generation: outcome.value.generation }
+				: {}),
+			data: { ...outcome.value, repair },
+		};
 	return error(id, type, codeOf(outcome.failure), { ...outcome.failure, repair });
 }
 
