@@ -76,7 +76,7 @@ it("T2/X04 a cancelled pending open releases only its own late hold and duplicat
 	const survivor = host.client("survivor");
 	const peer = host.client("peer");
 	const sessionPath = join(host.cwd, "shared.jsonl");
-	const original = await survivor.request({
+	await survivor.request({
 		type: "open_session",
 		cwd: host.cwd,
 		sessionPath,
@@ -108,7 +108,14 @@ it("T2/X04 a cancelled pending open releases only its own late hold and duplicat
 	} finally {
 		release.resolve();
 	}
-	expect(dataOf(await pending).sessionId).toBe(dataOf(original).sessionId);
+	const cancelled = await pending;
+	expect(cancelled).toMatchObject({
+		success: false,
+		code: "attempt_cancelled",
+		admissionId: "pending-1",
+		generation: 1,
+	});
+	expect(cancelled).not.toHaveProperty("sessionId");
 	expect(dataOf(await peer.request({ type: "cancel_attempt", admissionId: "pending-1" }))).toEqual({
 		outcome: "cancelled",
 	});
@@ -121,7 +128,13 @@ it("T2/X04 a cancelled pending open releases only its own late hold and duplicat
 		sessionPath,
 		admissionId: "pending-1",
 	});
-	expect(retired).toMatchObject({ success: false, errorData: { reason: "admission_retired" } });
+	expect(retired).toMatchObject({
+		success: false,
+		code: "attempt_cancelled",
+		admissionId: "pending-1",
+		generation: 1,
+	});
+	expect(retired).not.toHaveProperty("sessionId");
 }, 120_000);
 
 it("T2/X04 completion wins cancellation without dropping its accepted hold", async () => {

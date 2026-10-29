@@ -1,4 +1,5 @@
 import type { EventLeases } from "./compact-event-leases.ts";
+import { AdmissionRoutingActor } from "./compact-admission-routing.ts";
 import type { LegacyViewCursor } from "./legacy-view-cursor.ts";
 import type { RecoveryPageRequests } from "./compact-recovery-requests.ts";
 import type { RecoveryCheckpoints } from "./compact-recovery-state.ts";
@@ -6,6 +7,20 @@ import { SessionEventWriterLifecycle } from "./session-event-writer-lifecycle.ts
 
 /** The writer's recovery accessors (senpi#4272): legacy views, checkpoint tokens, page requests, peer epochs. */
 export abstract class SessionEventWriterRecovery extends SessionEventWriterLifecycle {
+	ordinaryRoute(peer: string, sessionId: string) {
+		const registered = this.fanout.get(peer);
+		const actor = registered?.actor;
+		return registered && actor instanceof AdmissionRoutingActor
+			? actor.remember(sessionId, this.fanout.checkpoints, registered.socketEpoch)
+			: undefined;
+	}
+	registerAdmission(peer: string, admissionId: string, sessionId: string): void {
+		const registered = this.fanout.get(peer);
+		if (registered?.actor instanceof AdmissionRoutingActor) {
+			registered.actor.admissions.add(admissionId);
+			registered.actor.remember(sessionId, this.fanout.checkpoints, registered.socketEpoch);
+		}
+	}
 	installAdmissionBaseline(peer: string, cursor: LegacyViewCursor, live: () => boolean): void {
 		const actor = this.fanout.get(peer)?.actor;
 		if (actor) actor.installBaseline(cursor, live);

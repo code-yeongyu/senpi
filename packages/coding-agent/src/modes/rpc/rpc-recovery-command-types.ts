@@ -1,6 +1,7 @@
 /** The recovery commands of a socket host (senpi#4272): pages under a checkpoint token or an event lease, and receipts. */
 export type RpcRecoveryCommand =
 	| { id?: string; type: "cancel_attempt"; admissionId: string }
+	| { id?: string; type: "reset_stream"; admissionId: string }
 	/**
 	 * One bounded page of a frozen checkpoint component through the recovery-token owner (R4.B3, senpi#4272); answered
 	 * only behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES`. `token`, `admissionId` and `componentRef` come from the

@@ -24,7 +24,7 @@ class OpenRefused extends Error {
 export async function compactOpen(
 	host: RouterContext,
 	command: OpenCommand,
-	physical: (accept: OpenAcceptance) => Promise<RpcResponse | undefined>,
+	physical: (accept: OpenAcceptance, signal: AbortSignal) => Promise<RpcResponse | undefined>,
 ): Promise<RpcResponse | undefined> {
 	const peer = host.writer.currentConnection();
 	const socketEpoch = peer === undefined ? undefined : host.writer.socketEpochOf(peer);
@@ -38,8 +38,24 @@ export async function compactOpen(
 		.update(JSON.stringify(Object.entries(request).sort(([a], [b]) => a.localeCompare(b))))
 		.digest("hex");
 	let delivery: ReturnType<typeof Promise.withResolvers<Readonly<Record<string, unknown>> | undefined>> | undefined;
+	let baseline: (() => void) | undefined;
+	const cancelledAnswer = async () => {
+		const result = await admissions.result(socketEpoch, admissionId);
+		if (result?.state !== "cancelled" || typeof result.answer.generation !== "number") return undefined;
+		return {
+			id: command.id,
+			type: "response" as const,
+			command: "open_session" as const,
+			success: false as const,
+			error: "attempt_cancelled",
+			errorCode: "attempt_cancelled",
+			code: "attempt_cancelled",
+			admissionId,
+			generation: result.answer.generation,
+		};
+	};
 	try {
-		const answer = await admissions.run({ socketEpoch, peer, admissionId, fingerprint }, async () => {
+		const answer = await admissions.run({ socketEpoch, peer, admissionId, fingerprint }, async (signal) => {
 			let result:
 				| { readonly answer: Readonly<Record<string, unknown>>; readonly release: () => Promise<void> }
 				| undefined;
@@ -49,17 +65,20 @@ export async function compactOpen(
 				if (!lane) throw new CompactAdmissionError("storage_unavailable");
 				const caller = { socketEpoch, sessionId };
 				const checkpoints = host.writer.recoveryCheckpoints;
-				const frozen = checkpoints.freeze({ ...caller, peer, admissionId, routeKind: "ordinary" }, lane);
+				const frozen = checkpoints.freeze({ ...caller, peer, admissionId, routeKind: "ordinary" }, lane, true);
 				if (!frozen.ok) throw new CompactAdmissionError("storage_unavailable");
 				const token = frozen.value.token;
 				const identity = { sessionId, admissionId, generation: token.admission.generation, token: token.id };
 				let active = true;
 				delivery = Promise.withResolvers<Readonly<Record<string, unknown>> | undefined>();
-				host.writer.installAdmissionBaseline(
-					peer,
-					admissionBaseline(delivery.promise, identity, () => active),
-					() => host.writer.socketEpochOf(peer) === socketEpoch,
-				);
+				const reply = delivery.promise;
+				host.writer.registerAdmission(peer, admissionId, sessionId);
+				baseline = () =>
+					host.writer.installAdmissionBaseline(
+						peer,
+						admissionBaseline(reply, identity, () => active),
+						() => host.writer.socketEpochOf(peer) === socketEpoch,
+					);
 				result = {
 					answer: {
 						type: "response",
@@ -81,18 +100,23 @@ export async function compactOpen(
 						await releaseDisconnectAttachment(host, sessionId);
 					},
 				};
-			});
+			}, signal);
 			if (response !== undefined) throw new OpenRefused(response);
 			if (result === undefined) throw new CompactAdmissionError("storage_unavailable");
 			return result;
 		});
-		if (delivery) delivery.resolve({ ...answer, id: command.id });
-		else await host.writer.enqueueControl({ ...answer, id: command.id }, peer);
+		const response = (await cancelledAnswer()) ?? { ...answer, id: command.id };
+		if (delivery) {
+			baseline?.();
+			delivery.resolve(response);
+		} else await host.writer.enqueueControl(response, peer);
 		return undefined;
 	} catch (cause) {
 		delivery?.resolve(undefined);
 		if (cause instanceof OpenRefused) return cause.response;
 		if (!(cause instanceof CompactAdmissionError)) throw cause;
+		const cancelled = await cancelledAnswer();
+		if (cancelled) return cancelled;
 		return error(command.id, command.type, `admission_${cause.reason}`, {
 			kind: "request_refused",
 			reason: cause.reason,

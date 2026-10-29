@@ -30,9 +30,9 @@ export class RecoveryStorageHealth {
 		this.setup ??= (async () => {
 			await mkdir(this.dir, { mode: 0o700, recursive: true });
 			if (!privateRootStat(await lstat(this.dir))) throw new CompactReadError("ownership");
-		})().catch(() => {
+		})().catch((cause: unknown) => {
 			this.setup = undefined;
-			throw new CompactReadError("ownership");
+			throw cause;
 		});
 		return this.setup;
 	}

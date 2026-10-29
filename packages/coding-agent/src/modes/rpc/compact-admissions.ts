@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { parseBoundedId } from "./compact-recovery-ids.ts";
+import { CompactAdmissionError } from "./compact-admission-error.ts";
+import { AdmissionProducerLifetime, runAdmissionProducer } from "./compact-admission-producer.ts";
+export { CompactAdmissionError } from "./compact-admission-error.ts";
 
 /** Per socket epoch: 128 IDs, 16 MiB reserved disk bytes, 16 live producers. No retired ID is evicted. */
 export const ADMISSION_LIMITS = { entries: 128, bytes: 16 * 1024 * 1024, hot: 16, row: 131_584 } as const;
@@ -17,6 +20,7 @@ type Answer = Readonly<Record<string, unknown>>;
 type Produced = { readonly answer: Answer; readonly release: () => Promise<void> };
 type Pending = ReturnType<typeof Promise.withResolvers<Answer>>;
 type Epoch = {
+	readonly producer: AdmissionProducerLifetime;
 	readonly peer: string;
 	readonly directory: Promise<string>;
 	readonly hot: Map<string, Pending>;
@@ -26,26 +30,24 @@ type Epoch = {
 	waiting: number;
 };
 
-export class CompactAdmissionError extends Error {
-	readonly reason:
-		| "malformed_request"
-		| "admission_conflict"
-		| "admission_retired"
-		| "admission_limit"
-		| "admission_busy"
-		| "storage_unavailable";
-
-	constructor(reason: CompactAdmissionError["reason"]) {
-		super(reason);
-		this.reason = reason;
-		this.name = "CompactAdmissionError";
-	}
-}
-
 /** Host-owned epoch index. Hash-file lookup is bounded by one <=131,584-byte row; hot results are never history. */
 export class CompactAdmissions {
 	private readonly epochs = new Map<string, Epoch>();
 	private readonly limits: Readonly<{ entries: number; bytes: number }>;
+	private abandoned = 0;
+
+	status() {
+		return { abandoned: this.abandoned };
+	}
+
+	private end(epoch: Epoch): void {
+		epoch.ended = true;
+		epoch.producer.end(() => {
+			const count = epoch.hot.size;
+			this.abandoned += count;
+			if (count > 0) process.stderr.write(`senpi rpc abandoned ${count} admission producer(s) at open deadline\n`);
+		});
+	}
 
 	constructor(limits: Readonly<{ entries: number; bytes: number }> = ADMISSION_LIMITS) {
 		this.limits = limits;
@@ -60,6 +62,7 @@ export class CompactAdmissions {
 		let epoch = this.epochs.get(id);
 		if (!epoch) {
 			epoch = {
+				producer: new AdmissionProducerLifetime(),
 				peer,
 				directory: mkdtemp(join(tmpdir(), "senpi-admissions-")),
 				hot: new Map(),
@@ -118,7 +121,7 @@ export class CompactAdmissions {
 			readonly admissionId: string;
 			readonly fingerprint: string;
 		},
-		produce: () => Promise<Produced>,
+		produce: (signal: AbortSignal) => Promise<Produced>,
 	): Promise<Answer> {
 		const key = this.key(identity.admissionId);
 		const epoch = this.epoch(identity.socketEpoch, identity.peer);
@@ -164,7 +167,7 @@ export class CompactAdmissions {
 		}
 		let produced: Produced | undefined;
 		try {
-			produced = await produce();
+			produced = await runAdmissionProducer(epoch.producer.signal, () => produce(epoch.producer.signal));
 			const value = produced.answer;
 			const answer = JSON.stringify(produced.answer);
 			if (Buffer.byteLength(answer) > 65_536) throw new CompactAdmissionError("storage_unavailable");
@@ -220,18 +223,34 @@ export class CompactAdmissions {
 		});
 	}
 
+	/** Resolve an accepted or cancelled late result through the same epoch index, with no second history. */
+	async result(
+		socketEpoch: string,
+		admissionId: string,
+	): Promise<{ state: Row["state"]; answer: Answer } | undefined> {
+		const key = this.key(admissionId);
+		const epoch = this.epochs.get(socketEpoch);
+		if (!epoch) return undefined;
+		return this.serial(epoch, async () => {
+			const row = await this.read(epoch, key);
+			if (row?.answer === undefined) return undefined;
+			return { state: row.state, answer: z.record(z.string(), z.unknown()).parse(JSON.parse(row.answer)) };
+		});
+	}
+
 	async forgetPeer(socketEpoch: string): Promise<void> {
 		const epoch = this.epochs.get(socketEpoch);
 		if (!epoch) return;
-		epoch.ended = true;
+		this.end(epoch);
 		await Promise.allSettled([...epoch.hot.values()].map((pending) => pending.promise));
 		await epoch.tail;
 		await rm(await epoch.directory, { recursive: true, force: true });
+		epoch.producer.close();
 		this.epochs.delete(socketEpoch);
 	}
 
 	endConnection(peer: string): void {
-		for (const epoch of this.epochs.values()) if (epoch.peer === peer) epoch.ended = true;
+		for (const epoch of this.epochs.values()) if (epoch.peer === peer) this.end(epoch);
 	}
 
 	async forgetConnection(peer: string): Promise<void> {
@@ -239,7 +258,7 @@ export class CompactAdmissions {
 	}
 
 	async dispose(): Promise<void> {
-		for (const epoch of this.epochs.values()) epoch.ended = true;
+		for (const epoch of this.epochs.values()) this.end(epoch);
 		for (const id of this.epochs.keys()) await this.forgetPeer(id);
 	}
 }

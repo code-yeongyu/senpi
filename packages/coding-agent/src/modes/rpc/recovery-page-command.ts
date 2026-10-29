@@ -82,14 +82,21 @@ export async function answerRecoveryPage(
 		hint: "restart_from_catalog",
 		retryAfterMs: outcome.ok ? 0 : randomInt(100, 2_001),
 	};
+	const ordinary = writer.ordinaryRoute(writer.currentConnection() ?? "", caller.sessionId);
+	const generation =
+		outcome.ok && "generation" in outcome.value
+			? outcome.value.generation
+			: ordinary?.routes.includes(command.admissionId)
+				? ordinary.generation
+				: undefined;
 	if (outcome.ok)
 		return {
 			id,
 			type: "response",
 			command: type,
 			success: true,
-			...("generation" in outcome.value
-				? { sessionId: caller.sessionId, admissionId: command.admissionId, generation: outcome.value.generation }
+			...(generation !== undefined
+				? { sessionId: caller.sessionId, admissionId: command.admissionId, generation }
 				: {}),
 			data: { ...outcome.value, repair },
 		};

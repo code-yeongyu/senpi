@@ -162,6 +162,20 @@ it.each(["revision", "recover"] as const)("defers ownership refusal to %s and re
 });
 
 // #4272 S14 L5: cleanup/read errors are not proof that storage writes became unavailable.
+it.each(["mkdir", "lstat"] as const)(
+	"S14 review carry preserves %s setup errors and allows retry",
+	async (operation) => {
+		for (const code of ["ENOSPC", "EACCES", "EROFS"]) {
+			const failure = Object.assign(new Error(code), { code });
+			const health = new RecoveryStorageHealth(base);
+			vi.spyOn(fs, operation).mockRejectedValueOnce(failure);
+			await expect(health.revision()).rejects.toBe(failure);
+			expect(await health.revision()).toBe("0");
+			vi.restoreAllMocks();
+		}
+	},
+);
+
 it.each(["reclaim", "leaf_read", "page_write"] as const)(
 	"only a real write failure advances health after %s fails and a later write succeeds",
 	async (operation) => {

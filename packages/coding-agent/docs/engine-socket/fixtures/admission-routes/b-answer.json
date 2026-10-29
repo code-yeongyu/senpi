@@ -1,0 +1,18 @@
+{
+	"answer": {
+		"type": "response",
+		"command": "open_session",
+		"success": true,
+		"sessionId": "rpc-1",
+		"admissionId": "golden-a",
+		"generation": 1,
+		"data": {
+			"sessionId": "rpc-1",
+			"recovery": {
+				"token": "socket-1:1",
+				"componentRef": "manifest"
+			}
+		},
+		"id": "peer-1"
+	}
+}

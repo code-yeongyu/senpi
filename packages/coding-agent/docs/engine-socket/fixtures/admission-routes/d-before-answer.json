@@ -1,0 +1,156 @@
+{
+	"frames": [
+		{
+			"type": "extension_ui_request",
+			"id": "00000000-0000-4000-8000-000000000001",
+			"method": "setWidget",
+			"widgetKey": "todo-sidebar",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"id": "00000000-0000-4000-8000-000000000002",
+			"method": "setStatus",
+			"statusKey": "anthropic-web-search",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"id": "00000000-0000-4000-8000-000000000003",
+			"method": "setWidget",
+			"widgetKey": "anthropic-web-search",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"id": "00000000-0000-4000-8000-000000000004",
+			"method": "setStatus",
+			"statusKey": "openai-web-search",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"id": "00000000-0000-4000-8000-000000000005",
+			"method": "setWidget",
+			"widgetKey": "openai-web-search",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"id": "00000000-0000-4000-8000-000000000006",
+			"method": "setStatus",
+			"statusKey": "monitors",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"id": "00000000-0000-4000-8000-000000000007",
+			"method": "setStatus",
+			"statusKey": "pi-websearch",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"id": "00000000-0000-4000-8000-000000000008",
+			"method": "setWidget",
+			"widgetKey": "pi-websearch",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"id": "00000000-0000-4000-8000-000000000009",
+			"method": "setStatus",
+			"statusKey": "pi-webfetch",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"id": "00000000-0000-4000-8000-000000000010",
+			"method": "setWidget",
+			"widgetKey": "pi-webfetch",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "entry_appended",
+			"entry": {
+				"type": "custom",
+				"customType": "pi-rules.scan",
+				"data": {
+					"cwd": "<root>/cwd",
+					"reason": "startup"
+				},
+				"startupBookkeeping": true,
+				"id": "00000001",
+				"parentId": "00000002",
+				"timestamp": "2026-10-29T00:00:00.000Z"
+			},
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"id": "00000000-0000-4000-8000-000000000011",
+			"method": "setStatus",
+			"statusKey": "todo-waiting",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "extension_ui_request",
+			"id": "00000000-0000-4000-8000-000000000012",
+			"method": "setStatus",
+			"statusKey": "goal",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "session_opened",
+			"sessionId": "rpc-1",
+			"durableSessionId": "00000000-0000-4000-8000-000000000013",
+			"sessionPath": "<root>/cwd/golden.jsonl",
+			"kind": "interactive",
+			"cwd": "<root>/cwd",
+			"admissionId": "golden-a",
+			"generation": 1
+		}
+	],
+	"answer": {
+		"type": "response",
+		"command": "open_session",
+		"success": true,
+		"sessionId": "rpc-1",
+		"admissionId": "golden-a",
+		"generation": 1,
+		"data": {
+			"sessionId": "rpc-1",
+			"recovery": {
+				"token": "socket-1:1",
+				"componentRef": "manifest"
+			}
+		},
+		"id": "peer-1"
+	}
+}

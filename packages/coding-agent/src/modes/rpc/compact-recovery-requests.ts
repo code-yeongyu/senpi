@@ -209,13 +209,12 @@ export class RecoveryPageRequests {
 
 	/** A checkpoint token minted for this caller under the named admission, claimed before any request state. */
 	private checkpointSource(caller: RecoveryCaller, tokenId: string, admissionId: string): RecoveryOutcome<PageSource> {
-		const token = this.checkpoints
-			.tokens()
-			.find((each) => each.id === tokenId && each.admission.admissionId === admissionId);
+		const token = this.checkpoints.tokens().find((each) => each.id === tokenId);
 		if (
 			!token ||
 			token.admission.socketEpoch !== caller.socketEpoch ||
-			token.admission.sessionId !== caller.sessionId
+			token.admission.sessionId !== caller.sessionId ||
+			!this.checkpoints.stream(caller)?.routes.includes(admissionId)
 		)
 			return { ok: false, failure: repairNeeded("unknown_token") };
 		const claimed = this.checkpoints.check(token, caller);

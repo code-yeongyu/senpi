@@ -11,6 +11,7 @@ export function admissionBaseline(
 		readonly token: string;
 	},
 	live: () => boolean,
+	routes?: readonly string[],
 ): GeneratedFramesCursor {
 	return new GeneratedFramesCursor(
 		false,
@@ -18,7 +19,14 @@ export function admissionBaseline(
 			const answer = await reply;
 			if (answer === undefined) return;
 			yield serializeJsonLine(answer);
-			if (live()) yield serializeJsonLine({ type: "recovery_manifest", ...identity, componentRef: "manifest" });
+			if (live())
+				for (const admissionId of routes ?? [identity.admissionId])
+					yield serializeJsonLine({
+						type: "recovery_manifest",
+						...identity,
+						admissionId,
+						componentRef: "manifest",
+					});
 		},
 		() => {},
 	);

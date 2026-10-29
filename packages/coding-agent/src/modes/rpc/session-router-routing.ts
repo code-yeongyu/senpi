@@ -1,6 +1,7 @@
 import { detachConnection } from "./connection-detach.ts";
 import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
 import { invalidCompactAdmission } from "./compact-admission-validation.ts";
+import { resetStream } from "./compact-reset-stream.ts";
 
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 
@@ -72,6 +73,7 @@ export async function dispatch(
 	host: RouterContext,
 	command: Exclude<RpcCommand, { type: "warm" }>,
 ): Promise<RpcResponse | undefined> {
+	if (command.type === "reset_stream" && host.admissions) return resetStream(host, command);
 	if (command.type === "cancel_attempt" && host.admissions !== undefined) {
 		const peer = host.writer.currentConnection();
 		const epoch = peer === undefined ? undefined : host.writer.socketEpochOf(peer);

@@ -7,10 +7,13 @@ import { error } from "./session-router-errors.ts";
 export function invalidCompactAdmission(command: RpcCommand): RpcResponse | undefined {
 	if (
 		!compactUpdatesEnabled() ||
-		!["open_session", "subscribe_sessions", "get_recovery_page", "cancel_attempt"].includes(command.type)
+		!["open_session", "subscribe_sessions", "get_recovery_page", "cancel_attempt", "reset_stream"].includes(
+			command.type,
+		)
 	)
 		return undefined;
-	if (command.type !== "cancel_attempt" && !("admissionId" in command)) return undefined;
+	if (command.type !== "cancel_attempt" && command.type !== "reset_stream" && !("admissionId" in command))
+		return undefined;
 	const id: unknown = "admissionId" in command ? command.admissionId : undefined;
 	if (typeof id === "string" && parseBoundedId(id).ok) return undefined;
 	return error(command.id, command.type, "admission_malformed_request", {

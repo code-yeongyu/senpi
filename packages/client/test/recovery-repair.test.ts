@@ -69,10 +69,10 @@ it("backs off when the fresh cut is also unknown, then restarts that token only 
 });
 
 // #4272 S14 LOW-2: a long-lived controller retains bounded token history without spinning on consecutive refusals.
-it("bounds restarted token history across many distinct refused tokens", () => {
+it("allows the token evicted after 65 restarts to restart again but not the 64 most recent", () => {
 	const controller = new RecoveryRepairController();
 	const gone: RecoveryRepairAdvice = { ...failure, state: "repair_needed" };
-	for (let index = 0; index < 1_000; index++) {
+	for (let index = 0; index < 65; index++) {
 		const now = index * 1_000;
 		const context = { token: `token-${index}`, reason: "unknown_token" };
 		if (index === 0) expect(controller.observe(gone, now, context).action).toBe("restart_from_catalog");
@@ -82,7 +82,13 @@ it("bounds restarted token history across many distinct refused tokens", () => {
 		}
 		expect(controller.observe(gone, now + 501, context).action).toBe("wait");
 	}
-	expect(Reflect.get(controller, "restartedTokens").size).toBeLessThanOrEqual(64);
+	for (let index = 1; index < 65; index++)
+		expect(controller.observe(gone, 100_000, { token: `token-${index}`, reason: "unknown_token" }).action).toBe(
+			"wait",
+		);
+	const evicted = { token: "token-0", reason: "unknown_token" };
+	expect(controller.observe(gone, 100_000, evicted).action).toBe("wait");
+	expect(controller.observe(gone, 100_500, evicted).action).toBe("restart_from_catalog");
 });
 
 it("keeps storage failures change-gated even with gone-token request context", () => {

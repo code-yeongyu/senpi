@@ -99,9 +99,13 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 			built === undefined ? jsonSize(record) : { bytes: Buffer.byteLength(built) - 1, units: built.length - 1 };
 		if (size.bytes + 1 <= COMPACT_RECORD_MAX_BYTES) return { line: line.text };
 		const at = { sessionEpoch: lane.sessionEpoch, sequence: lane.acceptedSequence };
-		const minted = events.mint({ socketEpoch, sessionId, admissionId }, at, record, built ?? size);
+		const routes = this.ordinaryRoute(target, sessionId)?.routes ?? [];
+		const owner = routes[0] ?? admissionId;
+		const minted = events.mint({ socketEpoch, sessionId, admissionId: owner }, at, record, built ?? size);
 		if (minted.ok) {
 			const { id } = minted.value;
+			const held = events.claim({ socketEpoch, sessionId }, id, owner);
+			if (held.ok) for (const route of routes) held.value.admissions.add(route);
 			return {
 				line: serializeJsonLine({ type: Reflect.get(record, "type"), sessionId, eventLease: minted.value }),
 				// The lease lives only if its envelope is written: every drop path of the socket actor ends it unseen.

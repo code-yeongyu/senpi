@@ -2,6 +2,8 @@ import type { TranscriptRoot } from "./accepted-transcript.ts";
 import { CompactReadError, CompactReadLease } from "./compact-read-lease.ts";
 import { RecoveryManifests } from "./compact-recovery-manifest.ts";
 import { RecoveryStreams } from "./compact-recovery-streams.ts";
+import type { FrozenCheckpoint } from "./compact-recovery-checkpoint-types.ts";
+export type { FrozenCheckpoint, RetainedRoot } from "./compact-recovery-checkpoint-types.ts";
 import {
 	type CheckpointToken,
 	type RecoveryCaller,
@@ -20,28 +22,6 @@ import {
 	storageUnavailable,
 } from "./compact-recovery-types.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
-
-/** A frozen checkpoint: its token, and the lane root the legacy view reader (S07b) reads under the lane. */
-export interface FrozenCheckpoint {
-	readonly token: CheckpointToken;
-	readonly lane: SessionAcceptanceLane;
-	readonly root: FrozenAcceptedRoot;
-	/** Runs a direct read of `root` as an operation in flight on this checkpoint: a reclaim waits for it to unwind. */
-	hold<T>(read: () => Promise<T>): Promise<T>;
-	/**
-	 * Keeps `root` for one consumer from now until `end`: a reclaim meanwhile (a supersession, a retired route, the
-	 * peer's end) invalidates the token but never takes the root from that consumer, whose reads never refuse.
-	 */
-	retain(): RetainedRoot;
-}
-
-/** A checkpoint's root kept for one consumer (the shed's resync cut) until it calls `end`. */
-export interface RetainedRoot {
-	readonly lane: SessionAcceptanceLane;
-	readonly root: FrozenAcceptedRoot;
-	hold<T>(read: () => Promise<T>): Promise<T>;
-	end(): void;
-}
 
 interface Checkpoint extends FrozenCheckpoint {
 	readonly lease: CompactReadLease;
@@ -100,8 +80,13 @@ export class RecoveryCheckpoints {
 	}
 
 	/** The next generation of the route's stream: a failed freeze advances nothing and pins nothing. */
-	freeze(route: RecoveryRoute, lane: SessionAcceptanceLane): RecoveryOutcome<FrozenCheckpoint> {
+	freeze(route: RecoveryRoute, lane: SessionAcceptanceLane, join = false): RecoveryOutcome<FrozenCheckpoint> {
 		if (lane.retired) return this.refuse(repairNeeded("lane_retired"));
+		const current = join ? this.checkpoints.get(this.streams.get(route)?.current ?? "") : undefined;
+		if (current && this.check(current.token, route).ok) {
+			this.streams.join(route);
+			return recovered(current);
+		}
 		const root = lane.freeze();
 		if (root.current === undefined) {
 			lane.release(root);
@@ -182,7 +167,10 @@ export class RecoveryCheckpoints {
 	 * token it minted is reclaimed like a superseded one (RULING-56 (4)), with or without its stream record. Idempotent.
 	 */
 	retireRoute(caller: RecoveryCaller, admissionId: string): void {
+		const current = this.streams.get(caller)?.current;
 		this.streams.retireRoute(caller, admissionId);
+		if ((this.streams.get(caller)?.routes.size ?? 0) > 0) return;
+		this.reclaim(current);
 		for (const { token } of [...this.checkpoints.values()]) {
 			const { socketEpoch, sessionId, admissionId: minter } = token.admission;
 			if (socketEpoch === caller.socketEpoch && sessionId === caller.sessionId && minter === admissionId)

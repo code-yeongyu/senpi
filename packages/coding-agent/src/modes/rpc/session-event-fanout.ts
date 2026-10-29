@@ -1,4 +1,5 @@
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { AdmissionRoutingActor } from "./compact-admission-routing.ts";
 import { tmpdir } from "node:os";
 import { startRecoveryCleanup } from "./compact-recovery-cleanup.ts";
 import { EventLeases } from "./compact-event-leases.ts";
@@ -87,7 +88,8 @@ export class SessionEventFanout {
 		options: { readonly maxQueueBytes?: number; readonly stallMs?: number } = {},
 	): void {
 		const socketEpoch = `socket-${++this.socketEpochs}`;
-		const actor = new SocketEventSinkActor(
+		const Actor = this.pages ? AdmissionRoutingActor : SocketEventSinkActor;
+		const actor = new Actor(
 			connection,
 			(cause) => {
 				if (this.connections.get(id)?.actor === actor) {
@@ -109,6 +111,7 @@ export class SessionEventFanout {
 			options.stallMs,
 			this.shedMode,
 		);
+		if (actor instanceof AdmissionRoutingActor) actor.bind(this.checkpoints, socketEpoch);
 		this.connections.set(id, { connection, actor, socketEpoch });
 		this.connectionCapabilities.set(id, new Set());
 		this.connectionSessions.set(id, new Map());
@@ -282,6 +285,8 @@ export class SessionEventFanout {
 	 * (a queued attach view keeps its root) and the session's stream records go on every peer (RULING-56 (2)).
 	 */
 	forgetSession(sessionId: string): void {
+		for (const { actor, socketEpoch } of this.connections.values())
+			if (actor instanceof AdmissionRoutingActor) actor.remember(sessionId, this.checkpoints, socketEpoch);
 		this.checkpoints.forgetSession(sessionId);
 		this.acceptance.get(sessionId)?.retire("close", this.attachViews);
 		this.acceptance.delete(sessionId);
