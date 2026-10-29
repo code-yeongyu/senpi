@@ -1,3 +1,43 @@
+## 2026-10-27 - Preserve seed emission frontier in the staged projection (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/json-event.ts` forwards validated `nextOffset` unchanged on text, thinking, and tool seeds.
+
+### Why
+
+- `packages/coding-agent/src/modes/json-event.ts` must distinguish replay from continuation without inspecting later deltas or a mutable partial.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/json-event.ts` is the internal structured-record projection boundary.
+
+### Expected merge conflict zones
+
+- Seed types and start projection in `packages/coding-agent/src/modes/json-event.ts`.
+
+## 2026-10-26 - Handle directory metadata before startup side effects (#4368)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: handle `config agent-dir --json` before enabling compile caches or preparing a runtime snapshot.
+- `packages/coding-agent/dist/cli.js`: regenerate the tracked launcher through the production package build so it carries the same early metadata dispatch.
+- `packages/coding-agent/src/cli-main.ts`: handle the same command before cache setup and lazily import the full agent entry only afterward.
+- `packages/coding-agent/src/bun/cli.ts`: handle metadata before lazily importing provider/runtime setup on the actual compiled-binary entry path. Normal runs retain restore, runtime-setup, then full-CLI ordering.
+- `packages/coding-agent/src/package-manager-cli.ts`: document the metadata subcommand and JSON exit contract in config help; `docs/agent-directory-selection.md` records the version-1 contract.
+
+### Why
+
+- A selector query must not initialize the directory whose location it is only being asked to report. Both the source launcher and compiled direct-entry path must obey that contract.
+
+### Why an extension could not handle it
+
+- The command decides the store before extension discovery and host admission.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/cli-main.ts` startup dispatch.
+
 ## 2026-10-26 - Opt-in seeded projection in toJsonEvent (senpi#4349, part of #4272)
 
 ### What changed
