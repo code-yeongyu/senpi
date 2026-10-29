@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { z } from "zod";
 import { parseBoundedId } from "./compact-recovery-ids.ts";
 import { CompactAdmissionError } from "./compact-admission-error.ts";
-import { AdmissionProducerLifetime, runAdmissionProducer } from "./compact-admission-producer.ts";
+import {
+	AdmissionProducerLifetime,
+	type ProducerLosses,
+	recordProducerLoss,
+	runAdmissionProducer,
+} from "./compact-admission-producer.ts";
 export { CompactAdmissionError } from "./compact-admission-error.ts";
 
 /** Per socket epoch: 128 IDs, 16 MiB reserved disk bytes, 16 live producers. No retired ID is evicted. */
@@ -34,19 +39,15 @@ type Epoch = {
 export class CompactAdmissions {
 	private readonly epochs = new Map<string, Epoch>();
 	private readonly limits: Readonly<{ entries: number; bytes: number }>;
-	private abandoned = 0;
+	private readonly losses: ProducerLosses = { abandoned: 0, releaseFailed: 0 };
 
 	status() {
-		return { abandoned: this.abandoned };
+		return { ...this.losses };
 	}
 
 	private end(epoch: Epoch): void {
 		epoch.ended = true;
-		epoch.producer.end(() => {
-			const count = epoch.hot.size;
-			this.abandoned += count;
-			if (count > 0) process.stderr.write(`senpi rpc abandoned ${count} admission producer(s) at open deadline\n`);
-		});
+		epoch.producer.end(() => recordProducerLoss(this.losses, "abandoned", epoch.hot.size));
 	}
 
 	constructor(limits: Readonly<{ entries: number; bytes: number }> = ADMISSION_LIMITS) {
@@ -170,7 +171,8 @@ export class CompactAdmissions {
 			produced = await runAdmissionProducer(
 				epoch.producer.signal,
 				() => produce(epoch.producer.signal),
-				(value) => value.release(),
+				(value) =>
+					value.release().catch((cause: unknown) => recordProducerLoss(this.losses, "releaseFailed", 1, cause)),
 			);
 			const value = produced.answer;
 			const answer = JSON.stringify(produced.answer);
