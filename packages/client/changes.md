@@ -1,24 +1,5 @@
 # changes
 
-## 2026-10-30 - Transaction-bound compact materializer contract (S16b, part of #4272)
-
-### What changed
-
-- `packages/client/src/materializer.ts`, `materializer-memory.ts`, `materializer-wire.ts`, `materializer-test-kit.ts`: a transport-neutral consumer and adapter contract that commits a unit's effects and its accepted-sequence frontier together; a reference in-memory adapter; a bounded S16 envelope parser that leaves S15a frames unchanged; and an exported conformance kit.
-- `packages/client/package.json`: adds the `./materializer-test-kit` export.
-
-### Why
-
-- RULING-95 requires desktop SQL adapters to run the same conformance cases as the reference adapter. RpcClient remains unchanged, and a separate consumer drives the adapter.
-
-### Why an extension could not handle it
-
-- The contract is published by the client package and consumed outside the coding-agent runtime.
-
-### Expected merge conflict zones
-
-- The client export map and public barrel.
-
 ## 2026-10-10 - Test-run temporary storage has an owner (senpi#3064)
 
 ### What changed
