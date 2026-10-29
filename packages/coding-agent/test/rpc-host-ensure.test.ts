@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/p
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, onTestFailed } from "vitest";
 import { VERSION } from "../src/config.ts";
 import { type HostPidFileWriter, readHostRegistration } from "../src/modes/rpc/host-daemon-registration.ts";
 import { GENERATION_HANDOFF_CAPABILITY, HostEnsureRefusedError } from "../src/modes/rpc/host-decision.ts";
@@ -525,6 +525,7 @@ describe("ensureHost", () => {
 		const qa = await scratch("dead-probe");
 		// A real process that has already exited: liveness is genuinely false.
 		const dead = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+		children.push(dead);
 		await new Promise<void>((resolve) => dead.once("exit", () => resolve()));
 		await writeRegistration(qa, { pid: dead.pid ?? 0, processStartTime: "stale" });
 		let probeCalls = 0;
@@ -939,6 +940,7 @@ async function startManagedFixture(
 		],
 		{ detached: true, stdio: ["pipe", "pipe", "pipe"] },
 	);
+	children.push(child);
 	await waitForProtocol(child);
 	return register(qa, child, options.writer ?? "self");
 }
@@ -954,12 +956,9 @@ async function startManagedProcess(
 	const script = options.ignoreTerm
 		? "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"
 		: "setInterval(() => {}, 1000)";
-	return register(
-		qa,
-		spawn(process.execPath, ["-e", script], { detached: true, stdio: "ignore" }),
-		options.writer,
-		options.selfWriterStartTime,
-	);
+	const child = spawn(process.execPath, ["-e", script], { detached: true, stdio: "ignore" });
+	children.push(child);
+	return register(qa, child, options.writer, options.selfWriterStartTime);
 }
 
 /** A live process listening on the public path that is not a registered host and never answers. */
@@ -1022,6 +1021,7 @@ async function leaveStaleEntry(socketPath: string): Promise<void> {
 		stdio: ["ignore", "pipe", "ignore"],
 		env: { ...process.env, STALE_SOCKET: socketPath },
 	});
+	children.push(child);
 	await new Promise<void>((resolve, reject) => {
 		child.stdout?.once("data", () => resolve());
 		child.once("exit", (code) => reject(new Error(`stale-entry listener exited before listening (code ${code})`)));
@@ -1061,6 +1061,7 @@ async function startBusySocketHost(qa: Qa, writer: Writer): Promise<Managed> {
 		stdio: ["ignore", "pipe", "pipe"],
 		env: { ...process.env, BUSY_SOCKET: qa.socket },
 	});
+	children.push(child);
 	await new Promise<void>((resolve, reject) => {
 		child.stdout?.once("data", () => resolve());
 		child.stderr?.once("data", (chunk: Buffer) =>
@@ -1072,7 +1073,6 @@ async function startBusySocketHost(qa: Qa, writer: Writer): Promise<Managed> {
 }
 
 async function register(qa: Qa, child: ChildProcess, writer: Writer, selfWriterStartTime?: string): Promise<Managed> {
-	children.push(child);
 	if (child.pid === undefined) throw new Error("managed host did not spawn");
 	// waitForStartTime returns undefined when every identity probe inside the budget is starved
 	// (a loaded windows-latest runner makes each Get-CimInstance call outlive its 1 s default) while
@@ -1135,6 +1135,15 @@ function waitForProtocol(child: ChildProcess): Promise<void> {
 	return new Promise((resolve, reject) => {
 		let output = "";
 		let stderr = "";
+		let listened = false;
+		// Failure hooks run after teardown, which may already have closed this child.
+		// Retain setup diagnostics until the owning test's failure is reported.
+		onTestFailed(() => {
+			if (listened) return;
+			throw new Error("fixture did not listen before the owning test failed", {
+				cause: { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode, stderr },
+			});
+		});
 		const finish = (error?: Error | null) => {
 			child.off("error", finish);
 			child.off("close", closed);
@@ -1151,6 +1160,7 @@ function waitForProtocol(child: ChildProcess): Promise<void> {
 		const listening = (chunk: Buffer) => {
 			output += chunk.toString("utf8");
 			if (!output.split("\n").includes("listening")) return;
+			listened = true;
 			child.stdout?.off("data", listening);
 			// Release the existing protocol gate immediately: these fixtures answer normally.
 			// The orphan launcher already released its child and only forwards its output.
@@ -1186,6 +1196,36 @@ async function stopManagedRoot(root: string): Promise<void> {
 	process.kill(identity.pid, "SIGKILL");
 	await expectGone(identity);
 }
+
+describe("protocol setup diagnostics", () => {
+	let failureCauses: unknown[] = [];
+	it.fails("attaches stderr and lifecycle when the owning test fails before listening", async () => {
+		onTestFailed(({ task }) => {
+			failureCauses = task.result?.errors?.map((error) => error.cause) ?? [];
+		});
+		const child = spawn(
+			process.execPath,
+			["-e", "process.stderr.write('CONTROLLED_PROTOCOL_SETUP_DIAGNOSTIC'); process.stdin.resume();"],
+			{ stdio: ["pipe", "pipe", "pipe"] },
+		);
+		children.push(child);
+		const diagnosticReady = new Promise<void>((resolve) => child.stderr?.once("data", () => resolve()));
+		void waitForProtocol(child).catch(() => {});
+		await diagnosticReady;
+		throw new Error("controlled owning-test failure while fixture setup is pending");
+	});
+	afterAll(() => {
+		// This assertion is outside the expected-failure test, so missing diagnostics fail the suite.
+		expect(failureCauses).toContainEqual(
+			expect.objectContaining({
+				stderr: "CONTROLLED_PROTOCOL_SETUP_DIAGNOSTIC",
+				pid: expect.any(Number),
+				exitCode: null,
+				signalCode: "SIGKILL",
+			}),
+		);
+	});
+});
 
 describe("processMatchesPidFile", () => {
 	it("retries a probe that fails transiently against a live pid and then answers", async () => {
