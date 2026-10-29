@@ -62,13 +62,22 @@ export function recordAttachment(host: RouterContext, owner: string, sessionId: 
  * Resolves to the sessions whose attachment is still counted: the ones that release when
  * their running turn settles, or every owned one while the host drains.
  */
-export async function releaseConnection(host: RouterContext, connectionId: string): Promise<string[]> {
+export function releaseConnection(host: RouterContext, connectionId: string): Promise<string[]> {
+	// Not async: with the flag off the caller gets the legacy body's own promise, with no extra microtask hop.
 	if (!host.admissions) return releaseConnectionHolds(host, connectionId);
-	host.admissions.endConnection(connectionId);
+	return releaseAdmittedConnection(host, host.admissions, connectionId);
+}
+
+async function releaseAdmittedConnection(
+	host: RouterContext,
+	admissions: NonNullable<RouterContext["admissions"]>,
+	connectionId: string,
+): Promise<string[]> {
+	admissions.endConnection(connectionId);
 	try {
 		return await releaseConnectionHolds(host, connectionId);
 	} finally {
-		await host.admissions.forgetConnection(connectionId);
+		await admissions.forgetConnection(connectionId);
 	}
 }
 
