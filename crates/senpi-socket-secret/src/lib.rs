@@ -2,6 +2,9 @@ use napi_derive::napi;
 
 pub mod answers;
 pub mod classify;
+pub mod presence;
+#[cfg(windows)]
+pub mod presence_windows;
 pub mod session;
 pub mod volume;
 

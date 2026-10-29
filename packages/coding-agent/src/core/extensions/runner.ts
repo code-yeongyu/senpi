@@ -45,7 +45,7 @@ import {
 	runBudgetedHandler,
 	runBudgetedSequence,
 } from "./handler-budget.ts";
-import { kernelToolsStorage } from "./kernel-tools-context.ts";
+import { type ExtensionKernelTools, kernelToolInvokerStorage, kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
@@ -1579,7 +1579,21 @@ export class ExtensionRunner {
 			},
 			get kernelTools() {
 				runner.assertActive();
-				return kernelToolsStorage.getStore();
+				const tools = kernelToolsStorage.getStore();
+				if (!tools) return undefined;
+				return {
+					capabilities: tools.capabilities,
+					describe: (names) => tools.describe(names),
+					invoke: (request, options) => {
+						runner.assertActive();
+						return tools.invoke(request, {
+							...(options && ("aborted" in options ? { signal: options } : options)),
+							invoker: kernelToolInvokerStorage.getStore() ?? {
+								sessionId: runner.sessionManager.getSessionId(),
+							},
+						});
+					},
+				} satisfies ExtensionKernelTools;
 			},
 			get evalHandleHost() {
 				runner.assertActive();

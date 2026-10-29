@@ -2,6 +2,7 @@ import type { KernelMemoryThresholds } from "../../bridge/memory-protocol.ts";
 import type { KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { EvalKernelRunInput } from "../../tool/types.ts";
 import type { SessionEnvironment } from "../session-env.ts";
+import type { InvocationPermissions } from "../shared/invocation-authority.ts";
 import type { JavaScriptInterruptBounds } from "./interrupt-bounds.ts";
 import type { CellDecision, CellOperation, CellRule } from "./permission-slots.mjs";
 
@@ -43,8 +44,7 @@ export function resolveKernelToolNameSource(names?: KernelToolNameSource): strin
 export interface JavaScriptKernelOptions {
 	readonly sessionId: string;
 	readonly cwd: string;
-	readonly permissions?: {
-		readonly state: () => CellPermissionState;
+	readonly permissions?: InvocationPermissions & {
 		readonly decide: CellDecider;
 	};
 	/** Integration marks direct tool admission DEAD too; the kernel host fences cells itself. */

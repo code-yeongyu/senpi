@@ -54,7 +54,9 @@ export async function startWorkerHost(
 	const cwd = join(scratch, "cwd");
 	const agentDir = join(scratch, "agent");
 	await mkdir(cwd);
-	await mkdir(agentDir);
+	// The host refuses a key root writable by group or others (rpc-public-key.ts), so the fixture owns its mode
+	// instead of inheriting the machine's umask: under umask 002 a plain mkdir yields 0775 and no host listens.
+	await mkdir(agentDir, { mode: 0o700 });
 	const extension = join(scratch, "gates.mjs");
 	if (extensionSource) await writeFile(extension, extensionSource);
 	const preload = join(scratch, "observe-transport.mjs");

@@ -6,7 +6,7 @@ contract for a host `CellDecider`; it does not connect the permission extension.
 ## Host integration
 
 `JavaScriptKernelOptions.permissions` supplies a current epoch snapshot and
-`decide(token, call)`. Tokens identify the owning session and execution cwd.
+`decide(token, call)`. Tokens identify the invoking session and execution cwd.
 The decision is either `pass` or `deny` with a rule's permission, pattern and
 layer. The core does not interpret rule syntax or implement allow/ask precedence.
 
@@ -17,9 +17,30 @@ abandoned retirement permanently fences cell admission for the session and
 emits `onRevocationFailed({ sessionId, kernelId })`.
 
 The integration PR must connect that event to direct-tool admission. Direct
-tools are not fenced by this core alone. Cross-session kernel-tool refusal
-belongs to PR 2b; `resolveInvocationToken(request, options)` is its host seam.
-For now each invocation gets a distinct token minted by the kernel's owner.
+tools are not fenced by this core alone.
+
+The coding-agent dispatcher stamps `options.invoker.sessionId` from its own
+SessionManager. Neither cell data nor tool arguments can override that identity.
+Registered extension event handlers also bind their own host context, rather
+than inheriting a parent task tool's identity when a child emits an event.
+The shared host pump forwards these options to `resolveInvocationToken` before
+posting an invocation frame. Absent or owner identity mints an owner token;
+another session is refused before the body runs if either session enforces,
+with `reason: "cross_session_authority"` and the enforcing session identified.
+The attached `rule` names a deny rule activating that session's enforcement;
+it does not claim that this rule matched an operation inside the unexecuted
+tool body. Otherwise the token identifies the invoker.
+Python applies the same cross-session check before posting to the interpreter.
+
+Live kernel owners publish their current permission snapshots to the host-only
+invocation registry. The permission integration supplies `permissions.resolveSession`
+for sessions without a kernel, returning that session's current state and cwd.
+Without integration or a registered kernel, a session has no enforcing state in
+this core and retains the existing inactive behavior. No invoker identity or
+session resolver is accepted by the worker protocol. An active JS invocation
+also binds its destination kernel to the invoker's revocation lifecycle. A
+settled inactive invocation keeps that binding until the worker retires, so
+the invoker's revocation still reaches the continuations it left behind.
 
 ## Runtime invariants
 

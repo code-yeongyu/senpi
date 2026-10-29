@@ -3,6 +3,7 @@ import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/p
 import type { EvalKernelRunInput } from "../../tool/types.ts";
 import type { SessionEnvironment } from "../session-env.ts";
 import type { KernelLifecycle } from "../shared/kernel-death.ts";
+import type { InvocationPermissions } from "../shared/invocation-authority.ts";
 import type { PeerKernelToolsDescribe } from "./kernel-tools-host.ts";
 import type { KernelSpawnProcess, KillProcessGroup } from "./process.ts";
 import type { PythonStartupStage } from "./startup.ts";
@@ -12,6 +13,7 @@ export interface PythonKernelStartOptions extends KernelLifecycle {
 	readonly interpreterPath: string;
 	readonly sessionId: string;
 	readonly cwd: string;
+	readonly permissions?: InvocationPermissions;
 	readonly connection: BridgeConnectionConfig;
 	readonly env?: NodeJS.ProcessEnv;
 	/** Per-session PI_* values merged into the interpreter environment at spawn. */

@@ -38,6 +38,10 @@
 			"types": "./dist/harness/session/testing/index.d.ts",
 			"import": "./dist/harness/session/testing/index.js"
 		},
+		"./testing/win32-sim": {
+			"types": "./dist/testing/win32-sim.d.ts",
+			"import": "./dist/testing/win32-sim.js"
+		},
 		"./package.json": "./package.json"
 	},
 	"files": [
