@@ -370,8 +370,6 @@
       // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
       "packages/coding-agent/examples/extensions/custom-provider-anthropic/index.ts": ["default"],
       // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
-      "packages/coding-agent/examples/extensions/custom-provider-gitlab-duo/index.ts": ["default"],
-      // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
       "packages/coding-agent/examples/extensions/debug-provider.ts": ["default"],
       // default export is the extension factory the loader imports by path, not an import (entry, newly export-checked)
       "packages/coding-agent/examples/extensions/dirty-repo-guard.ts": ["default"],
