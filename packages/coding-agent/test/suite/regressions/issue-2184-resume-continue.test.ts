@@ -130,8 +130,12 @@ async function continueIn(cwd: string, appMode: "interactive" | "print", answer?
 		{},
 		cwd,
 	);
-	if (answer !== undefined) child.send(answer);
-	const line = await child.line("RESULT ");
+	const result = child.line("RESULT ");
+	if (answer !== undefined) {
+		await child.waitForOutput(`${REBIND_PROMPT} [y/N] `);
+		child.send(answer);
+	}
+	const line = await result;
 	await child.exit();
 	return {
 		output: child.output(),
