@@ -73,6 +73,8 @@ it("RULING-26 Q4 freezes run state, lifecycle and dialogs at one sequence; targe
 });
 
 it("RULING-26 Q4 a real in-process session folds its own lifecycle and run state into the cut", async () => {
+	// Compact acceptance and client delivery stamp their own observation of the same lifecycle.
+	vi.spyOn(Date, "now").mockReturnValue(Date.UTC(2026, 9, 29));
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 	await using host = await statusHost();
 	const admissions = vi.spyOn(RpcSessionRegistry.prototype, "getForCommand");
