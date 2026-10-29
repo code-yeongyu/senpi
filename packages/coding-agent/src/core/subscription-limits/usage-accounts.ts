@@ -8,6 +8,7 @@
 import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
 import { listSlots, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { AUTH_BLOCK_REPROBE_MS } from "../credential-pool/auth-reprobe.ts";
+import { logAccountBlocked } from "../extensions/builtin/anthropic-subscription/account-block-log.ts";
 import {
 	type AnthropicSubscriptionCredential,
 	emptyCredential,
@@ -141,10 +142,12 @@ function claudeAccounts(stored: Credential | undefined, sources: AccountSources)
  */
 async function markAuthRejected(sources: AccountSources, name: string, rejectedRefresh: string): Promise<void> {
 	const now = sources.now();
+	let locked = false;
 	await sources.store.modify("anthropic-subscription", async (current) => {
 		if (current?.type !== "oauth") return current;
 		const credential = current as AnthropicSubscriptionCredential;
 		if (!credential.accounts?.some((slot) => slot.name === name && slot.refresh === rejectedRefresh)) return current;
+		locked = true;
 		return {
 			...credential,
 			accounts: credential.accounts.map((slot) =>
@@ -154,6 +157,14 @@ async function markAuthRejected(sources: AccountSources, name: string, rejectedR
 			),
 		};
 	});
+	if (locked)
+		logAccountBlocked({
+			account: name,
+			reason: "auth_error",
+			until: now + AUTH_BLOCK_REPROBE_MS,
+			shared: true,
+			detail: "usage_poll_token_rejected",
+		});
 }
 
 function chatgptAccounts(stored: Credential | undefined, now: () => number): PollAccount[] {

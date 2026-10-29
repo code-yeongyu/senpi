@@ -39,6 +39,19 @@ export type UnavailableAccount = {
 /** The origin of an account pin, highest precedence first (`resolveClaudeAccountPin`). */
 export type PinSource = "cli" | "settings" | "stored";
 
+/** One pool member's state when the pool refused a request: why it is out, and until when. */
+export type BlockedAccountState = {
+	readonly name: string;
+	readonly reason: string;
+	readonly until: number | undefined;
+};
+
+function describeAccountState(state: BlockedAccountState): string {
+	const until = state.until === undefined ? "re-login" : new Date(state.until).toISOString();
+	const login = state.reason === "auth_error" ? ` (run /login anthropic-subscription for ${state.name})` : "";
+	return `${state.name}: ${state.reason} until ${until}${login}`;
+}
+
 export class AllAccountsBlockedError extends Error {
 	readonly soonestUnblockAt: number | undefined;
 	/**
@@ -57,21 +70,25 @@ export class AllAccountsBlockedError extends Error {
 	readonly limitedModel: string | undefined;
 	/** Set only when account fallback is off, so the guidance names that account instead of the whole pool. */
 	readonly unavailableAccount: UnavailableAccount | undefined;
+	/** Every candidate's state, so the error names which account needs /login and which waits on a reset (senpi#4671). */
+	readonly accounts: readonly BlockedAccountState[];
 
 	constructor(
 		soonestUnblockAt: number | undefined,
 		blockReason?: "auth_error",
 		limitedModel?: string,
 		unavailableAccount?: UnavailableAccount,
+		accounts: readonly BlockedAccountState[] = [],
 	) {
 		const until = soonestUnblockAt === undefined ? undefined : new Date(soonestUnblockAt).toISOString();
-		super(
+		const summary =
 			limitedModel !== undefined && until !== undefined
 				? `All Anthropic Subscription accounts have hit the usage limit for model ${limitedModel} until ${until}.`
 				: until === undefined
 					? "All Anthropic Subscription accounts are blocked until re-login."
-					: `All Anthropic Subscription accounts are blocked until ${until}.`,
-		);
+					: `All Anthropic Subscription accounts are blocked until ${until}.`;
+		super(accounts.length === 0 ? summary : `${summary} Accounts: ${accounts.map(describeAccountState).join("; ")}.`);
+		this.accounts = accounts;
 		this.limitedModel = limitedModel;
 		this.name = "AllAccountsBlockedError";
 		this.soonestUnblockAt = soonestUnblockAt;
@@ -208,5 +225,10 @@ export function selectAccount(accounts: readonly AccountSlot[], options: Affinit
 			: undefined,
 		limitedModel(candidates, now, options.model),
 		unavailableAccount,
+		candidates.map((account) => ({
+			name: account.name,
+			reason: account.blockReason ?? (isAccountBlocked(account, now) ? "blocked" : "model_limit"),
+			until: unblockAt(account, now, options.model),
+		})),
 	);
 }
