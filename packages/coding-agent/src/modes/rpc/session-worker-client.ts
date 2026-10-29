@@ -1,9 +1,5 @@
-import { fileURLToPath } from "node:url";
-import { Worker } from "node:worker_threads";
-import { isBunBinary } from "../../config.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
-import { ownProcessStartedAtMs } from "../../core/extensions/builtin/terminal/process-identity.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { isSecurityNoticeState } from "../../core/security-notices.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
@@ -31,6 +27,8 @@ import { WorkerIntake } from "./session-worker-intake.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 import { randomUUID } from "node:crypto";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
+import { recoveryAgentDir } from "./compact-storage-health.ts";
+import { startSessionWorker } from "./session-worker-start.ts";
 
 /** Lifecycle hooks the owning registry installs on every worker it allocates. */
 export interface SessionWorkerCallbacks {
@@ -41,13 +39,6 @@ export interface SessionWorkerCallbacks {
 	failure: (error: string) => void;
 }
 
-/** Bun wrapper builders define the worker entry name relative to their explicit --root. */
-declare const SENPI_RPC_SESSION_WORKER_ENTRY: string | undefined;
-const compiledWorkerEntry =
-	typeof SENPI_RPC_SESSION_WORKER_ENTRY === "string"
-		? SENPI_RPC_SESSION_WORKER_ENTRY
-		: "./src/modes/rpc/session-worker.ts";
-
 export class SessionWorkerClient {
 	private privateBinding?: McpFormBinding;
 	private stopPrivateBinding?: () => void;
@@ -57,18 +48,7 @@ export class SessionWorkerClient {
 	>();
 	/** The worker's own route to the main-thread Bun.WebView service; released when the worker exits. */
 	private readonly webviewBroker = createWebViewBroker();
-	readonly worker = new Worker(
-		isBunBinary
-			? fileURLToPath(new URL(compiledWorkerEntry, import.meta.url)).replaceAll("\\", "/")
-			: new URL(import.meta.url.endsWith(".ts") ? "./session-worker.ts" : "./session-worker.js", import.meta.url),
-		{
-			workerData: {
-				hostProcessStartedAtMs: ownProcessStartedAtMs(),
-				...(this.webviewBroker ? { webviewBroker: this.webviewBroker.port } : {}),
-			},
-			...(this.webviewBroker ? { transferList: [this.webviewBroker.port] } : {}),
-		},
-	);
+	readonly worker = startSessionWorker(this.webviewBroker);
 	readonly exited: Promise<void>;
 	snapshot?: WorkerSnapshot;
 	/** Main marks this only after installing the unique routing binding. */
@@ -88,14 +68,16 @@ export class SessionWorkerClient {
 	private terminalFailure?: string;
 	private stopLimitMirror: () => void = () => {};
 	/** The host's ordered acceptance lane for this worker incarnation, present only while the flag is on. */
-	readonly acceptance = compactUpdatesEnabled() ? new SessionAcceptanceLane() : undefined;
+	readonly acceptance: SessionAcceptanceLane | undefined;
 	/** The host half of this incarnation's payload transport: permits, physical frame order, fragment staging (S12b). */
-	readonly intake = this.acceptance && new WorkerIntake(this.acceptance.staging, (error) => this.fail(error));
+	readonly intake: WorkerIntake | undefined;
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
-	constructor(callbacks: SessionWorkerCallbacks) {
+	constructor(callbacks: SessionWorkerCallbacks, agentDir = recoveryAgentDir) {
 		this.callbacks = callbacks;
+		this.acceptance = compactUpdatesEnabled() ? new SessionAcceptanceLane(undefined, undefined, agentDir) : undefined;
+		this.intake = this.acceptance && new WorkerIntake(this.acceptance.staging, (error) => this.fail(error));
 		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
 				this.intake?.permits.close();

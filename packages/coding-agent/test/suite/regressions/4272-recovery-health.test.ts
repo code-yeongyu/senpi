@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import { lstat, mkdtemp, open, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -111,15 +111,54 @@ it.each(["corrupt", "symlink"] as const)("repairs a %s revision atomically and c
 it("places the default health store under the agent directory and initializes it only once", async () => {
 	vi.stubEnv("SENPI_CODING_AGENT_DIR", undefined);
 	vi.stubEnv("HOME", base);
-	const health = new RecoveryStorageHealth();
-	const expected = `.senpi-recovery-health-${process.getuid?.() ?? "user"}`;
-	expect(await readdir(getAgentDir())).toContain(expected);
 	const mkdir = vi.spyOn(fs, "mkdir");
-
-	await health.revision();
-	await health.revision();
-
+	const health = new RecoveryStorageHealth(getAgentDir());
+	const expected = `.senpi-recovery-health-${process.getuid?.() ?? "user"}`;
 	expect(mkdir).not.toHaveBeenCalled();
+
+	await Promise.all([health.revision(), health.revision()]);
+	await health.revision();
+	health.unavailable();
+	await health.recover(repairWrite);
+
+	expect(await readdir(getAgentDir())).toContain(expected);
+	expect(await readdir(base)).not.toContain(expected);
+	expect(mkdir).toHaveBeenCalledExactlyOnceWith(join(getAgentDir(), expected), { mode: 0o700, recursive: true });
+});
+
+// #4272 S14: a host's captured directory wins over session-time environment discovery.
+it("keeps lane health under the supplied host agent directory", async () => {
+	const agentDir = join(base, "host-agent");
+	vi.stubEnv("SENPI_CODING_AGENT_DIR", join(base, "other-agent"));
+	const lane = new SessionAcceptanceLane({ dir: base }, undefined, agentDir);
+	lane.bootstrap({ transcript: [] });
+	const root = lane.freeze();
+	try {
+		expect(await lane.cutStorage(root, (store) => store.health.revision())).toBe("0");
+		expect(await readdir(agentDir)).toContain(`.senpi-recovery-health-${process.getuid?.() ?? "user"}`);
+	} finally {
+		lane.release(root);
+		lane.retire("close");
+		await lane.idle();
+	}
+});
+
+// #4272 S14 LOW-1: constructors never perform I/O or throw an ownership refusal, and a failed setup is retryable.
+it.each(["revision", "recover"] as const)("defers ownership refusal to %s and retries after repair", async (method) => {
+	const outside = join(base, "outside");
+	await mkdir(outside, { mode: 0o700 });
+	const dir = join(base, `.senpi-recovery-health-${process.getuid?.() ?? "user"}`);
+	await symlink(outside, dir);
+	const health = new RecoveryStorageHealth(base);
+	const operation = vi.fn(repairWrite);
+
+	await expect(method === "revision" ? health.revision() : health.recover(operation)).rejects.toMatchObject({
+		reason: "ownership",
+	});
+	expect(operation).not.toHaveBeenCalled();
+	await rm(dir);
+	expect(await health.revision()).toBe("0");
+	expect((await lstat(dir)).isDirectory()).toBe(true);
 });
 
 // #4272 S14 L5: cleanup/read errors are not proof that storage writes became unavailable.
