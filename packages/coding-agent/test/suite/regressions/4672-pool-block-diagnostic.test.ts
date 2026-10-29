@@ -57,6 +57,18 @@ describe("a refused account pool is a classified failure (senpi#4672)", () => {
 		expect(failure).toMatchObject({ category: "rate_limit", code: "account_pool_blocked", resetsAt: SOONEST });
 	});
 
+	it("finds a pool refusal carried as the cause of a wrapping failure", async () => {
+		const wrapped = new Error("rate_limit", {
+			cause: new Error("context", { cause: new AllAccountsBlockedError(SOONEST) }),
+		});
+
+		expect(await failedTurn(wrapped)).toMatchObject({
+			category: "rate_limit",
+			code: "account_pool_blocked",
+			resetsAt: SOONEST,
+		});
+	});
+
 	it("reports a pool where every account needs a new login as auth", async () => {
 		const failure = await failedTurn(new AllAccountsBlockedError(SOONEST, "auth_error"));
 

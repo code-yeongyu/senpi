@@ -18,6 +18,18 @@ const SDK_KIND_DIAGNOSTICS: Partial<
 	org_not_allowed: { category: "unknown", code: "permission_error" },
 };
 
+const CAUSE_DEPTH = 8;
+
+/** The pool refusal behind `error`: the error itself or one it carries as `cause`, so wrapping never hides it. */
+function poolRefusal(error: unknown): AllAccountsBlockedError | undefined {
+	let current = error;
+	for (let depth = 0; depth < CAUSE_DEPTH && current instanceof Error; depth++) {
+		if (current instanceof AllAccountsBlockedError) return current;
+		current = current.cause;
+	}
+	return undefined;
+}
+
 /**
  * The providerDiagnostic for an Anthropic Subscription turn failure (senpi#4672), mirroring the
  * chatgpt-subscription adapter (senpi#3771). A pool the extension refused locally is `auth` when every
@@ -25,15 +37,16 @@ const SDK_KIND_DIAGNOSTICS: Partial<
  * to its provider token. The result is revalidated against the closed vocabulary, so nothing else escapes.
  */
 export function anthropicSubscriptionDiagnostic(error: unknown): ProviderDiagnostic | undefined {
-	if (error instanceof AllAccountsBlockedError) {
+	const pool = poolRefusal(error);
+	if (pool !== undefined) {
 		// A pin to an account that is no longer configured is a configuration error, not a limit: no diagnostic.
-		if (error.unavailableAccount?.configured === false) return undefined;
-		const auth = error.blockReason === "auth_error";
+		if (pool.unavailableAccount?.configured === false) return undefined;
+		const auth = pool.blockReason === "auth_error";
 		return sanitizeProviderDiagnostic({
 			category: auth ? "auth" : "rate_limit",
 			code: auth ? "account_pool_auth_blocked" : "account_pool_blocked",
 			evidence: "structured_code",
-			...(auth || error.soonestUnblockAt === undefined ? {} : { resetsAt: error.soonestUnblockAt }),
+			...(auth || pool.soonestUnblockAt === undefined ? {} : { resetsAt: pool.soonestUnblockAt }),
 		});
 	}
 	const kind = error instanceof ClassifiedSdkError ? error.classification.kind : classifySdkError(error).kind;
