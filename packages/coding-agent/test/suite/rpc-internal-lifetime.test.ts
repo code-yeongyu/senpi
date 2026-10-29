@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 function killIfAlive(pid: number): void {
 	try {
@@ -39,7 +40,7 @@ describe.skipIf(process.platform === "win32")("wrapped internal host lifetime", 
 						endpoint,
 					],
 					{
-						env: { ...process.env },
+						env: { ...hostSpawnEnv() },
 						stdio: ["ignore", "ignore", "pipe"],
 					},
 				);

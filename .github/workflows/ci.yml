@@ -111,7 +111,7 @@ jobs:
       - name: Codemode package tests (including gate regressions)
         run: bun run --cwd packages/senpi-codemode test -- test/gate
       - name: Gate harness types
-        run: bunx tsc --noEmit --project packages/senpi-codemode/scripts/tsconfig.gate.json
+        run: bun check --no-script --all -p packages/senpi-codemode/scripts/tsconfig.gate.json
       - name: Upload gate report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -333,6 +333,54 @@ jobs:
             echo "## Test (coding-agent ${{ matrix.shard }}/4)"
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
+  # Fused-path equivalence (EQ, plan P0-05b): the real CLI on the Bun child runs cases E01-E20 against the fake model
+  # server and must match the B0 goldens recorded for this platform; the Z1.n smoke compares a Node and a Bun child.
+  fused-equivalence:
+    name: Fused equivalence (EQ E01-E20, Node smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      - name: Normalizer unit tests
+        run: node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs
+
+      - name: EQ compare against the B0 goldens
+        timeout-minutes: 25
+        run: node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --pipeline legacy --placement fused --evidence eq-ci
+
+      - name: Z1.n Node smoke (node vs bun)
+        timeout-minutes: 10
+        run: node .agents/skills/senpi-qa/scripts/scenarios/node-smoke-qa.mjs --compare --runtimes node,bun --evidence node-smoke
+
       - name: Check OS temp after tests
         if: always() && steps.test_temp_snapshot.outcome == 'success'
         shell: bash
@@ -1443,6 +1491,7 @@ jobs:
         check,
         codemode-gate,
         test-coding-agent,
+        fused-equivalence,
         rpc-owner-lifetime,
         macos-combined,
         grep-native-contract,
@@ -1487,6 +1536,7 @@ jobs:
             echo "- check: ${{ needs.check.result }}"
             echo "- codemode-gate: ${{ needs.codemode-gate.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
+            echo "- fused-equivalence: ${{ needs.fused-equivalence.result }}"
             echo "- rpc-owner-lifetime: ${{ needs.rpc-owner-lifetime.result }}"
             echo "- macos-combined: ${{ needs.macos-combined.result }}"
             echo "- grep-native-contract: ${{ needs.grep-native-contract.result }}"

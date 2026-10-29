@@ -18,6 +18,7 @@ import { DEFAULT_HOST_LAUNCH_SPEC } from "../../src/modes/rpc/host-launch-spec.t
 import { HOST_EXIT_REFUSED, runHostRequest } from "../../src/modes/rpc/host-runner.ts";
 import { processIsLive, readProcessStartTime } from "../../src/utils/process-identity.ts";
 import { reapSpawnedHosts } from "../helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const CLI_ENGINE = "2026.10.16";
 const CLI_PROFILE = "cli-profile-with-agent-mode-extensions";
@@ -125,7 +126,7 @@ async function spawnSilentListener(socket: string): Promise<ChildProcess> {
 	].join(" ");
 	const child = spawn(process.execPath, ["-e", script], {
 		stdio: ["ignore", "pipe", "ignore"],
-		env: { ...process.env, HELD_SOCKET: socket },
+		env: { ...hostSpawnEnv(), HELD_SOCKET: socket },
 	});
 	children.push(child);
 	await new Promise<void>((resolve, reject) => {

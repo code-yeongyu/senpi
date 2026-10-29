@@ -893,6 +893,7 @@ parsing a version string:
 - `memory_pressure` - multi-session hosts only: `true` while this host's memory sampler reads its memory footprint
   above `SENPI_RPC_HOST_RSS_WARN_MB`, else `false`. Not identity and never an admission signal; `senpi host status`
   reports it per endpoint. Classic hosts and hosts released before the field omit it.
+- `path_identity_resolver` - multi-session hosts only: `{ state: "not_started" | "ready" | "unavailable", detail }`, the permission system's path identity worker. `not_started` means no worker has published its first mount snapshot yet (the first path request spawns it); `ready` means one has; `unavailable` names why it could not start; path rules for `read`/`edit`/`list`/`grep` then match by spelling only (a JS cell's own canonical path still decides exactly).
 
 Compatibility is decided from `protocolVersion` + `capabilities`, and "is my build newer?" from `engineOrdinal`.
 A `serverVersion` string comparison is never a compatibility test: two hosts with different version strings can
@@ -1045,6 +1046,11 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    connection occupancy. Clients see `session_closed { reason: "handoff_parked", sessionPath }` before
    their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
    ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
+   A session with no attachment cannot be reached on the drained generation any more, so each drain pass
+   holds its automatic turns (goal continuation, monitor and codemode wakes), exactly as an unattended
+   reopen does: they wait as notices, its running turn is its last on this generation, and it parks once
+   that turn settles. A person's input or `resume_session` releases the hold after the reopen. A session a
+   client is still attached to keeps its automatic turns.
 
 Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 
@@ -1351,7 +1357,7 @@ which prints the bare socket path).
   `senpi host handoff` command.
 - `status` prints `{ reachable, lifecycle, socket, pid, instanceId, generation, engineVersion, capabilities,
   launchProfile, runtimeBuildId, handover, sessions: { total, interactive, worker, retained, foreign_attached, foreign_retained },
-  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, env_keys, generations, pointer, crashes, shard, session_rows,
+  zombies, rss_mb, host_rss_mb, host_footprint_mb, open_fds, memory_pressure, path_identity_resolver, env_keys, generations, pointer, crashes, shard, session_rows,
   claims_live, claims }` and exits 3 when nothing answers - with the same
   field set, so a caller parses one shape and branches on one boolean. The additive `lifecycle` field is
   `"ready"` while an answering supervised host accepts opens, `"stopping"` while it shuts down or drains,
@@ -1391,6 +1397,7 @@ which prints the bare socket path).
     `get_protocol_info`; `null` when nothing answers or the host predates the field. It lives in the host process
     alone, so a draining predecessor's state is not reported, and it is observability only: a pressured endpoint
     admits every open.
+  - `path_identity_resolver`: the ANSWERING generation's path identity resolver, `{ state, detail }` as `get_protocol_info` reports it; `null` when nothing answers or the host predates the field.
   - `crashes`: records in the endpoint's `crashes.jsonl` that are deaths - supervised host children that died
     rather than stopped, `engine_stop` and watchdog lines excluded; `0` when the file is absent. Each line of that
     file is `{ at, signal?, code?, uptimeMs, kind?, generation?, detection?, sender?, chain?, reason?, stopIntent?,
@@ -2017,7 +2024,7 @@ Startup: `senpi --mode rpc --multi-session` → NO default session is constructe
 
 ### Session replacement
 
-A replacement (`new_session`, `switch_session`, `fork`) responds as soon as the swap is committed; the derived-surface refresh that rebinds extensions continues afterwards. That refresh does not disturb work the client starts against the committed session: tool activation performed while extensions are still binding no longer cancels an in-flight compaction or invalidates its context. `loaded_surfaces_changed` is emitted only when the surface digest actually changes, so it is NOT a settle barrier clients can wait on.
+A replacement (`new_session`, `switch_session`, `fork`) responds as soon as the swap is committed; the derived-surface refresh that rebinds extensions continues afterwards. That refresh does not disturb work the client starts against the committed session: tool activation performed while extensions are still binding no longer cancels an in-flight compaction or invalidates its context. Outside an MCP startup window, `loaded_surfaces_changed` is emitted only when the surface digest actually changes, so it is NOT a settle barrier for the extension rebind; the one settle point it does carry is the end of the MCP startup window described under [loaded_surfaces_changed](#loaded_surfaces_changed).
 
 #### Replacement identity event
 
@@ -5570,6 +5577,16 @@ Emitted without a request id when the loaded skill, extension, or MCP inventory 
 ```json
 {"type": "loaded_surfaces_changed"}
 ```
+
+**MCP startup window.** Every MCP attach of a session (session start, a new, resumed or forked session, a reload) opens a startup window. It stays open until every MCP server connect that attach started has settled: connected with its tools registered, failed, or timed out by the server's `connectTimeoutMs`. The count of startup events is fixed by this contract, not by how parallel connects interleave or how often the client reads:
+
+- While the window is open, MCP inventory changes emit no `loaded_surfaces_changed`. `get_loaded_surfaces` still answers with the current inventory, which may show servers still connecting.
+- When the window closes after starting at least one connect, each connection attached to the session receives exactly one `loaded_surfaces_changed`, even when its last `get_loaded_surfaces` already showed the final inventory. Re-reading after it gives the settled startup inventory. A multi-session host applies the per-connection dedupe above: sessions that settle onto the same inventory share one event.
+- An attach that starts no connect (no server configured, servers disabled, or every connection reused) emits no startup event; if its inventory changed, that change is announced once, like any other.
+- A connection that attaches after the window closed receives no startup event; it reads the inventory.
+- After the window, each MCP inventory change emits as before. Skill and extension changes are not held by the window.
+
+`get_loaded_surfaces` never emits `loaded_surfaces_changed`: a read answers with the inventory and records nothing, so polling during startup adds no events.
 
 ### transcript_write_failed
 

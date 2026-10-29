@@ -11,7 +11,7 @@ import { isBunBinary } from "../../config.ts";
 import { runtimeExecArgv } from "../../utils/runtime-exec-argv.ts";
 import { resolveCliMainPath } from "./host-cli-entry.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
-import { HOST_INSTANCE_ID_ENV } from "./host-identity-env.ts";
+import { HOST_INSTANCE_ID_ENV, INTERNAL_KEY_STDIN_ENV } from "./host-identity-env.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
 	HOST_PUBLIC_SOCKET_ENV,
@@ -291,7 +291,7 @@ export function spawnHostChild(options: {
 				[HOST_WATCH_LIFETIME_FIFO_ENV]: options.lifetimeFifo,
 				...(internal.dir ? { [HOST_SCRATCH_DIR_ENV]: internal.dir } : {}),
 				[SOCKET_SECRET_FILE_ENV]: process.platform === "win32" && internalSecret ? internal.secretPath : undefined,
-				SENPI_RPC_INTERNAL_KEY_STDIN: options.internalKey ? "1" : undefined,
+				[INTERNAL_KEY_STDIN_ENV]: options.internalKey ? "1" : undefined,
 				[HOST_CLEANUP_PATHS_ENV]: options.cleanupPaths.join("\n"),
 				...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
 			},

@@ -29,6 +29,7 @@ import {
 	reapCollectedHosts,
 	waitForPidGone,
 } from "./helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 import { fileAppears } from "./helpers/rpc-supervised-host.ts";
 
 const roots: string[] = [];
@@ -970,7 +971,7 @@ async function startUnregisteredListener(socketPath: string): Promise<ChildProce
 	].join(" ");
 	const child = spawn(process.execPath, ["-e", script], {
 		stdio: ["ignore", "pipe", "ignore"],
-		env: { ...process.env, HELD_SOCKET: socketPath },
+		env: { ...hostSpawnEnv(), HELD_SOCKET: socketPath },
 	});
 	children.push(child);
 	await new Promise<void>((resolve, reject) => {
@@ -1019,7 +1020,7 @@ async function leaveStaleEntry(socketPath: string): Promise<void> {
 	].join(" ");
 	const child = spawn(process.execPath, ["-e", script], {
 		stdio: ["ignore", "pipe", "ignore"],
-		env: { ...process.env, STALE_SOCKET: socketPath },
+		env: { ...hostSpawnEnv(), STALE_SOCKET: socketPath },
 	});
 	children.push(child);
 	await new Promise<void>((resolve, reject) => {
@@ -1059,7 +1060,7 @@ async function startBusySocketHost(qa: Qa, writer: Writer): Promise<Managed> {
 	const child = spawn(process.execPath, ["-e", script], {
 		detached: true,
 		stdio: ["ignore", "pipe", "pipe"],
-		env: { ...process.env, BUSY_SOCKET: qa.socket },
+		env: { ...hostSpawnEnv(), BUSY_SOCKET: qa.socket },
 	});
 	children.push(child);
 	await new Promise<void>((resolve, reject) => {

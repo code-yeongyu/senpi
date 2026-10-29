@@ -1,40 +1,42 @@
+// @ts-check
+import { once } from "node:events";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AuthStorage } from "../../../../src/core/auth-storage.ts";
-import permissionSystemExtension from "../../../../src/core/extensions/builtin/permission-system/index.ts";
-import { RejectedError } from "../../../../src/core/extensions/builtin/permission-system/types.ts";
-import { ExtensionRunner } from "../../../../src/core/extensions/runner.ts";
-import type { ExtensionUIContext } from "../../../../src/core/extensions/types.ts";
-import { SessionManager } from "../../../../src/core/session-manager.ts";
-import { theme } from "../../../../src/modes/interactive/theme/theme.ts";
-import { createInMemoryModelRegistry } from "../../../model-runtime-test-utils.ts";
-import { createTestExtensionsResult } from "../../../utilities.ts";
+import { AuthStorage } from "../../../../dist/core/auth-storage.js";
+import { createEventBus } from "../../../../dist/core/event-bus.js";
+import permissionSystemExtension from "../../../../dist/core/extensions/builtin/permission-system/index.js";
+import { RejectedError } from "../../../../dist/core/extensions/builtin/permission-system/types.js";
+import { createExtensionRuntime, loadExtensionFromFactory } from "../../../../dist/core/extensions/loader.js";
+import { ExtensionRunner } from "../../../../dist/core/extensions/runner.js";
+import { ModelRegistry } from "../../../../dist/core/model-registry.js";
+import { ModelRuntime } from "../../../../dist/core/model-runtime.js";
+import { SessionManager } from "../../../../dist/core/session-manager.js";
+import { theme } from "../../../../dist/modes/interactive/theme/theme.js";
 
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-	let resolve!: () => void;
-	const promise = new Promise<void>((resolvePromise) => {
-		resolve = resolvePromise;
-	});
-	return { promise, resolve };
+/** @returns {PromiseWithResolvers<void>} */
+function deferred() {
+	return Promise.withResolvers();
 }
 
 const tempDir = mkdtempSync(join(tmpdir(), "pi-perm-rejection-child-"));
 
 try {
-	const extensionsResult = await createTestExtensionsResult([permissionSystemExtension], tempDir);
-	const eventBus = extensionsResult.eventBus;
-	if (!eventBus) throw new Error("Expected the test extension event bus");
-	const sessionManager = SessionManager.create(tempDir);
-	const modelRegistry = await createInMemoryModelRegistry(AuthStorage.inMemory());
-	const runner = new ExtensionRunner(
-		extensionsResult.extensions,
-		extensionsResult.runtime,
+	// Use the built runtime, not the source utilities' tsx/provider-catalog import graph.
+	const runtime = createExtensionRuntime();
+	const eventBus = createEventBus();
+	const extension = await loadExtensionFromFactory(
+		permissionSystemExtension,
 		tempDir,
-		sessionManager,
-		modelRegistry,
 		eventBus,
+		runtime,
+		"<inline:1>",
 	);
+	const sessionManager = SessionManager.create(tempDir);
+	const modelRegistry = new ModelRegistry(
+		await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: null, allowModelNetwork: false }),
+	);
+	const runner = new ExtensionRunner([extension], runtime, tempDir, sessionManager, modelRegistry, eventBus);
 
 	runner.setFlagValue("permission-preset", "ask");
 	await runner.emit({ type: "session_start", reason: "startup" });
@@ -43,6 +45,7 @@ try {
 	const promptOpened = deferred();
 	const releasePrompt = deferred();
 	const unsubscribe = eventBus.on("permission_asked", () => permissionAsked.resolve());
+	/** @type {import("../../../../dist/core/extensions/types.js").ExtensionUIContext} */
 	const ui = {
 		select: async () => {
 			promptOpened.resolve();
@@ -62,7 +65,9 @@ try {
 		setFooter: () => {},
 		setHeader: () => {},
 		setTitle: () => {},
-		custom: async () => undefined as never,
+		custom: async () => {
+			throw new Error("Unexpected custom dialog");
+		},
 		pasteToEditor: () => {},
 		setEditorText: () => {},
 		getEditorText: () => "",
@@ -76,7 +81,7 @@ try {
 		setTheme: () => ({ success: false, error: "UI not available" }),
 		getToolsExpanded: () => false,
 		setToolsExpanded: () => {},
-	} satisfies ExtensionUIContext;
+	};
 	runner.setUIContext(ui, "tui");
 
 	const toolCallPromise = runner.emitToolCall({
@@ -87,8 +92,13 @@ try {
 	});
 
 	await Promise.all([permissionAsked.promise, promptOpened.promise]);
+	// Keep the prompt open until the parent observes it and requests shutdown.
+	const shutdownRequested = once(process.stdin, "data");
+	process.stdout.write("permission prompt open\n");
+	await shutdownRequested;
+	process.stdin.pause();
 	await runner.emit({ type: "session_shutdown", reason: "quit" });
-	await new Promise<void>((resolve) => setImmediate(resolve));
+	await new Promise((resolve) => setImmediate(() => resolve(undefined)));
 	releasePrompt.resolve();
 
 	const toolCallResult = await toolCallPromise;
