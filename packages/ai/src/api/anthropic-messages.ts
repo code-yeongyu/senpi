@@ -173,7 +173,7 @@ function getCacheControl(
 // The bundled Claude Code version and the floor of the advertised `claude-cli/<version>`
 // (see utils/claude-code-version.ts). Keep this exact declaration: a downstream installer
 // (oh-my-openagent) rewrites it byte-for-byte in the installed dist and bundle.
-const claudeCodeVersion = "2.1.306";
+const claudeCodeVersion = "2.1.312";
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
