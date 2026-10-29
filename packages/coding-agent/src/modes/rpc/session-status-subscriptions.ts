@@ -37,18 +37,19 @@ export function matchingMirrors(
 	subscriptions: Iterable<StatusSubscription>,
 	sessionId: string,
 	recordType: string,
-	entry: SessionStatusEntryView | undefined,
+	entryView: () => SessionStatusEntryView | undefined,
 	dialogs = false,
 ): StatusSubscription[] {
-	if (!entry) return [];
-	return [...subscriptions].filter(
+	const candidates = [...subscriptions].filter(
 		(subscription) =>
 			(!dialogs || subscription.options.dialogs === true) &&
 			(recordType === "snapshot_marker" || dialogs
 				? subscription.options.mirror.kind !== "none"
-				: mirrorsRecord(subscription.options.mirror, recordType)) &&
-			subscriptionMatches(subscription.options, sessionId, entry),
+				: mirrorsRecord(subscription.options.mirror, recordType)),
 	);
+	if (candidates.length === 0) return [];
+	const entry = entryView();
+	return entry ? candidates.filter((s) => subscriptionMatches(s.options, sessionId, entry)) : [];
 }
 
 export type SessionSelector =

@@ -248,7 +248,7 @@ export class SessionStatusStream {
 			[...this.pendings.values(), ...this.subscriptions.values()],
 			sessionId,
 			recordType,
-			this.source?.entryView(sessionId) ?? this.lastViews.get(sessionId)?.entry,
+			() => this.source?.entryView(sessionId) ?? this.lastViews.get(sessionId)?.entry,
 			dialogs,
 		);
 	}
