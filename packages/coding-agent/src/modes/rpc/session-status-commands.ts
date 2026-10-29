@@ -19,6 +19,7 @@ import { applyContextPatch, publishedSessionContext } from "./session-context-pa
 import type { RpcSessionEntry } from "./session-registry-types.ts";
 import { MAX_SUBSCRIPTIONS_PER_CONNECTION, type SessionStatusStream } from "./session-status-stream.ts";
 import { parseSubscription } from "./session-status-subscriptions.ts";
+import type { SessionStatusRecord } from "./session-status.ts";
 
 type Command<T extends RpcCommand["type"]> = Extract<RpcCommand, { type: T }>;
 
@@ -49,6 +50,7 @@ export function answerSubscribeSessions(
 	command: Command<"subscribe_sessions">,
 	connectionId: string | undefined,
 	stream: SessionStatusStream,
+	snapshotSink?: (rows: () => Iterable<SessionStatusRecord>, subscriptionId: string) => void,
 ): SubscribeAnswer {
 	if (connectionId === undefined)
 		return {
@@ -67,7 +69,7 @@ export function answerSubscribeSessions(
 	const parsed = parseSubscription(command);
 	if ("refusal" in parsed)
 		return { answer: refusal(command.id, command.type, RPC_ERROR_INVALID_SUBSCRIPTION, parsed.refusal) };
-	const subscribed = stream.subscribe(connectionId, parsed.options);
+	const subscribed = stream.subscribe(connectionId, parsed.options, snapshotSink);
 	// The response must reach the connection's writer actor before the subscription goes live: a delta
 	// published while this dispatch was awaiting the route then queues behind it, and `seq 0` (the
 	// snapshot) is always the first record the client reads for this subscription id.

@@ -8,6 +8,7 @@ import { SocketEventSinkActor } from "./socket-event-fanout.ts";
  */
 export class AdmissionRoutingActor extends SocketEventSinkActor {
 	readonly admissions = new Set<string>();
+	readonly subscriptions = new Map<string, string>();
 	// Terminal reply debt can enqueue after S08 retires the stream. Headers only, bounded by epoch admission IDs;
 	// this is neither another counter nor an attempt index, and cancelled answers never consult it.
 	private readonly terminal = new Map<string, RecoveryStreamState>();
@@ -20,10 +21,15 @@ export class AdmissionRoutingActor extends SocketEventSinkActor {
 	}
 
 	route(line: string, checkpoints: RecoveryCheckpoints, socketEpoch: string): readonly string[] {
-		if (this.admissions.size === 0) return [line];
+		if (this.admissions.size === 0 && this.subscriptions.size === 0) return [line];
 		const record: Record<string, unknown> = JSON.parse(line);
 		if (typeof record.sessionId !== "string" || record.admissionId !== undefined) return [line];
-		if (typeof record.subscriptionId === "string") return [line];
+		if (typeof record.subscriptionId === "string") {
+			const subscription = this.subscriptions.get(record.subscriptionId);
+			return subscription === undefined
+				? [line]
+				: [serializeJsonLine({ ...record, admissionId: subscription, generation: 0 })];
+		}
 		const stream = this.remember(record.sessionId, checkpoints, socketEpoch);
 		const routes = stream?.routes.filter((id) => this.admissions.has(id)) ?? [];
 		return routes.length === 0

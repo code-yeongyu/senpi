@@ -11,10 +11,8 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { SessionRetryFallbackProfile } from "../../core/agent-session-runtime.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
-import type { BrowserEngine } from "../../core/browser-engine.ts";
 import { type ClientMessageIdentity, clientMessageIdentity } from "../../core/client-message-identity.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
-import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { ServiceTier } from "../../core/extensions/builtin/service-tier.ts";
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import { MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -23,6 +21,12 @@ import { signalSpawnedChild } from "../../utils/child-signal.ts";
 import { DETACH_CONNECTION_CAPABILITY } from "./custom-capability.ts";
 import { ORIGIN_HOST_INSTANCE_FIELD, originHostInstance } from "./host-observe-request.ts";
 import { RpcCommandError } from "./rpc-command-error.ts";
+import {
+	RpcClientAdmissions,
+	type CompactOpenResult,
+	type LegacyOpenResult,
+	type RpcOpenOptions,
+} from "./rpc-client-admissions.ts";
 export { RpcCommandError } from "./rpc-command-error.ts";
 
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
@@ -189,6 +193,7 @@ const MAX_PENDING_SESSION_EVENTS = 512;
 const MAX_PENDING_SESSION_EVENT_BYTES = 1024 * 1024;
 
 export class RpcClient {
+	readonly admissions = new RpcClientAdmissions((command) => this.send(command, false));
 	private process: ChildProcess | null = null;
 	private socket: Socket | null = null;
 	private stopReadingStdout: (() => void) | null = null;
@@ -443,33 +448,17 @@ export class RpcClient {
 		await this.send({ type: "set_client_info", width, capabilities }, this.sessionId !== undefined);
 	}
 
-	async openSession(options: {
-		attended?: false;
-		spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
-		/** Attach only on this generation; requires `expected_host_instance`. */
-		expectedHostInstance?: string;
-		sessionPath?: string;
-		cwd?: string;
-		provider?: string;
-		modelId?: string;
-		thinkingLevel?: ThinkingLevel;
-		permissionPreset?: string;
-		/** Keep the session alive when its last client disconnects; needs the host's `retain_on_disconnect`. */
-		retain_on_disconnect?: boolean;
-		/** Per-session auto-titling; needs the host's `auto_title_per_session`. */
-		auto_title?: boolean;
-		/** Where this session's replies render; needs the host's `prompt_surface` (`prompt_surface_chat` for `chat`). */
-		promptSurface?: PromptSurface;
-		/** Which browser this session's skills drive; needs the host's `browser_engine`. */
-		browserEngine?: BrowserEngine;
-		/** This session's own fallback policy, in memory only; needs the host's `retry_fallback_profile`. */
-		retryFallback?: SessionRetryFallbackProfile;
-	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
+	async openSession(options: RpcOpenOptions & { admissionId: string }): Promise<CompactOpenResult>;
+	async openSession(options: RpcOpenOptions & { admissionId?: undefined }): Promise<LegacyOpenResult>;
+	async openSession(options: RpcOpenOptions): Promise<LegacyOpenResult | CompactOpenResult>;
+	async openSession(options: RpcOpenOptions): Promise<LegacyOpenResult | CompactOpenResult> {
 		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
 		this.pendingOpenSession = true;
 		try {
-			const response = await this.send({ type: "open_session", ...options }, false);
-			const opened = this.getData<{ sessionId: string; state: RpcSessionState; attached?: boolean }>(response);
+			const opened =
+				options.admissionId === undefined
+					? this.getData<LegacyOpenResult>(await this.send({ type: "open_session", ...options }, false))
+					: await this.admissions.open({ ...options, admissionId: options.admissionId });
 			this.sessionId = opened.sessionId;
 			this.compactions.clear();
 			this.pendingOpenSession = false;
@@ -1360,6 +1349,7 @@ export class RpcClient {
 	private handleLine(line: string): void {
 		try {
 			const data = JSON.parse(line);
+			this.admissions.receive(data);
 
 			// Check if it's a response to a pending request
 			if (data.type === "response" && data.id && this.pendingRequests.has(data.id)) {
@@ -1419,6 +1409,7 @@ export class RpcClient {
 	}
 
 	private notifyDisconnect(error: RpcTransportGoneError): void {
+		this.admissions.clear();
 		this.rejectPendingRequests(error);
 		if (!this.disconnectNotified && !this.stopping) {
 			this.disconnectNotified = true;

@@ -5,6 +5,9 @@ import { error } from "./session-router-errors.ts";
 /** Effect-based reads only. New session commands require attachment by default. */
 export const ATTACH_GATE_EXEMPT: ReadonlySet<RpcCommand["type"]> = new Set<RpcCommand["type"]>([
 	"get_protocol_info",
+	// Recovery owners validate the peer + admission + lease; host snapshots and mirrors have no attachment.
+	"get_recovery_page",
+	"release_recovery",
 	"list_sessions",
 	"subscribe_sessions",
 	"unsubscribe_sessions",

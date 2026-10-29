@@ -88,7 +88,9 @@ export async function answerRecoveryPage(
 			? outcome.value.generation
 			: ordinary?.routes.includes(command.admissionId)
 				? ordinary.generation
-				: undefined;
+				: writer.isCompactSubscription(writer.currentConnection() ?? "", command.admissionId, caller.sessionId)
+					? 0
+					: undefined;
 	if (outcome.ok)
 		return {
 			id,

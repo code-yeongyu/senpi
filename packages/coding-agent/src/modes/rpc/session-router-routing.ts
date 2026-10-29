@@ -1,6 +1,7 @@
 import { detachConnection } from "./connection-detach.ts";
 import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
 import { invalidCompactAdmission } from "./compact-admission-validation.ts";
+import { compactSubscribe } from "./compact-subscribe-admission.ts";
 import { resetStream } from "./compact-reset-stream.ts";
 
 import { answerEffectFromTranscript } from "./effect-commands.ts";
@@ -171,6 +172,7 @@ export async function dispatch(
 		return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 	}
 	if (command.type === "subscribe_sessions") {
+		if (host.admissions && command.admissionId !== undefined) return compactSubscribe(host, command);
 		const connection = host.writer.currentConnection();
 		const { answer, activate } = answerSubscribeSessions(command, connection, host.writer.status);
 		// On a socket host the response is enqueued HERE, ahead of activation: a delta published
