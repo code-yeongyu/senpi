@@ -1,5 +1,5 @@
 import type { EventLeases } from "./compact-event-leases.ts";
-import { randomInt } from "node:crypto";
+import { createHmac, randomBytes, randomInt } from "node:crypto";
 import type { RecoveryRepairAdvice } from "@earendil-works/pi-protocol";
 import { CompactStorageReadError } from "./compact-storage-io.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
@@ -13,6 +13,11 @@ import type { SessionEventWriter } from "./session-event-writer.ts";
 
 type RecoveryPageCommand = Extract<RpcCommand, { type: "get_recovery_page" }>;
 type ReleaseRecoveryCommand = Extract<RpcCommand, { type: "release_recovery" }>;
+
+// RULING-97: one process-local secret, independent of token validity; never serialized or logged.
+const repairAdviceKey = randomBytes(32);
+const tokenRetryAfterMs = (token: string): number =>
+	100 + (createHmac("sha256", repairAdviceKey).update(token, "utf8").digest().readUInt32BE(0) % 1_901);
 
 /** The stable error code of each typed refusal; `errorData` carries the refusal itself (kind, reason, hint). */
 const codeOf = (failure: RecoveryPageFailure): string =>
@@ -81,7 +86,11 @@ export async function answerRecoveryPage(
 		source: source ? { sessionEpoch: source.sessionEpoch, sequence: source.acceptedSequence } : null,
 		hint: "restart_from_catalog",
 		// Unknown/foreign tokens and mismatched admissions reveal no state, including through reply bytes.
-		retryAfterMs: outcome.ok ? 0 : failure?.reason === "unknown_token" ? 100 : randomInt(100, 2_001),
+		retryAfterMs: outcome.ok
+			? 0
+			: failure?.reason === "unknown_token"
+				? tokenRetryAfterMs("lease" in command ? command.lease.id : command.token)
+				: randomInt(100, 2_001),
 	};
 	const ordinary = writer.ordinaryRoute(writer.currentConnection() ?? "", caller.sessionId);
 	const generation =
