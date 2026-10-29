@@ -29,6 +29,8 @@ import { subscriptionLimits } from "../../core/subscription-limits/limit-store.t
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 import { WorkerIntake } from "./session-worker-intake.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
+import { WorkerOwnerGates } from "./session-worker-owners.ts";
+import { sessionWorkerDataRegistry } from "./session-worker-data.ts";
 import { randomUUID } from "node:crypto";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 
@@ -48,6 +50,28 @@ const compiledWorkerEntry =
 		? SENPI_RPC_SESSION_WORKER_ENTRY
 		: "./src/modes/rpc/session-worker.ts";
 
+function spawnSessionWorker(webviewBroker: ReturnType<typeof createWebViewBroker>) {
+	return sessionWorkerDataRegistry.spawn(
+		(issued) =>
+			new Worker(
+				isBunBinary
+					? fileURLToPath(new URL(compiledWorkerEntry, import.meta.url)).replaceAll("\\", "/")
+					: new URL(
+							import.meta.url.endsWith(".ts") ? "./session-worker.ts" : "./session-worker.js",
+							import.meta.url,
+						),
+				{
+					workerData: {
+						hostProcessStartedAtMs: ownProcessStartedAtMs(),
+						extensionData: issued.extensionData,
+						...(webviewBroker ? { webviewBroker: webviewBroker.port } : {}),
+					},
+					transferList: [...(webviewBroker ? [webviewBroker.port] : []), ...issued.transfer],
+				},
+			),
+	);
+}
+
 export class SessionWorkerClient {
 	private privateBinding?: McpFormBinding;
 	private stopPrivateBinding?: () => void;
@@ -57,18 +81,8 @@ export class SessionWorkerClient {
 	>();
 	/** The worker's own route to the main-thread Bun.WebView service; released when the worker exits. */
 	private readonly webviewBroker = createWebViewBroker();
-	readonly worker = new Worker(
-		isBunBinary
-			? fileURLToPath(new URL(compiledWorkerEntry, import.meta.url)).replaceAll("\\", "/")
-			: new URL(import.meta.url.endsWith(".ts") ? "./session-worker.ts" : "./session-worker.js", import.meta.url),
-		{
-			workerData: {
-				hostProcessStartedAtMs: ownProcessStartedAtMs(),
-				...(this.webviewBroker ? { webviewBroker: this.webviewBroker.port } : {}),
-			},
-			...(this.webviewBroker ? { transferList: [this.webviewBroker.port] } : {}),
-		},
-	);
+	private readonly spawned: ReturnType<typeof spawnSessionWorker>;
+	readonly worker: Worker;
 	readonly exited: Promise<void>;
 	snapshot?: WorkerSnapshot;
 	/** Main marks this only after installing the unique routing binding. */
@@ -91,16 +105,22 @@ export class SessionWorkerClient {
 	readonly acceptance = compactUpdatesEnabled() ? new SessionAcceptanceLane() : undefined;
 	/** The host half of this incarnation's payload transport: permits, physical frame order, fragment staging (S12b). */
 	readonly intake = this.acceptance && new WorkerIntake(this.acceptance.staging, (error) => this.fail(error));
+	private readonly owners = new WorkerOwnerGates();
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
 	constructor(callbacks: SessionWorkerCallbacks) {
 		this.callbacks = callbacks;
+		// Spawned here, with nothing between it and the exit listener that owns its cleanup (senpi#4728).
+		this.spawned = spawnSessionWorker(this.webviewBroker);
+		this.worker = this.spawned.result;
 		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
 				this.intake?.permits.close();
 				this.stopPrivateBinding?.();
 				this.privateBinding?.dispose();
+				this.owners.retireAll();
+				this.spawned.issued.dispose();
 				for (const operation of this.privateOperations.values()) operation.operation.abort();
 				this.privateOperations.clear();
 				if (!this.stopped && !this.closeTimer) this.fail("session_worker_exited");
@@ -201,24 +221,27 @@ export class SessionWorkerClient {
 			handle: async (command) => {
 				if (writer.handleMcpForm(command)) return;
 				const connection = writer.currentConnection();
-				const grantAnswer =
+				const owner = this.owners.capture(writer.connectionContext, connection, command);
+				// The grant rules apply to the request this response answers (`uiRequestId`, or `id` in the
+				// short form), the same request the worker settles.
+				const answered =
 					"type" in command && command.type === "extension_ui_response"
 						? answeredUiRequestId(command as RpcExtensionUIResponse)
 						: undefined;
-				if (
-					grantAnswer !== undefined &&
-					writer.acceptWorkerGrantResponse(sessionId, grantAnswer, connection) === false
-				)
+				if (answered !== undefined && writer.acceptWorkerGrantResponse(sessionId, answered, connection) === false)
 					return;
 				await this.request({
 					type: "command",
 					command,
 					connection,
 					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
+					...(owner === undefined ? {} : { owner }),
 				});
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
+			connectionDetached: (connection) => this.postRetired(this.owners.detach(writer.connectionContext, connection)),
 			dispose: async () => {
+				this.postRetired(this.owners.retireAll());
 				this.post({ type: "cancel_ui" });
 			},
 		};
@@ -254,6 +277,10 @@ export class SessionWorkerClient {
 
 	private request(message: WorkerRequestInput): ReturnType<SessionWorkerRequests["request"]> {
 		return this.requests.request(message);
+	}
+
+	private postRetired(owners: ReturnType<WorkerOwnerGates["retireAll"]>): void {
+		if (owners.length > 0) this.post({ type: "owners_retired", owners });
 	}
 
 	private post(message: HostToSessionWorker): void {
@@ -464,9 +491,13 @@ export class SessionWorkerClient {
 				};
 				const consumed = Promise.resolve(
 					message.snapshot ? this.callbacks.reconcile(message.snapshot.liveSessionPaths) : undefined,
-				).then(() =>
-					outputConnection === undefined ? enqueue() : writer.withConnection(outputConnection, enqueue),
-				);
+				).then(() => {
+					// Resolved after reconciliation: a retired or replaced destination consumes the frame normally.
+					if (outputConnection === undefined) return enqueue();
+					return message.owner === undefined || outputConnection !== message.connection
+						? writer.withConnection(outputConnection, enqueue)
+						: writer.connectionContext.runCaptured(outputConnection, message.owner, enqueue);
+				});
 				void consumed.then(
 					() => acknowledge(message.signal, true),
 					(cause: unknown) => {

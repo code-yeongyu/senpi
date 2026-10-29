@@ -62,7 +62,7 @@ export const defaultModelPerProvider: Record<string, string> = {
 	"github-copilot": "gpt-5.4",
 	openrouter: "moonshotai/kimi-k2.6",
 	"vercel-ai-gateway": "zai/glm-5.1",
-	opengateway: "moonshotai/kimi-k3",
+	opengateway: "moonshotai/kimi-k3.1-pro",
 	xai: "grok-4.7",
 	groq: "openai/gpt-oss-120b",
 	cerebras: "gpt-oss-120b",
@@ -71,15 +71,15 @@ export const defaultModelPerProvider: Record<string, string> = {
 	mistral: "devstral-medium-latest",
 	minimax: "MiniMax-M2.7",
 	"minimax-cn": "MiniMax-M2.7",
-	moonshotai: "kimi-k2.6",
-	"moonshotai-cn": "kimi-k2.6",
+	moonshotai: "kimi-k3.1-pro",
+	"moonshotai-cn": "kimi-k3.1-pro",
 	huggingface: "moonshotai/Kimi-K2.6",
 	fireworks: "accounts/fireworks/models/kimi-k3",
 	together: "moonshotai/Kimi-K3",
 	venice: "z-ai-glm-5-3",
 	baseten: "zai-org/GLM-5.2",
 	opencode: "kimi-k2.6",
-	"opencode-go": "kimi-k3",
+	"opencode-go": "kimi-k3.1-pro",
 	"kimi-coding": "kimi-for-coding",
 	meta: "muse-spark-1.3",
 	"cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
@@ -1114,18 +1114,15 @@ export async function restoreModelFromSession(
 	const restored = resolveStoredModelWithAuth(savedProvider, savedModelId, modelRuntime);
 	const restoredModel = restored?.model;
 
-	// Check if restored model exists and still has auth configured
-	const hasConfiguredAuth = restoredModel ? modelRuntime.hasConfiguredAuth(restoredModel.provider) : false;
-
-	if (restoredModel && hasConfiguredAuth) {
+	// A signed-out provider keeps its model; the first prompt asks for a login (senpi#4410).
+	if (restoredModel) {
 		if (shouldPrintMessages) {
 			console.log(chalk.dim(`Restored model: ${restoredModel.provider}/${restoredModel.id}`));
 		}
 		return { model: restoredModel, thinkingSelection: restored.thinkingSelection, fallbackMessage: undefined };
 	}
 
-	// Model not found or no API key - fall back
-	const reason = !restoredModel ? "model no longer exists" : "no auth configured";
+	const reason = "model no longer exists";
 
 	if (shouldPrintMessages) {
 		console.error(chalk.yellow(`Warning: Could not restore model ${savedProvider}/${savedModelId} (${reason}).`));
