@@ -9,6 +9,7 @@ import {
 	projectOAuthSlot,
 	refreshOAuthCredential,
 } from "./oauth-refresh.ts";
+import { managedSentinelMaterials } from "./pool/slots.ts";
 
 export { ModelsError, type ModelsErrorCode } from "../utils/models-error.ts";
 
@@ -211,6 +212,17 @@ async function resolveStoredOAuth(
 	const isStale = (credential: OAuthCredential) =>
 		expiresSoon(credential) || (rejectedAccess !== undefined && credential.access === rejectedAccess);
 	let credential = stored;
+
+	// The sentinel marks a pool whose tokens live in its accounts; it is not a token, so a
+	// token endpoint can only reject it. Only a slot of the pool can authenticate.
+	const isManagedSentinel =
+		credential.refresh === credential.access && managedSentinelMaterials(providerId).includes(credential.access);
+	if (isManagedSentinel && isStale(credential)) {
+		throw new ModelsError(
+			"auth",
+			`The stored ${providerId} credential is a managed account-pool placeholder; resolve one of its accounts instead`,
+		);
+	}
 
 	if (isStale(credential)) {
 		let post: Credential | undefined;

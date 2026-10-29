@@ -108,6 +108,30 @@ function coolingProbe<TSlot extends RunSlot>(slots: readonly TSlot[], attempted:
 }
 
 /**
+ * The slots a request's next attempt may pick from: the untried, unblocked ones, else the cooling
+ * probe. Empty means the request is refused. Shared by the stream and by auxiliary callers that
+ * resolve the session's account outside it (senpi#3924), so both treat an all-blocked pool alike.
+ */
+export function attemptCandidates<TSlot extends RunSlot>(
+	slots: readonly TSlot[],
+	attempted: ReadonlySet<string>,
+	now: number,
+): TSlot[] {
+	const available = slots.filter((slot) => !attempted.has(slot.name) && isAvailable(slot, now));
+	return available.length > 0 ? available : coolingProbe(slots, attempted);
+}
+
+/** The refusal a request gets when {@link attemptCandidates} is empty before any attempt ran. */
+export function noSlotsError(slots: readonly RunSlot[], now: number): CredentialFailoverError {
+	const retryAt = soonestRetryAt(slots, now);
+	return new CredentialFailoverError(
+		{ kind: "fail_request" },
+		new Error(noSlotsMessage(slots, now)),
+		retryAt === undefined ? {} : { retryAt },
+	);
+}
+
+/**
  * Why the request had nowhere to go: each slot it could not use, with its reason and the time it is
  * due back, so a refusal is never a bare "no slots" that only a re-login seemed to fix (senpi#2081).
  */
@@ -174,21 +198,15 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 
 	while (true) {
 		const slots = await options.listSlots();
-		const available = slots.filter((slot) => !attempted.has(slot.name) && isAvailable(slot, now()));
-		const candidates = available.length > 0 ? available : coolingProbe(slots, attempted);
+		const candidates = attemptCandidates(slots, attempted, now());
 		if (candidates.length === 0) {
 			if (lastTerminalEvent !== undefined) {
 				yield lastTerminalEvent;
 				return;
 			}
+			if (lastError === undefined || lastOriginal === undefined) throw noSlotsError(slots, now());
 			const retryAt = soonestRetryAt(slots, now());
-			throw lastError !== undefined && lastOriginal !== undefined
-				? new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt })
-				: new CredentialFailoverError(
-						{ kind: "fail_request" },
-						new Error(noSlotsMessage(slots, now())),
-						retryAt === undefined ? {} : { retryAt },
-					);
+			throw new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt });
 		}
 		const slot = options.select(candidates);
 		let committedOutput = false;

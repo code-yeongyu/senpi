@@ -275,6 +275,7 @@ function createExtensionContext(overrides: Partial<ExtensionContext>): Extension
 		agentDir: AGENT_DIR,
 		isProjectTrusted: () => true,
 		sessionManager: Object.assign(Object.create(null), {
+			getSessionId: () => "session-test",
 			getEntries: () => [],
 			getBranch: () => [],
 			reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries([], reducer),
@@ -357,6 +358,7 @@ async function expectSpeculativeCompactionInvalidatedBy(
 	const ctx = createExtensionContext({
 		model: currentModel,
 		sessionManager: Object.assign(Object.create(null), {
+			getSessionId: () => "session-test",
 			getEntries: () => branchEntries,
 			getBranch: () => branchEntries,
 			reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries(branchEntries, reducer),
@@ -1229,6 +1231,7 @@ describe("builtin compaction extension threshold regressions", () => {
 		const ctx = createExtensionContext({
 			model,
 			sessionManager: Object.assign(Object.create(null), {
+				getSessionId: () => "session-test",
 				getEntries: () => [firstUser, firstAssistant, secondUser, secondAssistant],
 				reduceHistory: (reducer: HistoryReducer<unknown>) =>
 					reduceEntries([firstUser, firstAssistant, secondUser, secondAssistant], reducer),
@@ -1291,6 +1294,7 @@ describe("builtin compaction extension threshold regressions", () => {
 		const ctx = createExtensionContext({
 			model,
 			sessionManager: Object.assign(Object.create(null), {
+				getSessionId: () => "session-test",
 				getEntries: () => branchEntries,
 				getBranch: () => branchEntries,
 				reduceHistory: (reducer: HistoryReducer<unknown>) => reduceEntries(branchEntries, reducer),
@@ -1343,6 +1347,7 @@ describe("builtin compaction extension threshold regressions", () => {
 		const ctx = createExtensionContext({
 			model,
 			sessionManager: Object.assign(Object.create(null), {
+				getSessionId: () => "session-test",
 				getEntries: () => [firstUser, firstAssistant, secondUser, secondAssistant],
 				reduceHistory: (reducer: HistoryReducer<unknown>) =>
 					reduceEntries([firstUser, firstAssistant, secondUser, secondAssistant], reducer),
