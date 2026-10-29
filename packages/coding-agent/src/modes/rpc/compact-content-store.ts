@@ -2,6 +2,7 @@ import { CompactSpoolStorage, RECLAIM_WORK_ALLOWANCE_BYTES } from "./compact-spo
 import { type CompactStorageFailure, type CompactStorageIo, nodeCompactStorageIo } from "./compact-storage-io.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import { CompactTextRoots } from "./compact-text-roots.ts";
+import type { RecoveryStorageHealth } from "./compact-storage-health.ts";
 
 /**
  * Owned bounded leaves for compact current state (senpi#4272, R3.C6.4 / R3.C2.4).
@@ -45,6 +46,7 @@ export interface CompactStorageStatus {
 }
 
 export interface CompactContentStoreOptions {
+	readonly health?: RecoveryStorageHealth;
 	/** Private epoch spool directory the store creates itself (0700, never an existing one; files 0600). Not a transcript. */
 	readonly dir: string;
 	readonly io?: CompactStorageIo;
@@ -95,7 +97,7 @@ export class CompactContentStore extends CompactSpoolStorage {
 	}
 
 	constructor(options: CompactContentStoreOptions) {
-		super(options.dir, options.io ?? nodeCompactStorageIo);
+		super(options.dir, options.io ?? nodeCompactStorageIo, options.health);
 		this.spillAboveBytes = options.spillAboveBytes ?? 4 * 1024 * 1024;
 		this.spillTargetBytes = options.spillTargetBytes ?? 2 * 1024 * 1024;
 	}

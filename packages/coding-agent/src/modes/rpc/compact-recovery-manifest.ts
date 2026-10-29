@@ -143,6 +143,7 @@ export class RecoveryManifests {
 		const built = this.ready.get(tokenId);
 		if (!parsed.ok || !built) throw new CompactReadError("range");
 		return lane.cutStorage(root, async (store, valid) => {
+			if (store.health.needsRecovery) await store.repair();
 			let bytes = this.verified.get(root, parsed.value);
 			if (!bytes) {
 				const read = await this.catalogs.read(store, built.root, parsed.value, valid, signal);

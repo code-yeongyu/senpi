@@ -1,4 +1,9 @@
 import type { EventLeases } from "./compact-event-leases.ts";
+import { randomInt } from "node:crypto";
+import type { RecoveryRepairAdvice } from "@earendil-works/pi-protocol";
+import { CompactStorageReadError } from "./compact-storage-io.ts";
+import { CompactReadError } from "./compact-read-lease.ts";
+import { storageUnavailable } from "./compact-recovery-types.ts";
 import type { RecoveryPageFailure, RecoveryPageRequests } from "./compact-recovery-requests.ts";
 import type { RecoveryCaller } from "./compact-recovery-types.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
@@ -48,9 +53,37 @@ export async function answerRecoveryPage(
 	const caller = callerOf(writer, command);
 	if ("type" in caller) return caller;
 	const { id, type } = command;
-	const outcome = await pages.request(caller, command);
-	if (outcome.ok) return { id, type: "response", command: type, success: true, data: outcome.value };
-	return error(id, type, codeOf(outcome.failure), { ...outcome.failure });
+	const lane = writer.recoveryLane(caller.sessionId);
+	let outcome: Awaited<ReturnType<RecoveryPageRequests["request"]>>;
+	try {
+		outcome = await pages.request(caller, command);
+	} catch (cause) {
+		if (!(cause instanceof CompactStorageReadError || cause instanceof CompactReadError)) throw cause;
+		outcome = { ok: false, failure: storageUnavailable("unavailable") } as const;
+	}
+	// Foreign/unknown tokens learn no source identity or storage counter (RULING-56).
+	const source =
+		!outcome.ok && (outcome.failure.kind === "request_refused" || outcome.failure.reason === "unknown_token")
+			? undefined
+			: lane;
+	let healthRevision: string | null = null;
+	try {
+		if (source) healthRevision = await source.staging.store.health.revision();
+	} catch (cause) {
+		if (!(cause instanceof Error)) throw cause;
+		outcome = { ok: false, failure: storageUnavailable("unavailable") } as const;
+	}
+	const failure = outcome.ok ? undefined : outcome.failure;
+	if (failure?.kind === "request_refused") return error(id, type, codeOf(failure), { ...failure });
+	const repair: RecoveryRepairAdvice = {
+		state: failure?.kind ?? "ok",
+		healthRevision,
+		source: source ? { sessionEpoch: source.sessionEpoch, sequence: source.acceptedSequence } : null,
+		hint: "restart_from_catalog",
+		retryAfterMs: outcome.ok ? 0 : randomInt(100, 2_001),
+	};
+	if (outcome.ok) return { id, type: "response", command: type, success: true, data: { ...outcome.value, repair } };
+	return error(id, type, codeOf(outcome.failure), { ...outcome.failure, repair });
 }
 
 /**

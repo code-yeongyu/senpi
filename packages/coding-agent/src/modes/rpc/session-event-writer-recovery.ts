@@ -5,6 +5,10 @@ import { SessionEventWriterLifecycle } from "./session-event-writer-lifecycle.ts
 
 /** The writer's recovery accessors (senpi#4272): legacy views, checkpoint tokens, page requests, peer epochs. */
 export abstract class SessionEventWriterRecovery extends SessionEventWriterLifecycle {
+	/** Internal S14 source identity; callers must establish the requesting token's scoped claim first. */
+	recoveryLane(sessionId: string) {
+		return this.fanout.acceptance.get(sessionId);
+	}
 	/** Legacy views frozen for a peer's baseline and not yet released (R3.C6.4 accounting). */
 	get openLegacyViews(): number {
 		return this.fanout.replay.openCursors;

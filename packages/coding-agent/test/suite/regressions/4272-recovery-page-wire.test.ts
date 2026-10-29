@@ -144,8 +144,21 @@ async function pagesOverTheWire(
 		success: false,
 		error: "recovery_repair_needed",
 		errorCode: "recovery_repair_needed",
-		errorData: { kind: "repair_needed", reason: "unknown_token" },
+		errorData: {
+			kind: "repair_needed",
+			reason: "unknown_token",
+			repair: {
+				state: "repair_needed",
+				healthRevision: null,
+				source: null,
+				hint: "restart_from_catalog",
+				retryAfterMs: expect.any(Number),
+			},
+		},
 	});
+	const retryAfterMs = (foreign as { errorData: { repair: { retryAfterMs: number } } }).errorData.repair.retryAfterMs;
+	expect(retryAfterMs).toBeGreaterThanOrEqual(100);
+	expect(retryAfterMs).toBeLessThanOrEqual(2_000);
 	const busy = await send("held", { requestId: "r-2", cursor: "p1:1:0:00000000000000000000000000000000" });
 	expect(busy).toMatchObject({
 		success: false,

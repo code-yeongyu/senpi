@@ -181,6 +181,7 @@ export class EventLeases {
 		if (componentRef !== EVENT_RECORD_COMPONENT || !staging)
 			return { ok: false, failure: storageUnavailable("range") };
 		try {
+			if (staging.store.health.needsRecovery) await staging.store.repair();
 			return recovered(
 				await held.reads.run(async () => {
 					held.shared.opened ??= staging.open(held.shared.content);
@@ -190,6 +191,7 @@ export class EventLeases {
 				}),
 			);
 		} catch (cause) {
+			held.shared.opened = undefined;
 			if (cause instanceof StagedReadError) return { ok: false, failure: storageUnavailable("integrity") };
 			if (!(cause instanceof CompactReadError)) throw cause;
 			const failure = cause.reason === "released" ? repairNeeded("released") : storageUnavailable(cause.reason);

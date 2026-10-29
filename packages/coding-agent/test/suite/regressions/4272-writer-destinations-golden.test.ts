@@ -5,7 +5,8 @@ import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.
 // Part of #4272 (S13w0, RULING-82 (1)): moving the per-destination write loop out of session-event-writer.ts changes
 // no byte. A fixed record sequence goes through the real writer to an attached peer, a media-placeholders peer, a peer
 // attached to nothing, a targeted reply and the stdio lane; what each destination receives is compared byte for byte
-// with the stream recorded at 7263345172, before the move (SENPI_RECORD_WRITER_GOLDEN=1 re-records it).
+// with the stream generated from the pre-move writer (7263345172) and committed with the move
+// (SENPI_RECORD_WRITER_GOLDEN=1 re-records it).
 
 const FIXTURE = new URL("../../fixtures/4272-writer-destinations-golden.json", import.meta.url);
 const IMAGE = { type: "image", data: "aGVsbG8gaW1hZ2UgYnl0ZXM=", mimeType: "image/png" };

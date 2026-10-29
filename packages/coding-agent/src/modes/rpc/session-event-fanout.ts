@@ -1,4 +1,6 @@
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { tmpdir } from "node:os";
+import { startRecoveryCleanup } from "./compact-recovery-cleanup.ts";
 import { EventLeases } from "./compact-event-leases.ts";
 import { legacyAttachView } from "./compact-legacy-view.ts";
 import { RecoveryPageRequests } from "./compact-recovery-requests.ts";
@@ -42,6 +44,7 @@ type RegisteredConnection = {
 };
 
 export class SessionEventFanout {
+	readonly startupCleanup = compactUpdatesEnabled() ? startRecoveryCleanup(tmpdir()) : undefined;
 	onConnectionClosed?: (id: string) => void;
 	/** Each routing session's acceptance lane; retired when the session is sealed or forgotten. */
 	readonly acceptance = new Map<string, SessionAcceptanceLane>();

@@ -1,4 +1,5 @@
 import type { EventLeases } from "./compact-event-leases.ts";
+import type { RecoveryRepairAdvice } from "@earendil-works/pi-protocol";
 import type { RecoveryPage } from "./compact-recovery-bytes.ts";
 import { type CursorBinding, RecoveryCursors } from "./compact-recovery-cursor.ts";
 import { parseBoundedId } from "./compact-recovery-ids.ts";
@@ -33,6 +34,7 @@ export interface LeasePageRequest {
  * or is null once `complete`.
  */
 export interface RecoveryPageAnswer {
+	readonly repair?: RecoveryRepairAdvice;
 	readonly requestId: string;
 	readonly token: string;
 	readonly generation: number;
@@ -275,6 +277,7 @@ export class RecoveryPageRequests {
 				if (this.lifetimes.get(caller.socketEpoch) === lifetime) this.lifetimes.delete(caller.socketEpoch);
 			}
 		}
+		if (!page.ok) this.tokens.delete(token.id);
 		if (!page.ok) return page;
 		if (!this.tokens.has(token.id)) return { ok: false, failure: repairNeeded("released") };
 		const ordinal = state.ordinal + 1;

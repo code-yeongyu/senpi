@@ -18,6 +18,7 @@ import {
 } from "./session-acceptance-admission.ts";
 import { foldCompactRecord, foldCompactTransition } from "./session-acceptance-compact.ts";
 import { AcceptedRootReads } from "./session-acceptance-reads.ts";
+import { RecoveryStorageHealth } from "./compact-storage-health.ts";
 
 /** Where one accepted recovery record sits in its runtime incarnation (R3.C1.1). */
 interface AcceptedRef {
@@ -87,10 +88,14 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 			process.stderr.write(`senpi rpc acceptance: settled transition: ${reason}\n`),
 	) {
 		super();
-		this.storage = storage;
+		this.storage = {
+			...storage,
+			dir: storage?.dir ?? tmpdir(),
+			health: storage?.health ?? new RecoveryStorageHealth(),
+		};
 		this.diagnose = diagnose;
 		const dir = join(storage?.dir ?? tmpdir(), `senpi-transcript-${randomUUID()}`);
-		this.staging = new TransferStaging(new CompactContentStore({ ...storage, dir }));
+		this.staging = new TransferStaging(new CompactContentStore({ ...this.storage, dir }));
 		this.transcript = new AcceptedTranscript(this.staging);
 	}
 

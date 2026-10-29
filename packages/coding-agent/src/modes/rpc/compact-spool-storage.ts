@@ -1,4 +1,7 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { open, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { RecoveryStorageHealth } from "./compact-storage-health.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import { createSpoolDir, removeSpoolDir } from "./compact-spool-dir.ts";
 import {
@@ -21,6 +24,7 @@ const FAILURE_HISTORY = 32;
 
 export abstract class CompactSpoolStorage {
 	readonly dir: string;
+	readonly health: RecoveryStorageHealth;
 	private readonly io: CompactStorageIo;
 	protected readonly failures: CompactStorageFailure[] = [];
 	private nextFile = 1;
@@ -56,9 +60,33 @@ export abstract class CompactSpoolStorage {
 		};
 	}
 
-	constructor(dir: string, io: CompactStorageIo) {
+	constructor(dir: string, io: CompactStorageIo, health = new RecoveryStorageHealth()) {
 		this.dir = dir;
 		this.io = io;
+		this.health = health;
+	}
+
+	/** Explicit availability repair: a real fsynced probe, then retry retained writes without changing accepted state. */
+	async repair(): Promise<string> {
+		const revision = await this.health.recover(async () => {
+			const path = join(dirname(this.dir), `.senpi-repair-${randomUUID()}`);
+			try {
+				const file = await open(path, "wx", 0o600);
+				try {
+					await file.writeFile("repair");
+					await file.sync();
+				} finally {
+					await file.close();
+				}
+			} finally {
+				await rm(path, { force: true });
+			}
+		});
+		this.halted = false;
+		if (this.spoolToken === undefined) this.dirReady = undefined;
+		this.scheduleSpill();
+		await this.idle();
+		return revision;
 	}
 
 	/** Resolves once every queued storage job, including the ones they queued, has completed. */
@@ -75,8 +103,16 @@ export abstract class CompactSpoolStorage {
 		await this.reading?.promise;
 		await this.idle();
 		const token = this.spoolToken;
-		this.spoolToken = undefined;
-		if (token !== undefined) await removeSpoolDir(this.dir, token);
+		if (token !== undefined) {
+			try {
+				await removeSpoolDir(this.dir, token);
+			} catch (cause) {
+				this.fail("reclaim", this.dir, cause, 0);
+				throw cause;
+			}
+			this.spoolToken = undefined;
+			this.reclaimDebtBytes = 0;
+		}
 	}
 
 	/** Reads a committed file and rejects a missing, unreadable or short one. */
@@ -116,7 +152,8 @@ export abstract class CompactSpoolStorage {
 		const file = join(path, `${prefix}-${this.nextFile++}.bin`);
 		this.pendingIoCopyBytes += data.byteLength;
 		try {
-			await this.io.writeFile(file, data);
+			if (this.health.needsRecovery) await this.health.recover(() => this.io.writeFile(file, data));
+			else await this.io.writeFile(file, data);
 			this.spillBytesWritten += data.byteLength;
 			return file;
 		} catch (cause) {
@@ -151,8 +188,7 @@ export abstract class CompactSpoolStorage {
 				const delay = RECLAIM_RETRY_DELAYS_MS[attempt];
 				if (delay !== undefined) {
 					setTimeout(() => {
-						if (this.retired) this.reclaimDebtBytes -= bytes;
-						else this.enqueue("reclaim", () => this.reclaim(path, bytes, attempt + 1));
+						if (!this.retired) this.enqueue("reclaim", () => this.reclaim(path, bytes, attempt + 1));
 					}, delay).unref?.();
 				}
 				return;
@@ -177,6 +213,7 @@ export abstract class CompactSpoolStorage {
 			.then(job)
 			.catch((cause: unknown) => {
 				if (operation === "spill_write") this.spillQueued = false;
+				if (this.retired && cause instanceof CompactReadError && cause.reason === "retired") return;
 				this.fail(operation, this.dir, cause, 0);
 			})
 			.finally(() => {
@@ -207,6 +244,7 @@ export abstract class CompactSpoolStorage {
 	}
 
 	private fail(operation: CompactStorageOperation, path: string, cause: unknown, retained: number): void {
+		this.health.unavailable();
 		if (operation === "spill_write" || operation === "value_write" || operation === "spool_create")
 			this.halted = true;
 		this.record({ operation, path, cause: describeCause(cause), retainedInMemoryBytes: retained });

@@ -559,7 +559,7 @@ Behind the same flag, one bounded page of a frozen checkpoint component, through
   `cursor` continues a component from the previous answer and is omitted for a component's first page. Every field
   is an opaque bounded protocol id (ASCII `[A-Za-z0-9][A-Za-z0-9:_-]*`, at most 128 bytes), parsed before any use.
 - The answer's `data` is `{requestId, token, generation, componentRef, ordinal, offset, length, digest, bytes,
-  cursor, complete}`: `bytes` is the base64 of exactly `length` raw stored bytes of the component at raw byte
+  cursor, complete, repair}`: `bytes` is the base64 of exactly `length` raw stored bytes of the component at raw byte
   `offset` (the component's stored UTF-16LE bytes, the representation the catalog's lengths and `leaf` digests
   describe); `digest` is the catalog's `fragment`-domain SHA-256 over those raw bytes, so a client verifies it
   AFTER base64 decoding, never over the base64 text; `cursor` is the opaque cursor of the next page or `null` once
@@ -589,6 +589,28 @@ Behind the same flag, one bounded page of a frozen checkpoint component, through
   `reason: "superseded_token"` and `newerGeneration` while an operation still holds it, and `unknown_token` once
   it is reclaimed. The owner's other typed failures arrive as `recovery_repair_needed` or
   `recovery_storage_unavailable` with `errorData` carrying the failure. Every refusal happens before any byte is read.
+
+**S14 repair policy (RULING-84).** Success carries `data.repair`; a typed recovery failure carries
+`errorData.repair`, using the same `RecoveryRepairAdviceSchema` as the client package's
+`RecoveryRepairController`. Advice contains `state` (`ok`, `repair_needed`, or `storage_unavailable`),
+`healthRevision` (a persisted decimal counter), `source` (`sessionEpoch`, accepted `sequence`),
+`hint: "restart_from_catalog"` and `retryAfterMs` (100 to 2,000 ms, jittered, or zero on success).
+An unknown or foreign token receives null revision and source, never another admission's state.
+Storage unavailability ends only the recovery attempt, not the connection, and does not resubmit a prompt or
+fall back to current-root content. Repair restarts at the catalog with a fresh cut after the backoff and only
+when either health revision or accepted-source identity changes. A freeze never advances health revision;
+a successful write/fsync or completed repair after a storage failure does, durably before publication.
+The controller implements this policy without transport wiring; S15a owns the blocking end-to-end test
+`the in-repo client honours the hint end to end`. The compact delta flag remains OFF by default until S15a
+lands; S14's crash reclaim is also a prerequisite for default-on (RULING-79).
+
+At compact-host startup the producer classifies direct transcript, settled, current and event spool children
+of its own temporary base. Each new spool has an atomically published 0600 marker with scratch/live kind,
+boot-session identity and process start identity. Only a scratch owner proven dead is reclaimed. Live,
+unmarked, unreadable, foreign and linked roots survive; unknown roots are counted with age and size (null
+when unreadable), and failed removals remain reported debt. Accepted engine content is ephemeral scratch,
+not evidence of desktop SQL/replay commitment. Windows startup reclaim is a reported no-op because this
+implementation cannot prove POSIX ownership and no-follow traversal there.
 
 **Event leases (senpi#4272, S13).** Behind the same flag, a connection that sends `compact_events` in its
 `set_client_info` capabilities (an internal opt-in, not advertised; the public selection comes later) receives a
