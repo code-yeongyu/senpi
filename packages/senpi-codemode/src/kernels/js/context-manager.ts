@@ -58,6 +58,7 @@ export class JavaScriptKernel {
 	readonly #kernelTools = new KernelToolHostPump(
 		(message) => this.#slot.postMessage(message),
 		() => this.#lifecycle === "open" && this.#slot.present,
+		(request, options) => this.#permissions.invocation(request, options),
 	);
 	readonly #toolCalls = new ToolCallQueue();
 	readonly #children: WorkerChildren;
@@ -131,12 +132,7 @@ export class JavaScriptKernel {
 		options?: AbortSignal | KernelToolsInvokeOptions,
 	): Promise<unknown> {
 		await this.#permissions.admit();
-		const release = this.#permissions.invocation(request, options);
-		try {
-			return await this.#kernelTools.invoke(request, options);
-		} finally {
-			release();
-		}
+		return await this.#kernelTools.invoke(request, options);
 	}
 
 	async run(input: JavaScriptRunInput): Promise<ResultMessage> {

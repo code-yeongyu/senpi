@@ -119,6 +119,14 @@ function getV41CatalogModels(): Model<Api>[] {
 	);
 }
 
+// Image input and reasoning are per-provider serving choices, not snapshot facts: models.dev lists mistral's
+// deepseek-v4-1-flash-1017 as text-only (attachment false), so the release's catalog regeneration can add such a
+// row (senpi#4762). Every shipped row must reach the V4.1 preset; the curated KNOWN_1017_ROWS pin the multimodal set.
+function expectShipped1017Row(model: Model<Api>): void {
+	expect(model.input).toContain("text");
+	expect(resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
+}
+
 describe("DeepSeek V4.1 Flash prompt preset", () => {
 	it.each(V41_FLASH_MODEL_IDS)("resolves %s on %s to the deepseek-v4-1-flash preset", (modelId, provider) => {
 		// when
@@ -186,16 +194,28 @@ describe("DeepSeek V4.1 Flash prompt preset", () => {
 	});
 
 	it.each(SHIPPED_1017_ROWS)("ships the 1017 snapshot row on %s (%s) on the V4.1 preset", (_provider, _id, model) => {
-		// then
-		expect(model.reasoning).toBe(true);
-		expect(model.input).toContain("image");
-		expect(resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
+		expectShipped1017Row(model);
 	});
 
-	it.each(KNOWN_1017_ROWS)("still ships the 1017 snapshot row on %s (%s)", (provider, id) => {
+	it("accepts a text-only 1017 row as the release's catalog regeneration can add one", () => {
+		// given models.dev's mistral row, served text-only upstream
+		const model = { ...createModel("deepseek-v4-1-flash-1017", "mistral"), input: ["text"] } satisfies Model<Api>;
+
 		// then
-		expect(SHIPPED_1017_ROWS.some(([p, i]) => p === provider && i === id)).toBe(true);
+		expectShipped1017Row(model);
 	});
+
+	it.each(KNOWN_1017_ROWS)(
+		"still ships the 1017 snapshot row on %s (%s) as a multimodal reasoning row",
+		(provider, id) => {
+			// when
+			const model = SHIPPED_1017_ROWS.find(([p, i]) => p === provider && i === id)?.[2];
+
+			// then
+			expect(model?.reasoning).toBe(true);
+			expect(model?.input).toContain("image");
+		},
+	);
 });
 
 describe("DeepSeek V4.1 Flash prompt content", () => {

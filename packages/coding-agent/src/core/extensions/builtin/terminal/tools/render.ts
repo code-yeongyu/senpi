@@ -1,6 +1,8 @@
 import { Text } from "@earendil-works/pi-tui";
 import { truncateToVisualLines } from "../../../../../modes/interactive/components/visual-truncate.ts";
 import { isModelOnlyText } from "../../../../tools/model-only-text.ts";
+import { formatJobWidgetLine, type JobWidgetLineStyle, jobWidgetLineStyle } from "../../job-widgets/tui-line.ts";
+import type { JobWidgetEntry } from "../../job-widgets/view-types.ts";
 import type { AgentToolResult, ToolDefinition } from "../../../types.ts";
 import type { BashOutputInput, bashOutputSchema } from "./bash-output.ts";
 import type { MonitorInput, monitorSchema } from "./monitor.ts";
@@ -12,12 +14,25 @@ type RenderResultOptions = Parameters<NonNullable<BashOutputToolDefinition["rend
 
 const OUTPUT_PREVIEW_LINES = 8;
 
+function jobWidgetOf(details: BashOutputDetails): JobWidgetEntry | undefined {
+	const entry = details?.jobWidget as JobWidgetEntry | undefined;
+	return typeof entry?.view?.title === "string" && Array.isArray(entry.view.blocks) ? entry : undefined;
+}
+
 class BashOutputResultComponent {
 	#text = "";
 	#isPartial = false;
 	#expanded = false;
+	#jobWidget: JobWidgetEntry | undefined;
+	#style: JobWidgetLineStyle | undefined;
 
-	setResult(result: AgentToolResult<BashOutputDetails>, options: RenderResultOptions): void {
+	setResult(
+		result: AgentToolResult<BashOutputDetails>,
+		options: RenderResultOptions,
+		style: JobWidgetLineStyle,
+	): void {
+		this.#jobWidget = jobWidgetOf(result.details);
+		this.#style = style;
 		this.#text = result.content
 			.filter((content) => content.type === "text" && !isModelOnlyText(content))
 			.map((content) => (content.type === "text" ? content.text : ""))
@@ -27,10 +42,17 @@ class BashOutputResultComponent {
 	}
 
 	render(width: number): string[] {
-		if (!this.#isPartial || this.#expanded) return this.#text.split("\n");
-		return truncateToVisualLines(this.#text, OUTPUT_PREVIEW_LINES, Math.max(1, width)).visualLines.map((line) =>
-			line.trimEnd(),
-		);
+		const summary =
+			this.#jobWidget && this.#style
+				? formatJobWidgetLine(this.#jobWidget, width, this.#style, { showId: false })
+				: undefined;
+		const output =
+			!this.#isPartial || this.#expanded
+				? this.#text.split("\n")
+				: truncateToVisualLines(this.#text, OUTPUT_PREVIEW_LINES, Math.max(1, width)).visualLines.map((line) =>
+						line.trimEnd(),
+					);
+		return summary === undefined ? output : [summary, ...output];
 	}
 
 	invalidate(): void {}
@@ -57,11 +79,11 @@ export function renderMonitorCall(
 export function renderBashOutputResult(
 	result: AgentToolResult<BashOutputDetails>,
 	options: RenderResultOptions,
-	_theme: Parameters<NonNullable<BashOutputToolDefinition["renderResult"]>>[2],
+	theme: Parameters<NonNullable<BashOutputToolDefinition["renderResult"]>>[2],
 	context: Parameters<NonNullable<BashOutputToolDefinition["renderResult"]>>[3],
 ): BashOutputResultComponent {
 	const component =
 		(context.lastComponent as BashOutputResultComponent | undefined) ?? new BashOutputResultComponent();
-	component.setResult(result, options);
+	component.setResult(result, options, jobWidgetLineStyle(theme));
 	return component;
 }

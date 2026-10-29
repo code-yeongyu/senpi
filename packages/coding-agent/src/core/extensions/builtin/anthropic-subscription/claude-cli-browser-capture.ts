@@ -1,6 +1,17 @@
-import { type FSWatcher, chmodSync, mkdtempSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import {
+	type FSWatcher,
+	chmodSync,
+	mkdtempSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	watch,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getAgentDir } from "../../../../config.ts";
+import { createSessionLogger } from "../../../session-log.ts";
 
 /**
  * The `BROWSER` helper of one login. `capture` appends the URL the CLI wants to open to a private sink, so senpi can
@@ -38,6 +49,7 @@ export function createClaudeCliBrowserCapture(
 	onUrl: (url: string) => void,
 	platform: NodeJS.Platform = process.platform,
 ): ClaudeCliBrowserCapture {
+	const logger = createSessionLogger(getAgentDir());
 	const dir = mkdtempSync(join(tmpdir(), "senpi-claude-browser-"));
 	const sinkPath = join(dir, "urls");
 	const helperPath = join(dir, platform === "win32" ? "browser.cmd" : "browser");
@@ -67,7 +79,22 @@ export function createClaudeCliBrowserCapture(
 		flush,
 		dispose: () => {
 			watcher?.close();
-			rmSync(dir, { recursive: true, force: true });
+			let cleanupDir = dir;
+			try {
+				// A browser helper can outlive the CLI even after its stdio closes. Revoke its
+				// absolute sink path before deletion: late opens fail, already-open files unlink safely.
+				const disposedDir = `${dir}-disposed`;
+				renameSync(dir, disposedDir);
+				cleanupDir = disposedDir;
+			} catch {
+				logger.debug("claude_cli_browser_capture_rename_failed", { source: dir });
+			}
+			try {
+				rmSync(cleanupDir, { recursive: true, force: true, maxRetries: 3 });
+			} catch {
+				// Private scratch cleanup must never prevent the login outcome from settling.
+				logger.debug("claude_cli_browser_capture_cleanup_failed", { source: cleanupDir });
+			}
 		},
 	};
 }

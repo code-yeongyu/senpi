@@ -149,3 +149,35 @@ it("T6 rejects deltas after block end and invalid parse frontiers", async () => 
 		owner.accept({ type: "toolcall_delta", contentIndex: 0, offset: 2, delta: "", parsedThrough: 2 }),
 	).toThrow(expect.objectContaining({ reason: "invalid_phase" }));
 });
+
+it("T6 lets a native insert take over a start-content slot and rejects a real native duplicate", async () => {
+	await using owner = await seededOwner();
+	const { partial, state } = owner;
+	partial.content.push({ type: "text", text: "seeded by start" });
+	owner.message({ type: "start", partial });
+	const native = (contentIndex: number, phase: "insert" | "end", value: string) =>
+		owner.control({
+			type: "message_block_state",
+			contentIndex,
+			phase,
+			block: { type: "providerNative", subtype: "fixture", raw: { value } },
+		});
+	native(0, "insert", "first");
+	native(0, "end", "final");
+	partial.content.push({ type: "text", text: "open" });
+	owner.push({ type: "text_start", contentIndex: 1, partial });
+	native(2, "insert", "other");
+	const before = await owner.view();
+	const sequence = state.acceptedSequence;
+	for (const contentIndex of [0, 1, 2])
+		expect(() => native(contentIndex, "insert", "again")).toThrow(
+			expect.objectContaining({ reason: "duplicate_block" }),
+		);
+	expect(state.acceptedSequence).toBe(sequence);
+	expect(await owner.view()).toEqual(before);
+	expect(before.messages[0]?.message?.content).toMatchObject([
+		{ type: "providerNative", raw: { value: "final" } },
+		{ type: "text", text: "open" },
+		{ type: "providerNative", raw: { value: "other" } },
+	]);
+});

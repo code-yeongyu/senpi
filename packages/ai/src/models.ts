@@ -163,6 +163,11 @@ export interface Provider<TApi extends Api = Api> {
 	readonly id: string;
 	readonly name: string;
 
+	/**
+	 * The provider's endpoint. Transports send each request to `model.baseUrl`, never to this value or a
+	 * hard-coded host: senpi sets every model's `baseUrl` (and this field) to a user's models.json
+	 * `baseUrl` when one is configured for the provider.
+	 */
 	readonly baseUrl?: string;
 	readonly headers?: ProviderHeaders;
 	/** Omitting it means the shipped senpi default profile applies. */

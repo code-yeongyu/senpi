@@ -7,6 +7,7 @@ import {
 	TERMINAL_MONITOR_STATE_EVENT,
 	WAKE_SOURCE_STATE_EVENT,
 } from "../monitor-state-event.ts";
+import { withTerminalContext } from "./context-lifetime.ts";
 import { tapBackgroundSession, untapBackgroundSession } from "./job-widget-tap.ts";
 import type { MonitorNotifier } from "./monitor-notify.ts";
 import { removeMonitorStateDir, terminalStateDir } from "./monitor-state-dir.ts";
@@ -42,6 +43,13 @@ export function createBundle(state: TerminalExtensionState): TerminalSessionBund
 
 /** Sinks read the live instance state at call time, so notifier swaps need no re-bind. */
 export function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): TerminalEventSinks {
+	const retire = () => {
+		state.monitorNotifier?.dispose();
+		state.monitorNotifier = null;
+		state.notifier = null;
+		state.statusTicker.stop();
+		state.keeper?.stop();
+	};
 	return {
 		onMonitorEvent: (event) => state.monitorNotifier?.notifyEvent(event),
 		onMonitorEnded: (event) => {
@@ -51,13 +59,17 @@ export function bundleSinks(pi: ExtensionAPI, state: TerminalExtensionState): Te
 			// runs again, so its restore baseline goes. Disposal is a shutdown or reload: the watch is
 			// suspended, not ended, and a later restore still needs the dir.
 			if (event.reason === "disposed") return;
-			const dir = terminalStateDir(state.ctx);
+			const dir = withTerminalContext(() => terminalStateDir(state.ctx), retire);
 			const monitorId = state.bundle?.manager.monitorIdOf(event.id);
 			if (dir === undefined || monitorId === undefined) return;
 			removeMonitorStateDir(dir, monitorId).catch((error: unknown) => {
-				state.ctx?.ui?.notify?.(
-					`Could not remove the state dir of ${monitorId}: ${error instanceof Error ? error.message : String(error)}`,
-					"warning",
+				withTerminalContext(
+					() =>
+						state.ctx?.ui?.notify?.(
+							`Could not remove the state dir of ${monitorId}: ${error instanceof Error ? error.message : String(error)}`,
+							"warning",
+						),
+					retire,
 				);
 			});
 		},
@@ -171,7 +183,11 @@ export function buildToolContext(pi: ExtensionAPI, state: TerminalExtensionState
 			state.bundle?.notifyBackgroundStart(id, description, startedAtMs);
 			const runtime = state.bundle?.manager.get(id);
 			if (runtime) {
-				tapBackgroundSession(sessionKeyOf(state.ctx), id, runtime, {
+				const key = withTerminalContext(
+					() => sessionKeyOf(state.ctx),
+					() => {},
+				);
+				tapBackgroundSession(key, id, runtime, {
 					command: command ?? description,
 					description,
 				});

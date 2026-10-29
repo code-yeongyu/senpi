@@ -17,7 +17,8 @@ export interface FrozenBlock {
 export interface CompactMessageView {
 	readonly messageId: string;
 	readonly persistence: CompactPersistence | undefined;
-	readonly message?: { readonly content: readonly object[] };
+	readonly message?: Readonly<Record<string, unknown>>;
+	readonly correlation?: Readonly<Record<string, unknown>>;
 	readonly blocks: readonly {
 		readonly contentIndex: number;
 		readonly kind: CompactBlockKind;

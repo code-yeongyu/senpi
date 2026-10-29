@@ -11,6 +11,8 @@ export type KernelToolInvokeScope = {
 export type KernelToolInvokeOptions = {
 	signal?: AbortSignal;
 	scope?: KernelToolInvokeScope;
+	/** Host dispatcher identity, never read from a tool's arguments or cell data. */
+	invoker?: { readonly sessionId: string };
 };
 
 export type ExtensionKernelTools = {
@@ -31,3 +33,6 @@ export type ExtensionKernelTools = {
 };
 
 export const kernelToolsStorage = new AsyncLocalStorage<ExtensionKernelTools>();
+
+/** The active host dispatcher, including when it executes a capability captured in another session. */
+export const kernelToolInvokerStorage = new AsyncLocalStorage<{ readonly sessionId: string }>();

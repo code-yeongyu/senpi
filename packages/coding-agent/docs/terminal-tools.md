@@ -13,8 +13,8 @@ platform/runtime).
 | `bash` | Run a command in a PTY. `run_in_background: true` starts a persistent session and returns a `bash_id` immediately. Foreground `timeout` (seconds) is a kill deadline. |
 | `bash_output` | Peek at a session without blocking: new output since the last read, or the status line. `filter` regex-filters lines; `view: "screen"` returns the rendered xterm grid. |
 | `monitor` | Watch a change and inject it as coalesced events, passing exactly one source - `command`, `path` or `target`: a long-running command (`description`, `command`, `filter?`, `timeout_ms?`, `persistent?`) injects matching PTY output lines, a file (`description`, `path`, `event?`, `persistent?`) fires once natively, and sessions (`type: "rpc"`, `target`, `events?`, `exclude?`, `filter?`, `persistent?`) report status changes, effect receipts and, opted in, content from every RPC host and terminal. Every call returns a stable `mon_` id (with the runtime `bash_N` handle as `details.bash_id`); either id addresses the watch. While watches are live, the interactive footer shows a brief `watching …` status (descriptions, count, paused markers). |
-| `bash_input` | Send stdin (`input`) or named keys (`keys: ["ctrl+c"]`, `["enter"]`, `["up"]`) to steer a REPL or interrupt a process. |
-| `bash_resize` | Resize a session's PTY (`cols`, `rows`) so full-screen TUIs reflow. |
+| `bash_input` | Search-exposed: activates on its first call. Send stdin (`input`) or named keys (`keys: ["ctrl+c"]`, `["enter"]`, `["up"]`) to steer a REPL or interrupt a process. |
+| `bash_resize` | Search-exposed: activates on its first call. Resize a session's PTY (`cols`, `rows`) so full-screen TUIs reflow. |
 | `kill_bash` | Tree-kill one session (`bash_id`) or all (`all: true`), leaving no orphans. |
 
 Background sessions are NEVER killed by `timeout` (they live until they exit or you

@@ -1,5 +1,10 @@
 import { MessageChannel, type MessagePort, type Transferable, Worker, type WorkerOptions } from "node:worker_threads";
 import type { HostToKernelMessage, KernelToHostMessage } from "../../bridge/protocol.ts";
+import {
+	invocationSession,
+	type InvocationSession,
+	registerInvocationSession,
+} from "../shared/invocation-authority.ts";
 import type { WorkerRetirement } from "./interrupt-bounds.ts";
 import type { CellAuthorityToken, JavaScriptKernelOptions } from "./kernel-contract.ts";
 import type { KernelToolsInvokeOptions, KernelToolsInvokeRequest } from "./kernel-tools-types.ts";
@@ -33,9 +38,11 @@ export class KernelPermissionHost {
 	readonly #tokens = new Map<string, CellAuthorityToken>();
 	readonly #runs = new Map<string, CellAuthorityToken>();
 	readonly #invocations = new Map<string, CellAuthorityToken>();
+	readonly #invokerBindings = new Map<string, number>();
 	readonly #pools = new Set<SharedArrayBuffer>();
 	readonly #ports = new Set<MessagePort>();
 	readonly #children = new Map<Worker, Promise<void>>();
+	readonly #releaseSession: () => void;
 	#kernel: CellAuthorityToken;
 	#revoked = false;
 	#retiring?: Promise<void>;
@@ -45,6 +52,7 @@ export class KernelPermissionHost {
 		this.#retire = retire;
 		this.#kernel = this.#mint();
 		this.#session = registerPermissionKernel(options.sessionId, this);
+		this.#releaseSession = registerInvocationSession(options.sessionId, () => this.#snapshot());
 	}
 
 	get blocked(): boolean {
@@ -61,29 +69,53 @@ export class KernelPermissionHost {
 		if (this.#session.dead) throw new Error("Permission authority unavailable; restart the session");
 	}
 
-	#mint(signal?: AbortSignal): CellAuthorityToken {
-		const state = this.#options.permissions?.state() ?? { epoch: 0, active: false, rules: [] };
+	#snapshot(): InvocationSession {
+		return {
+			cwd: this.#options.cwd,
+			state: this.#options.permissions?.state() ?? { epoch: 0, active: false, rules: [] },
+		};
+	}
+
+	#mint(
+		signal?: AbortSignal,
+		session = { sessionId: this.#options.sessionId, ...this.#snapshot() },
+	): CellAuthorityToken {
+		const { state } = session;
 		if (!Number.isInteger(state.epoch) || state.epoch < 0 || state.epoch >= 2 ** 29)
 			throw new Error("Invalid permission epoch");
 		const authority = new SharedArrayBuffer(4);
 		Atomics.store(new Int32Array(authority), 0, (state.epoch << 2) | 2 | Number(state.active));
 		return {
 			id: crypto.randomUUID(),
-			sessionId: this.#options.sessionId,
-			cwd: this.#options.cwd,
+			sessionId: session.sessionId,
+			cwd: session.cwd,
 			authority,
 			rules: state.rules,
 			signal,
 		};
 	}
 
-	/** PR 2b adds invoker authority here; today the owning session alone mints the token. */
+	/** Resolve host-only caller identity before admitting any invocation frame to the worker. */
 	resolveInvocationToken(
 		_request: KernelToolsInvokeRequest,
 		options?: AbortSignal | KernelToolsInvokeOptions,
 	): CellAuthorityToken {
 		const signal = options && ("aborted" in options ? options : options.signal);
-		const token = this.#mint(signal);
+		const session = invocationSession(
+			this.#options.sessionId,
+			this.#snapshot(),
+			options,
+			this.#options.permissions?.resolveSession,
+		);
+		const token = this.#mint(signal, session);
+		if (session.sessionId !== this.#options.sessionId) {
+			const binding = registerPermissionKernel(session.sessionId, this);
+			if (binding.dead || binding.pending) {
+				if (!this.#invokerBindings.has(session.sessionId)) unregisterPermissionKernel(session.sessionId, this);
+				throw new Error("Permission authority unavailable");
+			}
+			this.#invokerBindings.set(session.sessionId, (this.#invokerBindings.get(session.sessionId) ?? 0) + 1);
+		}
 		this.#tokens.set(token.id, token);
 		return token;
 	}
@@ -130,9 +162,25 @@ export class KernelPermissionHost {
 	}
 
 	#release(token: CellAuthorityToken): void {
-		// Settled no-deny work keeps its async resources; the kernel word still revokes them.
-		if (Atomics.load(new Int32Array(token.authority), 0) & 1) this.#kill(token);
-		this.#tokens.delete(token.id);
+		if (!this.#tokens.delete(token.id)) return;
+		// Settled no-deny work keeps its async resources; the kernel word still revokes them. A live inactive
+		// token also keeps its invoker binding, so that session's revocation reaches the work until the worker retires.
+		const word = Atomics.load(new Int32Array(token.authority), 0);
+		if (word & 2 && !(word & 1)) return;
+		this.#kill(token);
+		const count = this.#invokerBindings.get(token.sessionId);
+		if (count === undefined) return;
+		if (count > 1) this.#invokerBindings.set(token.sessionId, count - 1);
+		else {
+			this.#invokerBindings.delete(token.sessionId);
+			unregisterPermissionKernel(token.sessionId, this);
+		}
+	}
+
+	/** Worker retirement ends every continuation, so no invoker revocation needs to reach this kernel. */
+	#unbindInvokers(): void {
+		for (const sessionId of this.#invokerBindings.keys()) unregisterPermissionKernel(sessionId, this);
+		this.#invokerBindings.clear();
 	}
 
 	#kill(token: CellAuthorityToken): void {
@@ -286,12 +334,15 @@ export class KernelPermissionHost {
 		for (const [worker] of children) void worker.terminate();
 		await Promise.all(children.map(([, exited]) => exited));
 		for (const port of this.#ports) port.close();
-		this.#tokens.clear();
+		for (const token of this.#tokens.values()) this.#release(token);
+		this.#unbindInvokers();
 		this.#runs.clear();
 	}
 
 	dispose(): void {
 		this.revoke();
+		this.#releaseSession();
+		this.#unbindInvokers();
 		unregisterPermissionKernel(this.#options.sessionId, this);
 	}
 }

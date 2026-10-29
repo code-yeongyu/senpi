@@ -9,8 +9,15 @@ const ONE_LINE_DESCRIPTION_MAX_CHARS = 160;
 const TIGHT_ONE_LINE_DESCRIPTION_MAX_CHARS = 100;
 const MIN_FILL_CHARS = 24;
 // The when-to-use clause ("Use when...", "MUST USE for...", "Triggers: ...") is what the model selects a skill on.
-const TRIGGER_CLAUSE =
-	/(?:^|(?<=[.!?;:)]\s)|(?<=\s[-\u2013\u2014]\s))(?:MUST (?:USE|READ|use|read)\b|USE ONLY WHEN\b|(?:Use|Used|Read|Load|Invoke|Apply|Run|Call)\b[^.!?]{0,40}?\b(?:when|whenever|for|before|after|if|only)\b|(?:Korean )?[Tt]riggers?(?::| -| on\b)|This skill should be used\b|Use this\b|When the user\b)/;
+// An explicit trigger phrase anywhere in the description wins over the generic verb form, which also matches ordinary
+// imperative prose ("Run the formatter for each package before tagging."); the verb form is only the fallback.
+const CLAUSE_START = /(?:^|(?<=[.!?;:)]\s)|(?<=\s[-\u2013\u2014]\s))/.source;
+const EXPLICIT_TRIGGER_CLAUSE = new RegExp(
+	String.raw`${CLAUSE_START}(?:MUST (?:USE|READ|use|read)\b|USE ONLY WHEN\b|Use (?:when|whenever|for)\b|(?:Korean )?[Tt]riggers?(?::| -| on\b)|This skill should be used\b|Use this\b|When the user\b)`,
+);
+const VERB_TRIGGER_CLAUSE = new RegExp(
+	String.raw`${CLAUSE_START}(?:Use|Used|Read|Load|Invoke|Apply|Run|Call)\b[^.!?]{0,40}?\b(?:when|whenever|for|before|after|if|only)\b`,
+);
 const SENTENCE_END = /[.!?](?=\s|$)/g;
 
 /** A catalog this large is listed by name plus a one-line description, since it rides on every request. */
@@ -85,7 +92,7 @@ function buildSkillCatalog(skills: readonly Skill[], fileReadTool: "read" | "bas
 function oneLineDescription(description: string, maxChars: number): string {
 	const text = description.trim().replace(/\s+/g, " ");
 	if (text.length <= maxChars) return text;
-	const trigger = TRIGGER_CLAUSE.exec(text);
+	const trigger = EXPLICIT_TRIGGER_CLAUSE.exec(text) ?? VERB_TRIGGER_CLAUSE.exec(text);
 	if (!trigger) return truncate(text, maxChars);
 	SENTENCE_END.lastIndex = trigger.index;
 	const end = SENTENCE_END.exec(text)?.index;

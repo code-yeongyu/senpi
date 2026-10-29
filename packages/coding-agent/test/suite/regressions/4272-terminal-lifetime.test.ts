@@ -50,7 +50,24 @@ for (const reason of ["close", "worker_failed"] as const) {
 
 it("C2.2 C2.4 one thousand joined messages leave zero payload residency", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
-	const rig = await settledRig();
+	// #4756: exercise the real compactor and ownership graph without serial filesystem round trips.
+	// This claim is payload lifetime, not disk throughput; retain exact backing bytes and range reads.
+	const files = new Map<string, Buffer>();
+	const rig = await settledRig({
+		io: {
+			async writeFile(path, data) {
+				files.set(path, Buffer.from(data));
+			},
+			async readFile(path, range) {
+				const data = files.get(path);
+				if (!data) throw new Error("missing backing file");
+				return Buffer.from(range ? data.subarray(range.offset, range.offset + range.length) : data);
+			},
+			async unlink(path) {
+				files.delete(path);
+			},
+		},
+	});
 	try {
 		for (let index = 0; index < 1000; index++) {
 			const { carrier } = rig.end();

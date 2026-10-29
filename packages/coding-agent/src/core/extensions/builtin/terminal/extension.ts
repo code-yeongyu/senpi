@@ -225,9 +225,8 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 	pi.on(
 		"before_agent_start",
 		async (event) => {
-			if (state.steppedAside) return undefined;
 			return {
-				systemPrompt: `${event.systemPrompt}\n${buildTerminalPromptSection({ evalOnly: isEvalOnlyRouting(pi) })}`,
+				systemPrompt: `${event.systemPrompt}\n${buildTerminalPromptSection({ evalOnly: isEvalOnlyRouting(pi), ptyBash: !state.steppedAside })}`,
 			};
 		},
 		{ previewSafe: true },

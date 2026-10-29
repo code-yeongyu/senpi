@@ -3,6 +3,8 @@
 // then read-only metadata can answer before provider registration. Normal runs still
 // set up process identity and providers before loading the full CLI.
 import "./sandbox-env-setup.ts";
+// The private descriptor table is captured right after the environment exists, before anything spawns.
+import "../private-fds.ts";
 import "../modes/rpc/internal-bootstrap.ts";
 import { dispatchAgentDirectoryCommand } from "../cli/agent-dir-command.ts";
 
