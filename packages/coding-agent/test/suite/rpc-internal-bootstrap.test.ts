@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Duplex } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 
 const children: ChildProcess[] = [];
@@ -36,7 +37,7 @@ function start(runtime: string, args: string[] = [], env: Readonly<Record<string
 	return { child, stderr: () => stderr };
 }
 
-// senpi#4737: close follows stderr EOF, so an early exit reports the complete child diagnostic.
+// senpi#4737: reject at exit even if a descendant holds stderr; retain late output when close follows.
 function message(child: ChildProcess, stderr: () => string): Promise<unknown> {
 	return new Promise((resolve, reject) => {
 		const received = (value: unknown) => {
@@ -45,11 +46,12 @@ function message(child: ChildProcess, stderr: () => string): Promise<unknown> {
 		};
 		const exited = (code: number | null, signal: NodeJS.Signals | null) => {
 			cleanup();
-			reject(
-				new Error(
-					`bootstrap exited ${code} (signal ${signal ?? "none"}) before reporting\n${stderr() || "(no stderr)"}`,
-				),
-			);
+			const reason = `bootstrap exited ${code} (signal ${signal ?? "none"}) before reporting`;
+			const error = new Error(`${reason}\n${stderr() || "(no stderr)"}`);
+			child.once("close", () => {
+				error.message = `${reason}\n${stderr() || "(no stderr)"}`;
+			});
+			reject(error);
 		};
 		const failed = (cause: Error) => {
 			cleanup();
@@ -57,17 +59,84 @@ function message(child: ChildProcess, stderr: () => string): Promise<unknown> {
 		};
 		const cleanup = () => {
 			child.off("message", received);
-			child.off("close", exited);
+			child.off("exit", exited);
 			child.off("error", failed);
 		};
 		child.once("message", received);
-		child.once("close", exited);
+		child.once("exit", exited);
 		child.once("error", failed);
 	});
 }
 
 // senpi#3795: real socketpair stdin, on both runtimes; no inherited agent profile.
 describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => {
+	// senpi#4737: a descendant owns stderr until explicitly released, independently of its parent's exit.
+	it("rejects on exit while a descendant holds stderr open", async () => {
+		const holder = `
+			const { Socket } = require("node:net");
+			const { writeSync } = require("node:fs");
+			const control = new Socket({ fd: 3, readable: true, writable: false });
+			control.once("data", () => {
+				writeSync(2, "after-exit");
+				process.exit(0);
+			});
+			control.once("end", () => process.exit(0));
+			control.resume();
+			writeSync(2, "before-exit");
+			process.send("ready");
+		`;
+		const child = spawn(
+			"node",
+			[
+				"-e",
+				`
+			const { spawn } = require("node:child_process");
+			const holder = spawn(process.execPath, ["-e", ${JSON.stringify(holder)}], {
+				stdio: ["ignore", "ignore", "inherit", 3, "ipc"],
+			});
+			holder.once("message", () => process.send("ready"));
+			process.once("message", () => process.exit(7));
+		`,
+			],
+			{ stdio: ["ignore", "ignore", "pipe", "pipe", "ipc"] },
+		);
+		children.push(child);
+		const control = child.stdio[3] as Duplex;
+		let stderr = "";
+		child.stderr?.on("data", (data) => {
+			stderr += String(data);
+		});
+		const firstStderr = once(child.stderr!, "data");
+		let closed = false;
+		const close = once(child, "close").then(() => {
+			closed = true;
+		});
+		try {
+			await once(child, "message");
+			await firstStderr;
+			let failure: Error | undefined;
+			const report = message(child, () => stderr).catch((cause: Error) => {
+				failure = cause;
+			});
+			const exit = once(child, "exit");
+			child.send("exit");
+			await exit;
+			try {
+				// message's exit listener precedes ours, so its rejection handler has already run.
+				expect(failure).toBeInstanceOf(Error);
+				expect(failure?.message).toContain("before-exit");
+				expect(closed).toBe(false);
+			} finally {
+				control.end("release");
+				await close;
+				await report;
+			}
+			expect(failure?.message).toContain("after-exit");
+		} finally {
+			control.destroy();
+		}
+	});
+
 	for (const runtime of ["node", "bun"]) {
 		it(`${runtime} restores null stdin and its inherited-stdin descendant completes while the writer lives`, async () => {
 			const { child, stderr } = start(runtime);
