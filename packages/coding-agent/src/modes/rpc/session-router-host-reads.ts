@@ -1,6 +1,8 @@
 import { VERSION } from "../../config.ts";
+import { sharedPathIdentityResolver } from "../../core/extensions/builtin/permission-system/path-identity-host.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
+import { pathIdentityResolverStatus } from "./path-identity-status.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import type { RouterContext } from "./session-router-context.ts";
@@ -32,6 +34,7 @@ export function answerProtocolInfo(
 			mode: "multi",
 			...protocolIdentity(host.defaults.agentDir),
 			memory_pressure: host.memoryPressure,
+			path_identity_resolver: pathIdentityResolverStatus(sharedPathIdentityResolver()),
 		},
 	};
 }

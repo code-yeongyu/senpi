@@ -16,6 +16,13 @@ const bridgeErrorSchema = Type.Object({
 	message: Type.String(),
 	stack: Type.Optional(Type.String()),
 	code: Type.Optional(Type.String()),
+	permissionRule: Type.Optional(
+		Type.Object({
+			permission: Type.String(),
+			pattern: Type.String(),
+			layer: Type.String(),
+		}),
+	),
 });
 
 const statusEventSchema = Type.Object({ op: Type.String() }, { additionalProperties: true });

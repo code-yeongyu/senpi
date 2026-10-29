@@ -22,28 +22,40 @@ import {
 	readProcessStartTime,
 	waitForStartTime,
 } from "../src/utils/process-identity.ts";
-import { killAndWait, processesUnder, reapProcessesUnder, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
+import {
+	collectSpawnedHosts,
+	killAndWait,
+	processesUnder,
+	reapCollectedHosts,
+	waitForPidGone,
+} from "./helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
+import { fileAppears } from "./helpers/rpc-supervised-host.ts";
 
 const roots: string[] = [];
 const children: ChildProcess[] = [];
 const fixture = join(import.meta.dirname, "fixtures", "rpc-host-fixture.mjs");
 const incompatibleProtocolFixture = join(import.meta.dirname, "fixtures", "rpc-incompatible-protocol-host.ts");
+const readinessDiagnosticFixture = join(import.meta.dirname, "fixtures", "rpc-readiness-diagnostic.mjs");
 /** What a host must advertise before any client may attach: protocol capabilities, never a version. */
 const CAPABILITIES = "multi_session,extension_events,session_context,session_kind";
 /** A host that can drain into a successor generation: the only kind a client may ever hand off from. */
 const HANDOFF_CAPABILITIES = `${CAPABILITIES},${GENERATION_HANDOFF_CAPABILITY}`;
 
 afterEach(async () => {
-	for (const child of children.splice(0)) await killAndWait(child);
-	for (const root of roots.splice(0)) {
-		await stopManagedRoot(root);
-		// Most hosts here are spawned by PRODUCTION code: detached, with only a pid handed back, and
-		// some cases deliberately leave a registration the teardown above cannot act on (an unguarded
-		// pidfile, an ensure that cleaned its own state). The sandbox path still names every one of
-		// them, and the wait is what keeps the removal below from racing a host that is still writing.
-		await reapProcessesUnder(root);
-		await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-	}
+	const spawned = children.splice(0);
+	const pending = roots.splice(0);
+	// Most hosts here are spawned by PRODUCTION code: detached, with only a pid handed back, and
+	// some cases deliberately leave a registration the teardown cannot act on (an unguarded pidfile,
+	// an ensure that cleaned its own state). The sandbox path still names every one of them, and the
+	// wait is what keeps the removals below from racing a host that is still writing. The snapshot is
+	// taken BEFORE anything is signalled: a supervisor's host child is re-parented out of the tree the
+	// moment its supervisor dies, and argv never named it.
+	const scope = { children: spawned, roots: pending };
+	const collected = collectSpawnedHosts(scope);
+	for (const root of pending) await stopManagedRoot(root);
+	await reapCollectedHosts(collected, scope);
+	for (const root of pending) await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }, 60_000);
 
 describe("ensureHost", () => {
@@ -378,7 +390,7 @@ describe("ensureHost", () => {
 				readinessTimeoutMs: 300,
 				spawn: {
 					command: process.execPath,
-					args: ["-e", "process.stderr.write('fixture readiness diagnostic\\n'); setInterval(() => {}, 1000)"],
+					args: [readinessDiagnosticFixture, qa.root],
 				},
 			}),
 		).rejects.toThrow(/did not answer get_protocol_info.*fixture readiness diagnostic/s);
@@ -403,7 +415,7 @@ describe("ensureHost", () => {
 						: readProcessStartTime(pid),
 				spawn: {
 					command: process.execPath,
-					args: ["-e", "process.stderr.write('fixture readiness diagnostic\\n'); setInterval(() => {}, 1000)"],
+					args: [readinessDiagnosticFixture, qa.root],
 				},
 			}),
 		).rejects.toThrow(/did not answer get_protocol_info.*fixture readiness diagnostic/s);
@@ -428,7 +440,7 @@ describe("ensureHost", () => {
 					pinned ? ((await readProcessStartTime(pid)) ?? pinned) : readProcessStartTime(pid),
 				spawn: {
 					command: process.execPath,
-					args: ["-e", "process.stderr.write('fixture readiness diagnostic\\n'); setInterval(() => {}, 1000)"],
+					args: [readinessDiagnosticFixture, qa.root],
 				},
 			}),
 		).rejects.toThrow(/did not answer get_protocol_info.*fixture readiness diagnostic/s);
@@ -855,21 +867,37 @@ async function scratch(label: string): Promise<Qa> {
 	return { root, agentDir: join(root, "agent"), socket: join(root, "rpc.sock") };
 }
 
-function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
-	return ensureHost({
-		agentDir: qa.agentDir,
-		socket: qa.socket,
-		_test: {
-			readinessTimeoutMs: overrides.readinessTimeoutMs,
-			stopTimeoutMs: overrides.stopTimeoutMs,
-			spawn: overrides.spawn ?? {
-				command: process.execPath,
-				args: [fixture, qa.socket, VERSION, CAPABILITIES, "answer"],
+async function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
+	const controller = new AbortController();
+	// Arm before spawn. These cases time protocol readiness, not the runtime's first instruction:
+	// under CPU pressure SIGTERM can otherwise arrive before the fixture ever writes its diagnostic.
+	const diagnosticReady =
+		overrides.spawn?.args[0] === readinessDiagnosticFixture
+			? fileAppears(join(qa.root, "stderr-ready"), 5_000, controller.signal)
+			: undefined;
+	// Startup may fail before the pidfile hook awaits the fixture; cancellation must still be observed.
+	void diagnosticReady?.catch(() => {});
+	try {
+		return await ensureHost({
+			agentDir: qa.agentDir,
+			socket: qa.socket,
+			_test: {
+				readinessTimeoutMs: overrides.readinessTimeoutMs,
+				stopTimeoutMs: overrides.stopTimeoutMs,
+				spawn: overrides.spawn ?? {
+					command: process.execPath,
+					args: [fixture, qa.socket, VERSION, CAPABILITIES, "answer"],
+				},
+				readProcessStartTime: overrides.readProcessStartTime,
+				beforePidFileWrite: async () => {
+					await diagnosticReady;
+					await overrides.beforePidFileWrite?.();
+				},
 			},
-			readProcessStartTime: overrides.readProcessStartTime,
-			beforePidFileWrite: overrides.beforePidFileWrite,
-		},
-	});
+		});
+	} finally {
+		controller.abort();
+	}
 }
 
 /** A fixture host nobody registers, answering on its sandbox socket. Returns its pid. */
@@ -937,7 +965,7 @@ async function startUnregisteredListener(socketPath: string): Promise<ChildProce
 	].join(" ");
 	const child = spawn(process.execPath, ["-e", script], {
 		stdio: ["ignore", "pipe", "ignore"],
-		env: { ...process.env, HELD_SOCKET: socketPath },
+		env: { ...hostSpawnEnv(), HELD_SOCKET: socketPath },
 	});
 	children.push(child);
 	await new Promise<void>((resolve, reject) => {
@@ -986,7 +1014,7 @@ async function leaveStaleEntry(socketPath: string): Promise<void> {
 	].join(" ");
 	const child = spawn(process.execPath, ["-e", script], {
 		stdio: ["ignore", "pipe", "ignore"],
-		env: { ...process.env, STALE_SOCKET: socketPath },
+		env: { ...hostSpawnEnv(), STALE_SOCKET: socketPath },
 	});
 	await new Promise<void>((resolve, reject) => {
 		child.stdout?.once("data", () => resolve());
@@ -1025,7 +1053,7 @@ async function startBusySocketHost(qa: Qa, writer: Writer): Promise<Managed> {
 	const child = spawn(process.execPath, ["-e", script], {
 		detached: true,
 		stdio: ["ignore", "pipe", "pipe"],
-		env: { ...process.env, BUSY_SOCKET: qa.socket },
+		env: { ...hostSpawnEnv(), BUSY_SOCKET: qa.socket },
 	});
 	await new Promise<void>((resolve, reject) => {
 		child.stdout?.once("data", () => resolve());

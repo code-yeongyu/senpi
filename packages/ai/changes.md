@@ -1,3 +1,21 @@
+## 2026-10-27 - Moonshot Kimi K3.1 Pro rows get the K3 request contract (senpi#4442)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `MOONSHOT_KIMI_K3_SERIES_COSTS` (`kimi-k3`, `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`) replaces the `modelId === "kimi-k3"` checks in the Moonshot variant loop and in `applyOpenAICompletionsTranscriptMetadata`. Every listed row on `moonshotai` and `moonshotai-cn` gets the K3 compat (`supportsReasoningEffort`, `thinkingFormat: "openai"`, `requiresReasoningContentOnAssistantMessages`, mid-conversation system and tool messages), the low / high / max `MOONSHOT_KIMI_K3_SERIES_THINKING_LEVEL_MAP`, and its official USD list price. Regenerated `moonshotai.json`, `moonshotai-cn.json` and the manifest; only the K3.1 Pro rows changed.
+
+### Why
+
+- Moonshot documents that K3.1 Pro has the same parameter constraints as `kimi-k3` (top-level `reasoning_effort`, no K2-style `thinking` parameter). The generic Moonshot compat sent `thinking` and dropped the effort level, and `moonshotai-cn` billed a daily-drifting currency conversion instead of the USD list price (senpi#4441).
+
+### Why an extension could not handle it
+
+- The catalog rows are generated build data; an extension cannot correct a built-in model's compat or price before the provider sends the request.
+
+### Expected merge conflict zones
+
+- LOW: the Moonshot variant loop and the Kimi constants near `KIMI_K3_COST` in `generate-models.ts`; regenerated `providers/data/moonshotai*.json` and `.manifest.json` conflict with any other regeneration and are resolved by regenerating.
+
 ## 2026-10-24 - Implied costs for Kimi Code K3.1 Pro (senpi#4183)
 
 ### What changed
