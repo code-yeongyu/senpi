@@ -46,6 +46,8 @@ export interface JavaScriptKernelOptions {
 	readonly cwd: string;
 	readonly permissions?: InvocationPermissions & {
 		readonly decide: CellDecider;
+		/** Slot wait deadline in ms; production keeps the 2s default. Integration suites raise it above host load. */
+		readonly checkDeadlineMs?: number;
 	};
 	/** Integration marks direct tool admission DEAD too; the kernel host fences cells itself. */
 	readonly onRevocationFailed?: (event: RevocationFailedEvent) => void;

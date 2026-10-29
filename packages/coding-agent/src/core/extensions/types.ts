@@ -13,6 +13,7 @@ import type { InputOrigin } from "../input-origin.ts";
 import type { LifecycleApi } from "../session-lifecycle-types.ts";
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { ContextEvent } from "./context-event.ts";
+import type { ExtensionRpcRequestHandler } from "./rpc-context.ts";
 
 export type { ContextEvent } from "./context-event.ts";
 
@@ -2988,7 +2989,7 @@ export interface ExtensionAPI {
 	readonly session: SessionControlActions;
 }
 
-export type ExtensionRpcRequestHandler = (data: unknown) => unknown | Promise<unknown>;
+export type { ExtensionRpcRequestContext, ExtensionRpcRequestHandler } from "./rpc-context.ts";
 
 // ============================================================================
 // Provider Registration Types

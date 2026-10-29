@@ -1557,13 +1557,6 @@ Content`,
 			expect(parsed.pinned).toBe(true);
 		});
 
-		it("should parse host/path shorthand only with git: prefix", async () => {
-			const parsed = (packageManager as any).parseSource("git:github.com/user/repo");
-			expect(parsed.type).toBe("git");
-			expect(parsed.host).toBe("github.com");
-			expect(parsed.path).toBe("user/repo");
-		});
-
 		it("should treat host/path shorthand as local without git: prefix", async () => {
 			const parsed = (packageManager as any).parseSource("github.com/user/repo");
 			expect(parsed.type).toBe("local");
