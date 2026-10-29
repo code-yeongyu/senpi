@@ -4,7 +4,6 @@ import { theme } from "../theme/theme.ts";
 
 export const CONTINUITY_DIAGNOSTIC_TYPE = "claude_sdk_oauth_session_continuity";
 export const RESUME_FALLBACK_DIAGNOSTIC_TYPE = "claude_sdk_oauth_resume_fallback";
-export { LONG_CONTEXT_FALLBACK_DIAGNOSTIC as LONG_CONTEXT_FALLBACK_DIAGNOSTIC_TYPE } from "../../../core/provider-notices.ts";
 
 /** Only degradation kinds reach the transcript; healthy kinds stay in session.log and RPC. */
 const DEGRADATION_KINDS = new Set(["flatten", "disabled"]);
