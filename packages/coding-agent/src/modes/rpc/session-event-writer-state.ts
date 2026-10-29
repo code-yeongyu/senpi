@@ -1,10 +1,10 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { McpPresenterAuthority, McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import { LegacyRecordRefusals } from "./legacy-record-depth.ts";
 import type { MediaPersister } from "./media-placeholders.ts";
 import { RpcSecurityPresentations } from "./security-presentations.ts";
 import { SessionEventFanout } from "./session-event-fanout.ts";
+import { SessionConnectionContext } from "./session-connection-context.ts";
 import { SessionOpenTurns } from "./session-open-turns.ts";
 import { type QueueNode, type RecordQueue, SessionRecordAccounting } from "./session-record-accounting.ts";
 import { SessionStatusStream } from "./session-status-stream.ts";
@@ -30,7 +30,7 @@ export abstract class SessionEventWriterState {
 	protected readonly records = new SessionRecordAccounting();
 	protected readonly queues = new Map<string, RecordQueue>();
 	protected readonly fanout = new SessionEventFanout();
-	protected readonly connectionContext = new AsyncLocalStorage<string>();
+	readonly connectionContext = new SessionConnectionContext((id) => this.fanout.get(id)?.owner);
 	protected readonly securityPresentations = new RpcSecurityPresentations(
 		this.fanout,
 		(id, task) => this.withConnection(id, task),

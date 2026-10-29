@@ -1,6 +1,7 @@
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
 import { omitNormalInlineMedia } from "./media-placeholders.ts";
 import type { RpcHostLifecycleEvent, RpcOpenQueuedEvent } from "./rpc-types.ts";
 import { compactDelta, demoteToDeltaOnly, MESSAGE_KEY, type RpcRecord } from "./session-event-writer-compaction.ts";
@@ -68,15 +69,11 @@ export class SessionEventWriter extends SessionEventWriterRecovery {
 		if (this.sealedSessions.has(sessionId)) return false;
 		const targetId = this.connectionContext.getStore();
 		const record = normalizeJsonValue(value).value as RpcRecord;
-		const isTargeted =
-			record.type === "response" ||
-			record.type === "bash_execution_update" ||
-			// Relocation records belong to the one connection that offers it (session-relocation-channel.ts).
-			record.type === "host_request" ||
-			record.type === "relocation_due" ||
-			(record.type === "extension_ui_request" &&
-				["select", "confirm", "input", "editor"].includes(String(record.method)));
-		const tagged = { ...record, sessionId } as RpcRecord;
+		const isTargeted = this.isTargetedRecord(record);
+		// A stale reply is consumed, not a session failure: the worker still gets its output credit.
+		const current = isTargeted ? this.connectionContext.currentGuard() : undefined;
+		if (current?.() === false) return true;
+		const tagged = { ...observeLifecycleDelivery(record), sessionId } as RpcRecord;
 		const line = serializeJsonLine(tagged);
 		// Observation records are per-subscription opt-ins on the subscriber's own actor FIFO: never attachments,
 		// the attach replay, response broadcast, or the stdio lane, which cannot subscribe.
@@ -137,6 +134,7 @@ export class SessionEventWriter extends SessionEventWriterRecovery {
 					mirrors.includes(target)
 						? undefined
 						: this.fanout.attachmentOf(target, sessionId, isTargeted, record.type),
+					current,
 				);
 			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
 		}

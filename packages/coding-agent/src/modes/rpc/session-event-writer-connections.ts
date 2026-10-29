@@ -5,11 +5,24 @@ import { serializeJsonLine } from "./jsonl.ts";
 import type { MediaPersister } from "./media-placeholders.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import type { SessionEventWriterConnection } from "./session-event-fanout.ts";
+import type { RpcRecord } from "./session-event-writer-compaction.ts";
 import { acceptActors, SessionEventWriterLanes, settleActors } from "./session-event-writer-lanes.ts";
 import type { SocketEventSinkActor } from "./socket-event-fanout.ts";
 
 /** Connection registration, capabilities, security presentations and per-session delivery settings. */
 export abstract class SessionEventWriterConnections extends SessionEventWriterLanes {
+	protected isTargetedRecord(record: RpcRecord): boolean {
+		return (
+			record.type === "response" ||
+			record.type === "bash_execution_update" ||
+			// Relocation records belong to the one connection that offers it (session-relocation-channel.ts).
+			record.type === "host_request" ||
+			record.type === "relocation_due" ||
+			(record.type === "extension_ui_request" &&
+				["select", "confirm", "input", "editor"].includes(String(record.method)))
+		);
+	}
+
 	isSessionSealed(sessionId: string): boolean {
 		return this.sealedSessions.has(sessionId);
 	}

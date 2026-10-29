@@ -1,0 +1,53 @@
+{
+	"caseId": "stale-ref",
+	"kind": "receiver",
+	"contractIds": [
+		"R4.B3",
+		"R4.C2",
+		"RULING-37",
+		"RULING-44"
+	],
+	"description": "A ref minted at viewRevision 41 is fetched after the row changed at viewRevision 42 to a value of the same length. The engine answers page-reset-needed; a receiver given the changed bytes must reject them against the binding digest. Never other bytes.",
+	"digestAlgorithm": "sha256",
+	"limits": {
+		"D": 131072,
+		"F": 262144,
+		"H": 16384
+	},
+	"source": {
+		"base64": "c3RhbGUgcmVmIHZhbHVlIHYx"
+	},
+	"sourceLength": 18,
+	"sourceDigest": "ad340fb5660fc31485fc495f67f8efab4c9ccb61c2eb4821f0a161fa51c3d010",
+	"binding": {
+		"threadId": "thread-sf1-fixture",
+		"viewRevision": 41,
+		"rowKey": "row-sf1-fixture",
+		"field": "content",
+		"bytes": 18,
+		"digest": "ad340fb5660fc31485fc495f67f8efab4c9ccb61c2eb4821f0a161fa51c3d010"
+	},
+	"change": {
+		"viewRevision": 42,
+		"source": {
+			"base64": "c3RhbGUgcmVmIHZhbHVlIHYy"
+		},
+		"sourceLength": 18,
+		"sourceDigest": "b947a27c76a6d18742b7f7a128b7d843fd7f66e84286eb99b531951089f9d535"
+	},
+	"fault": {
+		"field": "digest",
+		"reason": "concatenated input bytes match the changed row (viewRevision 42), not binding.digest"
+	},
+	"input": [
+		{
+			"offset": 0,
+			"length": 18,
+			"digest": "b947a27c76a6d18742b7f7a128b7d843fd7f66e84286eb99b531951089f9d535",
+			"next": null,
+			"complete": true,
+			"data": "c3RhbGUgcmVmIHZhbHVlIHYy"
+		}
+	],
+	"expectedOutcome": "page-reset-needed"
+}
