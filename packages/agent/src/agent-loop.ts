@@ -729,6 +729,7 @@ async function streamAssistantResponse(
 							carryAssistantCapture(event, {
 								type: "message_start",
 								message: { ...partialMessage },
+								streaming: true,
 							}),
 						);
 						break;

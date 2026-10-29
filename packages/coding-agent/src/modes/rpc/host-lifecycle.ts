@@ -98,6 +98,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		shuttingDown: false,
 		shutdownReason: undefined,
 		childExitRecorded: Promise.resolve(),
+		startupComplete: Promise.resolve(),
 		publicSocketOwned: false,
 		publicSocketIdentity: undefined,
 		endpointReplaced: false,
@@ -231,34 +232,38 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		}
 		await waitForListener(internalSocket, 30_000, internalSecret, internalKey);
 		await activity.openObserver();
-		await prepareSocketPath(bindSocket);
-		await listen(server, bindSocket, publicSecret);
-		await publicEndpoint?.publish();
-		state.publicSocketOwned = true;
-		if (successor) await adoptPublicSocket(bindSocket, publicSocket, launch.replaceIdentity);
-		state.publicSocketIdentity = await statSocketIdentity(publicSocket);
-		// Publish the ownership token inside this supervisor's private scratch
-		// directory (which no replacement supervisor writes): the host child's
-		// crash-path cleanup compares the public path against THIS entry only.
-		if (state.publicSocketIdentity && internal.dir) {
-			await writeSocketIdentityFile(join(internal.dir, PUBLIC_SOCKET_IDENTITY_FILE), state.publicSocketIdentity);
-		}
-		watchers.push(
-			drainOnPublicSocketLoss(
-				publicSocket,
-				state.publicSocketIdentity,
-				() => state.shuttingDown || drain.active,
-				drain,
-				() => {
-					state.endpointReplaced = true;
-				},
-				{ file: paths.pointerFile, instanceId },
-			),
-		);
-		watchers.push(await drain.acceptRequests(generation));
+		if (state.shuttingDown) return;
+		// Shutdown stops the child immediately, but joins these writes before removing their directories.
+		state.startupComplete = (async () => {
+			await prepareSocketPath(bindSocket);
+			await listen(server, bindSocket, publicSecret);
+			await publicEndpoint?.publish();
+			state.publicSocketOwned = true;
+			if (successor) await adoptPublicSocket(bindSocket, publicSocket, launch.replaceIdentity);
+			state.publicSocketIdentity = await statSocketIdentity(publicSocket);
+			// The child's crash cleanup compares the public entry against this generation's private token.
+			if (state.publicSocketIdentity && internal.dir) {
+				await writeSocketIdentityFile(join(internal.dir, PUBLIC_SOCKET_IDENTITY_FILE), state.publicSocketIdentity);
+			}
+			watchers.push(
+				drainOnPublicSocketLoss(
+					publicSocket,
+					state.publicSocketIdentity,
+					() => state.shuttingDown || drain.active,
+					drain,
+					() => {
+						state.endpointReplaced = true;
+					},
+					{ file: paths.pointerFile, instanceId },
+				),
+			);
+			watchers.push(await drain.acceptRequests(generation));
+		})();
+		await state.startupComplete;
 	} catch (cause) {
 		await shutdown(`startup failed: ${errorMessage(cause)}`, 1);
 	}
+	if (state.shuttingDown) return;
 	if (process.platform === "win32") {
 		watchers.push(
 			await watchWin32ChildIdentity(

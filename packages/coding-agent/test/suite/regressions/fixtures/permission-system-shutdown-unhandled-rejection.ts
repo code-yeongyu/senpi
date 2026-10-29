@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuthStorage } from "../../../../src/core/auth-storage.ts";
 import permissionSystemExtension from "../../../../src/core/extensions/builtin/permission-system/index.ts";
+import { RejectedError } from "../../../../src/core/extensions/builtin/permission-system/types.ts";
 import { ExtensionRunner } from "../../../../src/core/extensions/runner.ts";
 import type { ExtensionUIContext } from "../../../../src/core/extensions/types.ts";
 import { SessionManager } from "../../../../src/core/session-manager.ts";
@@ -91,10 +92,7 @@ try {
 	releasePrompt.resolve();
 
 	const toolCallResult = await toolCallPromise;
-	if (
-		toolCallResult?.block !== true ||
-		toolCallResult.reason !== "The user rejected permission to use this specific tool call."
-	) {
+	if (toolCallResult?.block !== true || toolCallResult.reason !== new RejectedError().message) {
 		throw new Error(`Unexpected tool call result: ${JSON.stringify(toolCallResult)}`);
 	}
 

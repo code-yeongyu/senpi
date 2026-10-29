@@ -1,6 +1,8 @@
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
 import { carriesMedia, omitNormalInlineMedia } from "./media-placeholders.ts";
+import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import { SocketEventSinkActor } from "./socket-event-fanout.ts";
 import { EVENT_RESYNC_CAPABILITY, type ResyncReason, type RpcSessionResyncRequired } from "./socket-peer-recovery.ts";
 
@@ -63,6 +65,8 @@ function snapshotPlaceholderLine(record: SnapshotRecord): string {
 
 export class SessionEventFanout {
 	onConnectionClosed?: (id: string) => void;
+	/** Each routing session's acceptance lane; retired when the session is sealed or forgotten. */
+	readonly acceptance = new Map<string, SessionAcceptanceLane>();
 	private readonly connections = new Map<string, RegisteredConnection>();
 	private readonly sessionSnapshots = new Map<string, SnapshotRecord[]>();
 	private readonly lifecycleSnapshots = new Map<string, SnapshotRecord>();
@@ -138,7 +142,16 @@ export class SessionEventFanout {
 		if (capabilities.includes(EVENT_RESYNC_CAPABILITY)) {
 			registered.actor.enableRecovery((reason) => {
 				const attached = [...(this.connectionSessions.get(id) ?? [])];
-				return () => this.resyncSnapshot(id, reason, attached);
+				// Frozen at the shed, before the actor awaits its drain (R3.C1.5); released by the recovery.
+				const frozen = attached.flatMap((sessionId) => {
+					const lane = this.acceptance.get(sessionId);
+					return lane && !lane.retired ? [{ lane, root: lane.freeze() }] : [];
+				});
+				return Object.assign(() => this.resyncSnapshot(id, reason, attached), {
+					release: () => {
+						for (const { lane, root } of frozen) lane.release(root);
+					},
+				});
 			});
 		} else registered.actor.disableRecovery();
 	}
@@ -251,6 +264,8 @@ export class SessionEventFanout {
 	}
 
 	forgetSession(sessionId: string): void {
+		this.acceptance.get(sessionId)?.retire("close");
+		this.acceptance.delete(sessionId);
 		this.pendingQuestions.delete(sessionId);
 		this.sessionSnapshots.delete(sessionId);
 		this.lifecycleSnapshots.delete(sessionId);
@@ -261,7 +276,7 @@ export class SessionEventFanout {
 		if (!actor) return;
 		const placeholders = this.connectionHas(id, MEDIA_PLACEHOLDERS_CAPABILITY);
 		const lifecycle = this.lifecycleSnapshots.get(sessionId);
-		if (lifecycle) actor.enqueue(placeholders ? snapshotPlaceholderLine(lifecycle) : lifecycle.line);
+		if (lifecycle) actor.enqueue(serializeJsonLine(observeLifecycleDelivery(JSON.parse(lifecycle.line))));
 		for (const record of this.sessionSnapshots.get(sessionId) ?? [])
 			actor.enqueue(placeholders ? snapshotPlaceholderLine(record) : record.line);
 	}

@@ -1,279 +1,253 @@
-import { CompactContentIndex, type FrozenIndex } from "./compact-content-index.ts";
-import {
-	COMPACT_LEAF_CODE_UNITS,
-	CompactContentStore,
-	type CompactContentStoreOptions,
-	type CompactStorageStatus,
-	type LeafId,
-} from "./compact-content-store.ts";
-import {
-	type BlockAddress,
-	type CompactBlockKind,
-	type CompactPersistence,
-	type CompactTransition,
-	CompactTransitionError,
-} from "./compact-transition.ts";
+import { type ActiveBlock, type ActiveMessage, adjustBlock, appendBlock, deltaBlock } from "./compact-active-block.ts";
+import type { ComponentRoot } from "./compact-component-roots.ts";
+import type { CompactColdOperation } from "./compact-cold-operations.ts";
+import { CompactReadError, CompactReadLease } from "./compact-read-lease.ts";
+import { foldSeededBlock, frozenSeededBlock } from "./compact-seeded-block.ts";
+import { CompactSeededDraft } from "./compact-seeded-draft.ts";
+import { CompactStartIdentity } from "./compact-start-identity.ts";
+import { CompactStateStorage } from "./compact-state-storage.ts";
+import { type FrozenCompactState, type MessageRoot, readCompactState } from "./compact-state-view.ts";
+import { type BlockAddress, type CompactTransition, CompactTransitionError } from "./compact-transition.ts";
+export type { CompactSessionStateOptions } from "./compact-state-storage.ts";
 
-/**
- * The in-memory current-state owner over compact storage (senpi#4272, R3.C6.4 first half).
- *
- * `accept` is synchronous: it validates a typed transition completely, then publishes the next
- * sequence, or throws and leaves the prior root untouched. Block text lives in owned bounded leaves
- * that spill asynchronously; settled messages live in a spillable index whose persistence status
- * changes only through `message_status`, never through storage success or failure. `freeze` pins
- * an immutable cut synchronously, and `read` materializes it asynchronously from RAM or disk.
- */
-
-interface FrozenBlock {
-	readonly contentIndex: number;
-	readonly kind: CompactBlockKind;
-	readonly leaves: readonly LeafId[];
-	/** A cut shares the immutable active tail string (under one leaf) instead of minting a leaf per freeze. */
-	readonly tail: string;
-}
-
-interface ActiveBlock {
-	readonly kind: CompactBlockKind;
-	readonly leaves: LeafId[];
-	tail: string;
-	units: number;
-	emitted: number;
-	covered: number;
-	/** The declared replay range, kept resident until emission passes it; counted as hot bytes. */
-	witness: string;
-}
-
-interface SettledRow {
-	readonly persistence: CompactPersistence;
-	readonly blocks: readonly FrozenBlock[];
-}
-
-interface FrozenCompactState {
-	readonly sequence: number;
-	readonly active: ReadonlyMap<string, readonly FrozenBlock[]>;
-	readonly settled: FrozenIndex<SettledRow>;
-}
-
-interface CompactMessageView {
-	readonly messageId: string;
-	readonly persistence: CompactPersistence | undefined;
-	readonly blocks: readonly {
-		readonly contentIndex: number;
-		readonly kind: CompactBlockKind;
-		readonly text: string;
-	}[];
-}
-
-export interface CompactSessionStateOptions extends CompactContentStoreOptions {
-	/** Index compaction is considered once this many override slots exist (one page by default). */
-	readonly compactAboveRows?: number;
-}
-
-const byContentIndex = ([a]: [number, ActiveBlock], [b]: [number, ActiveBlock]) => a - b;
-
-export class CompactSessionState {
-	private readonly store: CompactContentStore;
-	private readonly settled: CompactContentIndex<SettledRow>;
-	private readonly active = new Map<string, Map<number, ActiveBlock>>();
+/** Synchronous acceptance; cuts and settlement transfer persistent component roots (senpi#4272). */
+export class CompactSessionState extends CompactStateStorage {
+	private messages: ComponentRoot<MessageRoot> = { header: undefined, ref: undefined };
+	private readonly active = new Map<string, ActiveMessage>();
+	private readonly identity = new CompactStartIdentity();
 	private sequence = 0;
+	private residentTailBytes = 0;
+	private hotWitnessBytes = 0;
 	private frozenTailBytes = 0;
+	private readonly cuts = new WeakMap<FrozenCompactState, CompactReadLease>();
 
-	constructor(options: CompactSessionStateOptions) {
-		this.store = new CompactContentStore(options);
-		const leavesOf = (row: SettledRow) => row.blocks.flatMap((block) => block.leaves);
-		this.settled = new CompactContentIndex(this.store, leavesOf, options.compactAboveRows ?? 128);
+	protected override isActiveKey(key: string): boolean {
+		return this.active.has(key);
 	}
 
 	get acceptedSequence(): number {
 		return this.sequence;
 	}
 
-	accept(transition: CompactTransition): number {
-		switch (transition.type) {
+	accept(t: CompactTransition): number {
+		if (t.type !== "message_remove") this.store.assertReadable();
+		if ((t.type === "message_status" || t.type === "message_remove") && !this.active.has(t.messageId))
+			throw new CompactTransitionError("cold_operation_required", "use applyCold after acceptance");
+		switch (t.type) {
+			case "seeded_block": {
+				const address = { messageId: t.messageId, contentIndex: t.event.contentIndex };
+				const old = this.active.get(t.messageId)?.blocks.get(address.contentIndex);
+				if (old?.epoch !== undefined && old.epoch !== t.epoch)
+					throw new CompactTransitionError("wrong_epoch", t.messageId);
+				if (!Number.isSafeInteger(address.contentIndex) || address.contentIndex < 0)
+					throw new CompactTransitionError("unknown_block", String(address.contentIndex));
+				const starting =
+					"seed" in t.event || (t.event.type === "message_block_state" && t.event.phase === "insert" && !old);
+				if (starting) this.identity.validate(t);
+				using draft = new CompactSeededDraft(this.store);
+				const block = foldSeededBlock(draft, old?.seeded, t.event);
+				this.publish(address, { ...block.body, seeded: block, epoch: t.epoch });
+				if (starting) this.identity.commit(t);
+				break;
+			}
 			case "block_start":
-				this.start(transition);
+				this.start(t);
 				break;
-			case "block_delta":
-				this.delta(this.block(transition), transition.offset, transition.text);
+			case "block_delta": {
+				const block = { ...this.block(t) };
+				adjustBlock(this.store, block, 1);
+				try {
+					deltaBlock(this.store, block, t.offset, t.text);
+					this.publish(t, block);
+				} finally {
+					adjustBlock(this.store, block, -1);
+				}
 				break;
-			case "block_replace":
-				this.replace(this.block(transition), transition.text);
+			}
+			case "block_replace": {
+				const block: ActiveBlock = {
+					...this.block(t),
+					root: 0,
+					tail: "",
+					tailRoot: 0,
+					units: 0,
+					covered: 0,
+					witness: "",
+				};
+				appendBlock(this.store, block, t.text);
+				block.emitted = block.units;
+				this.publish(t, block);
+				adjustBlock(this.store, block, -1);
 				break;
+			}
 			case "message_status":
-				this.setPersistence(transition.messageId, transition.persistence);
+				this.settled.set(t.messageId, {
+					messageId: t.messageId,
+					persistence: t.persistence,
+					blocks: this.active.get(t.messageId)?.root.ref,
+				});
+				this.dropActive(t.messageId);
 				break;
 			case "message_remove":
-				this.remove(transition.messageId);
+				this.dropActive(t.messageId);
 				break;
 		}
 		return ++this.sequence;
 	}
 
+	applyCold(t: CompactColdOperation) {
+		return this.cold.run(t, this.sequence);
+	}
+
 	freeze(): FrozenCompactState {
-		const active = new Map<string, FrozenBlock[]>();
-		for (const [messageId, blocks] of this.active) active.set(messageId, this.seal(blocks, false));
-		for (const blocks of active.values()) this.pin(blocks, 1);
-		return { sequence: this.sequence, active, settled: this.settled.freeze() };
+		this.store.assertReadable();
+		const active = this.messages.ref;
+		const tails = this.residentTailBytes;
+		if (active) this.store.adjust(active.owner, 0, 1);
+		this.frozenTailBytes += tails;
+		const frozen = { sequence: this.sequence, active, settled: this.settled.freeze() };
+		this.cuts.set(
+			frozen,
+			new CompactReadLease(() => {
+				if (active) this.store.adjust(active.owner, 0, -1);
+				this.frozenTailBytes -= tails;
+				this.settled.release(frozen.settled);
+			}),
+		);
+		return frozen;
 	}
 
 	release(frozen: FrozenCompactState): void {
-		for (const blocks of frozen.active.values()) this.pin(blocks, -1);
-		this.settled.release(frozen.settled);
+		this.cutLease(frozen).release();
 	}
 
-	/** Rejects with the storage error when committed content is gone; never returns empty content for it. */
-	async read(frozen: FrozenCompactState): Promise<{ sequence: number; messages: CompactMessageView[] }> {
-		const messages: CompactMessageView[] = [];
-		for (const [messageId, row] of await this.settled.entries(frozen.settled)) {
-			messages.push({ messageId, persistence: row.persistence, blocks: await this.texts(row.blocks) });
-		}
-		for (const [messageId, blocks] of frozen.active) {
-			messages.push({ messageId, persistence: undefined, blocks: await this.texts(blocks) });
-		}
-		return { sequence: frozen.sequence, messages };
+	/** Whole-view compatibility assembly; persistent nodes and text ranges are read separately. */
+	async read(frozen: FrozenCompactState) {
+		const lease = this.cutLease(frozen);
+		const valid = () => {
+			lease.assert();
+			this.store.assertReadable();
+		};
+		valid();
+		return lease.run(() =>
+			readCompactState(
+				frozen,
+				{
+					store: this.store,
+					settled: this.settled,
+					blockRoots: this.blockRoots,
+					messageRoots: this.messageRoots,
+				},
+				valid,
+			),
+		);
 	}
 
-	storageStatus(): CompactStorageStatus &
-		ReturnType<CompactContentIndex<SettledRow>["status"]> & {
-			readonly residentTailBytes: number;
-			/** Active tails held by unreleased cuts; may share storage with `residentTailBytes`. */
-			readonly frozenTailBytes: number;
-			readonly hotWitnessBytes: number;
-		} {
-		let residentTailBytes = 0;
-		let hotWitnessBytes = 0;
-		for (const blocks of this.active.values()) {
-			for (const block of blocks.values()) {
-				residentTailBytes += block.tail.length * 2;
-				hotWitnessBytes += block.witness.length * 2;
-			}
-		}
+	private cutLease(frozen: FrozenCompactState): CompactReadLease {
+		const lease = this.cuts.get(frozen);
+		if (!lease) throw new CompactReadError("ownership");
+		return lease;
+	}
+
+	storageStatus() {
 		return {
 			...this.store.status(),
 			...this.settled.status(),
-			residentTailBytes,
+			residentTailBytes: this.residentTailBytes,
 			frozenTailBytes: this.frozenTailBytes,
-			hotWitnessBytes,
+			hotWitnessBytes: this.hotWitnessBytes,
+			residentComponentNodes: this.blockRoots.residentNodes + this.messageRoots.residentNodes,
+			residentComponentIndexBytes: (this.blockRoots.residentNodes + this.messageRoots.residentNodes) * 192,
+			residentTextNodes: this.store.text.residentNodes,
+			residentTextIndexBytes: this.store.text.residentNodes * 192,
 		};
 	}
 
-	idle(): Promise<void> {
-		return this.store.idle();
+	async idle(): Promise<void> {
+		await this.cold.idle();
+		await this.store.idle();
 	}
 
-	retire(): Promise<void> {
-		return this.store.retire();
+	async retire(): Promise<void> {
+		await this.store.retire();
+		await this.cold.idle();
 	}
 
 	private start(t: Extract<CompactTransition, { type: "block_start" }>): void {
-		if (this.active.get(t.messageId)?.has(t.contentIndex) || this.settled.has(t.messageId)) {
+		this.identity.validate(t);
+		if (this.active.get(t.messageId)?.blocks.has(t.contentIndex))
 			throw new CompactTransitionError("duplicate_block", `${t.messageId}#${t.contentIndex}`);
-		}
 		const covered = t.coveredCodeUnits;
-		if (!Number.isInteger(covered) || (covered !== 0 && covered !== t.seed.length)) {
+		if (!Number.isInteger(covered) || (covered !== 0 && covered !== t.seed.length))
 			throw new CompactTransitionError("invalid_coverage", `${covered} of ${t.seed.length} seed code units`);
-		}
-		const emitted = covered > 0 ? 0 : t.seed.length;
-		const block: ActiveBlock = { kind: t.kind, leaves: [], tail: "", units: 0, emitted, covered, witness: "" };
-		block.witness = t.seed.slice(0, covered);
-		this.append(block, t.seed);
-		const blocks = this.active.get(t.messageId) ?? new Map<number, ActiveBlock>();
-		blocks.set(t.contentIndex, block);
-		this.active.set(t.messageId, blocks);
+		const block: ActiveBlock = {
+			kind: t.kind,
+			root: 0,
+			tail: "",
+			tailRoot: 0,
+			units: 0,
+			emitted: covered > 0 ? 0 : t.seed.length,
+			covered,
+			witness: t.seed.slice(0, covered),
+		};
+		appendBlock(this.store, block, t.seed);
+		this.publish(t, block);
+		adjustBlock(this.store, block, -1);
+		this.identity.commit(t);
 	}
 
-	/**
-	 * Appends only the new suffix. Overlap exists only while a fully covered seed is being replayed
-	 * (`emitted < covered == units`), so it always lies inside the producer-declared coverage.
-	 */
-	private delta(block: ActiveBlock, offset: number, text: string): void {
-		if (offset !== block.emitted) {
-			throw new CompactTransitionError("non_contiguous", `offset ${offset}, expected ${block.emitted}`);
-		}
-		const overlapEnd = Math.min(offset + text.length, block.units);
-		const overlap = Math.max(0, overlapEnd - offset);
-		if (overlap > 0 && text.slice(0, overlap) !== block.witness.slice(offset, overlapEnd)) {
-			throw new CompactTransitionError("conflicting_overlap", `[${offset}, ${overlapEnd})`);
-		}
-		this.append(block, text.slice(overlap));
-		block.emitted = offset + text.length;
-		if (block.emitted >= block.covered) block.witness = "";
+	private publish(address: BlockAddress, block: ActiveBlock): void {
+		const message = this.active.get(address.messageId) ?? {
+			order: String(this.sequence).padStart(16, "0"),
+			blocks: new Map<number, ActiveBlock>(),
+			root: { header: undefined, ref: undefined },
+			tailBytes: 0,
+			witnessBytes: 0,
+		};
+		const old = message.blocks.get(address.contentIndex);
+		const tails =
+			(block.tail.length +
+				(block.seeded?.signature.tail.length ?? 0) -
+				(old?.tail.length ?? 0) -
+				(old?.seeded?.signature.tail.length ?? 0)) *
+			2;
+		const witness = (block.witness.length - (old?.witness.length ?? 0)) * 2;
+		message.root = this.blockRoots.set(message.root, String(address.contentIndex).padStart(16, "0"), {
+			contentIndex: address.contentIndex,
+			kind: block.kind,
+			root: block.root,
+			tail: "",
+			tailRoot: block.tailRoot,
+			...(block.seeded ? { seeded: frozenSeededBlock(block.seeded) } : {}),
+		});
+		this.messages = this.messageRoots.set(this.messages, message.order, {
+			messageId: address.messageId,
+			blocks: message.root.ref,
+		});
+		message.blocks.set(address.contentIndex, block);
+		message.tailBytes += tails;
+		message.witnessBytes += witness;
+		this.residentTailBytes += tails;
+		this.hotWitnessBytes += witness;
+		// The only entry into `active`, so every start path voids cold work queued while the key was settled.
+		if (!this.active.has(address.messageId)) this.cold.activate(address.messageId);
+		this.active.set(address.messageId, message);
 	}
 
-	private replace(block: ActiveBlock, text: string): void {
-		for (const id of block.leaves.splice(0)) this.store.adjust(id, -1, 0);
-		block.tail = "";
-		block.units = 0;
-		block.covered = 0;
-		block.witness = "";
-		this.append(block, text);
-		block.emitted = block.units;
-	}
-
-	private setPersistence(messageId: string, persistence: CompactPersistence): void {
-		const blocks = this.active.get(messageId);
-		if (blocks) {
-			this.settled.set(messageId, { persistence, blocks: this.seal(blocks, true) });
-			for (const block of blocks.values()) for (const id of block.leaves) this.store.adjust(id, -1, 0);
-			this.active.delete(messageId);
-		} else if (this.settled.has(messageId)) {
-			this.settled.patch(messageId, { persistence });
-		} else {
-			throw new CompactTransitionError("unknown_message", messageId);
-		}
-	}
-
-	private remove(messageId: string): void {
-		const blocks = this.active.get(messageId);
-		const settled = this.settled.has(messageId);
-		if (!blocks && !settled) throw new CompactTransitionError("unknown_message", messageId);
-		for (const block of blocks?.values() ?? []) for (const id of block.leaves) this.store.adjust(id, -1, 0);
+	private dropActive(messageId: string): void {
+		const message = this.active.get(messageId);
+		if (!message) return;
+		this.messages = this.messageRoots.set(this.messages, message.order, undefined);
+		this.blockRoots.release(message.root);
+		this.residentTailBytes -= message.tailBytes;
+		this.hotWitnessBytes -= message.witnessBytes;
 		this.active.delete(messageId);
-		if (settled) this.settled.delete(messageId);
+		this.identity.release(messageId);
 	}
 
 	private block(address: BlockAddress): ActiveBlock {
-		const block = this.active.get(address.messageId)?.get(address.contentIndex);
+		const block = this.active.get(address.messageId)?.blocks.get(address.contentIndex);
 		if (!block) throw new CompactTransitionError("unknown_block", `${address.messageId}#${address.contentIndex}`);
 		return block;
-	}
-
-	private append(block: ActiveBlock, text: string): void {
-		block.units += text.length;
-		let rest = text;
-		while (block.tail.length + rest.length >= COMPACT_LEAF_CODE_UNITS) {
-			const take = COMPACT_LEAF_CODE_UNITS - block.tail.length;
-			block.leaves.push(this.store.createLeaf(block.tail + rest.slice(0, take)));
-			block.tail = "";
-			rest = rest.slice(take);
-		}
-		block.tail += rest;
-	}
-
-	/** Settling mints the final tail into a spillable leaf; a freeze of an active block shares the tail. */
-	private seal(blocks: Map<number, ActiveBlock>, settle: boolean): FrozenBlock[] {
-		return [...blocks].sort(byContentIndex).map(([contentIndex, block]) => {
-			if (settle && block.tail.length > 0) {
-				block.leaves.push(this.store.createLeaf(block.tail));
-				block.tail = "";
-			}
-			return { contentIndex, kind: block.kind, leaves: [...block.leaves], tail: block.tail };
-		});
-	}
-
-	private pin(blocks: readonly FrozenBlock[], delta: number): void {
-		for (const block of blocks) {
-			this.frozenTailBytes += delta * block.tail.length * 2;
-			for (const id of block.leaves) this.store.adjust(id, 0, delta);
-		}
-	}
-
-	private async texts(blocks: readonly FrozenBlock[]): Promise<CompactMessageView["blocks"]> {
-		return Promise.all(
-			blocks.map(async ({ contentIndex, kind, leaves, tail }) => {
-				const parts = await Promise.all(leaves.map((id) => this.store.readLeaf(id)));
-				return { contentIndex, kind, text: parts.join("") + tail };
-			}),
-		);
 	}
 }

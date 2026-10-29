@@ -24,6 +24,7 @@ import hooksExtension from "./hooks/index.ts";
 import htmlRenderExtension from "./html-render/index.ts";
 import imageGenExtension from "./imagegen/index.ts";
 import importReproExtension from "./import-repro.ts";
+import jobWidgetsExtension from "./job-widgets/extension.ts";
 import lookAtExtension from "./look-at/index.ts";
 import loopExtension from "./loop/index.ts";
 import loopGuardExtension from "./loop-guard/index.ts";
@@ -100,6 +101,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	// Terminal follows bash-timeout so its injected default reaches the PTY bash, and follows
 	// anthropic-bash so mutual-exclusion (companion step-aside) is evaluated after it registers.
 	{ id: "terminal", factory: terminalExtension },
+	// Beside terminal, the main host of its jobs; terminal reaches it only through the session registry, so order is not load-bearing.
+	{ id: "job-widgets", factory: jobWidgetsExtension },
 	{ id: "tool-pair-guard", factory: toolPairGuardExtension },
 	{ id: "compaction", factory: compactionExtension },
 	{ id: "history-search", factory: historySearchExtension },

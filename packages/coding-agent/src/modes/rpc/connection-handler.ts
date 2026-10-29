@@ -62,6 +62,7 @@ import type {
 import { ExtensionRpcRequestNotFoundError } from "../../core/extensions/runner.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { describeUsageLimitEntry, describeUsageLimitMessage } from "../../core/retry-fallback/usage-limit.ts";
+import { carryRecovery } from "../../core/session-recovery-identity.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { storedKeyHint, verifyApiKey } from "../../core/verify-api-key.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
@@ -398,7 +399,7 @@ export function createRpcConnectionHandler(
 	});
 
 	const tagSessionRecord = <T extends object>(value: T): T | (T & { sessionId: string }) =>
-		routingSessionId === undefined ? value : { ...value, sessionId: routingSessionId };
+		routingSessionId === undefined ? value : carryRecovery(value, { ...value, sessionId: routingSessionId });
 
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
 		const record = tagSessionRecord(obj);
@@ -1069,7 +1070,9 @@ export function createRpcConnectionHandler(
 	 *
 	 * Reuses AuthStorage.login (the same callbacks the classic TUI uses). Only the
 	 * URL-based happy path is surfaced over RPC: onAuth emits an auth_login_url
-	 * event; success/failure/cancel emit a single auth_login_end event. Callbacks
+	 * event, onProgress (for example a `provider_login_start` handler's download
+	 * line) emits auth_login_progress, and success/failure/cancel emit a single
+	 * auth_login_end event. Callbacks
 	 * that need interactive mid-flow input (onPrompt/onSelect) are answered over
 	 * the extension UI dialog channel, so clients may either answer the dialog or
 	 * finish through the browser/callback-server path. An unanswered dialog never
@@ -1098,7 +1101,9 @@ export function createRpcConnectionHandler(
 					outputEvent({ type: "auth_login_url", provider, url: info.verificationUri });
 				},
 				...createRpcLoginPromptCallbacks(createExtensionUIContext(), loginSignal),
-				onProgress: () => {},
+				onProgress: (message) => {
+					outputEvent({ type: "auth_login_progress", provider, text: message });
+				},
 				signal: controller.signal,
 			});
 			session.modelRegistry.refresh();
@@ -1196,7 +1201,12 @@ export function createRpcConnectionHandler(
 				if (holdAutomaticInput(session, command, hasRole(INTERACTIVE_USER_CAPABILITY)))
 					return success(id, "prompt", { disposition: "handled", heldAsNotice: true });
 				turnRequested = true;
-				const admission = handleClientInput(session, command, { output, promptCalls });
+				const admission = handleClientInput(
+					session,
+					command,
+					{ output, promptCalls },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY) },
+				);
 				promptCalls.add(admission);
 				void admission.finally(() => promptCalls.delete(admission));
 				return undefined;
@@ -1273,7 +1283,12 @@ export function createRpcConnectionHandler(
 				if (holdAutomaticInput(session, command, hasRole(INTERACTIVE_USER_CAPABILITY)))
 					return success(id, command.type, { disposition: "handled", heldAsNotice: true });
 				turnRequested = true;
-				await handleClientInput(session, command, { output, promptCalls });
+				await handleClientInput(
+					session,
+					command,
+					{ output, promptCalls },
+					{ interactiveUser: hasRole(INTERACTIVE_USER_CAPABILITY) },
+				);
 				return undefined;
 			}
 
@@ -2023,13 +2038,17 @@ export function createRpcConnectionHandler(
 				const modelRegistry = session.modelRegistry;
 				const oauthInfos = buildLoginProviderInfos(modelRegistry, "oauth");
 				const apiKeyInfos = buildLoginProviderInfos(modelRegistry, "api_key");
-				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => ({
-					id: info.id,
-					name: info.name,
-					authType: info.authType,
-					status: authMethodStatus(modelRegistry, info),
-					...storedKeyHint(modelRegistry, info),
-				}));
+				const providers: RpcAuthProvider[] = [...oauthInfos, ...apiKeyInfos].map((info) => {
+					const origin = modelRegistry.getProviderOrigin(info.id);
+					return {
+						id: info.id,
+						name: info.name,
+						authType: info.authType,
+						status: authMethodStatus(modelRegistry, info),
+						...storedKeyHint(modelRegistry, info),
+						...(origin === undefined ? {} : { origin }),
+					};
+				});
 				return success(id, "get_auth_providers", { providers });
 			}
 

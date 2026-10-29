@@ -12,6 +12,46 @@
 
 ### Removed
 
+## [2026.10.27-2] - 2026-10-27
+
+### Breaking Changes
+
+### Added
+
+- Assistant stream-start events carry an optional `streaming` marker so consumers can distinguish live model streams from prepared and synthetic messages ([#4231](https://github.com/code-yeongyu/senpi/pull/4231)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.27-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Empty-assistant recovery forwards captured records for the kept attempt only, so recovered streams (including Claude models) reach the internal agent channel ([#4307](https://github.com/code-yeongyu/senpi/pull/4307))
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.26-1] - 2026-10-26
 
 ### Breaking Changes

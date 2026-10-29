@@ -49,6 +49,9 @@ export const loadMcpSdkStdioTransport = memoizeLoader(() => import("@modelcontex
 /** SDK-owned protocol schemas for elicitation and modern request results. */
 export const loadMcpSdkTypes = memoizeLoader(() => import("@modelcontextprotocol/sdk/types.js"));
 
+/** SDK-owned request defaults, loaded only by negotiated modern operations. */
+export const loadMcpSdkProtocol = memoizeLoader(() => import("@modelcontextprotocol/sdk/shared/protocol.js"));
+
 let authModule: SdkAuthModule | undefined;
 
 /** OAuth 2.1 discovery, authorization, token exchange and refresh. */

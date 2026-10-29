@@ -439,6 +439,24 @@ const KIMI_K3_COST = {
 	cacheRead: 0.3,
 	cacheWrite: 3,
 } as const;
+// Official Moonshot API prices for the K3 series per 1M tokens (platform.kimi.ai/docs/pricing/chat, checked
+// 2026-10-27). Both Moonshot providers bill these USD list prices; models.dev carries a currency-converted
+// price for moonshotai-cn that drifts daily. K3.1 Pro shares K3's request contract
+// (platform.kimi.ai/docs/api/models-overview: "the same parameter constraints as kimi-k3").
+const MOONSHOT_KIMI_K3_SERIES_COSTS: Record<string, Model<Api>["cost"]> = {
+	"kimi-k3": KIMI_K3_COST,
+	"kimi-k3.1-pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 },
+	"kimi-k3.1-pro-highspeed": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 4 },
+};
+const MOONSHOT_KIMI_K3_SERIES_THINKING_LEVEL_MAP = {
+	off: null,
+	minimal: null,
+	low: "low",
+	medium: null,
+	high: "high",
+	xhigh: null,
+	max: "max",
+} as const;
 const KIMI_CODING_STABLE_MODELS = {
 	"kimi-for-coding": {
 		id: "kimi-for-coding",
@@ -495,12 +513,15 @@ const OPENAI_TOOL_SEARCH_MODEL_IDS = new Set([
 ]);
 const OPENAI_ADDITIONAL_TOOLS_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
 const OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS = OPENAI_TOOL_SEARCH_MODEL_IDS;
+// GPT-6.1 Terra is listed for the subscription only, as in upstream pi's Codex rows (#4578); the API-key row
+// keeps its current flags until it is verified separately.
 const CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS = new Set([
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-6-astra",
 	"gpt-6.1-sol",
+	"gpt-6.1-terra",
 	"gpt-6-sol",
 	"gpt-6-luna",
 ]);
@@ -521,7 +542,8 @@ const OPENAI_MAX_CONTEXT_INPUT_CAP = 922000;
 const GPT_6_ASTRA_DEFAULT_CONTEXT_WINDOW = 600000;
 const GPT_6_SOL_DEFAULT_CONTEXT_WINDOW = 400000;
 // Live Codex catalog, 2026-10-12T00:15Z: subscription default only; API budgets stay unchanged (#3150).
-const CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW = 500000;
+// GPT-6.1 Terra ships with the same 500k on the subscription, as upstream pi's Codex list does (#4578).
+const CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW = 500000;
 const GPT_6_LUNA_DEFAULT_CONTEXT_WINDOW = OPENAI_MAX_CONTEXT_INPUT_CAP;
 const OPENAI_FLAGSHIP_DEFAULT_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
 	["gpt-5.6-sol", 650000],
@@ -610,6 +632,9 @@ function withOpenAiLongContextPricing(cost: Model<Api>["cost"]): Model<Api>["cos
 // GPT-6 Sol / Luna list prices (developers.openai.com/api/docs/models/gpt-6-sol, gpt-6-luna).
 // GPT-6.1 Sol (2026-09-29) keeps Sol's input/output rates and halves cached input to 0.10
 // (developers.openai.com/api/docs/models/gpt-6.1-sol).
+// GPT-6.1 Terra list price (models.dev, matches upstream pi). Only the subscription row reads it here;
+// the API row keeps its models.dev metadata.
+const CHATGPT_SUBSCRIPTION_GPT_61_TERRA_COST: ModelCost = { input: 1, output: 5, cacheRead: 0.05, cacheWrite: 1.25 };
 const OPENAI_GPT_6_STANDARD_COSTS: Record<string, ModelCost> = {
 	"gpt-6.1-sol": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
 	"gpt-6-sol": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
@@ -1274,7 +1299,11 @@ function applyOpenAIGrammarToolCompatMetadata(model: Model<Api>): void {
 function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	const isOpenAIResponses = model.provider === "openai" && model.api === "openai-responses";
 	const isChatGptSubscription = model.provider === "chatgpt-subscription" && model.api === "openai-codex-responses";
-	if (!(isOpenAIResponses || isChatGptSubscription) || !OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id)) return;
+	const supportsToolSearch =
+		(isOpenAIResponses && OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id)) ||
+		(isChatGptSubscription &&
+			(OPENAI_TOOL_SEARCH_MODEL_IDS.has(model.id) || CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id)));
+	if (!supportsToolSearch) return;
 	const supportsAdditionalTools =
 		(isOpenAIResponses && OPENAI_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id)) ||
 		(isChatGptSubscription && CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id));
@@ -1293,7 +1322,7 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 function applyOpenAICompletionsTranscriptMetadata(model: Model<Api>): void {
 	if (model.api !== "openai-completions") return;
 	const isKimiK3 =
-		(model.provider.startsWith("moonshot") && model.id === "kimi-k3") ||
+		(model.provider.startsWith("moonshot") && Object.hasOwn(MOONSHOT_KIMI_K3_SERIES_COSTS, model.id)) ||
 		(model.provider === "fireworks" && model.id.includes("kimi-k3")) ||
 		((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "kimi-k3");
 	const isMoonshotKimiK2 =
@@ -1325,10 +1354,10 @@ function applyOpenAIResponsesTranscriptMetadata(model: Model<Api>): void {
 	const isChatGptSubscription = model.provider === "chatgpt-subscription" && model.api === "openai-codex-responses";
 	const isProxiedResponses =
 		OPENAI_RESPONSES_PROXY_PROVIDERS.has(model.provider) && model.api === "openai-responses";
-	if (
-		!(isOpenAIResponses || isChatGptSubscription || isProxiedResponses) ||
-		!OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS.has(model.id)
-	) {
+	const supportsMidConvo =
+		OPENAI_MID_CONVO_SYSTEM_MESSAGE_MODEL_IDS.has(model.id) ||
+		(isChatGptSubscription && CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS.has(model.id));
+	if (!(isOpenAIResponses || isChatGptSubscription || isProxiedResponses) || !supportsMidConvo) {
 		return;
 	}
 	model.compat = {
@@ -1382,7 +1411,7 @@ function applyOpenAIConfigurationUpdateMetadata(model: Model<Api>): void {
 // changed with the provider that routed the request.
 function applyGpt6ContextWindow(model: Model<Api>): void {
 	if (model.provider === "chatgpt-subscription" && model.id === "gpt-6.1-sol") {
-		model.contextWindow = CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW;
+		model.contextWindow = CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW;
 		return;
 	}
 	const contextWindow = gpt6FamilyDefaultContextWindow(model.id);
@@ -3077,7 +3106,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, m] of Object.entries(moonshotModels[key])) {
 				if (m.tool_call !== true) continue;
 
-				const isKimiK3 = modelId === "kimi-k3";
+				const kimiK3SeriesCost = MOONSHOT_KIMI_K3_SERIES_COSTS[modelId];
+				const isKimiK3 = kimiK3SeriesCost !== undefined;
 				const compat = isKimiK3 ? { ...moonshotCompat } : moonshotCompat;
 				if (isKimiK3) {
 					compat.requiresReasoningContentOnAssistantMessages = true;
@@ -3092,10 +3122,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl,
 					reasoning: isKimiK3 || m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
-					// Kimi K3 always bills at the official USD list price: models.dev carries a
-					// currency-converted price for moonshotai-cn (2.9879/14.9395) that drifts daily.
-					cost: isKimiK3
-						? { ...KIMI_K3_COST }
+					cost: kimiK3SeriesCost
+						? { ...kimiK3SeriesCost }
 						: {
 								input: m.cost?.input || 0,
 								output: m.cost?.output || 0,
@@ -3105,6 +3133,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 					compat,
+					...(isKimiK3 ? { thinkingLevelMap: { ...MOONSHOT_KIMI_K3_SERIES_THINKING_LEVEL_MAP } } : {}),
 				});
 				recordModelsDevReasoningOptions(provider, modelId, m);
 			}
@@ -4184,8 +4213,30 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: withOpenAiLongContextPricing(OPENAI_GPT_6_STANDARD_COSTS["gpt-6.1-sol"]),
-			contextWindow: CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW,
+			contextWindow: CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW,
 			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			id: "gpt-6.1-terra",
+			name: "GPT-6.1 Terra",
+			api: "openai-codex-responses",
+			provider: "chatgpt-subscription",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: withOpenAiLongContextPricing(CHATGPT_SUBSCRIPTION_GPT_61_TERRA_COST),
+			contextWindow: CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW,
+			maxTokens: CODEX_MAX_TOKENS,
+			// Terra accepts reasoning.effort "none" and rejects "minimal" (upstream pi, verified on Codex Oct 2026).
+			thinkingLevelMap: {
+				off: "none",
+				minimal: null,
+				low: "low",
+				medium: "medium",
+				high: "high",
+				xhigh: "xhigh",
+				max: "max",
+			},
 		},
 		{
 			id: "gpt-6-sol",
