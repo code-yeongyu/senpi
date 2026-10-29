@@ -192,6 +192,13 @@ export class CompactAdmissions {
 		}
 	}
 
+	async pending(socketEpoch: string, admissionId: string): Promise<boolean> {
+		const key = this.key(admissionId);
+		const epoch = this.epochs.get(socketEpoch);
+		if (!epoch || epoch.ended) return false;
+		return this.serial(epoch, async () => (await this.read(epoch, key))?.state === "pending");
+	}
+
 	async cancel(socketEpoch: string, admissionId: string): Promise<"cancelled" | "already_complete" | "unknown"> {
 		const key = this.key(admissionId);
 		const epoch = this.epochs.get(socketEpoch);
