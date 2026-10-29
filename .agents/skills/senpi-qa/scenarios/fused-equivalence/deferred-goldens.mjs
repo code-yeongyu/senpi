@@ -25,14 +25,6 @@ export const deferredGoldens = Object.freeze([
 	},
 	{
 		platform: "linux-x64",
-		case: "E27",
-		mode: "rpc",
-		owner: "brain-hand-exec-p0",
-		issue: "https://github.com/code-yeongyu/senpi/pull/4837",
-		due: "before PGATE-P0",
-	},
-	{
-		platform: "linux-x64",
 		case: "E28",
 		mode: "rpc",
 		owner: "brain-hand-exec-p0",
