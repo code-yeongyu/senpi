@@ -3,6 +3,8 @@
  */
 
 import { basename } from "node:path";
+import type { ExtensionRpcRequestContext } from "./rpc-context.ts";
+import { requestExtensionRpc } from "./rpc-request.ts";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
@@ -45,7 +47,7 @@ import {
 	runBudgetedHandler,
 	runBudgetedSequence,
 } from "./handler-budget.ts";
-import { kernelToolsStorage } from "./kernel-tools-context.ts";
+import { type ExtensionKernelTools, kernelToolInvokerStorage, kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
@@ -127,12 +129,7 @@ import type {
 } from "./types.ts";
 import { RUNTIME_EXTENSION_PATH } from "./types.ts";
 
-export class ExtensionRpcRequestNotFoundError extends Error {
-	constructor(name: string) {
-		super(`Unknown extension RPC request: ${name}`);
-		this.name = "ExtensionRpcRequestNotFoundError";
-	}
-}
+export { ExtensionRpcRequestNotFoundError } from "./rpc-request.ts";
 
 // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
 // Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
@@ -1149,6 +1146,29 @@ export class ExtensionRunner {
 		return this.staleMessage === undefined;
 	}
 
+	/**
+	 * Deferred `ctx.afterSessionStart` work runs only while this generation still owns its session: a switch,
+	 * new session, reload or dispose during the `session_start` dispatch retires it, and its ctx would throw
+	 * `StaleExtensionContextError` on first use. A returned promise is observed here so its rejection is
+	 * reported, never unhandled; a stale error raised by a retirement mid-publish is dropped the same way.
+	 */
+	private runAfterSessionStart(publish: () => void | Promise<void>): void {
+		if (this.staleMessage) return;
+		const report = (error: unknown) => {
+			if (error instanceof StaleExtensionContextError) return;
+			this.emitError({
+				extensionPath: RUNTIME_EXTENSION_PATH,
+				event: "session_start",
+				error: error instanceof Error ? error.message : String(error),
+			});
+		};
+		try {
+			void Promise.resolve(publish()).catch(report);
+		} catch (error) {
+			report(error);
+		}
+	}
+
 	private assertActive(): void {
 		if (this.staleMessage) {
 			throw new StaleExtensionContextError(this.staleMessage);
@@ -1433,25 +1453,8 @@ export class ExtensionRunner {
 		return this.resolveRegisteredCommands().find((command) => command.invocationName === name);
 	}
 
-	async requestRpc(name: string, data: unknown): Promise<unknown> {
-		this.assertActive();
-		const normalizedName = name.trim();
-		if (normalizedName.length === 0) {
-			throw new Error("Extension RPC request name must not be empty");
-		}
-		const matches = this.extensions.flatMap((extension) => {
-			const handler = extension.rpcHandlers?.get(normalizedName);
-			return handler === undefined ? [] : [handler];
-		});
-		if (matches.length === 0) {
-			throw new ExtensionRpcRequestNotFoundError(normalizedName);
-		}
-		if (matches.length > 1) {
-			throw new Error(`Multiple extension RPC request handlers registered: ${normalizedName}`);
-		}
-		const result = await matches[0]?.(data);
-		this.assertActive();
-		return result;
+	async requestRpc(name: string, data: unknown, context?: ExtensionRpcRequestContext): Promise<unknown> {
+		return requestExtensionRpc(this.extensions, name, data, context, () => this.assertActive());
 	}
 
 	/**
@@ -1579,7 +1582,21 @@ export class ExtensionRunner {
 			},
 			get kernelTools() {
 				runner.assertActive();
-				return kernelToolsStorage.getStore();
+				const tools = kernelToolsStorage.getStore();
+				if (!tools) return undefined;
+				return {
+					capabilities: tools.capabilities,
+					describe: (names) => tools.describe(names),
+					invoke: (request, options) => {
+						runner.assertActive();
+						return tools.invoke(request, {
+							...(options && ("aborted" in options ? { signal: options } : options)),
+							invoker: kernelToolInvokerStorage.getStore() ?? {
+								sessionId: runner.sessionManager.getSessionId(),
+							},
+						});
+					},
+				} satisfies ExtensionKernelTools;
 			},
 			get evalHandleHost() {
 				runner.assertActive();
@@ -1665,6 +1682,10 @@ export class ExtensionRunner {
 			getAskUserSettings: () => {
 				runner.assertActive();
 				return runner.getAskUserSettingsFn();
+			},
+			afterSessionStart: (publish) => {
+				runner.assertActive();
+				runner.sessionStartTurns.admit(() => runner.runAfterSessionStart(publish));
 			},
 			getImageSettings: () => {
 				runner.assertActive();

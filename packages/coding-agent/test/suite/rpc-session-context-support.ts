@@ -100,6 +100,8 @@ export async function contextHost(
 		autoTitleSessions?: boolean;
 		titleModel?: boolean;
 		browserStateExtension?: boolean;
+		/** Extension under test, loaded through the real host runtime. */
+		extension?: string;
 		/** A faux provider every session can reach (`--provider`/`--model` select its first model). */
 		faux?: ReturnType<typeof fauxProvider>;
 		/** Additional independently authenticated providers for fallback profile tests. */
@@ -114,7 +116,7 @@ export async function contextHost(
 	await mkdir(cwd);
 	await mkdir(agentDir);
 	const probe = join(scratch, "probe.mjs");
-	await writeFile(probe, PROBE_EXTENSION);
+	await writeFile(probe, options.extension ?? PROBE_EXTENSION);
 	const browserState = join(scratch, "browser-state.mjs");
 	await writeFile(browserState, BROWSER_STATE_EXTENSION);
 	if (options.globalSettings !== undefined) {
@@ -245,6 +247,7 @@ export async function contextHost(
 		inbox: (connection: string): readonly WireRecord[] => inboxes.get(connect(connection)) ?? [],
 		connect,
 		send,
+		waitFor,
 		async prompt(connection: string, sessionId: string, message: string): Promise<void> {
 			const idle = waitFor((record) => record.type === "agent_idle" && record.sessionId === sessionId);
 			const record = await send(connection, { type: "prompt", sessionId, message });

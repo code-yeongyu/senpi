@@ -1,6 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
+import type { Component, TUI } from "@earendil-works/pi-tui";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { renderBashOutputResult } from "../../src/core/extensions/builtin/terminal/tools/render.ts";
+import type { ExtensionUIContext } from "../../src/core/extensions/types.ts";
 import { getJobWidgetState, type JobWidgetState } from "../../src/index.ts";
-import type { Harness } from "./harness.ts";
+import { initTheme, type Theme, theme } from "../../src/modes/interactive/theme/theme.ts";
+import { createTestUiContext, type Harness } from "./harness.ts";
 import {
 	answerWithBlenderSpec,
 	BLENDER_PRINT,
@@ -15,6 +19,8 @@ const PRINTED_TOKEN = `ghp_${"A1b2C3d4E5".repeat(4)}`;
 
 describe("job widgets on background bash sessions", () => {
 	const harnesses: Harness[] = [];
+
+	beforeAll(() => initTheme("dark"));
 
 	afterEach(() => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
@@ -74,6 +80,70 @@ describe("job widgets on background bash sessions", () => {
 			expect(state.jobs).toEqual([
 				expect.objectContaining({ id, kind: "bash", state: "live", updatedAtMs: expect.any(Number) }),
 			]);
+		} finally {
+			await harness.session.executeTool("kill_bash", { bash_id: id });
+		}
+	}, 30_000);
+
+	it("draws the live widget above the TUI editor and on top of bash_output, driven by job_widget_state", async () => {
+		let area: Component | undefined;
+		const waiters = new Set<() => void>();
+		const redraw = (): void => {
+			for (const waiter of [...waiters]) waiter();
+		};
+		const tui = { requestRender: redraw } as unknown as TUI;
+		const setWidget = ((key: string, content: ((tui: TUI, theme: Theme) => Component) | undefined) => {
+			if (key !== "job-widgets") return;
+			area = content?.(tui, theme);
+			redraw();
+		}) as ExtensionUIContext["setWidget"];
+		const areaLine = (accept: (line: string) => boolean): Promise<string> =>
+			new Promise((resolve, reject) => {
+				const check = (): void => {
+					const line = area?.render(80).find(accept);
+					if (line === undefined) return;
+					waiters.delete(check);
+					clearTimeout(timer);
+					resolve(line);
+				};
+				const timer = setTimeout(() => {
+					waiters.delete(check);
+					reject(new Error(`no matching widget line: ${JSON.stringify(area?.render(80))}`));
+				}, 20_000);
+				waiters.add(check);
+				check();
+			});
+		const { harness } = await createJobWidgetHarness(
+			{ authorAfterMs: 0 },
+			{ uiContext: createTestUiContext({ setWidget }), mode: "tui" },
+		);
+		harnesses.push(harness);
+		harness.setResponses([answerWithBlenderSpec]);
+		const plain = (line: string): string => line.replace(/\x1b\[[0-9;]*m/g, "");
+
+		const pending = areaLine((line) => plain(line).includes("reading output"));
+		const id = bashIdOf(
+			await harness.session.executeTool("bash", { command: `${BLENDER_PRINT}; sleep 30`, run_in_background: true }),
+		);
+		try {
+			expect(plain(await pending)).toContain(id);
+			const live = plain(await areaLine((line) => plain(line).includes("rendered 2")));
+			expect(live).toMatch(
+				new RegExp(`^ ${id}  Blender render · seconds per frame  [▁-█]{2}  rendered 2 · 4\\.30 s$`),
+			);
+
+			const read = await harness.session.executeTool("bash_output", { bash_id: id });
+			expect(read.details).toMatchObject({ jobWidget: { id, state: "live" } });
+			const rendered = renderBashOutputResult(
+				read as Parameters<typeof renderBashOutputResult>[0],
+				{ expanded: false, isPartial: false },
+				theme,
+				{ lastComponent: undefined } as Parameters<typeof renderBashOutputResult>[3],
+			).render(80);
+			expect(plain(rendered[0] ?? "")).toMatch(
+				/^Blender render · seconds per frame {2}[▁-█]{2} {2}rendered 2 · 4\.30 s$/,
+			);
+			expect(rendered[1]).toBe("status: running");
 		} finally {
 			await harness.session.executeTool("kill_bash", { bash_id: id });
 		}

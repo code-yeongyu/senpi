@@ -152,6 +152,8 @@ export interface RpcSessionRow {
 	name?: string;
 	status: Exclude<RpcSessionState, "quarantined">;
 	attachments: number;
+	/** True when the session outlives its last attachment; once granted, never revoked. */
+	retain_on_disconnect: boolean;
 	kind: SessionKind;
 	context: PublishedSessionContext;
 	/** Milliseconds since the last routed command or session-owned activity refreshed the idle window. */

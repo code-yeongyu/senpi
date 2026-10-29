@@ -324,8 +324,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && sessionModel) {
+		// Keep the saved reference exactly, signed out or not; the first prompt asks for a login (senpi#4410).
 		const restored = resolveStoredModelReference(sessionModel.provider, sessionModel.modelId, modelRuntime);
-		if (restored && modelRuntime.hasConfiguredAuth(restored.model.provider)) {
+		if (restored) {
 			model = restored.model;
 			initialResolvedThinkingLevel = restored.thinkingLevel;
 			initialThinkingSelection = restored.thinkingSelection;

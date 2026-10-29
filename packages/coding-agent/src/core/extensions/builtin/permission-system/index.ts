@@ -18,6 +18,7 @@ import {
 	permissionRequestsFor,
 	toolOwnedPermissionRequests,
 } from "./parsers.ts";
+import { sharedPathIdentityResolver } from "./path-identity-host.ts";
 import { registerPermissionPresetReader } from "./preset-registry.ts";
 import { showPermissionPrompt } from "./prompt.ts";
 import { PermissionService } from "./service.ts";
@@ -61,9 +62,17 @@ function denyReason(
 	settingsManager: SettingsManager | null,
 	cliRuleset: Ruleset,
 	request: Request,
+	service?: PermissionService,
 ): string {
 	if (settingsManager === null) return error.message;
-	const provenance = findDenyProvenance(settingsManager, cliRuleset, request.permission, request.patterns);
+	const matchesIdentity = service?.identityMatcher(request.permission, error.identity);
+	const provenance = findDenyProvenance(
+		settingsManager,
+		cliRuleset,
+		request.permission,
+		request.patterns,
+		matchesIdentity,
+	);
 	if (!provenance) return error.message;
 	const source = provenance.layer === "cli" ? "--permission" : `${provenance.layer} settings.json`;
 	// Only promise an unblock when no other layer still denies the call: naming the winning rule and
@@ -160,9 +169,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 						followPresetFlag(ctx.cwd, ctx.agentDir);
 						return { service, parsers: parserRegistry, preset: activePreset, setupError };
 					},
-					(permission, patterns) => {
+					(permission, patterns, matchesIdentity) => {
 						const rule = activeSettingsManager
-							? findDenyProvenance(activeSettingsManager, cliRuleset, permission, patterns)
+							? findDenyProvenance(activeSettingsManager, cliRuleset, permission, patterns, matchesIdentity)
 							: undefined;
 						return rule ? { permission: rule.permission, pattern: rule.pattern, layer: rule.layer } : undefined;
 					},
@@ -220,6 +229,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		activePreset = loadedSettings.preset;
 		const approved = loadedSettings.approved;
 		parserRegistry = createBuiltinParserRegistry();
+		const previous = service;
 		service = new PermissionService(
 			staticRuleset,
 			[...approved, ...sessionApproved],
@@ -227,7 +237,9 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			activePreset,
 			cwd,
 			agentDir,
+			sharedPathIdentityResolver(),
 		);
+		previous?.dispose();
 		if (cellSession) updateCellEnforcement(cellSession, staticRuleset, activePreset);
 	};
 
@@ -336,6 +348,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 					approveBlanketAsk: auto?.approveBlanketAsk ?? false,
 					presetBound: callPreset === "auto",
 					...(permissionRequest.ruleAliases ? { ruleAliases: permissionRequest.ruleAliases } : {}),
+					...(permissionRequest.executed ? { executed: permissionRequest.executed } : {}),
 				})
 				.then(
 					() => ({ ok: true as const }),
@@ -350,7 +363,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 						block: true,
 						reason:
 							askResult.error instanceof DeniedError
-								? denyReason(askResult.error, activeSettingsManager, cliRuleset, request)
+								? denyReason(askResult.error, activeSettingsManager, cliRuleset, request, activeService)
 								: getReason(askResult.error),
 					};
 				}
@@ -383,7 +396,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 					block: true,
 					reason:
 						askResult.error instanceof DeniedError
-							? denyReason(askResult.error, activeSettingsManager, cliRuleset, request)
+							? denyReason(askResult.error, activeSettingsManager, cliRuleset, request, activeService)
 							: getReason(askResult.error),
 				};
 			}
@@ -409,15 +422,21 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
-		const approved = service
-			.getSessionApproved()
-			.filter((rule) => !persistedAtAnswer.has(`${rule.permission}:${rule.pattern}`));
-		if (approved.length > 0) {
-			appendApproved(ctx.agentDir, ctx.cwd, approved);
-		}
+		// The shared resolver outlives this extension generation, so its hold on the service is released
+		// whatever persisting the answers or rejecting the open requests does.
+		try {
+			const approved = service
+				.getSessionApproved()
+				.filter((rule) => !persistedAtAnswer.has(`${rule.permission}:${rule.pattern}`));
+			if (approved.length > 0) {
+				appendApproved(ctx.agentDir, ctx.cwd, approved);
+			}
 
-		for (const pendingRequest of service.list()) {
-			service.reply({ requestID: pendingRequest.id, reply: "reject" });
+			for (const pendingRequest of service.list()) {
+				service.reply({ requestID: pendingRequest.id, reply: "reject" });
+			}
+		} finally {
+			service.dispose();
 		}
 	});
 }
