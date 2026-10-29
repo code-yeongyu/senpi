@@ -22,9 +22,11 @@ function sourceExists(entry) {
 	return SOURCE_EXTENSIONS.some((extension) => existsSync(join(repoRoot, dist[1], "src", `${dist[2]}${extension}`)));
 }
 
-// `bun build --compile` entrypoints, written relative to packages/coding-agent.
+// `bun build --compile` entrypoints, written relative to packages/coding-agent. Backslash-continued lines are
+// joined first, so an entrypoint on a continuation line is still read.
 function compileEntrypoints(text) {
 	return text
+		.replace(/\\\r?\n[ \t]*/g, " ")
 		.split("\n")
 		.filter((line) => line.includes("bun build --compile"))
 		.flatMap((line) => line.match(/(?<=\s)\.\/(?:dist|src)\/\S+\.(?:js|ts|tsx|mts)(?=\s)/g) ?? [])
@@ -49,6 +51,17 @@ function collectEntrySources() {
 }
 
 describe("bundle and binary entry paths", () => {
+	it("reads compile entrypoints from backslash-continued lines", () => {
+		// Given
+		const script = "bun build --compile \\\n  ./dist/cli.js \\\n  ./src/utils/worker.ts --outfile x\n";
+
+		// When
+		const entries = compileEntrypoints(script);
+
+		// Then
+		assert.deepEqual(entries, ["packages/coding-agent/dist/cli.js", "packages/coding-agent/src/utils/worker.ts"]);
+	});
+
 	it("finds entries in every list it guards", () => {
 		// Given / When
 		const lists = collectEntrySources();
