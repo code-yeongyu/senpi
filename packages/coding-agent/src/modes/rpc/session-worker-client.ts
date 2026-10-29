@@ -6,7 +6,7 @@ import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
 import { roleConnection } from "./connection-roles.ts";
-import { answeredUiRequestId } from "./extension-ui-response.ts";
+import { answeredUiRequestId, isGrantSelectRequest } from "./extension-ui-response.ts";
 import { enqueueLegacyRecord } from "./legacy-record-depth.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
@@ -22,9 +22,10 @@ import type {
 	WorkerSnapshot,
 } from "./session-worker-protocol.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
-import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
+import { SessionWorkerRequests } from "./session-worker-requests.ts";
 import { WorkerIntake } from "./session-worker-intake.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
+import { WorkerOwnerGates } from "./session-worker-owners.ts";
 import { randomUUID } from "node:crypto";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import { recoveryAgentDir } from "./compact-storage-health.ts";
@@ -48,7 +49,8 @@ export class SessionWorkerClient {
 	>();
 	/** The worker's own route to the main-thread Bun.WebView service; released when the worker exits. */
 	private readonly webviewBroker = createWebViewBroker();
-	readonly worker = startSessionWorker(this.webviewBroker);
+	private readonly spawned: ReturnType<typeof startSessionWorker>;
+	readonly worker: ReturnType<typeof startSessionWorker>["result"];
 	readonly exited: Promise<void>;
 	snapshot?: WorkerSnapshot;
 	/** Main marks this only after installing the unique routing binding. */
@@ -71,6 +73,7 @@ export class SessionWorkerClient {
 	readonly acceptance: SessionAcceptanceLane | undefined;
 	/** The host half of this incarnation's payload transport: permits, physical frame order, fragment staging (S12b). */
 	readonly intake: WorkerIntake | undefined;
+	private readonly owners = new WorkerOwnerGates();
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
@@ -78,11 +81,16 @@ export class SessionWorkerClient {
 		this.callbacks = callbacks;
 		this.acceptance = compactUpdatesEnabled() ? new SessionAcceptanceLane(undefined, undefined, agentDir) : undefined;
 		this.intake = this.acceptance && new WorkerIntake(this.acceptance.staging, (error) => this.fail(error));
+		// Spawned here, with nothing between it and the exit listener that owns its cleanup (senpi#4728).
+		this.spawned = startSessionWorker(this.webviewBroker);
+		this.worker = this.spawned.result;
 		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
 				this.intake?.permits.close();
 				this.stopPrivateBinding?.();
 				this.privateBinding?.dispose();
+				this.owners.retireAll();
+				this.spawned.issued.dispose();
 				for (const operation of this.privateOperations.values()) operation.operation.abort();
 				this.privateOperations.clear();
 				if (!this.stopped && !this.closeTimer) this.fail("session_worker_exited");
@@ -116,7 +124,7 @@ export class SessionWorkerClient {
 		this.stopLimitMirror = subscriptionLimits.subscribeMirror((limits) =>
 			this.post({ type: "subscription_limits", accounts: [limits] }),
 		);
-		const result = await this.request({
+		const result = await this.requests.request({
 			type: "prepare",
 			configuration,
 			profile,
@@ -128,25 +136,25 @@ export class SessionWorkerClient {
 
 	/** Moves the worker's live session to another prompt surface (a later `open_session.promptSurface`). */
 	async setPromptSurface(surface: PromptSurface): Promise<void> {
-		const result = await this.request({ type: "prompt_surface", surface });
+		const result = await this.requests.request({ type: "prompt_surface", surface });
 		if (result.type !== "result") throw new Error("Invalid worker prompt_surface response");
 	}
 
 	/** Moves the worker's live session to another browser engine (a later `open_session.browserEngine`). */
 	async setBrowserEngine(engine: BrowserEngine): Promise<void> {
-		const result = await this.request({ type: "browser_engine", engine });
+		const result = await this.requests.request({ type: "browser_engine", engine });
 		if (result.type !== "result") throw new Error("Invalid worker browser_engine response");
 	}
 
 	/** Moves the worker's live session to another permission preset (a later `open_session.permissionPreset`). */
 	async setPermissionPreset(preset: string): Promise<void> {
-		const result = await this.request({ type: "permission_preset", preset });
+		const result = await this.requests.request({ type: "permission_preset", preset });
 		if (result.type !== "result") throw new Error("Invalid worker permission_preset response");
 	}
 
 	async commit(): Promise<WorkerSnapshot> {
 		const nonce = randomUUID();
-		const result = await this.request({
+		const result = await this.requests.request({
 			type: "commit",
 			...(this.intake ? { acceptance: true, recoveryEpoch: nonce, permits: this.intake.permits.block } : {}),
 		});
@@ -171,7 +179,7 @@ export class SessionWorkerClient {
 		if (this.acceptance) writer.registerAcceptance(sessionId, this.acceptance);
 		this.requestClose = requestClose;
 		this.options = options;
-		await this.request({
+		await this.requests.request({
 			type: "bind",
 			sessionId,
 			capabilities: options.capabilities ?? [],
@@ -183,24 +191,27 @@ export class SessionWorkerClient {
 			handle: async (command) => {
 				if (writer.handleMcpForm(command)) return;
 				const connection = writer.currentConnection();
-				const grantAnswer =
+				const owner = this.owners.capture(writer.connectionContext, connection, command);
+				// The grant rules apply to the request this response answers (`uiRequestId`, or `id` in the
+				// short form), the same request the worker settles.
+				const answered =
 					"type" in command && command.type === "extension_ui_response"
 						? answeredUiRequestId(command as RpcExtensionUIResponse)
 						: undefined;
-				if (
-					grantAnswer !== undefined &&
-					writer.acceptWorkerGrantResponse(sessionId, grantAnswer, connection) === false
-				)
+				if (answered !== undefined && writer.acceptWorkerGrantResponse(sessionId, answered, connection) === false)
 					return;
-				await this.request({
+				await this.requests.request({
 					type: "command",
 					command,
 					connection,
 					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
+					...(owner === undefined ? {} : { owner }),
 				});
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
+			connectionDetached: (connection) => this.postRetired(this.owners.detach(writer.connectionContext, connection)),
 			dispose: async () => {
+				this.postRetired(this.owners.retireAll());
 				this.post({ type: "cancel_ui" });
 			},
 		};
@@ -234,8 +245,8 @@ export class SessionWorkerClient {
 		void this.worker.terminate();
 	}
 
-	private request(message: WorkerRequestInput): ReturnType<SessionWorkerRequests["request"]> {
-		return this.requests.request(message);
+	private postRetired(owners: ReturnType<WorkerOwnerGates["retireAll"]>): void {
+		if (owners.length > 0) this.post({ type: "owners_retired", owners });
 	}
 
 	private post(message: HostToSessionWorker): void {
@@ -376,9 +387,8 @@ export class SessionWorkerClient {
 				const lane = this.acceptance;
 				if (this.intake?.inOrder(message) === false) return;
 				// Identity and activity commit before publication; clients may attach or disconnect on that event.
-				if (message.snapshot) {
-					this.snapshot = message.snapshot;
-				} else if (this.snapshot)
+				if (message.snapshot) this.snapshot = message.snapshot;
+				else if (this.snapshot)
 					this.snapshot = {
 						...this.snapshot,
 						...message.activity,
@@ -406,23 +416,13 @@ export class SessionWorkerClient {
 					return;
 				}
 				let outputConnection = message.connection;
-				if (
-					"type" in record &&
-					record.type === "extension_ui_request" &&
-					"method" in record &&
-					record.method === "select" &&
-					"grantSelect" in record &&
-					record.grantSelect === true &&
-					"id" in record &&
-					typeof record.id === "string"
-				) {
-					const id = record.id;
+				if (isGrantSelectRequest(record)) {
 					const target = writer.routeWorkerGrant(
 						sessionId,
-						id,
+						record.id,
 						message.connection,
 						this.options.capabilities ?? [],
-						() => this.post({ type: "cancel_grant", id }),
+						() => this.post({ type: "cancel_grant", id: record.id }),
 					);
 					if (!target.accepted) {
 						acknowledge(message.signal, true);
@@ -446,9 +446,13 @@ export class SessionWorkerClient {
 				};
 				const consumed = Promise.resolve(
 					message.snapshot ? this.callbacks.reconcile(message.snapshot.liveSessionPaths) : undefined,
-				).then(() =>
-					outputConnection === undefined ? enqueue() : writer.withConnection(outputConnection, enqueue),
-				);
+				).then(() => {
+					// Resolved after reconciliation: a retired or replaced destination consumes the frame normally.
+					if (outputConnection === undefined) return enqueue();
+					return message.owner === undefined || outputConnection !== message.connection
+						? writer.withConnection(outputConnection, enqueue)
+						: writer.connectionContext.runCaptured(outputConnection, message.owner, enqueue);
+				});
 				void consumed.then(
 					() => acknowledge(message.signal, true),
 					(cause: unknown) => {

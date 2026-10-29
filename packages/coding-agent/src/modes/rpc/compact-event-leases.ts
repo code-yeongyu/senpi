@@ -216,6 +216,14 @@ export class EventLeases {
 		this.abandoned += 1;
 	}
 
+	/** A retired admission can no longer send receipts; drop only its references, preserving other holders. */
+	forgetAdmission(caller: RecoveryCaller, admissionId: string): void {
+		for (const held of this.peers.get(caller.socketEpoch)?.held.values() ?? []) {
+			if (held.sessionId !== caller.sessionId || !held.admissions.delete(admissionId)) continue;
+			if (held.admissions.size === 0) this.abandon(caller.socketEpoch, held.lease.id);
+		}
+	}
+
 	/** A peer incarnation is gone: every lease it holds ends once the reads in flight on it unwind. */
 	forgetPeer(socketEpoch: string): void {
 		const peer = this.peers.get(socketEpoch);

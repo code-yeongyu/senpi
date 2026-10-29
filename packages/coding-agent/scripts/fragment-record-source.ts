@@ -82,4 +82,3 @@ export function fragmentRecords(value: Uint8Array, withData: boolean): FragmentR
 	} while (offset < value.length);
 	return records;
 }
-

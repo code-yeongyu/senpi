@@ -70,6 +70,8 @@ export class SubprocessKernel {
 
 	run(input: KernelRunInput): Promise<KernelResult> {
 		if (this.closed) throw new KernelClosedError();
+		const refusal = this.permissionRefusal(input.cellId);
+		if (refusal) return Promise.resolve(refusal);
 		const run = this.runs.enqueue(input);
 		this.pumpRuns();
 		return run;
@@ -169,6 +171,13 @@ export class SubprocessKernel {
 		if (this.closed || this.runs.active || !process || process.isRetiring || !this.processReady) return;
 		const run = this.runs.startNext(performance.now());
 		if (!run) return;
+		const refusal = this.permissionRefusal(run.input.cellId);
+		if (refusal) {
+			this.runs.releaseActive(run);
+			this.runs.settle(run, refusal);
+			this.pumpRuns();
+			return;
+		}
 		const timeoutMs = run.input.timeoutMs;
 		if (timeoutMs !== undefined) run.timer = setTimeout(() => this.handleTimeout(run, timeoutMs), timeoutMs);
 		try {
@@ -176,6 +185,25 @@ export class SubprocessKernel {
 		} catch (error) {
 			this.failClosed(new KernelProcessError(error instanceof Error ? error.message : String(error)));
 		}
+	}
+
+	private permissionRefusal(cellId: string): KernelResult | undefined {
+		const state = this.options.permissions?.state();
+		if (!state?.active) return undefined;
+		const rule = state.rules[0];
+		return {
+			type: "result",
+			cellId,
+			ok: false,
+			durationMs: 0,
+			error: {
+				code: "cell_permission_denied",
+				message: rule
+					? `This kernel cannot enforce ${rule.permission} ${rule.pattern} (${rule.layer}); use Python or JavaScript`
+					: "Permission authority unavailable",
+				...(rule ? { permissionRule: rule } : {}),
+			},
+		};
 	}
 
 	private handleTimeout(run: PendingRun, timeoutMs: number): void {

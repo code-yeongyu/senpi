@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -45,6 +46,40 @@ const recordBytes = (record: FragmentRecord, source: Uint8Array): Uint8Array =>
 	record.data === undefined
 		? source.subarray(record.offset, record.offset + record.length)
 		: Buffer.from(record.data, "base64");
+
+/**
+ * A second decoder written only from index.json's generatorRules text, never from the generator's code, so a
+ * generator that drifts from the published rules fails here instead of regenerating matching fixtures.
+ */
+type RuleSegment =
+	| { kind: "bytes"; base64: string }
+	| { kind: "repeat"; patternBase64: string; length: number }
+	| { kind: "xorshift32"; seed: number; length: number };
+type RuleSource = { base64: string } | { generator: { kind: string; params: { segments: RuleSegment[] } } };
+
+function decodeRuleSegment(segment: RuleSegment): Uint8Array {
+	if (segment.kind === "bytes") return Buffer.from(segment.base64, "base64");
+	if (segment.kind === "repeat") {
+		const pattern = Buffer.from(segment.patternBase64, "base64");
+		return Buffer.alloc(segment.length, pattern);
+	}
+	const state = new Uint32Array([segment.seed]);
+	const words = new Uint8Array(Math.ceil(segment.length / 4) * 4);
+	const view = new DataView(words.buffer);
+	for (let at = 0; at < words.length; at += 4) {
+		state[0] ^= state[0] << 13;
+		state[0] ^= state[0] >>> 17;
+		state[0] ^= state[0] << 5;
+		view.setUint32(at, state[0], true);
+	}
+	return words.subarray(0, segment.length);
+}
+
+function decodeRuleSource(source: RuleSource): Uint8Array {
+	if ("base64" in source) return Buffer.from(source.base64, "base64");
+	expect(source.generator.kind).toBe("segments");
+	return Buffer.concat(source.generator.params.segments.map(decodeRuleSegment));
+}
 
 function expectRecordSequence(records: FragmentRecord[], source: Uint8Array): void {
 	let offset = 0;
@@ -185,8 +220,47 @@ describe("shared golden fragment-record fixtures (CONTRACT-r6 B3, senpi#4272)", 
 		for (const record of fixture.input) expect(record.digest).toBe(sha256(recordBytes(record, source)));
 	});
 
-	it("the package files list ships the fixtures", () => {
-		const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
-		expect(manifest.files).toContain("docs/engine-socket/fixtures/**");
+	it("an independent decoder of index.json's generatorRules reproduces every source and record digest", () => {
+		const index = JSON.parse(readFileSync(join(fixtureDirectory, "index.json"), "utf8"));
+		for (const { caseId, file } of index.cases as { caseId: string; file: string }[]) {
+			const fixture = JSON.parse(readFileSync(join(fixtureDirectory, file), "utf8"));
+			const source = decodeRuleSource(fixture.source);
+			expect(source.length, caseId).toBe(fixture.sourceLength);
+			expect(sha256(source), caseId).toBe(fixture.sourceDigest);
+			// stale-ref delivers the changed value, so its records are cut from change.source.
+			const delivered = fixture.change === undefined ? source : decodeRuleSource(fixture.change.source);
+			if (fixture.change !== undefined) {
+				expect(delivered.length, caseId).toBe(fixture.change.sourceLength);
+				expect(sha256(delivered), caseId).toBe(fixture.change.sourceDigest);
+			}
+			const records: FragmentRecord[] = fixture.kind === "valid" ? fixture.expectedRecords : fixture.input;
+			for (const [position, record] of records.entries()) {
+				const slice = delivered.subarray(record.offset, record.offset + record.length);
+				const label = `${caseId} record ${position}`;
+				expect(slice.length, label).toBe(record.length);
+				if (record.data !== undefined) expect(Buffer.from(record.data, "base64").equals(slice), label).toBe(true);
+				if (fixture.fault?.recordIndex === position && fixture.fault.field === "digest") {
+					expect(record.digest, label).toBe(fixture.fault.declaredDigest);
+					expect(sha256(slice), label).toBe(fixture.fault.actualDigest);
+				} else {
+					expect(record.digest, label).toBe(sha256(slice));
+				}
+			}
+		}
 	});
+
+	// Runs the real packer (about 1 s) rather than re-implementing npm's files/ignore rules, so the check follows npm.
+	it("npm pack ships index.json and every case file", () => {
+		const output = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+			cwd: packageRoot,
+			encoding: "utf8",
+			shell: process.platform === "win32",
+		});
+		const packed = new Set((JSON.parse(output)[0].files as { path: string }[]).map((entry) => entry.path));
+		const expected = ["index.json", ...CASE_IDS.map((caseId) => `${caseId}.json`)].map(
+			(name) => `${FRAGMENT_FIXTURE_DIRECTORY}/${name}`,
+		);
+		expect(expected).toHaveLength(12);
+		expect(expected.filter((path) => !packed.has(path))).toEqual([]);
+	}, 60_000);
 });

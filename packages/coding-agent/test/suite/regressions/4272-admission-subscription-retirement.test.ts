@@ -30,7 +30,9 @@ it.each(["unsubscribe", "peer end"])(
 				componentRef: "record",
 				requestId: "retired",
 			}),
-		).toMatchObject({ success: false, errorCode: "session_not_attached" });
+			// RULING-96: a retired route pages under the lease's own authority and gets its typed refusal.
+		).toMatchObject({ success: false, errorCode: "recovery_repair_needed", errorData: { reason: "unknown_token" } });
+		expect(host.writer.recoveryEvents?.status().open).toBe(0);
 	},
 	120_000,
 );

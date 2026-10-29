@@ -320,7 +320,10 @@ export function streamGitLabDuo(
 			if (!cfg) throw new Error(`Unknown model: ${model.id}`);
 
 			const directAccess = await getDirectAccessToken(gitlabAccessToken);
-			const modelWithBaseUrl = { ...model, baseUrl: cfg.baseUrl };
+			// The registration baseUrl stands for "the backend proxy of this model"; any other value is the
+			// user's models.json baseUrl and wins (senpi#4765).
+			const baseUrl = model.baseUrl === AI_GATEWAY_URL ? cfg.baseUrl : model.baseUrl;
+			const modelWithBaseUrl = { ...model, baseUrl };
 			const headers = { ...directAccess.headers, Authorization: `Bearer ${directAccess.token}` };
 			const streamOptions = { ...options, apiKey: "gitlab-duo", headers };
 

@@ -16,8 +16,8 @@
 		"A D-byte record encodes to 174,764 base64 bytes; with framing <= H it stays <= F."
 	],
 	"generatorRules": [
-		"source.base64 is the whole value. source.generator {kind: 'segments'} concatenates its segments in order.",
-		"Segment 'bytes': the base64-decoded bytes. Segment 'repeat': the base64-decoded pattern repeated and cut to length bytes.",
+		"source.base64 is the whole value. source.generator = { kind: 'segments', params: { segments: [...] } } concatenates source.generator.params.segments in order.",
+		"Segment { kind: 'bytes', base64 }: the base64-decoded bytes. Segment { kind: 'repeat', patternBase64, length }: the base64-decoded patternBase64 repeated and cut to length bytes. Segment { kind: 'xorshift32', seed, length }: see the xorshift32 rule.",
 		"Segment 'xorshift32': state = seed (uint32); for every 4 output bytes, state ^= state << 13; state ^= state >>> 17; state ^= state << 5 (all uint32), then emit state little-endian, cut to length bytes.",
 		"Records of generator cases carry no data: their bytes are source bytes [offset, offset + length). Small cases (source.base64) carry data inline."
 	],
