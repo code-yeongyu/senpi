@@ -167,7 +167,11 @@ export class CompactAdmissions {
 		}
 		let produced: Produced | undefined;
 		try {
-			produced = await runAdmissionProducer(epoch.producer.signal, () => produce(epoch.producer.signal));
+			produced = await runAdmissionProducer(
+				epoch.producer.signal,
+				() => produce(epoch.producer.signal),
+				(value) => value.release(),
+			);
 			const value = produced.answer;
 			const answer = JSON.stringify(produced.answer);
 			if (Buffer.byteLength(answer) > 65_536) throw new CompactAdmissionError("storage_unavailable");
@@ -244,8 +248,8 @@ export class CompactAdmissions {
 		this.end(epoch);
 		await Promise.allSettled([...epoch.hot.values()].map((pending) => pending.promise));
 		await epoch.tail;
-		await rm(await epoch.directory, { recursive: true, force: true });
 		epoch.producer.close();
+		await rm(await epoch.directory, { recursive: true, force: true });
 		this.epochs.delete(socketEpoch);
 	}
 
