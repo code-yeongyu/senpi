@@ -16,6 +16,8 @@
 // Kills 3 and 4 resume it the way a running client does (a fresh child, then RPC `switch_session` to the file: reason
 // `resume`), the path on which today's ask-user extension restores a dangling question
 // (packages/coding-agent/src/core/extensions/builtin/ask-user/resume.ts; a `startup` open does not restore it).
+// X13 says "re-asked on resume"; that a restarted CLI opening the file with `--session` does NOT re-ask is a bug,
+// https://github.com/code-yeongyu/senpi/issues/4764. B0 records today's behavior until it is fixed.
 // After every kill the case releases the killed barriers, so a body that ran again on resume would run to completion:
 // its id would be appended to ledger.txt a second time and its file written (O5 tree), and its start event would be an
 // extra O5 call. Today's recovery gives each dangling call the placeholder result in the next request (O1), runs no tool

@@ -11,11 +11,41 @@
 // Each connection's event stream is its own O6 (a connection receives its session's records and today's broadcast
 // lifecycle records); O7 is session A's transcript with session B's under `peers`; O5 records which bodies were in
 // flight at each release. A tool result delivered to the other session shows in O6/O7.
+// Solo compare (Z1.f "each equal to its single-session B0"): after the two-session run, each session is run again alone
+// (support/solo-compare.mjs: its own sandbox, fake server and host, only its own turns) and its O6/O7 projection must
+// equal the same session's projection from the two-session run; a difference fails the case.
 import { HELD_TOOLS } from "./support/held.mjs";
 import { attachSession, closeConnections, startMultiSessionHost } from "./support/multi-session-host.mjs";
 import { WITHOUT_O8 } from "./support/observables.mjs";
+import { assertSoloEqual, observeSession, runSolo } from "./support/solo-compare.mjs";
 
 const write = (id, path, barrier) => ({ id, name: "eq_write", args: { path, text: `${id}\n`, barrier } });
+const SESSIONS = {
+	A: { call: "call_a", path: "out/a.txt", barrier: "a-body", done: "E30-A-DONE" },
+	B: { call: "call_b", path: "out/b.txt", barrier: "b-body", done: "E30-B-DONE" },
+};
+
+/** Run session `name` alone: one prompt, its body released once it arrives, then its idle. */
+function runAlone(run, name) {
+	const s = SESSIONS[name];
+	const pipeline = run.env.SENPI_EXECUTION_PIPELINE;
+	const spec = {
+		extensions: [HELD_TOOLS],
+		files: { "out/.keep": "" },
+		turns: [{ toolCalls: [write(s.call, s.path, s.barrier)] }, { text: s.done }],
+		env: pipeline === undefined ? {} : { SENPI_EXECUTION_PIPELINE: pipeline },
+	};
+	return runSolo(spec, `e30-solo-${name.toLowerCase()}`, async (solo, connection) => {
+		await connection.client.send(
+			{ type: "prompt", sessionId: connection.sessionId, message: `write ${s.path}` },
+			{ timeoutMs: 120_000 },
+		);
+		await solo.server.barrierArrived(s.barrier);
+		solo.server.releaseBarrier(s.barrier);
+		await ended(connection, s.call);
+		await idle(connection, 0);
+	});
+}
 const ended = (connection, toolCallId) =>
 	connection.client.waitForEvent((e) => e.type === "tool_execution_end" && e.toolCallId === toolCallId, {
 		timeoutMs: 120_000,
@@ -81,5 +111,8 @@ export default {
 			timeoutMs: 120_000,
 		});
 		await closeConnections([b, a]);
+
+		const concurrent = { A: observeSession(run, a), B: observeSession(run, b) };
+		for (const name of ["A", "B"]) assertSoloEqual(name, concurrent[name], await runAlone(run, name));
 	},
 };
