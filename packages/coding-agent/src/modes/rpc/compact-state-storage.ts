@@ -3,8 +3,14 @@ import { CompactComponentRoots } from "./compact-component-roots.ts";
 import { CompactContentIndex } from "./compact-content-index.ts";
 import { CompactContentStore, type CompactContentStoreOptions } from "./compact-content-store.ts";
 import { seededBlockLeaves } from "./compact-seeded-block.ts";
+import { installSettledMessage } from "./compact-seeded-messages.ts";
 import type { MessageRoot, SettledRow } from "./compact-state-view.ts";
 import type { FrozenBlock } from "./compact-text-view.ts";
+
+const messageLeaves = (row: MessageRoot) => [
+	row.blocks?.owner ?? 0,
+	...Object.values({ ...row.fields, ...row.correlation }).map((ref) => ref.owner),
+];
 
 export interface CompactSessionStateOptions extends CompactContentStoreOptions {
 	readonly compactAboveRows?: number;
@@ -25,13 +31,19 @@ export class CompactStateStorage {
 			block.tailRoot ?? 0,
 			...(block.seeded ? seededBlockLeaves(block.seeded) : []),
 		]);
-		this.messageRoots = new CompactComponentRoots(this.store, (row) => [row.blocks?.owner ?? 0]);
-		this.settled = new CompactContentIndex(
-			this.store,
-			(row) => [row.blocks?.owner ?? 0],
-			options.compactAboveRows ?? 128,
+		this.messageRoots = new CompactComponentRoots(this.store, messageLeaves);
+		this.settled = new CompactContentIndex<SettledRow>(this.store, messageLeaves, options.compactAboveRows ?? 128);
+		this.cold = new CompactColdOperations(
+			this.settled,
+			(key) => this.isActiveKey(key),
+			(messageId, message, keep) =>
+				installSettledMessage(
+					{ store: this.store, blockRoots: this.blockRoots, settled: this.settled },
+					messageId,
+					message,
+					keep,
+				),
 		);
-		this.cold = new CompactColdOperations(this.settled, (key) => this.isActiveKey(key));
 	}
 
 	/** Whether a message is still live in acceptance; cold operations re-check this at apply time. */

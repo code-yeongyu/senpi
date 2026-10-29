@@ -33,6 +33,7 @@ import {
 import { classifierErrorResult, imageErrorResult } from "@earendil-works/pi-ai/utils/model-operations";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
+import { applyUserBaseUrl } from "./provider-base-url-override.ts";
 import {
 	composeApiKeyAuth,
 	configuredHeaders,
@@ -607,6 +608,8 @@ export function composeModelProvider(
 				...models.filter((model) => !isModelType(model, "chat")),
 			];
 		}
+		// The user's models.json baseUrl is applied after every extension rewrite, modifyModels included.
+		models = applyUserBaseUrl(models, config);
 		return models.map((model) => {
 			const override = config?.modelOverrides?.[model.id];
 			return override && isModelType(model, "chat") ? applyModelOverride(model, override) : model;
@@ -661,7 +664,7 @@ export function composeModelProvider(
 	const provider: Provider = {
 		id: providerId,
 		name: extension?.name ?? config?.name ?? base?.name ?? extension?.oauth?.name ?? providerId,
-		baseUrl: extension?.baseUrl ?? config?.baseUrl ?? base?.baseUrl,
+		baseUrl: config?.baseUrl ?? extension?.baseUrl ?? base?.baseUrl,
 		headers: base?.headers,
 		// Composed providers must not silently drop provider-declared retry profiles.
 		retryPolicy: extension?.retryPolicy ?? base?.retryPolicy,

@@ -1364,9 +1364,12 @@ jobs:
           --if-present
           --workspace packages/agent
           --workspace packages/ai
+          --workspace packages/client
+          --workspace packages/protocol
           --workspace packages/pty
           --workspace packages/senpi-codemode
           --workspace packages/server
+          --workspace packages/telemetry
           --workspace packages/tui
           test
 

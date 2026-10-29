@@ -18,7 +18,7 @@
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "tsc -p tsconfig.build.json",
-		"test": "node ../../scripts/run-tests.mjs vitest --run",
+		"test": "bun --bun ../../scripts/run-tests.mjs vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"keywords": [
