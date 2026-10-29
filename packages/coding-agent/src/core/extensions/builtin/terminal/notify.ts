@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "../../types.ts";
+import { withTerminalContext } from "./context-lifetime.ts";
 import { sanitizeTerminalOutput } from "./output-format.ts";
 import type { NotifyMode } from "./settings.ts";
 import type { TerminalExitView } from "./tools/context.ts";
@@ -78,13 +79,24 @@ function buildNotice(id: string, runtime: TerminalExitView): string {
 export class TerminalNotifier {
 	private readonly notified = new Set<string>();
 	private readonly deps: TerminalNotifierDeps;
+	private retired = false;
 
 	constructor(deps: TerminalNotifierDeps) {
 		this.deps = deps;
 	}
 
 	notifyCompletion(id: string, runtime: TerminalExitView): void {
-		if (this.notified.has(id)) return;
+		if (this.retired || this.notified.has(id)) return;
+		withTerminalContext(
+			() => this.deliverCompletion(id, runtime),
+			() => {
+				this.retired = true;
+				this.notified.clear();
+			},
+		);
+	}
+
+	private deliverCompletion(id: string, runtime: TerminalExitView): void {
 		const delivery = getTerminalNotificationDelivery(this.deps);
 		if (!delivery) return;
 

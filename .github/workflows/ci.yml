@@ -804,7 +804,7 @@ jobs:
       # lists it as a live tui endpoint, and a client attaches and drives it (senpi#4267).
       - name: Run interactive TUI control endpoint tests (win32)
         shell: bash
-        run: node ../../scripts/run-tests.mjs vitest run test/suite/interactive-session-control-win32.test.ts src/modes/rpc/tui-socket.observer.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tui-control-win32.json
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/interactive-session-control-win32.test.ts src/modes/rpc/tui-socket.observer.test.ts src/modes/interactive/attach.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tui-control-win32.json
         working-directory: packages/coding-agent
 
       # A skipped suite exits 0: fail unless the win32-only cases (the named-pipe wrong-secret test and
@@ -812,7 +812,7 @@ jobs:
       - name: Require the win32 gateway parity tests to have executed
         shell: bash
         run: |
-          for pair in vitest-socket-transport.json:rpc-socket-transport.test.ts vitest-tui-control-win32.json:interactive-session-control-win32.test.ts; do
+          for pair in vitest-socket-transport.json:rpc-socket-transport.test.ts vitest-tui-control-win32.json:interactive-session-control-win32.test.ts vitest-tui-control-win32.json:attach.test.ts; do
             node -e '
               const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
               const file = r.testResults.find((t) => t.name.replace(/\\/g, "/").endsWith(process.argv[2]));

@@ -195,14 +195,13 @@ export class SessionWorkerClient {
 			handle: async (command) => {
 				if (writer.handleMcpForm(command)) return;
 				const connection = writer.currentConnection();
-				const grantAnswer =
+				// The grant rules apply to the request this response answers (`uiRequestId`, or `id` in the
+				// short form), the same request the worker settles.
+				const answered =
 					"type" in command && command.type === "extension_ui_response"
 						? answeredUiRequestId(command as RpcExtensionUIResponse)
 						: undefined;
-				if (
-					grantAnswer !== undefined &&
-					writer.acceptWorkerGrantResponse(sessionId, grantAnswer, connection) === false
-				)
+				if (answered !== undefined && writer.acceptWorkerGrantResponse(sessionId, answered, connection) === false)
 					return;
 				await this.request({
 					type: "command",

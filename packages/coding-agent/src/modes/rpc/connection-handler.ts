@@ -102,7 +102,7 @@ import {
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
-import { answeredUiRequestId, settleExtensionUiResponse } from "./extension-ui-response.ts";
+import { answeredUiRequestId, refusedExtensionUiResponse, settleExtensionUiResponse } from "./extension-ui-response.ts";
 import { answerGetEntries } from "./get-entries-command.ts";
 import { runHoldInput } from "./held-input-commands.ts";
 import { HostSessionControl } from "./host-session-control.ts";
@@ -2173,16 +2173,23 @@ export function createRpcConnectionHandler(
 			"type" in parsed &&
 			parsed.type === "extension_ui_response"
 		) {
-			const requestId = answeredUiRequestId(parsed as RpcExtensionUIResponse);
-			if (!options.workerSecurityBridge && requestId !== undefined && grantRequests.has(requestId)) {
+			const response = parsed as RpcExtensionUIResponse;
+			// The grant rules apply to the request this response answers (`uiRequestId`, or `id` in the
+			// short form), the same request `settleExtensionUiResponse` settles.
+			const answered = answeredUiRequestId(response);
+			if (!options.workerSecurityBridge && answered !== undefined && grantRequests.has(answered)) {
 				const sender = options.clientInfo?.connectionId();
 				const capable =
 					sender === undefined
 						? clientCapabilities?.includes("grant_select") === true
 						: options.clientInfo?.hasCapability?.(sender, "grant_select") === true;
-				if (grantRequests.get(requestId) !== sender || !capable) return;
+				// The sender hears the refusal, so its dialog does not vanish as if the answer had counted.
+				if (grantRequests.get(answered) !== sender || !capable) {
+					output(refusedExtensionUiResponse(response.id, "grant_answer_refused"));
+					return;
+				}
 			}
-			const reply = settleExtensionUiResponse(parsed as RpcExtensionUIResponse, {
+			const reply = settleExtensionUiResponse(response, {
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,

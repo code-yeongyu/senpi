@@ -10,6 +10,9 @@ export interface CompactSlot {
 	readonly bytes: number;
 }
 
+/** Byte bound of one structural value batch file; a round's node segment stays one file (RULING-47). */
+export const COMPACT_SEGMENT_BYTES = 65_536;
+
 /** One flush batch in one spool file, with the leaves still live in it. */
 export interface CompactSegment {
 	readonly path: string;
@@ -38,6 +41,23 @@ export abstract class CompactSegmentStorage extends CompactSpoolStorage {
 		const path = await this.writeFile(data, operation, data.byteLength);
 		if (path === undefined) return undefined;
 		return { path, bytes: data.byteLength, operation, live: new Map(), liveBytes: 0, readers: 0, rewritten: false };
+	}
+
+	/** Splits sized entries, in order, into runs of at most `COMPACT_SEGMENT_BYTES`; a larger entry runs alone. */
+	protected segmentRuns<T>(entries: Iterable<readonly [T, number]>): T[][] {
+		const runs: T[][] = [];
+		let bytes = 0;
+		for (const [entry, size] of entries) {
+			const run = runs.at(-1);
+			if (run && bytes + size <= COMPACT_SEGMENT_BYTES) {
+				run.push(entry);
+				bytes += size;
+			} else {
+				runs.push([entry]);
+				bytes = size;
+			}
+		}
+		return runs;
 	}
 
 	protected place(segment: CompactSegment, id: LeafId, offset: number, bytes: number): CompactSlot {

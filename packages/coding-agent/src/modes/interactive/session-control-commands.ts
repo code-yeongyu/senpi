@@ -158,6 +158,8 @@ function sessionRow(session: AgentSession): Readonly<Record<string, unknown>> {
 		created_at: created,
 		updated_at: last?.timestamp ?? created,
 		attachments: 1,
+		// A release here never ends the terminal's own session.
+		retain_on_disconnect: true,
 	};
 }
 

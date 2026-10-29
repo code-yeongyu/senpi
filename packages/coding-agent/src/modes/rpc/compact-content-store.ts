@@ -15,6 +15,8 @@ import { CompactTextRoots } from "./compact-text-roots.ts";
 
 /** 32,768 UTF-16 code units (64 KiB as UTF-16LE), so a split surrogate survives a leaf boundary exactly. */
 export const COMPACT_LEAF_CODE_UNITS = 32_768;
+/** Structural leaves committed per segment: one compaction round's selection, never one file per leaf. */
+const VALUE_FLUSH_BATCH = 128;
 
 export type LeafId = number;
 
@@ -200,9 +202,8 @@ export class CompactContentStore extends CompactSegmentStorage {
 		) {
 			this.valueQueued = true;
 			this.enqueue("value_write", async () => {
-				const [id] = this.ramValues;
 				try {
-					if (id !== undefined) await this.flushLeaf(id);
+					await this.flushValues();
 				} finally {
 					this.valueQueued = false;
 				}
@@ -226,14 +227,17 @@ export class CompactContentStore extends CompactSegmentStorage {
 		}
 	}
 
-	/** Commit at most one batch of structural leaves ahead of a cold-index rewrite. */
+	/** Commits at most one batch of structural leaves, in page-bounded segments, ahead of a cold-index rewrite. */
 	async flushValues(): Promise<void> {
 		// Amortize a cold-index rewrite across a bounded batch, without waiting for every pending owner.
-		for (let n = 0; n < 128 && !this.spillStopped; n++) {
-			const [id] = this.ramValues;
-			if (id === undefined) break;
-			await this.flushLeaf(id);
+		if (this.spillStopped) return;
+		const batch: (readonly [LeafId, number])[] = [];
+		for (const id of this.ramValues) {
+			batch.push([id, this.leafUnits(id) * 2]);
+			if (batch.length === VALUE_FLUSH_BATCH) break;
 		}
+		// A failed run halts spilling, so flushLeaves leaves the later runs resident.
+		for (const run of this.segmentRuns(batch)) await this.flushLeaves(run);
 	}
 
 	/** Serial storage jobs can flush one newly built structural page without waiting on their own queue. */

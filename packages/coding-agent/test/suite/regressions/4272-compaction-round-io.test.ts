@@ -2,7 +2,10 @@ import { expect, it, vi } from "vitest";
 import { CompactContentIndex } from "../../../src/modes/rpc/compact-content-index.ts";
 import { CompactContentStore, type LeafId } from "../../../src/modes/rpc/compact-content-store.ts";
 import type { PagedRoot } from "../../../src/modes/rpc/compact-paged-tree.ts";
+import { CompactSpoolStorage } from "../../../src/modes/rpc/compact-spool-storage.ts";
+import type { CompactStorageIo } from "../../../src/modes/rpc/compact-storage-io.ts";
 import { spoolRoot } from "../compact-storage-support.ts";
+import { settledRig } from "./4272-settled-support.ts";
 
 interface Round {
 	readonly start: number;
@@ -117,3 +120,74 @@ it("packs each compaction round into one segment file and writes no node it repl
 		await root.cleanup();
 	}
 }, 120_000);
+
+// senpi#4272 / RULING-47 (SP3): structural value leaves are committed one segment per batch, never one file
+// per leaf, and a round never locates a key it cannot select.
+it("commits each compaction round's structural value leaves as one segment on the 1,000-join path", async () => {
+	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+	const files = new Map<string, Buffer>();
+	// Storage jobs run one at a time, so the running job's operation attributes each file it creates.
+	let running = "";
+	const value = { creates: 0, reads: 0 };
+	const roundStarts: number[] = [];
+	const io: CompactStorageIo = {
+		async writeFile(path, data) {
+			// A segment rewrite is reclamation, bounded by 4272-segment-reclamation, not a structural flush.
+			if (path.includes("/value-") && running !== "reclaim") value.creates++;
+			files.set(path, Buffer.from(data));
+		},
+		async readFile(path, range) {
+			if (path.includes("/value-")) value.reads++;
+			const data = files.get(path);
+			if (!data) throw new Error("missing backing file");
+			return Buffer.from(range ? data.subarray(range.offset, range.offset + range.length) : data);
+		},
+		async unlink(path) {
+			files.delete(path);
+		},
+	};
+	const enqueue = CompactSpoolStorage.prototype.enqueue;
+	vi.spyOn(CompactSpoolStorage.prototype, "enqueue").mockImplementation(function (this: CompactSpoolStorage, op, job) {
+		enqueue.call(this, op, async () => {
+			// The compactor's page_write job is one round; creates up to the next round start belong to it.
+			if (op === "page_write") roundStarts.push(value.creates);
+			running = op;
+			try {
+				await job();
+			} finally {
+				running = "";
+			}
+		});
+	});
+	const rig = await settledRig({ io });
+	try {
+		const joins = 1000;
+		for (let index = 0; index < joins; index++) {
+			const { carrier } = rig.end();
+			rig.manager.appendOwnedMessage(
+				{ role: "user", content: "terminal", timestamp: 1 },
+				{ recoveryOwner: carrier },
+			);
+			rig.lane.applyTranscript(rig.manager.drainTranscript());
+		}
+		await rig.lane.idle();
+		// Each join leaves four structural overrides, folded 128 per round.
+		const rounds = roundStarts.length;
+		expect(rounds).toBeGreaterThan(0);
+		expect(rounds, "compaction rounds").toBeLessThanOrEqual(Math.ceil((4 * joins) / 128));
+		for (const [n, start] of roundStarts.entries()) {
+			// One segment for the round's batch of structural leaves, one for its surviving nodes, and one for the
+			// value_write batch queued between rounds; one file per leaf made about 130 per round.
+			const creates = (roundStarts[n + 1] ?? value.creates) - start;
+			expect(creates, `round ${n} structural value file creates`).toBeLessThanOrEqual(3);
+		}
+		// About 290 node reads per round once pending keys are skipped before lookup; about 1,230 before either fix.
+		expect(value.reads, "structural value reads").toBeLessThanOrEqual(320 * rounds);
+		expect(rig.lane.storageStatus()).toMatchObject({ residentPayloadBytes: 0, failures: [] });
+		expect((await rig.cut()).owners).toHaveLength(joins);
+	} finally {
+		vi.restoreAllMocks();
+		vi.unstubAllEnvs();
+		await rig.close();
+	}
+}, 60_000);

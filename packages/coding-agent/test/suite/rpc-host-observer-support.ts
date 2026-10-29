@@ -78,6 +78,7 @@ export function evictionRegistry(entry: RpcSessionEntry, sessionId = "rpc-1"): R
 							sessionId,
 							cwd: entry.cwd,
 							status: entry.state,
+							retain_on_disconnect: entry.retainOnDisconnect === true,
 							attachments: entry.attachments,
 							idleMs: 0,
 							kind: entry.kind,

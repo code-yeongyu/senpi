@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Api, Context, Model, SimpleStreamOptions, ThinkingBudgets, ThinkingLevel } from "@earendil-works/pi-ai";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
 import {
@@ -151,17 +151,30 @@ function extractAgentsAppend(cwd: string): string | undefined {
 	}
 }
 
+function claudeSkillsPath(path: string, cwd: string): string {
+	const targets = [
+		[join(getAgentDir(), "skills"), "~/.claude/skills"],
+		[join(cwd, CONFIG_DIR_NAME, "skills"), ".claude/skills"],
+	] as const;
+	for (const [root, claudeRoot] of targets) {
+		const inside = relative(root, path);
+		if (inside === "") return claudeRoot;
+		if (!/^\.\.(?:[\\/]|$)/.test(inside) && !isAbsolute(inside))
+			return `${claudeRoot}/${inside.split(sep).join("/")}`;
+	}
+	return path;
+}
+
+// The catalog names each skill root once in `<skill_roots>` and locates skills by `rN/` alias, so the roots carry the
+// paths; a catalog without that table carries absolute `<location>` paths instead.
 function rewriteSkillsLocations(skillsBlock: string, cwd: string): string {
-	const globalSkillsRoot = join(getAgentDir(), "skills");
-	const projectSkillsRoot = join(cwd, CONFIG_DIR_NAME, "skills");
-	return skillsBlock.replace(/<location>([^<]+)<\/location>/g, (_match, location: string) => {
-		if (location.startsWith(globalSkillsRoot)) {
-			return `<location>~/.claude/skills/${relative(globalSkillsRoot, location).replace(/^\.+/, "")}</location>`;
-		}
-		if (location.startsWith(projectSkillsRoot)) {
-			return `<location>.claude/skills/${relative(projectSkillsRoot, location).replace(/^\.+/, "")}</location>`;
-		}
-		return `<location>${location}</location>`;
+	const withRoots = skillsBlock.replace(/<skill_roots>[\s\S]*?<\/skill_roots>/, (table) =>
+		table.replace(/<(r\d+)>([^<]+)<\/\1>/g, (_match, alias: string, root: string) => {
+			return `<${alias}>${claudeSkillsPath(root, cwd)}</${alias}>`;
+		}),
+	);
+	return withRoots.replace(/<location>([^<]+)<\/location>/g, (_match, location: string) => {
+		return `<location>${claudeSkillsPath(location, cwd)}</location>`;
 	});
 }
 
