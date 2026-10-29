@@ -99,12 +99,22 @@ async function scenarioLeak(clear) {
 	try {
 		await Promise.race([run.next((m) => m.item === "item5-closed-w"), deadline(20_000, "closed w")]);
 		const got = await Promise.race([eof.then(() => true), new Promise((resolve) => setTimeout(() => resolve(false), 5_000))]);
-		const expected = clear;
-		record(`item5-no-leak-to-grandchild[${tag}]`, got === expected, {
-			eofWhileGrandchildAlive: got,
-			expected: expected ? "EOF (grandchild did not inherit w)" : "NO EOF (control: grandchild inherited w, proving the leak exists without clearing)",
-			engine: run.lines.find((m) => m.item === "engine-receipt"),
-		});
+		const engine = run.lines.find((m) => m.item === "engine-receipt");
+		const receivedNonInheritable = Boolean(engine?.received?.every((d) => d.inheritable === false));
+		if (clear) {
+			record(`item5-no-leak-to-grandchild[${tag}]`, got, { eofWhileGrandchildAlive: got, expected: "EOF (grandchild did not inherit w)", engine });
+		} else {
+			// The control has two consistent outcomes: the runtime leaves received handles inheritable and the
+			// grandchild holds w (no EOF), or the runtime clears them at startup (handles arrive non-inheritable
+			// and EOF arrives). Anything else is inconsistent and fails. The observed outcome is recorded.
+			const outcome = !got && !receivedNonInheritable ? "leak" : got && receivedNonInheritable ? "startup-cleared" : "inconsistent";
+			record(`item5-control[${tag}]`, outcome !== "inconsistent", {
+				outcome,
+				eofWhileGrandchildAlive: got,
+				receivedNonInheritable,
+				engine,
+			});
+		}
 	} catch (error) {
 		record(`item5[${tag}]`, false, { error: String(error), ended, lines: run.lines });
 	}
