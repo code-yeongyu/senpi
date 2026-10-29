@@ -24,9 +24,6 @@ it("drops foreign and unmatched replies instead of delivering untagged or guessi
 	await withAdmissionRequest(request, "peer", () => host.writer.enqueueControl(reply, "foreign"));
 	await withAdmissionRequest({ ...request, id: "different" }, "peer", () => host.writer.enqueueControl(reply, "peer"));
 	await host.writer.enqueueControl(reply, "peer");
-	await withAdmissionRequest({ ...request, admissionId: "missing" }, "peer", () =>
-		host.writer.enqueueControl(reply, "peer"),
-	);
 	await host.writer.flush();
 	expect(foreign.inbox.slice(fromForeign).filter((frame) => frame.type === "response")).toEqual([]);
 	expect(peer.inbox.slice(fromPeer).filter((frame) => frame.type === "response")).toEqual([]);
@@ -34,6 +31,14 @@ it("drops foreign and unmatched replies instead of delivering untagged or guessi
 	await host.writer.flush();
 	expect(peer.inbox.slice(fromPeer).filter((frame) => frame.type === "response")).toEqual([
 		{ ...reply, admissionId: "b", generation: reset.generation },
+	]);
+	const from = peer.inbox.length;
+	await host.writer.withConnection("peer", () =>
+		host.core.handle(JSON.stringify({ ...request, admissionId: "missing" })),
+	);
+	await host.writer.flush();
+	expect(peer.inbox.slice(from).filter((frame) => frame.type === "response")).toEqual([
+		expect.objectContaining({ id: request.id, success: false, code: "unknown_admission", admissionId: "missing" }),
 	]);
 }, 120_000);
 

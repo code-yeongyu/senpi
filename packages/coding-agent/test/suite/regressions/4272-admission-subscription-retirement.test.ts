@@ -30,7 +30,8 @@ it.each(["unsubscribe", "peer end"])(
 				componentRef: "record",
 				requestId: "retired",
 			}),
-		).toMatchObject({ success: false, errorCode: "session_not_attached" });
+		).toMatchObject({ success: false, errorCode: "unknown_admission" });
+		expect(host.writer.recoveryEvents?.status().open).toBe(0);
 	},
 	120_000,
 );

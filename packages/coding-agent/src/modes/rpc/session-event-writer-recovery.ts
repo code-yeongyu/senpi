@@ -7,6 +7,14 @@ import { SessionEventWriterLifecycle } from "./session-event-writer-lifecycle.ts
 
 /** The writer's recovery accessors (senpi#4272): legacy views, checkpoint tokens, page requests, peer epochs. */
 export abstract class SessionEventWriterRecovery extends SessionEventWriterLifecycle {
+	holdsAdmission(peer: string, admissionId: string, sessionId?: string): boolean {
+		const actor = this.fanout.get(peer)?.actor;
+		if (!(actor instanceof AdmissionRoutingActor)) return false;
+		for (const [subscriptionId, id] of actor.subscriptions)
+			if (id === admissionId && (sessionId === undefined || subscriptionId === sessionId)) return true;
+		if (!actor.admissions.has(admissionId)) return false;
+		return sessionId === undefined || this.ordinaryRoute(peer, sessionId)?.routes.includes(admissionId) === true;
+	}
 	unregisterAdmission(peer: string, admissionId: string): void {
 		const actor = this.fanout.get(peer)?.actor;
 		if (actor instanceof AdmissionRoutingActor) actor.admissions.delete(admissionId);
@@ -23,8 +31,16 @@ export abstract class SessionEventWriterRecovery extends SessionEventWriterLifec
 		if (actor instanceof AdmissionRoutingActor) actor.subscriptions.set(subscriptionId, admissionId);
 	}
 	unregisterSubscription(peer: string, subscriptionId: string): void {
-		const actor = this.fanout.get(peer)?.actor;
-		if (actor instanceof AdmissionRoutingActor) actor.subscriptions.delete(subscriptionId);
+		const registered = this.fanout.get(peer);
+		const actor = registered?.actor;
+		if (!(actor instanceof AdmissionRoutingActor)) return;
+		const admissionId = actor.subscriptions.get(subscriptionId);
+		actor.subscriptions.delete(subscriptionId);
+		if (admissionId !== undefined && registered)
+			this.recoveryEvents?.forgetAdmission(
+				{ socketEpoch: registered.socketEpoch, sessionId: subscriptionId },
+				admissionId,
+			);
 	}
 	isCompactSubscription(peer: string, admissionId: string, subscriptionId: string): boolean {
 		const actor = this.fanout.get(peer)?.actor;

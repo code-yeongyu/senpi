@@ -28,7 +28,7 @@ it.each(["get_recovery_page", "release_recovery"])(
 );
 
 it.each(["get_recovery_page", "release_recovery"])(
-	"flag ON scopes %s to the server-side peer with byte-identical foreign/unknown/malformed denials",
+	"RULING-94 scopes %s to the server-side peer and validates malformed IDs first",
 	async (type) => {
 		vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 		vi.stubEnv("SENPI_RPC_REQUIRE_ATTACH", "1");
@@ -55,19 +55,22 @@ it.each(["get_recovery_page", "release_recovery"])(
 			socketEpoch: host.writer.socketEpochOf("owner"),
 		};
 		const denied: string[] = [];
-		for (const route of [
-			{},
-			{ sessionId: "unknown", admissionId: "unknown" },
-			{ sessionId: "../malformed", admissionId: "bad/id" },
-			{ admissionId: undefined },
-		]) {
+		for (const route of [{}, { sessionId: "unknown", admissionId: "own" }]) {
 			const from = foreign.received.length;
 			await host.writer.withConnection("foreign", () => host.core.handle(JSON.stringify({ ...command, ...route })));
 			await host.writer.flush();
 			denied.push(foreign.received.slice(from).join(""));
 		}
-		expect(denied[0]).toContain('"errorCode":"session_not_attached"');
-		expect(denied).toEqual(Array(4).fill(denied[0]));
+		expect(denied[0]).toContain('"errorCode":"unknown_admission"');
+		expect(denied).toEqual(Array(2).fill(denied[0]));
+		expect(await foreign.request({ ...command, admissionId: "bad/id" })).toMatchObject({
+			success: false,
+			errorData: { reason: "malformed_request" },
+		});
+		expect(await foreign.request({ ...command, admissionId: undefined })).toMatchObject({
+			success: false,
+			errorCode: "session_not_attached",
+		});
 		expect(page).not.toHaveBeenCalled();
 		expect(release).not.toHaveBeenCalled();
 		expect(lane).not.toHaveBeenCalled();
