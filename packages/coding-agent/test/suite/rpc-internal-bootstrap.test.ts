@@ -36,22 +36,33 @@ function start(runtime: string, args: string[] = [], env: Readonly<Record<string
 	return { child, stderr: () => stderr };
 }
 
-function message(child: ChildProcess): Promise<unknown> {
+// senpi#4737: close follows stderr EOF, so an early exit reports the complete child diagnostic.
+function message(child: ChildProcess, stderr: () => string): Promise<unknown> {
 	return new Promise((resolve, reject) => {
 		const received = (value: unknown) => {
 			cleanup();
 			resolve(value);
 		};
-		const exited = (code: number | null) => {
+		const exited = (code: number | null, signal: NodeJS.Signals | null) => {
 			cleanup();
-			reject(new Error(`bootstrap exited ${code} before reporting`));
+			reject(
+				new Error(
+					`bootstrap exited ${code} (signal ${signal ?? "none"}) before reporting\n${stderr() || "(no stderr)"}`,
+				),
+			);
+		};
+		const failed = (cause: Error) => {
+			cleanup();
+			reject(new Error(`bootstrap failed to spawn before reporting\n${stderr() || "(no stderr)"}`, { cause }));
 		};
 		const cleanup = () => {
 			child.off("message", received);
-			child.off("exit", exited);
+			child.off("close", exited);
+			child.off("error", failed);
 		};
 		child.once("message", received);
-		child.once("exit", exited);
+		child.once("close", exited);
+		child.once("error", failed);
 	});
 }
 
@@ -60,7 +71,7 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 	for (const runtime of ["node", "bun"]) {
 		it(`${runtime} restores null stdin and its inherited-stdin descendant completes while the writer lives`, async () => {
 			const { child, stderr } = start(runtime);
-			const ready = message(child);
+			const ready = message(child, stderr);
 			child.stdin?.write(Buffer.alloc(32, 7));
 			const result = await ready;
 			expect(result).toMatchObject({ type: "ready", key: "07".repeat(32), stdinNull: true, catCode: 0 });
@@ -72,11 +83,11 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 		});
 
 		it.skipIf(process.platform !== "darwin")(`${runtime} delivers reopened-stdin EOF`, async () => {
-			const { child } = start(runtime);
-			const ready = message(child);
+			const { child, stderr } = start(runtime);
+			const ready = message(child, stderr);
 			child.stdin?.write(Buffer.alloc(32, 7));
 			await ready;
-			const eof = message(child);
+			const eof = message(child, stderr);
 			const exit = once(child, "exit");
 			child.stdin?.end();
 			expect(await eof).toEqual({ type: "eof" });
@@ -85,7 +96,7 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 
 		it.each(["ENXIO", "ENOENT", "EACCES"])(`${runtime} restores stdin after reopen failure %s`, async (errno) => {
 			const { child, stderr } = start(runtime, ["fail-reopen", errno]);
-			const ready = message(child);
+			const ready = message(child, stderr);
 			child.stdin?.write(Buffer.alloc(32, 7));
 			expect(await ready).toMatchObject({ stdinNull: true, catCode: 0, lifetime: false });
 			expect(stderr()).toContain("identity poll");
@@ -97,8 +108,8 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 		it.skipIf(runtime !== "node")(`${runtime} keeps the deadline worker parked while fd 0 is free`, async () => {
 			const cache = mkdtempSync(join(tmpdir(), "senpi-bootstrap-cache-"));
 			try {
-				const { child } = start(runtime, ["await-worker-io"], { NODE_COMPILE_CACHE: cache });
-				const ready = message(child);
+				const { child, stderr } = start(runtime, ["await-worker-io"], { NODE_COMPILE_CACHE: cache });
+				const ready = message(child, stderr);
 				child.stdin?.write(Buffer.alloc(32, 7));
 				expect(await ready).toMatchObject({ type: "ready", stdinNull: true, workerIoWhileStdinFree: false });
 				const exit = once(child, "exit");
