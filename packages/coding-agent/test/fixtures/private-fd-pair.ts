@@ -1,18 +1,28 @@
 import { spawn } from "node:child_process";
 import { fstatSync } from "node:fs";
-import { preparePrivateFdSpawn } from "../../src/private-fd-spawn.ts";
-import { parseTable } from "../../src/private-fds.ts";
 import { inheritedDuplex } from "../../src/utils/inherited-duplex.ts";
+import { parseTable as oldParseTable } from "./private-fd-old-parser.ts";
 
-// Test-only proof injection: the release constant stays false until the named proof job passes.
-const parsed = parseTable('{"a":[5,6]}', { proven: { bun: process.versions.bun! } });
-if (process.argv[2] === "hop") {
+// Test-only receipt boundary: save the actual forwarded selector before production capture removes it.
+const encoded = process.env.SENPI_PRIVATE_FDS ?? "";
+const { parseTable } = await import("../../src/private-fds.ts");
+const { preparePrivateFdSpawn } = await import("../../src/private-fd-spawn.ts");
+const local = process.argv[2]?.startsWith("local-");
+// Test-only proof injection; the local socketpair exercises composition without pretending to prove Windows.
+const parsed = parseTable(encoded, {
+	proven: { bun: process.versions.bun! },
+	...(local
+		? { platform: "win32" as const, isPipe: (fd: number) => fstatSync(fd).isSocket(), clearInherit: () => true }
+		: {}),
+});
+if (oldParseTable(encoded).entries.get("a") !== null) throw new Error("old parser accepted a pair");
+if (process.argv[2] === "hop" || process.argv[2] === "local-hop") {
 	const transfer = preparePrivateFdSpawn(
 		{ stdio: ["ignore", "inherit", "inherit"] },
 		{},
 		{ kind: "entries", entries: parsed.entries },
 	);
-	const child = spawn(process.execPath, ["engine"], transfer.options);
+	const child = spawn(process.execPath, local ? [import.meta.filename, "local-engine"] : ["engine"], transfer.options);
 	transfer.close();
 	child.once("error", () => process.exit(2));
 	child.once("exit", (code) => process.exit(code ?? 2));

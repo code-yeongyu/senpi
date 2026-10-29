@@ -111,6 +111,42 @@ describe("Windows private descriptor pairs (#4859)", () => {
 		expect(result.discard.size).toBe(0);
 	});
 
+	it.skipIf(process.platform === "win32")("composes both halves through a real Bun hop on POSIX", async () => {
+		const fixture = join(import.meta.dirname, "../fixtures/private-fd-pair.ts");
+		const child = spawn("bun", [fixture, "local-hop"], {
+			env: { ...process.env, SENPI_PRIVATE_FDS: '{"a":[5,6]}' },
+			stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", "pipe", "pipe"],
+		});
+		const closed = once(child, "close", { signal: AbortSignal.timeout(15_000) });
+		const slots: readonly unknown[] = child.stdio;
+		const input = slots[5];
+		const output = slots[6];
+		if (!(input instanceof Socket) || !(output instanceof Socket)) throw new Error("missing pipes");
+		let received = "";
+		let report = "";
+		let errors = "";
+		child.stdout?.on("data", (chunk: Buffer) => {
+			report += chunk.toString();
+		});
+		child.stderr?.on("data", (chunk: Buffer) => {
+			errors += chunk.toString();
+		});
+		output.on("data", (chunk: Buffer) => {
+			received += chunk.toString();
+		});
+		output.resume();
+		input.end("ping");
+		try {
+			expect((await closed)[0], errors).toBe(0);
+			expect(received).toBe("echo:ping");
+			expect(JSON.parse(report)).toEqual({ closed: [true, true] });
+		} finally {
+			input.destroy();
+			output.destroy();
+			if (child.exitCode === null && child.signalCode === null) child.kill();
+		}
+	});
+
 	it("captures and clears before the compiled entry can spawn (spike item 9)", () => {
 		const source = readFileSync(join(import.meta.dirname, "../../src/bun/cli.ts"), "utf8");
 		const imports = [...source.matchAll(/^import .*?["']([^"']+)["'];/gm)].map((match) => match[1]);

@@ -8,6 +8,8 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
     return path;
 };
 import "./valid-cwd.js";
+// Second: capture the private descriptor table before anything can spawn (senpi#4749).
+import "./private-fds.js";
 import "./internal-role.js";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, fstatSync, realpathSync } from "node:fs";
@@ -21,6 +23,7 @@ import { APP_NAME, DISPLAY_VERSION, findNodePackageDir, getAgentDir, getInstallP
 import { hasInheritedInspectorOption, releaseInheritedInspectorForChild } from "./inspector-policy.js";
 import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.js";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.js";
+import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.js";
 /** Only a presenter-enabled launch may carry its reserved private channel through CLI re-execution. */
 function reexecStdio() {
     const argv = process.argv.slice(2);
@@ -70,10 +73,18 @@ function reexecUnderBunIfNeeded() {
     if (decision.action === "stay") {
         return false;
     }
-    const result = spawnSync(decision.bunPath, [scriptRealPath, ...process.argv.slice(2)], {
+    const transfer = preparePrivateFdSpawn({
         stdio: reexecStdio(),
         windowsHide: true,
     });
+    const result = (() => {
+        try {
+            return spawnSync(decision.bunPath, [scriptRealPath, ...process.argv.slice(2)], transfer.options);
+        }
+        finally {
+            transfer.close();
+        }
+    })();
     if (result.signal) {
         process.kill(process.pid, result.signal);
         return true;
@@ -143,7 +154,7 @@ async function spawnFullCli() {
     releaseInheritedInspectorForChild();
     const childEnvironment = isBundledNode ? { ...process.env, [ISOLATED_CHILD_ENV]: "1" } : process.env;
     return await new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [...process.execArgv, fullCliPath, ...args], {
+        const child = spawnWithPrivateFds(spawn, process.execPath, [...process.execArgv, fullCliPath, ...args], {
             env: childEnvironment,
             stdio: reexecStdio(),
         });
