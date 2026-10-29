@@ -1,20 +1,20 @@
 {
  "repo": {
-  "head": "8300e8189567b843998a4af7c2cc1599d6c5b457",
-  "dirty": true
+  "head": "c573477766932734dd9122213c7b3c3efe1e19cc",
+  "dirty": false
  },
  "platform": "darwin-arm64",
  "runtimes": {
-  "harness": "node@24.22.1",
+  "harness": "node@24.22.0",
   "child": "bun@1.4.4"
  },
  "hashes": {
-  "harness": "sha256:922c308b863e50c65ac24a2283373b1dfec4e665b47a973b9a81c11debce4cee",
-  "normalizer": "sha256:7d676cd57a4ba44323a5997bb81b7ffb7e70b0d1df7de05d08325c6901ca2dd9",
+  "harness": "sha256:9280da0b853c3ca12b8a6bb9a58279e33bfc475dd6783e9308b5632bff6d9659",
+  "normalizer": "sha256:19524e3e2fa4883b02b817375131e78d267a9a8c285fc53f5668f1ec3dd70ba6",
   "fakeModelServer": "sha256:cab5b6866b7854287218de51d1fafcc242a8602b2c83fb85572abe332f9f6560",
-  "cases": "sha256:e68ea9ebca5392d8d948d17cd2aa122d0215fbc9cc83e5fabe9f130cd20f43c8",
-  "fixtures": "sha256:40f9e14a19251c338614b3c0d2d2ecfce9f543aca9df5a389bd7bf5bd8f6b038",
-  "tuiCapture": "sha256:e342256c7aeabd915b94c19bcf60ce364cec6273d412025ee510941bda2a93df"
+  "cases": "sha256:8fd3b95eecc7d945ed7dd3bff8a324578bebd5403da7bb20ade0d01ca52bfdf8",
+  "fixtures": "sha256:639344488dbf5c7b39cbf7f3d6b151565ec71a4557c6717a904147ab864ceb8f",
+  "tuiCapture": "sha256:576b44f4aedf929851205284d58cdcec1e3984f4ba4073210e418d6d42888c41"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --surface tui --repeat 2 --evidence p0-05c-record-final2"
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --surface tui --cases E25 --repeat 2 --evidence p05e-rec1b-tui"
 }

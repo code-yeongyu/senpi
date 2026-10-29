@@ -47,6 +47,8 @@ const isSurfacesEvent = (event) => event.type === "loaded_surfaces_changed";
  */
 const isHostHealthEvent = (event) => event.type === "host_stalled";
 
+const transcript = (file) => (file && existsSync(file) ? readJsonl(readFileSync(file, "utf8")) : []);
+
 /** Provider requests: the fake model server's, or those of the provider fixture a case serves itself (E19 Cursor). */
 const modelRequests = (run) =>
 	(run.providerRequests?.() ?? run.server.requests).filter((request) => request.method === "POST");
@@ -80,13 +82,14 @@ export const collectors = {
 			surfaces: client.events.filter(isSurfacesEvent),
 		})),
 	O7: (run) => {
-		const entries =
-			run.sessionFile && existsSync(run.sessionFile) ? readJsonl(readFileSync(run.sessionFile, "utf8")) : [];
+		const entries = transcript(run.sessionFile);
 		return {
 			nonEmpty: entries.length > 0,
 			count: entries.length,
 			durableIdStable: run.sessionIds.length > 0 && run.sessionIds.every((id) => id === run.sessionIds[0]),
 			entries,
+			// A case that runs more than one session at once (E30) lists the other sessions' transcripts here.
+			...(run.peerSessionFiles ? { peers: run.peerSessionFiles.map((file) => transcript(file)) } : {}),
 		};
 	},
 	O8: (run) => ({ headless: run.states }),

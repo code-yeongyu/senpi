@@ -114,6 +114,33 @@ const TUI_DRIVES = {
 		// A resumed session asks for no title (only a session's first prompts are titled), so no footer title to wait for.
 		await resumed.checkpoint("final", (t) => idle(t) && shows("E14-RESUMED")(t) && noticed(1)(t));
 	},
+	/**
+	 * E25 (P0-05e, X13): the two tool-body kill points through the TUI, each followed by a TUI restart on the session file
+	 * (`--session`, today's reopen of a killed terminal). Kills 3 and 4 of the RPC drive (the dangling question) resume
+	 * through a running client's session switch, which in the TUI is the /resume picker; that form is not driven here.
+	 */
+	async E25(run) {
+		const tui = await boot(run);
+		await tui.submit("run the held body");
+		await arrived(run, "kill-body");
+		run.sessionFile = findSessionFile(run.box.sessionDir);
+		await tui.kill();
+		run.server.releaseBarrier("kill-body");
+		const first = await boot(run, { resume: true });
+		await first.checkpoint("resumed after the body kill", idle);
+		await first.submit("continue after the first crash");
+		await first.waitFor((t) => idle(t) && shows("E25-BODY-RESUMED")(t) && noticed(1)(t), "E25-BODY-RESUMED");
+		await first.submit("run the batch");
+		await Promise.all([arrived(run, "sibling-done"), arrived(run, "sibling-held")]);
+		run.server.releaseBarrier("sibling-done");
+		await first.waitFor(shows("eq_ledger call_sibling_done done"), "call_sibling_done result");
+		await first.kill();
+		run.server.releaseBarrier("sibling-held");
+		const second = await boot(run, { resume: true });
+		await second.checkpoint("resumed after the sibling kill", idle);
+		await second.submit("continue after the second crash");
+		await second.checkpoint("final", (t) => idle(t) && shows("E25-SIBLINGS-RESUMED")(t) && noticed(1)(t));
+	},
 	async E17(run) {
 		run.server.releaseBarrier("open-call_by_client");
 		run.server.releaseBarrier("open-call_by_other");
