@@ -80,7 +80,8 @@ export async function answerRecoveryPage(
 		healthRevision,
 		source: source ? { sessionEpoch: source.sessionEpoch, sequence: source.acceptedSequence } : null,
 		hint: "restart_from_catalog",
-		retryAfterMs: outcome.ok ? 0 : randomInt(100, 2_001),
+		// Unknown/foreign tokens and mismatched admissions reveal no state, including through reply bytes.
+		retryAfterMs: outcome.ok ? 0 : failure?.reason === "unknown_token" ? 100 : randomInt(100, 2_001),
 	};
 	const ordinary = writer.ordinaryRoute(writer.currentConnection() ?? "", caller.sessionId);
 	const generation =

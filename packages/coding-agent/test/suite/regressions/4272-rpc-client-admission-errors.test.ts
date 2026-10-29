@@ -49,8 +49,17 @@ it("RULING-94 RpcClient surfaces local unknown and server-retired admissions as 
 		errorCode: "unknown_admission",
 		errorData: { code: "unknown_admission", admissionId: "retired" },
 	});
-	expect(frames.slice(from).filter((line) => JSON.parse(line).type === "response")).toHaveLength(1);
-	expect(requests.filter((request) => request.type === "reset_stream")).toHaveLength(0);
+	// RULING-96: the page is answered by token authority (unknown_token), the client restarts per RULING-84, and the
+	// reset (an ordinary admission command) gets RULING-94's typed refusal: exactly one reply per request.
+	const replies = frames
+		.slice(from)
+		.map((line) => JSON.parse(line) as { type: string; command?: string; errorCode?: string })
+		.filter((frame) => frame.type === "response");
+	expect(replies.map(({ command, errorCode }) => [command, errorCode])).toEqual([
+		["get_recovery_page", "recovery_repair_needed"],
+		["reset_stream", "unknown_admission"],
+	]);
+	expect(requests.filter((request) => request.type === "reset_stream")).toHaveLength(1);
 	expect(events.mock.calls.map(([event]) => event)).not.toContainEqual(expect.objectContaining({ type: "response" }));
 	expect(failures).toEqual([]);
 }, 120_000);

@@ -1,5 +1,4 @@
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
-import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { error } from "./session-router-errors.ts";
 
@@ -52,10 +51,10 @@ export function attachmentGate(host: RouterContext, command: RpcCommand): RpcRes
 	const owner = host.writer.currentConnection();
 	if (owner === undefined || ATTACH_GATE_EXEMPT.has(command.type)) return undefined;
 	if (!("sessionId" in command) || command.sessionId === undefined) return undefined;
+	// RULING-96: compact recovery proves token/lease authority, not an ordinary session attachment.
 	if (
-		compactUpdatesEnabled() &&
-		(command.type === "get_recovery_page" || command.type === "release_recovery") &&
-		host.writer.isCompactSubscription(owner, command.admissionId, command.sessionId)
+		host.writer.recoveryPages !== undefined &&
+		(command.type === "get_recovery_page" || command.type === "release_recovery")
 	)
 		return undefined;
 	if (

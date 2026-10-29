@@ -82,6 +82,11 @@ it("RULING-94 every routed command validates before dispatch and answers exactly
 						type,
 						sessionId: "unattributable",
 						admissionId,
+						...(type === "get_recovery_page"
+							? { token: "missing", componentRef: "manifest", requestId: "page" }
+							: type === "release_recovery"
+								? { lease: { kind: "event", id: "missing" } }
+								: {}),
 					}),
 				),
 			);
@@ -93,7 +98,9 @@ it("RULING-94 every routed command validates before dispatch and answers exactly
 				type: "response",
 				success: false,
 				...(admissionId === "missing"
-					? { code: "unknown_admission", admissionId }
+					? type === "get_recovery_page" || type === "release_recovery"
+						? { errorCode: "recovery_repair_needed", errorData: { reason: "unknown_token" } }
+						: { code: "unknown_admission", admissionId }
 					: { errorData: { reason: "malformed_request" } }),
 			});
 		}
