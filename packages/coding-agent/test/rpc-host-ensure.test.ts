@@ -149,13 +149,13 @@ describe("ensureHost", () => {
 
 	it("attaches to a compatible unmanaged host", async () => {
 		const qa = await scratch("compatible-unmanaged");
-		const child = spawn(process.execPath, [fixture, qa.socket, VERSION, CAPABILITIES, "answer"], {
+		const child = spawn(process.execPath, [fixture, qa.socket, VERSION, CAPABILITIES, "gated"], {
 			detached: true,
-			stdio: "ignore",
+			stdio: ["pipe", "pipe", "pipe"],
 		});
 		children.push(child);
+		await waitForProtocol(child);
 		if (child.pid === undefined) throw new Error("fixture did not spawn");
-		await waitForProtocol(qa.socket);
 		const result = await ensureFixtureHost(qa);
 		expect(result.reused).toBe(true);
 		expect(result.pid).toBe(0);
@@ -707,18 +707,25 @@ describe.skipIf(process.platform === "win32")("protocol fixture self-termination
 			[
 				"-e",
 				"const { spawn } = require('node:child_process');" +
-					"spawn(process.execPath, process.argv.slice(1), { detached: true, stdio: 'ignore' }).unref();" +
+					"const child = spawn(process.execPath, process.argv.slice(1), " +
+					"{ detached: true, stdio: ['pipe', 'inherit', 'inherit'] });" +
+					"child.stdin.end('go\\n');" +
+					"child.once('error', error => { throw error; });" +
+					"child.once('exit', (code, signal) => {" +
+					"if (signal) process.kill(process.pid, signal); else process.exit(code);" +
+					"});" +
+					"child.unref();" +
 					"setInterval(() => {}, 1000);",
 				fixture,
 				qa.socket,
 				VERSION,
 				CAPABILITIES,
-				"answer",
+				"gated",
 			],
-			{ stdio: "ignore" },
+			{ stdio: ["ignore", "pipe", "pipe"] },
 		);
 		children.push(launcher);
-		await waitForProtocol(qa.socket);
+		await waitForProtocol(launcher);
 		const host = processesUnder(qa.root).find((pid) => pid !== launcher.pid);
 		expect(host).toBeGreaterThan(0);
 
@@ -901,13 +908,13 @@ async function ensureFixtureHost(qa: Qa, overrides: Overrides = {}) {
 
 /** A fixture host nobody registers, answering on its sandbox socket. Returns its pid. */
 async function spawnFixture(qa: Qa): Promise<number> {
-	const child = spawn(process.execPath, [fixture, qa.socket, VERSION, CAPABILITIES, "answer"], {
+	const child = spawn(process.execPath, [fixture, qa.socket, VERSION, CAPABILITIES, "gated"], {
 		detached: true,
-		stdio: "ignore",
+		stdio: ["pipe", "pipe", "pipe"],
 	});
 	children.push(child);
+	await waitForProtocol(child);
 	if (child.pid === undefined) throw new Error("fixture did not spawn");
-	await waitForProtocol(qa.socket);
 	return child.pid;
 }
 
@@ -927,12 +934,12 @@ async function startManagedFixture(
 			qa.socket,
 			options.serverVersion ?? VERSION,
 			options.capabilities ?? CAPABILITIES,
-			"answer",
+			"gated",
 			JSON.stringify(options.identity ?? {}),
 		],
-		{ detached: true, stdio: "ignore" },
+		{ detached: true, stdio: ["pipe", "pipe", "pipe"] },
 	);
-	await waitForProtocol(qa.socket);
+	await waitForProtocol(child);
 	return register(qa, child, options.writer ?? "self");
 }
 
@@ -1122,17 +1129,40 @@ async function protocolInfo(socketPath: string): Promise<Record<string, unknown>
 	});
 }
 
-async function waitForProtocol(socketPath: string): Promise<void> {
-	const deadline = Date.now() + 2_000;
-	while (Date.now() <= deadline) {
-		try {
-			await protocolInfo(socketPath);
-			return;
-		} catch {
-			await new Promise((resolve) => setTimeout(resolve, 20));
-		}
-	}
-	throw new Error("fixture protocol did not become ready");
+function waitForProtocol(child: ChildProcess): Promise<void> {
+	// #4722: setup observes the fixture's existing listen signal, not a second wall-clock
+	// deadline that can expire before the child runs. The owning test bounds this wait.
+	return new Promise((resolve, reject) => {
+		let output = "";
+		let stderr = "";
+		const finish = (error?: Error | null) => {
+			child.off("error", finish);
+			child.off("close", closed);
+			child.stdout?.off("data", listening);
+			child.stderr?.off("data", diagnostic);
+			child.stdin?.off("error", finish);
+			error ? reject(error) : resolve();
+		};
+		const diagnostic = (chunk: Buffer) => {
+			stderr += chunk.toString("utf8");
+		};
+		const closed = (code: number | null, signal: NodeJS.Signals | null) =>
+			finish(new Error(`fixture exited before listening (code ${code}, signal ${signal}): ${stderr}`));
+		const listening = (chunk: Buffer) => {
+			output += chunk.toString("utf8");
+			if (!output.split("\n").includes("listening")) return;
+			child.stdout?.off("data", listening);
+			// Release the existing protocol gate immediately: these fixtures answer normally.
+			// The orphan launcher already released its child and only forwards its output.
+			if (child.stdin) child.stdin.end("go\n", () => finish());
+			else finish();
+		};
+		child.once("error", finish);
+		child.once("close", closed);
+		child.stdout?.on("data", listening);
+		child.stderr?.on("data", diagnostic);
+		child.stdin?.once("error", finish);
+	});
 }
 
 async function expectGone(pidFile: { pid: number; processStartTime: string }): Promise<void> {
