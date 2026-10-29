@@ -1,4 +1,6 @@
 import { type Static, Type } from "typebox";
+import { getJobWidgetState } from "../../job-widgets/session-host.ts";
+import type { JobWidgetEntry } from "../../job-widgets/view-types.ts";
 import { formatTerminalToolOutput } from "../output-format.ts";
 import type { TerminalRuntimeSession } from "../runtime-session.ts";
 import { safeRegExp, TERMINAL_OUTPUT_TOOL } from "../shared.ts";
@@ -42,6 +44,14 @@ function applyFilter(text: string, filter: string | undefined): string {
 		.join("\n");
 }
 
+/** The job's widget as of this read, when it has a live (or finished) chart to summarize. */
+function jobWidgetOf(ctx: TerminalToolContext, id: string): JobWidgetEntry | undefined {
+	const sessionKey = ctx.getSessionContext?.()?.sessionManager?.getSessionId?.();
+	if (sessionKey === undefined) return undefined;
+	const entry = getJobWidgetState(sessionKey)?.jobs.find((job) => job.id === id);
+	return entry?.view && (entry.state === "live" || entry.state === "done") ? entry : undefined;
+}
+
 function screenView(runtime: TerminalRuntimeSession): string {
 	const snapshot = runtime.snapshot();
 	return snapshot.visibleGrid.join("\n").replace(/\s+$/, "");
@@ -71,7 +81,12 @@ export function createBashOutputTool(ctx: TerminalToolContext) {
 						? `monitor muted - ${mutedDropped} line(s) dropped while muted; run monitor({ action: "rearm", bash_id: "${input.bash_id}" }) to resume.`
 						: `monitor muted; run monitor({ action: "rearm", bash_id: "${input.bash_id}" }) to resume.`;
 			}
-			const extra = monitorEntry ? { details: { monitorMuted: muted, mutedDropped } } : undefined;
+			const jobWidget = jobWidgetOf(ctx, sessionId);
+			const details = {
+				...(monitorEntry ? { monitorMuted: muted, mutedDropped } : {}),
+				...(jobWidget ? { jobWidget } : {}),
+			};
+			const extra = Object.keys(details).length > 0 ? { details } : undefined;
 			const prefix = mutedNote.length > 0 ? `${mutedNote}\n` : "";
 
 			if (input.view === "screen") {
