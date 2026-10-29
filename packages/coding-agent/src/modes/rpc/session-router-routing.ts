@@ -14,11 +14,11 @@ import { protocolIdentity } from "./protocol-identity.ts";
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { RPC_ERROR_MISSING_SESSION_ID } from "./rpc-types.ts";
 import { attachSession, reclaimSession, releaseAttachment } from "./session-attachment-commands.ts";
-import { attachmentGate } from "./session-attachment-gate.ts";
 import { runWithSessionAttribution } from "./session-attribution.ts";
 import { dispatchSessionBinding } from "./session-held.ts";
 import { moveSession } from "./session-move-commands.ts";
 import { releaseSession } from "./session-release.ts";
+import { admissionAnswer } from "./session-router-admission.ts";
 import { releaseConnection } from "./session-router-attachments.ts";
 import { close, tearDownUnloaded } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
@@ -40,13 +40,9 @@ import { unloadSession } from "./session-unload.ts";
  * caused it - and anything the command starts inherits the attribution.
  */
 export function handle(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
-	const refusal = attachmentGate(host, command);
-	if (refusal) return Promise.resolve(refusal);
+	const admission = admissionAnswer(host, command);
+	if (admission) return Promise.resolve(admission.answer);
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;
-	// A parked handle is answered by its terminal record and connection close, never unknown_session.
-	if (host.draining && sessionId !== undefined && host.handoffClosed.has(sessionId)) return Promise.resolve(undefined);
-	if (host.draining && command.type === "open_session")
-		return Promise.resolve(error(command.id, command.type, "host_draining"));
 	// A warm holds no session and no path, so it stays out of the accounting a drain waits on (senpi#2314).
 	if (command.type === "warm")
 		return answerWarm(command, {

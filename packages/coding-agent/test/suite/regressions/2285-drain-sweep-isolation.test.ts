@@ -47,21 +47,33 @@ it("ends a session whose directory was deleted as session_dir_removed and still 
 	expect(rig.registry.size).toBe(0);
 }, 10_000);
 
-it("parks a session whose activity cannot be read instead of stranding every other session", async () => {
-	const { rig, s1, reasons, exited } = await drainRig();
+// code-yeongyu/oh-my-openagent#10091: unreadable activity is not proof of quiet. The session stays with this
+// generation instead of being handed to a successor that would become its second writer, and it still never
+// strands the other sessions; once its activity reads quiet again, it parks and the generation exits.
+it("holds a session whose activity cannot be read and still parks every other session", async () => {
+	const { rig, s1, s2, closes, reasons, exited } = await drainRig();
 	const session = rig.registry.peek(s1)?.runtime?.session;
 	expect(session).toBeDefined();
+	const readable = Object.getOwnPropertyDescriptor(session, "activitySnapshot");
 	Object.defineProperty(session, "activitySnapshot", {
+		configurable: true,
 		get() {
 			throw new Error("activity unreadable");
 		},
 	});
-	vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+	const log = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
 	expect(() => rig.router.beginDrain()).not.toThrow();
-	await exited;
 	await rig.settle();
 
+	expect(closes("b", s2)).toEqual([expect.objectContaining({ reason: "handoff_parked" })]);
+	expect(rig.registry.peek(s1)?.state).toBe("open");
+	expect(log).toHaveBeenCalledWith(expect.stringContaining(`keeps session ${s1} on this generation: unknown`));
+
+	if (readable) Object.defineProperty(session, "activitySnapshot", readable);
+	rig.router.beginDrain();
+	await exited;
+	await rig.settle();
 	expect(reasons()).toEqual(["handoff_parked", "handoff_parked"]);
 }, 10_000);
 

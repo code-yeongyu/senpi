@@ -17,6 +17,7 @@ import { routingIdOf } from "./session-router-errors.ts";
 import { sweepIdleSessions } from "./session-router-occupancy.ts";
 import type { RpcHostSessionDefaults, RpcSessionIdlePolicy } from "./session-router-types.ts";
 import { registryStatusSource } from "./session-status-source.ts";
+import type { TransferSeal } from "./session-transfer-seal.ts";
 export class RouterContext {
 	readonly bindings = new Map<string, RpcSessionBinding>();
 
@@ -77,6 +78,15 @@ export class RouterContext {
 	drainExitRequested = false;
 
 	readonly handoffClosed = new Set<string>();
+
+	/** Sessions sealed for a transfer to the next generation (`session-transfer-seal.ts`). */
+	readonly transferSeals = new Map<string, TransferSeal>();
+
+	/** What last held each session a drain keeps, so a pass logs a change once. */
+	readonly heldTransfers = new Map<string, string>();
+
+	/** When a retained session whose park record could not be written may be tried again, on `idleNow`. */
+	readonly parkRetryAt = new Map<string, { readonly at: number; readonly attempts: number }>();
 
 	readonly activeRequests = new Map<string | undefined, number>();
 

@@ -1,6 +1,6 @@
-import { isHandoffBusy } from "./handoff-activity.ts";
 import { sessionDirectoryRemoved } from "./session-path-key.ts";
-import type { RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
+import type { RpcSessionRegistry } from "./session-registry.ts";
+import { entryTransferBlockers, type TransferBlocker } from "./session-transfer-quiescence.ts";
 
 export interface DrainVerdicts {
 	/** Settled sessions a handoff parks: the successor reopens each by its `sessionPath`. */
@@ -10,57 +10,53 @@ export interface DrainVerdicts {
 	 * drain ends them as `session_dir_removed` instead of handing out a dead path (senpi#2285).
 	 */
 	readonly gone: readonly string[];
+	/**
+	 * Open sessions this generation keeps for now, with what holds each one: work in progress, a request
+	 * in flight, or activity that could not be read (`unknown`). A held session keeps its owner and its
+	 * work; the next pass judges it again (code-yeongyu/oh-my-openagent#10091).
+	 */
+	readonly held: ReadonlyMap<string, readonly TransferBlocker[]>;
 }
 
 /**
- * One handoff-drain pass's decisions. Every session is judged on its own: a session whose activity
- * cannot be read cannot be proven busy, so it parks like any other (reported through `unreadable`)
- * and never strands the rest on a superseded generation. The pass adds no path resolution of its
- * own: the gone check only stats the directory of the path the registry already holds.
+ * One handoff-drain pass's decisions. Every session is judged on its own, by the strict transfer check
+ * `release_session` uses: a session is parked only when it is proven quiet, and one whose activity
+ * cannot be read is held rather than handed to a successor that would become its second writer. One
+ * held session never strands the rest (senpi#2285). The gone check only stats the directory of the
+ * path the registry already holds.
  */
 export function selectDrainVerdicts(
 	registry: Pick<RpcSessionRegistry, "list" | "peek">,
 	inFlight: (sessionId: string) => boolean,
-	unreadable: (sessionId: string, cause: unknown) => void,
+	pendingPrompts: (sessionId: string) => number,
 ): DrainVerdicts {
 	const park: string[] = [];
 	const gone: string[] = [];
+	const held = new Map<string, readonly TransferBlocker[]>();
 	for (const { sessionId, status, sessionPath } of registry.list()) {
-		if (status !== "open" || inFlight(sessionId)) continue;
+		if (status !== "open") continue;
+		if (inFlight(sessionId)) {
+			held.set(sessionId, ["request"]);
+			continue;
+		}
 		const entry = registry.peek(sessionId);
-		if (!entry || handoffBusy(entry, sessionId, unreadable)) continue;
-		if (sessionPath !== undefined && sessionDirectoryRemoved(sessionPath)) gone.push(sessionId);
+		if (!entry) continue;
+		const blockers = entryTransferBlockers(entry, () => pendingPrompts(sessionId), 0);
+		if (blockers.length > 0) held.set(sessionId, blockers);
+		else if (sessionPath !== undefined && sessionDirectoryRemoved(sessionPath)) gone.push(sessionId);
 		else park.push(sessionId);
 	}
-	return { park, gone };
+	return { park, gone, held };
 }
 
-function handoffBusy(
-	entry: RpcSessionEntry,
-	sessionId: string,
-	unreadable: (sessionId: string, cause: unknown) => void,
-): boolean {
-	try {
-		// Both signals are optional: a runtime that does not publish an activity snapshot cannot be
-		// proven busy, and a park that waits for a signal the runtime never emits would strand the
-		// session on the old generation.
-		const snapshot = entry.runtime?.session.activitySnapshot;
-		return entry.worker?.handoffBusy === true || (snapshot !== undefined && isHandoffBusy(snapshot));
-	} catch (cause) {
-		unreadable(sessionId, cause);
-		return false;
-	}
-}
-
-/** One drain pass for the host: logs what it skips, and `undefined` when the pass failed as a whole. */
+/** One drain pass for the host: `undefined` when the pass failed as a whole. */
 export function readDrainVerdicts(
 	registry: Pick<RpcSessionRegistry, "list" | "peek">,
 	inFlight: (sessionId: string) => boolean,
+	pendingPrompts: (sessionId: string) => number,
 ): DrainVerdicts | undefined {
 	try {
-		return selectDrainVerdicts(registry, inFlight, (sessionId, cause) => {
-			process.stderr.write(`senpi rpc handoff activity of ${sessionId} unreadable, parking: ${String(cause)}\n`);
-		});
+		return selectDrainVerdicts(registry, inFlight, pendingPrompts);
 	} catch (cause) {
 		process.stderr.write(`senpi rpc handoff drain pass failed, retrying: ${String(cause)}\n`);
 		return undefined;

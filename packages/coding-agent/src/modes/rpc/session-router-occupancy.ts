@@ -1,8 +1,3 @@
-import { recordHandoverParkedSession } from "./host-handover-parked.ts";
-import { parkedEntryFromProfile } from "./host-handover-parked-open.ts";
-
-import { hostInstanceId } from "./protocol-identity.ts";
-
 import type { RpcSessionClosedReason } from "./rpc-types.ts";
 
 import { readDrainVerdicts } from "./session-drain.ts";
@@ -10,6 +5,8 @@ import { forgetSessionOwnership } from "./session-router-attachments.ts";
 import { finalizeClose, tryClaimClose } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { selectSweepEvictions } from "./session-sweep.ts";
+import { type ParkIntent, parkDue, stillQuiet, withdrawParkIntent, writeParkIntent } from "./session-transfer-park.ts";
+import { reportHeldTransfers } from "./session-transfer-seal.ts";
 
 const DRAIN_SWEEP_MS = 50;
 
@@ -35,10 +32,17 @@ export function sweepDrain(host: RouterContext): void {
 	// An accepted open can still be constructing a runtime or binding.
 	if (host.activeRequests.has(undefined)) return;
 	// A pass that failed as a whole is retried by the drain timer armed before it (senpi#2285).
-	const verdicts = readDrainVerdicts(host.registry, (sessionId) => host.activeRequests.has(sessionId));
+	const verdicts = readDrainVerdicts(
+		host.registry,
+		(sessionId) => host.activeRequests.has(sessionId),
+		(sessionId) => host.bindings.get(sessionId)?.pendingPrompts?.().length ?? 0,
+	);
 	if (!verdicts) return;
-	for (const sessionId of verdicts.gone) parkForHandoff(host, sessionId, "session_dir_removed");
-	for (const sessionId of verdicts.park) parkForHandoff(host, sessionId, "handoff_parked");
+	reportHeldTransfers(host, verdicts.held);
+	// A session whose transfer is already in flight is that transfer's to finish.
+	const startable = (sessionId: string) => !host.transferSeals.has(sessionId) && parkDue(host, sessionId);
+	for (const sessionId of verdicts.gone.filter(startable)) parkForHandoff(host, sessionId, "session_dir_removed");
+	for (const sessionId of verdicts.park.filter(startable)) parkForHandoff(host, sessionId, "handoff_parked");
 	if (host.registry.size > 0 || host.handoffParks > 0 || host.finalizations.size > 0) return;
 	if (host.drainTimer !== undefined) {
 		clearInterval(host.drainTimer);
@@ -55,7 +59,6 @@ export function parkForHandoff(
 	sessionId: string,
 	reason: "handoff_parked" | "session_dir_removed",
 ): void {
-	host.handoffClosed.add(sessionId);
 	host.handoffParks++;
 	void evictIdleSession(host, sessionId, reason)
 		.catch((cause: unknown) => {
@@ -87,7 +90,8 @@ export function sweepIdleSessions(host: RouterContext): void {
 			host.activeRequests.has(sessionId) || (host.bindings.get(sessionId)?.pendingPrompts?.().length ?? 0) > 0,
 	);
 	for (const sessionId of verdicts.orphaned) void evictIdleSession(host, sessionId, "session_dir_removed");
-	for (const sessionId of verdicts.idle) void evictIdleSession(host, sessionId);
+	for (const sessionId of verdicts.idle)
+		if (parkDue(host, sessionId) && !host.transferSeals.has(sessionId)) void evictIdleSession(host, sessionId);
 	if (Number.isFinite(host.emptyExitMs)) {
 		if (host.registry.size === 0 && (host.canExitWhenEmpty?.() ?? true)) {
 			if (host.emptySince === undefined) host.emptySince = now;
@@ -125,39 +129,32 @@ export async function evictIdleSession(
 		retained?.retainOnDisconnect === true || reason === "handoff_parked" ? retained?.sessionPath : undefined;
 	// A drain releases every session's connections the same way, parked or gone (senpi#2285).
 	const handoff = reason === "handoff_parked" || (reason === "session_dir_removed" && host.draining);
+	// A retain_on_disconnect session survives EVERY generation, whether the park came from the handoff
+	// drain or the idle sweep: it is sealed and its record written durably BEFORE anything is torn down
+	// (#10091), so a record that cannot be written leaves the session here instead of losing it.
+	let intent: ParkIntent | undefined;
+	if (host.handoverParkedDir !== undefined && parkedPath !== undefined && retained?.retainOnDisconnect === true) {
+		intent = await writeParkIntent(host, sessionId, retained, parkedPath, host.handoverParkedDir);
+		if (intent === undefined) return;
+		// Work that started while the record was written (an in-session timer, a passing control command)
+		// keeps the session here; the check and the claim below run in one synchronous step.
+		if (!intent.seal.closed && !stillQuiet(host, sessionId)) {
+			await withdrawParkIntent(host, sessionId, intent, false);
+			return;
+		}
+	}
 	const owners = handoff
 		? [...host.sessionsByConnection].filter(([, owned]) => owned.has(sessionId)).map(([connection]) => connection)
 		: [];
-	// A failed claim means an explicit close raced us and owns the entry now; nothing is recorded,
-	// or a closed session would come back on the next host start (MEDIUM-1, senpi#3282 review).
+	// A failed claim, or one that joined an explicit close of a sealed session, means that close owns the
+	// entry now: the close wins and the record is withdrawn, or a closed session would come back on the next
+	// host start (MEDIUM-1, senpi#3282).
 	const claim = tryClaimClose(host, sessionId, { drainAttachments: true });
-	if (!claim) return;
-	// A retain_on_disconnect session survives EVERY generation: park it to disk AND into the
-	// handover record, whether the park came from the handoff drain or the idle sweep, so the
-	// successor reopens it. Recorded only after the claim wins, and only when the teardown parks
-	// (parkedPath set) - never for an explicit close. The write is awaited before the drain
-	// proceeds, or the generation can hand over and exit before it lands and the park is lost.
-	if (
-		host.handoverParkedDir !== undefined &&
-		parkedPath !== undefined &&
-		retained?.retainOnDisconnect === true &&
-		retained.sessionPath !== undefined
-	) {
-		await recordHandoverParkedSession(host.handoverParkedDir, {
-			...parkedEntryFromProfile(
-				{
-					sessionPath: retained.sessionPath,
-					contextOverlay: retained.contextOverlay,
-					...(retained.durableSessionId !== undefined ? { durableSessionId: retained.durableSessionId } : {}),
-				},
-				retained.profile,
-				Object.keys(host.defaults.hostContext ?? {}),
-			),
-			parkedBy: host.defaults.hostContext?.host_instance ?? hostInstanceId(),
-		}).catch((cause: unknown) => {
-			process.stderr.write(`senpi rpc handover park record ${sessionId} failed: ${String(cause)}\n`);
-		});
+	if (!claim || intent?.seal.closed === true) {
+		if (intent !== undefined) await withdrawParkIntent(host, sessionId, intent, true);
+		return;
 	}
+	if (handoff) host.handoffClosed.add(sessionId);
 	const binding = host.bindings.get(sessionId);
 	binding?.cancelPendingExtensionUiRequests?.();
 	if (!handoff) forgetSessionOwnership(host, sessionId);
@@ -181,6 +178,7 @@ export async function evictIdleSession(
 		forgetSessionOwnership(host, sessionId);
 		await host.onHandoffParked?.(owners.filter((connection) => !host.sessionsByConnection.has(connection)));
 	}
+	if (intent !== undefined) host.transferSeals.delete(sessionId);
 	// The runtime is disposed and routing handles are unique per process
 	// epoch, so nothing can emit under this id again: drop the writer's
 	// per-session bookkeeping instead of retaining it for the host's life.

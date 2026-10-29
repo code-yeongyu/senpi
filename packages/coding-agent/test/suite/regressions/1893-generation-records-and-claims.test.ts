@@ -73,6 +73,35 @@ describe("a session-path claim across generations", () => {
 		expect(await reservations.claim(sessionPath)).toMatchObject({ instanceId: "serving", current: true });
 	});
 
+	// code-yeongyu/oh-my-openagent#10091: a superseded generation may still be running a turn in a detached
+	// session, so a strict-transfer owner's claim stands until that owner releases it after its teardown.
+	it("stands while its strict-transfer owner lives, superseded and detached", async () => {
+		const daemon = await daemonDirectory("strict");
+		const owner = await stranger();
+		const sessionPath = join(daemon.root, "held.jsonl");
+		await writeClaim(daemon.paths, {
+			instanceId: "old",
+			...owner,
+			sessionPath,
+			attached: false,
+			strict_transfer: true,
+		});
+		await writePointer(daemon.paths, "current");
+
+		const reservations = createSessionPathReservations({ daemonDir: daemon.paths.dir, instanceId: "current" });
+
+		expect(await reservations.claim(sessionPath)).toMatchObject({ instanceId: "old", current: false });
+	});
+
+	it("is published as a strict-transfer claim", async () => {
+		const daemon = await daemonDirectory("publish-strict");
+		const sessionPath = join(daemon.root, "mine.jsonl");
+		const reservations = createSessionPathReservations({ daemonDir: daemon.paths.dir, instanceId: "mine" });
+
+		expect(await reservations.claim(sessionPath)).toBeUndefined();
+		expect(await readClaim(daemon.paths, sessionPath)).toMatchObject({ instanceId: "mine", strict_transfer: true });
+	});
+
 	it("publishes the attachment state its owner last reported", async () => {
 		const daemon = await daemonDirectory("detach");
 		const sessionPath = join(daemon.root, "mine.jsonl");
@@ -210,6 +239,7 @@ async function writeClaim(
 		processStartTime: string | null;
 		sessionPath: string;
 		attached: boolean;
+		strict_transfer?: boolean;
 	},
 ): Promise<void> {
 	await writeFile(reservationFile(paths.reservationsDir, owner.sessionPath), `${JSON.stringify(owner)}\n`, {

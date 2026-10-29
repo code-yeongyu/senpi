@@ -1046,6 +1046,25 @@ client's sessions. A GENERATION HANDOFF replaces the process while its sessions 
    their connection closes and reopen with `open_session { sessionPath }` on the successor. Losing
    ownership of the public socket triggers the same sequence even if SIGUSR1 never arrives.
 
+The drain parks a session only by a STRICT TRANSFER (code-yeongyu/oh-my-openagent#10091):
+
+- It parks a session only when it is proven quiet: no run, no prompt in preflight, no queued input still owed a
+  turn, no admitted delivery not yet written, no bash, compaction or barrier-held session work, and no request for
+  it in flight. That is the check `release_session` makes. A session whose activity cannot be read is not proven
+  quiet: it stays with this generation, where its work keeps running, and the drain logs what holds it
+  (`unknown` for unreadable activity) once per change. Every other session still parks.
+- The drain seals the session in the same synchronous step as that check. Until the transfer ends, a command
+  that would add work to it (a prompt, steer, follow-up, bash, compaction, edit, context patch, ...) is answered
+  `session_closing` with `errorData { reason: "handoff_transfer", transfer_id }` and is not admitted; reads,
+  aborts, answers to a pending question, `close_session`, `release_attachment`, `attach_session` and
+  `reclaim_session` still pass. An explicit `close_session` during the transfer wins: the session closes as
+  `client_close` and its park record is withdrawn, so nothing reopens it.
+- A retained session's park record (below, `handover-parked/`) carries the transfer's `transferId` and is synced
+  to disk, file and directory, BEFORE the session is torn down; the teardown claim follows one more quiet check
+  in the same synchronous step. A record that cannot be written leaves the session open, unsealed and owned by
+  this generation, and the park is tried again after a backoff (250 ms doubling to 30 s). The successor removes a
+  record only while it still names the transfer it reopened, so a later park of the same path is never lost.
+
 Three guards decide whether a handoff is attempted at all, and all of them fail closed:
 
 - The running host must advertise `generation_handoff`. SIGUSR1 TERMINATES a process that installed no
@@ -1282,9 +1301,9 @@ ended.
 During a handoff two hosts are alive at once, so the in-process path reservation cannot keep them off one
 JSONL file. Every generation records each open session path in
 `<daemonDir>/reservations/<sha256(canonical path)[:16]>.json` as
-`{ instanceId, pid, processStartTime, sessionPath, attached }`, and removes it when the session closes or
-parks. `attached` is republished whenever that session gains its first client or loses its last one, so the
-claim says whether anybody is still driving the file.
+`{ instanceId, pid, processStartTime, sessionPath, attached, strict_transfer }`, and removes it when the session
+closes or parks. `attached` is republished whenever that session gains its first client or loses its last one, so
+the claim says whether anybody is still driving the file.
 
 A claim STANDS while one of two things is true: its owner is the generation the pointer names, or its owner
 still has a client attached to that session. Those are the cases where somebody is really writing the file.
@@ -1292,7 +1311,9 @@ A claim from a SUPERSEDED generation that published `attached: false` is reclaim
 been asked to drain and parks the session as it settles - so the current generation takes the path over
 instead of refusing it forever. A claim whose owner is gone (a killed host, a reboot, a recycled pid with a
 different start time) is ignored, and a claim written before the field existed is honored, so a running older
-build is never reclaimed from.
+build is never reclaimed from. A claim with `strict_transfer: true` stands for as long as its owner process runs,
+superseded and detached included: that owner hands the session over only by a strict transfer (above) and
+removes the claim itself after the teardown, while a detached session can still be running a turn there.
 
 An `open_session { sessionPath }` refused by a standing claim answers `session_path_in_use` with
 `errorData { owner, retry_after_ms: 2000 }`, where `owner` carries `{ instanceId, pid, processStartTime,
