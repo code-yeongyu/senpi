@@ -1,6 +1,8 @@
 export interface TerminalPromptOptions {
 	/** True when the session routes shell tools through eval cells, so call shapes must be `tool.<name>(`. */
 	readonly evalOnly: boolean;
+	/** Native bash replaces PTY bash, but monitor and its terminal companions remain available. */
+	readonly ptyBash?: boolean;
 }
 
 /**
@@ -9,15 +11,16 @@ export interface TerminalPromptOptions {
  * `bash` and `monitor` leave the model's direct tool list whenever the session has an
  * `eval` tool, so their call shapes are rendered per branch: a hardcoded direct shape
  * would teach a call the model cannot make. The steering companions
- * (`bash_output`/`bash_input`/`bash_resize`/`kill_bash`) stay directly callable in both.
+ * (`bash_output`/`bash_input`/`bash_resize`/`kill_bash`) stay callable by name in both; `bash_input` and
+ * `bash_resize` are search-exposed and activate on that first call (senpi#4446).
  */
 export function buildTerminalPromptSection(options: TerminalPromptOptions): string {
 	const bash = options.evalOnly ? "tool.bash" : "bash";
 	const monitor = options.evalOnly ? "tool.monitor" : "monitor";
-	return `
-## Persistent terminal sessions
-
-The \`bash\` tool is PTY-backed. For long-running or interactive work, do NOT use tmux or
+	const bashGuidance =
+		options.ptyBash === false
+			? ""
+			: `The \`bash\` tool is PTY-backed. For long-running or interactive work, do NOT use tmux or
 manual \`&\` backgrounding; use the built-in session tools:
 
 - \`${bash}({ command, run_in_background: true })\` starts a persistent session and returns a
@@ -27,10 +30,17 @@ manual \`&\` backgrounding; use the built-in session tools:
   call's PTY hangup (native backend), \`nohup\` at best leaves an untracked orphan (no \`bash_id\`,
   no log) that the call's timeout still group-kills; only \`run_in_background\` creates a
   session that outlives the call.
-- \`bash_output({ bash_id, filter, view })\` peeks at a session without blocking: new output
+`;
+	return `
+## Persistent terminal sessions
+
+${bashGuidance}- \`bash_output({ bash_id, filter, view })\` peeks at a session without blocking: new output
   since the last read, the status line, or a rendered full-screen snapshot of TUIs via
   \`view: "screen"\`. Completion arrives as a notification carrying the exit code and output
   tail: peeking is for steering, never for waiting.
+- For observable state (CI checks, builds, log patterns, deploys, files or other sessions),
+  register \`${monitor}\` and keep working instead of foreground sleeping/polling or repeatedly
+  calling \`bash_output\`. Sleep loops belong inside the monitor command.
 - \`${monitor}\` subscribes you to a change. Pass exactly one source (\`command\`, \`path\` or
   \`target\`; one branch per call, never two):
   - \`${monitor}({ description, command, filter?, timeout_ms?, persistent? })\` watches a command:
@@ -40,7 +50,8 @@ manual \`&\` backgrounding; use the built-in session tools:
     \`killed at deadline\`); for a job longer than the watch, start it with \`run_in_background\`
     and only watch it. One-shot gate: wait
     inside the command and print one sentinel (\`until <cond>; do sleep 1; done;
-    printf 'READY\\n'\`). Stream: \`tail -n 0 -F | grep --line-buffered\`. Filter noise at the
+    printf 'READY\\n'\`) with \`filter: "^READY$"\`. Stream: \`tail -n 0 -F <log> | grep --line-buffered <pat>\`
+    with \`persistent: true\`. Filter noise at the
     source and stop with \`kill_bash\`. Persistent command watches are re-run after a restart with
     \`SENPI_MONITOR_RESTORED=1\`; keep any baseline in \`$SENPI_MONITOR_STATE_DIR\` so a move during
     downtime (at most \`$SENPI_MONITOR_DOWNTIME_MS\` ms) is still reported:
