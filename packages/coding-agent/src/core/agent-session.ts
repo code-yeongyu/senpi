@@ -5806,7 +5806,7 @@ export class AgentSession {
 	 * prompt's `finally`, from run settlement, and after an answer is dispatched.
 	 */
 	private _settleInputRelease(): Promise<void> | undefined {
-		if (!this._engineTurnInput.hasPending) return undefined;
+		if (this._disposed || !this._engineTurnInput.hasPending) return undefined;
 		if (this._promptsInFlight > 0 || this._isAgentRunActive || !this.isIdle) return undefined;
 		// Turns deferred by the agent_settled window or the session_start gate still enter prompt() later.
 		if (this._agentSettledDelivery.active || this._extensionRunner.sessionStartTurnsHeld()) return undefined;
