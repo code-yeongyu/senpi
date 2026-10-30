@@ -1,4 +1,3 @@
-import type { webcrypto } from "node:crypto";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { createOpenAIChatGPTOAuth, openaiChatGPTOAuth } from "../src/auth/oauth/openai-chatgpt.ts";
@@ -13,8 +12,8 @@ const DEVICE_ID = "e61bbe28-07ef-466d-8e5d-a344f94ab305";
 const ISSUER = "https://auth.openai.com";
 const JWKS_URL = `${ISSUER}/test-jwks`;
 const loopbackFetch = fetch;
-let signingKey: webcrypto.CryptoKey;
-let publicKey: webcrypto.JsonWebKey;
+let signingKey: CryptoKey;
+let publicKey: JsonWebKey;
 let pendingNonce = "";
 
 beforeAll(async () => {
