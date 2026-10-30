@@ -4,10 +4,7 @@ import { join } from "node:path";
 import type { AssistantMessage, AssistantMessageEvent, ProviderDiagnostic } from "@earendil-works/pi-ai";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { ModelsError } from "@earendil-works/pi-ai/utils/models-error";
-import {
-	OAuthRefreshUnavailableError,
-	OAuthTokenEndpointError,
-} from "@earendil-works/pi-ai/utils/oauth-refresh-error";
+import { OAuthRefreshUnavailableError, OAuthTokenEndpointError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
 import { attachProviderDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-carrier";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { classifyCredentialFailure } from "../../../src/core/credential-pool/classify.ts";
@@ -166,7 +163,9 @@ describe("the rotation stream switches off a pooled account with an auth failure
 		yield { type: "error", reason: "error", error: message(text, diagnostic) };
 	}
 
-	type Failure = (slot: string) => AsyncIterable<AssistantMessageEvent> | Promise<AsyncIterable<AssistantMessageEvent>>;
+	type Failure = (
+		slot: string,
+	) => AsyncIterable<AssistantMessageEvent> | Promise<AsyncIterable<AssistantMessageEvent>>;
 
 	async function request(credential: PooledCredential, alpha: Failure, attempts: string[]) {
 		const events: AssistantMessageEvent[] = [];
@@ -210,22 +209,25 @@ describe("the rotation stream switches off a pooled account with an auth failure
 					evidence: "structured_code",
 				}),
 		],
-	] as const)("the pinned account %s: the sibling serves before any output and the account is blocked", async (_label, alpha) => {
-		const attempts: string[] = [];
+	] as const)(
+		"the pinned account %s: the sibling serves before any output and the account is blocked",
+		async (_label, alpha) => {
+			const attempts: string[] = [];
 
-		const events = await request(pool("alpha"), alpha, attempts);
+			const events = await request(pool("alpha"), alpha, attempts);
 
-		expect(attempts).toEqual(["alpha", "bravo"]);
-		expect(events.at(-1)?.type).toBe("done");
-		expect(events.filter((event) => event.type === "start")).toHaveLength(1);
-		expect(await health("alpha")).toMatchObject({ blockReason: "auth_error" });
-		expect((await health("alpha"))?.blockedUntil).toBeGreaterThan(NOW);
+			expect(attempts).toEqual(["alpha", "bravo"]);
+			expect(events.at(-1)?.type).toBe("done");
+			expect(events.filter((event) => event.type === "start")).toHaveLength(1);
+			expect(await health("alpha")).toMatchObject({ blockReason: "auth_error" });
+			expect((await health("alpha"))?.blockedUntil).toBeGreaterThan(NOW);
 
-		// The pin keeps naming the dead account, but its block keeps later requests off it.
-		const next: string[] = [];
-		await request(pool("alpha"), alpha, next);
-		expect(next).toEqual(["bravo"]);
-	});
+			// The pin keeps naming the dead account, but its block keeps later requests off it.
+			const next: string[] = [];
+			await request(pool("alpha"), alpha, next);
+			expect(next).toEqual(["bravo"]);
+		},
+	);
 
 	test("a transient refresh failure retries the same account and never blocks it", async () => {
 		const attempts: string[] = [];
