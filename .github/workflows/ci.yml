@@ -1455,6 +1455,11 @@ jobs:
         run: |
           command -v cc >/dev/null || { echo "::error::Missing C compiler 'cc' on PATH for POSIX process-exit tests"; exit 1; }
           cc --version
+      # 3044's bun-owner case spawns `bun` as the RPC owner (#4845), so this job needs the pinned bun on PATH.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
       - name: Install dependencies
         run: npm ci --ignore-scripts
       - name: Build workspace package entries
