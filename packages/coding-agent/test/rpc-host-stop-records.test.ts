@@ -108,9 +108,10 @@ describe.skipIf(process.platform === "win32")("a supervisor its caller had to SI
 			},
 		}).catch((error: unknown) => error);
 		expect(failure).toBeInstanceOf(Error);
-		const { supervisor, instanceId } = await frozen;
+		const { supervisor, child, instanceId } = await frozen;
 		await expectGoneWithin(supervisor, 5_000);
 		await recordsWritten.wait(instanceId, 10_000);
+		await expectGoneWithin(child, 10_000);
 
 		expectCallerRecord(qa, instanceId, "ensure", "readiness_timeout");
 	}, 45_000);
@@ -136,6 +137,7 @@ describe.skipIf(process.platform === "win32")("a supervisor its caller had to SI
 		if (frozen === undefined) throw new Error("the start never reached its pidfile write");
 		await expectGoneWithin(frozen.supervisor, 5_000);
 		await recordsWritten.wait(frozen.instanceId, 10_000);
+		await expectGoneWithin(frozen.child, 10_000);
 
 		expectCallerRecord(qa, frozen.instanceId, "ensure", "start_failed");
 	}, 45_000);
@@ -163,6 +165,7 @@ describe.skipIf(process.platform === "win32")("a supervisor its caller had to SI
 		if (frozen === undefined) throw new Error("the successor was never spawned");
 		await expectGoneWithin(frozen.supervisor, 5_000);
 		await recordsWritten.wait(frozen.instanceId, 10_000);
+		await expectGoneWithin(frozen.child, 10_000);
 
 		expectCallerRecord(qa, frozen.instanceId, "successor", "successor_readiness_timeout");
 	}, 60_000);
