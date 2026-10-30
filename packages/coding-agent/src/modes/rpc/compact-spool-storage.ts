@@ -267,13 +267,7 @@ export abstract class CompactSpoolStorage {
 	}
 
 	private fail(operation: CompactStorageOperation, path: string, cause: unknown, retained: number): void {
-		if (
-			operation === "spill_write" ||
-			operation === "value_write" ||
-			operation === "page_write" ||
-			operation === "spool_create"
-		)
-			this.health.unavailable();
+		if (HALTING.has(operation) || operation === "page_write") this.health.unavailable();
 		if (HALTING.has(operation)) this.halted = true;
 		this.record({ operation, path, cause: describeCause(cause), retainedInMemoryBytes: retained });
 	}

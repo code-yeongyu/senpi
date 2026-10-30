@@ -5,7 +5,9 @@ import {
 	type Model,
 	type ProviderDiagnostic,
 	type ProviderDiagnosticCategory,
+	PROVIDER_NOT_CONFIGURED_PREFIX,
 	sanitizeProviderDiagnostic,
+	stripTurnRetrySuppressionPrefix,
 } from "@earendil-works/pi-ai";
 import { type FallbackModelLookup, parseFallbackSelector } from "./retry-fallback/chains.ts";
 
@@ -19,8 +21,9 @@ export type ProviderFailureCategory = ProviderDiagnosticCategory | "request_refu
 
 /**
  * Structured failure of a turn that ended with a provider error, attached to `agent_end`.
- * Built only from the adapter-minted `ProviderDiagnostic` and the runtime's typed served-credential
- * mark; message text is never read.
+ * Built only from the adapter-minted `ProviderDiagnostic`, the runtime's typed served-credential
+ * mark, and the auth-miss sentinel auth resolution throws before any request (`PROVIDER_NOT_CONFIGURED_PREFIX`);
+ * provider message text is never read.
  * Every category, `unknown` included, carries a reason and an action.
  */
 export interface ProviderFailure {
@@ -147,14 +150,33 @@ export function providerFailureOf(
 ): ProviderFailure | undefined {
 	const last = messages.findLast((message) => message.role === "assistant");
 	if (last === undefined || last.role !== "assistant" || last.stopReason !== "error") return undefined;
-	const failure = describeProviderFailure(sanitizeProviderDiagnostic(last.providerDiagnostic), last.provider, {
-		model: last.model,
-		requestRefused: isRequestLevelRefusal(last),
-	});
+	const failure =
+		notConfiguredFailure(last) ??
+		describeProviderFailure(sanitizeProviderDiagnostic(last.providerDiagnostic), last.provider, {
+			model: last.model,
+			requestRefused: isRequestLevelRefusal(last),
+		});
 	if (selected === undefined || (selected.provider === last.provider && selected.model === last.model)) {
 		return failure;
 	}
 	return { ...failure, selectedProvider: selected.provider, selectedModel: selected.model };
+}
+
+/**
+ * No request was sent: auth resolution found no API key or sign-in for the provider and threw its sentinel.
+ * Without this the turn read as an `unknown` provider error with a resend step that cannot work (senpi#4329).
+ */
+function notConfiguredFailure(message: AssistantMessage): ProviderFailure | undefined {
+	const text = stripTurnRetrySuppressionPrefix(message.errorMessage ?? "");
+	if (!text.startsWith(PROVIDER_NOT_CONFIGURED_PREFIX)) return undefined;
+	const provider = text.slice(PROVIDER_NOT_CONFIGURED_PREFIX.length).trim() || message.provider;
+	return {
+		category: "auth",
+		provider: message.provider,
+		model: message.model,
+		reason: `no API key or sign-in is saved for ${provider}`,
+		action: `connect ${provider} (sign in or add an API key), or choose another model`,
+	};
 }
 
 export function formatProviderFailure(failure: ProviderFailure): string {

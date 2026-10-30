@@ -99,7 +99,7 @@
   ],
   "O4": [
    {
-    "authorization": "sha256:16db75d323fd60c6",
+    "authorization": "<redacted:sha256:16db75d323fd60c6>",
     "authorizationMatchesExpected": true,
     "clientType": "cli",
     "clientVersion": "cli-2026.07.23-e383d2b",
