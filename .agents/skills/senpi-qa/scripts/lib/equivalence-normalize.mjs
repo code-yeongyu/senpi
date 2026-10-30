@@ -11,7 +11,7 @@
 //   measurements (kernel memory byte counts) keep their key and compare as `<measured>`: a measurement one path adds or
 //   drops is still a difference (senpi#4739);
 // - the wall-clock elapsed label of the codemode detached-cell status (`\u2197 js \u00b7 <summary> (1s)`, formatElapsedSeconds in
-//   packages/senpi-codemode/src/extension/eval-status.ts) becomes `(<elapsed>)`, under the statusText key only: a cell that
+//   packages/senpi-codemode/src/extension/eval-status.ts) becomes `(<duration>)`, under the statusText key only: a cell that
 //   detaches at its 1 s timeout reads `(0s)` or `(1s)` depending on host load;
 // - only run-scoped prefixes are replaced: the roots the harness allocates (sandbox, checkout, fake-server origin) and
 //   the host facts the CLI renders about the machine it runs on;
@@ -169,7 +169,7 @@ export function createNormalizer({ roots = [], hostFacts = [] } = {}) {
 			const namespace = parent === undefined ? (key ?? "text") : `${parent}.${key ?? "text"}`;
 			if (typeof node === "string") {
 				if (key !== undefined && ID_KEYS.has(key) && !PURE_UUID.test(node)) return onId("id", node);
-				const text = key === "statusText" ? node.replace(EVAL_STATUS_ELAPSED, "$1(<elapsed>)") : node;
+				const text = key === "statusText" ? node.replace(EVAL_STATUS_ELAPSED, `$1(${DURATION})`) : node;
 				return rewriteString(text, namespace);
 			}
 			if (typeof node === "number") {
