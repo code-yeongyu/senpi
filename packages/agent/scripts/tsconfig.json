@@ -1,0 +1,8 @@
+{
+	"extends": "../../../tsconfig.json",
+	"compilerOptions": {
+		"types": ["node", "bun"],
+		"noEmit": true
+	},
+	"include": ["conformance-archive-files.ts", "pack-conformance-archive.ts"]
+}
