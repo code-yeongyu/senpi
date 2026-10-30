@@ -105,6 +105,7 @@ describe("X5: get_state projection", () => {
 		const state = await readState(client);
 
 		expect(Object.keys(state).sort()).toEqual(IDLE_KEYS);
+		expect(state.lifecycle).not.toHaveProperty("runId");
 		expect(withoutDeliveryStamp(state)).toEqual({
 			...sessionMirror(fixture.session),
 			answeredUiRequests: [],
@@ -141,6 +142,9 @@ describe("X5: get_state projection", () => {
 		await runToAgentIdle(fixture, () => client.send({ type: "prompt", message: "Do one thing." }));
 		const state = await readState(client);
 
+		const start = client.messages().find((record) => record.type === "agent_start");
+		expect(start).toMatchObject({ runId: expect.any(String) });
+		expect(state.lifecycle).toHaveProperty("runId", start?.runId);
 		expect(withoutDeliveryStamp(state)).toMatchObject({
 			...sessionMirror(fixture.session),
 			isStreaming: false,

@@ -41,7 +41,7 @@ export interface SessionStatusSource {
 
 export interface SessionStatusDelivery {
 	readonly enqueue: (connectionId: string, line: string) => boolean;
-	readonly pendingQuestions: (sessionId: string) => number;
+	readonly pendingQuestions: (sessionId: string) => number | undefined;
 	readonly now?: () => Date;
 }
 

@@ -26,6 +26,37 @@ it("advertises lifecycle and returns the exact shared snapshot through get_state
 	});
 	const state = await client.send({ type: "get_state" });
 	expect(state).toMatchObject({ success: true, data: { lifecycle: fixture.session.lifecycle } });
+	expect((state.data as { lifecycle: object }).lifecycle).not.toHaveProperty("runId");
+});
+
+// senpi#4925: real session/RPC delivery must correlate starts, snapshots, and readback, not observation order.
+it("correlates each start with its snapshots and keeps idle snapshots on the preceding run", async () => {
+	const fixture = await createIdentityHarness();
+	fixtures.push(fixture);
+	await fixture.session.bindExtensions({ mode: "rpc" });
+	const client = fixture.bind();
+	const child = fixture.session.workObligations.open("task:pending", "children");
+	fixture.harness.setResponses([fauxAssistantMessage("First."), fauxAssistantMessage("Second.")]);
+	const ids: string[] = [];
+	for (const message of ["First", "Second"]) {
+		const offset = client.messages().length;
+		await runToAgentIdle(fixture, () => client.send({ type: "prompt", message }));
+		const records = client.messages().slice(offset);
+		const start = records.find((record) => record.type === "agent_start");
+		expect(start?.runId).toEqual(expect.any(String));
+		const runId = start?.runId as string;
+		ids.push(runId);
+		const snapshots = records.filter((record) => record.type === "session_lifecycle");
+		expect(snapshots.length).toBeGreaterThan(0);
+		for (const snapshot of snapshots) expect(snapshot.lifecycle).toHaveProperty("runId", runId);
+		expect(await client.send({ type: "get_state" })).toMatchObject({ data: { lifecycle: { runId } } });
+		if (message === "First") {
+			const idle = nextSessionEvent(fixture, (event) => event.type === "session_lifecycle");
+			child.close("cancelled");
+			expect(await idle).toMatchObject({ lifecycle: { runId } });
+		}
+	}
+	expect(ids[1]).not.toBe(ids[0]);
 });
 
 it("persists a second human client's revision before input and invalidates a standing settle request", async () => {

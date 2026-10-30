@@ -1,5 +1,5 @@
 export class CompactReadError extends Error {
-	readonly reason: "released" | "retired" | "range" | "size_limit" | "count_limit" | "ownership";
+	readonly reason: "released" | "retired" | "range" | "size_limit" | "count_limit" | "ownership" | "unavailable";
 
 	constructor(reason: CompactReadError["reason"]) {
 		super(`compact read refused (${reason})`);

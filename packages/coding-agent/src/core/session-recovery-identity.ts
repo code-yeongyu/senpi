@@ -57,6 +57,11 @@ export class SessionRecoveryIdentity {
 		if (carrier && durableEntryId) carriers.set(event, { ...carrier, durableEntryId });
 	}
 
+	/** A block control belongs to the assistant message open at its emission; it gets that message's identity. */
+	own(control: object): void {
+		if (this.openAssistant !== undefined) carriers.set(control, { messageId: this.openAssistant, epoch: this.epoch });
+	}
+
 	observe(event: MessageEvent): void {
 		const message = event.message;
 		if (message === undefined || carriers.has(event)) return;

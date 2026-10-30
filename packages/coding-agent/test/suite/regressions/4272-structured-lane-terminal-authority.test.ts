@@ -24,7 +24,13 @@ it("T6 replaces streamed block CONTENT from the Kimi recovery terminal: hi<|open
 	session.harness.agent.streamFunction = async (model, context, options) =>
 		wrapStreamWithKimiThinkingRecovery(await provider(model, context, options));
 	const records: Lane[] = [];
-	const stop = subscribeStructuredSessionRecords(session.harness.session, (record) => records.push(record));
+	const stop = subscribeStructuredSessionRecords(
+		session.harness.session,
+		(record) => records.push(record),
+		(cause) => {
+			throw cause;
+		},
+	);
 	try {
 		await session.prompt("go");
 	} finally {
@@ -77,7 +83,13 @@ it("T6 invalidates ALL turn blocks when the reader cannot interpret a terminal c
 		}),
 	);
 	const records: Lane[] = [];
-	const stop = subscribeStructuredSessionRecords(session.harness.session, (record) => records.push(record));
+	const stop = subscribeStructuredSessionRecords(
+		session.harness.session,
+		(record) => records.push(record),
+		(cause) => {
+			throw cause;
+		},
+	);
 	try {
 		await session.prompt("go");
 	} finally {

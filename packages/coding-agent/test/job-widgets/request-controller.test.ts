@@ -72,13 +72,21 @@ describe("job widget request controller: answers", () => {
 		expect(requests).toHaveLength(2);
 	});
 
-	it("stops asking once the author has no model", async () => {
-		const { author, requests } = scriptedAuthor(undefined, RPS_SPEC);
-		const { controller } = controllerFor(author);
+	it("spends no request or hourly slot while the author has no model, and asks again 30 s later", async () => {
+		const { author, requests } = scriptedAuthor(undefined, undefined, RPS_SPEC);
+		// One request per job and one per hour: a model-less answer that spent either would block every later ask.
+		const { controller, advance } = controllerFor(author, { maxRequestsPerJob: 1, maxPerHour: 1 });
 		const job = new FakeJob("bg_1");
 		expect(await controller.maybeRequest(job)).toEqual({ kind: "unavailable" });
+		advance(29_999);
 		expect(controller.maybeRequest(job)).toBeUndefined();
-		expect(requests).toHaveLength(1);
+		expect(controller.maybeRequest(new FakeJob("bg_2"))).toBeUndefined();
+		advance(1);
+		expect(await controller.maybeRequest(job)).toEqual({ kind: "unavailable" });
+		advance(30_000);
+		expect(await controller.maybeRequest(job)).toMatchObject({ kind: "installed" });
+		expect(controller.maybeRequest(new FakeJob("bg_2"))).toBeUndefined();
+		expect(requests.map((request) => request.jobId)).toEqual(["bg_1", "bg_1", "bg_1"]);
 	});
 });
 

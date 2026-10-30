@@ -108,6 +108,28 @@ function entry(record: unknown): SessionEntry {
 	};
 }
 
+// senpi#4925: the ledger owns run identity, including idle publications and restart readback.
+it("retains the preceding run identity while idle and restores it before a new run", () => {
+	const f = fixture();
+	const first = f.ledger.runId;
+	expect(first).toEqual(expect.any(String));
+	expect(f.ledger.snapshot).toHaveProperty("runId", first);
+	const prior = f.ledger.snapshot;
+	f.ledger.runActive = false;
+	f.update({ state: "waiting_background" });
+	expect(f.events.at(-1)?.lifecycle).toHaveProperty("runId", first);
+	const restored = fixture([entry(f.records.at(-1))]);
+	expect(restored.ledger.snapshot).toHaveProperty("runId", first);
+	const epoch = restored.ledger.snapshot.epoch;
+	restored.ledger.startRun("automatic");
+	restored.update();
+	restored.ledger.publishUnwritten();
+	expect(restored.ledger.runId).not.toBe(first);
+	expect(restored.ledger.snapshot).toHaveProperty("runId", restored.ledger.runId);
+	expect(restored.ledger.snapshot.epoch).toBe(epoch);
+	expect(prior).toHaveProperty("runId", first);
+});
+
 it("compares every activity field separately and versions absence without durable traffic", () => {
 	const f = fixture();
 	const before = f.ledger.snapshot;

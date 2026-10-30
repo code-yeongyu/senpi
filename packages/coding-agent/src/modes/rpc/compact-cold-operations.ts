@@ -35,7 +35,9 @@ interface Token {
 	active: boolean;
 	pending: number;
 }
-type Step = () => Promise<CompactColdOutcome>;
+/** Publishes a prepared operation; synchronous, so the steps of one flow publish together. */
+type Commit = () => CompactColdOutcome;
+type Step = () => Promise<Commit>;
 
 /** Non-acceptance FIFO. Capacity rejection leaves work unqueued; callers await admitted operations. */
 export class CompactColdOperations {
@@ -60,21 +62,33 @@ export class CompactColdOperations {
 		if (this.isActive(input.messageId)) return Promise.resolve(this.active(afterSequence));
 		// Bound queued roots, keys and closures independently of the settled membership catalog.
 		if (this.pending === 128) return Promise.resolve({ kind: "rejected", reason: "capacity", afterSequence });
-		return this.enqueue(this.admit(input, afterSequence));
+		const step = this.admit(input, afterSequence);
+		return this.enqueue(async () => (await step())());
 	}
 
-	/** One FIFO unit holding one capacity slot; each operation keeps its order and its own typed outcome. */
+	/**
+	 * One FIFO unit holding one capacity slot; each operation keeps its order and its own typed outcome. Every step
+	 * reads first and the flow then publishes all of them in one synchronous pass, so a reader's cut holds the whole
+	 * flow or none of it. Live targets answer `active_message` before capacity, as `run` does; such a flow, like an
+	 * empty one, queues nothing.
+	 */
 	runAll(inputs: readonly CompactColdOperation[], afterSequence: number): Promise<readonly CompactColdOutcome[]> {
-		const capacity = { kind: "rejected", reason: "capacity", afterSequence } as const;
-		if (this.pending === 128) return Promise.resolve(inputs.map(() => capacity));
-		const steps = inputs.map((input): Step => {
-			if (!this.isActive(input.messageId)) return this.admit(input, afterSequence);
-			return async () => this.active(afterSequence);
+		const live = inputs.map((input) => this.isActive(input.messageId));
+		if (live.every(Boolean)) return Promise.resolve(inputs.map(() => this.active(afterSequence)));
+		if (this.pending === 128)
+			return Promise.resolve(
+				live.map((active) =>
+					active ? this.active(afterSequence) : { kind: "rejected", reason: "capacity", afterSequence },
+				),
+			);
+		const steps = inputs.map((input, index): Step => {
+			if (!live[index]) return this.admit(input, afterSequence);
+			return async () => () => this.active(afterSequence);
 		});
 		return this.enqueue(async () => {
-			const outcomes: CompactColdOutcome[] = [];
-			for (const step of steps) outcomes.push(await step());
-			return outcomes;
+			const commits: Commit[] = [];
+			for (const step of steps) commits.push(await step());
+			return commits.map((commit) => commit());
 		});
 	}
 
@@ -103,36 +117,52 @@ export class CompactColdOperations {
 		this.keys.set(key, token);
 		token.pending++;
 		return async () => {
-			try {
-				return await this.apply(operation, token, afterSequence);
-			} finally {
-				if (--token.pending === 0 && this.keys.get(key) === token) this.keys.delete(key);
-			}
+			const commit = await this.prepare(operation, token, afterSequence);
+			return () => {
+				try {
+					return commit();
+				} finally {
+					if (--token.pending === 0 && this.keys.get(key) === token) this.keys.delete(key);
+				}
+			};
 		};
 	}
 
-	private async apply(
-		operation: CompactColdOperation,
-		token: Token,
-		afterSequence: number,
-	): Promise<CompactColdOutcome> {
+	/** Reads under its own cut; the returned commit re-checks liveness and removal before it publishes. */
+	private async prepare(operation: CompactColdOperation, token: Token, afterSequence: number): Promise<Commit> {
 		const key = operation.messageId;
 		const unknown = { kind: "rejected", reason: "unknown_message", afterSequence } as const;
+		const outcome =
+			(value: CompactColdOutcome): Commit =>
+			() =>
+				value;
 		try {
 			this.index.store.assertReadable();
-			if (token.active || this.isActive(key)) return this.active(afterSequence);
-			if (token.removed && operation.type !== "message_install") return unknown;
-			const cut = this.index.freeze();
+			if (token.active || this.isActive(key)) return outcome(this.active(afterSequence));
+			if (token.removed && operation.type !== "message_install") return outcome(unknown);
+		} catch (cause) {
+			return outcome(this.failure(cause, afterSequence));
+		}
+		const cut = this.index.freeze();
+		let row: IndexRow | undefined;
+		let keep: Keep | undefined;
+		try {
+			row = await this.index.lookup(cut, key);
+			keep =
+				operation.type === "message_install"
+					? { persistence: operation.persistence }
+					: row && operation.type === "message_replace"
+						? await this.current(cut, key, row)
+						: undefined;
+		} catch (cause) {
+			this.index.release(cut);
+			return outcome(this.failure(cause, afterSequence));
+		}
+		return () => {
 			try {
-				const row = await this.index.lookup(cut, key);
-				const keep =
-					operation.type === "message_install"
-						? { persistence: operation.persistence }
-						: row && operation.type === "message_replace"
-							? await this.current(cut, key, row)
-							: undefined;
 				this.index.store.assertReadable();
 				if (token.active || this.isActive(key)) return this.active(afterSequence);
+				if (token.removed && operation.type !== "message_install") return unknown;
 				if (!row && !keep) return unknown;
 				switch (operation.type) {
 					case "message_status":
@@ -147,14 +177,18 @@ export class CompactColdOperations {
 						if (keep) this.install(key, operation.message, keep);
 				}
 				return { kind: "applied", afterSequence };
+			} catch (cause) {
+				return this.failure(cause, afterSequence);
 			} finally {
 				this.index.release(cut);
 			}
-		} catch (cause) {
-			return cause instanceof CompactReadError && cause.reason === "retired"
-				? { kind: "rejected", reason: "retired", afterSequence }
-				: { kind: "failed", cause, afterSequence };
-		}
+		};
+	}
+
+	private failure(cause: unknown, afterSequence: number): CompactColdOutcome {
+		return cause instanceof CompactReadError && cause.reason === "retired"
+			? { kind: "rejected", reason: "retired", afterSequence }
+			: { kind: "failed", cause, afterSequence };
 	}
 
 	/** The row as a reader sees it at the cut: its stored value plus any pending field patch. */

@@ -10,6 +10,13 @@ export const MAX_LINE_CHARS = 4096;
 const ANSI_SEQUENCE =
 	/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[@-Z\\-_]|\x9b[0-?]*[ -/]*[@-~]/g;
 const CONTROL_CHARS = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;
+/** An escape sequence the line in progress has not finished yet. */
+const UNFINISHED_ESCAPE = /\x1b(?:\[[0-?]*[ -/]*|\][^\x07\x1b]*)?$/;
+/**
+ * A long token-shaped run at the very end of a progress segment may be a secret cut mid-write, which
+ * no line redactor recognizes yet; it is held back until the segment is complete.
+ */
+const OPEN_TOKEN_TAIL = /[A-Za-z0-9_-]{16,}$/;
 
 /** A line without terminal escape sequences and control characters (tabs stay). */
 function sanitizeLine(line: string): string {
@@ -46,6 +53,8 @@ export class SourceLineReader {
 	#cursor = 0;
 	/** Raw text of the line in progress; sanitized once complete so split escapes still strip. */
 	#partial = "";
+	/** The line in progress follows a bare CR: a progress redraw (`30%`), not a line still being written. */
+	#partialAfterCr = false;
 	#torn = false;
 	readonly #redactor: SourceLineRedactor | undefined;
 
@@ -72,7 +81,10 @@ export class SourceLineReader {
 				this.#torn = false;
 			}
 		}
-		const raw = (this.#partial + text).replace(/\r\n?/g, "\n").split("\n");
+		const combined = this.#partial + text;
+		const lastBreak = Math.max(combined.lastIndexOf("\r"), combined.lastIndexOf("\n"));
+		if (lastBreak >= 0) this.#partialAfterCr = combined[lastBreak] === "\r";
+		const raw = combined.replace(/\r\n?/g, "\n").split("\n");
 		this.#partial = (raw.pop() ?? "").slice(0, MAX_LINE_CHARS * 2);
 		if ((flush || !chunk.open) && this.#partial.length > 0) {
 			raw.push(this.#partial);
@@ -89,5 +101,18 @@ export class SourceLineReader {
 			: clean;
 		const lines = redacted.map((line) => line.slice(0, MAX_LINE_CHARS));
 		return { lines, open: chunk.open, end: chunk.end };
+	}
+
+	/**
+	 * The newest CR segment of the line in progress, sanitized: a progress bar redraws with CR and only
+	 * completes on the next one, so without it the view shows the previous step. Never matched by rules.
+	 */
+	get progress(): string | undefined {
+		if (!this.#partialAfterCr || this.#partial.length === 0) return undefined;
+		const line = sanitizeLine(this.#partial.replace(UNFINISHED_ESCAPE, ""))
+			.slice(0, MAX_LINE_CHARS)
+			.replace(OPEN_TOKEN_TAIL, "")
+			.trim();
+		return line.length > 0 ? line : undefined;
 	}
 }

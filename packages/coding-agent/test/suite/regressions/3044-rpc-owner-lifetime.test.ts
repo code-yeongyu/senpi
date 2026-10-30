@@ -10,6 +10,7 @@ import { createHostDaemonPaths, generationPaths } from "../../../src/modes/rpc/h
 import { readHostRegistration } from "../../../src/modes/rpc/host-daemon-registration.ts";
 import { STOP_WAIT_BUDGET_MS } from "../../../src/modes/rpc/host-ensure-stop.ts";
 import { type HandoffResult, handoffHost } from "../../../src/modes/rpc/host-handoff.ts";
+import { DEFAULT_HOST_IDLE_EXIT_MS } from "../../../src/modes/rpc/host-lifecycle-policy.ts";
 import {
 	type GenerationScratch,
 	generationEnv,
@@ -29,10 +30,19 @@ const processes = new RpcOwnerProcesses();
 const peers: JsonlPeer[] = [];
 const models: HeldAnthropicModel[] = [];
 const EXIT_BOUND_MS = 10_000;
+const BUN_EXIT_BOUND_MS = EXIT_BOUND_MS + STOP_WAIT_BUDGET_MS;
 
-async function caller(qa: GenerationScratch, ownership = "caller", failure?: string): Promise<ChildProcess> {
-	const child = spawn(process.execPath, [fixture, qa.socket, qa.agentDir, ownership], {
-		env: { ...hostSpawnEnv(), ...generationEnv(qa), SENPI_CODING_AGENT_DIR: qa.agentDir },
+async function caller(
+	qa: GenerationScratch,
+	ownership = "caller",
+	failure?: string,
+	runtime: "node" | "bun" = "node",
+): Promise<ChildProcess> {
+	const args = [fixture, qa.socket, qa.agentDir, ownership];
+	if (runtime === "bun") args.push("", String(DEFAULT_HOST_IDLE_EXIT_MS));
+	const child = spawn(runtime === "bun" ? "bun" : process.execPath, args, {
+		cwd: qa.cwd,
+		env: { ...hostSpawnEnv(), ...generationEnv(qa), SENPI_RUNTIME: runtime, SENPI_CODING_AGENT_DIR: qa.agentDir },
 		stdio: ["ignore", "ignore", "inherit", "ipc"],
 	});
 	processes.owner(child);
@@ -41,8 +51,9 @@ async function caller(qa: GenerationScratch, ownership = "caller", failure?: str
 		child.on("message", (message, handle) => {
 			if (typeof message !== "object" || message === null || !("type" in message)) return;
 			if (message.type === "supervisor" && "pid" in message && typeof message.pid === "number") {
-				if (!(handle instanceof Socket)) return reject(new Error("missing transferred exit pipe"));
-				processes.supervisor(message.pid, handle);
+				if (!(handle instanceof Socket) && runtime !== "bun")
+					return reject(new Error("missing transferred exit pipe"));
+				processes.supervisor(message.pid, handle instanceof Socket ? handle : undefined);
 				return;
 			}
 			clearTimeout(timer);
@@ -105,19 +116,25 @@ async function survivesOwnerGrace(connection: JsonlPeer): Promise<void> {
 // #3044: the real detached supervisor and real in-process host must not wait out the 15-minute idle policy.
 // POSIX process-table assertions follow the existing supervised lifecycle harness.
 describe.skipIf(process.platform === "win32")("RPC owner lifetime", () => {
-	it.each(["normal", "SIGKILL"] as const)(
-		"exits within the bound after owner %s exit",
-		async (exit) => {
+	// #4845: Bun's inherited owner pipe can stay silent after SIGKILL; it must not disable death detection.
+	// Its fallback observation precedes the existing child-reap budget (#3054); idle exit must outlive both.
+	it.each([
+		{ runtime: "node", exit: "normal", bound: EXIT_BOUND_MS },
+		{ runtime: "node", exit: "SIGKILL", bound: EXIT_BOUND_MS },
+		{ runtime: "bun", exit: "SIGKILL", bound: BUN_EXIT_BOUND_MS },
+	] as const)(
+		"exits within the bound after $runtime owner $exit exit",
+		async ({ runtime, exit, bound }) => {
 			const qa = generationScratch("owner");
 			roots.push(qa);
-			const owner = await caller(qa);
+			const owner = await caller(qa, "caller", undefined, runtime);
 			const exited = once(owner, "exit", { signal: AbortSignal.timeout(EXIT_BOUND_MS) });
 			if (exit === "normal") owner.send("exit");
 			else owner.kill("SIGKILL");
 			await exited;
-			await processes.allGone();
+			await processes.allGone(bound);
 		},
-		45_000,
+		BUN_EXIT_BOUND_MS + 30_000,
 	);
 
 	it("keeps serving a second peer until it disconnects", async () => {

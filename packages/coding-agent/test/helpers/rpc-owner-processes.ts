@@ -15,7 +15,7 @@ export class RpcOwnerProcesses {
 	private readonly supervisors = new Map<
 		number,
 		{
-			pipe: Socket;
+			pipe: Socket | undefined;
 			ready: Promise<void>;
 			wait: (ms: number) => Promise<void>;
 			dispose: () => Promise<void>;
@@ -34,12 +34,12 @@ export class RpcOwnerProcesses {
 		this.remember(child.pid);
 	}
 
-	supervisor(pid: number, pipe: Socket): void {
+	supervisor(pid: number, pipe?: Socket): void {
 		const watcher = processExitEvent(pid);
 		const ready = watcher.then(() => {});
 		void ready.catch(() => {});
 		this.remember(pid);
-		pipe.resume();
+		pipe?.resume();
 		this.supervisors.set(pid, {
 			pipe,
 			ready,
@@ -66,7 +66,7 @@ export class RpcOwnerProcesses {
 		await Promise.all([...this.supervisors.values()].map((supervisor) => supervisor.ready));
 	}
 
-	async allGone(): Promise<void> {
+	async allGone(exitBoundMs = EXIT_BOUND_MS): Promise<void> {
 		await Promise.all(
 			this.owners.map((owner) =>
 				owner.exitCode !== null || owner.signalCode !== null
@@ -74,7 +74,7 @@ export class RpcOwnerProcesses {
 					: once(owner, "exit", { signal: AbortSignal.timeout(EXIT_BOUND_MS) }),
 			),
 		);
-		await Promise.all([...this.supervisors.values()].map((supervisor) => supervisor.wait(EXIT_BOUND_MS)));
+		await Promise.all([...this.supervisors.values()].map((supervisor) => supervisor.wait(exitBoundMs)));
 		for (const [pid, command] of this.pids)
 			expect(processAlive(pid), `pid ${pid} (${command}) still alive after owner exit`).toBe(false);
 	}
@@ -112,7 +112,7 @@ export class RpcOwnerProcesses {
 			} finally {
 				for (const supervisor of this.supervisors.values()) {
 					await supervisor.dispose();
-					supervisor.pipe.destroy();
+					supervisor.pipe?.destroy();
 				}
 				this.supervisors.clear();
 				this.owners.length = 0;

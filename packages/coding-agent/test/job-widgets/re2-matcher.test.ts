@@ -54,13 +54,24 @@ describe("re2 line matcher", () => {
 		expect(error).toMatchObject({ pattern: 1, reason: expect.stringContaining("error parsing regexp") });
 	});
 
+	it("reads a class opening with ] as literal members, so lookaround text inside it is plain text", () => {
+		const lines = ["]", "(?=a)", "a", "b", "]b"];
+		const compiled = compilePatterns(defaultLineMatcher, ["^[](?=a)]+$", "^[^](?=a)]+$"]);
+		expect(compiled.matchLines(lines).map(({ line, pattern }) => [line, pattern])).toEqual([
+			[0, 0],
+			[1, 0],
+			[2, 0],
+			[3, 1],
+		]);
+	});
+
 	it("matches a catastrophic-backtracking pattern in time linear in the line", () => {
 		const compiled = compilePatterns(defaultLineMatcher, ["^(a+)+$"]);
 		const timeFor = (length: number) => {
 			const line = `${"a".repeat(length)}b`;
 			return fastestMs(() => expect(compiled.matchLines([line])).toEqual([]));
 		};
-		// Both sizes sit above re2js's BitState cutoff (about 26k chars for this pattern), so both run on
+		// Both sizes sit above re2js's BitState cutoff (29,127 chars for this 9-instruction pattern), so both run on
 		// the same NFA/DFA engine and the ratio measures scaling, not an engine switch.
 		timeFor(50_000);
 		const short = timeFor(50_000);

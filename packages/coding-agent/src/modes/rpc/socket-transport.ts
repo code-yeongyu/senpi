@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { chmod, mkdir, open, readFile, writeFile } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { dirname, win32 } from "node:path";
 
@@ -19,13 +20,39 @@ export function socketSecretPath(logicalPath: string): string {
 }
 
 export async function ensureSocketSecret(path: string): Promise<Buffer> {
-	try {
-		const existing = await readFile(path);
-		if (existing.length === SOCKET_SECRET_BYTES) return existing;
-	} catch (error: unknown) {
-		if (!isNodeErrorCode(error, "ENOENT")) throw error;
-	}
+	const existing = await readSecretEntry(path);
+	if (existing?.length === SOCKET_SECRET_BYTES) return existing;
 	return createSocketSecret(path);
+}
+
+/**
+ * The bytes of the regular file at `path`, read up to one byte past the valid length, or `undefined` when
+ * nothing is there. A terminal symlink or another entry type throws instead of being followed or written
+ * through: only a regular file is a credential this process may reuse or repair
+ * (sisyphuslabs/omo-desktop-app#4199).
+ */
+async function readSecretEntry(path: string): Promise<Buffer | undefined> {
+	let handle: Awaited<ReturnType<typeof open>>;
+	try {
+		handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+	} catch (error: unknown) {
+		if (isNodeErrorCode(error, "ENOENT")) return undefined;
+		if (isNodeErrorCode(error, "ELOOP")) throw new Error(`RPC socket secret is not a regular file: ${path}`);
+		throw error;
+	}
+	try {
+		if (!(await handle.stat()).isFile()) throw new Error(`RPC socket secret is not a regular file: ${path}`);
+		const buffer = Buffer.alloc(SOCKET_SECRET_BYTES + 1);
+		let length = 0;
+		while (length < buffer.length) {
+			const { bytesRead } = await handle.read(buffer, length, buffer.length - length, null);
+			if (bytesRead === 0) break;
+			length += bytesRead;
+		}
+		return buffer.subarray(0, length);
+	} finally {
+		await handle.close();
+	}
 }
 
 export async function createSocketSecret(path: string): Promise<Buffer> {

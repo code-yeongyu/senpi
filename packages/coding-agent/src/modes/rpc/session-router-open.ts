@@ -135,6 +135,10 @@ export async function open(
 			openedSession.sessionId,
 			toolMediaPersister(() => liveToolMediaScope(entry)),
 		);
+		// The lane is bootstrapped before admission (R3.C1.1); the fanout knows it before the opener's attach freezes a cut,
+		// so a lane-owned session's baseline is never read from the replay store (RULING-52).
+		const lane = entry.acceptance ?? entry.worker?.acceptance;
+		if (lane) host.writer.registerAcceptance(openedSession.sessionId, lane);
 		if (owner !== undefined) {
 			if (!host.writer.hasRegisteredConnectionCapabilities(owner))
 				host.writer.setConnectionCapabilities(

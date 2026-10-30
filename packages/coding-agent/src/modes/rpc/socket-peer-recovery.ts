@@ -1,9 +1,13 @@
 import { serializeJsonLine } from "./jsonl.ts";
+import type { LegacyViewCursor } from "./legacy-view-cursor.ts";
 
 export const EVENT_RESYNC_CAPABILITY = "event_resync";
 export type ResyncReason = "overflow" | "stall";
-/** A shed's recovery cut: read once when the gap is delivered, released on that and on every other end. */
-export type ResyncCut = { (): readonly object[]; readonly release?: () => void };
+/**
+ * A shed's recovery cut: read by the peer's barrier after the gap, released on every end. `sessions` are the ones
+ * it reports, carried into a re-cut so a session detached in between is still reported closed.
+ */
+export type ResyncCut = LegacyViewCursor & { readonly sessions: readonly string[] };
 export type RpcSessionResyncRequired = {
 	readonly type: "resync_required";
 	readonly sessionId: string;
@@ -37,12 +41,9 @@ export class SocketPeerRecovery {
 	private pingBuffered = false;
 	private replyLost = false;
 	private readonly write: (line: string) => void;
-	private readonly snapshot: (reason: ResyncReason) => ResyncCut;
-	private cut: ResyncCut | undefined;
 
-	constructor(write: (line: string) => void, snapshot: (reason: ResyncReason) => ResyncCut) {
+	constructor(write: (line: string) => void) {
 		this.write = write;
-		this.snapshot = snapshot;
 		// Negotiate the heartbeat before session traffic can fill the output side.
 		// Pulses travel client -> host even while host -> client is backpressured.
 		this.pingBuffered = true;
@@ -53,16 +54,9 @@ export class SocketPeerRecovery {
 		return this.reason !== undefined;
 	}
 
+	/** The first shed names the gap's reason; a supersession while pending keeps it. */
 	shed(reason: ResyncReason): void {
-		if (this.reason !== undefined) return;
-		this.reason = reason;
-		this.cut = this.snapshot(reason);
-	}
-
-	/** The peer closed or failed before its gap was delivered. */
-	release(): void {
-		this.cut?.release?.();
-		this.cut = undefined;
+		this.reason ??= reason;
 	}
 
 	/** A fresh set_client_info is the existing connection-scoped acknowledgement. */
@@ -83,19 +77,14 @@ export class SocketPeerRecovery {
 		}
 	}
 
-	takeSnapshot(): readonly object[] {
+	/** The gap line that opens the recovery; taken once the peer drains again, before the cut's frames. */
+	takeGap(): string {
 		const reason = this.reason;
 		this.reason = undefined;
 		this.awaitingPing = false;
 		this.pingBuffered = false;
-		const cut = this.cut;
-		this.cut = undefined;
-		const gap = reason === undefined ? [] : [{ type: "resync_required", reason, replyLost: this.replyLost }];
+		const replyLost = this.replyLost;
 		this.replyLost = false;
-		try {
-			return [...gap, ...(cut?.() ?? [])];
-		} finally {
-			cut?.release?.();
-		}
+		return serializeJsonLine({ type: "resync_required", reason, replyLost });
 	}
 }

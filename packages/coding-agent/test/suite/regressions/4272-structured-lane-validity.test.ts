@@ -20,7 +20,13 @@ async function laneTurn(script: Script): Promise<Lane[]> {
 	const session = await scriptedSession([script, textReply("ok")]);
 	sessions.push(session);
 	const records: Lane[] = [];
-	const stop = subscribeStructuredSessionRecords(session.harness.session, (record) => records.push(record));
+	const stop = subscribeStructuredSessionRecords(
+		session.harness.session,
+		(record) => records.push(record),
+		(cause) => {
+			throw cause;
+		},
+	);
 	try {
 		await session.prompt("go");
 	} finally {
@@ -61,12 +67,24 @@ describe("T6 structured lane block validity", () => {
 		});
 		const records: Lane[] = [];
 		const early: Lane[] = [];
-		const stopEarly = subscribeStructuredSessionRecords(session.harness.session, (record) => early.push(record));
+		const stopEarly = subscribeStructuredSessionRecords(
+			session.harness.session,
+			(record) => early.push(record),
+			(cause) => {
+				throw cause;
+			},
+		);
 		let stop = () => {};
 		try {
 			const running = session.prompt("first");
 			await emitted.promise;
-			stop = subscribeStructuredSessionRecords(session.harness.session, (record) => records.push(record));
+			stop = subscribeStructuredSessionRecords(
+				session.harness.session,
+				(record) => records.push(record),
+				(cause) => {
+					throw cause;
+				},
+			);
 			resume.resolve();
 			await running;
 			expect(messageLabels(firstAssistantMessage(early))).toEqual([

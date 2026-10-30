@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
 	compilePatterns,
+	defaultLineMatcher,
 	MatcherCompileError,
+	patternGroupNames,
 	scanPattern,
+	validateJobWidgetSpec,
 } from "../../src/core/extensions/builtin/job-widgets/index.ts";
 import { RegExpLineMatcher } from "./support.ts";
 
@@ -51,6 +54,9 @@ describe("line matcher port", () => {
 		[String.raw`(?P<n>a\k{n})`, "backreference"],
 		["(?<n>a(?<=b)c)", "lookaround"],
 		["(?P<n>a(?&n)?)", "recursion"],
+		// After a class opening with ] or a \Q…\E quote, the scanner is back outside.
+		["[]a](?=b)", "lookaround"],
+		[String.raw`\Qa\E(?=b)`, "lookaround"],
 	];
 
 	it.each(rejected)("rejects %s (%s) before any engine sees it", (pattern, kind) => {
@@ -82,12 +88,55 @@ describe("line matcher port", () => {
 		"[(?=]+",
 		"[(?P=n)(?R)(?1)(?&n)(*]",
 		String.raw`[]\d](?<n>\d)`,
+		"[](?=a)]",
+		"[^](?=a)]",
+		String.raw`\Q(?=a)\1(?P=n)(?R)\E`,
 		"k<n> g{1} P=n",
 		String.raw`(?P<ms>\d+\.\d+)ms`,
 	];
 
 	it.each(accepted)("accepts %s", (pattern) => {
 		expect(scanPattern(pattern).error).toBeUndefined();
+	});
+
+	it("reads a class opening with ] as RE2 does: `]` and the text up to the next `]` are members", () => {
+		for (const pattern of ["[](?=a)]", "[^](?=a)]"]) {
+			expect(scanPattern(pattern)).toEqual({ groups: [], normalized: pattern });
+		}
+	});
+
+	const quoted: [string, string[]][] = [
+		[String.raw`\Q(?<x>a)\E(?<y>\d)`, ["y"]],
+		[String.raw`(?P<a>\d)\Q(?P<b>\E(?<c>x)`, ["a", "c"]],
+		[String.raw`(?<a>\d)\Q(?<b>x)`, ["a"]],
+		[String.raw`\\Q(?<a>x)\\E`, ["a"]],
+	];
+
+	it.each(quoted)("skips \\Q\\E quoted text in %s, naming the groups RE2 names", (pattern, groups) => {
+		expect(patternGroupNames(pattern)).toEqual(groups);
+		expect(compilePatterns(defaultLineMatcher, [pattern]).groupNames).toEqual([groups]);
+	});
+
+	it("rejects a spec whose field names a group inside \\Q\\E", () => {
+		const spec = (field: string) => ({
+			title: "quoted",
+			rules: [{ from: "out", match: String.raw`\Q(?<x>a)\E(?<y>\d)` }],
+			blocks: [{ kind: "stat", items: [{ field, agg: "last", label: field }] }],
+		});
+		const checked = validateJobWidgetSpec(spec("x"), { matcher: defaultLineMatcher });
+		expect(checked.ok).toBe(false);
+		expect(checked.ok ? [] : checked.errors).toContainEqual(expect.stringContaining('unknown field "x"'));
+		expect(validateJobWidgetSpec(spec("y"), { matcher: defaultLineMatcher }).ok).toBe(true);
+	});
+
+	it("has the RegExp fake refuse what JS reads differently: a class opening with ], and \\Q\\E", () => {
+		for (const pattern of ["[](?=a)]", "x[^](?=a)]", String.raw`[]\d](?<n>\d)`, String.raw`\Q(?<x>a)\E`]) {
+			const engine = new RegExpLineMatcher();
+			expect(() => engine.compile(["ok", pattern])).toThrow(MatcherCompileError);
+		}
+		for (const pattern of [String.raw`\[](?<n>\d)`, "[a]]", "[[]", String.raw`[\Q]`, String.raw`\\Q`]) {
+			expect(() => new RegExpLineMatcher().compile([pattern]), pattern).not.toThrow();
+		}
 	});
 
 	it("reports the rejected pattern's index", () => {

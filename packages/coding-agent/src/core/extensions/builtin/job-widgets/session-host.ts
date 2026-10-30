@@ -34,15 +34,38 @@ interface SessionSlot {
 	publish: ((state: JobWidgetState) => void) | undefined;
 }
 
+/** A session's widgets started (`open`) or went away (`!open`); a re-bind after a reload is neither. */
+export type JobWidgetSessionListener = (sessionId: string, open: boolean) => void;
+
 const sessions = new Map<string, SessionSlot>();
+const sessionListeners = new Set<JobWidgetSessionListener>();
 let hostResolver: JobWidgetHostModelResolver | undefined;
 
-/** Starts (or re-binds after a reload) the job widgets of one session. */
+/**
+ * Hosts that keep jobs across a reload hear when a session's widgets start or stop: a stop leaves
+ * their handles inert (drop them), a start after one is when to offer their running jobs again.
+ */
+export function onJobWidgetSessionChange(listener: JobWidgetSessionListener): () => void {
+	sessionListeners.add(listener);
+	return () => {
+		sessionListeners.delete(listener);
+	};
+}
+
+function notifySessionChange(sessionId: string, open: boolean): void {
+	for (const listener of [...sessionListeners]) listener(sessionId, open);
+}
+
+/** Starts (or re-binds after a reload, with the settings read again) the job widgets of one session. */
 export function openJobWidgetSession(sessionId: string, options: JobWidgetSessionOptions): void {
 	const existing = sessions.get(sessionId);
 	if (existing) {
 		existing.author = options.author;
 		existing.publish = options.publish;
+		existing.registry.configure({
+			limits: { authorAfterMs: options.authorAfterMs },
+			...(options.obfuscate === undefined ? {} : { obfuscate: options.obfuscate }),
+		});
 		existing.registry.republish();
 		return;
 	}
@@ -58,6 +81,16 @@ export function openJobWidgetSession(sessionId: string, options: JobWidgetSessio
 		}),
 	};
 	sessions.set(sessionId, slot);
+	notifySessionChange(sessionId, true);
+}
+
+/**
+ * Sends the session's current state again for a listener that just subscribed (an RPC client that
+ * declared `extension_events`), when there is a job to show; an empty state tells it nothing.
+ */
+export function resendJobWidgetState(sessionId: string): void {
+	const registry = sessions.get(sessionId)?.registry;
+	if (registry && registry.snapshot().jobs.length > 0) registry.republish();
 }
 
 /** Holds a session's state across a reload: jobs keep their taps, nothing is sent until re-bound. */
@@ -67,8 +100,11 @@ export function parkJobWidgetSession(sessionId: string): void {
 }
 
 export function closeJobWidgetSession(sessionId: string): void {
-	sessions.get(sessionId)?.registry.dispose();
+	const slot = sessions.get(sessionId);
+	if (!slot) return;
+	slot.registry.dispose();
 	sessions.delete(sessionId);
+	notifySessionChange(sessionId, false);
 }
 
 /**

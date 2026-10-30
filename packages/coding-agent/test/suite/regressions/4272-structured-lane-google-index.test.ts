@@ -62,7 +62,13 @@ it("T6 addresses interleaved Google blocks by the capture's own index on the str
 	const google = getModel("google", "gemini-2.5-flash");
 	session.harness.agent.streamFunction = (_model, context) => streamGoogle(google, context, { apiKey: "x" });
 	const records: Indexed[] = [];
-	const stop = subscribeStructuredSessionRecords(session.harness.session, (record) => records.push(record));
+	const stop = subscribeStructuredSessionRecords(
+		session.harness.session,
+		(record) => records.push(record),
+		(cause) => {
+			throw cause;
+		},
+	);
 	try {
 		await session.prompt("go");
 	} finally {

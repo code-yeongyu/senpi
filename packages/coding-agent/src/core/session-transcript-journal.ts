@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { parseSessionEntryLine, SESSION_READ_BUFFER_SIZE, SessionLineSplitter } from "./session-entry-file.ts";
 import type { FileEntry } from "./session-manager.ts";
@@ -29,6 +30,20 @@ export interface TranscriptPersistence {
 }
 
 /**
+ * A committed change that removes, replaces or reinstalls whole messages of the active path, named by entry id
+ * (RULING-33 condition 2). Messages are owned JSON, the public message each entry contributes.
+ */
+export type TranscriptFlow =
+	| { readonly kind: "edit"; readonly targetId: string; readonly message: AgentMessage }
+	| { readonly kind: "context_edit_removal"; readonly targetId: string }
+	| { readonly kind: "compaction"; readonly removedIds: readonly string[] }
+	| {
+			readonly kind: "branch";
+			readonly removedIds: readonly string[];
+			readonly installed: readonly { readonly id: string; readonly message: AgentMessage }[];
+	  };
+
+/**
  * One committed change of a manager's transcript, recorded after the commit and never before persistence.
  * Entry values are owned JSON: the manager mutates its entry objects later (mirror trimming re-parents them).
  */
@@ -41,9 +56,10 @@ export type TranscriptTransition =
 			readonly persistence?: TranscriptPersistence;
 			readonly owningMessageId?: string;
 			readonly recoveryEpoch?: string;
+			readonly flow?: TranscriptFlow;
 	  }
 	| { readonly kind: "persisted"; readonly persistence: TranscriptPersistence }
-	| { readonly kind: "leaf"; readonly leafId: string | null }
+	| { readonly kind: "leaf"; readonly leafId: string | null; readonly flow?: TranscriptFlow }
 	| { readonly kind: "unavailable"; readonly reason: TranscriptUnavailableReason };
 
 export type PersistedBaseError =

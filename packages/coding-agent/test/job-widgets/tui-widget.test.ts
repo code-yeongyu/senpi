@@ -90,6 +90,28 @@ describe("the TUI job widget area", () => {
 		expect(host.component).toBeUndefined();
 	});
 
+	it("shows nothing after a reload re-sends a job that had already finished, yet lingers one that finishes later", () => {
+		area.update(stateOf(entry("bash_1", "live")));
+		area.update(stateOf(entry("bash_1", "done", "7")));
+		expect(host.lines()).toEqual([expect.stringContaining("done 7")]);
+
+		// A reload (or a config-reload) disposes the area and the next generation builds a new one; the
+		// re-bound registry then re-sends every job it still holds, finished ones included.
+		area.dispose();
+		const reloaded = new FakeWidgetHost();
+		area = new JobWidgetArea({ setWidget: reloaded.setWidget, env: { NO_COLOR: "1" } });
+		area.update(stateOf(entry("bash_1", "done", "7")));
+		expect(reloaded.component).toBeUndefined();
+		expect(reloaded.sets).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+
+		area.update(stateOf(entry("bash_1", "done", "7"), entry("bash_2", "live")));
+		area.update(stateOf(entry("bash_1", "done", "7"), entry("bash_2", "done", "9")));
+		expect(reloaded.lines()).toEqual([expect.stringContaining("done 9")]);
+		vi.advanceTimersByTime(DONE_LINGER_MS);
+		expect(reloaded.component).toBeUndefined();
+	});
+
 	it("updates the same component on a change and does nothing for an unchanged state", () => {
 		area.update(stateOf(entry("bash_1", "live", "1")));
 		const first = host.component;
@@ -113,8 +135,38 @@ describe("the TUI job widget area", () => {
 		}
 	});
 
+	it("keeps the +N more row within the width at every narrow width", () => {
+		const jobs = [1, 2, 3, 4, 5].map((n) => entry(`bash_${n}`, "live"));
+		const themed = new FakeWidgetHost();
+		const themedArea = new JobWidgetArea({ setWidget: themed.setWidget, env: {} });
+		area.update(stateOf(...jobs));
+		themedArea.update(stateOf(...jobs));
+		try {
+			for (const width of [5, 6, 7, 8, 9, 10, 11, 12]) {
+				for (const component of [host.component, themed.component]) {
+					const lines = component?.render(width) ?? [];
+					// PI_TUI_STRICT_RENDER=1 throws on the first line whose visible width exceeds the terminal.
+					for (const line of lines)
+						expect(visibleWidth(line), `${JSON.stringify(line)} at ${width}`).toBeLessThanOrEqual(width);
+					expect(
+						lines
+							.at(-1)
+							?.replace(/\x1b\[[0-9;]*m/g, "")
+							.trim(),
+					).toMatch(/^\+2/);
+				}
+				expect(host.component?.render(width).join("")).not.toMatch(/\x1b/);
+			}
+			expect(host.component?.render(12).at(-1)).toBe(" +2 more");
+		} finally {
+			themedArea.dispose();
+		}
+	});
+
 	it("clears the area and stops its timer when disposed", () => {
+		area.update(stateOf(entry("bash_1", "live")));
 		area.update(stateOf(entry("bash_1", "done")));
+		expect(vi.getTimerCount()).toBe(1);
 		area.dispose();
 		expect(host.component).toBeUndefined();
 		expect(vi.getTimerCount()).toBe(0);

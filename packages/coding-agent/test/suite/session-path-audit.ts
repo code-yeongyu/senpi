@@ -27,6 +27,16 @@ export const SESSION_PATH_ROOT_FILES = [
 	"src/core/auth-storage.ts",
 ] as const;
 
+/**
+ * The recovery owner and the fanout that produces its admissions (senpi#4272 S08a, RULING-50 (3)): they expose no
+ * synchronous byte path; the pinned transcript's sync reader stays out of them until S11's asynchronous page route.
+ */
+export const RECOVERY_PATH_FILES = [
+	"src/modes/rpc/session-event-fanout.ts",
+	"src/modes/rpc/compact-recovery-state.ts",
+	"src/modes/rpc/compact-recovery-types.ts",
+] as const;
+
 /** Root directory expanded to all of its `.ts` sources. */
 export const SESSION_PATH_ROOT_DIRECTORY = "src/core/tools";
 
@@ -86,7 +96,7 @@ export function movePathFiles(packageRoot: string): string[] {
 
 export function sessionPathRoots(packageRoot: string): string[] {
 	return [
-		...SESSION_PATH_ROOT_FILES.map((file) => resolve(packageRoot, file)),
+		...[...SESSION_PATH_ROOT_FILES, ...RECOVERY_PATH_FILES].map((file) => resolve(packageRoot, file)),
 		...collectTypeScriptSources(resolve(packageRoot, SESSION_PATH_ROOT_DIRECTORY)),
 	];
 }

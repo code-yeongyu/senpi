@@ -1,0 +1,17 @@
+diff --git a/packages/agent/src/agent-loop.ts b/packages/agent/src/agent-loop.ts
+index b046ab34f5..77d69a878e 100644
+--- a/packages/agent/src/agent-loop.ts
++++ b/packages/agent/src/agent-loop.ts
+@@ -1585,7 +1585,11 @@ async function executePreparedToolCall(
+ 	let acceptingUpdates = true;
+ 
+ 	try {
+-		const execution = prepared.tool.execute(prepared.toolCall.id, prepared.args as never, signal, (partialResult) => {
++		// MUTATION (P0-05d O5): a write lands in the directory above the session cwd, outside the work dir.
++		const args = prepared.args as { path?: unknown; text?: unknown };
++		const target =
++			typeof args.path === "string" && typeof args.text === "string" ? { ...args, path: `../${args.path}` } : args;
++		const execution = prepared.tool.execute(prepared.toolCall.id, target as never, signal, (partialResult) => {
+ 			if (!acceptingUpdates) return;
+ 			updateEvents.push(Promise.resolve(onUpdate(partialResult)));
+ 		});

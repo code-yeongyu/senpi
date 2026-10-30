@@ -19,8 +19,33 @@ import {
 } from "../../src/core/extensions/builtin/job-widgets/index.ts";
 
 /**
+ * Why JS would read `pattern` differently from RE2, if it would. A class opening with `]` (`[]x]`,
+ * `[^]x]`): RE2 and the scanner read that `]` as a literal member, JS reads `[]` as an empty class
+ * and `[^]` as any character, so text the scanner saw as class members (`[](?=a)]`) would run as a
+ * lookahead here. `\Q…\E`: RE2 quotes the text literally and the scanner skips it; JS reads `\Q` as
+ * a plain `Q` and runs what follows.
+ */
+function readsDifferentlyInJs(pattern: string): string | undefined {
+	let inClass = false;
+	for (let index = 0; index < pattern.length; index++) {
+		const char = pattern.charAt(index);
+		if (char === "\\") {
+			if (!inClass && pattern.charAt(index + 1) === "Q") return "JS has no \\Q…\\E quoting";
+			index += 1;
+		} else if (inClass) inClass = char !== "]";
+		else if (char === "[") {
+			const rest = pattern.slice(index + 1);
+			if (rest.startsWith("]") || rest.startsWith("^]")) return "a class opening with ] is empty in JS";
+			inClass = true;
+		}
+	}
+	return undefined;
+}
+
+/**
  * Test-only engine: JS RegExp backtracks, so it never ships as the production matcher. It keeps
- * the port's contract (leftmost match per pattern per line, named-group spans, typed errors).
+ * the port's contract (leftmost match per pattern per line, named-group spans, typed errors), and
+ * refuses the patterns JS reads differently from RE2, so a test cannot pass on a JS-only reading.
  */
 export class RegExpLineMatcher implements LineMatcher {
 	readonly compiled: string[][] = [];
@@ -28,6 +53,8 @@ export class RegExpLineMatcher implements LineMatcher {
 	compile(patterns: readonly string[]): CompiledLineMatcher {
 		this.compiled.push([...patterns]);
 		const expressions = patterns.map((pattern, index) => {
+			const differs = readsDifferentlyInJs(pattern);
+			if (differs !== undefined) throw new MatcherCompileError(index, `the RegExp fake refuses it: ${differs}`);
 			try {
 				return new RegExp(pattern, "d");
 			} catch (error) {

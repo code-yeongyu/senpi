@@ -23,22 +23,33 @@ export function truncateText(text: string, max: number): string {
 	return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
 }
 
+/** `value / step` printed: one decimal below 100 (judged after rounding, so 99.96 prints `100`), else none. */
+function compactText(value: number, step: number, digits: number | undefined): string {
+	const scaled = value / step;
+	if (digits !== undefined) return scaled.toFixed(digits);
+	const oneDecimal = scaled.toFixed(1);
+	return Math.abs(Number(oneDecimal)) >= 100 ? scaled.toFixed(0) : oneDecimal;
+}
+
 /**
  * A number with its unit: auto decimals (>= 100 -> 0, >= 10 -> 1, else 2) unless `digits` is
- * given, whole numbers without decimals, large values compacted (`12.3k`). `%` attaches to the
- * number; other units follow a space.
+ * given, whole numbers without decimals, large values compacted (`12.3k`). A value that rounds up
+ * to 1000 of a suffix moves to the next one (`999_999` -> `1.0M`, never `1000k`). `%` attaches to
+ * the number; other units follow a space.
  */
 export function formatWidgetNumber(value: number, unit?: string, digits?: number): string {
 	if (!Number.isFinite(value)) return MISSING_VALUE_TEXT;
 	const magnitude = Math.abs(value);
 	let text: string | undefined;
 	if (magnitude >= COMPACT_FROM) {
-		for (const [step, suffix] of COMPACT_STEPS) {
-			if (magnitude < step) continue;
-			const scaled = value / step;
-			text = `${scaled.toFixed(digits ?? (Math.abs(scaled) >= 100 ? 0 : 1))}${suffix}`;
-			break;
-		}
+		const index = COMPACT_STEPS.findIndex(([step]) => magnitude >= step);
+		const [step, suffix] = COMPACT_STEPS[index];
+		const scaled = compactText(value, step, digits);
+		const larger = COMPACT_STEPS[index - 1];
+		text =
+			Math.abs(Number(scaled)) >= 1000 && larger
+				? `${compactText(value, larger[0], digits)}${larger[1]}`
+				: `${scaled}${suffix}`;
 	}
 	text ??=
 		Number.isInteger(value) && digits === undefined

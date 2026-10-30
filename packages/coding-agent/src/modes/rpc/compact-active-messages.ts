@@ -20,7 +20,7 @@ function rowOf(messageId: string, message: ActiveMessage): MessageRoot {
 export class CompactActiveMessages extends CompactStateStorage {
 	protected messages: ComponentRoot<MessageRoot> = { header: undefined, ref: undefined };
 	protected readonly active = new Map<string, ActiveMessage>();
-	protected readonly identity = new CompactStartIdentity();
+	protected readonly identity = new CompactStartIdentity(this.epoch);
 	protected sequence = 0;
 	protected residentTailBytes = 0;
 	protected hotWitnessBytes = 0;
