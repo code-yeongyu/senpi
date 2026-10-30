@@ -7,6 +7,8 @@ import {
 	MaterializerRefusal,
 } from "./materializer.ts";
 
+export { MemoryMaterializerAdapter } from "./materializer-memory.ts";
+
 /** Desktop D11 supplies its SQL harness here; scenarios are imported, never copied.
  * Snapshot must read from outside the open transaction. Restart must reopen only committed state.
  */
@@ -157,6 +159,19 @@ export function materializerConformance(create: Factory): readonly MaterializerC
 				equal(await h.snapshot(next), { frontier: 0, effects: [] });
 				equal(await new MaterializerConsumer(h.adapter).accept(unit(1, next)), "applied");
 				await rejected(() => h.adapter.reset(key), "stale_generation");
+			},
+		],
+		[
+			"R95.7 committed effects and frontier are isolated across generations",
+			async (h) => {
+				const consumer = new MaterializerConsumer(h.adapter);
+				equal(await consumer.accept(unit(7)), "applied");
+				equal(await h.snapshot(key), { frontier: 7, effects: ["seed", "clear", "record-7"] });
+				const next = { ...key, generation: 2 };
+				await consumer.reset(next);
+				equal(await h.snapshot(next), { frontier: 0, effects: [] });
+				equal(await consumer.accept(unit(1, next)), "applied");
+				equal(await h.snapshot(next), { frontier: 1, effects: ["seed", "clear", "record-1"] });
 			},
 		],
 		[

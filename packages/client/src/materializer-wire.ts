@@ -28,16 +28,18 @@ const invalid = (): never => {
 };
 
 /** Decode only the bounded header. The ingress owner enforces H before JSON decode and owns its reservation.
- * S15a frames remain accepted verbatim; selected S16 payloads stay under the shared S13 lease/page owner.
+ * Frames without a materializer header are legacy, including S15a cancellation replies without sessionId.
+ * Selected S16 payloads stay under the shared S13 lease/page owner.
  */
 export function parseMaterializerFrame(
 	input: unknown,
 ):
 	| { readonly kind: "legacy"; readonly frame: Record<string, unknown> }
 	| { readonly kind: "unit"; readonly envelope: MaterializerEnvelope } {
-	if (!object(input) || !id(input.sessionId) || !id(input.admissionId) || !count(input.generation)) return invalid();
+	if (!object(input)) return invalid();
 	if (input.type === "materializer_control") throw new MaterializerRefusal("stray_control");
 	if (input.materializer === undefined) return { kind: "legacy", frame: input };
+	if (!id(input.sessionId) || !id(input.admissionId) || !count(input.generation)) return invalid();
 	const m = input.materializer;
 	if (
 		!object(m) ||
