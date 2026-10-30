@@ -210,8 +210,9 @@ export function collectSkillEntries(
 			const fullPath = join(dir, entry.name);
 			let isDir = entry.isDirectory();
 			let isFile = entry.isFile();
+			const isLink = entry.isSymbolicLink();
 
-			if (entry.isSymbolicLink()) {
+			if (isLink) {
 				try {
 					const stats = statSync(fullPath);
 					isDir = stats.isDirectory();
@@ -233,6 +234,12 @@ export function collectSkillEntries(
 			}
 
 			if (!isDir) continue;
+			// A linked directory belongs to another tree: the ignore files above it neither hide it nor
+			// reach into it, while its own ignore files still apply inside it (senpi#5060).
+			if (isLink) {
+				entries.push(...collectSkillEntries(fullPath, mode, ignore(), root, { ...options, ancestry }));
+				continue;
+			}
 			if (ig.ignores(`${relPath}/`)) continue;
 
 			entries.push(...collectSkillEntries(fullPath, mode, ig, root, { ...options, ancestry }));

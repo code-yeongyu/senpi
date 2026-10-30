@@ -63,6 +63,8 @@ export {
 	engineBuildIdentityFrom,
 } from "./core/engine-build-identity.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
+// Job widgets: hosts register background jobs and their widget-author model route
+export * from "./core/extensions/builtin/job-widgets/public.ts";
 export {
 	type CancelReceipt,
 	EVAL_HANDLE_ERROR_CODES,
@@ -133,6 +135,7 @@ export type {
 	ExtensionFlag,
 	ExtensionHandler,
 	ExtensionRpcRequestHandler,
+	ExtensionRpcRequestContext,
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,

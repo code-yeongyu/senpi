@@ -175,6 +175,7 @@ export class RpcSessionRegistry {
 			context: publishedSessionContext(entry.context, entry.contextOverlay),
 			// A closing entry has already released its last attachment; never publish that as negative.
 			attachments: Math.max(0, entry.attachments),
+			retain_on_disconnect: entry.retainOnDisconnect === true,
 			status: entry.state === "quarantined" ? "closing" : entry.state,
 			idleMs: Math.max(0, now - entry.lastCommandAt),
 			tool_child: entry.runtime?.session.toolChildRow() ?? { state: "none" },
