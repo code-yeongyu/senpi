@@ -1,6 +1,12 @@
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
-import type { Model, Usage } from "@earendil-works/pi-ai/compat";
+import { isContextOverflow, type RetryCallbacks, type RetryPolicy } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Model, Usage } from "@earendil-works/pi-ai/compat";
+import {
+	allowOverflowRetry,
+	boundSummarizationInput,
+	SummarizationOverflowExhaustedError,
+	shrinkSummarizationInputForOverflowRetry,
+} from "../extensions/builtin/compaction/overflow-retry.ts";
 import { convertToLlm } from "../messages.ts";
 import { combineUsage } from "../usage-totals.ts";
 import {
@@ -16,7 +22,13 @@ import {
 	getSummarizationFailure,
 	type SummarizationStreamFn,
 } from "./compaction.ts";
-import { computeFileLists, contentTextForSummary, formatFileOperations, serializeConversation } from "./utils.ts";
+import {
+	computeFileLists,
+	contentTextForSummary,
+	formatFileOperations,
+	SUMMARIZATION_SYSTEM_PROMPT,
+	serializeConversation,
+} from "./utils.ts";
 
 const TURN_PREFIX_SUMMARIZATION_PROMPT = `The messages above are earlier context from an ongoing conversation. Later messages are stored separately and do not need to be reconstructed.
 
@@ -226,37 +238,70 @@ async function generateTurnPrefixSummary(
 	) {
 		sourceContext = undefined;
 	}
-	let promptText: string;
-	if (sourceContext) {
-		promptText = SOURCE_CONTEXT_TURN_PREFIX_SUMMARIZATION_PROMPT;
-	} else {
-		const providerMessages = transformContext ? await transformContext(messages, signal) : messages;
-		const llmMessages = convertToLlm(providerMessages);
-		const conversationText = serializeConversation(llmMessages);
-		promptText = `# Conversation\n${conversationText}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
-	}
-
-	const response = await completeSummarization(
-		model,
-		buildSummarizationContext(promptText, sourceContext),
-		createSummarizationOptions(
-			model,
-			maxTokens,
-			apiKey,
-			headers,
-			env,
-			signal,
-			thinkingLevel,
-			extraBody,
-			sessionId,
-			sourceContext ? cacheFriendly?.requestOptions : undefined,
-			sourceContext ? "short" : undefined,
-		),
-		streamFn,
-		retry,
-		callbacks,
-		summarizationMaxDurationMs,
+	let turnMessages: AgentMessage[] = [];
+	// The standalone request is bounded to the window with the same rule as the history summary (senpi#4079): a
+	// turn close to the window by itself must not make its prefix summary overflow it, or the compaction never
+	// succeeds. Inside the turn the request is kept and its oldest tool steps go first.
+	const boundsTurn = !sourceContext && model.contextWindow > 0;
+	const promptTokens = Math.ceil(
+		`${SUMMARIZATION_SYSTEM_PROMPT}# Conversation\n\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`.length /
+			4,
 	);
+	let summarizedMessages: AgentMessage[] = [];
+	if (!sourceContext) {
+		turnMessages = transformContext ? await transformContext(messages, signal) : messages;
+		summarizedMessages = turnMessages;
+		const serializedFits =
+			Math.ceil(serializeConversation(convertToLlm(turnMessages)).length / 4) + promptTokens + maxTokens <=
+			model.contextWindow;
+		if (boundsTurn && !serializedFits) {
+			summarizedMessages = boundSummarizationInput(turnMessages, model.contextWindow, promptTokens);
+		}
+	}
+	const overflowStartedAt = Date.now();
+	let overflowAttempts = 0;
+	let response: AssistantMessage;
+	while (true) {
+		let promptText: string;
+		if (sourceContext) {
+			promptText = SOURCE_CONTEXT_TURN_PREFIX_SUMMARIZATION_PROMPT;
+		} else {
+			const conversationText = serializeConversation(convertToLlm(summarizedMessages));
+			const omitted = turnMessages.length - summarizedMessages.length;
+			const omittedNote = omitted > 0 ? `<omitted-history messages="${omitted}" />\n` : "";
+			promptText = `# Conversation\n${omittedNote}${conversationText}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
+		}
+
+		response = await completeSummarization(
+			model,
+			buildSummarizationContext(promptText, sourceContext),
+			createSummarizationOptions(
+				model,
+				maxTokens,
+				apiKey,
+				headers,
+				env,
+				signal,
+				thinkingLevel,
+				extraBody,
+				sessionId,
+				sourceContext ? cacheFriendly?.requestOptions : undefined,
+				sourceContext ? "short" : undefined,
+			),
+			streamFn,
+			retry,
+			callbacks,
+			summarizationMaxDurationMs,
+		);
+		if (!boundsTurn || !isContextOverflow(response, model.contextWindow)) break;
+		overflowAttempts += 1;
+		const elapsedMs = Date.now() - overflowStartedAt;
+		const shrunk = allowOverflowRetry(overflowAttempts, elapsedMs)
+			? shrinkSummarizationInputForOverflowRetry(summarizedMessages, model.contextWindow, promptTokens)
+			: undefined;
+		if (shrunk === undefined) throw new SummarizationOverflowExhaustedError(overflowAttempts, elapsedMs);
+		summarizedMessages = shrunk;
+	}
 
 	const failure = getSummarizationFailure(response, "Turn prefix summarization");
 	if (failure) throw new Error(failure);

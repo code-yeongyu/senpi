@@ -7,6 +7,18 @@ const DIRECTIVE =
 	"an aborted result; they were not re-run and their side effects may be partial. Check their effects before repeating " +
 	"any of them, then continue the work.</system-reminder>";
 
-export function stopResumeDirective(): Pick<CustomMessage, "customType" | "content" | "display"> {
+export function stopResumeDirective(
+	cause: "stop" | "interrupted" = "stop",
+): Pick<CustomMessage, "customType" | "content" | "display" | "details"> {
+	if (cause === "interrupted")
+		return {
+			customType: STOP_RESUME_CUSTOM_TYPE,
+			content:
+				"<system-reminder>The previous run was interrupted and has now resumed. Interrupted tool calls may have " +
+				"partial side effects and were not re-run. Check their effects before repeating any of them, then continue " +
+				"the work.</system-reminder>",
+			display: false,
+			details: { resumeCause: cause },
+		};
 	return { customType: STOP_RESUME_CUSTOM_TYPE, content: DIRECTIVE, display: false };
 }

@@ -24,6 +24,55 @@ const rpcError = (code: number, message: string, data: unknown = {}) => ({
 });
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
+// senpi#4402: -32022 selects an implemented era, not merely an implemented modern version.
+describe("unsupported protocol version negotiation", () => {
+	it.each(["HTTP", "stdio"] as const)("%s falls back when only legacy versions are mutual", async (transport) => {
+		const error = rpcError(-32022, "UnsupportedProtocolVersionError", {
+			supported: ["2025-06-18", "2025-03-26"],
+		});
+		const send = vi.fn(async (request: ProbeRequest) => ({ ...error, id: request.id }));
+		const fetch = vi.fn(async () => reply(error, 400));
+		const outcome =
+			transport === "HTTP"
+				? await probeHttpEra(new URL("https://fixture.test"), fetch, options)
+				: await probeStdioEra(send, options);
+		expect(outcome).toEqual({ kind: "legacy-fallback" });
+		expect(transport === "HTTP" ? fetch : send).toHaveBeenCalledTimes(1);
+	});
+
+	it.each(["HTTP", "stdio"] as const)(
+		"%s names unsupported server versions in an actionable error",
+		async (transport) => {
+			const supported = ["2099-01-01", "1900-01-01"];
+			const error = rpcError(-32022, "UnsupportedProtocolVersionError", { supported });
+			const outcome =
+				transport === "HTTP"
+					? await probeHttpEra(new URL("https://fixture.test"), async () => reply(error, 400), options)
+					: await probeStdioEra(async (request) => ({ ...error, id: request.id }), options);
+			expect(outcome).toMatchObject({ kind: "indeterminate", reason: "no-mutual-version", era: "modern" });
+			if (outcome.kind !== "indeterminate") throw new Error("Expected an actionable negotiation error");
+			for (const version of supported) expect(outcome.action).toContain(version);
+			expect(outcome.action).toMatch(/update/i);
+		},
+	);
+
+	it.each(["HTTP", "stdio"] as const)("%s still retries modern when both eras are mutual", async (transport) => {
+		const error = rpcError(-32022, "UnsupportedProtocolVersionError", {
+			supported: ["2025-06-18", "2026-06-01"],
+		});
+		const fetch = vi.fn(async () => reply(discovery)).mockResolvedValueOnce(reply(error, 400));
+		const send = vi
+			.fn(async (request: ProbeRequest): Promise<unknown> => ({ ...discovery, id: request.id }))
+			.mockImplementationOnce(async (request) => ({ ...error, id: request.id }));
+		const outcome =
+			transport === "HTTP"
+				? await probeHttpEra(new URL("https://fixture.test"), fetch, options)
+				: await probeStdioEra(send, options);
+		expect(outcome).toMatchObject({ kind: "modern-version-retry", version: "2026-06-01" });
+		expect(transport === "HTTP" ? fetch : send).toHaveBeenCalledTimes(2);
+	});
+});
+
 describe("HTTP era detection", () => {
 	it("detects modern discovery and sends matching per-request metadata and headers", async () => {
 		const fetch = vi.fn(async (_url: URL, _init: RequestInit) => reply(discovery));

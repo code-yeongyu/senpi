@@ -12,6 +12,194 @@
 
 ### Removed
 
+## [2026.10.27-2] - 2026-10-27
+
+### Breaking Changes
+
+### Added
+
+- Assistant messages can carry `errorCause: { type: "model_config", model }` for a model id its route does not serve; every provider stream sets it from the raw body of an error message (`stopReason: "error"`) and keeps only the redacted body of every provider error, and `isRetryableAssistantError` never retries it. `isModelConfigError`, the value-based `redactSecrets` (one token-wise pass, linear in the input, no regular expressions), `redactCredentialShapes` (known key prefixes and JWTs only) and `sanitizeProviderErrorMessage` are exported ([#4283](https://github.com/code-yeongyu/senpi/pull/4283))
+- `AssistantMessage.credentialServedRecently?: true` marks a failed response whose credential served a response moments before ([#2491](https://github.com/code-yeongyu/senpi/issues/2491))
+- Internal block seeds declare their producer-time replay or continuation offset (part of #4272).
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`github-copilot`, `huggingface`, `opengateway`, `openrouter`, `venice`, `vercel-ai-gateway`).
+
+### Fixed
+
+- Moonshot `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` now send `reasoning_effort` (low / high / max) like `kimi-k3`, replay reasoning content, and bill the official USD list price on both Moonshot endpoints ([#4442](https://github.com/code-yeongyu/senpi/pull/4442))
+
+### Removed
+
+## [2026.10.27-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Recovery stream wrappers carry captured block records with remapped indices instead of dropping them; public events and bytes are unchanged ([#4307](https://github.com/code-yeongyu/senpi/pull/4307))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Assistant event streams can capture block seeds, delta coverage and native block transitions at the moment a provider emits them, for Anthropic, OpenAI Responses (including Codex and Azure) and OpenAI Completions; public events and bytes are unchanged ([#4277](https://github.com/code-yeongyu/senpi/pull/4277))
+- Bedrock, Mistral, Google, Vertex, Cursor, Pi messages, Devin and Faux streams capture block seeds, signatures and native block transitions at emission; public events and bytes are unchanged ([#4285](https://github.com/code-yeongyu/senpi/pull/4285))
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).
+
+### Fixed
+
+- Protocol-owned tool validators can preserve model arguments instead of applying compatibility coercion ([#4191](https://github.com/code-yeongyu/senpi/issues/4191)).
+
+### Removed
+
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`openrouter`).
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+- Provider request options carry the originating session's working directory for subprocess-backed adapters ([#4181](https://github.com/code-yeongyu/senpi/pull/4181)).
+- Kimi Code (`kimi-coding`) serves Kimi K3.1 Pro as `k3.1-pro` and K3.1 Pro Highspeed as `k3.1-pro-highspeed`: thinking only (low / high / max), up to 1M context, image and video input ([#4183](https://github.com/code-yeongyu/senpi/pull/4183))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-3] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-2] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+- `CredentialStore.readSlot` (optional) lets a store resolve one pooled account for a slot-scoped request. `resolveProviderAuth` uses it, and refuses a projected key that is still an unresolved reference object with a named `ConfigReferenceError` ([#3858](https://github.com/code-yeongyu/senpi/issues/3858)).
+- Shared configuration-value schemas and runtime validation recognize exact `$file`, `$env`, and flat `$concat` objects, with named errors for malformed references ([#3858](https://github.com/code-yeongyu/senpi/issues/3858)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-1] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- The bundled model catalog is refreshed from models.dev and the providers' model listings (`opengateway`, `openrouter`).
+
+### Fixed
+
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
+- Removed the `llama-cpp-classify` API (`api/llama-cpp-classify.ts` and its `.lazy.ts` wrapper), which existed only to serve the removed `/llama` llama.cpp extension, and dropped `"llama-cpp-classify"` from `KnownClassifierApi` ([#3202](https://github.com/code-yeongyu/senpi/issues/3202), requested by @code-yeongyu).
+
+### Added
+
+### Changed
+
+### Fixed
+
+- `calculateCost` reports `Usage.costUnknown` for a model whose `ModelCost.unknown` is set instead of a $0 cost ([#3844](https://github.com/code-yeongyu/senpi/issues/3844)).
+- OpenGateway catalog generation and runtime refresh accept the public price envelope and legacy flat tables, and reject unsupported currency or billing units. Runtime refresh and release regeneration keep the last good catalog when the feed fails or yields no usable models; the dedicated strict OpenGateway refresh still fails on it ([#4067](https://github.com/code-yeongyu/senpi/issues/4067)).
+
+### Removed
+
 ## [2026.10.21-3] - 2026-10-22
 
 ### Breaking Changes

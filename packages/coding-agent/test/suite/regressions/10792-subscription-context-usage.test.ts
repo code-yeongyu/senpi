@@ -118,7 +118,7 @@ describe("subscription request context versus query billing", () => {
 			await releaseResult.promise;
 		});
 		const harness = await createHarness({ models: [{ id: "context-test", contextWindow: 1_000_000 }] });
-		const stream = streamAnthropicSubscription(model, context);
+		const stream = streamAnthropicSubscription(model, context, { cwd: process.cwd() });
 		try {
 			const first = await stream[Symbol.asyncIterator]().next();
 			if (first.done || first.value.type !== "start") throw new Error("SDK stream did not start");
@@ -159,7 +159,11 @@ describe("subscription request context versus query billing", () => {
 
 			// The next single-request update must not "correct" a falsely doubled terminal value.
 			script([...request(353_000, 100), result(353_000, 100)]);
-			const next = await streamAnthropicSubscription(model, { messages: [...context.messages, message] }).result();
+			const next = await streamAnthropicSubscription(
+				model,
+				{ messages: [...context.messages, message] },
+				{ cwd: process.cwd() },
+			).result();
 			harness.sessionManager.appendMessage(next);
 			harness.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
 			expect(harness.session.getContextUsage()?.tokens).toBe(353_100);
@@ -179,7 +183,7 @@ describe("subscription request context versus query billing", () => {
 			}),
 			result(702_000, 300),
 		]);
-		const message = await streamAnthropicSubscription(model, { messages: [] }).result();
+		const message = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
 		expect(calculateContextTokens(message.usage)).toBe(352_012);
 		expect(message.usage.cacheRead).toBe(702_000);
 	});
@@ -187,7 +191,7 @@ describe("subscription request context versus query billing", () => {
 	it("estimates result-only context instead of treating cumulative billing as a measurement", async () => {
 		script([result(702_000, 300)]);
 		const context: Context = { messages: [{ role: "user", content: "seed", timestamp: 1 }] };
-		const message = await streamAnthropicSubscription(model, context).result();
+		const message = await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 		expect(estimateContextTokens([...context.messages, message]).tokens).toBe(2);
 		expect(isContextOverflow(message, 600_000)).toBe(false);
 		expect(message.usage.totalTokens).toBe(702_300);
@@ -204,7 +208,7 @@ describe("subscription request context versus query billing", () => {
 				usage: { input_tokens: 0, output_tokens: 300, cache_read_input_tokens: 702_000 },
 			}),
 		]);
-		const message = await streamAnthropicSubscription(model, { messages: [] }).result();
+		const message = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
 		expect(message.stopReason).toBe("error");
 		expect(message.usage.totalTokens).toBe(702_300);
 		expect(message.usage.cost.total).toBeCloseTo(0.2151);
@@ -220,7 +224,7 @@ describe("subscription request context versus query billing", () => {
 			}),
 			result(350_000, 100),
 		]);
-		const message = await streamAnthropicSubscription(model, { messages: [] }).result();
+		const message = await streamAnthropicSubscription(model, { messages: [] }, { cwd: process.cwd() }).result();
 		expect(calculateContextTokens(message.usage)).toBe(20);
 		expect(message.usage.cacheRead).toBe(350_000);
 	});

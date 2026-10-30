@@ -91,6 +91,7 @@ export class FooterDataProvider {
 	private static readonly WATCH_DEBOUNCE_MS = 500;
 
 	private extensionStatuses = new Map<string, string>();
+	private subagentCost: number | undefined = undefined;
 	private cachedBranch: string | null | undefined = undefined;
 	private gitPaths: GitPaths | null | undefined = undefined;
 	private headWatcher: FSWatcher | null = null;
@@ -147,9 +148,20 @@ export class FooterDataProvider {
 		}
 	}
 
-	/** Internal: clear extension statuses */
-	clearExtensionStatuses(): void {
-		this.extensionStatuses.clear();
+	/** Internal: clear extension statuses, keeping the host-owned keys in `keep` */
+	clearExtensionStatuses(keep: ReadonlySet<string> = new Set()): void {
+		for (const key of this.extensionStatuses.keys()) if (!keep.has(key)) this.extensionStatuses.delete(key);
+		this.subagentCost = undefined;
+	}
+
+	/** USD spent by the subagent tree under this session, as reported via ctx.ui.setSubagentCost() */
+	getSubagentCost(): number | undefined {
+		return this.subagentCost;
+	}
+
+	/** Internal: set the subagent tree's spend; a negative or non-finite figure is not a spend and clears it */
+	setSubagentCost(costUsd: number | undefined): void {
+		this.subagentCost = costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : undefined;
 	}
 
 	/** Number of unique providers with available models (for footer display) */
@@ -379,4 +391,5 @@ export class FooterDataProvider {
 export type ReadonlyFooterDataProvider = Pick<
 	FooterDataProvider,
 	"getGitBranch" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
->;
+> &
+	Partial<Pick<FooterDataProvider, "getSubagentCost">>;

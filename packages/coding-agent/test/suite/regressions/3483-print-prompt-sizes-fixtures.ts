@@ -33,8 +33,8 @@ export const realisticOptions: BuildDynamicSystemPromptOptions = {
 	tuningSection: "\nModel tuning.\n",
 };
 
-// Captured from main 89ecd50ca0 before the parts refactor. These inputs deliberately
-// exercise whitespace, multiple resource roots, and the >100-skill compact path.
+// Captured from main 89ecd50ca0 before the parts refactor, refreshed for #4043's
+// punctuation rewrite. These inputs exercise whitespace, resource roots, and >100 skills.
 export const goldenCases = [
 	{ name: "realistic", options: realisticOptions },
 	{

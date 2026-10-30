@@ -1076,8 +1076,7 @@ export async function generateSummaryWithUsage(
 		model.contextWindow;
 	let summarizedMessages = transformedSource.messages;
 	if (boundsHistory && !serializedFits(summarizedMessages)) {
-		const bounded = boundSummarizationInput(summarizedMessages, model.contextWindow, promptTokens);
-		summarizedMessages = bounded.length > 0 ? bounded : summarizedMessages.slice(-1);
+		summarizedMessages = boundSummarizationInput(summarizedMessages, model.contextWindow, promptTokens);
 	}
 	const overflowStartedAt = Date.now();
 	let overflowAttempts = 0;

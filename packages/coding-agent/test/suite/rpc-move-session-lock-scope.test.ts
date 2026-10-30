@@ -62,7 +62,7 @@ describe("move_session lock scope (senpi#3678)", () => {
 		await using a = rig;
 		let unblock = (): void => {};
 		const blocker = serializeByKey(
-			moveLockKey(sessionPath),
+			await moveLockKey(sessionPath),
 			() =>
 				new Promise<void>((resolve) => {
 					unblock = resolve;

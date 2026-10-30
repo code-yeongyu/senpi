@@ -5,7 +5,7 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { createConnection, type Socket } from "node:net";
+import type { Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
@@ -37,8 +37,10 @@ export class RpcCommandError extends Error {
 }
 
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
+import { connectRpcClientSocket } from "./rpc-client-socket.ts";
 import {
 	armRequestDeadline,
 	OPEN_AFTER_QUEUED_DEADLINE_MS,
@@ -74,13 +76,6 @@ import type {
 	RpcUnloadAnswer,
 } from "./rpc-types.ts";
 import { RPC_ERROR_SESSION_NOT_ATTACHED, RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
-import {
-	readSocketSecret,
-	resolveSocketTransportAddress,
-	sendSocketHandshake,
-	socketSecretPath,
-} from "./socket-transport.ts";
-import { socketNeedsHandshake } from "./tui-socket.ts";
 
 // ============================================================================
 // Types
@@ -95,6 +90,8 @@ type RpcCommandBody = DistributiveOmit<RpcCommand, "id">;
 export interface RpcClientOptions {
 	/** Connect to an existing multi-session Unix socket instead of spawning a child. */
 	socketPath?: string;
+	/** Endpoint credential lookup only; does not change the client's configuration profile. */
+	keyRoot?: string;
 	/** Called once when an established transport disconnects. */
 	onDisconnect?: (error: RpcTransportGoneError) => void;
 	/** Path to the CLI entry point (default: searches for dist/cli.js) */
@@ -414,27 +411,8 @@ export class RpcClient {
 	}
 
 	private async startSocket(path: string): Promise<void> {
-		const secret = socketNeedsHandshake(path) ? await readSocketSecret(socketSecretPath(path)) : undefined;
-		const socket = createConnection(resolveSocketTransportAddress(path, process.platform, secret));
+		const socket = await connectRpcClientSocket(path, this.options);
 		this.socket = socket;
-		await new Promise<void>((resolve, reject) => {
-			const onConnect = () => {
-				cleanup();
-				resolve();
-			};
-			const onError = (error: Error) => {
-				cleanup();
-				this.socket = null;
-				reject(error);
-			};
-			const cleanup = () => {
-				socket.off("connect", onConnect);
-				socket.off("error", onError);
-			};
-			socket.once("connect", onConnect);
-			socket.once("error", onError);
-		});
-		if (secret) sendSocketHandshake(socket, secret);
 		this.stopReadingStdout = attachJsonlLineReader(socket, (line) => this.handleLine(line));
 		socket.once("close", () => {
 			if (this.socket !== socket) return;
@@ -478,6 +456,7 @@ export class RpcClient {
 
 	async openSession(options: {
 		attended?: false;
+		spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
 		/** Attach only on this generation; requires `expected_host_instance`. */
 		expectedHostInstance?: string;
 		sessionPath?: string;
@@ -496,6 +475,8 @@ export class RpcClient {
 		browserEngine?: BrowserEngine;
 		/** This session's own fallback policy, in memory only; needs the host's `retry_fallback_profile`. */
 		retryFallback?: SessionRetryFallbackProfile;
+		/** Caller env for this one session's tool subprocesses (senpi#4381); needs the host's `session_env`. */
+		env?: Record<string, string>;
 	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
 		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
 		this.pendingOpenSession = true;
@@ -950,6 +931,18 @@ export class RpcClient {
 	async getAvailableThinkingLevels(): Promise<ThinkingLevel[]> {
 		const response = await this.send({ type: "get_available_thinking_levels" });
 		return this.getData<{ levels: ThinkingLevel[] }>(response).levels;
+	}
+
+	/**
+	 * The level a model runs at in this session (the current one when it is active, otherwise what a
+	 * switch to it would restore), where that level comes from, and the levels the model supports.
+	 */
+	async getModelThinkingLevel(
+		provider: string,
+		modelId: string,
+	): Promise<{ level: ThinkingLevel; source: ThinkingLevelSource; availableLevels: ThinkingLevel[] }> {
+		const response = await this.send({ type: "get_model_thinking_level", provider, modelId });
+		return this.getData(response);
 	}
 
 	/**

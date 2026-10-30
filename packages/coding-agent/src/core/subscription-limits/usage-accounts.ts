@@ -21,6 +21,42 @@ import { CredentialStoreBusyError } from "../lockfile-policy.ts";
 import type { UsageProvider } from "./usage-endpoints.ts";
 
 const EXPIRING_WITHIN_MS = 5 * 60_000;
+const STATUS_IN_TEXT = /\bstatus=(\d{3})\b/;
+const MAX_CAUSE_LINKS = 16;
+
+function causeChain(error: unknown): object[] {
+	const links: object[] = [];
+	let link: unknown = error;
+	while (typeof link === "object" && link !== null && !links.includes(link) && links.length < MAX_CAUSE_LINKS) {
+		links.push(link);
+		link = Reflect.get(link, "cause");
+	}
+	return links;
+}
+
+/**
+ * A background poll records the `auth_error` lock only on an explicit rejection from the token endpoint:
+ * a 400/401 answer, or `invalid_grant` when no status is known (senpi#3695). `isGrantRejected` alone also
+ * calls an HTML error page or a plain network failure rejected; a turn tolerates that, but a poll would then
+ * lock a healthy login. The endpoint's own numeric status decides first; only without one is the text read,
+ * and then only its first `status=`, because the flattened message carries the server's body after it.
+ */
+function tokenEndpointRejected(error: unknown): boolean {
+	if (!isGrantRejected(error)) return false;
+	const links = causeChain(error);
+	for (const link of links) {
+		const status: unknown = Reflect.get(link, "status");
+		if (typeof status === "number") return status === 400 || status === 401;
+	}
+	for (const link of links) {
+		const message: unknown = Reflect.get(link, "message");
+		if (typeof message !== "string") continue;
+		const status = STATUS_IN_TEXT.exec(message)?.[1];
+		if (status !== undefined) return status === "400" || status === "401";
+		if (message.includes("invalid_grant")) return true;
+	}
+	return false;
+}
 
 /** `undefined`: nothing usable to ask with right now (an expired ChatGPT token a turn will renew). */
 export type AccessResult = { readonly access: string } | { readonly error: string } | undefined;
@@ -86,7 +122,7 @@ function claudeAccounts(stored: Credential | undefined, sources: AccountSources)
 				// slot the way a turn records it, so later polls stop at the auth_error branch above instead of asking
 				// the token endpoint again; only /login (or a turn's one-shot recovery) lifts it.
 				if (signal.aborted || error instanceof CredentialStoreBusyError) return undefined;
-				if (!isGrantRejected(error)) return undefined;
+				if (!tokenEndpointRejected(error)) return undefined;
 				try {
 					await markAuthRejected(sources, slot.name, slot.refresh);
 				} catch {

@@ -186,7 +186,6 @@ Four global default extension factories load separately:
 ### Other bundled surfaces
 
 - `codemode` is bundled as `@code-yeongyu/senpi-codemode`.
-- `llama.cpp` is a hidden inline extension.
 - `.codex-plugin/plugin.json` belongs to the hooks plugin-manifest loader. Runtime-discovered
   hook plugins are user resources; no hook plugin is bundled by this repository.
 
@@ -619,7 +618,7 @@ For the next release:
 
 1. Start from a clean, current `main`.
 2. Audit every commit since the latest tag.
-3. Update all affected package `[Unreleased]` sections.
+3. Record affected-package changelog entries in `changes/unreleased/<pr>.md`; the release cut compiles them before stamping.
 4. Duplicate user-facing AI, agent, and TUI changes into the coding-agent changelog.
 5. Query registry-verifiable plugin dependencies for newer exact versions.
 6. Preserve vendored snapshots when no authoritative upstream source is available.

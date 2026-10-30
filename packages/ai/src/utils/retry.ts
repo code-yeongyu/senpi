@@ -486,6 +486,8 @@ export async function retryAssistantCall(
  * before restarting the assistant turn.
  */
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
+	// A route that does not serve the model answers the same on every attempt, whatever status wraps it.
+	if (message.errorCause?.type === "model_config") return false;
 	if (
 		message.stopReason === "error" &&
 		message.diagnostics?.some((diagnostic) => diagnostic.type === OAUTH_REFRESH_UNAVAILABLE_DIAGNOSTIC)

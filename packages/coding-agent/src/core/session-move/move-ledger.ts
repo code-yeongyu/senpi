@@ -1,5 +1,4 @@
-import { mkdirSync } from "node:fs";
-import { readFile, rename as renameFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename as renameFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serializeByKey } from "../session-sidecar-store.ts";
 import { parseMoveId } from "./bundle.ts";
@@ -161,7 +160,7 @@ export class MoveLedger {
 		here: {
 			readonly movedIn: boolean;
 			readonly revoked?: boolean;
-			readonly landed?: (target: string) => LandingOutcome;
+			readonly landed?: (target: string) => LandingOutcome | Promise<LandingOutcome>;
 		},
 	): Promise<MoveAnswer> {
 		return this.locked(moveId, async (): Promise<MoveAnswer> => {
@@ -190,10 +189,12 @@ export class MoveLedger {
 	fail(
 		moveId: MoveId,
 		reason: FailReason,
-		options: { readonly unlessLanded?: () => boolean } = {},
+		options: { readonly unlessLanded?: () => boolean | Promise<boolean> } = {},
 	): Promise<MoveRecord | undefined> {
-		return this.locked(moveId, () =>
-			options.unlessLanded?.() ? this.current(moveId) : this.settleLocked(moveId, { state: "failed", reason }, []),
+		return this.locked(moveId, async () =>
+			(await options.unlessLanded?.())
+				? this.current(moveId)
+				: this.settleLocked(moveId, { state: "failed", reason }, []),
 		);
 	}
 
@@ -203,13 +204,18 @@ export class MoveLedger {
 	 * file at the target then decides (`confirmLanded`, `reconcile`). Only the recorded target may be renamed into.
 	 * `prepare` runs before the stamp: whatever it does or refuses lands nothing, so a refusal there still records failed.
 	 */
-	commit<T>(moveId: MoveId, target: string, rename: () => T | Promise<T>, prepare?: () => void): Promise<T> {
+	commit<T>(
+		moveId: MoveId,
+		target: string,
+		rename: () => T | Promise<T>,
+		prepare?: () => void | Promise<void>,
+	): Promise<T> {
 		return this.locked(moveId, async () => {
 			const record = await this.read(moveId);
 			const landing = await this.landing(moveId);
 			if (!landsAt(record, landing, target))
 				throw new MoveFencedError(moveId, record, landedElsewhere(record, landing));
-			prepare?.();
+			await prepare?.();
 			await this.write(moveId, { state: "receiving" }, { target, committing: true });
 			moveStep("import:stamped");
 			const result = await rename();
@@ -245,11 +251,11 @@ export class MoveLedger {
 	private async reconcile(
 		moveId: MoveId,
 		record: MoveRecord | undefined,
-		landed: ((target: string) => LandingOutcome) | undefined,
+		landed: ((target: string) => LandingOutcome | Promise<LandingOutcome>) | undefined,
 	): Promise<MoveRecord | undefined> {
 		const { target, committing } = await this.landing(moveId);
 		if (landed === undefined || target === undefined) return record;
-		const next = settledLanding(record, committing === true, landed(target));
+		const next = settledLanding(record, committing === true, await landed(target));
 		if (next === undefined) return record;
 		await this.write(moveId, next, { target });
 		return next;
@@ -340,7 +346,7 @@ export class MoveLedger {
 	private locked<T>(moveId: MoveId, fn: () => T | Promise<T>): Promise<T> {
 		const file = this.path(moveId);
 		return serializeByKey(file, async () => {
-			mkdirSync(this.dir, { recursive: true });
+			await mkdir(this.dir, { recursive: true });
 			return this.#locks.hold(file, fn);
 		});
 	}

@@ -49,7 +49,7 @@ const TodoOperationSchema = Type.Union(
 		Type.Literal("append"),
 		Type.Literal("view"),
 	],
-	{ description: "Operation to perform. Required — always pass it explicitly." },
+	{ description: "Operation to perform. Required: always pass it explicitly." },
 );
 
 const TodoPhaseInputSchema = Type.Object({
@@ -160,7 +160,7 @@ function formatPhaseSummary(phase: TodoPhase, index: number, theme: Theme): stri
 	const closed = phase.tasks.filter((task) => task.status === "completed" || task.status === "abandoned").length;
 	return theme.fg(
 		"dim",
-		`${phaseRomanNumeral(index)}. ${sanitizeTodoText(phase.name)} — ${closed}/${phase.tasks.length} done`,
+		`${phaseRomanNumeral(index)}. ${sanitizeTodoText(phase.name)} - ${closed}/${phase.tasks.length} done`,
 	);
 }
 

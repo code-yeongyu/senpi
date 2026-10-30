@@ -4,11 +4,11 @@ import { createEvalTool } from "../src/tool/eval-tool.ts";
 import type { EvalLanguage } from "../src/tool/types.ts";
 import { FakeKernel, FakeManager, fakeExtensionContext, result } from "./eval/fakes.ts";
 
-const LANGUAGE_TEACHING_ERROR = 'eval run requires language — one of "js", "py", "rb", "jl"';
-const JS_ONLY_LANGUAGE_TEACHING_ERROR = 'eval run requires language — one of "js"';
-const DEFAULT_ENABLED_LANGUAGE_TEACHING_ERROR = 'eval run requires language — one of "js", "py"';
+const LANGUAGE_TEACHING_ERROR = 'eval run requires language: one of "js", "py", "rb", "jl"';
+const JS_ONLY_LANGUAGE_TEACHING_ERROR = 'eval run requires language: one of "js"';
+const DEFAULT_ENABLED_LANGUAGE_TEACHING_ERROR = 'eval run requires language: one of "js", "py"';
 const INVALID_LANGUAGE_ERROR = "eval run language must be one of: js, py, rb, jl";
-const CODE_TEACHING_ERROR = "eval run requires code — the cell body to execute, verbatim";
+const CODE_TEACHING_ERROR = "eval run requires code: the cell body to execute, verbatim";
 const LANGUAGE_SCHEMA_DESCRIPTION =
 	"REQUIRED for run. Kernel that runs the cell; each language keeps its own persistent state across eval calls.";
 const CODE_SCHEMA_DESCRIPTION = "REQUIRED for run. Cell body, verbatim.";

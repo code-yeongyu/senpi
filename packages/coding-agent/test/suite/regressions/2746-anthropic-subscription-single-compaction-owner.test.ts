@@ -100,7 +100,7 @@ const promptTooLong: Reply = (sessionId) => [
 
 const residentStreamFn: StreamFn = (model, context, options) =>
 	wrapStreamWithModelRecovery(
-		streamAnthropicSubscription(model, context, options),
+		streamAnthropicSubscription(model, context, { cwd: process.cwd(), ...options }),
 		model,
 		getCurrentTools(context.messages),
 	);
@@ -144,7 +144,7 @@ function servingQuery(queries: readonly ScriptedResidentQuery[]): ScriptedReside
 
 /** One owner, never zero: native auto-compact is on exactly when senpi stands down. */
 function expectSingleOwner(query: ScriptedResidentQuery | undefined, senpiOwns: boolean): void {
-	expect(query?.options?.settings).toEqual({ autoCompactEnabled: !senpiOwns });
+	expect(query?.options?.settings).toEqual({ autoCompactEnabled: !senpiOwns, autoMemoryEnabled: false });
 }
 
 function lastAssistant(harness: Harness): AssistantMessage | undefined {

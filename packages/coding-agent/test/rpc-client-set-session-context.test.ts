@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { attachJsonlLineReader, serializeJsonLine } from "../src/modes/rpc/jsonl.ts";
 import { RpcClient, RpcCommandError } from "../src/modes/rpc/rpc-client.ts";
+import { answerProtocolInfo } from "./helpers/rpc-legacy-protocol.ts";
 
 type Answer = (command: Record<string, unknown>) => Record<string, unknown>;
 
@@ -20,6 +21,7 @@ async function wireHost(answer: Answer) {
 	const server: Server = createServer((socket) => {
 		attachJsonlLineReader(socket, (line) => {
 			const command = JSON.parse(line) as Record<string, unknown>;
+			if (answerProtocolInfo(socket, command)) return;
 			received.push(command);
 			const base = { type: "response", id: command.id, command: command.type };
 			if (command.type === "open_session") {

@@ -94,7 +94,8 @@ async function createResidentAttempt(
 	const fingerprint = configFingerprint(auth.options, input.context, auth.authLane, auth.accountName);
 	const residentHashes = existing ? (sentHashesForEntry(existing) ?? hashes) : hashes;
 	const { binding, transcriptAvailable } = await admitRestoredBinding(sessionId, auth.options.cwd, auth.authLane);
-	const lineageSeat = existing?.accountName ?? getBinding(sessionId)?.accountName ?? binding?.accountName;
+	const servedLineage = getBinding(sessionId);
+	const lineageSeat = existing?.accountName ?? servedLineage?.accountName ?? binding?.accountName;
 	const seat = {
 		seat: seatDigest(auth.accountName),
 		...(lineageSeat === undefined ? {} : { seatChanged: lineageSeat !== auth.accountName }),
@@ -199,6 +200,8 @@ async function createResidentAttempt(
 		? flattenResult.blocks
 		: buildDeltaPromptBlocks(messages.slice(from), input.customToolNameToSdk);
 	const payloadBytes = flattenResult ? serializedPayloadBytes(flattenResult.blocks) : undefined;
+	const divergedPath =
+		observedReason === "assistant_rewritten" ? (existing?.pendingForkDivergedPath ?? undefined) : undefined;
 	const staged = stageContinuityDecision(
 		{
 			...observeSessionSyncDecision({
@@ -211,6 +214,7 @@ async function createResidentAttempt(
 				...(flattenResult?.collapsedDirectives !== undefined
 					? { collapsedDirectives: flattenResult.collapsedDirectives }
 					: {}),
+				...(divergedPath === undefined ? {} : { divergedPath }),
 			}),
 			...seat,
 		},
@@ -221,7 +225,14 @@ async function createResidentAttempt(
 		// cause pending for the next admission.
 		() => consumePendingCloseCause(sessionId),
 	);
-	return createSessionTurnAttempt(entry, userMessage(blocks), hashes, input.streamOptions.signal, staged);
+	return createSessionTurnAttempt(
+		entry,
+		userMessage(blocks),
+		hashes,
+		input.streamOptions.signal,
+		staged,
+		servedLineage,
+	);
 }
 
 export async function* residentSessionMessages(input: ResidentSessionStreamInput): AsyncGenerator<SDKMessage> {

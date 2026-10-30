@@ -527,7 +527,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 	context: TranscriptContext,
 	options?: OpenAICompletionsOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const normalizedContext = resolveTranscript(context, getCompat(model).supportsMidConvoSystemMessages);
 
 	(async () => {
@@ -852,17 +852,25 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				for (const block of blocks) {
 					const contentIndex = getContentIndex(block);
 					if (block.type === "text") {
-						stream.push({ type: "text_start", contentIndex, partial: output });
+						stream.push({ type: "text_start", contentIndex, partial: output }, { offset: 0 });
 						for (const delta of deferredTextDeltas) {
 							stream.push({ type: "text_delta", contentIndex, delta, partial: output });
 						}
 					} else if (block.type === "thinking") {
-						stream.push({ type: "thinking_start", contentIndex, partial: output });
+						stream.push({ type: "thinking_start", contentIndex, partial: output }, { offset: 0 });
 						for (const delta of deferredThinkingDeltas) {
 							stream.push({ type: "thinking_delta", contentIndex, delta, partial: output });
 						}
 					} else {
-						stream.push({ type: "toolcall_start", contentIndex, partial: output });
+						const rawArgumentPrefix = (deferredToolCallDeltas.get(block) ?? []).join("");
+						stream.push(
+							{ type: "toolcall_start", contentIndex, partial: output },
+							{
+								rawArgumentPrefix,
+								parsedThrough: rawArgumentPrefix.length,
+								offset: 0,
+							},
+						);
 						for (const delta of deferredToolCallDeltas.get(block) ?? []) {
 							stream.push({ type: "toolcall_delta", contentIndex, delta, partial: output });
 						}

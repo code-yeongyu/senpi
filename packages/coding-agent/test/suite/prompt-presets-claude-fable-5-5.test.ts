@@ -81,6 +81,7 @@ describe("Fable 5.5 provisional preset (senpi#3893)", () => {
 		(id) => {
 			const current = model(id);
 			const options = buildAnthropicSubscriptionQueryOptions({
+				cwd: process.cwd(),
 				model: current,
 				context: { messages: [] },
 				providerSettings: {},

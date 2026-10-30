@@ -135,4 +135,33 @@ export function registerLegacyProjectionDifferentialCase(): void {
 		]);
 		expect(result).toStrictEqual(parentMessage([thought, redacted, text]));
 	});
+
+	it("#given a turn on a model with no known price #when the legacy wrapper projects it #then usage keeps costUnknown (senpi#3844)", async () => {
+		// given
+		const inner = new AssistantMessageEventStream();
+		const wrapped = wrapStreamWithToolCallMiddleware(inner, getProtocol("hermes"), [weatherTool]);
+		const unpriced = sourceMessage([{ type: "text", text: "ok" }]);
+		unpriced.usage = {
+			...unpriced.usage,
+			costUnknown: true,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+
+		// when
+		inner.push({ type: "start", partial: structuredClone({ ...unpriced, content: [] }) });
+		inner.push({
+			type: "text_start",
+			contentIndex: 0,
+			partial: structuredClone({ ...unpriced, content: [{ type: "text", text: "" }] }),
+		});
+		inner.push({ type: "text_delta", contentIndex: 0, delta: "ok", partial: structuredClone(unpriced) });
+		inner.push({ type: "text_end", contentIndex: 0, content: "ok", partial: structuredClone(unpriced) });
+		inner.push({ type: "done", reason: "stop", message: structuredClone(unpriced) });
+		const result = await wrapped.result();
+
+		// then: the flag survives, while the legacy projection still omits the token splits
+		expect(result.usage.costUnknown).toBe(true);
+		expect(result.usage.reasoning).toBeUndefined();
+		expect(result.usage.cacheWrite1h).toBeUndefined();
+	});
 }

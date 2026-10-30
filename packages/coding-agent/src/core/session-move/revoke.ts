@@ -1,4 +1,4 @@
-import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
+import { loadEntriesFromFileAsync, SessionManager } from "../session-manager.ts";
 import type { MoveLedger } from "./move-ledger.ts";
 import { moveStep } from "./move-steps.ts";
 import {
@@ -18,7 +18,7 @@ export interface RevokeMoveOptions {
 	/** This device's move record; its accepted record is marked revoked once the copy is sealed. */
 	readonly ledger: MoveLedger;
 	/** Runs inside the move lock before anything is read; throw to refuse. */
-	readonly guard?: () => void;
+	readonly guard?: () => void | Promise<void>;
 }
 
 export class RevokeMismatchError extends Error {
@@ -52,7 +52,7 @@ export function revokeImportedMove(options: RevokeMoveOptions): Promise<void> {
 	return withSessionMoveLock(
 		options.sessionFile,
 		async () => {
-			seal(options.sessionFile, options.moveId);
+			await seal(options.sessionFile, options.moveId);
 			moveStep("revoke:sealed");
 			await options.ledger.markRevoked(options.moveId);
 			moveStep("revoke:marked");
@@ -61,8 +61,8 @@ export function revokeImportedMove(options: RevokeMoveOptions): Promise<void> {
 	);
 }
 
-function seal(sessionFile: string, moveId: MoveId): void {
-	const entries = loadEntriesFromFile(sessionFile);
+async function seal(sessionFile: string, moveId: MoveId): Promise<void> {
+	const entries = await loadEntriesFromFileAsync(sessionFile);
 	const sessionId = headerSessionId(entries);
 	let ownership: SessionOwnership = { writable: true };
 	let latest: EntryLike | undefined;
@@ -76,7 +76,7 @@ function seal(sessionFile: string, moveId: MoveId): void {
 	if (ofThisMove && latest?.customType === SESSION_MOVED && data(latest, "reason") === REVOKED) return;
 	if (!(ownership.writable && ofThisMove && latest?.customType === SESSION_MOVED_IN))
 		throw new RevokeMismatchError(moveId);
-	SessionManager.open(sessionFile).appendCustomEntry(SESSION_MOVED, {
+	(await SessionManager.openAsync(sessionFile)).appendCustomEntry(SESSION_MOVED, {
 		move_id: moveId,
 		session_id: sessionId ?? "",
 		target: data(latest, "from") ?? "",

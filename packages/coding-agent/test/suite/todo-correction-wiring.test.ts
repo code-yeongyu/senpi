@@ -111,7 +111,7 @@ describe("todo correction wiring", () => {
 
 	it("advertises explicit operation and exact-reference schema guidance without auto-correction", () => {
 		expect(schemaDescription(TODO_PARAMS_SCHEMA.properties.op)).toBe(
-			"Operation to perform. Required — always pass it explicitly.",
+			"Operation to perform. Required: always pass it explicitly.",
 		);
 		expect(schemaDescription(TODO_PARAMS_SCHEMA.properties.list)).toBe("Phased task list for init");
 		expect(schemaDescription(TODO_PARAMS_SCHEMA.properties.task)).toBe(
@@ -217,7 +217,7 @@ describe("todo correction wiring", () => {
 				undefined,
 				context as ExtensionToolContext,
 			),
-		).rejects.toThrow('Blank "task" — pass the exact task text, or omit the field entirely for a bulk operation.');
+		).rejects.toThrow('Blank "task": pass the exact task text, or omit the field entirely for a bulk operation.');
 		expect(getCurrentPhases()).toEqual(initialPhases);
 	});
 
@@ -264,7 +264,7 @@ describe("todo correction wiring", () => {
 				],
 				storage: "memory" as const,
 				corrections: [
-					'[auto-matched] task " deploy api " -> "Deploy API" — pass the exact text from the previous todo result next time',
+					'[auto-matched] task " deploy api " -> "Deploy API": pass the exact text from the previous todo result next time',
 				],
 			},
 		} satisfies { content: { type: "text"; text: string }[]; details: TodoToolDetails };

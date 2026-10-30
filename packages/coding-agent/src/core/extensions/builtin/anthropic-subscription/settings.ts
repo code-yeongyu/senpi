@@ -2,6 +2,7 @@ import { getAgentDir } from "../../../../config.ts";
 import { getFileContentRevision } from "../../../../utils/paths.ts";
 import { getSettingsPath, type Settings, SettingsManager } from "../../../settings-manager.ts";
 import type { SettingSource } from "./sdk-boundary.ts";
+import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 
 export type AnthropicSubscriptionSystemPromptMode = "preset-append" | "full" | "override";
 export type AnthropicSubscriptionResumeMode = "auto" | "off";
@@ -222,7 +223,10 @@ function settingsFingerprint(path: string): string {
 let cachedAnthropicSubscriptionManager: { cwd: string; key: string; manager: SettingsManager } | undefined;
 
 /** Load settings from Senpi's configured global and project settings.json paths. */
-export function loadAnthropicSubscriptionProviderSettingsFromDisk(cwd: string): AnthropicSubscriptionProviderSettings {
+export function loadAnthropicSubscriptionProviderSettingsFromDisk(
+	sessionCwd: string,
+): AnthropicSubscriptionProviderSettings {
+	const cwd = requireAnthropicSubscriptionCwd(sessionCwd);
 	// fallbackEligible() calls this per candidate probe; cache the manager by
 	// (cwd, settings content revision) and re-apply env live to avoid locked disk reads.
 	const agentDir = getAgentDir();

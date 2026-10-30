@@ -7,6 +7,7 @@ type AssistantUsage = {
 	cacheRead: number;
 	cacheWrite: number;
 	cost: { total: number };
+	costUnknown?: true;
 };
 
 type FooterUsageEntry =
@@ -65,6 +66,7 @@ export function createFooterSession(options: FooterSessionOptions): AgentSession
 					cacheRead: 0,
 					cacheWrite: 0,
 					cost: 0,
+					costUnknown: undefined as true | undefined,
 					latestCacheHitRate: undefined as number | undefined,
 				};
 				for (const entry of entries) {
@@ -74,6 +76,7 @@ export function createFooterSession(options: FooterSessionOptions): AgentSession
 					totals.cacheRead += usage.cacheRead;
 					totals.cacheWrite += usage.cacheWrite;
 					totals.cost += usage.cost.total;
+					if (usage.costUnknown) totals.costUnknown = true;
 					if (entry.type === "message" && entry.message.role === "assistant") {
 						const latestPromptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 						totals.latestCacheHitRate =

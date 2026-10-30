@@ -1,5 +1,6 @@
 /** Starting a fresh generation for `ensureHost`: settings first, then the supervisor, its pidfile, its readiness. */
 import { spawn } from "node:child_process";
+import { spawnWithPrivateFds } from "../../private-fd-spawn.ts";
 import { randomUUID } from "node:crypto";
 import { open, readFile } from "node:fs/promises";
 import { engineBuildIdentity } from "../../core/engine-build-identity.ts";
@@ -28,7 +29,8 @@ import { keepOwnerPipe, OWNER_WATCH_FD } from "./host-lifecycle-launch.ts";
 import { type ChildExit, pollProtocolInfo } from "./host-readiness.ts";
 import { initialHostEnvironment } from "./host-spawn-environment.ts";
 import { hostLaunchProfile } from "./protocol-identity.ts";
-import { createSocketSecret, socketSecretPath } from "./socket-transport.ts";
+import { ensureSocketSecret, socketSecretPath } from "./socket-transport.ts";
+import { relayPresenterBootstrap } from "./mcp-presenter-bootstrap.ts";
 
 export const DEFAULT_READINESS_TIMEOUT_MS = 10_000;
 export { DEFAULT_STOP_TIMEOUT_MS };
@@ -56,8 +58,10 @@ export async function startHost(
 		reason,
 	});
 	// The settings file must exist before the supervisor reads it at boot, so it
-	// records the policy before the spawn instead of beside the pidfile.
-	if (process.platform === "win32") await createSocketSecret(socketSecretPath(socket));
+	// records the policy before the spawn instead of beside the pidfile. A valid public
+	// secret belongs to the endpoint, not to this start: clients that already read it
+	// derive the pipe name from it, so a start reuses it and never rotates it.
+	if (process.platform === "win32") await ensureSocketSecret(socketSecretPath(socket));
 	await writeHostSettings(paths, {
 		socket,
 		capabilities: PINNED_HOST_CLIENT_CAPABILITIES,
@@ -73,15 +77,18 @@ export async function startHost(
 	let child: ReturnType<typeof spawn> | undefined;
 	let exitedEarly: ChildExit | undefined;
 	let childExit: Promise<ChildExit> | undefined;
+	let presenterEnrollment: Promise<void> | undefined;
 	try {
 		const supervisorArgs = [
 			"--socket",
 			socket,
 			...(options.owner ? ["--owner-fd", String(OWNER_WATCH_FD)] : []),
+			...(options.presenterBootstrap ? ["--mcp-presenter-fd", "4"] : []),
+			...(options.mcpPresenterEnforcement ? ["--mcp-presenter-enforcement"] : []),
 			...(options.hostArgs ?? []),
 		];
 		const launch = testOptions?.spawn ?? testOptions?.launch?.(supervisorArgs) ?? defaultHostLaunch(supervisorArgs);
-		child = spawn(launch.command, [...launch.args], {
+		child = spawnWithPrivateFds(spawn, launch.command, [...launch.args], {
 			detached: true,
 			windowsHide: true,
 			env: initialHostEnvironment({
@@ -91,8 +98,17 @@ export async function startHost(
 				instanceId,
 				generation,
 			}),
-			stdio: options.owner ? ["ignore", "ignore", stderr.fd, "pipe"] : ["ignore", "ignore", stderr.fd],
+			stdio: options.presenterBootstrap
+				? ["ignore", "ignore", stderr.fd, options.owner ? "pipe" : "ignore", "pipe"]
+				: options.owner
+					? ["ignore", "ignore", stderr.fd, "pipe"]
+					: ["ignore", "ignore", stderr.fd],
 		});
+		if (options.presenterBootstrap)
+			presenterEnrollment = relayPresenterBootstrap(options.presenterBootstrap, child, {
+				kind: "initial",
+				predecessorHostInstance: null,
+			});
 		childExit = new Promise((resolveExit) => {
 			child!.once("exit", (code, signal) => {
 				exitedEarly = { code, signal };
@@ -157,7 +173,10 @@ export async function startHost(
 	}
 	const readinessTimeoutMs = testOptions?.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
 	const result = await pollProtocolInfo(socket, readinessTimeoutMs, isCompatible, childExit);
-	if (result.ready) return { pid: pidFile.pid, socket, reused: false, release: result.hold.release };
+	if (result.ready) {
+		await presenterEnrollment;
+		return { pid: pidFile.pid, socket, reused: false, release: result.hold.release };
+	}
 	await testOptions?.beforeReadinessTeardown?.();
 	// Teardown runs for the diagnostic's sake, so it must never replace it: a stop failure here
 	// (unreadable identity, a host that outlives SIGKILL) would otherwise propagate instead of the

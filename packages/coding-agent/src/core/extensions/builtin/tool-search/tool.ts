@@ -118,8 +118,8 @@ export function buildToolSearchResultText(input: ToolSearchResultInput): string 
 		const description = oneLine(match.doc.description) ?? "(no description)";
 		const parameters = compactParameters(input.parametersOf(match.name));
 		return parameters === undefined
-			? `- ${match.name} — ${description}`
-			: `- ${match.name} — ${description}\n  parameters: ${parameters}`;
+			? `- ${match.name} - ${description}`
+			: `- ${match.name} - ${description}\n  parameters: ${parameters}`;
 	});
 	const lines = [
 		`Found ${matches.length} tool(s) matching "${query}"${scopeText}. Nothing was activated; call one by name and it activates on that first call:`,

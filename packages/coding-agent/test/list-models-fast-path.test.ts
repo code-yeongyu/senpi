@@ -8,7 +8,8 @@ import type {
 	CreateAgentSessionServicesOptions,
 	createAgentSessionFromServices as createAgentSessionFromServicesType,
 } from "../src/core/agent-session-services.ts";
-import { createLlamaProvider, LLAMA_PROVIDER_ID } from "../src/extensions/llama/provider.ts";
+
+const GENERIC_PROVIDER_ID = "generic-local";
 
 class ProcessExitError extends Error {
 	readonly code: string | number | null | undefined;
@@ -152,7 +153,7 @@ describe("--list-models fast path", () => {
 		});
 
 		await expect(main(["--list-models"])).rejects.toMatchObject({ code: 0 });
-		expect(capturedServices?.modelRuntime.getProviders().map((provider) => provider.id)).toContain(LLAMA_PROVIDER_ID);
+		expect(capturedServices?.modelRuntime.getProviders().map((provider) => provider.id)).toContain("openai");
 	});
 
 	it("lets caller extension factories override built-in providers for --list-models", async () => {
@@ -192,16 +193,21 @@ describe("--list-models fast path", () => {
 			main(["--list-models"], {
 				extensionFactories: [
 					{
-						name: "llama-override",
+						name: "generic-override",
 						factory: (pi) => {
-							pi.registerProvider({ ...createLlamaProvider().provider, name: "override llama" });
+							pi.registerProvider(GENERIC_PROVIDER_ID, {
+								name: "override generic",
+								baseUrl: "http://localhost:8080/v1",
+								api: "openai-completions",
+								models: [],
+							});
 						},
 						hidden: true,
 					},
 				],
 			}),
 		).rejects.toMatchObject({ code: 0 });
-		expect(capturedServices?.modelRuntime.getProvider(LLAMA_PROVIDER_ID)?.name).toBe("override llama");
+		expect(capturedServices?.modelRuntime.getProvider(GENERIC_PROVIDER_ID)?.name).toBe("override generic");
 	});
 
 	it("loads only model-listing resources for --list-models", async () => {

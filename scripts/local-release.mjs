@@ -205,7 +205,10 @@ function main() {
 	mkdirSync(tarballDirectory, { recursive: true });
 
 	if (!options.skipCheck || !options.skipTest) {
-		run("npm", ["--prefix", "packages/ai", "run", "generate-models"], { cwd: repoRoot });
+		// senpi#4067: same release opt-in as scripts/release-artifacts.mjs runGenerateModels.
+		run("npm", ["--prefix", "packages/ai", "run", "generate-models", "--", "--keep-last-good-opengateway"], {
+			cwd: repoRoot,
+		});
 		// senpi#2645: a regeneration that drops a bundled provider default stops here.
 		run("npm", ["--prefix", "packages/coding-agent", "run", "check:provider-defaults"], { cwd: repoRoot, env: { CI: "1" } });
 	}

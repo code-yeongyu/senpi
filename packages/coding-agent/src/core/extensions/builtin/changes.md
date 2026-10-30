@@ -1,3 +1,58 @@
+## 2026-10-27 - Kimi recommendations and the look-at chain move to K3.1 Pro (senpi#4443)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/recommended-models/index.ts`: the Kimi rung of `RECOMMENDED_DEFAULT_MODELS` is `kimi-k3.1-pro` at `max` (was `kimi-k3`); `canonicalModelId` maps Kimi Code's bare `k3.1-pro` to `kimi-k3.1-pro` as it maps `k3` to `kimi-k3`.
+- `packages/coding-agent/src/core/extensions/builtin/look-at/model-selector.ts`: `DEFAULT_LOOK_AT_CHAIN` ends at `kimi-k3.1-pro` (was `kimi-k3`).
+
+### Why
+
+- Kimi K3.1 Pro replaces K3 as Moonshot's flagship (senpi#4441); implicit Kimi picks should land on it.
+
+### Why an extension could not handle it
+
+- These are the builtin extensions' own shipped defaults.
+
+### Expected merge conflict zones
+
+- LOW: the `RECOMMENDED_DEFAULT_MODELS` table and `DEFAULT_LOOK_AT_CHAIN`.
+
+## 2026-10-26 - vertex-garden ambient auth carries a resolved project (senpi#4339)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts`: the ambient resolver resolves the target project (process env, then the sibling google-vertex stored profile env) and returns it in the ambient `AuthResult.env`; availability still tracks the ADC chain alone (no return of the reverted env-only gate, 9a497be00).
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts`: with a plain ADC login, no env vars and no quota project, the first garden request threw "Vertex AI requires a project ID" while google-vertex worked off the same login.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/vertex-model-garden/auth.ts`: needs the new `storedProviderEnv` input plus `AuthResult.env` flow through `ambientApiKeyAuth` — both core-owned.
+
+### Expected merge conflict zones
+
+- LOW: `resolveVertexModelGardenAmbient` body.
+
+## 2026-10-23 - show_html_page points at the visualize skill again (senpi#2869)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/html-render/tool.ts`: the `show_html_page` description gains one sentence, "Load the visualize skill before building the page." The guidelines are unchanged, so the pointer appears once.
+
+### Why
+
+- The 2026-10-06 entry removed the pointer until the skill shipped. The `visualize` skill now ships in released omo (oh-my-openagent#9702), so the description names it without restating its content.
+
+### Why an extension could not handle it
+
+- `show_html_page` is this builtin's own tool; its description is defined here.
+
+### Expected merge conflict zones
+
+- LOW: the `description` string of `showHtmlPageTool` in `html-render/tool.ts`.
+
 ## 2026-10-21 - The TPS notice uses the shared generation-window rule (senpi#3879)
 
 ### What changed
@@ -33,6 +88,42 @@
 ### Expected merge conflict zones
 
 - LOW: `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`, `promptTokensOfFirstReply`.
+
+## 2026-10-21 - Deliver a resumed question's answer as a user message (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` passes `deliver: "user-message"` for a question resumed after a restart, as it already did for an async question; only a live blocking question passes `tool-result`.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: a resumed question's answer is delivered by `deliverAnswer`, whose question-input release reports it as human input. The RPC adapter reports `tool-result` answers itself, so the option must say which path delivers the answer or one answer counts twice.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the builtin owns answer delivery for every surface, while lifecycle accounting belongs to the engine.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the `deliver` member of the question dialog options in `startQuestion`.
+
+## 2026-10-21 - Declare lifecycle wake-source obligation kinds (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `WakeSourceStateEvent` accepts an optional `children` or `background` kind. Publishers without it retain background semantics.
+
+### Why
+
+Child work must remain distinct from monitors and background jobs in lifecycle accounting.
+
+### Why an extension could not handle it
+
+The shared cross-package event contract is engine-owned.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `WakeSourceStateEvent`.
 
 ## 2026-10-21 - Distinguish human question answers from automatic timeouts (senpi#3853)
 

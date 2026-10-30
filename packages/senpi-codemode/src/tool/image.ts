@@ -122,7 +122,7 @@ export class EvalOutputCollector {
 		if (message.mimeType.startsWith("image/")) {
 			const image = validateDisplayImage(message.dataBase64);
 			if ("reason" in image) {
-				this.#sink.push(`[display: image dropped \u2014 ${image.reason}]\n`);
+				this.#sink.push(`[display: image dropped - ${image.reason}]\n`);
 				return;
 			}
 			if (

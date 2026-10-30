@@ -8,10 +8,12 @@
   ],
   "jsPlugins": [
     "./scripts/oxlint/model-type-comparison.ts",
-    "./scripts/oxlint/biome-ports.ts"
+    "./scripts/oxlint/biome-ports.ts",
+    "./scripts/oxlint/copy.mjs"
   ],
   "categories": {},
   "rules": {
+    "senpi-copy/require-suppression-reason": "error",
     "eslint/array-callback-return": "error",
     "eslint/constructor-super": "error",
     "eslint/default-case-last": "error",
@@ -285,14 +287,36 @@
     "typescript/unbound-method": "off",
     "typescript/use-unknown-in-catch-callback-variable": "off"
   },
+  "overrides": [
+    {
+      "files": ["packages/*/src/**", "packages/session-backends/*/src/**"],
+      "excludeFiles": [
+        "**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+        "**/{test,tests,testkit,fixtures,testUtils,_generated,gen,vendor}/**",
+        "**/*.{gen,generated}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}"
+      ],
+      "rules": { "senpi-copy/no-em-dash-copy": "error" }
+    }
+  ],
   "ignorePatterns": [
     "**/*",
     "!**/",
     "!scripts/model-catalog-protocol.ts",
     "!scripts/model-catalog-protocol.test.ts",
     "!packages/*/src/**/*.ts",
+    "!packages/*/src/**/*.tsx",
+    "!packages/*/src/**/*.js",
+    "!packages/*/src/**/*.jsx",
+    "!packages/*/src/**/*.mjs",
+    "!packages/*/src/**/*.cjs",
+    "!packages/*/src/**/*.mts",
+    "!packages/*/src/**/*.cts",
     "!packages/*/test/**/*.ts",
     "!packages/session-backends/*/src/**/*.ts",
+    "!packages/session-backends/*/src/**/*.mjs",
+    "!packages/session-backends/*/src/**/*.cjs",
+    "!packages/session-backends/*/src/**/*.mts",
+    "!packages/session-backends/*/src/**/*.cts",
     "!packages/session-backends/*/test/**/*.ts",
     "!packages/coding-agent/examples/**/*.ts",
     "**/node_modules/**",

@@ -267,7 +267,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 		configureAuth(store, managedEnvironment(), undefined, "oauth-slots");
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
-		await streamAnthropicSubscription(model, context).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		expect(captured).toHaveLength(1);
 		expect(captured[0]?.env).toMatchObject({ PATH: "/usr/bin", CLAUDE_CODE_OAUTH_TOKEN: "slot-access" });
@@ -285,7 +285,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 		configureAuth(new InMemoryCredentialStore(), ambientEnvironment);
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
-		await streamAnthropicSubscription(model, context).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		expect(captured).toHaveLength(1);
 		expect(captured[0]?.env).toBeDefined();
@@ -311,7 +311,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 		});
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
-		await streamAnthropicSubscription(model, context, { signal: controller.signal }).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd(), signal: controller.signal }).result();
 
 		expect(refreshes).toBe(1);
 		expect(receivedSignal).toBe(controller.signal);
@@ -335,7 +335,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 			JSON.stringify({ claudeSdkOauthProvider: { tokenInjection: "config-dir" } }),
 		);
 
-		await streamAnthropicSubscription(model, context).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		const configDir = join(agentDir, "anthropic-subscription-accounts", "work");
 		expect(captured[0]?.env?.CLAUDE_CONFIG_DIR).toBe(configDir);
@@ -360,7 +360,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 			configureAuth(store, ambientEnvironment, undefined, lane === "ambient" ? undefined : lane);
 			overrideSdkBoundary({ query: queryCapturing(captured) });
 
-			await streamAnthropicSubscription(model, context).result();
+			await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 			expect(captured).toHaveLength(1);
 			const env = captured[0]?.env ?? {};
@@ -384,7 +384,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 		const captured: Options[] = [];
 		overrideSdkBoundary({ query: queryCapturing(captured) });
 
-		await streamAnthropicSubscription(model, context).result();
+		await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 		expect(captured[0]?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe(hrwLast === "A" ? "access-a" : "access-b");
 	});
@@ -413,7 +413,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 		const result = await streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
-			{ sessionId, streamKind: "main" },
+			{ cwd: process.cwd(), sessionId, streamKind: "main" },
 		).result();
 
 		expect(result.content).toEqual([{ type: "text", text: "ok" }]);
@@ -448,7 +448,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 		const result = await streamAnthropicSubscription(
 			model,
 			{ messages: [{ role: "user", content: "hello", timestamp: 1 }] },
-			{ sessionId, streamKind: "main" },
+			{ cwd: process.cwd(), sessionId, streamKind: "main" },
 		).result();
 
 		expect(result.stopReason).toBe("error");
@@ -475,7 +475,7 @@ describe("Claude SDK OAuth auth lanes", () => {
 		const unsubscribe = subscribeProviderAccountEvents((event) => accountEvents.push(event));
 
 		try {
-			const result = await streamAnthropicSubscription(model, context).result();
+			const result = await streamAnthropicSubscription(model, context, { cwd: process.cwd() }).result();
 
 			expect(result.content).toEqual([{ type: "text", text: "ok" }]);
 			expect(captured.map((options) => options.env?.CLAUDE_CODE_OAUTH_TOKEN)).toEqual(["valid-access"]);

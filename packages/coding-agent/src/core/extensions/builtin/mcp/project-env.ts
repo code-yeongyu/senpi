@@ -1,5 +1,5 @@
 import { interpolateValue } from "./config.ts";
-import type { McpServerDeclaration } from "./config-schema.ts";
+import type { PlainMcpServerDeclaration } from "./config-references.ts";
 
 /** Shared F4 fixture contract: finite names, never an LC_* or proxy wildcard. */
 export const PROJECT_MCP_SAFE_BASE_NAMES = [
@@ -90,12 +90,12 @@ function inherited(ambient: Environment, names: readonly string[]): Record<strin
 }
 /** Pure policy calculation; only `withheld` is allowed into diagnostics/logs. */
 export function projectMcpEnvironment(
-	raw: McpServerDeclaration,
+	raw: PlainMcpServerDeclaration,
 	trusted: boolean,
 	granted: readonly string[],
 	explicit: Environment | undefined = undefined,
 	ambient: Environment = process.env,
-): { declaration: McpServerDeclaration; env: Record<string, string>; withheld: string[] } {
+): { declaration: PlainMcpServerDeclaration; env: Record<string, string>; withheld: string[] } {
 	const remote = (raw.type ?? (raw.url ? "http" : "stdio")) !== "stdio";
 	const env = mergeProjectEnv([
 		inherited(ambient, PROJECT_MCP_SAFE_BASE_NAMES),
@@ -134,7 +134,7 @@ export function projectMcpEnvironment(
 	};
 	// Preserve absent fields: adding args:undefined would overwrite the
 	// normalizer's default array when it spreads the declaration.
-	const declaration: McpServerDeclaration = { ...raw };
+	const declaration: PlainMcpServerDeclaration = { ...raw };
 	if (raw.command !== undefined) declaration.command = expand(raw.command, "command");
 	if (raw.cwd !== undefined) declaration.cwd = expand(raw.cwd, "cwd");
 	if (raw.args !== undefined) declaration.args = raw.args.map((arg) => expand(arg, "args"));

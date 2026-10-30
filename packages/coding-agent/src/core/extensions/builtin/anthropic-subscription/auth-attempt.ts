@@ -1,7 +1,9 @@
 import { subscriptionLimits } from "../../../subscription-limits/limit-store.ts";
 import { claudeWindowsFromSdkEvent } from "../../../subscription-limits/limit-windows.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
+import { attemptAccountContext, logAttemptAccount, rememberAccountContext } from "./account-context.ts";
 import type { AccountSlot } from "./accounts.ts";
+import type { PinSource } from "./affinity.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 import type { AnthropicSubscriptionTokenInjection } from "./settings.ts";
 
@@ -9,6 +11,7 @@ export type AuthenticatedAttemptInput = {
 	accountName: string;
 	accounts: readonly AccountSlot[];
 	authLane: AnthropicSubscriptionTokenInjection;
+	pinSource?: PinSource;
 	options: Options;
 	/**
 	 * Digest of the OAuth access token this attempt authenticates with. A
@@ -27,6 +30,7 @@ export interface RetainableAttempt<TEvent> {
 export type AttemptFactoryInput = {
 	prompt: Parameters<SdkQuery>[0]["prompt"];
 	query: SdkQuery;
+	sessionId?: string;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
 	createAttempt?: (
 		input: AuthenticatedAttemptInput,
@@ -56,11 +60,23 @@ export async function createAttemptMessages(
 	input: AttemptFactoryInput,
 	auth: AuthenticatedAttemptInput,
 ): Promise<AsyncIterable<SDKMessage>> {
-	if (input.createAttempt)
-		return recordingLimitWindows(retainedAttemptMessages(await input.createAttempt(auth)), auth);
-	const query = input.query({ prompt: input.prompt, options: auth.options });
-	input.onQuery?.(query);
-	return recordingLimitWindows(closingQueryMessages(query), auth);
+	const account = attemptAccountContext(auth);
+	logAttemptAccount(auth, input.sessionId);
+	// Claude Code loads auto memory independently of settingSources. Keep its private
+	// notes out of every subscription session, after all auth and caller overrides.
+	auth.options.env = { ...auth.options.env, CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" };
+	if (typeof auth.options.settings !== "string")
+		auth.options.settings = { ...auth.options.settings, autoMemoryEnabled: false };
+	try {
+		if (input.createAttempt)
+			return recordingLimitWindows(retainedAttemptMessages(await input.createAttempt(auth)), auth);
+		const query = input.query({ prompt: input.prompt, options: auth.options });
+		input.onQuery?.(query);
+		return recordingLimitWindows(closingQueryMessages(query), auth);
+	} catch (error) {
+		rememberAccountContext(error, account);
+		throw error;
+	}
 }
 
 /** The SDK reports the account's limit windows as `rate_limit_event` messages: kept for that account (senpi#3370). */
@@ -68,13 +84,20 @@ async function* recordingLimitWindows(
 	messages: AsyncIterable<SDKMessage>,
 	auth: AuthenticatedAttemptInput,
 ): AsyncGenerator<SDKMessage> {
-	for await (const message of messages) {
-		if (message.type === "rate_limit_event")
-			subscriptionLimits.record(
-				ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
-				auth.accountName,
-				claudeWindowsFromSdkEvent(message),
-			);
-		yield message;
+	const account = attemptAccountContext(auth);
+	try {
+		for await (const message of messages) {
+			rememberAccountContext(message, account);
+			if (message.type === "rate_limit_event")
+				subscriptionLimits.record(
+					ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
+					auth.accountName,
+					claudeWindowsFromSdkEvent(message),
+				);
+			yield message;
+		}
+	} catch (error) {
+		rememberAccountContext(error, account);
+		throw error;
 	}
 }

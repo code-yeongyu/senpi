@@ -58,9 +58,11 @@ describe("modern HTTP MCP transport", () => {
 
 	it.each([
 		["tools/call", { name: "echo" }, "echo"],
-		["prompts/get", { name: "\uD55C\uAE00" }, "base64:7ZWc6riA"],
-		["resources/read", { uri: "x:\u00FF", name: "ignored" }, "base64:eDrDvw"],
-		["tools/call", { name: "base64:literal" }, "base64:YmFzZTY0OmxpdGVyYWw"],
+		["prompts/get", { name: "\uD55C\uAE00" }, "=?base64?7ZWc6riA?="],
+		["resources/read", { uri: "x:\u00FF", name: "ignored" }, "=?base64?eDrDvw==?="],
+		["tools/call", { name: "base64:literal" }, "base64:literal"],
+		// #4192: only the exact sentinel pattern is ambiguous, not the former base64: prefix.
+		["tools/call", { name: "=?base64?literal?=" }, "=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?="],
 		["tools/list", { name: "ignored" }, null],
 	])("routes %s with the canonical name encoding", async (method, params, expected) => {
 		const fetch = vi.fn<FetchLike>().mockResolvedValue(Response.json(result));
@@ -75,7 +77,7 @@ describe("modern HTTP MCP transport", () => {
 		await client.close();
 	});
 
-	it("POSTs notifications and responses individually without session traffic", async () => {
+	it("ignores unmatched cancellation and POSTs responses without session traffic", async () => {
 		const fetch = vi.fn<FetchLike>().mockImplementation(async () => new Response(null, { status: 202 }));
 		const client = transport(fetch);
 		await client.start();
@@ -84,11 +86,9 @@ describe("modern HTTP MCP transport", () => {
 		await client.send({ jsonrpc: "2.0", id: "server-request", result: {} });
 		await client.close();
 
-		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(fetch).toHaveBeenCalledTimes(1);
 		const bodies = fetch.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
-		expect(bodies[0]).not.toHaveProperty("id");
-		expect(bodies[0].params._meta["io.modelcontextprotocol/clientInfo"]).toEqual(clientInfo);
-		expect(bodies[1]).toEqual({ jsonrpc: "2.0", id: "server-request", result: {} });
+		expect(bodies[0]).toEqual({ jsonrpc: "2.0", id: "server-request", result: {} });
 		for (const [, init] of fetch.mock.calls) {
 			expect(init?.method).toBe("POST");
 			expect(new Headers(init?.headers).has("Mcp-Session-Id")).toBe(false);
@@ -164,15 +164,26 @@ describe("modern HTTP MCP transport", () => {
 	});
 
 	it("delivers JSON-RPC errors as messages rather than transport errors", async () => {
-		const error = { jsonrpc: "2.0", id: 1, error: { code: -32022, message: "unsupported", data: { supported: [] } } };
+		const error = {
+			jsonrpc: "2.0",
+			id: 1,
+			error: { code: -32022, message: "REMOTE_ERROR_CANARY", data: { supported: ["PRIVATE_DATA_CANARY"] } },
+		};
 		const client = transport(async () => Response.json(error, { status: 400 }));
-		client.onmessage = vi.fn();
+		const onmessage = vi.fn();
+		client.onmessage = onmessage;
 		client.onerror = vi.fn();
 		await client.start();
 
 		await client.send({ jsonrpc: "2.0", id: 1, method: "tools/list" });
 
-		expect(client.onmessage).toHaveBeenCalledWith(error);
+		expect(onmessage).toHaveBeenCalledWith({
+			jsonrpc: "2.0",
+			id: 1,
+			error: expect.objectContaining({ code: -32022 }),
+		});
+		expect(onmessage.mock.calls[0]?.[0]).not.toHaveProperty("error.data");
+		expect(JSON.stringify(onmessage.mock.calls)).not.toContain("CANARY");
 		expect(client.onerror).not.toHaveBeenCalled();
 		await client.close();
 	});
@@ -209,7 +220,9 @@ describe("modern HTTP MCP transport", () => {
 		const stream = new ReadableStream<Uint8Array>({
 			start(controller) {
 				controller.enqueue(
-					new TextEncoder().encode('data: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n'),
+					new TextEncoder().encode(
+						'data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":1,"progress":0}}\n\n',
+					),
 				);
 			},
 			cancel,

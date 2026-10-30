@@ -8,7 +8,7 @@
  */
 import { execFile } from "node:child_process";
 import {
-	processIsLive,
+	processIsRunning,
 	processStartTimeMs,
 	readProcessStartTime,
 	sameProcessStartMs,
@@ -114,7 +114,9 @@ function groupHasMembers(pgid: number): boolean {
 
 export const defaultGroupProbes: GroupProbes = {
 	groupHasMembers,
-	isAlive: processIsLive,
+	// An exited, unreaped leader (state Z) has no start identity left to compare, so it must read as exited:
+	// its orphaned members keep the group, and the group is swept (senpi#3020, senpi#4119).
+	isAlive: processIsRunning,
 	startOf: (pid) => readProcessStartTime(pid),
 	ownGroup: () => processGroupOf(process.pid),
 	signalGroup: (pgid, signal) => {

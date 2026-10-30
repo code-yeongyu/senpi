@@ -118,5 +118,5 @@ it("includes loaded history in the eight-turn resume cap and resets only on real
 	const afterInput = b.faux.state.callCount;
 	for (let i = 0; i < 9; i++) await b.session.sendCustomMessage(wake, { triggerTurn: true });
 	expect(b.faux.state.callCount - afterInput).toBe(9);
-	expect(b.settingsManager.getEngineTurnSettings().maxPerUserInput).toBe(150);
+	expect(b.settingsManager.getEngineTurnSettings().maxPerUserInput).toBe(0);
 });

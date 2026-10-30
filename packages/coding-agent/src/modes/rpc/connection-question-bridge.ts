@@ -4,6 +4,7 @@ import type {
 	QuestionRequest,
 	QuestionResponse,
 } from "../../core/extensions/types.ts";
+import type { UiRequestChange } from "./snapshot-types.ts";
 import { settledQuestionStatus, unansweredQuestionIds } from "./extension-ui-response.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiRequest } from "./rpc-types.ts";
 
@@ -11,7 +12,7 @@ type Options = Parameters<NonNullable<ExtensionUIContext["question"]>>[1];
 type Pending = {
 	frame: RpcQuestionUiRequest;
 	progress: (draft: RpcExtensionUIProgress) => void;
-	respond: (response: RpcExtensionUIResponse) => boolean;
+	respond: (response: RpcExtensionUIResponse, beforeAnswer?: () => void) => boolean;
 	cancel: () => void;
 };
 export const sessionQuestionBridges = new WeakMap<object, ConnectionQuestionBridge>();
@@ -20,8 +21,10 @@ export class ConnectionQuestionBridge {
 	private readonly pending = new Map<string, Pending>();
 	private readonly resolved = new Set<string>();
 	private readonly output: (record: object) => void;
-	constructor(output: (record: object) => void) {
+	private readonly changed: ((change?: UiRequestChange) => void) | undefined;
+	constructor(output: (record: object) => void, changed?: (change?: UiRequestChange) => void) {
 		this.output = output;
+		this.changed = changed;
 	}
 	pendingQuestions(): RpcQuestionUiRequest[] {
 		return [...this.pending.values()].map(({ frame }) => ({
@@ -62,6 +65,11 @@ export class ConnectionQuestionBridge {
 				clearTimeout(timer);
 				opts?.signal?.removeEventListener("abort", cancel);
 				this.pending.delete(id);
+				this.changed?.({
+					type: "ui_request_settled",
+					uiRequestId: id,
+					disposition: status === "answered" || status === "comment-submitted" ? "answered" : "cancelled",
+				});
 				this.resolved.add(id);
 				const result: QuestionResponse = {
 					status,
@@ -115,7 +123,7 @@ export class ConnectionQuestionBridge {
 							remainingMs: Math.max(0, frame.deadlineAtMs - Date.now()),
 						});
 				},
-				respond: (response) => {
+				respond: (response, beforeAnswer) => {
 					// The client's cancel is the user's; a closed connection or an abort is a lifecycle cancel.
 					if ("cancelled" in response) {
 						finish("cancelled", undefined, "user");
@@ -126,19 +134,26 @@ export class ConnectionQuestionBridge {
 					comment = response.comment;
 					const status = settledQuestionStatus(answers, comment);
 					if (status === undefined) return false;
+					// Only a tool-result answer is reported here. An async or resumed answer is delivered as a
+					// user message, whose question-input release reports it; reporting both would count it twice.
+					if (request.waitForAnswer && opts?.deliver !== "user-message") beforeAnswer?.();
 					finish(status, "rpc_connection");
 					return true;
 				},
 			});
 			arm();
+			this.changed?.({ type: "ui_request_pending", uiRequestId: id, method: "question", request: frame });
 			this.output(frame);
 			opts?.signal?.addEventListener("abort", cancel, { once: true });
 			if (opts?.signal?.aborted) cancel();
 		});
 	}
-	respond(response: RpcExtensionUIResponse): boolean | "question_incomplete" | "question_already_resolved" {
+	respond(
+		response: RpcExtensionUIResponse,
+		beforeAnswer?: () => void,
+	): boolean | "question_incomplete" | "question_already_resolved" {
 		const pending = this.pending.get(response.id);
-		if (pending) return pending.respond(response) || "question_incomplete";
+		if (pending) return pending.respond(response, beforeAnswer) || "question_incomplete";
 		return this.resolved.has(response.id) ? "question_already_resolved" : false;
 	}
 	progress(draft: RpcExtensionUIProgress): void {

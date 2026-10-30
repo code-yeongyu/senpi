@@ -3,6 +3,10 @@
  * (`authenticateSocket`, the handshake every RPC transport shares); a wrong secret is disconnected
  * before a single JSONL line is read. After that it is the RPC framing: one LF-terminated JSON
  * object per request, one response per request carrying its `id`, plus pushed feed events.
+ *
+ * The socket path is the endpoint's logical address on every platform (its secret lives beside it); on win32 the
+ * listener binds the named pipe the host transport derives from that path and the secret (senpi#4267), which is
+ * the address every client already connects to.
  */
 import { chmod } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
@@ -10,7 +14,7 @@ import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS, serializeJsonLine } fro
 import { rpcCommandShapeError } from "../rpc/rpc-input-validation.ts";
 import type { SessionEventWriterConnection } from "../rpc/session-event-fanout.ts";
 import { socketSink } from "../rpc/socket-sink.ts";
-import { authenticateSocket } from "../rpc/socket-transport.ts";
+import { authenticateSocket, resolveSocketTransportAddress } from "../rpc/socket-transport.ts";
 
 export interface ControlConnection {
 	readonly id: number;
@@ -51,13 +55,14 @@ export async function listenControlSocket(
 	});
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
-		server.listen(socketPath, () => {
+		server.listen(resolveSocketTransportAddress(socketPath, process.platform, secret), () => {
 			server.off("error", reject);
 			resolve();
 		});
 	});
 	server.on("error", (error) => handlers.listenerError(error));
-	await chmod(socketPath, 0o600);
+	// A named pipe has no file to restrict: the secret, 0600 beside the logical path, is its gate.
+	if (process.platform !== "win32") await chmod(socketPath, 0o600);
 	return { close: () => closeServer(server, clients) };
 }
 

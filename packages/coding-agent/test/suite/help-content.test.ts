@@ -29,7 +29,7 @@ function section(markdown: string, heading: string): string {
 function commandNames(markdown: string): Set<string> {
 	const names = new Set<string>();
 	for (const line of section(markdown, "Commands").split("\n")) {
-		const match = /^\/([^ ]+) — /.exec(line);
+		const match = /^\/([^ ]+) - /.exec(line);
 		if (match?.[1]) names.add(match[1]);
 	}
 	return names;
@@ -84,9 +84,9 @@ describe("buildHelpMarkdown", () => {
 		for (const command of BUILTIN_SLASH_COMMANDS) {
 			expect(names.has(command.name), command.name).toBe(true);
 		}
-		expect(commands).toContain("/inspect-extension — Inspect extension state");
+		expect(commands).toContain("/inspect-extension - Inspect extension state");
 		expect(commands).not.toContain("Extension model override");
-		expect(commands.split("\n").filter((line) => line.startsWith("/model —"))).toHaveLength(1);
+		expect(commands.split("\n").filter((line) => line.startsWith("/model -"))).toHaveLength(1);
 	});
 
 	it("uses live remapped keys in keybinding rows and builtin command descriptions", () => {
@@ -105,7 +105,7 @@ describe("buildHelpMarkdown", () => {
 
 		expect(keybindings).toContain(`| \`${remappedThinkingKey}\` | Cycle thinking level |`);
 		expect(keybindings.toLowerCase()).not.toContain("shift+tab");
-		expect(commands).toContain(`/favorite-models — Manage favorite models for ${remappedModelKey} cycling`);
+		expect(commands).toContain(`/favorite-models - Manage favorite models for ${remappedModelKey} cycling`);
 		const favoriteModelsLine = commands.split("\n").find((line) => line.includes("/favorite-models"));
 		expect(favoriteModelsLine).toBeDefined();
 		expect(favoriteModelsLine).not.toContain("Ctrl+P");

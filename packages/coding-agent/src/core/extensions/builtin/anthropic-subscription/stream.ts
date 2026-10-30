@@ -21,6 +21,7 @@ import { refusalError } from "./refusal.ts";
 import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
 import { forgetBinding } from "./session-reattach.ts";
+import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 import { residentSessionMessages } from "./session-stream.ts";
 import {
 	loadAnthropicSubscriptionProviderSettingsFromDisk,
@@ -74,6 +75,7 @@ export function streamAnthropicSubscription(
 		let nativeCompactionStopped = false;
 
 		try {
+			const cwd = requireAnthropicSubscriptionCwd(options?.cwd);
 			// Resident before the synchronous SDK member below (getSdkBoundary().query)
 			// reads it - see sdk-boundary.lazy.ts.
 			await loadClaudeAgentSdk();
@@ -82,7 +84,7 @@ export function streamAnthropicSubscription(
 			const sessionKey = options?.sessionId ? toolWatch.sessionKey(options.sessionId) : undefined;
 			if (sessionKey) toolWatch.reconcileWithContext(sessionKey, context);
 			const toolWatchNote = toolWatch.buildPromptNote(sessionKey, context, resolvedTools.customToolNameToSdk);
-			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(process.cwd());
+			const providerSettings = loadAnthropicSubscriptionProviderSettingsFromDisk(cwd);
 			const senpiOwnsCompaction = resolveCompactionOwner(providerSettings) === "senpi";
 			const toolLessRequest = options?.toolChoice === "none";
 			const mcpServers = toolLessRequest ? undefined : await buildCustomToolServers(resolvedTools.customTools);
@@ -94,6 +96,7 @@ export function streamAnthropicSubscription(
 					model,
 					context,
 					streamOptions: options,
+					cwd,
 					providerSettings,
 					authLane,
 					tools: resolvedTools.sdkTools,

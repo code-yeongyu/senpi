@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createFallbackLogger } from "../../src/core/retry-fallback/log.ts";
+import { READABLE_PROVIDER_TEXT, SECRET_CELLS } from "./secret-inventory.ts";
 
 const tempDirs: string[] = [];
 
@@ -94,5 +95,28 @@ describe("retry fallback logger", () => {
 			logger.warn("still_safe", { selector: "b/two" });
 		}).not.toThrow();
 		expect(error).toHaveBeenCalledTimes(1);
+	});
+
+	describe("redacts every secret shape in every container", () => {
+		for (const cell of SECRET_CELLS) {
+			it(cell.name, () => {
+				const agentDir = createTempDir();
+				createFallbackLogger(agentDir).warn("candidate_failed", { error: cell.text, errorMessage: cell.text });
+
+				const text = readFileSync(join(agentDir, "logs", "fallback.log"), "utf8");
+				expect(text).toMatch(/\[redacted\]/i);
+				expect(text).not.toContain(cell.secret);
+			});
+		}
+
+		it("keeps model ids, error codes and request ids readable", () => {
+			const agentDir = createTempDir();
+			createFallbackLogger(agentDir).warn("candidate_failed", { errorMessage: READABLE_PROVIDER_TEXT });
+
+			const entry: Record<string, unknown> = JSON.parse(
+				readFileSync(join(agentDir, "logs", "fallback.log"), "utf8"),
+			);
+			expect(entry.errorMessage).toBe(READABLE_PROVIDER_TEXT);
+		});
 	});
 });

@@ -50,6 +50,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { pushAssistantProgress } from "../utils/assistant-capture.ts";
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
@@ -139,7 +140,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 	context: TranscriptContext,
 	options: BedrockOptions = {},
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	// Bedrock has no mid-conversation system messages; fold them into the leading prompt.
 	const normalizedContext = collapseSystemMessages(context);
 
@@ -682,12 +683,23 @@ function handleContentBlockDelta(
 			if (delta.reasoningContent.signature && !thinkingBlock.redacted) {
 				thinkingBlock.thinkingSignature =
 					(thinkingBlock.thinkingSignature || "") + delta.reasoningContent.signature;
+				pushAssistantProgress(stream, {
+					type: "message_block_metadata",
+					contentIndex: thinkingIndex,
+					thinkingSignatureDelta: delta.reasoningContent.signature,
+				});
 			}
 			if (delta.reasoningContent.redactedContent?.length) {
 				// Encrypted reasoning from non-Anthropic models on Bedrock (e.g. OpenAI GPT-5.6).
 				// The payload is opaque, so keep it verbatim in `thinkingSignature` the way the
 				// Anthropic path stores redacted thinking, and replay it on the next turn.
 				if (!thinkingBlock.redacted) {
+					pushAssistantProgress(stream, {
+						type: "message_block_metadata",
+						contentIndex: thinkingIndex,
+						redacted: true,
+						...(thinkingBlock.thinkingSignature ? { thinkingSignature: "" } : {}),
+					});
 					thinkingBlock.redacted = true;
 					thinkingBlock.thinkingSignature = "";
 					thinkingBlock.thinking += REDACTED_THINKING_PLACEHOLDER;

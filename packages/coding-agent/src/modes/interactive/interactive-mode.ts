@@ -126,6 +126,9 @@ import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/htt
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { isManualContinueSubmission } from "../../core/manual-continue.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
+import { registerMcpMrtrPresentation } from "../../core/mcp-mrtr-presentations.ts";
+import { markMcpFormPresented, type McpFormBinding } from "../../core/mcp-form-types.ts";
+import { registerLocalMcpPresenter } from "./mcp-local-presenter.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
 import {
@@ -139,6 +142,7 @@ import {
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { formatProviderFailure } from "../../core/provider-failure.ts";
+import { failureAlreadyDescribed } from "./provider-error-description.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -266,6 +270,7 @@ import {
 	takeOverInteractiveStderr,
 } from "./interactive-stderr-guard.ts";
 import { applyKeybindingsFileEdit, seedKeybindingsFile } from "./keybindings-command.ts";
+import { LIFECYCLE_STATUS_KEY, LifecycleStatus } from "./lifecycle-status.ts";
 import {
 	buildResourceScopeGroups,
 	type DisplaySourceInfo,
@@ -342,17 +347,14 @@ import {
 	type WorkingStatusRgbColor,
 } from "./working-status.ts";
 
+/** Footer statuses the host owns: an extension UI reset (e.g. /reload) keeps them. */
+const HOST_STATUS_KEYS: ReadonlySet<string> = new Set([LIFECYCLE_STATUS_KEY]);
+
 export { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
 
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
 	setExpanded(expanded: boolean): void;
-}
-
-function llamaCppPostLoginGuidance(actionLabel: string, loadedModelCount: number): string {
-	return loadedModelCount === 0
-		? `${actionLabel}. No llama.cpp models are loaded. Use /llama to load a model, then /model to select it.`
-		: `${actionLabel}. Use /model to select a loaded llama.cpp model, or /llama to manage models.`;
 }
 
 interface ActiveEditor extends EditorComponent {
@@ -362,6 +364,12 @@ interface ActiveEditor extends EditorComponent {
 interface WorkingStatusEditor extends EditorComponent {
 	readonly embedWorkingStatus: boolean;
 	setWorkingStatusIndicator(indicator: StatusIndicator | undefined): void;
+}
+
+/** Copy the default editor's action handlers (clear, suspend, model switching, etc.) onto a custom editor. */
+function adoptDefaultEditorActions(defaultEditor: CustomEditor, editor: EditorComponent): void {
+	if (editor === defaultEditor || !("actionHandlers" in editor) || !(editor.actionHandlers instanceof Map)) return;
+	for (const [action, handler] of defaultEditor.actionHandlers) editor.actionHandlers.set(action, handler);
 }
 
 function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatusEditor {
@@ -873,6 +881,8 @@ async function attachClipboardImage(
  * Options for InteractiveMode initialization.
  */
 export interface InteractiveModeOptions {
+	/** Opt in to host-issued MCP form authority; ordinary terminal forms remain the default. */
+	mcpPresenterEnforcement?: boolean;
 	/** Renderer mode for the interactive terminal. */
 	uiMode?: TuiMode;
 	/** Providers that were migrated to auth.json (shows warning) */
@@ -907,6 +917,8 @@ export interface InteractiveModeOptions {
 }
 
 type QuestionOverlayOptions = ExtensionUIDialogOptions & {
+	/** A `user-message` answer is reported by its own delivery, so the overlay must not report it again. */
+	deliver?: "tool-result" | "user-message";
 	onProgress?: (draft: QuestionDraft) => void;
 	getDeadlineAtMs?: () => number;
 	initialDraft?: QuestionDraft;
@@ -1081,6 +1093,8 @@ export class InteractiveMode {
 
 	// Agent subscription unsubscribe function
 	private unsubscribe?: () => void;
+	private agentSubscriptionGeneration = 0;
+	private readonly lifecycleStatus = new LifecycleStatus();
 	private signalCleanupHandlers: Array<() => void> = [];
 
 	// Track if editor is in bash mode (text starts with !)
@@ -1784,13 +1798,6 @@ export class InteractiveMode {
 		this.fdPath = fdPath;
 		time("ensureTools", "tui");
 
-		// Enable the remaining input handlers only after managed-tool setup completes.
-		this.setupKeyHandlers();
-		this.setupEditorSubmitHandler();
-		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
-		this.ui.requestRender();
-		time("keyHandlers", "tui");
-
 		// Initialize extensions first so resources are shown before messages
 		await this.rebindCurrentSession();
 		time("rebindSession", "tui");
@@ -1799,6 +1806,15 @@ export class InteractiveMode {
 		this.renderInitialMessages();
 		this.session.releaseSettledSessionMemory();
 		time("renderInitial", "tui");
+
+		// Enable the remaining input handlers only once the restored transcript is rendered (senpi#4826): a
+		// submit accepted earlier painted its echo above the history that startup appended afterwards.
+		this.setupKeyHandlers();
+		this.setupEditorSubmitHandler();
+		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
+		adoptDefaultEditorActions(this.defaultEditor, this.editor);
+		this.ui.requestRender();
+		time("keyHandlers", "tui");
 
 		// Set up theme file watcher
 		onThemeChange(() => {
@@ -2736,7 +2752,13 @@ export class InteractiveMode {
 	 */
 	private unsubscribeSecurityNotices?: () => void;
 	private detachMcpGrantPresentation?: () => void;
+	/** A presentation is optional until extension UI is created; shutdown may precede it. */
+	private mcpMrtrPresentationLifetime?: AbortController;
+	private mcpLocalPresenter?: McpFormBinding;
 	private async bindCurrentSessionExtensions(): Promise<void> {
+		this.mcpMrtrPresentationLifetime?.abort();
+		this.mcpMrtrPresentationLifetime = new AbortController();
+		this.mcpLocalPresenter = undefined;
 		await this.sessionControlHost?.disposeActive();
 		this.session.setControlEndpointHost?.(this.sessionControlHost);
 		const uiContext = this.createExtensionUIContext();
@@ -2844,6 +2866,7 @@ export class InteractiveMode {
 				this.showExtensionError(error);
 			},
 		});
+		this.setExtensionStatus(PAUSE_STATUS_KEY, pauseFooterText(this.session));
 
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		this.setupAutocompleteProvider();
@@ -2894,6 +2917,7 @@ export class InteractiveMode {
 		this.externalOwnerCompactionNoticeShown = false;
 		this.footer?.setCompactionDelegated?.(false);
 		const session = this.session;
+		this.agentSubscriptionGeneration++;
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.applyRuntimeSettings();
@@ -3063,7 +3087,16 @@ export class InteractiveMode {
 		};
 	}
 
-	private async withBlockedHostDialog<T>(id: string, label: string, show: () => Promise<T>): Promise<T> {
+	private async withBlockedHostDialog<T>(
+		id: string,
+		label: string,
+		show: () => Promise<T>,
+		opts?: ExtensionUIDialogOptions,
+	): Promise<T> {
+		if (opts?.ephemeral) {
+			if (opts.signal?.aborted) return undefined as T;
+			return await show();
+		}
 		this.session.emitExtensionEvent("herdr:blocked", { active: true, label, id });
 		try {
 			return await show();
@@ -3526,7 +3559,7 @@ export class InteractiveMode {
 		this.setExtensionFooter(undefined);
 		this.setExtensionHeader(undefined);
 		this.clearExtensionWidgets();
-		this.footerDataProvider.clearExtensionStatuses();
+		this.footerDataProvider.clearExtensionStatuses(HOST_STATUS_KEYS);
 		this.footer.invalidate();
 		this.autocompleteProviderWrappers = [];
 		this.setCustomEditorComponent(undefined);
@@ -3697,18 +3730,29 @@ export class InteractiveMode {
 	}
 
 	private createExtensionUIContext(): ExtensionUIContext {
-		return {
+		this.mcpMrtrPresentationLifetime ??= new AbortController();
+		if (this.isShuttingDown) this.mcpMrtrPresentationLifetime.abort();
+		const context: ExtensionUIContext = {
 			select: (title, options, opts) =>
-				this.withBlockedHostDialog(crypto.randomUUID(), title, () =>
-					this.showExtensionSelector(title, options, opts),
+				this.withBlockedHostDialog(
+					crypto.randomUUID(),
+					title,
+					() => this.showExtensionSelector(title, options, opts),
+					opts,
 				),
-			confirm: (title, message, opts) =>
-				this.withBlockedHostDialog(crypto.randomUUID(), title, () =>
-					this.showExtensionConfirm(title, message, opts),
-				),
+			confirm: async (title, message, opts) =>
+				(await this.withBlockedHostDialog(
+					crypto.randomUUID(),
+					title,
+					() => this.showExtensionConfirm(title, message, opts),
+					opts,
+				)) ?? false,
 			input: (title, placeholder, opts) =>
-				this.withBlockedHostDialog(crypto.randomUUID(), title, () =>
-					this.showExtensionInput(title, placeholder, opts),
+				this.withBlockedHostDialog(
+					crypto.randomUUID(),
+					title,
+					() => this.showExtensionInput(title, placeholder, opts),
+					opts,
 				),
 			// Async answers are delivered by the ask-user extension, not here: the
 			// widget only resolves the question, so the model sees exactly one
@@ -3717,7 +3761,14 @@ export class InteractiveMode {
 				request.waitForAnswer ? this.showQuestionOverlay(request, opts) : this.showAsyncQuestion(request, opts),
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
-			setStatus: (key, text) => this.setExtensionStatus(key, text),
+			// The host owns the lifecycle status; an extension cannot overwrite or clear it.
+			setStatus: (key, text) => {
+				if (key !== LIFECYCLE_STATUS_KEY) this.setExtensionStatus(key, text);
+			},
+			setSubagentCost: (costUsd) => {
+				this.footerDataProvider.setSubagentCost(costUsd);
+				this.ui.requestRender();
+			},
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
 				this.updateWorkingIndicatorMessage();
@@ -3768,6 +3819,17 @@ export class InteractiveMode {
 			getToolsExpanded: () => this.toolOutputExpanded,
 			setToolsExpanded: (expanded) => this.setToolsExpanded(expanded),
 		};
+		const presenterSession = this.session;
+		const privateForms =
+			this.options?.mcpPresenterEnforcement === true
+				? (this.mcpLocalPresenter ??= registerLocalMcpPresenter(
+						context,
+						presenterSession.sessionId,
+						this.mcpMrtrPresentationLifetime.signal,
+						() => presenterSession.admitHumanAnswer(),
+					))
+				: undefined;
+		return registerMcpMrtrPresentation(context, this.mcpMrtrPresentationLifetime.signal, undefined, privateForms);
 	}
 
 	/**
@@ -3794,6 +3856,7 @@ export class InteractiveMode {
 				title,
 				options,
 				(option) => {
+					if (!opts?.ephemeral || !this.options?.mcpPresenterEnforcement) this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionSelector();
 					resolve(option);
@@ -3814,7 +3877,10 @@ export class InteractiveMode {
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.extensionSelector);
 			this.ui.setFocus(this.extensionSelector);
-			this.ui.requestRender();
+			if (opts?.ephemeral && this.options?.mcpPresenterEnforcement) {
+				this.ui.renderNow();
+				markMcpFormPresented(opts);
+			} else this.ui.requestRender();
 		});
 	}
 
@@ -3874,6 +3940,7 @@ export class InteractiveMode {
 				title,
 				placeholder,
 				(value) => {
+					if (!opts?.ephemeral || !this.options?.mcpPresenterEnforcement) this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionInput();
 					resolve(value);
@@ -3917,6 +3984,7 @@ export class InteractiveMode {
 				title,
 				prefill,
 				(value) => {
+					this.session.admitHumanAnswer();
 					this.hideExtensionEditor();
 					resolve(value);
 				},
@@ -3956,6 +4024,8 @@ export class InteractiveMode {
 			const previousWorkingMessage = this.workingMessage;
 			const finish = (response: QuestionResponse) => {
 				if (settled) return;
+				if (request.waitForAnswer && opts?.deliver !== "user-message" && response.resolvedBy === "local_ui")
+					this.session.admitHumanAnswer();
 				settled = true;
 				opts?.signal?.removeEventListener("abort", onAbort);
 				this.workingMessage = previousWorkingMessage;
@@ -4381,7 +4451,7 @@ export class InteractiveMode {
 			newEditor.onSubmit = (text) => {
 				this.defaultEditor.onSubmit?.(expandSubmittedText(newEditor, text));
 			};
-			newEditor.onChange = this.defaultEditor.onChange;
+			newEditor.onChange = (text) => this.defaultEditor.onChange?.(text);
 			observeComposerActivity(newEditor, () => emitUserActivity(this.session, "draft"));
 
 			// Copy text (and any collapsed paste/image markers) from previous editor.
@@ -4433,10 +4503,7 @@ export class InteractiveMode {
 				if (!customEditor.onExtensionShortcut) {
 					customEditor.onExtensionShortcut = (data: string) => this.defaultEditor.onExtensionShortcut?.(data);
 				}
-				// Copy action handlers (clear, suspend, model switching, etc.)
-				for (const [action, handler] of this.defaultEditor.actionHandlers) {
-					(customEditor.actionHandlers as Map<string, () => void>).set(action, handler);
-				}
+				adoptDefaultEditorActions(this.defaultEditor, customEditor);
 			}
 
 			this.editor = newEditor;
@@ -5187,8 +5254,28 @@ export class InteractiveMode {
 		};
 	}
 
+	private showLifecycleStatus(session: AgentSession): void {
+		this.lifecycleStatus.bind(session.sessionId, session.lifecycle);
+		this.setExtensionStatus(LIFECYCLE_STATUS_KEY, this.lifecycleStatus.text());
+	}
+
 	private subscribeToAgent(): void {
-		this.unsubscribe = this.session.subscribe(async (event) => {
+		this.unsubscribe?.();
+		const session = this.session;
+		const generation = ++this.agentSubscriptionGeneration;
+		this.showLifecycleStatus(session);
+		this.unsubscribe = session.subscribe(async (event) => {
+			if (generation !== this.agentSubscriptionGeneration || session !== this.session) return;
+			if (event.type === "session_lifecycle") {
+				if (event.sessionId !== session.sessionId) return;
+				if (!this.lifecycleStatus.owns(event.lifecycle))
+					this.lifecycleStatus.bind(session.sessionId, session.lifecycle);
+				this.lifecycleStatus.accept(event.lifecycle);
+				const text = this.lifecycleStatus.text();
+				if (this.footerDataProvider.getExtensionStatuses().get(LIFECYCLE_STATUS_KEY) !== text)
+					this.setExtensionStatus(LIFECYCLE_STATUS_KEY, text);
+				return;
+			}
 			await this.handleEvent(event);
 		});
 	}
@@ -5546,7 +5633,8 @@ export class InteractiveMode {
 				}
 				this.detachAssistantTextSegments();
 				this.clearPendingTools();
-				if (event.failure !== undefined && !event.willRetry) this.showError(formatProviderFailure(event.failure));
+				if (event.failure !== undefined && !event.willRetry && !failureAlreadyDescribed(event.messages))
+					this.showError(formatProviderFailure(event.failure));
 
 				this.ui.requestRender();
 				break;
@@ -5562,6 +5650,10 @@ export class InteractiveMode {
 					this.clearStatusIndicator("working");
 				}
 				this.ui.requestRender();
+				break;
+
+			case "session_recovered":
+				this.showWarning(sanitizeTerminalLabel(event.notice));
 				break;
 
 			case "continuation_error":
@@ -5866,7 +5958,7 @@ export class InteractiveMode {
 					tone: "warning",
 					why: event.chainConfigured
 						? "Retrying on your configured fallback chain."
-						: "No fallback chain configured — set one with /fallback.",
+						: "No fallback chain configured: set one with /fallback.",
 				});
 				break;
 
@@ -6300,9 +6392,11 @@ export class InteractiveMode {
 				index += 1;
 			}
 			const runMessage: AssistantMessage = { ...message, content: runBlocks };
+			// Only the run that ends the message shows the turn's error; earlier runs repeat it otherwise (senpi#4954).
+			const errorShownElsewhere = isNetworkProviderMessage(message) || index < content.length;
 			const existing = this.assistantTextSegments.get(runStart);
 			if (existing) {
-				existing.setProviderErrorOwned(isNetworkProviderMessage(message));
+				existing.setProviderErrorOwned(errorShownElsewhere);
 				existing.updateContent(runMessage, true);
 				continue;
 			}
@@ -6315,7 +6409,7 @@ export class InteractiveMode {
 				this.getMarkdownTransformers(),
 			);
 			segment.setExpanded(this.toolOutputExpanded);
-			segment.setProviderErrorOwned(isNetworkProviderMessage(message));
+			segment.setProviderErrorOwned(errorShownElsewhere);
 			this.assistantTextSegments.set(runStart, segment);
 			const followingToolCall = content.slice(index).find((block) => block.type === "toolCall");
 			const followingToolCallId = followingToolCall?.type === "toolCall" ? followingToolCall.id : undefined;
@@ -6727,6 +6821,7 @@ export class InteractiveMode {
 	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
+		this.mcpMrtrPresentationLifetime?.abort();
 		// Keep signal handlers registered until terminal cleanup has completed.
 		// `signal-exit` checks the listener list during the same SIGTERM/SIGHUP
 		// dispatch and re-sends the signal if only its own listeners remain.
@@ -9128,7 +9223,10 @@ export class InteractiveMode {
 		try {
 			providerOptions = await this.getLogoutProviderOptions();
 		} catch (error) {
-			this.showError(`Could not read stored credentials: ${error instanceof Error ? error.message : String(error)}`);
+			const message = error instanceof Error ? error.message : String(error);
+			this.showError(
+				`Could not read your saved sign-ins: ${message}${/[.!?]$/.test(message) ? "" : "."} Restart senpi; if it happens again, run /login to sign in again.`,
+			);
 			return;
 		}
 		if (providerOptions.length === 0) {
@@ -9201,10 +9299,7 @@ export class InteractiveMode {
 			if (isUnknownModel(previousModel)) {
 				const availableModels = this.session.modelRuntime.getAvailableSnapshot();
 				const providerModels = availableModels.filter((model) => model.provider === providerId);
-				// Matches LLAMA_PROVIDER_ID from extensions/llama/provider.ts; kept inline to avoid coupling interactive mode to the built-in extension.
-				if (providerId === "llama.cpp") {
-					selectionError = llamaCppPostLoginGuidance(actionLabel, providerModels.length);
-				} else if (!hasDefaultModelProvider(providerId)) {
+				if (!hasDefaultModelProvider(providerId)) {
 					selectionError = `${actionLabel}, but no default model is configured for provider "${providerId}". Use /model to select a model.`;
 				} else if (providerModels.length === 0) {
 					selectionError = `${actionLabel}, but no models are available for that provider. Use /model to select a model.`;
@@ -9893,11 +9988,11 @@ export class InteractiveMode {
 
 			if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
 				info += `\n${theme.bold("Cost")}\n`;
-				info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}`;
+				info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}${stats.costUnknown ? theme.fg("dim", " + unpriced turns") : ""}`;
 				// A single entry repeats the total, unless it names a model other than the selected one.
 				if (usageBreakdown.length > 1 || usageBreakdown[0]?.key !== selectedModelKey) {
 					for (const entry of usageBreakdown) {
-						info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
+						info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)}${entry.costUnknown ? theme.fg("dim", " + unpriced turns") : ""} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
 					}
 				}
 				if (cacheWaste.missedTokens > 0) {
@@ -10273,6 +10368,9 @@ export class InteractiveMode {
 		this.clearExtensionTerminalInputListeners();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
+		this.agentSubscriptionGeneration++;
+		// The footer is disposed: clear the data without scheduling a frame.
+		this.footerDataProvider.setExtensionStatus(LIFECYCLE_STATUS_KEY, undefined);
 		if (this.unsubscribe) {
 			this.unsubscribe();
 		}

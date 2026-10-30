@@ -1,0 +1,221 @@
+#!/usr/bin/env node
+// EQ harness (plan P0-05b, §6.2-§6.4): drive the real CLI through each fused-equivalence case, collect O1-O8,
+// normalize, and compare against the B0 goldens (`--compare`) or write them (`--record`). The pipeline witness is read
+// separately and asserted on its own; it is never part of the equality.
+//
+//   node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --pipeline legacy \
+//     --placement fused [--cases E01,E02] [--surface rpc] [--repeat N] [--child node|binary:<path>] --evidence <slug>
+//
+// `--surface tui` (EQ.tui, plan P0-05c) runs the cases that list O8 through the real interactive TUI instead
+// (lib/equivalence-tui-cases.mjs) and compares their TUI captures against `golden-tui/<platform>`.
+//
+// The CLI child runs on Bun unless `--child` says otherwise (lib/common.mjs). Exit code 0 only when every selected
+// case matches its golden on every declared observable and its witness matches `--pipeline`, except a cell listed in
+// fused-equivalence/deferred-goldens.mjs whose golden is missing: it is reported DEFERRED(<owner>, <issue>), never PASS,
+// and does not fail the run. A listed cell whose golden exists fails the run (lib/equivalence-deferred.mjs).
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { cases } from "../../scenarios/fused-equivalence/cases/index.mjs";
+import { deferredGoldens } from "../../scenarios/fused-equivalence/deferred-goldens.mjs";
+import { startCaseRun } from "../../scenarios/fused-equivalence/cases/support/case-run.mjs";
+import { baselineManifest, goldenDir, observe } from "../../scenarios/fused-equivalence/cases/support/observe.mjs";
+import { ownTsxCache } from "../../scenarios/fused-equivalence/cases/support/tsx-cache.mjs";
+import { expectedWitness, readWitness } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
+import { goldenPlatform } from "../../scenarios/fused-equivalence/cases/support/host.mjs";
+import { childRuntime, evidenceDir, guardRealAuth, installCleanupHooks, repoRoot } from "../lib/common.mjs";
+import {
+	goldenCellVerdict,
+	staleDeferredEntries,
+	summarizeRun,
+	validateDeferredList,
+} from "../lib/equivalence-deferred.mjs";
+import { diffNormalized } from "../lib/equivalence-normalize.mjs";
+import { tuiCaptureHash, tuiGoldenDir } from "../lib/equivalence-tui-capture.mjs";
+import { runTuiCase, TUI_CASE_IDS } from "../lib/equivalence-tui-cases.mjs";
+
+/** Placements and surfaces whose producers come later in the plan; asking for them is an error, never a PASS. */
+const DEFERRED = {
+	placement: { "split-local": "S27a", "split-remote": "DM1", hosted: "V4" },
+	surface: { desktop: "P0-07b" },
+};
+
+function parseArgs(argv) {
+	const value = (flag) => {
+		const index = argv.indexOf(flag);
+		return index >= 0 ? argv[index + 1] : undefined;
+	};
+	const mode = argv.includes("--record") ? "record" : argv.includes("--compare") ? "compare" : undefined;
+	if (!mode) throw new Error("pass --compare or --record");
+	const placement = value("--placement") ?? "fused";
+	const surface = value("--surface") ?? "rpc";
+	for (const [kind, requested] of [
+		["placement", placement],
+		["surface", surface],
+	]) {
+		const owner = DEFERRED[kind][requested];
+		if (owner) throw new Error(`--${kind} ${requested} is DEFERRED(${owner}): its producer has not landed`);
+	}
+	if (placement !== "fused") throw new Error(`unknown --placement ${placement}`);
+	if (surface !== "rpc" && surface !== "headless" && surface !== "tui")
+		throw new Error(`unknown --surface ${surface}`);
+	const pipeline = value("--pipeline") ?? "default";
+	expectedWitness(pipeline);
+	const selected = value("--cases")
+		?.split(",")
+		.map((id) => id.trim().toUpperCase());
+	const unknown = (selected ?? []).filter((id) => !cases.some((c) => c.id === id));
+	if (unknown.length) throw new Error(`unknown case(s): ${unknown.join(", ")}`);
+	const noTui = surface === "tui" ? (selected ?? []).filter((id) => !TUI_CASE_IDS.includes(id)) : [];
+	if (noTui.length)
+		throw new Error(`no TUI drive for case(s): ${noTui.join(", ")} (EQ.tui: ${TUI_CASE_IDS.join(", ")})`);
+	const repeat = Number.parseInt(value("--repeat") ?? "1", 10);
+	if (!Number.isInteger(repeat) || repeat < 1) throw new Error("--repeat must be a positive integer");
+	return { mode, placement, surface, pipeline, selected, repeat, evidence: value("--evidence") };
+}
+
+async function runCase(testCase, { pipeline, surface }) {
+	const env = pipeline === "default" ? {} : { SENPI_EXECUTION_PIPELINE: pipeline };
+	if (surface === "tui") {
+		const { observations, sessionFile } = await runTuiCase(testCase, env);
+		return { observations, witness: readWitness(sessionFile) };
+	}
+	const spec = typeof testCase.spec === "function" ? testCase.spec() : testCase.spec;
+	const run = await startCaseRun({ ...spec, label: testCase.id.toLowerCase(), env: { ...spec.env, ...env } });
+	try {
+		await testCase.drive(run);
+		const observables =
+			surface === "headless"
+				? testCase.observables.filter((id) => id === "O7" || id === "O8")
+				: testCase.observables;
+		return { observations: observe(run, observables), witness: readWitness(run.sessionFile) };
+	} finally {
+		await run.stop();
+		run.box.cleanup();
+	}
+}
+
+function summarizeDiffs(diffs) {
+	return diffs
+		.slice(0, 12)
+		.map(
+			(row) =>
+				`    ${row.path}: golden=${JSON.stringify(row.golden)?.slice(0, 160)} actual=${JSON.stringify(row.actual)?.slice(0, 160)}`,
+		);
+}
+
+async function main() {
+	installCleanupHooks();
+	const options = parseArgs(process.argv.slice(2));
+	const guard = guardRealAuth();
+	const tui = options.surface === "tui";
+	const selected = cases.filter((c) =>
+		options.selected ? options.selected.includes(c.id) : !tui || TUI_CASE_IDS.includes(c.id),
+	);
+	const dir = tui ? tuiGoldenDir(goldenPlatform()) : goldenDir();
+	const command = `node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs ${process.argv.slice(2).join(" ")}`;
+	// Read before any golden is written: the manifest names the tree the goldens were recorded from, so a record run's own
+	// output must not mark that tree dirty.
+	const manifest = baselineManifest({ repo: repoRoot(), childRuntime: childRuntime().label, command });
+	const problems = validateDeferredList(
+		deferredGoldens,
+		cases.map((c) => c.id),
+	);
+	if (problems.length) throw new Error(`deferred-goldens.mjs is invalid:\n${problems.join("\n")}`);
+	const stale = options.mode === "compare" ? staleDeferredEntries(deferredGoldens) : [];
+	for (const entry of stale)
+		process.stdout.write(
+			`[FAIL] deferred ${entry.platform} ${entry.case} ${entry.mode}: its golden exists - remove the deferred entry (${entry.issue})\n`,
+		);
+	const cell = { platform: goldenPlatform(), mode: tui ? "tui" : "rpc" };
+	const results = [];
+	for (const testCase of selected) {
+		const verdict =
+			options.mode === "compare" ? goldenCellVerdict(deferredGoldens, { ...cell, case: testCase.id }) : undefined;
+		if (verdict?.kind === "deferred") {
+			const { owner, issue, due } = verdict.entry;
+			results.push({ id: testCase.id, title: testCase.title, pass: false, deferred: { owner, issue, due } });
+			process.stdout.write(`[DEFERRED] ${testCase.id} ${testCase.title} - ${verdict.label}, due ${due}\n`);
+			continue;
+		}
+		const runs = [];
+		let error;
+		try {
+			for (let index = 0; index < options.repeat; index++) runs.push(await runCase(testCase, options));
+		} catch (caught) {
+			error = caught instanceof Error ? (caught.stack ?? caught.message) : String(caught);
+		}
+		const goldenPath = join(dir, `${testCase.id}.json`);
+		const result = {
+			id: testCase.id,
+			title: testCase.title,
+			observables: testCase.observables,
+			error,
+			runs: runs.length,
+		};
+		if (!error) {
+			const first = runs[0].observations;
+			result.repeatDiffs = runs.slice(1).flatMap((other) => diffNormalized(first, other.observations));
+			result.witness = runs[0].witness;
+			result.witnessOk = runs.every((r) => r.witness.pipeline === expectedWitness(options.pipeline));
+			if (options.mode === "record") {
+				// A golden is written only from runs that agreed with each other: a nondeterministic case is a FAIL, never a golden.
+				if (result.repeatDiffs.length === 0) {
+					mkdirSync(dir, { recursive: true });
+					writeFileSync(
+						goldenPath,
+						`${JSON.stringify({ id: testCase.id, title: testCase.title, observations: first }, null, 1)}\n`,
+					);
+				}
+				result.diffs = [];
+			} else {
+				const golden = existsSync(goldenPath)
+					? JSON.parse(readFileSync(goldenPath, "utf8")).observations
+					: undefined;
+				result.diffs = golden
+					? diffNormalized(golden, first)
+					: [{ path: "$", golden: "<missing golden>", actual: "<observed>" }];
+			}
+			result.observed = first;
+		}
+		result.pass = !error && result.witnessOk && result.repeatDiffs.length === 0 && result.diffs.length === 0;
+		process.stdout.write(
+			`[${result.pass ? "PASS" : "FAIL"}] ${testCase.id} ${testCase.title}${error ? ` - ${error.split("\n")[0]}` : ""}\n`,
+		);
+		for (const line of summarizeDiffs([...(result.diffs ?? []), ...(result.repeatDiffs ?? [])]))
+			process.stdout.write(`${line}\n`);
+		if (result.witnessOk === false)
+			process.stdout.write(
+				`    witness.pipeline=${result.witness.pipeline} expected=${expectedWitness(options.pipeline)}\n`,
+			);
+		results.push(result);
+	}
+	guard.assertUnchanged();
+	if (tui) manifest.hashes.tuiCapture = tuiCaptureHash();
+	if (options.mode === "record") writeFileSync(join(dir, "baseline.json"), `${JSON.stringify(manifest, null, 1)}\n`);
+	const summary = summarizeRun(results, stale, options.mode);
+	process.stdout.write(`\n${summary.line} (child_runtime=${manifest.runtimes.child})\n`);
+	if (options.evidence) {
+		const out = evidenceDir(options.evidence);
+		const receipt = {
+			command,
+			child_runtime: manifest.runtimes.child,
+			manifest,
+			options,
+			staleDeferred: stale,
+			results: results.map(({ observed, ...rest }) => rest),
+		};
+		writeFileSync(join(out, "receipt.json"), `${JSON.stringify(receipt, null, 1)}\n`);
+		for (const r of results)
+			if (r.observed) writeFileSync(join(out, `${r.id}.observed.json`), `${JSON.stringify(r.observed, null, 1)}\n`);
+		process.stdout.write(`evidence: ${out}\n`);
+	}
+	process.exitCode = summary.exitCode;
+}
+
+const releaseTsxCache = ownTsxCache();
+main()
+	.catch((error) => {
+		process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+		process.exitCode = 2;
+	})
+	.finally(releaseTsxCache);

@@ -2,13 +2,13 @@ import type { ProviderEnv } from "../types.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { ModelsError } from "../utils/models-error.ts";
 import { classifyOAuthRefreshFailure, OAuthRefreshUnavailableError } from "../utils/oauth-refresh-error.ts";
+import { readCredential, readSlotCredential } from "./credential-read.ts";
 import {
 	OAuthRefreshExchangeError,
 	OAuthRefreshStoreError,
 	projectOAuthSlot,
 	refreshOAuthCredential,
 } from "./oauth-refresh.ts";
-import { projectSlot } from "./pool/slots.ts";
 
 export { ModelsError, type ModelsErrorCode } from "../utils/models-error.ts";
 
@@ -100,10 +100,9 @@ async function resolveProviderAuthWithSignal(
 		);
 	}
 
-	const stored = await readCredential(credentials, provider.id, signal);
 	const slotName = overrides?.slotName;
 	if (slotName !== undefined) {
-		const projected = stored === undefined ? undefined : projectSlot(stored, slotName);
+		const projected = await readSlotCredential(credentials, provider.id, slotName, signal);
 		if (!projected) return undefined;
 		if (projected.type === "oauth" && provider.auth.oauth) {
 			return resolveStoredOAuth(
@@ -125,6 +124,7 @@ async function resolveProviderAuthWithSignal(
 		}
 		return undefined;
 	}
+	const stored = await readCredential(credentials, provider.id, signal);
 	if (stored) {
 		if (stored.type === "oauth" && provider.auth.oauth) {
 			return resolveStoredOAuth(
@@ -286,17 +286,5 @@ async function resolveApiKey(
 		return await apiKey.resolve({ ctx: authContext, credential, signal });
 	} catch (error) {
 		throw new ModelsError("auth", `API key auth failed for provider ${providerId}`, { cause: error });
-	}
-}
-
-async function readCredential(
-	credentials: CredentialStore,
-	providerId: string,
-	signal: AbortSignal,
-): Promise<Credential | undefined> {
-	try {
-		return await credentials.read(providerId, { signal });
-	} catch (error) {
-		throw new ModelsError("auth", `Credential store read failed for ${providerId}`, { cause: error });
 	}
 }
