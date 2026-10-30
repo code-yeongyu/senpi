@@ -11,7 +11,6 @@ export {
 	type MaterializerRefusalCode,
 	type MaterializerSnapshot,
 } from "./materializer.ts";
-export { MemoryMaterializerAdapter } from "./materializer-memory.ts";
 export {
 	parseMaterializerFrame,
 	type MaterializerEnvelope,

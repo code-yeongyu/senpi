@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { parseMaterializerFrame } from "../src/materializer-wire.ts";
-import { MemoryMaterializerAdapter } from "../src/materializer-memory.ts";
+import { MemoryMaterializerAdapter } from "../src/materializer-test-kit.ts";
 import { MaterializerConsumer } from "../src/materializer.ts";
 
-it("R85.Q7 actual S15a answers, baselines and pre-answer frames still parse unchanged", async () => {
+it("R85.Q7 actual S15a b-g answers, baselines, overlaps and cancellations parse unchanged", async () => {
 	const fixture = async (name: string) =>
 		JSON.parse(
 			await readFile(
@@ -15,7 +15,24 @@ it("R85.Q7 actual S15a answers, baselines and pre-answer frames still parse unch
 	const answer = await fixture("b-answer");
 	const baseline = await fixture("c-baseline");
 	const before = await fixture("d-before-answer");
-	for (const frame of [answer.answer, baseline.baseline, baseline.page, ...before.frames])
+	const overlap = await fixture("e-overlap");
+	const subscribe = await fixture("f-subscribe");
+	const cancelled = await fixture("g-cancelled");
+	for (const frame of [
+		answer.answer,
+		baseline.baseline,
+		baseline.page,
+		...before.frames,
+		...overlap.answers,
+		...overlap.suffix,
+		subscribe.answer,
+		subscribe.baseline,
+		subscribe.page,
+		subscribe.delta,
+		cancelled.cancelled,
+		cancelled.answer,
+		cancelled.replay,
+	])
 		expect(parseMaterializerFrame(frame)).toEqual({ kind: "legacy", frame });
 });
 
