@@ -9,8 +9,11 @@ export interface ResourceCollision {
 
 export interface ResourceDiagnostic {
 	type: "warning" | "error" | "collision";
+	/** Optional for existing SDK resource overrides; skill loaders classify at the source. */
+	kind?: "collision" | "parse-error" | "read-error" | "validation";
 	category?: "size-limit" | "skill-link-blocked";
 	message: string;
+	hint?: string;
 	path?: string;
 	collision?: ResourceCollision;
 }

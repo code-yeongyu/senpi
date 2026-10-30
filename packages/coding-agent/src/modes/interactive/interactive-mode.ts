@@ -2500,6 +2500,9 @@ export class InteractiveMode {
 			} else {
 				lines.push({ text: `  ${d.message}`, tone });
 			}
+			if (d.hint) {
+				lines.push({ text: `    ${d.hint}`, tone });
+			}
 		}
 
 		return lines;
@@ -2711,8 +2714,25 @@ export class InteractiveMode {
 			const skillDiagnostics = skillsResult.diagnostics.filter(
 				(diagnostic) => diagnostic.category !== "size-limit" && diagnostic.category !== "skill-link-blocked",
 			);
-			if (skillDiagnostics.length > 0) {
-				addDiagnosticNotice("Skill conflicts", skillDiagnostics);
+			const skillConflicts = skillDiagnostics.filter(
+				(diagnostic) => (diagnostic.kind ?? diagnostic.type) === "collision",
+			);
+			const invalidSkills = skillDiagnostics.filter(
+				(diagnostic) => (diagnostic.kind ?? diagnostic.type) !== "collision",
+			);
+			if (skillConflicts.length > 0) {
+				addDiagnosticNotice(
+					"Skill conflicts",
+					skillConflicts,
+					"Multiple skills claim the same name; only the first is loaded.",
+				);
+			}
+			if (invalidSkills.length > 0) {
+				addDiagnosticNotice(
+					"Invalid skill files",
+					invalidSkills,
+					"Skill files could not be loaded or have invalid metadata.",
+				);
 			}
 
 			const promptDiagnostics = promptsResult.diagnostics;
