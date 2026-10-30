@@ -226,7 +226,7 @@ export class RetryFallbackController {
 	}
 
 	/**
-	 * A login or an account change on `provider` (the remedy a usage-limit refusal names) makes the account and
+	 * A login or an explicit block reset on `provider` makes the account and
 	 * model holds it earned stale, so the restore guard stops waiting out a reset that may no longer apply.
 	 */
 	noteProviderAccountsChanged(provider: string): void {
@@ -452,11 +452,12 @@ export class RetryFallbackController {
 	}
 }
 
-/** Feeds every provider `accounts_changed` event to the controller; returns the unsubscribe. */
+/** Only explicit account remedies invalidate holds; health and listing notices do not. */
 export function followProviderAccountChanges(
 	controller: Pick<RetryFallbackController, "noteProviderAccountsChanged">,
 ): () => void {
 	return subscribeProviderAccountEvents((event) => {
-		if (event.type === "accounts_changed") controller.noteProviderAccountsChanged(event.provider);
+		if (event.type === "accounts_changed" && event.remedy !== undefined)
+			controller.noteProviderAccountsChanged(event.provider);
 	});
 }

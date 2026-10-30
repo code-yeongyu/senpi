@@ -2,18 +2,19 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { streamWithCredentialRotation } from "../../../src/core/credential-pool/rotation-stream.ts";
 import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
 import { createFallbackCircuitAccess, FallbackCircuitBreaker } from "../../../src/core/retry-fallback/circuit.ts";
 import {
+	followProviderAccountChanges,
 	RetryFallbackController,
 	type RetryFallbackControllerDeps,
 } from "../../../src/core/retry-fallback/controller.ts";
 import { SelectorCooldowns } from "../../../src/core/retry-fallback/cooldown.ts";
 import { emitProviderAccountsChanged } from "../../../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
-import { followProviderAccountChanges } from "../../../src/core/retry-fallback/controller.ts";
 
 const MINUTE = 60_000;
 const primary = "openai-codex/gpt-5.6-sol";
@@ -71,6 +72,11 @@ describe("retry fallback: restoring the primary honours its account hold (senpi#
 		const { controller, selector, advance } = harness();
 		const directory = mkdtempSync(join(tmpdir(), "3347-sibling-block-"));
 		const repository = new CredentialSlotRepository(join(directory, "health.json"));
+		const siblingCredential: PooledCredential = {
+			type: "api_key",
+			key: "synthetic-key",
+			accounts: [{ name: "session-b", key: "synthetic-key", source: "login" }],
+		};
 		const unfollow = followProviderAccountChanges(controller);
 		try {
 			await controller.tryFallback("transient", usageLimit);
@@ -79,17 +85,13 @@ describe("retry fallback: restoring the primary honours its account hold (senpi#
 			const siblingStream = streamWithCredentialRotation({
 				sources: {
 					providerId: "openai-codex",
-					credential: {
-						type: "api_key",
-						key: "synthetic-key",
-						accounts: [{ name: "session-b", key: "synthetic-key", source: "login" }],
-					},
+					credential: siblingCredential,
 					env: () => undefined,
 					repository,
 					now: () => Date.parse("2026-10-14T10:00:00Z"),
 				},
 				affinityKey: "session-b",
-				runAttempt: async function* () {
+				runAttempt: () => {
 					throw new Error("429 rate limited");
 				},
 			});
@@ -100,9 +102,7 @@ describe("retry fallback: restoring the primary honours its account hold (senpi#
 					}
 				})(),
 			).rejects.toThrow("429 rate limited");
-			expect((await repository.listSlots("openai-codex", "stored"))["session-b"]?.blockReason).toBe(
-				"rate_limit",
-			);
+			expect((await repository.listSlots("openai-codex", "stored"))["session-b"]?.blockReason).toBe("rate_limit");
 			advance(31 * MINUTE);
 			expect(await controller.maybeRestorePrimary("cooldown-expiry")).toBe(false);
 			expect(selector()).toBe(fallback);
@@ -135,13 +135,13 @@ describe("retry fallback: restoring the primary honours its account hold (senpi#
 		expect(selector()).toBe(primary);
 	});
 
-	it("drops the hold when the primary's provider accounts change (a login or an added account)", async () => {
+	it.each(["login", "reset"] as const)("drops the hold after an explicit %s remedy", async (remedy) => {
 		const { controller, selector, advance } = harness();
 		const unfollow = followProviderAccountChanges(controller);
 		try {
 			await controller.tryFallback("transient", usageLimit);
 			controller.resetTurn();
-			emitProviderAccountsChanged("openai-codex");
+			emitProviderAccountsChanged("openai-codex", remedy);
 			advance(31 * MINUTE);
 
 			expect(await controller.maybeRestorePrimary("cooldown-expiry")).toBe(true);
@@ -151,13 +151,16 @@ describe("retry fallback: restoring the primary honours its account hold (senpi#
 		}
 	});
 
-	it("keeps the hold when another provider's accounts change", async () => {
+	it.each([
+		["openai-codex", undefined],
+		["anthropic", "login"],
+	] as const)("keeps the hold for a non-remedy or unrelated provider notice (%s, %s)", async (provider, remedy) => {
 		const { controller, selector, advance } = harness();
 		const unfollow = followProviderAccountChanges(controller);
 		try {
 			await controller.tryFallback("transient", usageLimit);
 			controller.resetTurn();
-			emitProviderAccountsChanged("anthropic");
+			emitProviderAccountsChanged(provider, remedy);
 			advance(31 * MINUTE);
 
 			expect(await controller.maybeRestorePrimary("cooldown-expiry")).toBe(false);

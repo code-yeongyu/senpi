@@ -1376,7 +1376,7 @@ export class ModelRuntime implements Models {
 			const credential = await this.models.login(providerId, type, { ...interaction, signal }, options);
 			await this.synchronizeCredentialState(providerId, "login", credential, signal);
 			// A fresh login is the remedy a usage-limit refusal names: holds sessions keep on this provider are stale.
-			emitProviderAccountsChanged(providerId);
+			emitProviderAccountsChanged(providerId, "login");
 			return credential;
 		});
 	}

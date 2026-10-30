@@ -1147,7 +1147,7 @@ export function createRpcConnectionHandler(
 				signal: controller.signal,
 			});
 			session.modelRegistry.refresh();
-			emitProviderAccountsChanged(provider);
+			emitProviderAccountsChanged(provider, "login");
 			// The client shows what this login replaced and where the previous credential is (senpi#3486).
 			const replacement = authStorage.takeReplacement(provider);
 			outputEvent({ type: "auth_login_end", provider, success: true, ...replacement });

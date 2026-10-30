@@ -140,7 +140,7 @@ export async function unblockProviderAccount(
 		};
 	});
 	const sessionScoped = forgetSessionBlocksFor(name);
-	if (lifted || sessionScoped) emitProviderAccountsChanged(provider);
+	if (lifted || sessionScoped) emitProviderAccountsChanged(provider, "reset");
 	return lifted || sessionScoped;
 }
 
