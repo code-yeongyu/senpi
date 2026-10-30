@@ -33,6 +33,7 @@ import {
 import { classifierErrorResult, imageErrorResult } from "@earendil-works/pi-ai/utils/model-operations";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
+import { applyUserBaseUrl } from "./provider-base-url-override.ts";
 import {
 	composeApiKeyAuth,
 	configuredHeaders,
@@ -459,15 +460,7 @@ function applyModelsJson(
 		if (existingIndex >= 0) models[existingIndex] = model;
 		else models.push(model);
 	}
-	const whitelist = config.whitelist ? new Set(config.whitelist) : undefined;
-	const blacklist = config.blacklist ? new Set(config.blacklist) : undefined;
-	const hideFree = config.hideFreeModels === true;
-	return models.filter(
-		(model) =>
-			(whitelist === undefined || whitelist.has(model.id)) &&
-			(blacklist === undefined || !blacklist.has(model.id)) &&
-			!(hideFree && !model.cost.unknown && model.cost.input === 0 && model.cost.output === 0),
-	);
+	return models;
 }
 
 function applyExtension(
@@ -588,7 +581,7 @@ export function composeModelProvider(
 	let refreshedExtensionModels: ProviderConfigInput["models"];
 	const currentExtension = (): ProviderConfigInput | undefined =>
 		extension && refreshedExtensionModels ? { ...extension, models: refreshedExtensionModels } : extension;
-	// models.json modelOverrides are the topmost user-config layer: they apply once,
+	// models.json overrides and visibility are the topmost user-config layer: they apply once,
 	// after custom-model upserts, extension model replacement, and legacy OAuth projection.
 	const getAllModels = (): AnyModel[] => {
 		let models = applyExtension(
@@ -607,6 +600,17 @@ export function composeModelProvider(
 				...models.filter((model) => !isModelType(model, "chat")),
 			];
 		}
+		const whitelist = config?.whitelist ? new Set(config.whitelist) : undefined;
+		const blacklist = config?.blacklist ? new Set(config.blacklist) : undefined;
+		const hideFree = config?.hideFreeModels === true;
+		models = models.filter(
+			(model) =>
+				(whitelist === undefined || whitelist.has(model.id)) &&
+				(blacklist === undefined || !blacklist.has(model.id)) &&
+				!(hideFree && !model.cost.unknown && model.cost.input === 0 && model.cost.output === 0),
+		);
+		// The user's models.json baseUrl is applied after every extension rewrite, modifyModels included.
+		models = applyUserBaseUrl(models, config);
 		return models.map((model) => {
 			const override = config?.modelOverrides?.[model.id];
 			return override && isModelType(model, "chat") ? applyModelOverride(model, override) : model;
@@ -661,7 +665,7 @@ export function composeModelProvider(
 	const provider: Provider = {
 		id: providerId,
 		name: extension?.name ?? config?.name ?? base?.name ?? extension?.oauth?.name ?? providerId,
-		baseUrl: extension?.baseUrl ?? config?.baseUrl ?? base?.baseUrl,
+		baseUrl: config?.baseUrl ?? extension?.baseUrl ?? base?.baseUrl,
 		headers: base?.headers,
 		// Composed providers must not silently drop provider-declared retry profiles.
 		retryPolicy: extension?.retryPolicy ?? base?.retryPolicy,

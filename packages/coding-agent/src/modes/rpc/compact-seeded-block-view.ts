@@ -1,7 +1,19 @@
 import { parseStreamingJson } from "@earendil-works/pi-ai";
 import type { CompactContentStore } from "./compact-content-store.ts";
 import type { FrozenSeededBlock } from "./compact-seeded-block.ts";
+import type { SeededFields } from "./compact-seeded-draft.ts";
 import { CompactValues } from "./compact-values.ts";
+
+export async function readSeededFields(store: CompactContentStore, fields: SeededFields, valid: () => void) {
+	const values = new CompactValues(store);
+	const result: Record<string, unknown> = {};
+	for (const [key, ref] of Object.entries(fields)) {
+		const value = await values.read(ref);
+		valid();
+		Object.defineProperty(result, key, { value, enumerable: true, configurable: true, writable: true });
+	}
+	return result;
+}
 
 /** Compatibility observation only: acceptance neither parses raw spelling nor assembles public values. */
 export async function readSeededBlock(
@@ -9,13 +21,7 @@ export async function readSeededBlock(
 	block: FrozenSeededBlock,
 	context: { readonly text: string; readonly valid: () => void },
 ) {
-	const values = new CompactValues(store);
-	const fields: Record<string, unknown> = {};
-	for (const [key, ref] of Object.entries(block.fields)) {
-		const value = await values.read(ref);
-		context.valid();
-		Object.defineProperty(fields, key, { value, enumerable: true, configurable: true, writable: true });
-	}
+	const fields = await readSeededFields(store, block.fields, context.valid);
 	let signature = "";
 	for (const root of [block.signature.root, block.signature.tailRoot])
 		for await (const part of store.text.chunks(root, context.valid)) signature += part;

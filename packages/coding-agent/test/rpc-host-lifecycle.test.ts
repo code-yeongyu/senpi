@@ -1,11 +1,12 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { on, once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createServer as createHttpServer, type Server as HttpServer, type ServerResponse } from "node:http";
 import { type AddressInfo, createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
 import { readHostRegistration } from "../src/modes/rpc/host-daemon-registration.ts";
 import { createHostDaemonPaths, ensureHost, type HostLifecyclePolicyInput } from "../src/modes/rpc/host-ensure.ts";
@@ -39,15 +40,33 @@ import {
 import { processIsLive, processMatchesPidFile, readProcessStartTime } from "../src/utils/process-identity.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 import { processAlive, reapProcessesUnder } from "./helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 const peers: JsonlPeer[] = [];
 const models: HeldAnthropicModel[] = [];
 const managed: Array<{ pidFile: { pid: number; processStartTime: string }; pidFilePath: string }> = [];
 const collisionChildFixture = join(import.meta.dirname, "fixtures", "rpc-collision-child.ts");
-// Windows supervisor-exit observation is load-dependent; teardown is eventually
-// consistent within the watchdog fallback bound, so the affected waits allow 30s.
-const WINDOWS_SUPERVISOR_EXIT_TIMEOUT_MS = 30_000;
+// Every lifecycle case that waits for a host exit declares its whole-case budget here, so the wait's
+// own bound is derived from the same number the case is given.
+const LIFECYCLE_CASE_TIMEOUT_MS = 45_000;
+const TURN_CASE_TIMEOUT_MS = 60_000;
+// vitest rejects a timed-out test with its own generic "Test timed out" error BEFORE the aborted test
+// signal reaches this wait, so a signal-only bound never gets to report. The wait therefore gives up
+// this long before its case does: enough to read the supervisor log tail and throw, and well past the
+// slowest identity probe measured under load (151 ms).
+const EXIT_REPORT_MARGIN_MS = 5_000;
+let caseStartedAt = Date.now();
+beforeEach(() => {
+	caseStartedAt = Date.now();
+});
+
+/** The exit wait's bound: what is left of this case's budget, minus the margin it keeps for reporting. */
+function exitWait(signal: AbortSignal, caseTimeoutMs: number): HostExitWait {
+	const remainingMs = caseStartedAt + caseTimeoutMs - EXIT_REPORT_MARGIN_MS - Date.now();
+	return { signal, timeoutMs: Math.max(1_000, remainingMs) };
+}
+
 // A clock test waits on events only. Its single bound must cover a cold supervisor start, which the
 // supervisor itself caps at 30 s for its host child (`waitForListener`), plus the clock steps.
 const CLOCK_TEST_TIMEOUT_MS = 60_000;
@@ -61,7 +80,7 @@ afterEach(
 			// Supervisors are detached and a failed ensure leaves no registration to stop them by; the
 			// sandbox path names every process this file started, so nothing outlives its directory.
 			await reapProcessesUnder(root);
-			rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+			await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 		}
 		// Each managed supervisor can use its stalled-child grace and post-SIGKILL exit breaker.
 	},
@@ -254,95 +273,119 @@ describe("ensureHost-spawned host lifecycle", () => {
 		CLOCK_TEST_TIMEOUT_MS,
 	);
 
-	it("exits cleanly after the idle window with no connections and no active turns", async () => {
-		const qa = scratch("idle");
-		const ensured = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 } });
-		expect(ensured.reused).toBe(false);
-		const entry = currentManaged();
-		await waitForHostExit(entry);
-		expect(existsSync(entry.pidFilePath)).toBe(false);
-		expect(existsSync(daemonPaths(qa).settingsFile)).toBe(false);
-		expect(await endpointLive(qa.socket)).toBe(false);
-		// Scoped to THIS supervisor: the internal directories live in one shared tmpdir, so any
-		// other host running concurrently (another suite, another checkout) owns its own.
-		expect(listInternalSocketDirs(ensured.pid)).toEqual([]);
-	}, 45_000);
+	it(
+		"exits cleanly after the idle window with no connections and no active turns",
+		async ({ signal }) => {
+			const qa = scratch("idle");
+			const ensured = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 } });
+			expect(ensured.reused).toBe(false);
+			const entry = currentManaged();
+			await waitForHostExit(entry, exitWait(signal, LIFECYCLE_CASE_TIMEOUT_MS));
+			expect(existsSync(entry.pidFilePath)).toBe(false);
+			expect(existsSync(daemonPaths(qa).settingsFile)).toBe(false);
+			expect(await endpointLive(qa.socket)).toBe(false);
+			// Scoped to THIS supervisor: the internal directories live in one shared tmpdir, so any
+			// other host running concurrently (another suite, another checkout) owns its own.
+			expect(listInternalSocketDirs(ensured.pid)).toEqual([]);
+		},
+		LIFECYCLE_CASE_TIMEOUT_MS,
+	);
 
-	it("does not exit while a client is attached, then exits after it detaches", async () => {
-		const qa = scratch("conn");
-		const ensured = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 }, hold: true });
-		const entry = currentManaged();
-		const peer = await JsonlPeer.connect(qa.socket);
-		ensured.release();
-		await delay(2_000);
-		await expectHostAlive(qa, entry.pidFile);
-		peer.destroy();
-		await waitForHostExit(entry);
-	}, 45_000);
+	it(
+		"does not exit while a client is attached, then exits after it detaches",
+		async ({ signal }) => {
+			const qa = scratch("conn");
+			const ensured = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 }, hold: true });
+			const entry = currentManaged();
+			const peer = await JsonlPeer.connect(qa.socket);
+			ensured.release();
+			await delay(2_000);
+			await expectHostAlive(qa, entry.pidFile);
+			peer.destroy();
+			await waitForHostExit(entry, exitWait(signal, LIFECYCLE_CASE_TIMEOUT_MS));
+		},
+		LIFECYCLE_CASE_TIMEOUT_MS,
+	);
 
-	it("does not exit while a turn is active even with no connections; exits after the turn settles", async () => {
-		const qa = scratch("turn");
-		const model = await HeldAnthropicModel.start();
-		models.push(model);
-		writeRpcModelsJson(qa.agentDir, model.origin);
-		const ensured = await ensureLifecycleHost(qa, {
-			policy: { idleExitMs: 800 },
-			hostArgs: ["--provider", MOCK_PROVIDER, "--model", MOCK_MODEL],
-			hold: true,
-		});
-		const entry = currentManaged();
-		const peer = await JsonlPeer.connect(qa.socket);
-		ensured.release();
-		const opened = await peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
-		const sessionId = openedSessionId(opened);
-		const agentStart = peer.waitFor((value) => value.type === "agent_start" && value.sessionId === sessionId);
-		await peer.request({ id: "prompt", type: "prompt", sessionId, message: "hold this turn open" });
-		await agentStart;
-		peer.destroy();
-		await delay(2_500);
-		await expectHostAlive(qa, entry.pidFile);
-		model.release();
-		await waitForHostExit(entry, 20_000);
-	}, 60_000);
+	it(
+		"does not exit while a turn is active even with no connections; exits after the turn settles",
+		async ({ signal }) => {
+			const qa = scratch("turn");
+			const model = await HeldAnthropicModel.start();
+			models.push(model);
+			writeRpcModelsJson(qa.agentDir, model.origin);
+			const ensured = await ensureLifecycleHost(qa, {
+				policy: { idleExitMs: 800 },
+				hostArgs: ["--provider", MOCK_PROVIDER, "--model", MOCK_MODEL],
+				hold: true,
+			});
+			const entry = currentManaged();
+			const peer = await JsonlPeer.connect(qa.socket);
+			ensured.release();
+			const opened = await peer.request({ id: "open", type: "open_session", cwd: qa.cwd });
+			const sessionId = openedSessionId(opened);
+			const agentStart = peer.waitFor((value) => value.type === "agent_start" && value.sessionId === sessionId);
+			await peer.request({ id: "prompt", type: "prompt", sessionId, message: "hold this turn open" });
+			await agentStart;
+			peer.destroy();
+			await delay(2_500);
+			await expectHostAlive(qa, entry.pidFile);
+			model.release();
+			await waitForHostExit(entry, exitWait(signal, TURN_CASE_TIMEOUT_MS));
+		},
+		TURN_CASE_TIMEOUT_MS,
+	);
 
 	// senpi#2227: the idle window used to start when ensureHost's readiness probe detached, so a
 	// client slower than the window to attach (a loaded runner, a lock release) found no host.
-	it("keeps an ensured host up past its idle window until the ensuring client attaches", async () => {
-		const qa = scratch("hold");
-		const ensured = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 }, hold: true });
-		const entry = currentManaged();
-		await delay(2_000);
-		const peer = await JsonlPeer.connect(qa.socket);
-		expect(await peer.request({ id: "held", type: "get_protocol_info" })).toMatchObject({ success: true });
-		ensured.release();
-		peer.destroy();
-		await waitForHostExit(entry);
-	}, 45_000);
+	it(
+		"keeps an ensured host up past its idle window until the ensuring client attaches",
+		async ({ signal }) => {
+			const qa = scratch("hold");
+			const ensured = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 }, hold: true });
+			const entry = currentManaged();
+			await delay(2_000);
+			const peer = await JsonlPeer.connect(qa.socket);
+			expect(await peer.request({ id: "held", type: "get_protocol_info" })).toMatchObject({ success: true });
+			ensured.release();
+			peer.destroy();
+			await waitForHostExit(entry, exitWait(signal, LIFECYCLE_CASE_TIMEOUT_MS));
+		},
+		LIFECYCLE_CASE_TIMEOUT_MS,
+	);
 
-	it("starts a fresh host transparently on the next ensure after an idle exit", async () => {
-		const qa = scratch("ensure");
-		const first = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 } });
-		const entry = currentManaged();
-		await waitForHostExit(entry);
-		const second = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 } });
-		expect(second.reused).toBe(false);
-		expect(second.pid).not.toBe(first.pid);
-		const info = await protocolInfo(qa.socket);
-		expect(info.data).toMatchObject({ serverVersion: VERSION, mode: "multi" });
-	}, 60_000);
+	it(
+		"starts a fresh host transparently on the next ensure after an idle exit",
+		async ({ signal }) => {
+			const qa = scratch("ensure");
+			const first = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 } });
+			const entry = currentManaged();
+			await waitForHostExit(entry, exitWait(signal, TURN_CASE_TIMEOUT_MS));
+			const second = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600 } });
+			expect(second.reused).toBe(false);
+			expect(second.pid).not.toBe(first.pid);
+			const info = await protocolInfo(qa.socket);
+			expect(info.data).toMatchObject({ serverVersion: VERSION, mode: "multi" });
+		},
+		TURN_CASE_TIMEOUT_MS,
+	);
 
-	it("persistent cold start never idle-exits (env override beats settings)", async () => {
-		const qa = scratch("persist");
-		await ensureLifecycleHost(qa, {
-			policy: { idleExitMs: 600 },
-			env: { [HOST_COLD_START_ENV]: "persistent" },
-		});
-		const entry = currentManaged();
-		await delay(2_500);
-		await expectHostAlive(qa, entry.pidFile);
-		terminateSupervisor(entry.pidFile.pid, "SIGTERM");
-		await waitForHostExit(entry, WINDOWS_SUPERVISOR_EXIT_TIMEOUT_MS);
-	}, 45_000);
+	it(
+		"persistent cold start never idle-exits (env override beats settings)",
+		async ({ signal }) => {
+			const qa = scratch("persist");
+			await ensureLifecycleHost(qa, {
+				policy: { idleExitMs: 600 },
+				env: { [HOST_COLD_START_ENV]: "persistent" },
+			});
+			const entry = currentManaged();
+			await delay(2_500);
+			await expectHostAlive(qa, entry.pidFile);
+			terminateSupervisor(entry.pidFile.pid, "SIGTERM");
+			await waitForHostExit(entry, exitWait(signal, LIFECYCLE_CASE_TIMEOUT_MS));
+		},
+		LIFECYCLE_CASE_TIMEOUT_MS,
+	);
 
 	it("preserves a live public socket when supervisor startup cannot bind it", async () => {
 		const qa = scratch("collision");
@@ -357,8 +400,6 @@ describe("ensureHost-spawned host lifecycle", () => {
 		const supervisor = spawn(
 			process.execPath,
 			[
-				"--import",
-				"tsx",
 				hostLifecycleEntry(),
 				"--socket",
 				qa.socket,
@@ -377,32 +418,36 @@ describe("ensureHost-spawned host lifecycle", () => {
 		live.close();
 	}, 45_000);
 
-	it("reaps the internal host when the supervisor is SIGKILLed (no catchable-signal path)", async () => {
-		const qa = scratch("kill9");
-		// A long idle window leaves the supervisor-lifetime binding as the only thing
-		// that can reap the internal host during this test.
-		const ensured = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600_000 } });
-		const entry = currentManaged();
-		const internalHosts = await waitForChildPids(ensured.pid);
-		expect(internalHosts.length).toBeGreaterThan(0);
-		const leakedDirs = listInternalSocketDirs(ensured.pid);
-		// The internal host serves a filesystem socket from its own tmp directory on POSIX, so a running
-		// supervisor must own at least one. win32 serves a NAMED PIPE instead: there is no directory to
-		// create, so the only honest expectation there is that none exists - and the reap assertions
-		// below (every internal host gone, nothing left under tmp) still carry the real invariant.
-		if (process.platform === "win32") expect(leakedDirs).toEqual([]);
-		else expect(leakedDirs.length).toBeGreaterThan(0);
+	it(
+		"reaps the internal host when the supervisor is SIGKILLed (no catchable-signal path)",
+		async ({ signal }) => {
+			const qa = scratch("kill9");
+			// A long idle window leaves the supervisor-lifetime binding as the only thing
+			// that can reap the internal host during this test.
+			const ensured = await ensureLifecycleHost(qa, { policy: { idleExitMs: 600_000 } });
+			const entry = currentManaged();
+			const internalHosts = await waitForChildPids(ensured.pid);
+			expect(internalHosts.length).toBeGreaterThan(0);
+			const leakedDirs = listInternalSocketDirs(ensured.pid);
+			// The internal host serves a filesystem socket from its own tmp directory on POSIX, so a running
+			// supervisor must own at least one. win32 serves a NAMED PIPE instead: there is no directory to
+			// create, so the only honest expectation there is that none exists - and the reap assertions
+			// below (every internal host gone, nothing left under tmp) still carry the real invariant.
+			if (process.platform === "win32") expect(leakedDirs).toEqual([]);
+			else expect(leakedDirs.length).toBeGreaterThan(0);
 
-		terminateSupervisor(ensured.pid, "SIGKILL");
-		await waitForPidsGone(internalHosts, 10_000);
-		expect(internalHosts.filter(processAlive)).toEqual([]);
-		expect(leakedDirs.filter((dir) => existsSync(join(tmpdir(), dir)))).toEqual([]);
-		expect(await endpointLive(qa.socket)).toBe(false);
-		// Win32 endpoint close and metadata unlink are separate operations; poll the
-		// identity-aware lifecycle helper instead of asserting the pidfile atomically.
-		await waitForHostExit(entry, WINDOWS_SUPERVISOR_EXIT_TIMEOUT_MS);
-		expect(existsSync(daemonPaths(qa).settingsFile)).toBe(false);
-	}, 60_000);
+			terminateSupervisor(ensured.pid, "SIGKILL");
+			await waitForPidsGone(internalHosts, 10_000);
+			expect(internalHosts.filter(processAlive)).toEqual([]);
+			expect(leakedDirs.filter((dir) => existsSync(join(tmpdir(), dir)))).toEqual([]);
+			expect(await endpointLive(qa.socket)).toBe(false);
+			// Win32 endpoint close and metadata unlink are separate operations; wait on the
+			// identity-aware lifecycle helper instead of asserting the pidfile atomically.
+			await waitForHostExit(entry, exitWait(signal, TURN_CASE_TIMEOUT_MS));
+			expect(existsSync(daemonPaths(qa).settingsFile)).toBe(false);
+		},
+		TURN_CASE_TIMEOUT_MS,
+	);
 });
 
 describe("host watchdog configuration", () => {
@@ -631,10 +676,12 @@ function supervisorGone(supervisor: ChildProcess, type: string): Error {
 function clockSupervisor(qa: Scratch): { supervisor: ChildProcess; exited: Promise<unknown[]> } {
 	const supervisor = spawn(
 		process.execPath,
-		["--import", "tsx", join(import.meta.dirname, "fixtures", "rpc-lifecycle-clock.ts"), qa.socket, qa.agentDir],
+		// The real host child inherits exec argv. Use Node's built-in TypeScript handling,
+		// as in rpc-host-idle-exit-closed-turn, rather than paying for tsx at every cold start.
+		[join(import.meta.dirname, "fixtures", "rpc-lifecycle-clock.ts"), qa.socket, qa.agentDir],
 		{
 			env: {
-				...process.env,
+				...hostSpawnEnv(),
 				...hermeticProviderEnv(),
 				SENPI_CODING_AGENT_DIR: qa.agentDir,
 				SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
@@ -789,7 +836,7 @@ async function fireWatchdogOnPipeEof(options: {
 			...(options.cleanupPaths ?? []),
 		],
 		{
-			env: { ...process.env, ...(options.sidecar ? { WATCHDOG_SIDECAR: options.sidecar } : {}) },
+			env: { ...hostSpawnEnv(), ...(options.sidecar ? { WATCHDOG_SIDECAR: options.sidecar } : {}) },
 			stdio: ["ignore", "ignore", "inherit", "pipe", "ipc"],
 		},
 	);
@@ -948,31 +995,75 @@ async function hostAlive(pidFile: { pid: number; processStartTime: string }): Pr
 	}
 }
 
+interface HostExitWaitOptions {
+	/**
+	 * A hard bound. Teardown, which escalates to SIGKILL, passes its own budget; an assertion passes
+	 * what is left of its case's budget (`exitWait`) so its own error reports before vitest's.
+	 */
+	readonly timeoutMs?: number;
+	/** The vitest test context's signal: aborted when the test itself runs out of time. */
+	readonly signal?: AbortSignal;
+	/** Injection point for the identity read, so a test can count how often the wait forks `ps`. */
+	readonly readStartTime?: (pid: number) => Promise<string | undefined>;
+}
+
+/** At least one bound is required: a wait with neither could loop forever. */
+type HostExitWait =
+	| (HostExitWaitOptions & { readonly timeoutMs: number })
+	| (HostExitWaitOptions & { readonly signal: AbortSignal });
+
+/**
+ * `kill(pid, 0)` is one syscall, so sampling it this often adds nothing to the machine running the
+ * shutdown being waited on.
+ */
+const EXIT_LIVENESS_INTERVAL_MS = 50;
+/**
+ * A live pid can be a REUSED pid, and only the recorded start time tells the two apart - but reading
+ * it costs a `ps` child, so it is re-read on this interval rather than on every liveness check.
+ */
+const EXIT_IDENTITY_INTERVAL_MS = 1_000;
+
+/**
+ * Waits for the supervisor process to be GONE: its pid stops answering `kill(pid, 0)` (or, on
+ * Windows, the CIM identity stops matching) and its pidfile is unlinked.
+ *
+ * senpi#3392: this used to read the identity through `ps` on every 50 ms tick and give up after a
+ * fixed 12 s. Against a 600 ms idle policy that budget is not a product bound at all, and the poll
+ * itself forked twenty processes a second at the very shutdown it was waiting for, so on a CPU
+ * starved runner the wait competed with its own subject and failed while the host was exiting
+ * normally. Liveness is now a syscall, the `ps` identity read only disambiguates pid reuse, and the
+ * bound is the caller's: an escalating caller passes its own budget, an assertion passes the test
+ * signal so the test timeout is the only deadline. The failure still names the host and the tail of
+ * its supervisor log.
+ */
 async function waitForHostExit(
 	entry: { pidFile: { pid: number; processStartTime: string }; pidFilePath: string },
-	timeoutMs = 12_000,
+	wait: HostExitWait,
 ): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() <= deadline) {
-		let currentIdentity: string | undefined;
+	const startedAt = Date.now();
+	const deadline = wait.timeoutMs === undefined ? undefined : startedAt + wait.timeoutMs;
+	let identityReadAt = 0;
+	for (;;) {
+		let exited = false;
 		let probeTimedOut = false;
 		if (process.platform === "win32") {
 			// Serialize the Windows CIM query: one bounded PowerShell probe at a time
 			// avoids the 50ms polling storm that caused every probe to time out.
 			const probe = probeWindowsProcessIdentity(entry.pidFile.pid, 10_000);
-			currentIdentity = probe.identity;
+			exited = probe.identity !== entry.pidFile.processStartTime;
 			// A probe that timed out reports UNKNOWN, not ALIVE. kill(pid, 0) answers
 			// liveness deterministically, so a host that really exited is recognized here
 			// instead of spinning until the deadline and failing with "did not exit".
 			probeTimedOut = probe.timedOut && processIsLive(entry.pidFile.pid);
-		} else {
-			currentIdentity = await readProcessStartTime(entry.pidFile.pid);
+		} else if (!processIsLive(entry.pidFile.pid)) {
+			exited = true;
+		} else if (Date.now() - identityReadAt >= EXIT_IDENTITY_INTERVAL_MS) {
+			identityReadAt = Date.now();
+			// Also catches an exited-but-unreaped host: `ps` reports state Z as no identity at all.
+			const readStartTime = wait.readStartTime ?? readProcessStartTime;
+			exited = (await readStartTime(entry.pidFile.pid)) !== entry.pidFile.processStartTime;
 		}
-		if (currentIdentity === entry.pidFile.processStartTime) {
-			await delay(process.platform === "win32" ? 1_000 : 50);
-			continue;
-		}
-		if (!probeTimedOut) {
+		if (exited && !probeTimedOut) {
 			if (!existsSync(entry.pidFilePath)) return;
 			// Force-kill teardown can leave a stale pidfile after the recorded process
 			// is already gone and the endpoint is no longer connectable. A nonmatching
@@ -983,9 +1074,28 @@ async function waitForHostExit(
 			rmSync(join(dirname(entry.pidFilePath), "settings.json"), { force: true });
 			return;
 		}
-		await delay(1_000);
+		if (wait.signal?.aborted === true) break;
+		if (deadline !== undefined && Date.now() >= deadline) break;
+		await delay(process.platform === "win32" ? 1_000 : EXIT_LIVENESS_INTERVAL_MS);
 	}
-	throw new Error(`RPC socket host pid ${entry.pidFile.pid} did not exit within ${timeoutMs}ms`);
+	const bound = wait.timeoutMs === undefined ? "the test's own timeout" : `${wait.timeoutMs}ms`;
+	throw new Error(
+		`RPC socket host pid ${entry.pidFile.pid} did not exit within ${bound} (waited ${Date.now() - startedAt}ms)\n` +
+			`[supervisor stderr tail]\n${supervisorStderrTail(entry.pidFilePath)}`,
+	);
+}
+
+/** The supervisor's own last words, from the daemon directory the pidfile lives in. */
+function supervisorStderrTail(pidFilePath: string, lines = 5): string {
+	try {
+		const tail = readFileSync(join(dirname(pidFilePath), "stderr.log"), "utf8")
+			.trimEnd()
+			.split("\n")
+			.slice(-lines);
+		return tail.join("\n") || "<empty supervisor stderr log>";
+	} catch {
+		return "<no supervisor stderr log>";
+	}
 }
 
 function probeWindowsProcessIdentity(pid: number, timeoutMs: number): { identity?: string; timedOut: boolean } {
@@ -1017,18 +1127,18 @@ async function stopHostProcess(pidFile: { pid: number; processStartTime: string 
 				// Detached Win32 supervisors require Stop-Process; process.kill does not
 				// reliably terminate them and can leak handles into the next test.
 				terminateSupervisor(pidFile.pid, "SIGTERM");
-				await waitForHostExit({ pidFile, pidFilePath }, STOP_WAIT_BUDGET_MS).catch(async () => {
+				await waitForHostExit({ pidFile, pidFilePath }, { timeoutMs: STOP_WAIT_BUDGET_MS }).catch(async () => {
 					terminateSupervisor(pidFile.pid, "SIGKILL");
-					await waitForHostExit({ pidFile, pidFilePath }, 2_000).catch(() => undefined);
+					await waitForHostExit({ pidFile, pidFilePath }, { timeoutMs: 2_000 }).catch(() => undefined);
 				});
 			} else {
 				signalIfAlive(pidFile.pid, "SIGTERM");
-				await waitForHostExit({ pidFile, pidFilePath }, STOP_WAIT_BUDGET_MS).catch(async () => {
+				await waitForHostExit({ pidFile, pidFilePath }, { timeoutMs: STOP_WAIT_BUDGET_MS }).catch(async () => {
 					// A host that idle-exits on its own between the SIGTERM and this
 					// escalation is a normal teardown, not a failure: signal only if the
 					// pid is still ours, so teardown can never fail with ESRCH.
 					signalIfAlive(pidFile.pid, "SIGKILL");
-					await waitForHostExit({ pidFile, pidFilePath }, 2_000).catch(() => undefined);
+					await waitForHostExit({ pidFile, pidFilePath }, { timeoutMs: 2_000 }).catch(() => undefined);
 				});
 			}
 		}
@@ -1264,3 +1374,77 @@ function writeHeldAnthropicResponse(res: ServerResponse): void {
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+// senpi#3392: the exit wait is the shared bound of every lifecycle case in this file, so it carries its
+// own proof - it must settle on a REAL exit and must never report a living host as gone.
+describe("host exit wait", () => {
+	it("settles on the process exit and still refuses a host that is alive", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "senpi-host-exit-wait-"));
+		const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+		const pid = child.pid;
+		if (pid === undefined) throw new Error("probe child did not start");
+		try {
+			const pidFilePath = join(dir, "host.pid");
+			const entry = {
+				pidFile: { pid, processStartTime: (await readProcessStartTime(pid)) ?? "" },
+				pidFilePath,
+			};
+			writeFileSync(pidFilePath, JSON.stringify({ pid }));
+			// A living host is never taken for an exited one: the wait ends at its bound, naming the host.
+			await expect(waitForHostExit(entry, { signal: AbortSignal.abort() })).rejects.toThrow(
+				`RPC socket host pid ${pid} did not exit`,
+			);
+			expect(existsSync(pidFilePath)).toBe(true);
+			const exited = once(child, "exit");
+			child.kill("SIGKILL");
+			await exited;
+			// The same wait settles off the real exit, and clears the state the dead host left behind.
+			await waitForHostExit(entry, { timeoutMs: 10_000 });
+			expect(existsSync(pidFilePath)).toBe(false);
+		} finally {
+			child.kill("SIGKILL");
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}, 30_000);
+
+	// The defect this file was changed for: the wait used to read the identity through a `ps` CHILD on
+	// every 50ms tick, about 20 forks a second aimed at the shutdown it was waiting for. Liveness is a
+	// syscall now and the identity read is the 1Hz pid-reuse guard, so the rate itself is the invariant.
+	// win32 reads its identity through the CIM probe instead, which the wait already runs at 1Hz.
+	it.skipIf(process.platform === "win32")(
+		"reads the process identity about once a second, not on every liveness check",
+		async () => {
+			const dir = mkdtempSync(join(tmpdir(), "senpi-host-exit-rate-"));
+			const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+			const pid = child.pid;
+			if (pid === undefined) throw new Error("probe child did not start");
+			try {
+				const pidFilePath = join(dir, "host.pid");
+				const entry = {
+					pidFile: { pid, processStartTime: (await readProcessStartTime(pid)) ?? "" },
+					pidFilePath,
+				};
+				writeFileSync(pidFilePath, JSON.stringify({ pid }));
+				let identityReads = 0;
+				const readStartTime = async (probed: number): Promise<string | undefined> => {
+					identityReads += 1;
+					return await readProcessStartTime(probed);
+				};
+				const windowMs = 2_000;
+				const startedAt = Date.now();
+				await expect(waitForHostExit(entry, { timeoutMs: windowMs, readStartTime })).rejects.toThrow(
+					"did not exit",
+				);
+				const elapsedSeconds = (Date.now() - startedAt) / 1_000;
+				expect(identityReads).toBeGreaterThan(0);
+				// One read per second, plus the one that opens the wait. The old 50ms identity poll would
+				// have made roughly twenty times this many and fails here.
+				expect(identityReads).toBeLessThanOrEqual(Math.ceil(elapsedSeconds) + 1);
+			} finally {
+				child.kill("SIGKILL");
+				rmSync(dir, { recursive: true, force: true });
+			}
+		},
+		30_000,
+	);
+});

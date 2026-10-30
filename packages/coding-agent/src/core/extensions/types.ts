@@ -13,6 +13,7 @@ import type { InputOrigin } from "../input-origin.ts";
 import type { LifecycleApi } from "../session-lifecycle-types.ts";
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { ContextEvent } from "./context-event.ts";
+import type { ExtensionRpcRequestHandler } from "./rpc-context.ts";
 
 export type { ContextEvent } from "./context-event.ts";
 
@@ -546,6 +547,8 @@ export interface ExtensionContext {
 	readonly goalStoreFile?: string;
 	/** Browser engine the opener chose for THIS session (`open_session.browserEngine`); absent when it chose none. */
 	readonly browserEngine?: BrowserEngine;
+	/** Caller env the opener gave THIS session (`open_session.env`, senpi#4381); absent when it gave none. */
+	readonly sessionEnv?: Readonly<Record<string, string>>;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -648,6 +651,13 @@ export interface ExtensionContext {
 	getLookAtSettings(): { enabled: boolean; models: string[] | undefined };
 	/** Get resolved ask-user settings from global/project overrides and --no-ask-user. */
 	getAskUserSettings?(): { enabled: boolean; timeoutMinutes: number };
+	/**
+	 * Run `publish` once every `session_start` handler of the current dispatch has returned, in admission order;
+	 * outside a `session_start` dispatch it runs now. Recovered work published here cannot be answered while a
+	 * later startup handler is still preparing the session. Skipped when the session was replaced, reloaded or
+	 * disposed before dispatch ended; a returned promise's rejection is reported as an extension error.
+	 */
+	afterSessionStart?(publish: () => void | Promise<void>): void;
 	/** Get resolved image settings from global/project/user overrides. */
 	getImageSettings(): { autoResize: boolean; blockImages: boolean };
 	/** Manage retry fallback through the SettingsManager owned by this session. */
@@ -2887,9 +2897,12 @@ export interface ExtensionAPI {
 	 * Register or override a model provider.
 	 *
 	 * If `models` is provided: replaces all existing models for this provider.
-	 * If only `baseUrl` is provided: overrides the URL for existing models.
+	 * If only `baseUrl` is provided: overrides the URL for existing models, unless the user's
+	 * models.json sets a `baseUrl` for this provider or model, which always wins.
 	 * If `oauth` is provided: registers OAuth provider for /login support.
-	 * If `streamSimple` is provided: registers a custom API stream handler.
+	 * If `streamSimple` is provided: registers a custom API stream handler. It must send each
+	 * request to `model.baseUrl`: when models.json sets a `baseUrl`, every model of the provider
+	 * carries it.
 	 *
 	 * During initial extension load this call is queued and applied once the
 	 * runner has bound its context. After that it takes effect immediately, so
@@ -2916,7 +2929,7 @@ export interface ExtensionAPI {
 	 * });
 	 *
 	 * @example
-	 * // Override baseUrl for an existing provider
+	 * // Override baseUrl for an existing provider (a models.json baseUrl still wins)
 	 * pi.registerProvider("anthropic", {
 	 *   baseUrl: "https://proxy.example.com"
 	 * });
@@ -2985,7 +2998,7 @@ export interface ExtensionAPI {
 	readonly session: SessionControlActions;
 }
 
-export type ExtensionRpcRequestHandler = (data: unknown) => unknown | Promise<unknown>;
+export type { ExtensionRpcRequestContext, ExtensionRpcRequestHandler } from "./rpc-context.ts";
 
 // ============================================================================
 // Provider Registration Types
@@ -3001,7 +3014,12 @@ export interface ExtensionVirtualModel<TState = unknown> extends Omit<VirtualMod
 export interface ProviderConfig {
 	/** Display name for the provider in UI. */
 	name?: string;
-	/** Base URL for the API endpoint. Required when defining models. */
+	/**
+	 * Base URL for the API endpoint. Required when defining models. A models.json `baseUrl` for this
+	 * provider (or a models.json `models[i].baseUrl`) takes precedence over it and over model-level
+	 * `baseUrl` values declared here, for every model of the provider. `streamSimple`, `images` and
+	 * `classifiers` must therefore send each request to `model.baseUrl`, not to this value.
+	 */
 	baseUrl?: string;
 	/** API key literal, env interpolation ($ENV_VAR or ${ENV_VAR}), or leading !command. Required when defining models (unless oauth provided). */
 	apiKey?: string;
@@ -3509,6 +3527,7 @@ export interface ExtensionContextActions {
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getBrowserEngine?: () => BrowserEngine | undefined;
+	getSessionEnv?: () => Readonly<Record<string, string>> | undefined;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;

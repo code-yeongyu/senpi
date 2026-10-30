@@ -21,6 +21,7 @@ import {
 	socketSecretPath,
 } from "../../../src/modes/rpc/socket-transport.ts";
 import { hermeticProviderEnv } from "../../helpers/rpc-hermetic.ts";
+import { hostSpawnEnv } from "../../helpers/rpc-host-spawn-env.ts";
 
 vi.mock("node:child_process", async (importOriginal) => {
 	const actual = await importOriginal<typeof childProcess>();
@@ -187,8 +188,6 @@ describe("createInternalSocketPath", () => {
 			const supervisor = childProcess.spawn(
 				process.execPath,
 				[
-					"--import",
-					import.meta.resolve("tsx"),
 					resolve(import.meta.dirname, "../../../src/cli.ts"),
 					"--internal-rpc-host-supervisor",
 					"--socket",
@@ -202,7 +201,7 @@ describe("createInternalSocketPath", () => {
 				{
 					cwd: root,
 					env: {
-						...process.env,
+						...hostSpawnEnv(),
 						...hermeticProviderEnv(),
 						PI_OFFLINE: "1",
 						TMPDIR: temporaryDirectory,
