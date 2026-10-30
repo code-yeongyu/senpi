@@ -18,6 +18,16 @@ import type {
 	Usage,
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
+import type { ExecutionPipelineWitness, ExecutionScope, ToolHost } from "./execution/tool-host.ts";
+
+export type {
+	ExecutionPipelineWitness,
+	ExecutionScope,
+	ToolHost,
+	ToolHostCall,
+	ToolHostOptions,
+	ToolHostResult,
+} from "./execution/tool-host.ts";
 
 /**
  * Stream function used by the agent loop. `Models.streamSimple` satisfies
@@ -371,6 +381,10 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * Default: "parallel"
 	 */
 	toolExecution?: ToolExecutionMode;
+	/** Unprepared batch boundary. Omitted selects the existing in-process legacy scheduler. */
+	toolHost?: ToolHost;
+	executionScope?: ExecutionScope;
+	onExecutionPipeline?: (witness: ExecutionPipelineWitness) => Promise<void> | void;
 
 	/**
 	 * Optional migration guidance for tool names intentionally removed by an extension.
