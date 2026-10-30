@@ -5,6 +5,7 @@ import type { AgentSessionEvent } from "./agent-session.ts";
 /** One record of a session's internal structured lane: a session event or a block control, in session order. */
 export type AgentSessionStructuredRecord = AgentSessionEvent | AssistantProgress;
 type StructuredListener = (record: AgentSessionStructuredRecord) => void;
+type StructuredFailure = (cause: unknown) => void;
 
 export class StructuredLaneUnavailableError extends Error {
 	constructor() {
@@ -24,25 +25,37 @@ export class StructuredLaneUnavailableError extends Error {
  * with no structured listener, which drop them at their public iterator.
  */
 export class StructuredSessionLane {
-	private readonly listeners = new Set<StructuredListener>();
+	private readonly listeners = new Map<StructuredListener, StructuredFailure | undefined>();
 	readonly #channel: InternalAgentChannel | undefined;
 	readonly #enqueue: (deliver: () => void) => void;
+	readonly #own: (control: object) => void;
 	private releaseChannel: (() => void) | undefined;
 
-	constructor(channel: InternalAgentChannel | undefined, enqueue: (deliver: () => void) => void) {
+	/** `own` binds a block control to the message open when it leaves the session queue (its emission point). */
+	constructor(
+		channel: InternalAgentChannel | undefined,
+		enqueue: (deliver: () => void) => void,
+		own: (control: object) => void = () => {},
+	) {
 		this.#channel = channel;
 		this.#enqueue = enqueue;
+		this.#own = own;
 	}
 
 	get active(): boolean {
 		return this.listeners.size > 0;
 	}
 
-	subscribe(listener: StructuredListener): () => void {
+	/** `failed` hears a record this lane could not build; that record is skipped, never the event's legacy delivery. */
+	subscribe(listener: StructuredListener, failed?: StructuredFailure): () => void {
 		if (!this.#channel) throw new StructuredLaneUnavailableError();
-		this.listeners.add(listener);
+		this.listeners.set(listener, failed);
 		this.releaseChannel ??= this.#channel.subscribe((record) => {
-			if ("progress" in record) this.#enqueue(() => this.emit(record.progress));
+			if ("progress" in record)
+				this.#enqueue(() => {
+					this.#own(record.progress);
+					this.emit(record.progress);
+				});
 		});
 		return () => {
 			this.listeners.delete(listener);
@@ -58,7 +71,14 @@ export class StructuredSessionLane {
 				: undefined;
 		// A user-facing description replaced the engine message, so the capture's frozen message must follow it.
 		const described = message && "message" in source && source.message !== message ? message : undefined;
-		this.emit(carryAssistantCapture(source, event, described));
+		let record: AgentSessionStructuredRecord;
+		try {
+			record = carryAssistantCapture(source, event, described);
+		} catch (cause) {
+			for (const failed of [...this.listeners.values()]) failed?.(cause);
+			return;
+		}
+		this.emit(record);
 	}
 
 	dispose(): void {
@@ -68,6 +88,6 @@ export class StructuredSessionLane {
 	}
 
 	private emit(record: AgentSessionStructuredRecord): void {
-		for (const listener of [...this.listeners]) listener(record);
+		for (const listener of [...this.listeners.keys()]) listener(record);
 	}
 }

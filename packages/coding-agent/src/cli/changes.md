@@ -1,3 +1,40 @@
+## 2026-10-28 - Prompt-size inventory follows the registered-server ownership rule (senpi#4604, fixes #4597)
+
+### What changed
+
+- `packages/coding-agent/src/cli/prompt-size-inventory.ts`: `mcpServerNames` merges extension-registered servers only when no extension handles `mcp_servers_change`, matching what the built-in gateway connects.
+
+### Why
+
+- `packages/coding-agent/src/cli/prompt-size-inventory.ts`: the inventory estimates the built-in gateway's prompt section; counting servers another extension connects would overcount.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli/prompt-size-inventory.ts`: the inventory is a CLI diagnostic outside the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the `mcpServerNames` body.
+
+## 2026-10-25 - Explicit RPC endpoint attachment arguments (senpi#4269)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: exposes `--attach` and documents its required session reference.
+- `packages/coding-agent/src/cli/attach-args.ts`: validates attachment mode and incompatible session options before startup.
+
+### Why
+
+- `packages/coding-agent/src/cli/args.ts`: an explicit attachment must not fall through to local session creation or RPC server mode.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli/args.ts`: mode selection happens before a session loads extensions.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: the argument result type, final validation, and help options.
+
 ## 2026-10-26 - Read the canonical agent directory without opening state (#4368)
 
 ### What changed
