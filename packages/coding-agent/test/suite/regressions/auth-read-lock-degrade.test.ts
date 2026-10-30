@@ -5,6 +5,7 @@ import type { AuthOperationOptions } from "@earendil-works/pi-ai";
 import lockfile from "proper-lockfile";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage, type AuthStorageBackend } from "../../../src/core/auth-storage.ts";
+import { AuthStoreUnreadableError } from "../../../src/core/auth-store-load-error.ts";
 import { operationSignal } from "../../../src/utils/abort.ts";
 
 class AsyncReadLockFailureBackend implements AuthStorageBackend {
@@ -105,6 +106,8 @@ describe("auth read lock degradation", () => {
 			type: "api_key",
 			key: "last-good-key",
 		});
-		expect(storage.drainErrors()).toEqual([expect.any(SyntaxError)]);
+		const errors = storage.drainErrors();
+		expect(errors).toEqual([expect.any(AuthStoreUnreadableError)]);
+		expect((errors[0] as AuthStoreUnreadableError).loadError.kind).toBe("malformed_json");
 	});
 });
