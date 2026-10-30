@@ -51,8 +51,10 @@ export function materializerLine(
 		},
 	});
 	// Generated identifiers and one fixed control leave room for the bounded admissionId header.
-	if (Buffer.byteLength(line) + 512 > MATERIALIZER_ENVELOPE_MAX_BYTES)
-		throw new Error("materializer envelope exceeded H");
+	if (Buffer.byteLength(line) + 512 > MATERIALIZER_ENVELOPE_MAX_BYTES) {
+		fanout.events.abandon(caller.socketEpoch, minted.value.id);
+		throw new RangeError("materializer envelope exceeded H");
+	}
 	return {
 		line,
 		atomic: true,
