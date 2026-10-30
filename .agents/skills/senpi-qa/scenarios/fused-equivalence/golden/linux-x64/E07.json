@@ -4616,7 +4616,7 @@
    {
     "accept": "application/json",
     "accept-encoding": "gzip, deflate, br, zstd",
-    "authorization": "sha256:01274dd5010dcac7",
+    "authorization": "<redacted:sha256:01274dd5010dcac7>",
     "content-type": "application/json",
     "host": "<model-server-host>",
     "user-agent": "pi (linux <host:release>; x64)",
@@ -4632,7 +4632,7 @@
    {
     "accept": "application/json",
     "accept-encoding": "gzip, deflate, br, zstd",
-    "authorization": "sha256:01274dd5010dcac7",
+    "authorization": "<redacted:sha256:01274dd5010dcac7>",
     "content-type": "application/json",
     "host": "<model-server-host>",
     "user-agent": "pi (linux <host:release>; x64)",
@@ -4648,7 +4648,7 @@
    {
     "accept": "application/json",
     "accept-encoding": "gzip, deflate, br, zstd",
-    "authorization": "sha256:01274dd5010dcac7",
+    "authorization": "<redacted:sha256:01274dd5010dcac7>",
     "content-type": "application/json",
     "host": "<model-server-host>",
     "user-agent": "pi (linux <host:release>; x64)",
@@ -4664,7 +4664,7 @@
    {
     "accept": "application/json",
     "accept-encoding": "gzip, deflate, br, zstd",
-    "authorization": "sha256:01274dd5010dcac7",
+    "authorization": "<redacted:sha256:01274dd5010dcac7>",
     "content-type": "application/json",
     "host": "<model-server-host>",
     "user-agent": "pi (linux <host:release>; x64)",

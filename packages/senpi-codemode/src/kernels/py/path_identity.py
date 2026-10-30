@@ -67,12 +67,17 @@ def create_identity(runtime):
     asset = os.path.join(os.path.dirname(__file__),
                          "path_identity_windows.py" if platform == "win32" else "path_identity_posix.py")
     namespace = {"__builtins__": __builtins__}
-    with open(asset, "rb") as source:
-        exec(compile(source.read(), asset, "exec"), namespace)
-    if platform == "win32":
-        realpath, anchor, dirname, basename, join, absolute = namespace["windows_primitives"](failure)
-    else:
-        realpath = namespace["native_realpath"](runtime, failure)
+    try:
+        with open(asset, "rb") as source:
+            exec(compile(source.read(), asset, "exec"), namespace)
+        if platform == "win32":
+            realpath, anchor, dirname, basename, join, absolute = namespace["windows_primitives"](failure)
+        else:
+            realpath = namespace["native_realpath"](runtime, failure)
+    except (ImportError, OSError, AttributeError):
+        # No native primitives (e.g. a Python built without ctypes): send no canonical, so the host
+        # falls back exactly as it does for any request without one, and the kernel still starts.
+        return lambda executed: {}
 
     def volume_fold(existing):
         try:
