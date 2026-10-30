@@ -493,7 +493,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		};
 		this.eventBus = options.eventBus ?? createEventBus();
 		const factories = options.extensionFactories ?? [];
-		this.extensionFactories = factories.filter((input) => !isBuiltinExtension(input));
+		const hostFactories = factories.flatMap((input) =>
+			typeof input !== "function" && input.host ? [{ id: input.name, factory: input.factory }] : [],
+		);
+		this.extensionFactories = factories.filter(
+			(input) => !(typeof input !== "function" && input.host) && !isBuiltinExtension(input),
+		);
 		this.builtinExtensions = new Map(factories.filter(isBuiltinExtension).map((input) => [input.name, input]));
 		this.packageManager = new DefaultPackageManager({
 			cwd: this.cwd,
@@ -518,6 +523,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 								}
 							: extension,
 					);
+		this.builtinExtensionFactories = [...this.builtinExtensionFactories, ...hostFactories];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;

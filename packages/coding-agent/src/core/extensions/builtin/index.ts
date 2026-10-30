@@ -21,7 +21,6 @@ import helpExtension from "./help/index.ts";
 import herdrExtension from "./herdr/index.ts";
 import historySearchExtension from "./history-search/index.ts";
 import hooksExtension from "./hooks/index.ts";
-import htmlRenderExtension from "./html-render/index.ts";
 import imageGenExtension from "./imagegen/index.ts";
 import importReproExtension from "./import-repro.ts";
 import jobWidgetsExtension from "./job-widgets/extension.ts";
@@ -126,9 +125,6 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "relocate-session", factory: relocateSessionExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
-	// HTML page rendering for standalone senpi (TUI/local); the desktop thread reaches the
-	// same capability through the desktop's MCP server instead.
-	{ id: "html-render", factory: htmlRenderExtension },
 	// Provider-neutral account listing; sits before the provider lanes so their
 	// dedicated commands (claude-account, cursor accounts) keep their own names.
 	{ id: "account", factory: accountExtension },

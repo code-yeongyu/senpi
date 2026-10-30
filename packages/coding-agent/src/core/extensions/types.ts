@@ -3189,6 +3189,8 @@ export type InlineExtension =
 			factory: ExtensionFactory;
 			/** Omit this extension from the startup Extensions list. */
 			hidden?: boolean;
+			/** Host-supplied default, controlled by enabledBuiltinExtensions/disabledBuiltinExtensions by name. */
+			host?: boolean;
 			/**
 			 * Leave this extension out when another extension registers a tool, command, or flag with a
 			 * name it registers during loading, instead of reporting a conflict. The CLI's built-in MCP,
