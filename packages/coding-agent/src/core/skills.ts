@@ -242,11 +242,12 @@ function loadSkillsFromDirInternal(
 				}
 			}
 
-			// A linked directory gets its own ignore context, as in collectSkillEntries (senpi#5060).
+			// A linked entry belongs to another tree: the ignore files above it do not hide it, and a linked
+			// directory gets its own ignore context, as in collectSkillEntries (senpi#5060, senpi#5069).
 			const linkedDirectory = isLink && isDirectory;
 			const relPath = toPosixPath(relative(root, fullPath));
 			const ignorePath = isDirectory ? `${relPath}/` : relPath;
-			if (!linkedDirectory && ig.ignores(ignorePath)) {
+			if (!isLink && ig.ignores(ignorePath)) {
 				continue;
 			}
 
