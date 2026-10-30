@@ -46,14 +46,18 @@ if (group === "auth" && command === "status") {
 		process.stdout.write("not json\n");
 		process.exit(0);
 	}
-	const status = statuses[mode] ?? statuses["status-loggedout"];
+	// FAKE_CLAUDE_STATUS_MODE answers `auth status` after a login scenario ran under FAKE_CLAUDE_MODE.
+	const status = statuses[process.env.FAKE_CLAUDE_STATUS_MODE ?? mode] ?? statuses["status-loggedout"];
 	process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
 	process.exit(status.loggedIn ? 0 : 1);
 }
 
-if (group === "auth" && command === "logout") {
+if (group === "auth" && command === "logout" && mode === "logout-hang") {
+	// Never exits: only a kill (deadline or abort) ends it.
+	await new Promise(() => setInterval(() => {}, 1_000));
+} else if (group === "auth" && command === "logout") {
 	process.stdout.write("Successfully logged out from your Anthropic account.\n");
-	process.exit(mode === "logout-fail" ? 1 : 0);
+	process.exit(mode === "logout-fail" || process.env.FAKE_CLAUDE_LOGOUT_FAIL === "1" ? 1 : 0);
 }
 
 if (group !== "auth" || command !== "login") process.exit(2);

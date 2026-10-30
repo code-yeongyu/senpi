@@ -14,7 +14,6 @@ export function bundleRequiredInputs({ codingAgentDistDir, aiDistDir }) {
 		join(codingAgentDistDir, "utils", "image-resize-worker.js"),
 		join(codingAgentDistDir, "core", "extensions", "builtin", "permission-system", "path-identity-worker.js"),
 		join(aiDistDir, "api", "bedrock-converse-stream.js"),
-		join(aiDistDir, "auth", "oauth", "anthropic.js"),
 	];
 }
 
@@ -25,7 +24,6 @@ export function bundleRequiredInputs({ codingAgentDistDir, aiDistDir }) {
  */
 export function lazyEntryPoints({ codingAgentDistDir, aiDistDir }) {
 	return {
-		anthropic: join(aiDistDir, "auth", "oauth", "anthropic.js"),
 		"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
 		cursor: join(aiDistDir, "auth", "oauth", "cursor.js"),
 		"cursor-agent": join(aiDistDir, "api", "cursor-agent.js"),

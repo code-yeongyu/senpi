@@ -88,8 +88,10 @@ it("disposes a worker's grants on exit and when its construction throws", async 
 	const { result: worker, issued: data } = registry.spawn((grant) =>
 		startProbe({ workerData: { extensionData: grant.extensionData } }),
 	);
-	await ready(worker);
+	// The probe exits on its own after "ready"; Node drains that message and emits "exit" in one callback,
+	// so a listener added after awaiting "ready" can miss the exit. Attach it before any await.
 	worker.once("exit", () => data.dispose());
+	await ready(worker);
 	await worker.terminate();
 
 	// Then: each grant was disposed exactly once.

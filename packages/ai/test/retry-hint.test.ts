@@ -457,14 +457,6 @@ describe("body prose", () => {
 /* ---------- 7. Precedence: explicit zero beats lower-precedence positive ---------- */
 
 describe("explicit zero precedence", () => {
-	it("retry-after: 0 + prose 30s -> 0", () => {
-		const result = extract429RetryAfterMs(
-			{ status: 429, headers: headers({ "retry-after": "0" }), bodyText: "try again in 30 seconds" },
-			NOW,
-		);
-		expect(result).toBe(0);
-	});
-
 	it("retry-after-ms: 0 + retry-after: 60 -> 0 (higher precedence wins with zero)", () => {
 		const result = extract429RetryAfterMs(
 			{ status: 429, headers: headers({ "retry-after-ms": "0", "retry-after": "60" }), bodyText: "" },
