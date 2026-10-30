@@ -4,5 +4,5 @@
 		"types": ["node", "bun"],
 		"noEmit": true
 	},
-	"include": ["conformance-archive-files.ts", "pack-conformance-archive.ts"]
+	"include": ["conformance-archive-files.ts", "deterministic-tar-gz.ts", "pack-conformance-archive.ts"]
 }

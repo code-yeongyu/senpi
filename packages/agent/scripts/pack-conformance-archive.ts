@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { conformanceArchiveFiles } from "./conformance-archive-files.ts";
+import { deterministicTarGz } from "./deterministic-tar-gz.ts";
 import { buildManifest } from "../src/conformance/mapping.ts";
 import type * as Conformance from "../src/conformance/index.ts";
 
@@ -77,7 +78,7 @@ try {
 	if (archived.suite_hash !== baseline.suite_hash || recomputed.suite_hash !== baseline.suite_hash ||
 		JSON.stringify(archived.cases) !== JSON.stringify(baseline.cases))
 		throw new Error("packed conformance export differs from same-commit CONF.bun manifest");
-	const archive = await new Bun.Archive(files, { compress: "gzip" }).bytes();
+	const archive = deterministicTarGz(files);
 	await Bun.write(resolve(destination), archive);
 	console.log(JSON.stringify({
 		senpiSha: sha,

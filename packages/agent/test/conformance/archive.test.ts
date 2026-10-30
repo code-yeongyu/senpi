@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { conformanceArchiveFiles } from "../../scripts/conformance-archive-files.ts";
+import { deterministicTarGz } from "../../scripts/deterministic-tar-gz.ts";
 import { buildManifest } from "../../src/conformance/mapping.ts";
 import { CONFORMANCE_REGISTRY } from "../../src/conformance/registry.ts";
 import { sha256Hex } from "../../src/conformance/suite-hash.ts";
@@ -12,10 +13,14 @@ const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const readImpl = (path: string) => readFile(`${root}${path}`);
 const execute = promisify(execFile);
 
-async function roundTrip(files: Record<string, Uint8Array>): Promise<Record<string, Uint8Array>> {
-	const encoded = Object.fromEntries(
-		Object.entries(files).map(([path, bytes]) => [path, Buffer.from(bytes).toString("base64")]),
-	);
+interface RoundTrip {
+	readonly archive: Buffer;
+	readonly files: Record<string, Uint8Array>;
+	readonly lastModified: Record<string, number>;
+}
+
+async function roundTrip(files: Record<string, Uint8Array>): Promise<RoundTrip> {
+	const archive = Buffer.from(deterministicTarGz(files));
 	const recovered = await new Promise<string>((done, fail) => {
 		const child = execFile(
 			"bun",
@@ -26,17 +31,23 @@ async function roundTrip(files: Record<string, Uint8Array>): Promise<Record<stri
 				else done(stdout);
 			},
 		);
-		child.stdin?.end(JSON.stringify(encoded));
+		child.stdin?.end(archive.toString("base64"));
 	});
-	const decoded: Record<string, string> = JSON.parse(recovered);
-	return Object.fromEntries(Object.entries(decoded).map(([path, bytes]) => [path, Buffer.from(bytes, "base64")]));
+	const decoded: { files: Record<string, string>; lastModified: Record<string, number> } = JSON.parse(recovered);
+	return {
+		archive,
+		files: Object.fromEntries(
+			Object.entries(decoded.files).map(([path, bytes]) => [path, Buffer.from(bytes, "base64")]),
+		),
+		lastModified: decoded.lastModified,
+	};
 }
 
 it("ships the exact registry sources that reproduce CONF.bun's suite hash", async () => {
 	const packageTarball = new TextEncoder().encode("a packed package supplied by the producer");
 	const sha = (await execute("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
 	const entries = await conformanceArchiveFiles(sha, packageTarball, CONFORMANCE_REGISTRY, readImpl);
-	const files = await roundTrip(entries);
+	const { files } = await roundTrip(entries);
 	const archiveManifest: {
 		senpiSha: string;
 		files: { path: string; sha256: string }[];
@@ -64,6 +75,17 @@ it("ships the exact registry sources that reproduce CONF.bun's suite hash", asyn
 	expect(archived.suite_hash).toBe(bun.suite_hash);
 	expect(archived.cases).toEqual(bun.cases);
 	expect(await conformanceArchiveFiles(sha, packageTarball, CONFORMANCE_REGISTRY, readImpl)).toEqual(entries);
+});
+
+it("writes the same archive bytes on every run, with no build time in them", async () => {
+	const packageTarball = new TextEncoder().encode("a packed package supplied by the producer");
+	const entries = await conformanceArchiveFiles("a".repeat(40), packageTarball, CONFORMANCE_REGISTRY, readImpl);
+	const first = await roundTrip(entries);
+	const second = await roundTrip(entries);
+	expect(Object.keys(first.lastModified).sort()).toEqual(Object.keys(entries).sort());
+	expect(Object.values(first.lastModified).filter((time) => time !== 0)).toEqual([]);
+	expect([...first.archive.subarray(4, 8)]).toEqual([0, 0, 0, 0]);
+	expect(second.archive.equals(first.archive)).toBe(true);
 });
 
 it("refuses unsafe registry paths and propagates missing implementation bytes", async () => {
