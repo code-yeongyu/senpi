@@ -2694,13 +2694,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:3>",
        "parentId": "<id:1>",
@@ -2732,6 +2732,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:1>"
       }
      },
@@ -2742,7 +2743,8 @@
       "statusKey": "todo-waiting"
      },
      {
-      "type": "agent_start"
+      "type": "agent_start",
+      "runId": "<uuid:17>"
      },
      {
       "type": "turn_start"
@@ -2866,6 +2868,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:1>"
@@ -3017,6 +3020,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:3>"
       }
      },
@@ -3045,6 +3049,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_write",
@@ -3496,6 +3501,7 @@
         "rootSessionId": "<uuid:16>",
         "restoring": false,
         "persisted": true,
+        "runId": "<uuid:17>",
         "waitingOn": {
          "children": 0,
          "background": [],
@@ -3526,8 +3532,7 @@
         ],
         "epochSealed": false,
         "runActive": false,
-        "interrupted": true,
-        "runId": "<uuid:17>"
+        "interrupted": true
        },
        "id": "<id:13>",
        "parentId": "<id:11>",
@@ -3549,6 +3554,7 @@
        "rootSessionId": "<uuid:16>",
        "restoring": false,
        "persisted": true,
+       "runId": "<uuid:17>",
        "waitingOn": {
         "children": 0,
         "background": [],
@@ -3588,6 +3594,7 @@
         "rootSessionId": "<uuid:16>",
         "restoring": false,
         "persisted": true,
+        "runId": "<uuid:17>",
         "waitingOn": {
          "children": 0,
          "background": [],
@@ -3618,8 +3625,7 @@
         ],
         "epochSealed": false,
         "runActive": false,
-        "interrupted": true,
-        "runId": "<uuid:17>"
+        "interrupted": true
        },
        "id": "<id:14>",
        "parentId": "<id:13>",
@@ -3644,6 +3650,7 @@
         "rootSessionId": "<uuid:16>",
         "restoring": false,
         "persisted": true,
+        "runId": "<uuid:17>",
         "waitingOn": {
          "children": 0,
          "background": [],
@@ -3674,8 +3681,7 @@
         ],
         "epochSealed": false,
         "runActive": false,
-        "interrupted": true,
-        "runId": "<uuid:17>"
+        "interrupted": true
        },
        "id": "<id:15>",
        "parentId": "<id:14>",
@@ -3697,6 +3703,7 @@
        "rootSessionId": "<uuid:16>",
        "restoring": false,
        "persisted": true,
+       "runId": "<uuid:17>",
        "waitingOn": {
         "children": 0,
         "background": [],
@@ -3773,6 +3780,7 @@
         "rootSessionId": "<uuid:16>",
         "restoring": false,
         "persisted": true,
+        "runId": "<uuid:36>",
         "waitingOn": {
          "children": 0,
          "background": [],
@@ -3784,8 +3792,7 @@
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:36>"
+        "interrupted": false
        },
        "id": "<id:17>",
        "parentId": "<id:16>",
@@ -3807,6 +3814,7 @@
        "rootSessionId": "<uuid:16>",
        "restoring": false,
        "persisted": true,
+       "runId": "<uuid:36>",
        "waitingOn": {
         "children": 0,
         "background": [],
@@ -3827,7 +3835,8 @@
       "statusKey": "todo-waiting"
      },
      {
-      "type": "agent_start"
+      "type": "agent_start",
+      "runId": "<uuid:36>"
      },
      {
       "type": "turn_start"
@@ -3919,6 +3928,7 @@
        "rootSessionId": "<uuid:16>",
        "restoring": false,
        "persisted": true,
+       "runId": "<uuid:36>",
        "waitingOn": {
         "children": 0,
         "background": [],
@@ -4044,6 +4054,7 @@
        "rootSessionId": "<uuid:16>",
        "restoring": false,
        "persisted": true,
+       "runId": "<uuid:36>",
        "waitingOn": {
         "children": 0,
         "background": [],
@@ -4292,6 +4303,7 @@
         "rootSessionId": "<uuid:16>",
         "restoring": false,
         "persisted": true,
+        "runId": "<uuid:36>",
         "waitingOn": {
          "children": 0,
          "background": [],
@@ -4313,8 +4325,7 @@
          "endedBy": "clean",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:36>"
+        }
        },
        "id": "<id:22>",
        "parentId": "<id:21>",
@@ -4336,6 +4347,7 @@
        "rootSessionId": "<uuid:16>",
        "restoring": false,
        "persisted": true,
+       "runId": "<uuid:36>",
        "waitingOn": {
         "children": 0,
         "background": [],
@@ -4531,6 +4543,7 @@
         "restoring": false,
         "persisted": true,
         "completionId": "<uuid:16>:1",
+        "runId": "<uuid:36>",
         "waitingOn": {
          "children": 0,
          "background": [],
@@ -4551,8 +4564,7 @@
          "endedBy": "clean",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:36>"
+        }
        },
        "id": "<id:24>",
        "parentId": "<id:23>",
@@ -4686,13 +4698,13 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:4>",
      "parentId": "<id:3>",
@@ -4828,6 +4840,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
+      "runId": "<uuid:2>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -4858,8 +4871,7 @@
       ],
       "epochSealed": false,
       "runActive": false,
-      "interrupted": true,
-      "runId": "<uuid:2>"
+      "interrupted": true
      },
      "id": "<id:14>",
      "parentId": "<id:12>",
@@ -4881,6 +4893,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
+      "runId": "<uuid:2>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -4911,8 +4924,7 @@
       ],
       "epochSealed": false,
       "runActive": false,
-      "interrupted": true,
-      "runId": "<uuid:2>"
+      "interrupted": true
      },
      "id": "<id:15>",
      "parentId": "<id:14>",
@@ -4934,6 +4946,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
+      "runId": "<uuid:2>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -4964,8 +4977,7 @@
       ],
       "epochSealed": false,
       "runActive": false,
-      "interrupted": true,
-      "runId": "<uuid:2>"
+      "interrupted": true
      },
      "id": "<id:16>",
      "parentId": "<id:15>",
@@ -5003,6 +5015,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
+      "runId": "<uuid:3>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -5014,8 +5027,7 @@
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:3>"
+      "interrupted": false
      },
      "id": "<id:18>",
      "parentId": "<id:17>",
@@ -5121,6 +5133,7 @@
       "rootSessionId": "<uuid:1>",
       "restoring": false,
       "persisted": true,
+      "runId": "<uuid:3>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -5142,8 +5155,7 @@
        "endedBy": "clean",
        "budgetSpent": false,
        "deadlineStop": false
-      },
-      "runId": "<uuid:3>"
+      }
      },
      "id": "<id:23>",
      "parentId": "<id:22>",
@@ -5178,6 +5190,7 @@
       "restoring": false,
       "persisted": true,
       "completionId": "<uuid:1>:1",
+      "runId": "<uuid:3>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -5198,8 +5211,7 @@
        "endedBy": "clean",
        "budgetSpent": false,
        "deadlineStop": false
-      },
-      "runId": "<uuid:3>"
+      }
      },
      "id": "<id:25>",
      "parentId": "<id:24>",
@@ -5228,6 +5240,7 @@
       "restoring": false,
       "persisted": true,
       "completionId": "<uuid:1>:1",
+      "runId": "<uuid:2>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -5239,7 +5252,7 @@
        "at": "<ts:completion.at:1>"
       },
       "activityRevision": {
-       "instanceId": "<uuid:2>",
+       "instanceId": "<uuid:3>",
        "revision": 0
       },
       "observedAt": "<ts:lifecycle.observedAt:1>"
