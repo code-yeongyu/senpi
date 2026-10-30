@@ -4,14 +4,18 @@ import { join } from "node:path";
 import type { RecoveryCarrier } from "../../core/session-recovery-identity.ts";
 import type { TranscriptTransition } from "../../core/session-transcript-journal.ts";
 import { AcceptedTranscript, type TranscriptRoot } from "./accepted-transcript.ts";
-import { CALL_RECORDS } from "./compact-call-model.ts";
-import { COMPONENT_RECORDS } from "./compact-current-components.ts";
 import { CompactLaneCurrent } from "./compact-lane-current.ts";
 import type { CanonicalUnit } from "./compact-lane-transitions.ts";
 import { CompactSettledMessages, type SettledDiagnostic, type SettledRoot } from "./compact-settled-messages.ts";
 import type { FrozenCompactState } from "./compact-state-view.ts";
 import type { CompactContentStoreOptions } from "./compact-content-store.ts";
-import { type AcceptedCorrelation, admitRecord, correlationChange, field } from "./session-acceptance-admission.ts";
+import {
+	type AcceptedCorrelation,
+	admitRecord,
+	correlationChange,
+	field,
+	SEQUENCED,
+} from "./session-acceptance-admission.ts";
 import { foldCompactRecord, foldCompactTransition } from "./session-acceptance-compact.ts";
 
 /** Where one accepted recovery record sits in its runtime incarnation (R3.C1.1). */
@@ -43,25 +47,6 @@ export interface SessionBootstrap {
 }
 
 const RETIRED_SETTLED: SettledRoot = Object.freeze({ base: undefined, overrides: undefined });
-
-/** Recovery kinds take a sequence; responses and every other record keep FIFO order with none. */
-const SEQUENCED = new Set([
-	"agent_start",
-	"agent_end",
-	"turn_start",
-	"turn_end",
-	"message_start",
-	"message_update",
-	"message_end",
-	"tool_execution_start",
-	"tool_execution_update",
-	"tool_execution_end",
-	"entry_appended",
-	"session_abort",
-	"transcript_write_failed",
-	...COMPONENT_RECORDS,
-	...CALL_RECORDS,
-]);
 
 /**
  * The ordered acceptance lane of one routing session. Every record reaches it synchronously, before
@@ -107,6 +92,10 @@ export class SessionAcceptanceLane {
 
 	get retired(): boolean {
 		return this.retiredAs !== undefined;
+	}
+
+	get retirement(): "close" | "worker_failed" | undefined {
+		return this.retiredAs;
 	}
 
 	get liveRoots(): number {
@@ -156,15 +145,26 @@ export class SessionAcceptanceLane {
 		}
 	}
 
-	/** A legacy record and, when the structured lane projected one, its canonical record: one unit, one sequence. */
-	accept(record: object, carrier: RecoveryCarrier | undefined, canonical?: CanonicalUnit): AcceptedRef | undefined {
+	/**
+	 * A legacy record and, when the structured lane projected one, its canonical record: one unit, one sequence.
+	 * `canonicalRefused`: the pairing refused this event's canonical record at the protocol depth limit and that refusal
+	 * was already counted; like a record the depth check refuses here, the unit then takes its place but changes no
+	 * compact state, and the event is never counted twice (RULING-59 C).
+	 */
+	accept(
+		record: object,
+		carrier: RecoveryCarrier | undefined,
+		canonical?: CanonicalUnit,
+		canonicalRefused = false,
+	): AcceptedRef | undefined {
 		const type = field(record, "type");
 		if (this.retired || this.epoch === "" || typeof type !== "string" || !SEQUENCED.has(type)) return undefined;
+		const folds = !canonicalRefused && this.current.admits(record, type);
 		// The calls component decides first, before the lane commits anything for this record, its correlation change
 		// included (RULING-13 Q9); a correlation change takes the sequence just before its record.
-		const correlation = correlationChange(this.correlation, this.turnId, record);
+		const correlation = folds ? correlationChange(this.correlation, this.turnId, record) : undefined;
 		const at = { sequence: this.sequence + (correlation ? 1 : 0), turnId: this.turnId };
-		const place = admitRecord(this.current, record, type, at);
+		const place = admitRecord(this.current, record, type, at, folds);
 		if (!place) return undefined;
 		if (correlation) this.correlation = Object.freeze({ sequence: place.sequence - 1, ...correlation });
 		const { turnId, call } = place;
@@ -173,15 +173,16 @@ export class SessionAcceptanceLane {
 		if (type === "turn_end" || type === "agent_end") this.turnId = null;
 		const messageId = type.startsWith("message_") && this.settled.valid(carrier) ? carrier.messageId : null;
 		if (type === "message_start") this.activeMessageId = messageId;
-		foldCompactRecord(this.compact(), {
-			record,
-			type,
-			carrier,
-			canonical,
-			sequence: this.sequence,
-			turnId,
-			call: call?.projection,
-		});
+		if (folds)
+			foldCompactRecord(this.compact(), {
+				record,
+				type,
+				carrier,
+				canonical,
+				sequence: this.sequence,
+				turnId,
+				call: call?.projection,
+			});
 		if (type === "message_end" && this.activeMessageId === messageId) this.activeMessageId = null;
 		return {
 			sessionEpoch: this.epoch,
@@ -200,7 +201,10 @@ export class SessionAcceptanceLane {
 		return this.sequence;
 	}
 
-	/** A canonical record of this epoch was lost before folding, so its compact state can no longer be complete. */
+	/**
+	 * A canonical record of this epoch was lost before folding, so its compact state can no longer be complete; one refused
+	 * at the protocol depth limit is counted instead, live state or not, and a live state stays (RULING-59 C).
+	 */
 	compactUnavailable(cause: unknown): void {
 		if (!this.retired) this.current.fail(cause);
 	}
@@ -262,7 +266,7 @@ export class SessionAcceptanceLane {
 	}
 
 	storageStatus() {
-		return this.settled.storageStatus();
+		return { ...this.settled.storageStatus(), refusedRecords: this.current.refusedRecords };
 	}
 
 	private compact = () => ({ settled: this.settled, current: this.current });

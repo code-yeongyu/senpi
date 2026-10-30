@@ -9,12 +9,20 @@ import { MCP_SERVER } from "./sandbox-setup.mjs";
 const OPEN_TIMEOUT_MS = 300_000;
 const COMMAND_TIMEOUT_MS = 120_000;
 
-/** Tokens one assistant message used: input + output + cached input (cache read and cache write). */
+/**
+ * Billable-weighted tokens one assistant message used, in input-token equivalents at the provider's relative prices:
+ * output x5, cache read x0.05, cache write x1.25 (anthropic/claude-opus-5-5: $4 in / $20 out / $0.20 cache read /
+ * $5 cache write per M). The --budget caps SPEND: raw counts let re-read system prompts (cache reads, 1/20 the price)
+ * exhaust it in a few turns (LIVE-P0 run 1: 915k of 1.0M raw tokens were cache reads, ~$0.80 spent).
+ */
+const TOKEN_WEIGHT = { input: 1, output: 5, cacheRead: 0.05, cacheWrite: 1.25 };
 export function messageTokens(usage) {
 	if (!usage || typeof usage !== "object") return 0;
-	return ["input", "output", "cacheRead", "cacheWrite"].reduce(
-		(total, key) => total + (Number.isFinite(usage[key]) ? usage[key] : 0),
-		0,
+	return Math.round(
+		Object.entries(TOKEN_WEIGHT).reduce(
+			(total, [key, weight]) => total + (Number.isFinite(usage[key]) ? usage[key] * weight : 0),
+			0,
+		),
 	);
 }
 
