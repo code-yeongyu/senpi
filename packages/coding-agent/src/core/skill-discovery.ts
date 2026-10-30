@@ -226,7 +226,7 @@ export function collectSkillEntries(
 			const shouldIncludeMarkdownFile =
 				isFile &&
 				entry.name.endsWith(".md") &&
-				!ig.ignores(relPath) &&
+				(isLink || !ig.ignores(relPath)) &&
 				((mode === "pi" && dir === root) || (mode === "agents" && dir !== root));
 			if (shouldIncludeMarkdownFile) {
 				entries.push(fullPath);

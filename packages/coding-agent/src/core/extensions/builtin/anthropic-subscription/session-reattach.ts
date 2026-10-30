@@ -123,6 +123,7 @@ export async function verifyRestoredTranscript(
 	cwd: string,
 	authLane: AnthropicSubscriptionAuthLane,
 ): Promise<boolean> {
+	// Only config-dir roots are private; claude-cli account dirs link `projects` to the shared root read here.
 	if (authLane === "config-dir") return false;
 	let messages: SessionMessage[];
 	try {
