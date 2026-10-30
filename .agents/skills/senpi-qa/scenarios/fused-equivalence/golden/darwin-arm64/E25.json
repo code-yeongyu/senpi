@@ -14679,6 +14679,99 @@
       "persisted": true
      },
      {
+      "type": "extension_ui_request",
+      "id": "<uuid:90>",
+      "method": "setWidget",
+      "widgetKey": "todo-sidebar"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:91>",
+      "method": "setStatus",
+      "statusKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:92>",
+      "method": "setWidget",
+      "widgetKey": "anthropic-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:93>",
+      "method": "setStatus",
+      "statusKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:94>",
+      "method": "setWidget",
+      "widgetKey": "openai-web-search"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:95>",
+      "method": "setStatus",
+      "statusKey": "monitors"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:96>",
+      "method": "setStatus",
+      "statusKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:97>",
+      "method": "setWidget",
+      "widgetKey": "pi-websearch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:98>",
+      "method": "setStatus",
+      "statusKey": "pi-webfetch"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:99>",
+      "method": "setWidget",
+      "widgetKey": "pi-webfetch"
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "pi-rules.scan",
+       "data": {
+        "cwd": "<sandbox>/work",
+        "reason": "resume"
+       },
+       "startupBookkeeping": true,
+       "id": "<id:50>",
+       "parentId": "<id:49>",
+       "timestamp": "<ts:entry.timestamp:37>"
+      }
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:100>",
+      "method": "setStatus",
+      "statusKey": "todo-waiting"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:101>",
+      "method": "setStatus",
+      "statusKey": "goal"
+     },
+     {
+      "type": "extension_ui_request",
+      "id": "<uuid:102>",
+      "method": "setWidget",
+      "widgetKey": "prompt-url"
+     },
+     {
       "type": "entry_appended",
       "entry": {
        "type": "custom",
@@ -14686,9 +14779,9 @@
        "data": {
         "toolCallId": "<id:43>"
        },
-       "id": "<id:50>",
-       "parentId": "<id:49>",
-       "timestamp": "<ts:entry.timestamp:37>"
+       "id": "<id:51>",
+       "parentId": "<id:50>",
+       "timestamp": "<ts:entry.timestamp:38>"
       }
      },
      {
@@ -14702,14 +14795,14 @@
          "Library"
         ]
        },
-       "id": "<id:51>",
-       "parentId": "<id:50>",
-       "timestamp": "<ts:entry.timestamp:38>"
+       "id": "<id:52>",
+       "parentId": "<id:51>",
+       "timestamp": "<ts:entry.timestamp:39>"
       }
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:90>",
+      "id": "<uuid:103>",
       "method": "select",
       "title": "Which library?",
       "options": [
@@ -14718,42 +14811,6 @@
        "Other (type an answer)"
       ],
       "timeout": 1800000
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:91>",
-      "method": "setWidget",
-      "widgetKey": "todo-sidebar"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:92>",
-      "method": "setStatus",
-      "statusKey": "anthropic-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:93>",
-      "method": "setWidget",
-      "widgetKey": "anthropic-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:94>",
-      "method": "setStatus",
-      "statusKey": "openai-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:95>",
-      "method": "setWidget",
-      "widgetKey": "openai-web-search"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:96>",
-      "method": "setStatus",
-      "statusKey": "monitors"
      },
      {
       "type": "entry_appended",
@@ -14795,9 +14852,9 @@
         "interrupted": true,
         "runId": "<uuid:64>"
        },
-       "id": "<id:52>",
-       "parentId": "<id:51>",
-       "timestamp": "<ts:entry.timestamp:39>"
+       "id": "<id:53>",
+       "parentId": "<id:52>",
+       "timestamp": "<ts:entry.timestamp:40>"
       }
      },
      {
@@ -14840,9 +14897,9 @@
         "interrupted": true,
         "runId": "<uuid:64>"
        },
-       "id": "<id:53>",
-       "parentId": "<id:52>",
-       "timestamp": "<ts:entry.timestamp:40>"
+       "id": "<id:54>",
+       "parentId": "<id:53>",
+       "timestamp": "<ts:entry.timestamp:41>"
       }
      },
      {
@@ -14859,9 +14916,9 @@
         "cause": "input",
         "at": "<ts:data.at:6>"
        },
-       "id": "<id:54>",
-       "parentId": "<id:53>",
-       "timestamp": "<ts:entry.timestamp:41>"
+       "id": "<id:55>",
+       "parentId": "<id:54>",
+       "timestamp": "<ts:entry.timestamp:42>"
       }
      },
      {
@@ -14869,63 +14926,6 @@
       "pauseSeq": 3,
       "cause": "input",
       "at": "<ts:events.at:6>"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:97>",
-      "method": "setStatus",
-      "statusKey": "pi-websearch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:98>",
-      "method": "setWidget",
-      "widgetKey": "pi-websearch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:99>",
-      "method": "setStatus",
-      "statusKey": "pi-webfetch"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:100>",
-      "method": "setWidget",
-      "widgetKey": "pi-webfetch"
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "pi-rules.scan",
-       "data": {
-        "cwd": "<sandbox>/work",
-        "reason": "resume"
-       },
-       "startupBookkeeping": true,
-       "id": "<id:55>",
-       "parentId": "<id:54>",
-       "timestamp": "<ts:entry.timestamp:42>"
-      }
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:101>",
-      "method": "setStatus",
-      "statusKey": "todo-waiting"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:102>",
-      "method": "setStatus",
-      "statusKey": "goal"
-     },
-     {
-      "type": "extension_ui_request",
-      "id": "<uuid:103>",
-      "method": "setWidget",
-      "widgetKey": "prompt-url"
      },
      {
       "type": "entry_appended",
@@ -16598,33 +16598,6 @@
       "persisted": true
      },
      {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "ask-user:resumed",
-       "data": {
-        "toolCallId": "<id:67>"
-       },
-       "id": "<id:72>",
-       "parentId": "<id:71>",
-       "timestamp": "<ts:entry.timestamp:56>"
-      }
-     },
-     {
-      "type": "entry_appended",
-      "entry": {
-       "type": "custom",
-       "customType": "ask-user:settlement",
-       "data": {
-        "requestId": "<id:67>",
-        "status": "orphaned-after-restart"
-       },
-       "id": "<id:73>",
-       "parentId": "<id:72>",
-       "timestamp": "<ts:entry.timestamp:57>"
-      }
-     },
-     {
       "type": "extension_ui_request",
       "id": "<uuid:161>",
       "method": "setWidget",
@@ -16694,9 +16667,9 @@
         "reason": "resume"
        },
        "startupBookkeeping": true,
-       "id": "<id:74>",
-       "parentId": "<id:73>",
-       "timestamp": "<ts:entry.timestamp:58>"
+       "id": "<id:72>",
+       "parentId": "<id:71>",
+       "timestamp": "<ts:entry.timestamp:56>"
       }
      },
      {
@@ -16716,6 +16689,33 @@
       "id": "<uuid:173>",
       "method": "setWidget",
       "widgetKey": "prompt-url"
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "ask-user:resumed",
+       "data": {
+        "toolCallId": "<id:67>"
+       },
+       "id": "<id:73>",
+       "parentId": "<id:72>",
+       "timestamp": "<ts:entry.timestamp:57>"
+      }
+     },
+     {
+      "type": "entry_appended",
+      "entry": {
+       "type": "custom",
+       "customType": "ask-user:settlement",
+       "data": {
+        "requestId": "<id:67>",
+        "status": "orphaned-after-restart"
+       },
+       "id": "<id:74>",
+       "parentId": "<id:73>",
+       "timestamp": "<ts:entry.timestamp:58>"
+      }
      },
      {
       "type": "entry_appended",
@@ -19058,13 +19058,25 @@
     },
     {
      "type": "custom",
+     "customType": "pi-rules.scan",
+     "data": {
+      "cwd": "<sandbox>/work",
+      "reason": "resume"
+     },
+     "startupBookkeeping": true,
+     "id": "<id:49>",
+     "parentId": "<id:48>",
+     "timestamp": "<ts:entries.timestamp:43>"
+    },
+    {
+     "type": "custom",
      "customType": "ask-user:resumed",
      "data": {
       "toolCallId": "<id:45>"
      },
-     "id": "<id:49>",
-     "parentId": "<id:48>",
-     "timestamp": "<ts:entries.timestamp:43>"
+     "id": "<id:50>",
+     "parentId": "<id:49>",
+     "timestamp": "<ts:entries.timestamp:44>"
     },
     {
      "type": "custom",
@@ -19075,9 +19087,9 @@
        "Library"
       ]
      },
-     "id": "<id:50>",
-     "parentId": "<id:49>",
-     "timestamp": "<ts:entries.timestamp:44>"
+     "id": "<id:51>",
+     "parentId": "<id:50>",
+     "timestamp": "<ts:entries.timestamp:45>"
     },
     {
      "type": "custom",
@@ -19117,9 +19129,9 @@
       "interrupted": true,
       "runId": "<uuid:6>"
      },
-     "id": "<id:51>",
-     "parentId": "<id:50>",
-     "timestamp": "<ts:entries.timestamp:45>"
+     "id": "<id:52>",
+     "parentId": "<id:51>",
+     "timestamp": "<ts:entries.timestamp:46>"
     },
     {
      "type": "custom",
@@ -19159,9 +19171,9 @@
       "interrupted": true,
       "runId": "<uuid:6>"
      },
-     "id": "<id:52>",
-     "parentId": "<id:51>",
-     "timestamp": "<ts:entries.timestamp:46>"
+     "id": "<id:53>",
+     "parentId": "<id:52>",
+     "timestamp": "<ts:entries.timestamp:47>"
     },
     {
      "type": "custom",
@@ -19175,18 +19187,6 @@
       "cause": "input",
       "at": "<ts:data.at:6>"
      },
-     "id": "<id:53>",
-     "parentId": "<id:52>",
-     "timestamp": "<ts:entries.timestamp:47>"
-    },
-    {
-     "type": "custom",
-     "customType": "pi-rules.scan",
-     "data": {
-      "cwd": "<sandbox>/work",
-      "reason": "resume"
-     },
-     "startupBookkeeping": true,
      "id": "<id:54>",
      "parentId": "<id:53>",
      "timestamp": "<ts:entries.timestamp:48>"
@@ -19563,13 +19563,25 @@
     },
     {
      "type": "custom",
+     "customType": "pi-rules.scan",
+     "data": {
+      "cwd": "<sandbox>/work",
+      "reason": "resume"
+     },
+     "startupBookkeeping": true,
+     "id": "<id:69>",
+     "parentId": "<id:68>",
+     "timestamp": "<ts:entries.timestamp:62>"
+    },
+    {
+     "type": "custom",
      "customType": "ask-user:resumed",
      "data": {
       "toolCallId": "<id:67>"
      },
-     "id": "<id:69>",
-     "parentId": "<id:68>",
-     "timestamp": "<ts:entries.timestamp:62>"
+     "id": "<id:70>",
+     "parentId": "<id:69>",
+     "timestamp": "<ts:entries.timestamp:63>"
     },
     {
      "type": "custom",
@@ -19578,18 +19590,6 @@
       "requestId": "<id:67>",
       "status": "orphaned-after-restart"
      },
-     "id": "<id:70>",
-     "parentId": "<id:69>",
-     "timestamp": "<ts:entries.timestamp:63>"
-    },
-    {
-     "type": "custom",
-     "customType": "pi-rules.scan",
-     "data": {
-      "cwd": "<sandbox>/work",
-      "reason": "resume"
-     },
-     "startupBookkeeping": true,
      "id": "<id:71>",
      "parentId": "<id:70>",
      "timestamp": "<ts:entries.timestamp:64>"

@@ -6138,17 +6138,18 @@ export class InteractiveMode {
 		const end = streamingIndex >= 0 ? streamingIndex : children.length;
 		const last = end > 0 ? children[end - 1] : undefined;
 		const secondLast = end > 1 ? children[end - 2] : undefined;
+		this.lastStatusMessage = message;
+		// Each row owns its content, even if its first render or a theme invalidation happens after another notice.
+		const text = new ThemedText(() => theme.fg("dim", message), 1, 0);
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
-			this.lastStatusMessage = message;
-			this.lastStatusText.invalidate();
+			children[end - 1] = text;
+			this.lastStatusText = text;
 			this.ui.requestRender();
 			return;
 		}
 
 		const spacer = new Spacer(1);
-		this.lastStatusMessage = message;
-		const text = new ThemedText(() => theme.fg("dim", this.lastStatusMessage), 1, 0);
 		if (streamingIndex >= 0) {
 			children.splice(streamingIndex, 0, spacer, text);
 		} else {
