@@ -76,7 +76,11 @@ export function withoutOrderedAccount<T extends { order?: string[] }>(credential
 	return next;
 }
 
-function isBlocked(slot: SelectableSlot, now: number): boolean {
+/**
+ * Whether selection skips a slot now: an auth block holds until a login rewrites the slot, whatever its deadline;
+ * any other block holds until its deadline. Account listings ask this too, so they never call a skipped slot available.
+ */
+export function isSlotBlocked(slot: Pick<SelectableSlot, "blockedUntil" | "blockReason">, now: number): boolean {
 	return slot.blockReason === "auth_error" || (slot.blockedUntil !== undefined && slot.blockedUntil > now);
 }
 
@@ -97,8 +101,8 @@ function selectUnblocked<T extends SelectableSlot>(
 	now: number,
 ): T | undefined {
 	const pinned = options.pinnedSlot === undefined ? undefined : slots.find((slot) => slot.name === options.pinnedSlot);
-	if (pinned && !isBlocked(pinned, now)) return pinned;
-	return rendezvousOrder(getPoolAffinityKey(options), slots, options.hasher).find((slot) => !isBlocked(slot, now));
+	if (pinned && !isSlotBlocked(pinned, now)) return pinned;
+	return rendezvousOrder(getPoolAffinityKey(options), slots, options.hasher).find((slot) => !isSlotBlocked(slot, now));
 }
 
 function soonestUnblockAt(slots: readonly SelectableSlot[], now: number): number | undefined {

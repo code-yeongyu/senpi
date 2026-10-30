@@ -66,6 +66,7 @@ describe("multi-session RPC protocol info", () => {
 					"prompt_surface",
 					"prompt_surface_chat",
 					"browser_engine",
+					"session_env",
 					"retry_fallback_profile",
 					"permission_preset_accept_edits",
 					"permission_preset_auto",
