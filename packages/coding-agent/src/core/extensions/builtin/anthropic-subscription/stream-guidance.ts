@@ -12,10 +12,14 @@ import {
 } from "./guidance.ts";
 
 export function withAuthGuidance(error: unknown, message: string, ran?: ClaudeCodeRun): string {
-	if (error instanceof AllAccountsBlockedError)
-		return error.unavailableAccount === undefined
-			? allAccountsBlockedGuidance(error.soonestUnblockAt, error.blockReason)
-			: singleAccountUnavailableGuidance(error.unavailableAccount, error.soonestUnblockAt, error.blockReason);
+	if (error instanceof AllAccountsBlockedError) {
+		const guidance =
+			error.unavailableAccount === undefined
+				? allAccountsBlockedGuidance(error.soonestUnblockAt, error.blockReason)
+				: singleAccountUnavailableGuidance(error.unavailableAccount, error.soonestUnblockAt, error.blockReason);
+		// The model-limit sentence is how the fallback chain learns the limit binds this model only (senpi#5007).
+		return error.limitedModel === undefined ? guidance : `${error.message}\n${guidance}`;
+	}
 	const kind = classifySdkError(error).kind;
 	const account = errorAccountContext(error instanceof ClassifiedSdkError ? error.original : error);
 	let guidance = sdkErrorGuidance(kind);
