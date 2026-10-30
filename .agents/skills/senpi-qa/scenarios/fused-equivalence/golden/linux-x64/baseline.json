@@ -1,6 +1,6 @@
 {
  "repo": {
-  "head": "37be855d4a415b98ba9ef9daf7af1759b7824716",
+  "head": "51e3aba974464cdc180276e99799455777a3ff67",
   "dirty": false
  },
  "platform": "linux-x64",
@@ -12,8 +12,8 @@
   "harness": "sha256:9094e2ffd705a59e0c74b038a4dd00096173c2eecc393ed1f782d96e4fdae69d",
   "normalizer": "sha256:84514c2fcc12276a4ff77acbbee2903ab61a040de09f87bf7650ca74d1c5fa7e",
   "fakeModelServer": "sha256:cab5b6866b7854287218de51d1fafcc242a8602b2c83fb85572abe332f9f6560",
-  "cases": "sha256:771b0e11c1955094775899dc252d3ec1e38d6989e1e0a535fa056fe1a6072718",
-  "fixtures": "sha256:639344488dbf5c7b39cbf7f3d6b151565ec71a4557c6717a904147ab864ceb8f"
+  "cases": "sha256:23b83840d6861e611c34dcf2af655c983dd7b9023b8b69566cc79b5776eb2c44",
+  "fixtures": "sha256:406b03cc838ea251953667f945a0bc821242c6d378bfb290fbbf76402890fc7e"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --cases E26,E29,E30 --repeat 3 --evidence restack05-linux-x64-rec1"
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --placement fused --pipeline legacy --surface rpc --cases E01,E02,E03,E04,E05,E06,E07,E08,E09,E10,E11,E12,E13,E14,E15,E16,E17,E18,E19,E20,E26,E30 --repeat 3 --evidence runid2-linux-rec"
 }

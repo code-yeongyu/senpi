@@ -1593,6 +1593,8 @@
         "!examples/extensions/{with-deps,custom-provider-anthropic,custom-provider-gitlab-duo,sandbox,gondolin}/**",
         // The vitest setup file vitest.config.ts loads by path.
         "test/setup.ts",
+        // The vitest globalSetup file vitest.config.ts loads by path (shared Node compile cache, #4614).
+        "test/helpers/source-compile-cache-global-setup.ts",
       ],
       "includeEntryExports": true,
       // Minified vendor bundles read as text by export-html.
