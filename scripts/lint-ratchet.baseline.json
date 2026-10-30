@@ -1446,9 +1446,6 @@
   "packages/coding-agent/test/suite/regressions/3462-anthropic-subscription-usage-limit-block-guards.test.ts": {
     "typescript/no-non-null-assertion": 15
   },
-  "packages/coding-agent/test/suite/regressions/3462-anthropic-subscription-usage-limit-reset-block.test.ts": {
-    "typescript/no-non-null-assertion": 1
-  },
   "packages/coding-agent/test/suite/regressions/3534-get-entries-pages.test.ts": {
     "typescript/no-non-null-assertion": 2
   },
