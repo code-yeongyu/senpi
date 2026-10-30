@@ -11,7 +11,8 @@
  * Classes, least to most dangerous:
  * - `observe`: side-effect-free reads.
  * - `drive`: runs, steers or edits the current session (prompts, queue and message edits, session-scoped settings;
- *   a setter that writes the device-wide settings file is `device_admin`).
+ *   a setter that writes the device-wide settings file is `device_admin`). A prompt that can run a slash command is
+ *   `device_admin`: extension command handlers run with the same unbounded context as `extension_request`.
  * - `answer`: replies to a question or dialog the engine asked. The engine's permission prompts are such dialogs, so
  *   a caller granted `answer` can approve what `device_admin` would otherwise gate: never treat it as harmless.
  * - `thread`: creates, opens, attaches, forks or closes sessions by id. A record that names a host path (a session
@@ -120,6 +121,20 @@ function effectStatusClass(record: object): RpcMethodClass {
 	return namesAny(record, ["sessionPath"]) ? "device_admin" : "observe";
 }
 
+/**
+ * Prompt text is `drive`; text that can dispatch a registered slash command is `device_admin`, because the handler runs
+ * with a full command context (`/mcp` writes the MCP config and starts servers, `/account` edits credentials, `/ir`
+ * reads any host path). Mirrors the session's own dispatch check: templates expand unless `expandPromptTemplates` is exactly
+ * `false`, and the raw message starts with `/`. Whether the command exists is left to the session, so an unregistered
+ * name is not a reason to answer lower; a message that is not a string cannot be judged.
+ */
+function promptClass(record: object): RpcMethodClass {
+	const message: unknown = Reflect.get(record, "message");
+	if (typeof message !== "string") return "device_admin";
+	if (Reflect.get(record, "expandPromptTemplates") === false) return "drive";
+	return message.startsWith("/") ? "device_admin" : "drive";
+}
+
 /** A new session is a thread operation; naming a parent session file reads a host path. */
 function newSessionClass(record: object): RpcMethodClass {
 	return namesAny(record, ["parentSession"]) ? "device_admin" : "thread";
@@ -154,7 +169,8 @@ export const RPC_METHOD_CLASS = {
 	"eval_cells.list": "observe",
 	"eval_cells.peek": "observe",
 	// drive
-	prompt: "drive",
+	// drive for text; device_admin when the text can run a slash command (rule prompt@1)
+	prompt: { classify: promptClass, version: 1 },
 	steer: "drive",
 	follow_up: "drive",
 	abort: "drive",
@@ -247,6 +263,8 @@ export const RPC_METHOD_CLASS = {
 	record_user_activity: "connection_local",
 	detach_connection: "connection_local",
 	release_session: "connection_local",
+	// loads the extension graph for a caller-named cwd (device_admin in effect); safe only because connection_local is
+	// never permitted on someone else's behalf
 	warm: "connection_local",
 	host_response: "connection_local",
 	release_attachment: "connection_local",

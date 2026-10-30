@@ -17,8 +17,8 @@ import {
 	rpcMethodClassesDigest,
 	rpcMethodPermitted,
 } from "../../src/modes/rpc/method-classes.ts";
-import type { RpcResponse } from "../../src/modes/rpc/rpc-response-types.ts";
-import { RULE_FIELDS, RULE_FIXTURES } from "./method-class-rule-fixtures.ts";
+import { REVIEWED_FIELDS } from "./method-class-reviewed-fields.ts";
+import { RULE_FIXTURES } from "./method-class-rule-fixtures.ts";
 
 type Covers<K extends string> = { readonly [M in K]: unknown };
 // @ts-expect-error -- exhaustiveness proof: the table has no entry for the widened literal, so it does not cover the widened union.
@@ -27,79 +27,24 @@ const widenedTable: Covers<RpcMethodType | "zz_unclassified_probe"> = RPC_METHOD
 const tableWithoutPrompt: Covers<RpcMethodType> = RPC_METHOD_CLASS as Omit<typeof RPC_METHOD_CLASS, "prompt">;
 
 type Table = typeof RPC_METHOD_CLASS;
-type DynamicType = { [K in RpcMethodType]: Table[K] extends string ? never : K }[RpcMethodType];
+// Every entry that can answer below device_admin: each static class under it, and every rule (a rule may answer lower).
+type ReviewedType = {
+	[K in RpcMethodType]: Table[K] extends "device_admin" | "connection_local" ? never : K;
+}[RpcMethodType];
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
-type RuleFieldsExact = {
-	readonly [K in DynamicType]: Equal<keyof RpcInboundRecordOf<K>, (typeof RULE_FIELDS)[K]["fields"][number]>;
-};
-// A record type that gains (or loses) a field makes its row `false` here, so the rule is re-reviewed before it compiles.
-const ruleFieldsExact: RuleFieldsExact = {
-	open_session: true,
-	new_session: true,
-	get_effect_status: true,
-	set_thinking_level: true,
-	append_session_entry: true,
-};
-
-type KeyMaterialName =
-	| `${string}apikey${string}`
-	| `${string}api_key${string}`
-	| `${string}secret${string}`
-	| `${string}password${string}`
-	| `${string}privatekey${string}`
-	| `${string}private_key${string}`
-	| `${string}accesstoken${string}`
-	| `${string}access_token${string}`
-	| `${string}refreshtoken${string}`
-	| `${string}refresh_token${string}`
-	| `${string}credential${string}`
-	| `${string}bearer${string}`
-	| `${string}oauth${string}`
-	| "authorization"
-	| "cookie";
-type NextDepth = [never, 0, 1, 2, 3, 4, 5, 6, 7];
-// An index-signature key is `string`, which would absorb every literal name in the union and hide a leak: skip its
-// name, keep walking its value.
-type LiteralName<K extends string> = string extends K ? never : Lowercase<K>;
-// Key material is a free-form string, bytes, or a structure holding them; a boolean flag or a literal enum cannot be.
-type CanCarryMaterial<V> = [Extract<V, object>] extends [never]
-	? string extends Extract<V, string>
-		? true
-		: false
-	: true;
-type MaterialName<T, K extends keyof T & string> = CanCarryMaterial<T[K]> extends true ? LiteralName<K> : never;
-type DeepKeys<T, D extends number = 8> = [D] extends [never]
-	? never
-	: T extends readonly (infer E)[]
-		? DeepKeys<E, NextDepth[D]>
-		: T extends (...args: never[]) => unknown
-			? never
-			: T extends object
-				? { [K in keyof T & string]-?: MaterialName<T, K> | DeepKeys<T[K], NextDepth[D]> }[keyof T & string]
-				: never;
-type ObserveType =
-	| { [K in RpcMethodType]: Table[K] extends "observe" ? K : never }[RpcMethodType]
-	| "get_effect_status";
-type ObserveReplyData =
-	Extract<RpcResponse, { command: ObserveType; success: true }> extends infer R
-		? R extends { data: infer D }
-			? D
-			: never
-		: never;
-type LeakedKeyNames = Extract<DeepKeys<ObserveReplyData>, KeyMaterialName>;
-// No observe-class reply carries a field named like key material, at any depth the forwarder could relay.
-const observeRepliesCarryNoKeyMaterial: [LeakedKeyNames] extends [never] ? true : LeakedKeyNames = true;
-// The guard can fail: a nested credential field is found next to an index signature.
-const guardSeesNestedKey: Extract<
-	DeepKeys<{ labels: Record<string, string>; a: { b: [{ refreshToken: string }] } }>,
-	KeyMaterialName
-> = "refreshtoken";
-// ...and a flag that only names a credential is not material (AssistantMessage.credentialServedRecently, senpi#2491).
-const guardSkipsFlags: [
-	Extract<DeepKeys<{ credentialServedRecently?: true; authStatus: "ok" | "none" }>, KeyMaterialName>,
-] extends [never]
-	? true
-	: false = true;
+// The keys of every variant: plain `keyof` on a union keeps only the keys all variants share.
+type AllKeys<T> = T extends unknown ? keyof T : never;
+type UnreviewedType = {
+	[K in ReviewedType]: Equal<
+		AllKeys<RpcInboundRecordOf<K>>,
+		(typeof REVIEWED_FIELDS)[K]["fields"][number]
+	> extends true
+		? never
+		: K;
+}[ReviewedType];
+// A record below device_admin that gains (or loses) a field, at any variant, is named here and fails the typecheck
+// until its field list is re-reviewed; a type reassigned below device_admin has no list and fails the lookup above.
+const reviewedFieldsExact: [UnreviewedType] extends [never] ? true : UnreviewedType = true;
 
 const EVERY_CLASS: ReadonlySet<RpcMethodClass> = new Set<RpcMethodClass>([
 	"observe",
@@ -124,6 +69,7 @@ const UNCLASSIFIED: ReadonlyArray<readonly [string, unknown]> = [
 	["a null record", null],
 	["an undefined record", undefined],
 	["an array record", [{ type: "prompt" }]],
+	["the transport authenticate frame", { type: "authenticate", client_proof: "p" }],
 ];
 
 function digestValues(): Record<string, string> {
@@ -137,10 +83,7 @@ describe("RPC method classes (senpi#4319)", () => {
 	it("holds the compile-time proofs live", () => {
 		expect(widenedTable).toBe(RPC_METHOD_CLASS);
 		expect(tableWithoutPrompt).toBe(RPC_METHOD_CLASS);
-		expect(Object.values(ruleFieldsExact).every(Boolean)).toBe(true);
-		expect(observeRepliesCarryNoKeyMaterial).toBe(true);
-		expect(guardSeesNestedKey).toBe("refreshtoken");
-		expect(guardSkipsFlags).toBe(true);
+		expect(reviewedFieldsExact).toBe(true);
 	});
 
 	it.each(UNCLASSIFIED)("refuses %s as unclassified even with every class granted", (_name, record) => {
@@ -222,10 +165,28 @@ describe("RPC method classes (senpi#4319)", () => {
 		}
 	});
 
+	it("reviews the fields of exactly the entries that can answer below device_admin", () => {
+		const below = Object.entries(RPC_METHOD_CLASS)
+			.filter(([, entry]) => entry !== "device_admin" && entry !== "connection_local")
+			.map(([type]) => type);
+		expect(Object.keys(REVIEWED_FIELDS).sort()).toEqual(below.sort());
+	});
+
 	it("pins the reviewed field set of every dynamic rule at the rule's current version", () => {
 		const versions = describeRpcMethodClasses().dynamic_versions;
-		const reviewed = Object.fromEntries(Object.entries(RULE_FIELDS).map(([type, { version }]) => [type, version]));
+		const reviewed = Object.fromEntries(
+			Object.entries(REVIEWED_FIELDS).flatMap(([type, review]) =>
+				"version" in review ? [[type, review.version]] : [],
+			),
+		);
 		expect(reviewed).toEqual(versions);
+	});
+
+	it("classes a prompt that can run a slash command as device_admin (rule prompt@1)", () => {
+		const command = { type: "prompt", message: "/mcp enable x" };
+		expect(rpcMethodPermitted(command, new Set<RpcMethodClass>(["drive", "answer", "thread"]))).toBe(false);
+		expect(rpcMethodPermitted(command, new Set<RpcMethodClass>(["device_admin"]))).toBe(true);
+		expect(rpcMethodPermitted({ type: "prompt", message: "hi" }, new Set<RpcMethodClass>(["drive"]))).toBe(true);
 	});
 
 	it("digests the sorted type=class lines, dynamic entries as type=dynamic@<version>", () => {

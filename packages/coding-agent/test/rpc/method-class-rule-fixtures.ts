@@ -53,41 +53,17 @@ export const RULE_FIXTURES: Readonly<Record<string, ReadonlyArray<RuleCase>>> = 
 		["plain", {}, "thread"],
 		["parent session file", { parentSession: "/x/p.jsonl" }, "device_admin"],
 	],
+	"prompt@1": [
+		["plain text", { message: "hi" }, "drive"],
+		["slash command", { message: "/mcp enable x" }, "device_admin"],
+		["credential command", { message: "/account openai remove a" }, "device_admin"],
+		["bare slash", { message: "/" }, "device_admin"],
+		["templates explicitly on", { message: "/mcp enable x", expandPromptTemplates: true }, "device_admin"],
+		["a non-boolean opt-out still expands", { message: "/mcp", expandPromptTemplates: "false" }, "device_admin"],
+		["templates off sends the text", { message: "/mcp enable x", expandPromptTemplates: false }, "drive"],
+		["leading space is not a command", { message: " /mcp" }, "drive"],
+		["slash later in the text", { message: "see /mcp" }, "drive"],
+		["non-string message", { message: 7 }, "device_admin"],
+		["missing message", {}, "device_admin"],
+	],
 };
-
-/**
- * The record fields each dynamic rule was reviewed against, with the rule version that review produced. The test
- * file proves at compile time that each list is exactly `keyof` the record type: a new field fails the typecheck
- * until someone decides whether it changes the rule's answer (and bumps the version when it does).
- */
-export const RULE_FIELDS = {
-	open_session: {
-		version: 2,
-		fields: [
-			"attended",
-			"auto_title",
-			"browserEngine",
-			"context",
-			"cwd",
-			"durableSessionId",
-			"env",
-			"expectedHostInstance",
-			"id",
-			"kind",
-			"modelId",
-			"permissionPreset",
-			"promptSurface",
-			"provider",
-			"retain_on_disconnect",
-			"retryFallback",
-			"sessionPath",
-			"spawnedBy",
-			"thinkingLevel",
-			"type",
-		],
-	},
-	new_session: { version: 1, fields: ["id", "parentSession", "sessionId", "type"] },
-	get_effect_status: { version: 1, fields: ["effectId", "id", "sessionId", "sessionPath", "type"] },
-	set_thinking_level: { version: 1, fields: ["effectId", "id", "level", "scope", "sessionId", "type"] },
-	append_session_entry: { version: 1, fields: ["entry", "id", "sessionId", "type"] },
-} as const;
