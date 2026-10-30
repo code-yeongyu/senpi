@@ -61,6 +61,7 @@ import {
 import {
 	findPromptCacheComparisonResponseId,
 	type OpenAIPromptCacheOptionsPayload,
+	supportsOpenAIResponsesExplicitPromptCacheMode,
 	withPromptCacheComparison,
 } from "./openai-responses-prompt-cache.ts";
 import {
@@ -151,7 +152,7 @@ function getCompat(model: Model<"openai-responses">, env?: ProviderEnv): Require
 		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		supportsAdditionalTools: model.compat?.supportsAdditionalTools ?? false,
 		supportsToolSearch: !model.compat?.siwc && (model.compat?.supportsToolSearch ?? false),
-		supportsExplicitPromptCacheMode: !model.compat?.siwc && (model.compat?.supportsExplicitPromptCacheMode ?? false),
+		supportsExplicitPromptCacheMode: supportsOpenAIResponsesExplicitPromptCacheMode(model),
 		supportsConfigurationUpdate: model.compat?.supportsConfigurationUpdate ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
 		supportsForcedToolChoice: model.compat?.supportsForcedToolChoice ?? true,

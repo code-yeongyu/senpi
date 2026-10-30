@@ -140,6 +140,52 @@ async function run(model: RemoteCompactionV2Model) {
 }
 
 describe("OpenAI remote compaction v2 routing", () => {
+	// senpi#5101: SIWC supports POST /v1/responses, never the standalone compact endpoint.
+	it("keeps SIWC on v2 or local summary without requesting the compact endpoint", async () => {
+		for (const outcome of ["completed", "no-checkpoint", "disabled"] as const) {
+			const model: RemoteCompactionV2Model = {
+				...OPENAI_MODEL,
+				compat: {
+					siwc: true,
+					supportsRemoteCompactionV2: outcome !== "disabled",
+					supportsWebSocket: true,
+				},
+			};
+			const captured: { payload?: unknown; options?: SimpleStreamOptions } = {};
+			const stream = streamRunner(model, captured);
+			if (outcome === "no-checkpoint") {
+				stream.mockReturnValue({
+					result: async () => ({ ...completedCompactionMessage(model), content: [] }),
+				});
+			}
+			const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+				return new Response("unsupported endpoint", { status: 400 });
+			});
+			const result = await runOpenAiRemoteCompaction(
+				{
+					model,
+					serviceTier: undefined,
+					modelRegistry: {
+						getApiKeyAndHeaders: async () => ({ ok: true as const, apiKey: "test-key" }),
+					},
+					sessionManager: { getSessionId: () => "session-siwc" },
+					getSystemPrompt: () => "You are senpi.",
+				},
+				compactionEvent(),
+				undefined,
+				{ streamRunner: stream, fetch },
+			);
+
+			expect(fetch.mock.calls, outcome).toEqual([]);
+			expect(stream, outcome).toHaveBeenCalledTimes(outcome === "disabled" ? 0 : 1);
+			if (outcome === "completed") {
+				expect(result?.details.transport).toBe("responses-v2");
+			} else {
+				expect(result, outcome).toBeUndefined();
+			}
+		}
+	});
+
 	it.each([
 		["official OpenAI", OPENAI_MODEL],
 		["explicit custom proxy", CUSTOM_MODEL],

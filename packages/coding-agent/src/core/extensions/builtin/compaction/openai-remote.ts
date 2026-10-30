@@ -683,6 +683,7 @@ export async function runOpenAiRemoteCompaction(
 		return undefined;
 	}
 
+	const siwc = requestModel.api === "openai-responses" && requestModel.compat?.siwc === true;
 	if (supportsOpenAiResponsesRemoteCompactionV2(requestModel)) {
 		// The v2 beta header is request-local, so the checkpoint keeps the origin every later
 		// turn presents; fingerprinting it made replay refuse every v2 checkpoint (senpi#2378).
@@ -707,7 +708,7 @@ export async function runOpenAiRemoteCompaction(
 			describeTimeout: (waitedMs) =>
 				timedOut(
 					waitedMs,
-					requestModel.api === "openai-codex-responses"
+					requestModel.api === "openai-codex-responses" || siwc
 						? "local-summary"
 						: supportsOpenAiResponsesWebSocket(requestModel)
 							? "websocket"
@@ -716,6 +717,9 @@ export async function runOpenAiRemoteCompaction(
 		});
 		if (result || requestModel.api === "openai-codex-responses") return result;
 	}
+
+	// SIWC permits only streaming /responses; unavailable v2 falls back to the local summary.
+	if (siwc) return undefined;
 
 	if (supportsOpenAiResponsesWebSocket(requestModel) && !remoteBudgetExhausted("websocket")) {
 		const websocketHeaders = Object.fromEntries(requestHeaders.entries());
