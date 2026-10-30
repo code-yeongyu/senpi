@@ -3873,6 +3873,15 @@ export class AgentSession {
 		const turnMaxRetries = this._resolveRetryProfile().turn.maxRetries;
 
 		const retryableError = this._isRetryableError(lastAssistant);
+		// The retry handler answers an account limit only with the fallback walk, and that walk skips
+		// every rung on the spent provider. Announcing a retry it will not start leaves an RPC client
+		// waiting for a terminal agent_end until the account resets (omo#9711).
+		if (
+			(retryableError || this._isHardErrorFallbackEligible(lastAssistant)) &&
+			usageLimitScope(lastAssistant.errorMessage) === "account"
+		) {
+			return this._retryFallback.canTryFallback(lastAssistant.provider);
+		}
 		if (isCursorZeroTokenResourceExhausted(lastAssistant)) {
 			return true;
 		}
