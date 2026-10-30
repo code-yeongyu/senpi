@@ -22,7 +22,6 @@ it("R85.Q7 actual S15a b-g answers, baselines, overlaps and cancellations parse 
 		answer.answer,
 		baseline.baseline,
 		baseline.page,
-		...before.frames,
 		...overlap.answers,
 		...overlap.suffix,
 		subscribe.answer,
@@ -34,6 +33,24 @@ it("R85.Q7 actual S15a b-g answers, baselines, overlaps and cancellations parse 
 		cancelled.replay,
 	])
 		expect(parseMaterializerFrame(frame)).toEqual({ kind: "legacy", frame });
+	// #4272 C8.2-C8.4: the selected socket's early suffix now includes compact units.
+	for (const frame of before.frames) {
+		if (frame.materializer === undefined) {
+			expect(parseMaterializerFrame(frame)).toEqual({ kind: "legacy", frame });
+			continue;
+		}
+		expect(parseMaterializerFrame(frame)).toEqual({
+			kind: "unit",
+			envelope: {
+				sessionId: frame.sessionId,
+				generation: frame.generation,
+				sessionEpoch: frame.materializer.sessionEpoch,
+				sequence: frame.materializer.sequence,
+				controls: frame.materializer.controls,
+				payload: frame.eventLease,
+			},
+		});
+	}
 });
 
 it("R66 N routed envelopes load one payload and apply each effect once", async () => {

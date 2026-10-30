@@ -12,7 +12,14 @@ afterEach(() => {
 it("releases the accepted cut and route exactly once when physical open actually throws", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 	await using host = await statusHost();
-	host.client("peer");
+	const peer = host.client("peer");
+	// #4272 C8.2 / RULING-73: select before bypassing request() for the throwing route.
+	const pair = ["compact_message_updates_v1", "event_resync"];
+	expect(dataOf(await peer.request({ type: "get_protocol_info" })).capabilities).toEqual(expect.arrayContaining(pair));
+	expect(await peer.request({ type: "set_client_info", capabilities: pair })).toMatchObject({
+		success: true,
+		data: { capabilities: pair },
+	});
 	const checkpoints = host.writer.recoveryCheckpoints;
 	const retired = vi.spyOn(checkpoints, "retireRoute");
 	const unregistered = vi.spyOn(host.writer, "unregisterAdmission");

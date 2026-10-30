@@ -133,10 +133,11 @@ export async function statusHost(
 			received,
 			waitFor,
 			async request(command) {
-				// Admission fixtures start after an explicit selection prelude; real negotiation is tested over TCP.
+				// Admission fixtures select first; C8.3 forbids upgrading an admitted legacy peer for a token request.
 				if (
 					command.admissionId !== undefined &&
 					process.env.SENPI_ENGINE_SOCKET_COMPACT_UPDATES === "1" &&
+					!writer.compactSelection(name)?.admitted &&
 					!writer.compactSelection(name)?.selected
 				) {
 					const selected = await writer.withConnection(name, () =>
