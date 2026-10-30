@@ -1,6 +1,11 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
+import { streamWithCredentialRotation } from "../../../src/core/credential-pool/rotation-stream.ts";
+import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
 import { createFallbackCircuitAccess, FallbackCircuitBreaker } from "../../../src/core/retry-fallback/circuit.ts";
 import {
 	RetryFallbackController,
@@ -62,6 +67,51 @@ function harness() {
 }
 
 describe("retry fallback: restoring the primary honours its account hold (senpi#3347)", () => {
+	it("keeps session A's hold when session B persists a block on another slot", async () => {
+		const { controller, selector, advance } = harness();
+		const directory = mkdtempSync(join(tmpdir(), "3347-sibling-block-"));
+		const repository = new CredentialSlotRepository(join(directory, "health.json"));
+		const unfollow = followProviderAccountChanges(controller);
+		try {
+			await controller.tryFallback("transient", usageLimit);
+			controller.resetTurn();
+			// Session B's real pool write publishes through the process-global event bus.
+			const siblingStream = streamWithCredentialRotation({
+				sources: {
+					providerId: "openai-codex",
+					credential: {
+						type: "api_key",
+						key: "synthetic-key",
+						accounts: [{ name: "session-b", key: "synthetic-key", source: "login" }],
+					},
+					env: () => undefined,
+					repository,
+					now: () => Date.parse("2026-10-14T10:00:00Z"),
+				},
+				affinityKey: "session-b",
+				runAttempt: async function* () {
+					throw new Error("429 rate limited");
+				},
+			});
+			await expect(
+				(async () => {
+					for await (const _event of siblingStream) {
+						// Exhaust the generator so the block write and notice have committed.
+					}
+				})(),
+			).rejects.toThrow("429 rate limited");
+			expect((await repository.listSlots("openai-codex", "stored"))["session-b"]?.blockReason).toBe(
+				"rate_limit",
+			);
+			advance(31 * MINUTE);
+			expect(await controller.maybeRestorePrimary("cooldown-expiry")).toBe(false);
+			expect(selector()).toBe(fallback);
+		} finally {
+			unfollow();
+			rmSync(directory, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps the fallback while the primary's named usage-limit reset is still ahead", async () => {
 		const { controller, selector, advance } = harness();
 
