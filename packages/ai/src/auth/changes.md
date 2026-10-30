@@ -1,3 +1,46 @@
+## 2026-10-22 - Resolve slot-scoped requests through the store's own slot read (senpi#3858)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: optional `CredentialStore.readSlot` reads one pooled slot already projected for a slot-scoped request.
+- `packages/ai/src/auth/credential-read.ts`: `readSlotCredential` uses the store's `readSlot` when present and otherwise projects `read`. A projected key that is still an object raises `ModelsError("auth")` caused by `ConfigReferenceError` (`forbidden`), so an unresolved reference never reaches a provider.
+- `packages/ai/src/auth/resolve.ts`: slot-scoped resolution reads through `readSlotCredential`; the flat credential is read only for unscoped requests.
+- `scripts/check-entry-graphs.mjs`: the `./models` budget grows by `utils/config-reference-error.ts`.
+
+### Why
+
+- Reading the whole credential first resolved its flat key, so a pooled request failed on an unused account's broken reference, and the selected slot's reference reached the provider unresolved.
+
+### Why an extension could not handle it
+
+- Slot-scoped auth resolution is the cross-provider choke point in `resolve.ts`.
+
+### Expected merge conflict zones
+
+- MEDIUM: the slot branch of `resolveProviderAuthWithSignal` in `packages/ai/src/auth/resolve.ts`.
+- LOW: the `CredentialStore` interface in `packages/ai/src/auth/types.ts`.
+
+## 2026-10-22 - Extract the credential-store read without behavior changes (senpi#3858)
+
+### What changed
+
+- `packages/ai/src/auth/credential-read.ts`: holds the unchanged `readCredential` store read and its `ModelsError` wrapping, moved from `resolve.ts`.
+- `packages/ai/src/auth/resolve.ts`: imports the moved read.
+- `scripts/check-entry-graphs.mjs`: the `./models` entry budget grows by this one leaf module.
+
+### Why
+
+- Isolates the store read that reference-object support extends, so the behavior edit lands in a focused module and `resolve.ts` stays within the size boundary.
+
+### Why an extension could not handle it
+
+- Provider auth resolution is a core auth internal.
+
+### Expected merge conflict zones
+
+- LOW: the `readCredential` import in `packages/ai/src/auth/resolve.ts`.
+- LOW: the `./models` budget comment in `scripts/check-entry-graphs.mjs`.
+
 ## 2026-10-21 - ApiKeyAuth.keyOptional for providers that work without a key (senpi#3869)
 
 ### What changed

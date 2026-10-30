@@ -283,7 +283,7 @@ describe("ask-user resume", () => {
 			await emitStart(installed.handlers, "resume", ctx(manager));
 			await emitStart(installed.handlers, "reload", ctx(manager));
 			expect(blocked).toEqual([
-				{ active: true, id: CALL_ID, label: "Library — Which library?" },
+				{ active: true, id: CALL_ID, label: "Library - Which library?" },
 				{ active: false, id: CALL_ID },
 			]);
 			expect(installed.userMessages).toEqual([formatUserMessage(ORPHANED, CALL_ID, CANONICAL_QUESTIONS)]);

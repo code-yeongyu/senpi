@@ -6,6 +6,7 @@ import {
 	type DetectedTerminalCapabilities,
 	detectTerminalCapabilities,
 	type ImageProtocol,
+	isVsCodeTerminal,
 	type TerminalCapabilities,
 } from "./terminal-capabilities.ts";
 import { sanitizeTerminalLabel, shortenImagePath } from "./terminal-text.ts";
@@ -121,7 +122,7 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
-	if (termProgram === "alacritty" || termProgram === "vscode" || termProgram === "zed") {
+	if (termProgram === "alacritty" || termProgram === "zed") {
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
@@ -139,6 +140,11 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 			hyperlinks: false,
 			...(probedImageProtocol === undefined ? { imageProbe: "kitty" as const } : {}),
 		};
+	}
+
+	// After every other terminal: the VS Code marker is inherited by terminals started from VS Code (#2826).
+	if (isVsCodeTerminal(process.env)) {
+		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
 	// Windows Terminal does not always set WT_SESSION, for example when it hosts

@@ -107,9 +107,9 @@ export function normalizeTodoParams(
 					'For a single target pass the exact text: {"op":"rm","task":"<exact task content>"}.',
 			);
 		} else if (isBlank(raw.task) && !phase) {
-			return error('Blank "task" — pass the exact task text, or omit the field entirely for a bulk operation.');
+			return error('Blank "task": pass the exact task text, or omit the field entirely for a bulk operation.');
 		} else if (isBlank(raw.phase) && !task) {
-			return error('Blank "phase" — pass the exact phase text, or omit the field entirely for a bulk operation.');
+			return error('Blank "phase": pass the exact phase text, or omit the field entirely for a bulk operation.');
 		}
 	}
 

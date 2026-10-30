@@ -12,7 +12,8 @@
  * answers is exactly what an operator is looking for, and a superseded host holding gigabytes
  * cannot be asked how many sessions it has.
  */
-import { readdir, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { link, readdir, rename, rm } from "node:fs/promises";
 import { processIsLive } from "../../utils/process-identity.ts";
 import { generationPaths, type HostDaemonDirectory, type HostDaemonPaths } from "./host-daemon-paths.ts";
 import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
@@ -47,13 +48,22 @@ export interface PrunedDaemonState {
 	readonly pointer: boolean;
 }
 
+export interface PruneOptions {
+	/** Deterministic race seam: runs after the pointer was read and before it is removed. */
+	readonly _test?: { readonly beforePointerRemoval?: () => Promise<void> };
+}
+
 /**
  * Drops every record of a generation that is no longer running: its directory, the pointer while it
  * still names it, and the session-path claims its pid published. A record that cannot be parsed is
  * LEFT - an ensure writing one right now must not be mistaken for a generation that ended.
  */
-export async function pruneDeadGenerations(paths: HostDaemonPaths): Promise<PrunedDaemonState> {
-	const pointer = parseJson(await readFileOrUndefined(paths.pointerFile).catch(() => undefined));
+export async function pruneDeadGenerations(
+	paths: HostDaemonPaths,
+	options: PruneOptions = {},
+): Promise<PrunedDaemonState> {
+	const pointerText = await readFileOrUndefined(paths.pointerFile).catch(() => undefined);
+	const pointer = parseJson(pointerText);
 	const pointedAt = typeof pointer?.instance_id === "string" ? pointer.instance_id : undefined;
 	const generations: string[] = [];
 	for (const instanceId of await readdir(paths.generationsDir).catch(() => [] as string[])) {
@@ -67,10 +77,29 @@ export async function pruneDeadGenerations(paths: HostDaemonPaths): Promise<Prun
 	const claims = await endClaimsOfEndedGenerations(paths, new Set(generations));
 	for (const instanceId of generations)
 		await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true }).catch(() => undefined);
-	const pointerRemoved = pointedAt !== undefined && generations.includes(pointedAt);
 	// The pointer outliving its generation is what makes a client probe a socket nobody serves.
-	if (pointerRemoved) await rm(paths.pointerFile, { force: true }).catch(() => undefined);
+	const pointerNamesDead = pointerText !== undefined && pointedAt !== undefined && generations.includes(pointedAt);
+	if (pointerNamesDead) await options._test?.beforePointerRemoval?.();
+	const pointerRemoved = pointerNamesDead && (await removePointerIfUnchanged(paths, pointerText));
 	return { generations, claims, pointer: pointerRemoved };
+}
+
+/**
+ * Removes the pointer only while it is still the one this prune read (senpi#1911). Prune runs outside the
+ * ensure lock (`host status`), so a registration may have renamed a new pointer in since: the file is
+ * moved aside atomically, compared, and a replacement is linked back unless an even newer one landed.
+ */
+async function removePointerIfUnchanged(paths: HostDaemonPaths, read: string): Promise<boolean> {
+	const parked = `${paths.pointerFile}.prune-${process.pid}-${randomUUID()}.tmp`;
+	const moved = await rename(paths.pointerFile, parked).then(
+		() => true,
+		() => false,
+	);
+	if (!moved) return false;
+	const unchanged = (await readFileOrUndefined(parked).catch(() => undefined)) === read;
+	if (!unchanged) await link(parked, paths.pointerFile).catch(() => undefined);
+	await rm(parked, { force: true }).catch(() => undefined);
+	return unchanged;
 }
 
 /**

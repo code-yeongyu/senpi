@@ -114,6 +114,10 @@
 					"path": "environment-variables.md"
 				},
 				{
+					"title": "Agent Directory Selection",
+					"path": "agent-directory-selection.md"
+				},
+				{
 					"title": "Session Format",
 					"path": "session-format.md"
 				}

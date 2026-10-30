@@ -1,3 +1,241 @@
+## 2026-10-27 - Omitted render-signature tails are hashed iteratively (senpi#4415)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/render-signature.ts`: omitted array items (past 40) and omitted object entries (past 80) are folded into one FNV-1a accumulator in a single loop (`hashSignatureArrayTail`, `hashSignatureEntries`) that shares the active ancestor set, instead of re-entering the summarizer on a fresh copy of the remainder per 40 items or 80 keys. Carries the hashing from #782.
+
+### Why
+
+- Depth grew linearly and live memory quadratically with a value's width; a wide tool result aborted Node at its heap limit (80,000 keys: 4.2 GB) and cost Bun 5+ GB per signature. Now 80,000 keys take about 100 ms and 120 MB on Node.
+
+### Why an extension could not handle it
+
+- Assistant-message and tool-execution render signatures are private TUI cache keys; extensions cannot replace their hashing.
+
+### Expected merge conflict zones
+
+- LOW: the omitted array/object branches in `components/render-signature.ts` and `test/render-signature.test.ts`.
+
+## 2026-10-26 - Show the session recovery notice (senpi#4295)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `handleEvent` shows `session_recovered` as a warning with its `notice`.
+
+### Why
+
+- The person must be told once that the last message was not saved, and where the incomplete bytes were kept.
+
+### Why an extension could not handle it
+
+- The session event switch is core interactive-mode code.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, the `case` before `continuation_error`.
+
+## 2026-10-25 - Show ordered session lifecycle status in the TUI (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/lifecycle-status.ts` projects state, named child sources/reports, background items, human waits, stop provenance, failure and live activity into the interactive footer. Ordinary state follows lifecycle sequence; activity follows owner-scoped sequence/revision ordering, including explicit absence.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` reads the authoritative lifecycle on subscription/rebind, consumes lifecycle events separately from ordinary event effects, synchronizes unfamiliar owners from the bound session snapshot, and fences retired subscriptions on replacement/disposal. Its extension-UI reset (`/reload`) clears extension statuses but keeps the host-owned `session-lifecycle` status, so the reload keeps the existing subscription and the status never goes missing; the `session-lifecycle` status key is reserved, so an extension's `ctx.ui.setStatus` cannot overwrite or clear it; `stop()` clears the status without scheduling a frame after the footer is disposed. The existing working animation, tool output, compaction/retry progress and abort controls remain in place.
+- The lifecycle text is never empty (an idle session shows `idle`), so the interactive footer always has its extension-status line. That line keeps its existing behaviour: statuses sorted by key and truncated to the terminal width, so long lifecycle text (many named waits or child reports) can be cut and can push later-sorted extension statuses off the line.
+- `packages/coding-agent/test/suite/regressions/3864-tui-lifecycle.test.ts` renders the actual footer through the real session event subscription, compares named wait content with RPC capture, and covers stops/caps, lost custody, same-sequence activity, owner replacement and disposal. `3864-tui-lifecycle-ownership.test.ts` covers `/reload`, the reserved key and `stop()`.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/lifecycle-status.ts` and `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: terminal users need the same authoritative coarse status as RPC consumers without mistaking an unknown activity for model work or replaying ordinary state at equal sequence.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` and `packages/coding-agent/src/modes/interactive/lifecycle-status.ts`: the interactive host owns its session subscription, binding generation, footer data provider and status indicator lifetime.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/interactive/interactive-mode.ts`, agent subscription, rebind, `resetExtensionUI`, extension UI `setStatus` and stop paths.
+- `packages/coding-agent/src/modes/interactive/lifecycle-status.ts`: none; new fork-only consumer.
+
+## 2026-10-25 - Make MRTR presentation lifetime explicitly optional (#4226)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` declares `mcpMrtrPresentationLifetime` optional, creates it when UI is requested, replaces it on rebind, and aborts it on shutdown only if a presentation exists. UI requested during disposal receives an aborted lifetime rather than reviving presentation authority.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: shutdown and rebind can precede presentation creation. The optional aborts and lazy UI initialization are required, not dead code; removing them prevented session disposal, signal cleanup, and stderr restoration. The proposed guard removal in issue #4226 is declined on this evidence.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the terminal host owns its presentation lifetime.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: extension rebind, UI context construction, and shutdown lifetime handling.
+
+## 2026-10-25 - Terminal snapshot cursors and answer receipts (#4266)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/session-control-rpc-commands.ts`: answers `get_snapshot` through the shared synchronous capture and connection FIFO marker path.
+- `packages/coding-agent/src/modes/interactive/session-control-commands.ts`: advertises snapshot and UI-answer receipt support and settles named answers through the session-local receipt ledger.
+
+### Why
+
+- Both endpoints must identify snapshot cuts by source order and distinguish a retried answer from another answer to an already settled request.
+
+### Why an extension could not handle it
+
+- The control endpoint owns command replies and its connection FIFO; an extension cannot insert a cursor atomically with state capture.
+
+### Expected merge conflict zones
+
+- Additive imports, capability names, snapshot dispatch, and answer receipt handling in the two named control-command files.
+
+## 2026-10-25 - Terminal control endpoints: host drive set and every platform (senpi#4267)
+
+### What changed
+
+- `session-control-rpc-commands.ts`, `session-control-commands.ts`, `session-control-attach.ts`: `get_entries`, `set_client_info`, `attach_session`, `release_attachment`, `abort` with the host's role rule, admission receipts and their replay, `tui_observer`.
+- `session-control-server.ts`, `session-control-registry.ts`, `../../core/session-control-actions.ts`: registration on win32 over the host transport's named pipe.
+
+### Why
+
+- A client observes and drives a terminal session exactly as a host session, on every platform.
+
+### Why an extension could not handle it
+
+- The terminal endpoint's command surface and listener are core interactive-mode code.
+
+### Expected merge conflict zones
+
+- LOW: the command list and `get_protocol_info` capabilities in `session-control-commands.ts`.
+
+## 2026-10-25 - Local terminal forms use private final settlement (#4197)
+
+### What changed
+
+- `mcp-local-presenter.ts`: register the terminal internally, queue whole forms within their original deadlines, and route review through the host terminal latch. Collector failure terminates only that form.
+- `interactive-mode.ts`: register one local private authority per session binding only with enforcement enabled. Preserve default per-field human admission and scheduled ephemeral-select rendering; enforced forms admit through the final authority latch.
+
+### Why
+
+- Editing one field is not approval of the complete form. A remote attachment must not acquire the terminal's authority.
+
+### Key decisions
+
+- Actual rendering acknowledges presentation; final accept, decline, or explicit cancel admits once. Timeout, replacement, and disposal never fabricate human activity.
+- Default terminals keep the base MRTR queue, legacy origin rules, and legacy stderr handling.
+
+### Why an extension could not handle it
+
+- The terminal host owns modal rendering, the actual input callbacks, and presentation disposal.
+
+### Expected merge conflict zones
+
+- LOW: extension UI context construction and private selector rendering.
+
+## 2026-10-25 - Bind private MCP forms to the live terminal presentation (#4207)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: issue the real terminal's MRTR presentation lifetime and forward ephemeral select/input options without generic blocked events, labels, identifiers, or pending markers.
+- `packages/coding-agent/src/modes/interactive/components/extension-selector.ts`: ignore answers from disposed selectors so duplicate or delayed prior-round input cannot dismiss the current dialog.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a fabricated UI object or RPC capability declaration must not grant modern form-answering authority, and private interaction state must not enter ordinary status publication.
+- `packages/coding-agent/src/modes/interactive/components/extension-selector.ts`: a completed dialog's callback must not remove another input round's selector or admit a duplicate human answer.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: only the terminal host owns its actual UI object, dialog wrappers, session replacement, and presentation disposal.
+- `packages/coding-agent/src/modes/interactive/components/extension-selector.ts`: the terminal component owns keyboard delivery and disposal; an extension cannot fence an already-retired widget's callback.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: extension UI context creation, presentation-lifetime disposal, and the private-dialog branch of `withBlockedHostDialog`.
+- `packages/coding-agent/src/modes/interactive/components/extension-selector.ts`: selector input admission and disposal.
+
+## 2026-10-24 - Identify interrupted sessions in the pause footer (senpi#4204)
+
+### What changed
+
+- `pause-footer.ts` identifies the interrupted-run hold and shows the existing input and Resume recovery controls.
+- `pause-footer.ts` omits the held-update count when an interrupted session has no updates.
+- `interactive-mode.ts` restores the pause status after extension binding, including startup events emitted before the TUI subscription is installed.
+
+### Why
+
+- A recovered interrupted session must remain usable and explain how the person can continue.
+
+### Why an extension could not handle it
+
+- The interactive host owns the pause footer and Resume routing.
+
+### Expected merge conflict zones
+
+- `pause-footer.ts`: pause view and footer state selection.
+
+## 2026-10-18 - Terminal.app's selection hint names Command-R (senpi#3604 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/ask-user-async-widget.ts`: `selectionBypassHint()` returns `cmd+r (toggle mouse reporting)` for Terminal.app instead of `option+drag`, and the tmux note names only iTerm2.
+
+### Why
+
+- Apple documents Option-drag in Terminal as rectangular selection and Command-R as the "Allow Mouse Reporting" toggle; it documents no drag modifier that bypasses an app's mouse reporting.
+
+### Why an extension could not handle it
+
+- The widget is the interactive host's own component.
+
+### Expected merge conflict zones
+
+- LOW: the Terminal.app and tmux rows of `selectionBypassHint`.
+
+## 2026-10-20 - Present retained skill security reasons once (senpi#3796)
+## 2026-10-23 - Product copy punctuation (senpi#4040)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+- `packages/coding-agent/src/modes/interactive/components/daxnuts.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+
+### Why
+
+- The product-copy oxlint rule rejects em dashes in strings, templates and JSX text. Existing copy must pass it without changing control flow or punctuation matching.
+
+### Why an extension could not handle it
+
+- These source strings and lint directives are read before runtime extensions can rewrite them.
+
+### Expected merge conflict zones
+
+- The listed copy strings and adjacent lint comments only.
+
+
+## 2026-10-21 - A cost total that includes unpriced turns is marked as a lower bound (senpi#3844)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the session cost reads `$X+?` when `UsageTotals.costUnknown` is set.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `/session` cost total, and each per-model breakdown row, appends `+ unpriced turns` when `SessionStats.costUnknown` (or the row's `costUnknown`) is set.
+
+### Why
+
+- A model with no known price reports its turns as `costUnknown` (senpi#3844). Summing them as $0 would show a complete-looking total that hides the unpriced spend; the marker says the amount is a lower bound. Test: `test/footer-usage-display.test.ts`.
+
+### Why an extension could not handle it
+
+- The footer and `/session` render the core usage totals directly.
+
+### Expected merge conflict zones
+
+- LOW: the `costStr` line in `footer.ts`; the `/session` cost `Total:` line in `interactive-mode.ts`.
+
 ## 2026-10-20 - Present retained skill security reasons once (senpi#3796)
 
 ### What changed
@@ -59,6 +297,42 @@ Startup warning filtering, `bindSession`, and extension presentation cleanup.
 
 - The settings selector block in `interactive-mode.ts`.
 
+
+## 2026-10-22 - Count a resumed TUI answer once (senpi#3864 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the question overlay reports a local answer as human input only when the answer is a tool result; a resumed question's `user-message` answer is reported by its delivery.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a resumed blocking question answered in the TUI was counted twice.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the overlay is interactive mode itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showQuestionOverlay` finish.
+
+## 2026-10-22 - Admit TUI answers as human input for the lifecycle (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: admits a synchronous question/dialog answer through `admitHumanAnswer` before resuming work.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a person answering must invalidate self-settle and count as human input.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the TUI answer path is interactive mode itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: question/dialog answer handling.
 
 ## 2026-10-21 - The resume picker's search finds a session by the id its file name carries (oh-my-openagent#7471)
 
@@ -369,6 +643,24 @@ It uses the core resolver and must run for every transcript message.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `applyThinkingLevel` and `onThinkingLevelChange`.
+
+## 2026-10-12 - Remove the /llama llama.cpp integration (senpi#3202)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: removes `llamaCppPostLoginGuidance` and the post-login `llama.cpp` branch.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the post-login guidance belongs to the `/llama` feature Q ordered removed.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: an extension cannot remove a branch inside the host's authentication flow.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the removed guidance function and branch.
 
 ## 2026-10-12 - Short owned temp roots contain TUI socket fallbacks (Refs senpi#3064)
 
@@ -3186,3 +3478,40 @@ The shared markdown theme and the tool card's renderer are interactive-mode inte
 ### Expected merge conflict zones
 
 - LOW: `sharedMarkdownTheme()` in `theme.ts`; the theme imports and default arguments of the seven message components; `releaseContent()` in `tool-execution-renderer.ts`.
+
+## 2026-10-20 - Footer shows the subagent tree cost (senpi#2471)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the cost segment appends ` (+X.XXX)` when the reported subagent cost is positive, and shows the segment when only subagents have spent.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the extension UI context's `setSubagentCost` stores the figure on the footer data provider and requests a render.
+
+### Why
+
+- A session that fans out to subagents showed only its own spend in the footer, so it looked far cheaper than it was. The extension that runs the subagents (omo's task engine) knows the tree's spend; the footer needs a typed way to receive it and show it as `$0.380 (+1.270)` (oh-my-pi parity).
+
+### Why an extension could not handle it
+
+- The built-in footer's cost segment and the `ExtensionUIContext` contract are core; `setStatus` can only add a separate status line, not place a figure inside the cost segment.
+
+### Expected merge conflict zones
+
+- MEDIUM: `footer.ts` cost-segment block (`totalCost || usingSubscription`).
+- LOW: `interactive-mode.ts` extension UI context object next to `setStatus`.
+## 2026-10-21 - Admit synchronous human replies before resuming work (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: accepted selector, input and editor replies, and synchronous questions explicitly answered by the local UI, report through the existing human-input admission hook before their promises resolve.
+
+### Why
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: an answer may resume the current turn without admitting a new turn, but must still invalidate a standing agent self-settle intent.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the UI adapter owns the accepted local-user callback; automatic timeout/abort paths must not be classified as human.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: extension selector/input/editor callbacks and blocking question completion. Preserve the existing asynchronous question-input admission path.

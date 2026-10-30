@@ -57,7 +57,7 @@ export type KnownImageApi = "openrouter-images" | "openai-images";
 
 export type ImageApi = KnownImageApi | (string & {});
 
-export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one" | "llama-cpp-classify";
+export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one";
 
 export type ClassifierApi = KnownClassifierApi | (string & {});
 
@@ -186,6 +186,8 @@ export interface ProviderResponse {
 /** Authentication, HTTP transport, and lifecycle callbacks shared by provider requests. */
 export interface ProviderRequestOptions<TModel = Model<Api>> {
 	signal?: AbortSignal;
+	/** Originating session working directory for subprocess-backed providers. */
+	cwd?: string;
 	/**
 	 * Abort the request when the provider reports that a safety classifier
 	 * declined the requested model and a substitute model served the turn
@@ -596,6 +598,8 @@ export interface Usage {
 		cacheWrite: number;
 		total: number;
 	};
+	/** The model has no known price, so `cost` is not a real amount; consumers must not report it as $0. */
+	costUnknown?: true;
 }
 
 /**
@@ -764,8 +768,11 @@ export interface AssistantMessage {
 	stopDetails?: AssistantStopDetails;
 	deferred?: DeferredHandle;
 	errorMessage?: string;
-	/** Redaction-safe cause retained when a session projects a provider limit as user-facing advice. */
-	errorCause?: { type: "usage_limit"; scope: "account" | "model" };
+	/**
+	 * Redaction-safe cause: a provider limit projected as user-facing advice, or a model id its route does not
+	 * serve (`model_config`, never retried or fallen back).
+	 */
+	errorCause?: { type: "usage_limit"; scope: "account" | "model" } | { type: "model_config"; model: string };
 	/** Structured provider failure family, minted only by a provider adapter from structured error metadata. */
 	providerDiagnostic?: ProviderDiagnostic;
 	/** Explicit owner for an abort initiated by the provider retry watchdog. */
@@ -775,6 +782,11 @@ export interface AssistantMessage {
 	 * No model produced the failure, so retry and model fallback must not act on it.
 	 */
 	failureSource?: "local";
+	/**
+	 * Set by the model runtime on a failed response when the same credential (provider, endpoint and key) served a
+	 * response moments before: an `auth` failure then means the provider refused this request, not the key.
+	 */
+	credentialServedRecently?: true;
 	rawStopReason?: string;
 	/**
 	 * Provider indication of whether the model explicitly ended its turn.
@@ -1390,6 +1402,8 @@ export interface ModelCostEffectiveRate extends ModelCostCard {
 export interface ModelCost extends ModelCostCard {
 	/** Scheduled list-price changes, each billed for requests at or after its `effectiveFrom`. */
 	effectiveRates?: ModelCostEffectiveRate[];
+	/** No price is known for this model (rates are placeholders): usage on it reports `costUnknown`, not a $0 cost. */
+	unknown?: true;
 }
 
 export interface ModelImageResizeOptions {

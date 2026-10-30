@@ -104,6 +104,8 @@ export interface AnthropicSubscriptionSessionEntry {
 	taintedReason: string | null;
 	/** Wave C seam: a divergence boundary recorded for the next continuity decision. */
 	pendingForkReason: string | null;
+	/** senpi#1975: first diverged field path the commit boundary named for the pending fork, when it named one. */
+	pendingForkDivergedPath: string | null;
 	lastUsedAt: number;
 	/** Digest of the access token the resident subprocess was spawned with. */
 	credentialDigest?: string;
@@ -231,6 +233,7 @@ export class AnthropicSubscriptionSessionRegistry {
 			branchInfo: null,
 			taintedReason: null,
 			pendingForkReason: null,
+			pendingForkDivergedPath: null,
 			lastUsedAt: now,
 		};
 		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
@@ -326,8 +329,8 @@ export async function switchSessionModel(senpiSessionId: string, modelId: string
 	return switchEntryModel(sessionRegistry, senpiSessionId, modelId, sdkModel);
 }
 
-export function recordPendingFork(senpiSessionId: string, reason: string): void {
-	annotatePendingFork(sessionRegistry, senpiSessionId, reason);
+export function recordPendingFork(senpiSessionId: string, reason: string, divergedPath?: string): void {
+	annotatePendingFork(sessionRegistry, senpiSessionId, reason, divergedPath);
 }
 
 export function recordBranchInfo(senpiSessionId: string, info: SessionBranchInfo): void {

@@ -1,5 +1,23 @@
 # Cache Keep-Alive Extension Changes
 
+## 2026-10-18 - Do not arm provider work for size inspection (senpi#3483)
+
+### What changed
+
+- `index.ts`: `session_start.sizesOnly` skips prewarm and startup activity arming.
+
+### Why
+
+A diagnostic must not arm a provider request if a user extension emits activity during startup.
+
+### Why an extension could not handle it
+
+This built-in owns the warm-request subscriptions.
+
+### Expected merge conflict zones
+
+- `index.ts`: `session_start` before `prewarm.start`.
+
 ## 2026-10-11 - Arm prewarm until the first user activity (senpi#3140)
 
 ### What changed

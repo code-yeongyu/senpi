@@ -99,6 +99,7 @@ function captureShellPromise(promise, options) {
 			return prototype[method].apply(this, args);
 		};
 	}
+	// oxlint-disable-next-line unicorn/no-thenable -- This wraps an existing shell promise to record when the cell awaits it.
 	promise.then = function then(onFulfilled, onRejected) {
 		if (!waiting && !settled) {
 			waiting = true;

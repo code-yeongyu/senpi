@@ -160,6 +160,8 @@ class ScriptedResidentQuery implements SdkQueryHandle, AsyncIterator<SDKMessage>
 function residentBoundary(scriptFor: (account: string, submission: number) => AttemptOutcome): QueryRecord[] {
 	const queries: QueryRecord[] = [];
 	const query: SdkQuery = ({ prompt, options = {} }) => {
+		expect(options.cwd).toBe(process.env.SENPI_CODING_AGENT_DIR);
+		expect(options.cwd).not.toBe(process.cwd());
 		if (typeof prompt === "string") throw new Error("Expected streaming input");
 		const account = options.env?.CLAUDE_CODE_OAUTH_TOKEN === ACCESS_PRIMARY ? ACCOUNT_PRIMARY : ACCOUNT_SECONDARY;
 		const handle = new ScriptedResidentQuery(prompt, account, (submission) => scriptFor(account, submission));
@@ -212,7 +214,11 @@ function assistant(text: string, timestamp: number): AssistantMessage {
 }
 
 function runTurn(context: Context): Promise<AssistantMessage> {
-	return streamAnthropicSubscription(model, context, { sessionId: SESSION_ID, streamKind: "main" }).result();
+	return streamAnthropicSubscription(model, context, {
+		cwd: process.env.SENPI_CODING_AGENT_DIR,
+		sessionId: SESSION_ID,
+		streamKind: "main",
+	}).result();
 }
 
 afterEach(() => {

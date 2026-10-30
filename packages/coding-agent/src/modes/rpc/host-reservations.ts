@@ -24,6 +24,7 @@ import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promise
 import { join } from "node:path";
 import {
 	processIsLive,
+	processIsRunning,
 	processStartTimeMs,
 	readProcessStartTime,
 	sameProcessStartMs,
@@ -351,7 +352,8 @@ export async function claimOwnerIsLive(owner: SessionPathOwner): Promise<boolean
  * different start time. `unproven`: the pid runs but no start time was recorded or none can be read.
  */
 export async function claimOwnerIdentity(owner: SessionPathOwner): Promise<"proven" | "gone" | "unproven"> {
-	if (!processIsLive(owner.pid)) return "gone";
+	// An exited, unreaped owner (state Z) makes no more writes: the claim is gone (senpi#4119).
+	if (!processIsRunning(owner.pid)) return "gone";
 	const recorded = owner.processStartTime === null ? undefined : processStartTimeMs(owner.processStartTime);
 	if (recorded === undefined) {
 		logUnknownHostIdentity("session-path-claim", owner.pid);

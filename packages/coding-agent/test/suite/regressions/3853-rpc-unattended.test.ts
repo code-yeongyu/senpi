@@ -68,7 +68,14 @@ it("open_session attended:false holds an active goal, and a subsequent attach re
 	expect(buildRpcSessionState(resumed.session)).toMatchObject({
 		paused: true,
 		pausedNoticeCount: 1,
-		holds: [{ kind: "unattended", since: expect.any(String), sourceCounts: { goal: 1 } }],
+		holds: [
+			{ kind: "session_hold", key: "interrupted-run", since: expect.any(String), sourceCounts: { goal: 1 } },
+			{ kind: "unattended", since: expect.any(String), sourceCounts: { goal: 1 } },
+		],
+		lifecycle: {
+			state: "held",
+			waitingOn: { human: expect.arrayContaining([expect.objectContaining({ kind: "interrupted_run" })]) },
+		},
 	});
 	await router.handle({ type: "open_session", sessionPath });
 	expect(a.faux.state.callCount).toBe(before);

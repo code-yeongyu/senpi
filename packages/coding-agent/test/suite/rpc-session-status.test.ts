@@ -339,7 +339,8 @@ describe("activity neutrality and mirror opt-in", () => {
 					record.sessionId === worker &&
 					record.type !== "agent_start" &&
 					record.type !== "agent_settled" &&
-					record.type !== "agent_idle",
+					record.type !== "agent_idle" &&
+					record.type !== "session_lifecycle",
 			),
 		).toBe(false);
 		const listed = dataOf(await mirror.request({ type: "list_sessions", include_workers: true })).sessions as Array<{

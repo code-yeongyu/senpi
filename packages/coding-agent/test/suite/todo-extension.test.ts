@@ -615,7 +615,7 @@ describe("todo extension", () => {
 
 		expect(rendered).toContain("I. Foundation");
 		expect(rendered).toContain("[✓] Build core");
-		expect(rendered).toContain("II. Auth — 1/1 done");
+		expect(rendered).toContain("II. Auth - 1/1 done");
 		expect(rendered).toContain("III. Verification");
 		expect(rendered).toContain("[ ] Run checks");
 	});

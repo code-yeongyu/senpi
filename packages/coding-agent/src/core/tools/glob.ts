@@ -12,6 +12,7 @@ export function createGlobToolDefinition(
 	return {
 		...find,
 		name: "glob",
+		workspaceEffect: "read",
 		label: "glob",
 		exposure: "eval",
 		description:

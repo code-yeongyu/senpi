@@ -47,6 +47,7 @@ export function buildContinuationPrompt(goal: Goal, options: ContinuationPromptO
 		"No-progress check - run this whenever a turn ended without moving the objective:",
 		"- Progress changes authoritative state, finishes work, or yields evidence that changes the next action. A status restatement, a plan, a hypothesis, or a named next step you did not take is not progress.",
 		"- Retries are unbounded: there is no attempt limit, so change something material each time - a different source, namespace, tool, or assumption - and widen an empty or thin result to another source before treating absence as a fact. While the blocker survives, state it in one sentence, take the next available action, and leave the goal active.",
+		"- A permission denial, a refusal by the user, or a call a permission rule blocked is not a blocker to route around: it is final for what that call was meant to do. Never reach that result with another tool, command, path or host; only the user can change it, so ask them with the question tool or leave that part out and say so.",
 		"",
 		"Blocked audit - run this before deciding the goal is blocked:",
 		"- No live resumption channel exists: no monitor, subscription, background command, child task, or pending question can still deliver what the objective waits on. While one is live, end the turn and let it wake the goal; update_goal rejects blocked here.",
@@ -75,6 +76,7 @@ function buildGpt6AstraContinuationPrompt(goal: Goal): string {
 		"Open todo tasks are the remaining goal work. Evidence already captured for the current state stands; rerun a check only when its input changed or it failed.",
 		'End this turn one of four ways: a concrete action toward the objective; update_goal with status "complete" once every requested deliverable is observably done and no todo task is open, then report the final elapsed time; a question through the question tool (request_user_input / ask_user_question) when only the user can supply the next decision or fact; or ending the turn while a live resumption channel (an active monitor, scheduled continuation, or background child) is on duty for what the objective waits on - let it wake the goal.',
 		'update_goal with status "blocked" only when no live channel can still deliver, you asked the user and they did not answer within the wait, and the same blocker survived three goal turns since the goal became active or the user last spoke. Hard, slow, or uncertain work is not a reason to block.',
+		"A permission denial or a refusal by the user is final for what that call was meant to do: never reach that result with another tool, command, path or host; ask the user or leave that part out.",
 	].join("\n");
 }
 

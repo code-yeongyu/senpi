@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openChannelListener } from "../../src/modes/rpc/tool-child/channel.ts";
 import type { ToolChildMessage } from "../../src/modes/rpc/tool-child/protocol.ts";
 import { TOOL_CHILD_JOB_HANDLERS } from "../../src/modes/rpc/tool-child/role.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 const resolver = pathToFileURL(resolve(import.meta.dirname, "../../src/experimental/source-resolver.ts")).href;
 const ENTRIES = ["src/cli.ts", "src/cli-main.ts", "src/rpc-entry.ts", "src/tool-child-main.ts"] as const;
@@ -22,7 +23,7 @@ function run(entry: string, env: Record<string, string>, args: string[]) {
 		process.execPath,
 		["--import", resolver, resolve(import.meta.dirname, "../..", entry), ...args],
 		{
-			env: { ...process.env, ...env },
+			env: { ...hostSpawnEnv(), ...env },
 			stdio: ["ignore", "pipe", "pipe"],
 		},
 	);

@@ -25,6 +25,7 @@ export const PLATFORM_JOBS = [
 	"tool-child-windows",
 	"schedule-windows",
 	"rpc-windows",
+	"socket-secret-native-windows",
 	"compiled-extensions-windows",
 	"claude-executable-windows",
 	"bash-grandchild-console-windows",

@@ -64,7 +64,9 @@ export function withResults(
 		delete fetching[key];
 		const previous = accounts[key];
 		accounts[key] =
-			reading.error !== undefined && previous !== undefined ? { ...reading, windows: previous.windows } : reading;
+			reading.error !== undefined && previous !== undefined
+				? { ...reading, windows: previous.windows, plan: reading.plan ?? previous.plan }
+				: reading;
 	}
 	return { accounts, fetching };
 }

@@ -17,6 +17,9 @@ import {
 } from "../../src/core/session-move/ownership.ts";
 import { admittedInputs, appendUserMessage, customTypes, MOVE, SESSION_ID, setup } from "./session-move-fixture.ts";
 
+/** The session file a receive in these tests lands as. */
+const LANDING = "/sessions/landing.jsonl";
+
 const BACK = "move-0002" as MoveId;
 
 function editManifest(bundleDir: string, edit: (manifest: Record<string, unknown>) => void): void {
@@ -263,7 +266,7 @@ describe("session move review fixes (senpi#3631)", () => {
 
 	it("#given a move already receiving #when it is cancelled or expires #then it keeps receiving", async () => {
 		const { ledger } = await setup();
-		await ledger.beginReceive(MOVE);
+		await ledger.beginReceive(MOVE, LANDING);
 		expect(await ledger.decline(MOVE, "expired")).toEqual({ state: "receiving" });
 		expect(await ledger.fail(MOVE, "import_failed")).toEqual({ state: "failed", reason: "import_failed" });
 	});

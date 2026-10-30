@@ -4,6 +4,7 @@
  * turn's refresher and written back, a login already rejected is reported instead of re-redeemed, and an
  * expired ChatGPT token is left for a turn to renew. Payload shapes map onto the ids turns report.
  */
+import { OAuthTokenEndpointError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { CredentialStoreBusyError } from "../../../src/core/lockfile-policy.ts";
@@ -196,6 +197,97 @@ describe("usage poll accounts and payloads (senpi#3684)", () => {
 
 		expect(await accounts[0]?.access(new AbortController().signal)).toEqual({ error: SIGN_IN_NEEDED });
 		expect(await workSlot(store)).toMatchObject({ refresh: token("relogin") });
+		expect((await workSlot(store)).blockReason).toBeUndefined();
+	});
+
+	// senpi#3695: only an explicit token-endpoint rejection may lock an account from a background poll.
+	it.each([
+		["an HTML error page", new Error("Unexpected token '<', \"<!DOCTYPE html>\" is not valid JSON")],
+		["a network error", new TypeError("fetch failed")],
+	])("a non-auth refresh failure (%s) never locks the account", async (_label, failure) => {
+		const store = revokedStore();
+		const accounts = await listPollAccounts({
+			store,
+			env: () => undefined,
+			refresher: async () => {
+				throw failure;
+			},
+			now: () => NOW,
+		});
+
+		expect(await accounts[0]?.access(new AbortController().signal)).toBeUndefined();
+		expect((await workSlot(store)).blockReason).toBeUndefined();
+	});
+
+	it("a 401 from the token endpoint locks the account", async () => {
+		const store = revokedStore();
+		const accounts = await listPollAccounts({
+			store,
+			env: () => undefined,
+			refresher: async () => {
+				throw Object.assign(new Error("HTTP request failed. status=401; body=unauthorized"), { status: 401 });
+			},
+			now: () => NOW,
+		});
+
+		expect(await accounts[0]?.access(new AbortController().signal)).toEqual({ error: SIGN_IN_NEEDED });
+		expect((await workSlot(store)).blockReason).toBe("auth_error");
+	});
+
+	// The refresher's real shape: a wrapper whose message flattens the endpoint error (status, then the
+	// server's body) and whose `cause` is the OAuthTokenEndpointError carrying the numeric status.
+	const wrappedEndpointError = (status: number, body: string, innerMessage?: string) => {
+		const endpoint = new OAuthTokenEndpointError(
+			innerMessage ?? `HTTP request failed. status=${status}; url=https://example.invalid/token; body=${body}`,
+			status,
+		);
+		return new Error(`Anthropic token refresh request failed. details=Error: ${endpoint.message}`, {
+			cause: endpoint,
+		});
+	};
+
+	it.each([
+		["a wrapped 401 whose text carries no status", wrappedEndpointError(401, "", "opaque")],
+		["a wrapped 400 invalid_grant", wrappedEndpointError(400, '{"error":"invalid_grant"}')],
+	])("an explicit rejection read from the cause chain (%s) locks the account", async (_label, failure) => {
+		const store = revokedStore();
+		const accounts = await listPollAccounts({
+			store,
+			env: () => undefined,
+			refresher: async () => {
+				throw failure;
+			},
+			now: () => NOW,
+		});
+
+		expect(await accounts[0]?.access(new AbortController().signal)).toEqual({ error: SIGN_IN_NEEDED });
+		expect((await workSlot(store)).blockReason).toBe("auth_error");
+	});
+
+	// Text the server controls (the response body) must not decide: only the endpoint's own status does.
+	it.each([
+		["a wrapped 403 whose body says invalid_grant", wrappedEndpointError(403, '{"error":"invalid_grant"}')],
+		["a wrapped 404 whose body says status=400", wrappedEndpointError(404, "upstream said status=400")],
+		[
+			"an unwrapped 403 message whose body says invalid_grant",
+			new Error('HTTP request failed. status=403; body={"error":"invalid_grant"}'),
+		],
+		[
+			"an unwrapped 404 message whose body says status=401",
+			new Error("HTTP request failed. status=404; body=proxy: status=401"),
+		],
+	])("a non-rejection status (%s) never locks the account", async (_label, failure) => {
+		const store = revokedStore();
+		const accounts = await listPollAccounts({
+			store,
+			env: () => undefined,
+			refresher: async () => {
+				throw failure;
+			},
+			now: () => NOW,
+		});
+
+		expect(await accounts[0]?.access(new AbortController().signal)).toBeUndefined();
 		expect((await workSlot(store)).blockReason).toBeUndefined();
 	});
 

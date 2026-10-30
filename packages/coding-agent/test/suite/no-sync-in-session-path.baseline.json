@@ -1,0 +1,1160 @@
+{
+	"documentation": "Frozen, shrink-only baseline for test/suite/no-sync-in-session-path.test.ts (senpi#3676). Every synchronous fs, crypto or zlib call reachable from the RPC session path, outside the three whole-file APIs the ledger tracks and outside the move path (which allows none). Keyed by (file, declared callee, enclosing symbol) with the exact call count. The test fails on any site not listed here (adding one is forbidden: make the new call asynchronous) and on any listed entry that no longer occurs at that count (remove or lower it in the same PR). It may only shrink, to zero. Sorted by codepoint; counts are call sites. The one addition after the first snapshot, made in #3991 when the audit learned the bind/alias forms, is src/utils/photon.ts readFileSync in patchPhotonWasmRead (see its reason).",
+	"entries": [
+		{
+			"file": "src/config.ts",
+			"callee": "existsSync",
+			"symbol": "assetDirIn",
+			"count": 1
+		},
+		{
+			"file": "src/config.ts",
+			"callee": "existsSync",
+			"symbol": "findNodePackageDir",
+			"count": 2
+		},
+		{
+			"file": "src/config.ts",
+			"callee": "existsSync",
+			"symbol": "resolveShippedAssetDir",
+			"count": 1
+		},
+		{
+			"file": "src/core/agent-session-runtime.ts",
+			"callee": "copyFileSync",
+			"symbol": "importFromJsonl",
+			"count": 1
+		},
+		{
+			"file": "src/core/agent-session-runtime.ts",
+			"callee": "existsSync",
+			"symbol": "fork",
+			"count": 1
+		},
+		{
+			"file": "src/core/agent-session-runtime.ts",
+			"callee": "existsSync",
+			"symbol": "importFromJsonl",
+			"count": 3
+		},
+		{
+			"file": "src/core/agent-session-runtime.ts",
+			"callee": "mkdirSync",
+			"symbol": "importFromJsonl",
+			"count": 1
+		},
+		{
+			"file": "src/core/agent-session.ts",
+			"callee": "existsSync",
+			"symbol": "exportToJsonl",
+			"count": 1
+		},
+		{
+			"file": "src/core/agent-session.ts",
+			"callee": "mkdirSync",
+			"symbol": "exportToJsonl",
+			"count": 1
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"callee": "chmodSync",
+			"symbol": "writeAuthFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"callee": "existsSync",
+			"symbol": "backupAuthFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"callee": "existsSync",
+			"symbol": "ensureFileExists",
+			"count": 1
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"callee": "existsSync",
+			"symbol": "ensureParentDir",
+			"count": 1
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"callee": "existsSync",
+			"symbol": "withLock",
+			"count": 1
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"callee": "existsSync",
+			"symbol": "withLockAsync",
+			"count": 1
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"callee": "existsSync",
+			"symbol": "writeAuthFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"callee": "mkdirSync",
+			"symbol": "ensureParentDir",
+			"count": 1
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"callee": "renameSync",
+			"symbol": "writeAuthFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"callee": "rmSync",
+			"symbol": "writeAuthFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/auth-storage.ts",
+			"callee": "statSync",
+			"symbol": "writeAuthFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/credential-pool/state-file.ts",
+			"callee": "chmodSync",
+			"symbol": "writeStateFileAtomic",
+			"count": 1
+		},
+		{
+			"file": "src/core/credential-pool/state-file.ts",
+			"callee": "existsSync",
+			"symbol": "writeStateFileAtomic",
+			"count": 1
+		},
+		{
+			"file": "src/core/credential-pool/state-file.ts",
+			"callee": "renameSync",
+			"symbol": "replaceFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/credential-pool/state-file.ts",
+			"callee": "rmSync",
+			"symbol": "writeStateFileAtomic",
+			"count": 1
+		},
+		{
+			"file": "src/core/credential-pool/state-file.ts",
+			"callee": "statSync",
+			"symbol": "writeStateFileAtomic",
+			"count": 1
+		},
+		{
+			"file": "src/core/credential-pool/state-store.ts",
+			"callee": "existsSync",
+			"symbol": "withDocument",
+			"count": 1
+		},
+		{
+			"file": "src/core/credential-pool/state-store.ts",
+			"callee": "mkdirSync",
+			"symbol": "withDocument",
+			"count": 1
+		},
+		{
+			"file": "src/core/export-html/index.ts",
+			"callee": "existsSync",
+			"symbol": "renderSessionToHtml",
+			"count": 1
+		},
+		{
+			"file": "src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts",
+			"callee": "closeSync",
+			"symbol": "readJsonFileSync",
+			"count": 1
+		},
+		{
+			"file": "src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts",
+			"callee": "fstatSync",
+			"symbol": "readJsonFileSync",
+			"count": 1
+		},
+		{
+			"file": "src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts",
+			"callee": "lstatSync",
+			"symbol": "readJsonFileSync",
+			"count": 1
+		},
+		{
+			"file": "src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts",
+			"callee": "openSync",
+			"symbol": "readJsonFileSync",
+			"count": 1
+		},
+		{
+			"file": "src/core/extensions/builtin/moved-path-guard/breadcrumb-trust.ts",
+			"callee": "readSync",
+			"symbol": "readJsonFileSync",
+			"count": 1
+		},
+		{
+			"file": "src/core/extensions/builtin/moved-path-guard/resolve.ts",
+			"callee": "accessSync",
+			"symbol": "pathExistsSync",
+			"count": 1
+		},
+		{
+			"file": "src/core/extensions/builtin/moved-path-guard/resolve.ts",
+			"callee": "existsSync",
+			"symbol": "canonicalPath",
+			"count": 1
+		},
+		{
+			"file": "src/core/extensions/builtin/moved-path-guard/resolve.ts",
+			"callee": "realpathSync",
+			"symbol": "answer",
+			"count": 1
+		},
+		{
+			"file": "src/core/extensions/builtin/moved-path-guard/resolve.ts",
+			"callee": "realpathSync",
+			"symbol": "canonicalPath",
+			"count": 1
+		},
+		{
+			"file": "src/core/extensions/builtin/rules/rules/project-root.ts",
+			"callee": "existsSync",
+			"symbol": "findProjectRoot",
+			"count": 2
+		},
+		{
+			"file": "src/core/extensions/builtin/rules/rules/project-root.ts",
+			"callee": "statSync",
+			"symbol": "findProjectRoot",
+			"count": 1
+		},
+		{
+			"file": "src/core/hidden-stdout-log.ts",
+			"callee": "chmodSync",
+			"symbol": "appendDebugLogEntry",
+			"count": 1
+		},
+		{
+			"file": "src/core/hidden-stdout-log.ts",
+			"callee": "mkdirSync",
+			"symbol": "appendDebugLogEntry",
+			"count": 1
+		},
+		{
+			"file": "src/core/lifecycle-goal.ts",
+			"callee": "statSync",
+			"symbol": "readLifecycleGoal",
+			"count": 1,
+			"reason": "Already on main before this baseline lands: no-goal lifecycle admission deliberately avoids waiting on unrelated asynchronous filesystem work (#3864)."
+		},
+		{
+			"file": "src/core/log-file-rotation.ts",
+			"callee": "chmodSync",
+			"symbol": "rotateLogIfNeeded",
+			"count": 1
+		},
+		{
+			"file": "src/core/log-file-rotation.ts",
+			"callee": "closeSync",
+			"symbol": "rotateLogIfNeeded",
+			"count": 1
+		},
+		{
+			"file": "src/core/log-file-rotation.ts",
+			"callee": "openSync",
+			"symbol": "rotateLogIfNeeded",
+			"count": 1
+		},
+		{
+			"file": "src/core/log-file-rotation.ts",
+			"callee": "renameSync",
+			"symbol": "rotateLogIfNeeded",
+			"count": 1
+		},
+		{
+			"file": "src/core/log-file-rotation.ts",
+			"callee": "rmSync",
+			"symbol": "clearStaleLock",
+			"count": 1
+		},
+		{
+			"file": "src/core/log-file-rotation.ts",
+			"callee": "rmSync",
+			"symbol": "rotateLogIfNeeded",
+			"count": 1
+		},
+		{
+			"file": "src/core/log-file-rotation.ts",
+			"callee": "statSync",
+			"symbol": "clearStaleLock",
+			"count": 1
+		},
+		{
+			"file": "src/core/log-file-rotation.ts",
+			"callee": "statSync",
+			"symbol": "exceedsCap",
+			"count": 1
+		},
+		{
+			"file": "src/core/message-path-resolution.ts",
+			"callee": "statSync",
+			"symbol": "existing",
+			"count": 1
+		},
+		{
+			"file": "src/core/models-json-migration.ts",
+			"callee": "chmodSync",
+			"symbol": "migrateModelsJsonProviderIds",
+			"count": 1
+		},
+		{
+			"file": "src/core/models-json-migration.ts",
+			"callee": "existsSync",
+			"symbol": "uniqueBackupPath",
+			"count": 1
+		},
+		{
+			"file": "src/core/models-json-migration.ts",
+			"callee": "renameSync",
+			"symbol": "migrateModelsJsonProviderIds",
+			"count": 1
+		},
+		{
+			"file": "src/core/models-json-migration.ts",
+			"callee": "rmSync",
+			"symbol": "migrateModelsJsonProviderIds",
+			"count": 1
+		},
+		{
+			"file": "src/core/models-json-migration.ts",
+			"callee": "statSync",
+			"symbol": "migrateModelsJsonProviderIds",
+			"count": 1
+		},
+		{
+			"file": "src/core/prompt-size-report.ts",
+			"callee": "realpathSync",
+			"symbol": "entry",
+			"count": 1,
+			"reason": "Already on main before this baseline lands: sizes-only startup accounts for canonical home paths (#3483)."
+		},
+		{
+			"file": "src/core/retry-fallback/log.ts",
+			"callee": "closeSync",
+			"symbol": "writeLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/retry-fallback/log.ts",
+			"callee": "fchmodSync",
+			"symbol": "writeLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/retry-fallback/log.ts",
+			"callee": "mkdirSync",
+			"symbol": "writeLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/retry-fallback/log.ts",
+			"callee": "openSync",
+			"symbol": "writeLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/retry-fallback/log.ts",
+			"callee": "writeSync",
+			"symbol": "writeLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-cwd.ts",
+			"callee": "existsSync",
+			"symbol": "getMissingSessionCwdIssue",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-discovery.ts",
+			"callee": "existsSync",
+			"symbol": "listSessionsFromDir",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "closeSync",
+			"symbol": "readRawEntriesFromFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "closeSync",
+			"symbol": "terminateFinalSessionLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "existsSync",
+			"symbol": "readRawEntriesFromFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "existsSync",
+			"symbol": "loadEntriesFromFileAsync",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "existsSync",
+			"symbol": "terminateFinalSessionLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "fstatSync",
+			"symbol": "terminateFinalSessionLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "ftruncateSync",
+			"symbol": "terminateFinalSessionLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "openSync",
+			"symbol": "readRawEntriesFromFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "openSync",
+			"symbol": "terminateFinalSessionLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "readSync",
+			"symbol": "finalSegmentStart",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "readSync",
+			"symbol": "readRawEntriesFromFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "readSync",
+			"symbol": "terminateFinalSessionLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "statSync",
+			"symbol": "terminateFinalSessionLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-entry-file.ts",
+			"callee": "writeSync",
+			"symbol": "terminateFinalSessionLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "closeSync",
+			"symbol": "rewriteInPlace",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "closeSync",
+			"symbol": "syncDirectory",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "closeSync",
+			"symbol": "writeDurably",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "fchmodSync",
+			"symbol": "writeDurably",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "fsyncSync",
+			"symbol": "syncDirectory",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "fsyncSync",
+			"symbol": "writeDurably",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "openSync",
+			"symbol": "openTemp",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "openSync",
+			"symbol": "rewriteInPlace",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "openSync",
+			"symbol": "syncDirectory",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "realpathSync",
+			"symbol": "resolveTarget",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "renameSync",
+			"symbol": "replaceFileAtomically",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "rmSync",
+			"symbol": "replaceFileAtomically",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-file-replace.ts",
+			"callee": "statSync",
+			"symbol": "resolveTarget",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-holders.ts",
+			"callee": "existsSync",
+			"symbol": "holdSessionFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-holders.ts",
+			"callee": "mkdirSync",
+			"symbol": "publishHolderRecord",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-holders.ts",
+			"callee": "renameSync",
+			"symbol": "publishHolderRecord",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-holders.ts",
+			"callee": "rmdirSync",
+			"symbol": "removeDirIfEmpty",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-holders.ts",
+			"callee": "statSync",
+			"symbol": "activeMover",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-holders.ts",
+			"callee": "unlinkSync",
+			"symbol": "unlinkIfPresentSync",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-log.ts",
+			"callee": "closeSync",
+			"symbol": "writeLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-log.ts",
+			"callee": "fchmodSync",
+			"symbol": "writeLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-log.ts",
+			"callee": "mkdirSync",
+			"symbol": "writeLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-log.ts",
+			"callee": "openSync",
+			"symbol": "writeLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-log.ts",
+			"callee": "writeSync",
+			"symbol": "writeLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "closeSync",
+			"symbol": "_persist",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "closeSync",
+			"symbol": "readSessionHeader",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "existsSync",
+			"symbol": "_beginSessionFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "existsSync",
+			"symbol": "constructor",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "existsSync",
+			"symbol": "discoverOpenHeader",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "existsSync",
+			"symbol": "forkFrom",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "existsSync",
+			"symbol": "getDefaultSessionDir",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "existsSync",
+			"symbol": "listAll",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "existsSync",
+			"symbol": "reloadFromDisk",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "mkdirSync",
+			"symbol": "constructor",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "mkdirSync",
+			"symbol": "forkFrom",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "mkdirSync",
+			"symbol": "getDefaultSessionDir",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "openSync",
+			"symbol": "_persist",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "openSync",
+			"symbol": "readSessionHeader",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "readSync",
+			"symbol": "readSessionHeader",
+			"count": 2
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "readdirSync",
+			"symbol": "findById",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "readdirSync",
+			"symbol": "findMostRecentSession",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "rmSync",
+			"symbol": "_removeBlobsDir",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "statSync",
+			"symbol": "_adoptFileEntries",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "statSync",
+			"symbol": "findMostRecentSession",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-manager.ts",
+			"callee": "statSync",
+			"symbol": "reloadFromDisk",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-resident-store.ts",
+			"callee": "existsSync",
+			"symbol": "_writeBlob",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-resident-store.ts",
+			"callee": "mkdirSync",
+			"symbol": "_writeBlob",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-resident-store.ts",
+			"callee": "renameSync",
+			"symbol": "_writeBlob",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-resident-store.ts",
+			"callee": "rmSync",
+			"symbol": "_readBlob",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-resident-store.ts",
+			"callee": "rmSync",
+			"symbol": "_writeBlob",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-resident-store.ts",
+			"callee": "rmSync",
+			"symbol": "clear",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-write-recovery.ts",
+			"callee": "closeSync",
+			"symbol": "discardFailedFirstFlush",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-write-recovery.ts",
+			"callee": "closeSync",
+			"symbol": "truncateToLastCompleteLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-write-recovery.ts",
+			"callee": "fstatSync",
+			"symbol": "truncateToLastCompleteLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-write-recovery.ts",
+			"callee": "ftruncateSync",
+			"symbol": "truncateToLastCompleteLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-write-recovery.ts",
+			"callee": "openSync",
+			"symbol": "truncateToLastCompleteLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-write-recovery.ts",
+			"callee": "readSync",
+			"symbol": "truncateToLastCompleteLine",
+			"count": 1
+		},
+		{
+			"file": "src/core/session-write-recovery.ts",
+			"callee": "rmSync",
+			"symbol": "discardFailedFirstFlush",
+			"count": 1
+		},
+		{
+			"file": "src/core/settings-manager.ts",
+			"callee": "existsSync",
+			"symbol": "resolveSettingsSource",
+			"count": 2
+		},
+		{
+			"file": "src/core/settings-manager.ts",
+			"callee": "existsSync",
+			"symbol": "withPathLock",
+			"count": 3
+		},
+		{
+			"file": "src/core/settings-manager.ts",
+			"callee": "mkdirSync",
+			"symbol": "withPathLock",
+			"count": 1
+		},
+		{
+			"file": "src/core/settings-manager.ts",
+			"callee": "renameSync",
+			"symbol": "withPathLock",
+			"count": 1
+		},
+		{
+			"file": "src/core/settings-manager.ts",
+			"callee": "rmSync",
+			"symbol": "withPathLock",
+			"count": 1
+		},
+		{
+			"file": "src/core/tools/path-utils.ts",
+			"callee": "accessSync",
+			"symbol": "fileExists",
+			"count": 1
+		},
+		{
+			"file": "src/core/tools/renderers/skill-read-path.ts",
+			"callee": "existsSync",
+			"symbol": "findSkillRoot",
+			"count": 1
+		},
+		{
+			"file": "src/core/trust-manager.ts",
+			"callee": "existsSync",
+			"symbol": "readTrustFile",
+			"count": 1
+		},
+		{
+			"file": "src/core/trust-manager.ts",
+			"callee": "mkdirSync",
+			"symbol": "acquireTrustLockSync",
+			"count": 1
+		},
+		{
+			"file": "src/core/trust-manager.ts",
+			"callee": "mkdirSync",
+			"symbol": "writeTrustFile",
+			"count": 1
+		},
+		{
+			"file": "src/modes/interactive/theme/theme.ts",
+			"callee": "existsSync",
+			"symbol": "loadThemeJson",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/host-handover-parked.ts",
+			"callee": "renameSync",
+			"symbol": "writeEntryFile",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/rpc-session-state.ts",
+			"callee": "existsSync",
+			"symbol": "buildRpcSessionState",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/session-path-key.ts",
+			"callee": "existsSync",
+			"symbol": "canonicalSessionPath",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/session-path-key.ts",
+			"callee": "existsSync",
+			"symbol": "sessionDirectoryRemoved",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/session-path-key.ts",
+			"callee": "realpathSync",
+			"symbol": "canonicalSessionPath",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/session-registry-moved-path.ts",
+			"callee": "existsSync",
+			"symbol": "resolveMovedProfile",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/session-registry-opening.ts",
+			"callee": "existsSync",
+			"symbol": "buildOpeningEntry",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-child/test-controls.ts",
+			"callee": "existsSync",
+			"symbol": "touch",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-child/test-controls.ts",
+			"callee": "existsSync",
+			"symbol": "waitForFile",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-child/test-controls.ts",
+			"callee": "existsSync",
+			"symbol": "watchPrefix",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-child/test-controls.ts",
+			"callee": "readdirSync",
+			"symbol": "watchPrefix",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-child/test-controls.ts",
+			"callee": "rmSync",
+			"symbol": "close",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-child/test-controls.ts",
+			"callee": "rmSync",
+			"symbol": "finish",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-child/test-controls.ts",
+			"callee": "rmSync",
+			"symbol": "watchPrefix",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-media-store.ts",
+			"callee": "chmodSync",
+			"symbol": "writeImage",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-media-store.ts",
+			"callee": "existsSync",
+			"symbol": "store",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-media-store.ts",
+			"callee": "existsSync",
+			"symbol": "storedBytes",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-media-store.ts",
+			"callee": "lstatSync",
+			"symbol": "assertRealDirectoryChain",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-media-store.ts",
+			"callee": "mkdirSync",
+			"symbol": "writeImage",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-media-store.ts",
+			"callee": "readdirSync",
+			"symbol": "directoryBytes",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-media-store.ts",
+			"callee": "renameSync",
+			"symbol": "writeImage",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-media-store.ts",
+			"callee": "rmSync",
+			"symbol": "writeImage",
+			"count": 1
+		},
+		{
+			"file": "src/modes/rpc/tool-media-store.ts",
+			"callee": "statSync",
+			"symbol": "directoryBytes",
+			"count": 1
+		},
+		{
+			"file": "src/nearest-parent-config.ts",
+			"callee": "lstatSync",
+			"symbol": "isDirectory",
+			"count": 1
+		},
+		{
+			"file": "src/nearest-parent-config.ts",
+			"callee": "lstatSync",
+			"symbol": "isFile",
+			"count": 1
+		},
+		{
+			"file": "src/utils/bundled-bun.ts",
+			"callee": "chmodSync",
+			"symbol": "writeIfChanged",
+			"count": 1
+		},
+		{
+			"file": "src/utils/bundled-bun.ts",
+			"callee": "mkdirSync",
+			"symbol": "materialize",
+			"count": 1
+		},
+		{
+			"file": "src/utils/bundled-bun.ts",
+			"callee": "renameSync",
+			"symbol": "writeIfChanged",
+			"count": 1
+		},
+		{
+			"file": "src/utils/paths.ts",
+			"callee": "lstatSync",
+			"symbol": "resolveWithoutOpen",
+			"count": 1
+		},
+		{
+			"file": "src/utils/paths.ts",
+			"callee": "readlinkSync",
+			"symbol": "resolveWithoutOpen",
+			"count": 1
+		},
+		{
+			"file": "src/utils/paths.ts",
+			"callee": "statSync",
+			"symbol": "getFileRevision",
+			"count": 1
+		},
+		{
+			"file": "src/utils/photon.ts",
+			"callee": "existsSync",
+			"symbol": "patchPhotonWasmRead",
+			"count": 1
+		},
+		{
+			"file": "src/utils/photon.ts",
+			"callee": "readFileSync",
+			"symbol": "patchPhotonWasmRead",
+			"count": 4,
+			"reason": "photon's WASM loader calls fs.readFileSync synchronously while it initialises; this patch wraps that call to try fallback paths, so it must stay synchronous. Off the move path. Removed when the loader is initialised asynchronously (senpi#3993)."
+		},
+		{
+			"file": "src/utils/shell.ts",
+			"callee": "existsSync",
+			"symbol": "findExecutableOnPath",
+			"count": 1
+		},
+		{
+			"file": "src/utils/shell.ts",
+			"callee": "existsSync",
+			"symbol": "getShellConfig",
+			"count": 4
+		},
+		{
+			"file": "src/utils/shell.ts",
+			"callee": "existsSync",
+			"symbol": "windowsTaskkillCandidates",
+			"count": 1
+		},
+		{
+			"file": "src/utils/tools-manager.ts",
+			"callee": "chmodSync",
+			"symbol": "downloadTool",
+			"count": 1
+		},
+		{
+			"file": "src/utils/tools-manager.ts",
+			"callee": "existsSync",
+			"symbol": "downloadTool",
+			"count": 1
+		},
+		{
+			"file": "src/utils/tools-manager.ts",
+			"callee": "existsSync",
+			"symbol": "getToolPath",
+			"count": 1
+		},
+		{
+			"file": "src/utils/tools-manager.ts",
+			"callee": "existsSync",
+			"symbol": "getWindowsTarCommand",
+			"count": 1
+		},
+		{
+			"file": "src/utils/tools-manager.ts",
+			"callee": "mkdirSync",
+			"symbol": "downloadTool",
+			"count": 2
+		},
+		{
+			"file": "src/utils/tools-manager.ts",
+			"callee": "readdirSync",
+			"symbol": "findBinaryRecursively",
+			"count": 1
+		},
+		{
+			"file": "src/utils/tools-manager.ts",
+			"callee": "renameSync",
+			"symbol": "downloadTool",
+			"count": 1
+		},
+		{
+			"file": "src/utils/tools-manager.ts",
+			"callee": "rmSync",
+			"symbol": "downloadTool",
+			"count": 2
+		},
+		{
+			"file": "src/utils/tools-manager.ts",
+			"callee": "statSync",
+			"symbol": "commandExists",
+			"count": 1
+		}
+	]
+}

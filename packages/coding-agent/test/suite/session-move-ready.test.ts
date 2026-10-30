@@ -13,6 +13,9 @@ import { MoveFencedError, MoveLedger, READY_TTL_MS } from "../../src/core/sessio
 import type { MoveId } from "../../src/core/session-move/ownership.ts";
 import { MOVE, setup } from "./session-move-fixture.ts";
 
+/** The session file a receive in these tests lands as. */
+const LANDING = "/sessions/landing.jsonl";
+
 const dirs: string[] = [];
 afterEach(() => {
 	for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -31,14 +34,14 @@ describe("MoveLedger ready state (senpi#3676)", () => {
 		const { book } = clockedLedger();
 		expect(await book.prepare(id("r1"))).toEqual({ state: "ready", expiresAt: expect.any(String) });
 		expect(await book.answerStatus(id("r1"), { movedIn: false })).toEqual({ state: "receiving" });
-		await book.beginReceive(id("r1"));
-		await book.commit(id("r1"), () => undefined);
+		await book.beginReceive(id("r1"), LANDING);
+		await book.commit(id("r1"), LANDING, () => undefined);
 		expect(await book.answerStatus(id("r1"), { movedIn: false })).toEqual({ state: "accepted" });
 	});
 
 	it("#given no ready record #when a bundle starts arriving #then it is refused and declined for good", async () => {
 		const { book } = clockedLedger();
-		await expect(book.beginReceive(id("r2"))).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.beginReceive(id("r2"), LANDING)).rejects.toBeInstanceOf(MoveFencedError);
 		expect(await book.answerStatus(id("r2"), { movedIn: false })).toEqual({
 			state: "declined",
 			reason: "chunk_without_ready",
@@ -51,14 +54,14 @@ describe("MoveLedger ready state (senpi#3676)", () => {
 		await book.prepare(id("r3"));
 		clock.now += READY_TTL_MS;
 		expect(await book.answerStatus(id("r3"), { movedIn: false })).toEqual({ state: "declined", reason: "expired" });
-		await expect(book.beginReceive(id("r3"))).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.beginReceive(id("r3"), LANDING)).rejects.toBeInstanceOf(MoveFencedError);
 	});
 
 	it("#given a ready move whose window passed #when the bundle arrives first #then it is refused as expired", async () => {
 		const { book, clock } = clockedLedger();
 		await book.prepare(id("r4"));
 		clock.now += READY_TTL_MS + 1;
-		await expect(book.beginReceive(id("r4"))).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.beginReceive(id("r4"), LANDING)).rejects.toBeInstanceOf(MoveFencedError);
 		expect(await book.answerStatus(id("r4"), { movedIn: false })).toEqual({ state: "declined", reason: "expired" });
 	});
 
@@ -66,13 +69,13 @@ describe("MoveLedger ready state (senpi#3676)", () => {
 		const { book } = clockedLedger();
 		await book.prepare(id("r5"));
 		expect(await book.decline(id("r5"), "cancelled")).toEqual({ state: "declined", reason: "cancelled" });
-		await expect(book.beginReceive(id("r5"))).rejects.toBeInstanceOf(MoveFencedError);
+		await expect(book.beginReceive(id("r5"), LANDING)).rejects.toBeInstanceOf(MoveFencedError);
 	});
 
 	it("#given a move already receiving #when its ready window passes #then it keeps receiving", async () => {
 		const { book, clock } = clockedLedger();
 		await book.prepare(id("r6"));
-		await book.beginReceive(id("r6"));
+		await book.beginReceive(id("r6"), LANDING);
 		clock.now += READY_TTL_MS * 3;
 		expect(await book.answerStatus(id("r6"), { movedIn: false })).toEqual({ state: "receiving" });
 		expect(await book.expire(id("r6"))).toEqual({ state: "receiving" });
@@ -91,7 +94,7 @@ describe("MoveLedger ready state (senpi#3676)", () => {
 		const first = await book.prepare(id("r8"));
 		clock.now += 1000;
 		expect(await book.prepare(id("r8"))).toEqual(first);
-		await book.beginReceive(id("r8"));
+		await book.beginReceive(id("r8"), LANDING);
 		expect(await book.prepare(id("r8"))).toEqual({ state: "receiving" });
 	});
 
@@ -122,7 +125,7 @@ describe("MoveLedger ready state (senpi#3676)", () => {
 		expect(await book.answerStatus(id("r12"), { movedIn: false })).toEqual(noRecord);
 
 		await book.prepare(id("r13"));
-		await book.beginReceive(id("r13"));
+		await book.beginReceive(id("r13"), LANDING);
 		const failed = { state: "failed", reason: "import_failed" };
 		expect(await book.fail(id("r13"), "import_failed")).toEqual(failed);
 		expect(await book.decline(id("r13"), "cancelled")).toEqual(failed);

@@ -10,7 +10,7 @@ const STREAM_RETRY_TIMEOUT_MS = 30_000;
 function stallMessage() {
 	return fauxAssistantMessage("", {
 		stopReason: "error",
-		errorMessage: `Provider stream start timed out after ${STREAM_START_TIMEOUT_MS}ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)`,
+		errorMessage: `Provider stream start timed out after ${STREAM_START_TIMEOUT_MS}ms (raise streamStartTimeoutMs: retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)`,
 	});
 }
 

@@ -133,6 +133,12 @@ export interface ThemeStyle extends TextAttributes {
 type OptionalThemeColor = "scrollbarTrack" | "scrollbarThumb" | "thinkingMax" | "searchMatchText" | "skillMention";
 type OptionalThemeBg = "searchMatchBg";
 
+/**
+ * Optional colors for inline markdown `**strong**`, `*emphasis*`, and `~~deleted~~` text. Unlike other tokens they
+ * have no fallback: an omitted color leaves that text in the color of its surroundings (paragraph, heading, quote).
+ */
+export type MarkdownEmphasisColor = "mdBold" | "mdItalic" | "mdStrikethrough";
+
 // ============================================================================
 // Color Utilities
 // ============================================================================
@@ -254,6 +260,7 @@ export class Theme {
 	// Precomputed escape sequences keep fg()/bg() on the render hot path to a lookup and concat.
 	private readonly fgAnsi = new Map<ThemeColor, string>();
 	private readonly bgAnsi = new Map<ThemeBg, string>();
+	private readonly markdownEmphasisAnsi = new Map<MarkdownEmphasisColor, string>();
 	// Tokens set to "" have no color of their own; `colors` fills them from the terminal defaults.
 	private readonly concreteColors: Partial<Record<ThemeToken, Color>> = {};
 	private readonly defaultForegroundTokens: ThemeToken[] = [];
@@ -276,6 +283,7 @@ export class Theme {
 			appearance?: ThemeAppearance;
 			/** Foreground tokens to render faint (SGR 2). */
 			dim?: readonly ThemeColor[];
+			markdownEmphasis?: Partial<Record<MarkdownEmphasisColor, string | number>>;
 		} = {},
 	) {
 		this.name = options.name;
@@ -310,6 +318,13 @@ export class Theme {
 		}
 		for (const [token, value] of Object.entries(backgrounds) as [ThemeBg, string | number][]) {
 			this.bgAnsi.set(token, addToken(token, value, true));
+		}
+		for (const [token, value] of Object.entries(options.markdownEmphasis ?? {}) as [
+			MarkdownEmphasisColor,
+			string | number | undefined,
+		][]) {
+			if (value === undefined) continue;
+			this.markdownEmphasisAnsi.set(token, value === "" ? "\x1b[39m" : foregroundAnsi(parseColor(value), mode));
 		}
 		this.ownAppearance = options.appearance ?? detectAppearance(concreteForegrounds, concreteBackgrounds);
 	}
@@ -370,6 +385,16 @@ export class Theme {
 		const ansi = this.tokenAnsi(this.fgAnsi, color);
 		if (this.dimTokens.has(color)) return `${ansi}\x1b[2m${text}\x1b[22;39m`;
 		return `${ansi}${text}\x1b[39m`;
+	}
+
+	/** Color inline markdown emphasis; returns the text unchanged when the theme omits the token. */
+	hasMarkdownEmphasis(token: MarkdownEmphasisColor): boolean {
+		return this.markdownEmphasisAnsi.has(token);
+	}
+
+	markdownEmphasis(token: MarkdownEmphasisColor, text: string): string {
+		const ansi = this.markdownEmphasisAnsi.get(token);
+		return ansi === undefined ? text : `${ansi}${text}\x1b[39m`;
 	}
 
 	bg(color: ThemeBg, text: string): string {
@@ -606,12 +631,16 @@ function splitThemeColors(colors: Record<string, string | number>): {
 
 function createTheme(themeJson: ThemeJson, mode?: TerminalColorMode, sourcePath?: string): Theme {
 	const colorMode = mode ?? getTerminalColorMode();
-	const resolvedColors = resolveThemeColors(withThemeColorFallbacks(themeJson.colors), themeJson.vars);
+	const { mdBold, mdItalic, mdStrikethrough, ...resolvedColors } = resolveThemeColors(
+		withThemeColorFallbacks(themeJson.colors),
+		themeJson.vars,
+	);
 	const { fgColors, bgColors } = splitThemeColors(resolvedColors);
 	return new Theme(fgColors, bgColors, colorMode, {
 		name: themeJson.name,
 		sourcePath,
 		appearance: themeJson.appearance,
+		markdownEmphasis: { mdBold, mdItalic, mdStrikethrough },
 	});
 }
 
@@ -1134,6 +1163,23 @@ function createMarkdownTheme(): MarkdownTheme {
 		italic: (text: string) => theme.italic(text),
 		underline: (text: string) => theme.underline(text),
 		strikethrough: (text: string) => theme.strikethrough(text),
+		// Install emphasis hooks only for tokens the theme sets, so unset tokens keep the plain bold/italic/strikethrough path.
+		// Getters defer the theme lookup to render time, like the other hooks, so building this object never needs initTheme().
+		get strong() {
+			return theme.hasMarkdownEmphasis("mdBold")
+				? (text: string) => theme.markdownEmphasis("mdBold", theme.bold(text))
+				: undefined;
+		},
+		get emphasis() {
+			return theme.hasMarkdownEmphasis("mdItalic")
+				? (text: string) => theme.markdownEmphasis("mdItalic", theme.italic(text))
+				: undefined;
+		},
+		get deleted() {
+			return theme.hasMarkdownEmphasis("mdStrikethrough")
+				? (text: string) => theme.markdownEmphasis("mdStrikethrough", theme.strikethrough(text))
+				: undefined;
+		},
 		highlightCode: (code: string, lang?: string): string[] => {
 			// Validate language before highlighting to avoid stderr spam from cli-highlight
 			const validLang = lang && supportsLanguage(lang) ? lang : undefined;

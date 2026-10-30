@@ -206,6 +206,7 @@ describe("session_before_compact error surfacing", () => {
 			budgetTokens: 111_616,
 			budgetExceeded: false,
 			candidatesChecked: 0,
+			rejectionCounts: {},
 		});
 	});
 

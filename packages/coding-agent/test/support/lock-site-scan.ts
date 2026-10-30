@@ -1,11 +1,69 @@
-/** Blanks comments while keeping string contents, so a module name inside a string is still seen. */
+/** Keywords after which an expression starts, so a following `/` opens a regex rather than dividing. */
+const EXPRESSION_KEYWORDS = new Set([
+	"return",
+	"typeof",
+	"instanceof",
+	"in",
+	"of",
+	"new",
+	"delete",
+	"void",
+	"throw",
+	"case",
+	"do",
+	"else",
+	"yield",
+	"await",
+]);
+
+/**
+ * Whether a `/` following `before` opens a regular expression, judged by the previous token as a tokenizer
+ * would: an operand (identifier, number, closing bracket, postfix `++`/`--`) is followed by a division.
+ */
+function regexCanStart(before: string): boolean {
+	const code = before.trimEnd();
+	const last = code.at(-1);
+	if (last === undefined) return true;
+	if (last === "+" || last === "-") return !code.endsWith(last + last);
+	if (last === ")" || last === "]" || last === "}") return false;
+	if (/[\w$]/.test(last)) return EXPRESSION_KEYWORDS.has(code.match(/[\w$]+$/)?.[0] ?? "");
+	return true;
+}
+
+/** The end index (exclusive) of the regular expression literal that opens at `start`, flags included. */
+function regexLiteralEnd(source: string, start: number): number {
+	let i = start + 1;
+	let inClass = false;
+	while (i < source.length && source[i] !== "\n") {
+		const char = source[i];
+		if (char === "\\") i += 2;
+		else {
+			if (char === "[") inClass = true;
+			else if (char === "]") inClass = false;
+			else if (char === "/" && !inClass) break;
+			i++;
+		}
+	}
+	i++;
+	while (i < source.length && /[a-z]/i.test(source[i] ?? "")) i++;
+	return i;
+}
+
+/**
+ * Blanks comments while keeping string and regular-expression contents, so a module name inside a string
+ * is still seen and a `/*` inside a regex is not mistaken for a comment.
+ */
 export function withoutComments(source: string): string {
 	let out = "";
 	let i = 0;
 	while (i < source.length) {
 		const char = source[i];
 		const next = source[i + 1];
-		if (char === "/" && next === "/") {
+		if (char === "/" && next !== "/" && next !== "*" && regexCanStart(out)) {
+			const end = regexLiteralEnd(source, i);
+			out += source.slice(i, end);
+			i = end;
+		} else if (char === "/" && next === "/") {
 			while (i < source.length && source[i] !== "\n") i++;
 		} else if (char === "/" && next === "*") {
 			const end = source.indexOf("*/", i + 2);
@@ -77,11 +135,15 @@ export function functionSpans(code: string): FunctionSpan[] {
 	return spans;
 }
 
+/** The text between `openParen` and its matching `)`; parentheses inside string literals do not count. */
 export function callArguments(code: string, openParen: number): string {
 	let depth = 0;
 	for (let i = openParen; i < code.length; i++) {
-		if (code[i] === "(") depth++;
-		else if (code[i] === ")" && --depth === 0) return code.slice(openParen + 1, i);
+		const char = code[i];
+		if (char === '"' || char === "'" || char === "`") {
+			for (i++; i < code.length && code[i] !== char; i += code[i] === "\\" ? 2 : 1);
+		} else if (char === "(") depth++;
+		else if (char === ")" && --depth === 0) return code.slice(openParen + 1, i);
 	}
 	return code.slice(openParen + 1);
 }
@@ -166,8 +228,33 @@ function escapeRegExp(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-const VENDORED_ALLOWED_MODULE = /^(?:node:[\w/]+|proper-lockfile)$/;
+/**
+ * The modules a vendored file may import: the node built-ins it uses today plus proper-lockfile. A new
+ * built-in is added here on purpose; `node:module` and `node:vm` stay out because they can load any file.
+ */
+const VENDORED_ALLOWED_MODULES = new Set([
+	"node:crypto",
+	"node:fs",
+	"node:fs/promises",
+	"node:os",
+	"node:path",
+	"node:timers/promises",
+	"proper-lockfile",
+]);
+/** Ways to load a module without an import or require of a literal specifier. */
+const MODULE_LOADER =
+	/\b(?:createRequire|getBuiltinModule|dlopen)\b|\bprocess\s*\.\s*binding\b|\bmodule\s*\.\s*require\b/;
+/** An `onCompromised` value that is a function or a named handler; `undefined` and `null` restore the throwing default. */
+const OWN_ON_COMPROMISED =
+	/\bonCompromised\s*:\s*(?!(?:undefined|null|void)\b)(?:\(|async\b|function\b|[A-Za-z_$][\w$]*\s*[,}\n])/;
 const DEFAULT_LOCKFILE_IMPORT = /^\s*import\s+(\w+)\s+from\s+["']proper-lockfile["'];?\s*$/m;
+
+/** A spread after `onCompromised` can replace it (later keys win); one before it, or `...` inside a string, cannot. */
+function spreadsAfterOnCompromised(args: string): boolean {
+	const code = args.replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, '""');
+	const handler = code.search(/\bonCompromised\s*:/);
+	return handler !== -1 && code.slice(handler).includes("...");
+}
 
 /**
  * A file vendored byte-for-byte into another repository may import only node built-ins and proper-lockfile,
@@ -183,9 +270,11 @@ export function vendoredSelfContainedViolations(source: string): string[] {
 		...code.matchAll(/\b(?:require|import)\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g),
 	].map(([, specifier]) => specifier ?? "");
 	for (const specifier of specifiers)
-		if (!VENDORED_ALLOWED_MODULE.test(specifier)) problems.push(`imports ${specifier}`);
-	if (/\b(?:require|import)\s*\(\s*[^"'`\s)]/.test(code))
+		if (!VENDORED_ALLOWED_MODULES.has(specifier)) problems.push(`imports ${specifier}`);
+	if (/\b(?:require|import)\s*\(\s*(?:[^"'`\s)]|`[^`]*\$\{)/.test(code))
 		problems.push("dynamic import or require of a computed module");
+	const loader = code.match(MODULE_LOADER);
+	if (loader) problems.push(`loads modules through ${loader[0].replace(/\s+/g, "")}`);
 	const [importLine, binding] = code.match(DEFAULT_LOCKFILE_IMPORT) ?? [];
 	const references = code.match(/["']proper-lockfile["']/g)?.length ?? 0;
 	if (!importLine || !binding || references !== 1) {
@@ -202,7 +291,9 @@ export function vendoredSelfContainedViolations(source: string): string[] {
 		}
 		lockCalls++;
 		const args = callArguments(rest, (use.index ?? 0) + whole.length - 1);
-		if (!/\bonCompromised\s*:/.test(args)) problems.push(`${binding}.lock( without its own onCompromised`);
+		if (!OWN_ON_COMPROMISED.test(args)) problems.push(`${binding}.lock( without its own onCompromised`);
+		else if (spreadsAfterOnCompromised(args))
+			problems.push(`${binding}.lock( spreads options that can replace onCompromised`);
 	}
 	if (lockCalls === 0) problems.push(`no ${binding}.lock( call`);
 	return problems;

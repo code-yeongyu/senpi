@@ -1,4 +1,5 @@
 import { MONITOR_NOTIFICATION_CUSTOM_TYPE } from "../monitor-state-event.ts";
+import { withTerminalContext } from "./context-lifetime.ts";
 import { monitorDetails } from "./monitor-notify-details.ts";
 import { buildWakeMessage, eventBody, renderedLength, WAKE_BUDGET_PAUSE_NOTICE } from "./monitor-notify-format.ts";
 import { type MonitorSpill, OverflowBook } from "./monitor-overflow.ts";
@@ -83,7 +84,11 @@ export class MonitorNotifier {
 			this.#lastInjectionAt.delete(event.id);
 			this.#lastInjectedBatch.delete(event.id);
 		}
-		if (!getTerminalNotificationDelivery(this.#deps, MONITOR_NOTIFICATION_CUSTOM_TYPE)) return;
+		const delivery = withTerminalContext(
+			() => getTerminalNotificationDelivery(this.#deps, MONITOR_NOTIFICATION_CUSTOM_TYPE),
+			() => this.dispose(),
+		);
+		if (!delivery) return;
 		const settings = resolveSettings(this.#deps.getSettings());
 		const queueLimit = Math.max(1, settings.maxCharsPerInjection - QUEUE_OVERHEAD_CHARS);
 		const own = this.#events.filter((queued) => queued.id === event.id);
@@ -140,7 +145,14 @@ export class MonitorNotifier {
 		if (this.#timer !== undefined && this.#scheduledAt !== undefined && this.#scheduledAt <= due) return;
 		if (this.#timer !== undefined) this.#scheduler.clearTimeout(this.#timer);
 		this.#scheduledAt = due;
-		this.#timer = this.#scheduler.setTimeout(() => this.#flush(), delayMs);
+		this.#timer = this.#scheduler.setTimeout(
+			() =>
+				withTerminalContext(
+					() => this.#flush(),
+					() => this.dispose(),
+				),
+			delayMs,
+		);
 	}
 
 	#pendingIds(): Set<string> {

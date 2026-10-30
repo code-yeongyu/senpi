@@ -25,6 +25,7 @@ export type FakeEditor = Text & {
 };
 
 export type FakeSession = {
+	admitHumanAnswer: Mock<() => void>;
 	isStreaming: boolean;
 	isCompacting: boolean;
 	messages: unknown[];
@@ -75,6 +76,7 @@ export function createFakeInteractiveMode(options: { isStreaming?: boolean } = {
 	let focused: unknown = editor;
 	editorContainer.addChild(editor);
 	const session: FakeSession = {
+		admitHumanAnswer: vi.fn(),
 		isStreaming: options.isStreaming ?? false,
 		isCompacting: false,
 		messages: [],

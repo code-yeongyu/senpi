@@ -8,6 +8,7 @@ import {
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { isValidThinkingLevel } from "../cli/args.ts";
+import type { DynamicSystemPromptPart } from "./dynamic-prompt/build.ts";
 import type { ExtensionRunner } from "./extensions/runner.ts";
 import type {
 	BuildSystemPromptOptions,
@@ -16,6 +17,9 @@ import type {
 	ServiceTier,
 } from "./extensions/types.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import { promptSizeExtensionNames } from "./prompt-size-extension-names.ts";
+import { PromptSizeAccounting } from "./prompt-size-report.ts";
+import { type PromptSizeInventory, promptSizeStartupNotes } from "./prompt-size-startup.ts";
 
 export interface PromptCachePrefixSources {
 	readonly agent: Agent;
@@ -23,9 +27,12 @@ export interface PromptCachePrefixSources {
 	readonly modelRuntime: ModelRuntime;
 	/** Settles once the session start the prefix depends on (tools, discovered skills) has run. */
 	readonly ready: Promise<void>;
+	readonly sizesOnlyStartup?: boolean;
+	readonly promptSizeInventory?: PromptSizeInventory;
 	getServiceTier(): ServiceTier | undefined;
 	getBaseSystemPrompt(): string;
 	getBaseSystemPromptOptions(): BuildSystemPromptOptions;
+	getBaseSystemPromptParts?(): readonly DynamicSystemPromptPart[];
 }
 
 export const PROMPT_STARTED_REASON = "a prompt started composing its turn before the prefix was built";
@@ -52,7 +59,7 @@ export class PromptCachePrefixBuilds {
 			options.signal === undefined ? controller.signal : AbortSignal.any([options.signal, controller.signal]);
 		this.#inFlight.add(controller);
 		try {
-			return await buildPromptCachePrefixRequest(sources, signal);
+			return await buildPromptCachePrefixRequest(sources, signal, options);
 		} finally {
 			this.#inFlight.delete(controller);
 		}
@@ -86,14 +93,18 @@ export class PromptCachePrefixBuilds {
 export async function buildPromptCachePrefixRequest(
 	sources: PromptCachePrefixSources,
 	signal: AbortSignal,
+	requestOptions: PromptCachePrefixRequestOptions = {},
 ): Promise<PromptCachePrefixResult> {
 	if ((await untilAborted(sources.ready, signal)) === CANCELLED) return cancelled(signal);
 	const unsafe = sources.runner.getPreviewUnsafeBeforeAgentStartPaths();
 	if (unsafe.length > 0) {
 		return skipped(`before_agent_start handlers not registered previewSafe: ${unsafe.join(", ")}`);
 	}
-	const systemPrompt = await untilAborted(composeTurnSystemPrompt(sources, signal), signal);
-	if (systemPrompt === CANCELLED) return cancelled(signal);
+	const composed = await untilAborted(
+		composeTurnSystemPrompt(sources, signal, requestOptions.sizesOnly === true),
+		signal,
+	);
+	if (composed === CANCELLED) return cancelled(signal);
 	const { agent, runner } = sources;
 	const state = agent.state;
 	const model = state.model;
@@ -110,11 +121,13 @@ export async function buildPromptCachePrefixRequest(
 	if (runner.hasHandlers("before_provider_headers")) {
 		options.transformHeaders = async (headers: ProviderHeaders) => await runner.emitBeforeProviderHeaders(headers);
 	}
-	const prepared = await untilAborted(sources.modelRuntime.prepareSimpleRequest(model, options), signal);
+	const prepared = requestOptions.sizesOnly
+		? { model, options }
+		: await untilAborted(sources.modelRuntime.prepareSimpleRequest(model, options), signal);
 	if (prepared === CANCELLED) return cancelled(signal);
 	const transcript = await buildProviderContext(
 		{
-			systemPrompt,
+			systemPrompt: composed.systemPrompt,
 			messages: [],
 			tools: state.tools.slice(),
 			...(state.declaredTools !== undefined ? { declaredTools: state.declaredTools.slice() } : {}),
@@ -124,7 +137,25 @@ export async function buildPromptCachePrefixRequest(
 	if (signal.aborted) return cancelled(signal);
 	return {
 		status: "ready",
-		request: { model: prepared.model, context: toPrefixContext(transcript), options: prepared.options },
+		request: {
+			model: prepared.model,
+			context: toPrefixContext(transcript),
+			options: prepared.options,
+			...(composed.accounting === undefined
+				? {}
+				: {
+						sizeReport: {
+							...composed.accounting.report(getCurrentTools(transcript.messages)),
+							...promptSizeStartupNotes({
+								cwd: sources.getBaseSystemPromptOptions().cwd,
+								runner,
+								extensionNames: composed.extensionNames,
+								inventory: sources.promptSizeInventory,
+								sizesOnlyStartup: sources.sizesOnlyStartup === true,
+							}),
+						},
+					}),
+		},
 	};
 }
 
@@ -143,21 +174,45 @@ function toPrefixContext(transcript: TranscriptContext): Context {
 	};
 }
 
-async function composeTurnSystemPrompt(sources: PromptCachePrefixSources, signal: AbortSignal): Promise<string> {
+async function composeTurnSystemPrompt(sources: PromptCachePrefixSources, signal: AbortSignal, sizesOnly: boolean) {
 	let systemPrompt = sources.getBaseSystemPrompt();
+	let accounting: PromptSizeAccounting | undefined;
+	const extensionNames = sizesOnly
+		? promptSizeExtensionNames(sources.runner.getExtensionPaths(), (path) =>
+				sources.promptSizeInventory?.packageNameOf(path),
+			)
+		: new Map<string, string>();
 	for (let pass = 0; pass < MAX_COMPOSITION_PASSES && !signal.aborted; pass += 1) {
 		const base = sources.getBaseSystemPrompt();
+		accounting = sizesOnly
+			? new PromptSizeAccounting({
+					base,
+					options: sources.getBaseSystemPromptOptions(),
+					parts: sources.getBaseSystemPromptParts?.() ?? [],
+					extensionNames,
+				})
+			: undefined;
+		const currentAccounting = accounting;
 		const result = await sources.runner.emitBeforeAgentStart(
 			"",
 			undefined,
 			base,
 			sources.getBaseSystemPromptOptions(),
-			{ preview: true, signal },
+			{
+				preview: true,
+				signal,
+				...(currentAccounting === undefined
+					? {}
+					: {
+							observePrompt: (contribution: Parameters<PromptSizeAccounting["observe"]>[0]) =>
+								currentAccounting.observe(contribution),
+						}),
+			},
 		);
 		systemPrompt = result?.systemPrompt ?? base;
 		if (sources.getBaseSystemPrompt() === base) break;
 	}
-	return systemPrompt;
+	return { systemPrompt, accounting, extensionNames };
 }
 
 async function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T | typeof CANCELLED> {

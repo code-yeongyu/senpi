@@ -28,11 +28,15 @@ type Scheduled = {
 	readonly target: string;
 	readonly reason: string;
 	readonly connection: string;
+	readonly dropReason?: "aborted";
 };
 type HostAsk = { method: "list_relocation_targets" } | { method: "relocate_session"; target: string; reason: string };
 
 export interface RpcSessionRelocationDeps {
-	readonly session: Pick<AgentSession, "sessionFile" | "subscribe" | "isStreaming" | "currentAbortSource">;
+	readonly session: Pick<
+		AgentSession,
+		"sessionFile" | "subscribe" | "isStreaming" | "currentAbortSource" | "sendCustomMessage"
+	>;
 	/** `prompt` calls not yet returned; `release_session` counts them as a running turn (`busy: ["prompt"]`). */
 	readonly pendingPrompts: () => readonly Promise<unknown>[];
 	readonly channel: RelocationChannel;
@@ -64,8 +68,13 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		this.deps = deps;
 		this.unsubscribe = deps.session.subscribe((event) => {
 			// A run the user stopped takes its scheduled move with it: the user chose to stay here.
-			if (event.type === "agent_end" && deps.session.currentAbortSource === "user") this.scheduled = undefined;
-			if (event.type === "agent_settled" && this.scheduled !== undefined) void this.announceWhenReleasable();
+			if (event.type === "agent_end" && deps.session.currentAbortSource === "user" && this.scheduled !== undefined)
+				this.scheduled = { ...this.scheduled, dropReason: "aborted" };
+			if (event.type === "agent_settled" && this.scheduled !== undefined) {
+				// agent_end still streams: wait until settlement so the correction is appended, not parked.
+				if (this.scheduled.dropReason !== undefined) this.dropScheduled(this.scheduled.dropReason);
+				else void this.announceWhenReleasable();
+			}
 		});
 	}
 
@@ -117,7 +126,8 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 
 	/** The connection `connectionId` left the session: what it accepted or was asked ends here, never later. */
 	connectionDetached(connectionId: string): void {
-		if (this.scheduled?.connection === connectionId) this.scheduled = undefined;
+		if (this.scheduled?.connection === connectionId && this.scheduled.dropReason === undefined)
+			this.dropScheduled("disconnected");
 		for (const pending of [...this.pending.values()])
 			if (pending.connection === connectionId)
 				pending.finish(refused("app_disconnected", "the app that was asked left this session"));
@@ -127,6 +137,22 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		this.unsubscribe();
 		this.scheduled = undefined;
 		for (const { finish } of [...this.pending.values()]) finish(refused("session_closed", "this session was closed"));
+	}
+
+	private dropScheduled(reason: "disconnected" | "aborted" | "withdrawn"): void {
+		const scheduled = this.scheduled;
+		if (scheduled === undefined) return;
+		this.scheduled = undefined;
+		const { moveId, target } = scheduled;
+		void this.deps.session.sendCustomMessage(
+			{
+				customType: "session_relocation",
+				content: `The session will not continue on ${target} (${reason}). The session stays on this computer; keep working here.`,
+				display: false,
+				details: { status: "dropped", reason, moveId, target },
+			},
+			{ triggerTurn: false },
+		);
 	}
 
 	private settleRequest(
@@ -153,13 +179,16 @@ export class RpcSessionRelocation implements SessionRelocationHost {
 		const due = this.scheduled;
 		// A new run took over meanwhile: its own settle announces the move.
 		if (due === undefined || this.deps.session.isStreaming) return;
-		this.scheduled = undefined;
 		// Only the connection that accepted, while it still offers relocation here, is told to move the session.
-		if (this.deps.channel.offerer() !== due.connection) return;
-		const { connection, ...fields } = due;
+		if (this.deps.channel.offerer() !== due.connection) {
+			this.dropScheduled("withdrawn");
+			return;
+		}
+		this.scheduled = undefined;
+		const { connection, moveId, target, reason } = due;
 		this.deps.channel.send(
 			connection,
-			{ type: "relocation_due", ...fields } satisfies RpcRelocationDueEvent,
+			{ type: "relocation_due", moveId, target, reason } satisfies RpcRelocationDueEvent,
 			"event",
 		);
 	}

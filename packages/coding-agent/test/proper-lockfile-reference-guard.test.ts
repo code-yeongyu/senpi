@@ -63,7 +63,7 @@ const LOCK_SITES: Record<string, LockSite> = {
 			{ file: at("core/extensions/builtin/mcp/auth/token-store.ts"), fn: "clear", op: "rmSync(this.dir" },
 		],
 	},
-	[`${at("core/session-move/move-ledger.ts")}#acquire`]: {
+	[`${at("core/session-move/move-ledger-lock.ts")}#acquireMoveRecordLock`]: {
 		reason: "every record write goes through MoveLedger.write",
 		writes: [{ file: at("core/session-move/move-ledger.ts"), fn: "write", op: "renameFile(temp" }],
 	},
@@ -248,6 +248,84 @@ describe("proper-lockfile reference guard", () => {
 		it("RED: a second lock call without its own onCompromised fails even when another call has one", () => {
 			const second = `${valid}export const other = (path: string) => lockfile.lock(path, { realpath: false });\n`;
 			expect(vendoredSelfContainedViolations(second)).toEqual(["lockfile.lock( without its own onCompromised"]);
+		});
+
+		// #4035: every import form keeps its own row, so weakening one branch fails here.
+		it.each([
+			[
+				"a require of a senpi file",
+				'const x = require("../../../file-lock.ts");',
+				["imports ../../../file-lock.ts"],
+			],
+			["a re-export", 'export { lock } from "../../../file-lock.ts";', ["imports ../../../file-lock.ts"]],
+			["a literal dynamic import", 'await import("../../../file-lock.ts");', ["imports ../../../file-lock.ts"]],
+			["a computed dynamic import", "await import(name);", ["dynamic import or require of a computed module"]],
+		])("rejects %s", (_name, extra, expected) => {
+			expect(vendoredSelfContainedViolations(`${extra}\n${valid}`)).toEqual(expected);
+		});
+
+		// #4035: ways around the scanner that it missed before.
+		it.each([
+			[
+				"a template import whose substitution holds a quote",
+				// oxlint-disable-next-line eslint/no-template-curly-in-string -- scanner input: the source text of a template import.
+				'await import(`${"../../../file-lock.ts"}`);',
+				["dynamic import or require of a computed module"],
+			],
+			[
+				"createRequire from node:module",
+				'import { createRequire } from "node:module";\ncreateRequire(import.meta.url)("../x.ts");',
+				["imports node:module", "loads modules through createRequire"],
+			],
+			[
+				"process.getBuiltinModule without an import",
+				'process.getBuiltinModule("node:module");',
+				["loads modules through getBuiltinModule"],
+			],
+		])("RED: %s fails", (_name, extra, expected) => {
+			expect(vendoredSelfContainedViolations(`${extra}\n${valid}`)).toEqual(expected);
+		});
+
+		it.each([
+			["onCompromised: undefined", "onCompromised: undefined", "lockfile.lock( without its own onCompromised"],
+			["onCompromised: null", "onCompromised: null", "lockfile.lock( without its own onCompromised"],
+			[
+				"a spread after onCompromised",
+				"onCompromised: () => {}, ...options",
+				"lockfile.lock( spreads options that can replace onCompromised",
+			],
+		])("RED: a lock call with %s fails", (_name, options, expected) => {
+			const call = `export const other = (path: string, options: object) => lockfile.lock(path, { ${options} });\n`;
+			expect(vendoredSelfContainedViolations(`${valid}${call}`)).toEqual([expected]);
+		});
+
+		it("RED: a parenthesis inside a string does not end the lock arguments early", () => {
+			const call =
+				'export const other = (path: string) => lockfile.lock(path, { tag: ")", onCompromised: () => {} });\n';
+			expect(vendoredSelfContainedViolations(`${valid}${call}`)).toEqual([]);
+		});
+
+		it("RED: a /* inside a regular expression does not hide the code after it", () => {
+			const hidden = 'const pattern = /a/*x/;\nimport("../../../file-lock.ts");\nconst end = 1; // */\n';
+			expect(vendoredSelfContainedViolations(`${hidden}${valid}`)).toEqual(["imports ../../../file-lock.ts"]);
+		});
+
+		// #4035 review: a division after a postfix ++/-- or a closing bracket is not a regex, so nothing after it is hidden.
+		it.each(["x++ / y", "x-- / y", "(x) / y", "x[0] / y", "x / y"])(
+			"RED: code after a division %s with a later // stays visible",
+			(division) => {
+				const hidden = `const q = ${division}; const s = "a/b//c"; import("../../../file-lock.ts");\n`;
+				expect(vendoredSelfContainedViolations(`${hidden}${valid}`)).toEqual(["imports ../../../file-lock.ts"]);
+			},
+		);
+
+		it("accepts a spread before onCompromised and a handler whose text contains ...", () => {
+			const calls = [
+				"export const a = (path: string, options: object) => lockfile.lock(path, { ...options, onCompromised: () => {} });",
+				'export const b = (path: string) => lockfile.lock(path, { onCompromised: () => console.warn("lock lost...") });',
+				"",
+			].join("\n");
+			expect(vendoredSelfContainedViolations(`${valid}${calls}`)).toEqual([]);
 		});
 
 		it("every listed vendored file passes", () => {

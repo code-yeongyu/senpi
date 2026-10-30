@@ -45,6 +45,7 @@ import { writeHelpFlagsCache } from "./cli/help-flags-cache.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { isModelsDiscoverCommand, runModelsDiscoverCommand } from "./cli/models-command.ts";
+import { printPromptSizes } from "./cli/print-prompt-sizes.ts";
 import { pipedStdinOptions } from "./cli/piped-stdin-options.ts";
 import { exitAfterOutput, printThenExit } from "./cli/print-then-exit.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
@@ -525,8 +526,11 @@ export async function createSessionManager(
 	settingsManager: SettingsManager,
 	appMode: AppMode,
 ): Promise<SessionManager> {
+	if (parsed.spawnedBy && (parsed.session || parsed.resume || parsed.continue || parsed.fork || parsed.rebind)) {
+		console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming or forking a session."));
+	}
 	if (parsed.noSession || parsed.help || parsed.listModels !== undefined || parsed.listTips) {
-		return SessionManager.inMemory(cwd, parsed.sessionId !== undefined ? { id: parsed.sessionId } : undefined);
+		return SessionManager.inMemory(cwd, { id: parsed.sessionId, spawnedBy: parsed.spawnedBy });
 	}
 
 	if (parsed.fork) {
@@ -670,6 +674,8 @@ export async function createSessionManager(
 	if (parsed.sessionId) {
 		const existingSession = await findLocalSessionByExactId(parsed.sessionId, cwd, sessionDir);
 		if (existingSession) {
+			if (parsed.spawnedBy)
+				console.error(chalk.yellow("Warning: --spawned-by is ignored when resuming an existing session."));
 			return SessionManager.open(existingSession.path, sessionDir);
 		}
 		console.error(
@@ -679,7 +685,7 @@ export async function createSessionManager(
 		);
 	}
 
-	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId });
+	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId, spawnedBy: parsed.spawnedBy });
 }
 
 function buildSessionOptions(
@@ -1088,6 +1094,7 @@ export function createCliRuntimeFactory(
 			),
 			promptSurface: launchProfile?.promptSurface,
 			browserEngine: launchProfile?.browserEngine,
+			sessionEnv: launchProfile?.sessionEnv,
 			...(toolRuntime !== undefined ? { toolRuntime } : {}),
 		});
 		markSwitch("createSession");
@@ -1118,7 +1125,8 @@ export async function main(args: string[], options?: MainOptions) {
 	// over when the first statement runs, so it is read from the process clock rather than measured.
 	recordTiming("processStart->main", Math.round(process.uptime() * 1000));
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
-	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
+	const offlineMode =
+		args.includes("--print-prompt-sizes") || args.includes("--offline") || isTruthyEnvFlag(envValue("OFFLINE"));
 	if (offlineMode) {
 		process.env.PI_OFFLINE = "1";
 		process.env.PI_SKIP_VERSION_CHECK = "1";
@@ -1207,6 +1215,25 @@ export async function main(args: string[], options?: MainOptions) {
 		await printThenExit(() => console.log(DISPLAY_VERSION), 0);
 	}
 
+	if (parsed.attach && parsed.session && !parsed.help) {
+		const { runAttachedTui } = await import("./modes/interactive/run-attached-tui.ts");
+		try {
+			await runAttachedTui({
+				address: parsed.attach,
+				session: parsed.session,
+				tuiMode: parsed.tuiMode,
+				theme: parsed.useTheme,
+			});
+		} catch (error) {
+			// A refusal or connection failure is the user's next step, not a crash: one line, no stack.
+			await printThenExit(
+				() => console.error(`Error: ${error instanceof Error ? error.message : String(error)}`),
+				1,
+			);
+		}
+		return;
+	}
+
 	if (parsed.export) {
 		let result: string;
 		try {
@@ -1220,7 +1247,9 @@ export async function main(args: string[], options?: MainOptions) {
 		await printThenExit(() => console.log(`Exported to: ${result}`), 0);
 	}
 
-	let appMode = resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
+	let appMode: AppMode = parsed.printPromptSizes
+		? "print"
+		: resolveAppMode(parsed, process.stdin.isTTY, process.stdout.isTTY);
 	const shouldTakeOverStdout =
 		appMode !== "interactive" && (!isPlainRuntimeMetadataCommand(parsed) || (parsed.help && parsed.mode === "json"));
 	if (shouldTakeOverStdout) {
@@ -1331,7 +1360,8 @@ export async function main(args: string[], options?: MainOptions) {
 	if (appMode === "rpc" && parsed.multiSession) {
 		if (options?.extensionFactories?.length)
 			throw new Error("Shared RPC workers require file-backed extensions; inline factories cannot cross isolates");
-		const runtimeConfiguration = { parsed, cwd, agentDir, appMode, toolRuntime };
+		const { presenterBootstrapFd, mcpPresenterEnforcement, ...sessionArgs } = parsed;
+		const runtimeConfiguration = { parsed: sessionArgs, cwd, agentDir, appMode, toolRuntime };
 		// Socket hosts (the machine-wide daemon) run every session IN this process:
 		// createHostCore selects the worker registry only when a workerConfiguration
 		// is passed, so withholding it is what selects the uncapped in-process registry.
@@ -1363,6 +1393,8 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 		printTimings();
 		await runMultiSessionHost({
+			presenterBootstrapFd,
+			mcpPresenterEnforcement,
 			agentDir,
 			createRuntime: createCliRuntimeFactory(runtimeConfiguration, {
 				...(hostModelRuntime === undefined ? {} : { modelRuntime: hostModelRuntime }),
@@ -1458,6 +1490,9 @@ export async function main(args: string[], options?: MainOptions) {
 			startupLoadingIndicator.stop();
 		});
 	time("createAgentSessionRuntime");
+	if (parsed.printPromptSizes) {
+		await printPromptSizes(runtime);
+	}
 	await prepareSessionOpening(sessionManager, appMode);
 	const { services, session, modelFallbackMessage } = runtime;
 	const { settingsManager, modelRuntime, resourceLoader } = services;
@@ -1584,6 +1619,7 @@ export async function main(args: string[], options?: MainOptions) {
 		// mode seam: interactive startup still loads the same module before first use.
 		const { InteractiveMode } = await import("./modes/interactive/interactive-mode.ts");
 		const interactiveMode = new InteractiveMode(runtime, {
+			mcpPresenterEnforcement: parsed.mcpPresenterEnforcement,
 			migratedProviders,
 			authNotices: interactiveAuthNotices(services.authStorage),
 			legacyPiEditNotice: legacyPiEditStartupNotice(),

@@ -101,7 +101,7 @@ describe("extension state in the bundle and on import (senpi#3676)", () => {
 		]);
 
 		const { sessionFile } = await importMovedSession({ bundleDir, targetCwd: cwdB, ledger, readIdentity });
-		const pending = pendingMovedState(sessionFile);
+		const pending = await pendingMovedState(sessionFile);
 		expect(pending).toMatchObject({ moveId, dir: movedStateDir(sessionFile, moveId) });
 		expect(readFileSync(join(pending?.dir ?? "", "probe", "state.json"), "utf8")).toBe('{"tasks":3}\n');
 	});
@@ -140,7 +140,7 @@ describe("extension state restored on open (senpi#3676)", () => {
 		expect(probe.seen.imported).toBe('{"tasks":3}\n');
 		expect(existsSync(pendingDir)).toBe(false);
 		expect(customTypes(sessionPath)).toContain(MOVED_STATE_RESTORED);
-		expect(pendingMovedState(sessionPath)).toBeUndefined();
+		expect(await pendingMovedState(sessionPath)).toBeUndefined();
 		expect(existsSync(dirname(pendingDir))).toBe(true);
 	});
 });

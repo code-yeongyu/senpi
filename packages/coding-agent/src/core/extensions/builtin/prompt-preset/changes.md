@@ -1,3 +1,62 @@
+## 2026-10-24 - Kimi K3.1 prompt preset, copied from K3 (senpi#4184)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/kimi-k3-1.ts` (new): a copy of `kimi-k3.ts`; only the identity line ("running on Kimi K3.1") and the function names differ.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/matchers.ts`: `hasKimiK31Signal` / `isKimiK31Model` (`k3.1-pro`, `kimi-k3.1-pro`, `kimi-k3-1-pro`, `k3p1`, "Kimi K3.1", Highspeed variants).
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/contract.ts`: K3.1 resolves to `kimi-k3-1` before the K3 check; new model case and auto-resolved name.
+- `packages/coding-agent/src/core/extensions/builtin/prompt-preset/settings.ts`, `presets.ts`: the `kimi-k3-1` name and its builder.
+
+### Why
+
+- Q asked for K3.1 support with the K3 template cloned, as its own copy so later K3 edits do not change K3.1. Before this, `kimi-k3.1-pro` shared the K3 preset and Kimi Code's `k3.1-pro` matched no preset at all.
+
+### Why an extension could not handle it
+
+- Preset routing and the preset name union live in this builtin extension.
+
+### Expected merge conflict zones
+
+- LOW: the Kimi branch at the top of `resolvePresetName` in `contract.ts`, the preset name lists in `settings.ts` and `contract.ts`, the Kimi cases in `presets.ts`.
+
+## 2026-10-23 - Record product-copy punctuation (senpi#4040)
+
+### What changed
+
+- `test/suite/prompt-presets-native-baseline.json`: refresh 156 of the 198 native prompt hashes after the product-copy punctuation changes. Every preset, surface and input is rendered against the clean merge base; the word sequence is unchanged.
+- `test/suite/regressions/3483-prompt-goldens.json` and `3483-review-accounting.test.ts`: refresh the newly merged prompt-accounting baselines for the same verification and workstation punctuation rewrites; fixture inputs stay fixed.
+
+### Why
+
+- The native generation contracts compare shipped prompt bytes, so intentional punctuation changes require matching recorded hashes.
+
+### Why an extension could not handle it
+
+- The fixture records the builtin prompt builders before runtime extensions apply.
+
+### Expected merge conflict zones
+
+- The native prompt baseline hash values.
+
+## 2026-10-18 - Measure the preset actually composed (senpi#3483)
+
+### What changed
+
+- `presets.ts` observes the parts from each preset's real dynamic-builder call and returns them alongside its unchanged prompt. `index.ts` passes those parts, plus only the user's append when present, to preview accounting. Replaced base sections and session policy are not reported.
+- API note: the public `buildDynamicSystemPrompt` now honours custom/append options. `eventOptionsToBuilderInput` deliberately strips both before preset construction; user appends are reapplied once.
+
+### Why
+
+The default builder's sections do not describe a model preset replacement. A golden captured from main before this fold proves the preset bytes stay unchanged.
+
+### Why an extension could not handle it
+
+Only the preset's actual builder call owns its section boundaries.
+
+### Expected merge conflict zones
+
+- `presets.ts`: resolved preset metadata and builder dispatch. `index.ts`: before-agent-start return and user append handling.
+
 ## 2026-10-21 - Launch-gated Fable 5.5 preset (senpi#3893)
 
 ### What changed

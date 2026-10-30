@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "../../../types.ts";
+import type { ExtensionAPI, ExtensionUIContext } from "../../../types.ts";
 import type { ToolSearchService } from "../../tool-search/service.ts";
 import {
 	cachedToolsToCatalogEntries,
@@ -13,6 +13,7 @@ import type { McpOutputArtifacts } from "../guard/output-guard.ts";
 import type { McpInvocationResolver } from "../invocation.ts";
 import { createMcpLogger, type McpLogger } from "../log.ts";
 import type { McpPromptServer } from "../prompts.ts";
+import type { McpRequestOrigin } from "../request-origin.ts";
 import { createMcpResourceTools, type McpResourceServer } from "../resources.ts";
 import { computeMcpExposurePolicy } from "./policy.ts";
 import type { McpCatalogRegistrationOptions } from "./register.ts";
@@ -24,6 +25,8 @@ export type McpSessionRegistration = McpTierBRegistration & {
 };
 
 export interface McpDirectRegistrationEntry {
+	readonly requestOrigin?: () => McpRequestOrigin | undefined;
+	readonly bindPresentation?: (ui: ExtensionUIContext) => void;
 	readonly name: string;
 	readonly connection: ServerConnection;
 	readonly logger: McpLogger;
@@ -67,6 +70,7 @@ export async function registerDirectMcpTools(
 							artifacts: entry.artifacts,
 							ensureFresh: entry.ensureFresh,
 							invocation: entry.invocation,
+							requestOrigin: entry.requestOrigin,
 							outputGuard: config.settings.outputGuard,
 						})
 					: []
@@ -81,6 +85,7 @@ export async function registerDirectMcpTools(
 							artifacts: entry.artifacts,
 							ensureFresh: entry.ensureFresh,
 							invocation: entry.invocation,
+							requestOrigin: entry.requestOrigin,
 							outputGuard: config.settings.outputGuard,
 						},
 					);
@@ -89,6 +94,9 @@ export async function registerDirectMcpTools(
 		const cachedPrompts = entry.cachedCatalog?.prompts ?? [];
 		if (cachedPrompts.length > 0) {
 			promptServers.push({
+				ensureFresh: entry.ensureFresh,
+				bindPresentation: entry.bindPresentation,
+				requestOrigin: entry.requestOrigin,
 				connection: entry.connection,
 				prompts: cachedPrompts,
 				requestTimeoutMs: server.config.requestTimeoutMs,
@@ -98,6 +106,8 @@ export async function registerDirectMcpTools(
 		const cachedResources = entry.cachedCatalog?.resources ?? [];
 		if (cachedResources.length > 0) {
 			resourceServers.push({
+				ensureFresh: entry.ensureFresh,
+				requestOrigin: entry.requestOrigin,
 				agentDir: entry.agentDir,
 				artifacts: entry.artifacts,
 				connection: entry.connection,

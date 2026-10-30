@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { attachJsonlLineReader, serializeJsonLine } from "../src/modes/rpc/jsonl.ts";
 import { RpcClient, RpcCommandError } from "../src/modes/rpc/rpc-client.ts";
+import { answerProtocolInfo } from "./helpers/rpc-legacy-protocol.ts";
 
 type Answer = (command: Record<string, unknown>) => Record<string, unknown>;
 
@@ -20,6 +21,7 @@ async function wireHost(answer: Answer) {
 	const server: Server = createServer((socket) => {
 		attachJsonlLineReader(socket, (line) => {
 			const command = JSON.parse(line) as Record<string, unknown>;
+			if (answerProtocolInfo(socket, command)) return;
 			received.push(command);
 			const base = { type: "response", id: command.id, command: command.type };
 			if (command.type === "open_session") {
@@ -77,12 +79,13 @@ describe("RpcClient.setSessionContext", () => {
 		await expect(refused).rejects.toMatchObject({ errorCode: "session_not_attached" });
 	});
 
-	it("refuses without a session instead of sending an unroutable command", async () => {
+	it("refuses without a session with the host's session_not_attached error, sending nothing", async () => {
 		const { client, received } = await wireHost(() => ({ success: true }));
 
-		await expect(client.setSessionContext({ task_status: "completed" })).rejects.toThrow(
-			"set_session_context needs a session",
-		);
+		const refused = client.setSessionContext({ task_status: "completed" });
+
+		await expect(refused).rejects.toBeInstanceOf(RpcCommandError);
+		await expect(refused).rejects.toMatchObject({ errorCode: "session_not_attached" });
 		expect(received.some((command) => command.type === "set_session_context")).toBe(false);
 	});
 });

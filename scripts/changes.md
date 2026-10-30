@@ -1,3 +1,134 @@
+## 2026-10-27 - Account for the capture responsibility split (part of #4272)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs` accounts for the two browser-safe capture leaves: `./models` reaches 33 files and `./utils/event-stream` reaches 8.
+
+### Why
+
+- `scripts/check-entry-graphs.mjs` measures module count; the mandatory 250-code-line split moves existing capture construction to one leaf and shares the frontier contract in another. No new external dependency, barrel reachability, wildcard budget increase, or forbid-rule change.
+
+### Why an extension could not handle it
+
+- `scripts/check-entry-graphs.mjs` is repository validation tooling.
+
+### Expected merge conflict zones
+
+- The two named budgets in `scripts/check-entry-graphs.mjs`.
+
+## 2026-10-26 - pi-ai models entry budget covers the provider-error boundary (senpi#4282)
+
+### What changed
+
+- `check-entry-graphs.mjs`: the `@earendil-works/pi-ai/models` entry budget is 31 files: `utils/provider-error.ts`, which `event-stream.ts` now imports to redact every provider error at the stream boundary, and the token-wise redactor it runs, split by responsibility into `utils/secret-redaction.ts`, `utils/secret-classifier.ts` and `utils/secret-lexer.ts`, alongside main's `utils/assistant-capture.ts`. A wildcard budget may name one expanded export in `overrides`: `./utils/event-stream` reaches 6 files and `./utils/provider-error` 4, while every other `./utils/*` entry stays at 3.
+
+### Why
+
+- The lightweight models entry runs provider streams, so it carries the redaction those streams apply.
+
+### Why an extension could not handle it
+
+- The entry-graph budget is repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` and `./utils/*` budget blocks, and the two lines that read a budget's `maxFiles`.
+
+## 2026-10-25 - The ./models entry budget admits the capture leaf (senpi#4277, part of #4272)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `packages/ai` `./models` budget rises from 26 to 27 files for
+  `utils/assistant-capture.ts`, reached through `api/lazy.ts` -> `utils/event-stream.ts`.
+
+### Why
+
+- `utils/event-stream.ts` must import the capture module to freeze carriers at `push`; the module itself has only
+  type imports, so the graph grows by exactly that one leaf.
+
+### Why an extension could not handle it
+
+- The budget is a repository gate that runs in `bun run check`, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` entry in `BUDGETS` (one comment line and `maxFiles`).
+
+## 2026-10-22 - The pi-ai `./models` entry graph admits two reference leaves (senpi#3858)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs`: the `@earendil-works/pi-ai` `./models` budget is 26 files (was 24 after senpi#3378). The added files are `auth/credential-read.ts`, the credential-store read that `auth/resolve.ts` wraps in `ModelsError`, and `utils/config-reference-error.ts`, the typebox-free error a slot read raises for an unresolved reference; the reasons are recorded beside the budget and the forbid rules are unchanged.
+
+### Why
+
+- `scripts/check-entry-graphs.mjs`: a slot-scoped request must refuse a projected key that is still an unresolved reference with a typed error, and `./models` reaches `auth/resolve.ts`, so both leaves join its graph. Both stay inside the forbid rules: neither reaches `providers/`, `models.generated.ts` or the typebox helpers.
+
+### Why an extension could not handle it
+
+- `scripts/check-entry-graphs.mjs`: entry-graph budgets are repository build tooling.
+
+### Expected merge conflict zones
+
+- `scripts/check-entry-graphs.mjs`: the `./models` row, which senpi#3292 and senpi#3378 also raised.
+
+## 2026-10-20 - Per-PR change fragments replace direct changes.md and [Unreleased] edits (senpi#3610)
+
+### What changed
+
+- `scripts/release.mjs`: calls `compileFragments` (from `scripts/sync-changes-fragments.mjs`) only at the release cut, right before `stampChangelogs`, on the pinned tree when `--sha` is set; `stageChangedFiles` already stages their deletion (`git ls-files -d`).
+- `scripts/changes-fragments.mjs`, `scripts/changes-fragments-gate.mjs`, `scripts/sync-changes-fragments.mjs`, `scripts/check-pr-changelog-facts.mjs` (new, fork-only): fragment parsing and compile planning, gate facts, the `compile` / `from-diff` CLI, and the PR fact collection moved out of `check-pr-changelog.mjs`. `check-pr-changelog.mjs` counts a fragment's CHANGELOG block as that package's entry and its tracker blocks as coverage; once the base carries `changes/unreleased/README.md`, a PR that adds to an existing tracker or an `[Unreleased]` section fails. `audit-changes-md.mjs` counts entries still waiting in fragments. There is no standalone compile workflow; `from-diff` preserves added lines, including repeated headings and blanks.
+- `scripts/upstream-release-worthy.mjs`: evaluates a read-only compile preview so pending package fragments can trigger a release without first being written into `[Unreleased]`.
+
+### Why
+
+- Every PR wrote to the same top lines of the same trackers and `[Unreleased]` sections, so each merge into `main` made the other open PRs conflict there, and a release cut could strand a bullet in a released section (senpi#3123).
+
+### Why an extension could not handle it
+
+- The release script and the PR gate are repository tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `stampChangelogs` call site in `scripts/release.mjs`.
+
+## 2026-10-23 - Windows signal forwarding does not block on CIM (senpi#4057)
+
+### What changed
+
+- `scripts/package-manager.mjs`, `scripts/windows-process-tree.mjs`: signal forwarding asynchronously queries CIM with a one-second timeout, then feeds the result through the existing creation-time-checked explicit-PID planner; failures still permit only the root.
+- `scripts/run-tests.mjs`, `scripts/run-workspaces.mjs`: drain pending forwarding before re-raising a signal so early child exit cannot abandon cleanup.
+
+### Why
+
+- `scripts/package-manager.mjs`: synchronous five-second CIM probes serialized across children inside Ctrl-C handlers.
+
+### Why an extension could not handle it
+
+- `scripts/package-manager.mjs`: repository package-manager and test-runner signal handling.
+
+### Expected merge conflict zones
+
+- `scripts/package-manager.mjs`: signal forwarding and child close handling.
+
+## 2026-10-23 - Local release regeneration keeps the last good OpenGateway catalog (senpi#4067)
+
+### What changed
+
+- `scripts/local-release.mjs`: its `generate-models` run passes `-- --keep-last-good-opengateway`, the same opt-in as the release's `runGenerateModels`.
+
+### Why
+
+- `scripts/local-release.mjs`: an OpenGateway feed break must not stop a release; the dedicated OpenGateway refresh workflow is what fails on it.
+
+### Why an extension could not handle it
+
+- `scripts/local-release.mjs`: release tooling runs outside the runtime.
+
+### Expected merge conflict zones
+
+- `scripts/local-release.mjs`: the `generate-models` call before `check:provider-defaults`.
+
 ## 2026-10-19 - The bundle ships the RPC host supervisor as its own program (senpi#3743)
 
 ### What changed

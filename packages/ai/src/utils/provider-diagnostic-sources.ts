@@ -67,9 +67,19 @@ export function anthropicProviderDiagnosticFromSseData(data: string): ProviderDi
 }
 
 /**
+ * `error.type` values an OpenAI-compatible server uses for exactly one failure, so they stand in for a
+ * missing `error.code` (senpi#4950). Coarse buckets such as `invalid_request_error` never do.
+ */
+const OPENAI_COMPATIBLE_PRECISE_TYPES: ReadonlySet<string> = new Set([
+	"exceeded_current_quota_error",
+	"insufficient_quota",
+]);
+
+/**
  * OpenAI SDK `APIError` (HTTP rejection or in-stream error chunk): reads
- * `status` and `code` once each. `type` is ignored because OpenAI-compatible
- * servers reuse it for coarse buckets that can contradict the precise code.
+ * `status` and `code` once each. `type` is read only when `code` is absent, and
+ * only a precise token counts: OpenAI-compatible servers reuse `type` for coarse
+ * buckets that can contradict the precise code.
  */
 export function openAICompatibleProviderDiagnosticFromError(error: unknown): ProviderDiagnostic | undefined {
 	try {
@@ -77,8 +87,10 @@ export function openAICompatibleProviderDiagnosticFromError(error: unknown): Pro
 		const status = Reflect.get(error, "status");
 		const code = optionalString(Reflect.get(error, "code"));
 		if (code === null) return undefined;
-		if (code === undefined && (status === undefined || status === null)) return undefined;
-		return classifyProviderFailure({ status, code });
+		const type = code === undefined ? optionalString(Reflect.get(error, "type")) : undefined;
+		const token = code ?? (typeof type === "string" && OPENAI_COMPATIBLE_PRECISE_TYPES.has(type) ? type : undefined);
+		if (token === undefined && (status === undefined || status === null)) return undefined;
+		return classifyProviderFailure({ status, code: token });
 	} catch {
 		return undefined;
 	}

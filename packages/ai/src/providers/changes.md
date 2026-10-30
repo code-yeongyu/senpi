@@ -1,3 +1,43 @@
+## 2026-10-26 - The faux provider captures block seeds at emission (senpi#4285, part of #4272)
+
+### What changed
+
+- `packages/ai/src/providers/faux.ts`: both the streamed and the deferred-fetch stream enable capture; each tool
+  argument delta carries `parsedThrough: 0`, because faux never parses its generated chunks and only the end installs
+  the arguments.
+
+### Why
+
+- Faux backs the unit tests and real-CLI QA; its streams must carry the same capture facts as provider streams so
+  later stages can be exercised end to end (R3.C6.2).
+
+### Why an extension could not handle it
+
+- Capture has to run inside the stream's `push`, which only the provider controls.
+
+### Expected merge conflict zones
+
+- LOW: the two `createAssistantMessageEventStream()` sites in `createFauxCore` and the tool delta push in
+  `streamWithDeltas`.
+
+## 2026-10-24 - Kimi K3.1 Pro rows in the kimi-coding shard (senpi#4183)
+
+### What changed
+
+- `packages/ai/src/providers/kimi-coding.models.ts`: adds `chat:k3.1-pro` and `chat:k3.1-pro-highspeed` with the `k3` compat flags and image resize profile, the K3 thinking map, context 1048576, maxTokens 131072, text + image + video input, and the Moonshot API rates as implied cost (2 / 10 / 0.2 / 2 and 4 / 20 / 0.2 / 4 per MTok), like `k3`.
+
+### Why
+
+- Moonshot shipped K3.1 Pro on Kimi Code on 2026-10-23 under the ids `k3.1-pro` / `k3.1-pro-highspeed` (kimi.com/code/docs models page, checked 2026-10-24). Without a row the model could not be selected, and a mistyped id silently falls back to K2.8 Preview without thinking.
+
+### Why an extension could not handle it
+
+- The `kimi-coding` catalog is a hand-owned builtin shard; the builtin provider reads only this file.
+
+### Expected merge conflict zones
+
+- LOW: the `anthropic-messages` block of `packages/ai/src/providers/kimi-coding.models.ts`, between `chat:k3` and `chat:k3-256k`.
+
 ## 2026-10-16 - Xiaomi MiMo compat covers mimo-v2.6-pro (senpi v2026.10.16 release)
 
 ### What changed

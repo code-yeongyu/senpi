@@ -98,7 +98,14 @@ export default function promptPresetExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
-		return { systemPrompt: withUserAppends(preset.prompt, event.systemPromptOptions) };
+		const append = event.systemPromptOptions.appendSystemPrompt;
+		return {
+			systemPrompt: withUserAppends(preset.prompt, event.systemPromptOptions),
+			systemPromptParts: [
+				...preset.parts,
+				...(append ? [{ name: "append_system_prompt", source: "loader", text: `\n\n${append}` }] : []),
+			],
+		};
 	};
 	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 

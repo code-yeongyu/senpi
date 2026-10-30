@@ -263,7 +263,7 @@ describe("buildEvalPrompt", () => {
 		const withoutHost = buildEvalPrompt(enabled, { spawns: false }).description;
 
 		// Then: the note names the host and the sizing rule, and disappears without one.
-		expect(withHost).toContain("Host: darwin arm64 \u00b7 Apple M5 Max \u00b7 18 cores — cells execute here.");
+		expect(withHost).toContain("Host: darwin arm64 \u00b7 Apple M5 Max \u00b7 18 cores. Cells execute here.");
 		expect(withHost).toContain("Size `parallel(thunks)` pools to its cores");
 		expect(withoutHost).not.toContain("Host:");
 	});

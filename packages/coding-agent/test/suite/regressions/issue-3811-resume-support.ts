@@ -93,6 +93,7 @@ export function settlesWithin<T>(promise: Promise<T>, what: string, ms = 10_000)
 
 export async function settle(fixture: ResumeFixture): Promise<void> {
 	await fixture.h.session.waitForIdle();
-	await new Promise<void>((resolve) => queueMicrotask(resolve));
+	// The resume consumes held input after its turn's send settles; wait for that, not for a tick count.
+	await fixture.h.session.resumeSettled();
 	await fixture.h.session.waitForIdle();
 }

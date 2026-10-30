@@ -87,6 +87,8 @@ export interface RunDueOptions {
 	/** Delivery time limit, recorded in the session lock for ungated (Windows) deliveries. */
 	readonly deliveryTimeoutMs?: number;
 	readonly shouldDefer?: DeferProbe;
+	/** Only this session's jobs: the pass a live session runs for itself. */
+	readonly sessionId?: string;
 	/** Live runners, for recovering occurrences of dead ones; defaults to reading the leases. */
 	readonly runners?: () => Promise<readonly LiveRunner[]>;
 }
@@ -230,7 +232,11 @@ async function deliverClaimed(
 export async function runDueJobs(options: RunDueOptions): Promise<RunDueResult> {
 	const listing = await listScheduledJobs(options.dir);
 	const events: RunnerEvent[] = listing.invalid.map((invalid) => ({ event: "invalid", ...invalid }));
-	const recovery = await recoverAbandoned(options, listing.jobs);
+	const jobs =
+		options.sessionId === undefined
+			? listing.jobs
+			: listing.jobs.filter((record) => record.job.sessionId === options.sessionId);
+	const recovery = await recoverAbandoned(options, jobs);
 	events.push(...recovery.events);
 	await pruneTombstones(options.dir, listing, options.now());
 
@@ -240,7 +246,7 @@ export async function runDueJobs(options: RunDueOptions): Promise<RunDueResult> 
 	};
 	for (const dueAt of recovery.restoredDueAt) noteNext(dueAt);
 	const bySession = new Map<string, ScheduledJob[]>();
-	for (const { state, job } of listing.jobs) {
+	for (const { state, job } of jobs) {
 		if (state !== "pending") continue;
 		if (job.dueAt > options.now()) {
 			noteNext(job.dueAt);

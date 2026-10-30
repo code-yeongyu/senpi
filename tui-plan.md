@@ -834,7 +834,7 @@ Likely modified files:
 - `packages/tui/CHANGELOG.md`
 - `packages/coding-agent/CHANGELOG.md`
 
-Do not modify released changelog sections. Add entries under the existing `## [Unreleased]` subsections.
+Do not modify released changelog sections. Add package `CHANGELOG.md` blocks in `changes/unreleased/<pr>.md`.
 
 ## Test plan
 

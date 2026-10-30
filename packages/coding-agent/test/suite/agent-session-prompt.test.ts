@@ -38,7 +38,13 @@ describe("AgentSession prompt characterization", () => {
 
 		await harness.session.prompt("hi");
 
-		expect(harness.eventsOfType("entry_appended").map((event) => event.entry.type)).toEqual(["message", "message"]);
+		// Design 4.4 adds durable lifecycle metadata; ordinary transcript publications stay in order.
+		expect(
+			harness
+				.eventsOfType("entry_appended")
+				.filter((event) => event.entry.type !== "custom" || event.entry.customType !== "session-lifecycle")
+				.map((event) => event.entry.type),
+		).toEqual(["message", "message"]);
 	});
 
 	it("prompts while idle and records a single text response", async () => {

@@ -47,6 +47,41 @@ describe("host session references across a park", () => {
 		}
 	}, 120_000);
 
+	// senpi#3814 review H1: the CLI's parked reopen is its only hold, so unload must not count it as another client.
+	it("unloads a parked session through the CLI", async () => {
+		const { target, opened, ref } = await rig(false, { SENPI_RPC_SESSION_IDLE_EVICTION_MS: "2000" });
+		const sessionPath = String(opened.payload.sessionPath);
+		const observer = await JsonlPeer.connect(target.socket);
+		try {
+			const parked = observer.waitFor(
+				(record) => record.type === "session_parked" && record.sessionId === ref,
+				30_000,
+			);
+			await runHostSessionRequest({ action: "prompt", target, ref, text: "park-me" });
+			expect(
+				await runHostSessionRequest({ action: "wait", target, ref, until: "done", timeoutMs: 20_000 }),
+			).toMatchObject({ exitCode: 0 });
+			await parked;
+
+			// The CLI's defaults for a bare `senpi host session unload <ref>`.
+			const unloaded = await runHostSessionRequest({
+				action: "unload",
+				target,
+				ref: sessionPath,
+				interrupt: false,
+				force: false,
+				clearQueue: false,
+				children: "refuse",
+			});
+			expect(unloaded, JSON.stringify(unloaded.payload)).toMatchObject({
+				exitCode: 0,
+				payload: { action: "unload", outcome: "unloaded" },
+			});
+		} finally {
+			observer.destroy();
+		}
+	}, 120_000);
+
 	// #3073 review H3: a durable id carried by a live session AND a parked transcript names two sessions.
 	it("refuses a durable id that a live session and a parked transcript share", async () => {
 		const { target, cwd } = await rig();

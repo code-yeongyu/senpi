@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 
 const WINDOWS_FILETIME_EPOCH = 116444736000000000n;
 export const PROCESS_START_TOLERANCE_MS = 3_000;
@@ -122,7 +122,7 @@ export interface IdentityProbeRetry {
 export async function processMatchesPidFile(
 	pidFile: DaemonPidFile,
 	readStartTime: (pid: number) => Promise<string | undefined> = readProcessStartTime,
-	isLive: (pid: number) => boolean = processIsLive,
+	isLive: (pid: number) => boolean = processIsRunning,
 	retry: IdentityProbeRetry = {},
 ): Promise<boolean> {
 	// A record without an identity guard answers only the liveness half of the question: a pid
@@ -173,7 +173,9 @@ export async function readProcessIdentity(
 						`$process = Get-CimInstance Win32_Process -Filter "ProcessId=${String(pid)}" -ErrorAction Stop; if ($null -eq $process) { Write-Output '__SENPI_ABSENT__'; exit 0 }; $process.CreationDate.ToFileTimeUtc().ToString("D", [Globalization.CultureInfo]::InvariantCulture)`,
 					],
 				}
-			: { executable: "ps", args: ["-o", "lstart=", "-p", String(pid)] };
+			: // State and start time from ONE snapshot: an exited, unreaped process (state Z) keeps its start
+				// time but runs nothing, so it has no identity to match (senpi#4119).
+				{ executable: "ps", args: ["-o", "stat=,lstart=", "-p", String(pid)] };
 	return new Promise((resolve) => {
 		const effectiveTimeoutMs = timeoutMs ?? (platform === "win32" ? 1_000 : undefined);
 		execFile(
@@ -199,8 +201,11 @@ export async function readProcessIdentity(
 					resolve({ kind: "error", error });
 					return;
 				}
-				const output = stdout.trim();
-				if (output === "__SENPI_ABSENT__") return resolve({ kind: "absent" });
+				const snapshot = stdout.trim();
+				if (snapshot === "__SENPI_ABSENT__") return resolve({ kind: "absent" });
+				const state = platform === "win32" ? "" : (snapshot.split(/\s+/, 1)[0] ?? "");
+				if (state.startsWith("Z")) return resolve({ kind: "absent" });
+				const output = platform === "win32" ? snapshot : snapshot.slice(state.length).trim();
 				if (!output || (platform === "win32" && !/^\d+$/.test(output)))
 					return resolve({ kind: "error", error: new Error("invalid process identity output") });
 				resolve({ kind: "present", identity: timeZone && platform !== "win32" ? `${output} UTC` : output });
@@ -238,6 +243,24 @@ export async function readProcessStartTime(
 		if (result.kind === "error") throw result.error;
 		return result.kind === "present" ? result.identity : undefined;
 	});
+}
+
+/**
+ * `processIsLive` minus processes that have exited but are not reaped yet (state Z): a SIGKILLed host
+ * stays a zombie until its parent's loop, or init, waits on it, and `kill(pid, 0)` still succeeds for it
+ * (senpi#4119). One `ps` snapshot decides; a probe that fails any other way reads as running, so a
+ * starved probe on a live process is never taken for a dead one (#1609).
+ */
+export function processIsRunning(pid: number): boolean {
+	if (!processIsLive(pid)) return false;
+	if (process.platform === "win32") return true;
+	try {
+		const state = execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8", timeout: 2_000 });
+		return !state.trim().startsWith("Z");
+	} catch (error: unknown) {
+		if (error instanceof Error && "status" in error && error.status === 1) return false;
+		return true;
+	}
 }
 
 export function processIsLive(pid: number): boolean {

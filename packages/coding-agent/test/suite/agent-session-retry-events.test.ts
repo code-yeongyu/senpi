@@ -11,6 +11,8 @@ const hint1258ms = "HTTP 429: rate_limit_error (retry-after-ms: 1258)";
 function normalizeEventOrder(events: Harness["events"]): string[] {
 	const normalized: string[] = [];
 	for (const event of events) {
+		// Design 4.4 adds lifecycle publications; preserve the exact original agent/retry ordering.
+		if (event.type === "session_lifecycle") continue;
 		const label =
 			event.type === "message_start" || event.type === "message_end"
 				? `${event.type}:${event.message.role}`
@@ -561,7 +563,7 @@ describe("AgentSession retry and event characterization", () => {
 
 		expect(harness.eventsOfType("agent_end")).toHaveLength(1);
 		await harness.session.waitForIdle();
-		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_idle");
+		expect(normalizeEventOrder(harness.events).at(-1)).toBe("agent_idle");
 	});
 
 	it("delivers retry_probe_scheduled to a subscribed listener with payload intact", async () => {
@@ -682,7 +684,7 @@ describe("AgentSession retry and event characterization", () => {
 
 		expect(harness.eventsOfType("agent_end")).toHaveLength(1);
 		await harness.session.waitForIdle();
-		expect(harness.events[harness.events.length - 1]?.type).toBe("agent_idle");
+		expect(normalizeEventOrder(harness.events).at(-1)).toBe("agent_idle");
 		const lastMessage = harness.session.messages[harness.session.messages.length - 1];
 		expect(lastMessage?.role).toBe("assistant");
 		if (lastMessage?.role === "assistant") {

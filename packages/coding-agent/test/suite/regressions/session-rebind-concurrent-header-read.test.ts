@@ -10,15 +10,15 @@ const fsHooks = vi.hoisted(() => ({ onSourceRead: undefined as ((path: string) =
 
 vi.mock("node:fs/promises", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("node:fs/promises")>();
-	const readFile = ((path: Parameters<typeof actual.readFile>[0], ...rest: unknown[]) => {
+	const open = ((path: Parameters<typeof actual.open>[0], ...rest: unknown[]) => {
 		const hook = fsHooks.onSourceRead;
 		if (hook !== undefined && path === fsHooks.source) {
 			fsHooks.onSourceRead = undefined;
 			hook(path);
 		}
-		return Reflect.apply(actual.readFile, actual, [path, ...rest]);
-	}) as typeof actual.readFile;
-	return { ...actual, default: { ...actual, readFile }, readFile };
+		return Reflect.apply(actual.open, actual, [path, ...rest]);
+	}) as typeof actual.open;
+	return { ...actual, default: { ...actual, open }, open };
 });
 
 const { rebindSessionFile } = await import("../../../src/core/session-rebind.ts");

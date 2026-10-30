@@ -3,10 +3,10 @@
 // Copyright (c) 2025-2026 Can Bölük
 // https://github.com/can1357/oh-my-pi
 
-export const TODO_TOOL_DESCRIPTION = `**Tasks referenced by verbatim content string, NEVER an auto-generated ID — no "task-1"/"task-N" exists. Pass the content text in the task field.**
+export const TODO_TOOL_DESCRIPTION = `**Tasks referenced by verbatim content string, NEVER an auto-generated ID: no "task-1"/"task-N" exists. Pass the content text in the task field.**
 
 On each completion the earliest still-open task (in phase order) auto-promotes to in_progress.
-Completing tasks out of phase order can move this pointer **back** to an earlier phase — expected; completed tasks are never reverted.
+Completing tasks out of phase order can move this pointer **back** to an earlier phase. This is expected; completed tasks are never reverted.
 
 ## Operations
 
@@ -19,7 +19,7 @@ Completing tasks out of phase order can move this pointer **back** to an earlier
 | drop | task or phase | Mark abandoned |
 | rm | task or phase (optional) | Remove task or phase; omit both to clear |
 | append | phase?, items: string[] | Append tasks to phase; lazily creates phase |
-| view | — | Read-only: echo list |
+| view | - | Read-only: echo list |
 
 Example: {"op":"init","list":[{"phase":"Setup","items":["Survey code","Write tests"]}]}
 
@@ -31,15 +31,15 @@ Example: {"op":"init","list":[{"phase":"Setup","items":["Survey code","Write tes
 - Mark tasks done immediately after finishing, then re-check the list against the newest user message. Complete phases in order.
 - NEVER end a turn with a todo call as its only tool call - batch it with the real work: init with the first reads/edits, each done/start with the next action.
 - Blocked? append a task to the active phase, or drop.
-- Keep task/phase strings stable once introduced. done/start/drop take the task's EXACT text — copy it verbatim from the latest todo result; when it is lost, view echoes the list.
+- Keep task/phase strings stable once introduced. done/start/drop take the task's EXACT text: copy it verbatim from the latest todo result; when it is lost, view echoes the list.
 
 ## When to create a list
 - User explicitly requests one
 - User provides a set of tasks
-- New instructions arrive mid-task — reconcile before acting: keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect
+- New instructions arrive mid-task (reconcile before acting): keep what they don't conflict with, amend what they contradict, append what they add; replace only on explicit redirect
 
 <critical>
-User hands you a multi-step plan — phased todo, numbered/bulleted checklist, or "N bugs/items/tasks":
+User hands you a multi-step plan (phased todo, numbered/bulleted checklist, or "N bugs/items/tasks"):
 - You MUST init the list with EVERY item as its own task before working.
 - Enumerate all; NEVER summarize into fewer tasks, sample "the important ones", drop items, or track the rest from memory.
 </critical>`;

@@ -34,7 +34,7 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 function createManualCompactionResult(harness: Harness, summary: string) {
-	const firstEntry = harness.sessionManager.getEntries()[0];
+	const firstEntry = harness.sessionManager.getEntries().find((entry) => entry.type === "message");
 	if (!firstEntry) throw new Error("Expected a session entry before compaction");
 	return {
 		summary,
@@ -52,7 +52,7 @@ function createPostApplyFeedbackExtension(capture: PostApplyFeedbackCapture) {
 	return (pi: ExtensionAPI): void => {
 		pi.on("before_agent_start", async (_event, ctx) => {
 			if (capture.firstSignal) return undefined;
-			const firstEntry = ctx.sessionManager.getEntries()[0];
+			const firstEntry = ctx.sessionManager.getEntries().find((entry) => entry.type === "message");
 			if (!firstEntry) return undefined;
 			capture.firstSignal = ctx.beginCompaction?.({ reason: "extension" });
 			capture.firstContext = ctx;

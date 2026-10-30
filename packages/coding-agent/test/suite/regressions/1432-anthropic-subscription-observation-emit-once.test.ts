@@ -202,7 +202,11 @@ function assistant(text: string, timestamp: number): AssistantMessage {
 }
 
 function runTurn(context: Context): Promise<AssistantMessage> {
-	return streamAnthropicSubscription(model, context, { sessionId: SESSION_ID, streamKind: "main" }).result();
+	return streamAnthropicSubscription(model, context, {
+		cwd: process.cwd(),
+		sessionId: SESSION_ID,
+		streamKind: "main",
+	}).result();
 }
 
 afterEach(() => {

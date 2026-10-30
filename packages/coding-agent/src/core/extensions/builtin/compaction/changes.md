@@ -1,3 +1,69 @@
+## 2026-10-26 - Terminal summarizer failures degrade on every compaction kind (senpi#4340)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: a generator failure classified `summarization-provider-failure` authorizes the deterministic fallback on any compaction kind (like `unsafe-retained-content`), not only required compaction; timeouts, truncation, overflow-exhaustion, empty-summary, refusals, aborts, transient failures and ordinary bugs keep their existing authorization.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: a soft-threshold `pre_prompt` compaction whose summarizer model 404'd cancelled, the session rejected it, and the pending prompt failed with RequiredCompactionError — "Compaction rejected: compaction generator failed" while the deterministic recovery sat gated off.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/index.ts`: the recovery authorization lives in the builtin generator's catch; no extension hook can widen it.
+
+### Expected merge conflict zones
+
+- LOW: the generator catch condition in `compaction/index.ts`.
+
+## 2026-10-24 - Persist budget notices after the cached system prefix (senpi#4166)
+
+### What changed
+
+- `orchestration.ts`: budget notices use a hidden custom message with explicit
+  before-prompt placement, including when attached to a new restoration payload.
+- `index.ts`: returns that message through before_agent_start's persisted message delivery,
+  never a systemPrompt rewrite. Existing restoration payloads receive the notice only when
+  their new message is created; sent messages remain unchanged.
+- `token-budget-reminder.ts`: persisted notice metadata is scoped to the latest accepted
+  compaction entry on the active branch. Reload and resume inside that epoch do not
+  append another notice; a new compaction permits a new estimate.
+
+### Why
+
+Changing or removing a numeric budget notice in the system text invalidated the cached prefix.
+The notice and its stale numeric estimate intentionally remain in conversation history
+until compaction. This differs from the standalone reminder rolled back on 2026-08-30:
+the notice precedes the user's prompt instead of following it, preserving the final user
+message for fallback dispatch without rewriting the system or earlier checkpoints.
+
+### Why an extension could not handle it
+
+The compaction builtin itself owns budget calculation and delivery.
+
+### Expected merge conflict zones
+
+- `index.ts`: before_agent_start return; `orchestration.ts`: reminder delivery.
+
+## 2026-10-24 - Budget-only fallback searches shorter safe suffixes (senpi#4161)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: an over-budget candidate enables the later-boundary search, retaining the existing replay, tool-chain, reconstruction and budget checks. Rejection diagnostics prioritize budget failures at structurally valid boundaries over invalid-cut noise, retaining per-reason counts, the first candidate and the smallest measured candidate. Each boundary is checked once across search passes.
+- The selected suffix can start after the latest user turn, as the unsafe-content recovery already allowed; only checkpoint `taskIntent`, when available, carries that request into the reduced context.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: default retention could reject every earlier boundary while never considering a smaller safe suffix. Budget failures also received reconstruction/reload advice. Reported by 승기 in the OmO KakaoTalk room (#4161). This does not change #4148's envelope estimator or #2942's broader recovery ladder.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: this is the builtin compaction extension's existing fallback selector and diagnostic formatter.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/deterministic-fallback.ts`: candidate rejection accounting, the later-safe-boundary guard, and rejection formatting.
+
 ## 2026-10-22 - Frontier steps keep the reduced prefix cacheable (senpi#3242)
 
 ### What changed
@@ -2357,3 +2423,21 @@ This is the builtin extension that owns summary generation and its retry loop.
 ### Expected merge conflict zones
 
 The overflow branches of the retry loop in `runExtensionCompaction` in `speculative.ts`.
+
+## 2026-10-23 - Summarization bound reaches inside the last turn (senpi#4079)
+
+### What changed
+
+`overflow-retry.ts`: `boundSummarizationInput` and `shrinkSummarizationInputForOverflowRetry` now prune through `pruneSummarizationInputToBudget`. It drops the oldest history first, as before, and then, when the last turn alone is still over the budget, that turn's oldest tool call/result pairs, never a call without its result. The turn's request is never dropped: when it alone is over the budget, `boundSummarizationInput` cuts its text to fit (`truncateRequestToBudget`), and the shrink-retry does the same when the request is the only message left; otherwise the shrink-retry's last-resort drop removes the oldest entry after the request instead of the request itself. Every caller of the two helpers gets this: core's history summary (senpi#4032) and split-turn prefix summary, and this extension's merged request. `boundSummarizationInput` never returns an empty list: a turn with no user-like request (one that starts with a custom or summary entry) keeps its newest message, so the callers need no fallback of their own. A request cut again by a later retry carries one note with the combined count, and the cut ratio is measured on its text alone. `pruneOldMessagesToBudget`, which live-context pruning (`emergency-prune.ts`, `btw/side-query.ts`) uses, is unchanged.
+
+### Why
+
+A single turn close to the window could not be bounded at all: the old rule only removed messages before the last user message, so the summary request overflowed and the compaction failed. Core's split-turn prefix summary and this extension's merged request share the rule.
+
+### Why an extension could not handle it
+
+This is the builtin extension that owns these helpers; core imports them for its own summary requests.
+
+### Expected merge conflict zones
+
+`boundSummarizationInput` / `shrinkSummarizationInputForOverflowRetry` in `overflow-retry.ts`.

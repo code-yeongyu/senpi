@@ -11,6 +11,8 @@ import type {
 } from "./connection-types.ts";
 import { diagnoseCapturedMcpConnectFailure, diagnoseMcpConnectFailure } from "./diagnose.ts";
 import { ConnectError } from "./errors.ts";
+import { legacyMcpFormEligible } from "./elicitation.ts";
+import { isModernMcpClient, legacyMcpFormsAdvertised } from "./modern/request.ts";
 import type { McpLogger } from "./log.ts";
 import { subscribeMcpServerLogging } from "./logging.ts";
 import { isMcpNeedsAuthError } from "./needs-auth.ts";
@@ -39,14 +41,22 @@ export class ServerConnection {
 	readonly #config: ServerConnectionOptions["config"];
 	readonly #authProvider: McpOAuthProvider | undefined;
 	readonly #elicitationUiProvider: ServerConnectionOptions["elicitationUiProvider"];
+	readonly #elicitationEnabled: ServerConnectionOptions["elicitationEnabled"];
+	readonly #resolveConfig: ServerConnectionOptions["resolveConfig"];
 	readonly #projectPolicy: ServerConnectionOptions["projectPolicy"];
 	#policyAbort: AbortController | undefined;
+	#requestLifetime = new AbortController();
+	get requestLifetimeSignal(): AbortSignal {
+		return this.#requestLifetime.signal;
+	}
 	#startedGrantNames: readonly string[] = [];
 	#state: ServerConnectionState;
 	#generation = 0;
 	#connection: McpTransportConnection | undefined;
 	#pendingConnection: McpTransportConnection | undefined;
 	#pendingConnect: Promise<Client> | undefined;
+	#renegotiatingForms: Promise<Client> | undefined;
+	#stopFormReadiness: (() => void) | undefined;
 	#lastError: Error | undefined;
 	readonly #stateListeners = new Set<ServerConnectionListener<ServerConnectionStateChangedEvent>>();
 	readonly #toolsListeners = new Set<ServerConnectionListener<ServerConnectionToolsChangedEvent>>();
@@ -59,6 +69,8 @@ export class ServerConnection {
 		this.#env = options.env;
 		this.#authProvider = options.authProvider;
 		this.#elicitationUiProvider = options.elicitationUiProvider;
+		this.#elicitationEnabled = options.elicitationEnabled;
+		this.#resolveConfig = options.resolveConfig;
 		this.#projectPolicy = options.projectPolicy;
 		this.#startedGrantNames = options.projectPolicy?.initial.grantedNames ?? [];
 		this.#state = options.config.enabled ? "idle" : "disabled";
@@ -112,9 +124,37 @@ export class ServerConnection {
 		return this.#connection?.getRootPid() ?? null;
 	}
 	connect(): Promise<Client> {
+		return this.#renegotiatingForms ?? this.#connect();
+	}
+
+	#legacyFormsChanged(client: Client): boolean {
+		return (
+			this.#elicitationUiProvider?.enforced?.() === true &&
+			!isModernMcpClient(client) &&
+			legacyMcpFormsAdvertised(client) !==
+				legacyMcpFormEligible(this.#elicitationUiProvider, this.#elicitationEnabled !== false)
+		);
+	}
+
+	#refreshLegacyForms(): void {
+		if (this.#state !== "connected" || this.#renegotiatingForms || !this.#legacyFormsChanged(this.client)) return;
+		// Publish the single flight before renewing: connect callers join it while the old transport closes.
+		this.#renegotiatingForms = Promise.resolve()
+			.then(() => this.renew())
+			.finally(() => {
+				this.#renegotiatingForms = undefined;
+			});
+		void this.#renegotiatingForms.catch((error: unknown) => {
+			this.markDegraded(error instanceof Error ? error : new Error(String(error)));
+		});
+	}
+
+	#connect(): Promise<Client> {
 		if (this.#state === "disabled") {
 			return Promise.reject(this.#connectError(`MCP server ${this.serverName} is disabled`, "connect"));
 		}
+		if (this.#elicitationUiProvider?.enforced?.())
+			this.#stopFormReadiness ??= this.#elicitationUiProvider.subscribe?.(() => this.#refreshLegacyForms());
 		if (this.#state === "connected") return Promise.resolve(this.client);
 		if (this.#pendingConnect) return this.#pendingConnect;
 
@@ -171,14 +211,18 @@ export class ServerConnection {
 			throw this.#connectError(`MCP server ${this.serverName} is disabled`, "renew");
 		}
 		this.#policyAbort?.abort();
+		this.#requestLifetime.abort();
+		this.#requestLifetime = new AbortController();
 		this.#generation++;
 		this.#pendingConnect = undefined;
 		this.#setState("idle");
 		await this.#disposeOwnedConnections();
-		return this.connect();
+		return this.#connect();
 	}
 
 	bumpGeneration(): Promise<void> {
+		this.#requestLifetime.abort();
+		this.#requestLifetime = new AbortController();
 		this.#policyAbort?.abort();
 		this.#generation++;
 		this.#pendingConnect = undefined;
@@ -188,6 +232,9 @@ export class ServerConnection {
 	}
 
 	disable(): Promise<void> {
+		this.#stopFormReadiness?.();
+		this.#stopFormReadiness = undefined;
+		this.#requestLifetime.abort();
 		this.#policyAbort?.abort();
 		this.#generation++;
 		this.#pendingConnect = undefined;
@@ -197,6 +244,9 @@ export class ServerConnection {
 	}
 
 	async dispose(): Promise<void> {
+		this.#stopFormReadiness?.();
+		this.#stopFormReadiness = undefined;
+		this.#requestLifetime.abort();
 		this.#policyAbort?.abort();
 		this.#generation++;
 		this.#pendingConnect = undefined;
@@ -268,7 +318,9 @@ export class ServerConnection {
 							return current;
 						},
 			elicitationUiProvider: this.#elicitationUiProvider,
+			elicitationEnabled: this.#elicitationEnabled,
 			logger: this.#logger,
+			resolveConfig: this.#resolveConfig,
 			serverName: this.serverName,
 		});
 	}
@@ -345,6 +397,8 @@ export class ServerConnection {
 		// Server logging notifications (todo 42): RFC-5424 → the per-server
 		// logger, filtered by config.logLevel, burst-capped.
 		subscribeMcpServerLogging(connection.client, { logLevel: this.#config.logLevel, logger: this.#logger });
+		// Readiness can change while initialize is in flight; never publish that stale negotiation as connected.
+		if (this.#legacyFormsChanged(connection.client)) return this.renew();
 		this.#setState("connected");
 		this.markToolsChanged("connect");
 		return connection.client;

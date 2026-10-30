@@ -49,7 +49,7 @@ export const stream: StreamFunction<"devin-agent", DevinAgentOptions> = (
 	context: TranscriptContext,
 	options?: DevinAgentOptions,
 ) => {
-	const events = new AssistantMessageEventStream();
+	const events = new AssistantMessageEventStream({ captureBlocks: true });
 	void run(model, context, events, options);
 	return events;
 };

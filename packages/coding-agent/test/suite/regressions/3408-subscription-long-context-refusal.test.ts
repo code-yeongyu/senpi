@@ -59,6 +59,7 @@ async function liveLane(): Promise<{
 	let active = true;
 	const pi = new Proxy({} as ExtensionAPI, {
 		get: (_target, key) => {
+			if (key === "cwd") return process.cwd();
 			if (key === "registerProvider")
 				return (name: string, config: ProviderConfig) => {
 					if (!active) throw new Error("stale extension context");

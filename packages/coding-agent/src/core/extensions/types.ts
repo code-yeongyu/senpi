@@ -8,9 +8,12 @@
  * - Interact with the user via UI primitives
  */
 
+import type { PromptSizeReport } from "../prompt-size-report.ts";
 import type { InputOrigin } from "../input-origin.ts";
+import type { LifecycleApi } from "../session-lifecycle-types.ts";
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { ContextEvent } from "./context-event.ts";
+import type { ExtensionRpcRequestHandler } from "./rpc-context.ts";
 
 export type { ContextEvent } from "./context-event.ts";
 
@@ -71,6 +74,7 @@ import type { BashResult } from "../bash-executor.ts";
 import type { BrowserEngine } from "../browser-engine.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { WarmAnchorSnapshot } from "../compaction/warm-anchor.ts";
+import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
 import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
@@ -94,6 +98,7 @@ import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo, SourceScope } from "../source-info.ts";
 import type { AccountLimits } from "../subscription-limits/limit-store.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import type { ToolBarrierSpec, ToolWorkspaceEffect } from "../tool-barrier.ts";
 import type { BashOperations } from "../tools/bash.ts";
 import type { EditToolDetails } from "../tools/edit.ts";
 import type {
@@ -115,6 +120,7 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { McpServerRegistry } from "./mcp-server-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
@@ -144,6 +150,8 @@ export type CompactionRejectionCause =
 
 /** Options for extension UI dialogs. */
 export interface ExtensionUIDialogOptions {
+	/** Private local dialog: emits no generic blocked event or pending marker. Not an RPC field. */
+	ephemeral?: boolean;
 	/** AbortSignal to programmatically dismiss the dialog. */
 	signal?: AbortSignal;
 	/** Timeout in milliseconds. Dialog auto-dismisses with live countdown display. */
@@ -247,6 +255,11 @@ export interface ExtensionUIContext {
 		request: QuestionRequest,
 		opts?: ExtensionUIDialogOptions & {
 			onProgress?: (draft: { answers?: QuestionResponse["answers"]; comment?: string }) => void;
+			/**
+			 * How the answer reaches the model. A "user-message" answer is reported as a person's input when it
+			 * is delivered, so a UI adapter must not report it again.
+			 */
+			deliver?: "tool-result" | "user-message";
 		},
 	): Promise<QuestionResponse>;
 
@@ -258,6 +271,14 @@ export interface ExtensionUIContext {
 
 	/** Set status text in the footer/status bar. Pass undefined to clear. */
 	setStatus(key: string, text: string | undefined): void;
+
+	/**
+	 * Report the USD the subagent tree under this session has spent (every child, nested child and
+	 * background child, each counted once). The footer shows it after the session's own cost, as
+	 * `$0.380 (+1.270)`. Pass undefined to clear; a negative or non-finite figure clears it too.
+	 * Optional so UI contexts written before it keep compiling; call it as `ctx.ui.setSubagentCost?.(x)`.
+	 */
+	setSubagentCost?(costUsd: number | undefined): void;
 
 	/** Set the working/loading message shown during streaming. Call with no argument to restore default. */
 	setWorkingMessage(message?: string): void;
@@ -526,6 +547,8 @@ export interface ExtensionContext {
 	readonly goalStoreFile?: string;
 	/** Browser engine the opener chose for THIS session (`open_session.browserEngine`); absent when it chose none. */
 	readonly browserEngine?: BrowserEngine;
+	/** Caller env the opener gave THIS session (`open_session.env`, senpi#4381); absent when it gave none. */
+	readonly sessionEnv?: Readonly<Record<string, string>>;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -628,6 +651,13 @@ export interface ExtensionContext {
 	getLookAtSettings(): { enabled: boolean; models: string[] | undefined };
 	/** Get resolved ask-user settings from global/project overrides and --no-ask-user. */
 	getAskUserSettings?(): { enabled: boolean; timeoutMinutes: number };
+	/**
+	 * Run `publish` once every `session_start` handler of the current dispatch has returned, in admission order;
+	 * outside a `session_start` dispatch it runs now. Recovered work published here cannot be answered while a
+	 * later startup handler is still preparing the session. Skipped when the session was replaced, reloaded or
+	 * disposed before dispatch ended; a returned promise's rejection is reported as an extension error.
+	 */
+	afterSessionStart?(publish: () => void | Promise<void>): void;
 	/** Get resolved image settings from global/project/user overrides. */
 	getImageSettings(): { autoResize: boolean; blockImages: boolean };
 	/** Manage retry fallback through the SettingsManager owned by this session. */
@@ -680,6 +710,11 @@ export interface ExtensionContext {
 	/** Get extension-declared MCP servers aggregated across all extensions (first-wins). */
 	getRegisteredMcpServers?(): readonly RegisteredMcpServerDeclaration[];
 	/**
+	 * Whether a loaded extension handles `mcp_servers_change` and therefore connects the registered
+	 * servers itself. The built-in MCP gateway then leaves them alone, so no server is connected twice.
+	 */
+	extensionConnectsMcpServers?(): boolean;
+	/**
 	 * Report what the currently running tool_call/tool_result handler is doing.
 	 * Updates the live "Running PreToolUse/PostToolUse hook" status row in the TUI.
 	 * Only available on the context passed to tool_call/tool_result handlers; calls
@@ -693,9 +728,13 @@ export interface PromptCachePrefixRequest {
 	readonly model: Model<Api>;
 	readonly context: Context;
 	readonly options: SimpleStreamOptions;
+	/** Sizes of the exact preview composition; never includes prompt or tool content. */
+	readonly sizeReport?: PromptSizeReport;
 }
 
 export interface PromptCachePrefixRequestOptions {
+	/** Inspect composition without resolving credentials (which may refresh over the network). */
+	readonly sizesOnly?: boolean;
 	/** Aborting stops the preview pass before its next handler and resolves the build as `skipped`. */
 	readonly signal?: AbortSignal;
 }
@@ -1092,6 +1131,12 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	annotations?: ToolAnnotations;
 
 	/**
+	 * What a call can do to the workspace. `"read"` tools run while a tool barrier is armed; anything else,
+	 * including a tool that leaves this unset, waits for its release (senpi#3717).
+	 */
+	workspaceEffect?: ToolWorkspaceEffect;
+
+	/**
 	 * Whether registering the tool activates it. Default: `true` for `direct` and `model-only` tools;
 	 * other exposures are never activated on registration. A tool with `defaultActive: false` is
 	 * activated by naming it in `--tools` or the `defaultTools` setting, or with `setActiveTools()`.
@@ -1265,6 +1310,18 @@ export interface ResourcesDiscoverResult {
 	hookPaths?: ResourceDiscoverEntry[];
 }
 
+/**
+ * Fired when an extension registers or unregisters an MCP server after the extensions are bound
+ * (see {@link ExtensionAPI.registerMcpServer}). Servers registered while extensions load are read
+ * with `pi.getMcpServers()` on `session_start`. Handling this event marks an extension as the one
+ * that connects registered servers.
+ */
+export interface McpServersChangeEvent {
+	type: "mcp_servers_change";
+	/** Every registered server after the change. */
+	servers: RegisteredMcpServer[];
+}
+
 // ============================================================================
 // Session Events
 // ============================================================================
@@ -1272,6 +1329,8 @@ export interface ResourcesDiscoverResult {
 /** Fired when a session is started, loaded, or reloaded */
 export interface SessionStartEvent {
 	type: "session_start";
+	/** Diagnostic startup: built-in MCP attach and cache prewarm are skipped; every other handler runs; no turn starts. */
+	readonly sizesOnly?: boolean;
 	/** Why this session start happened. */
 	reason: "startup" | "reload" | "new" | "resume" | "fork";
 	/** Initial model resolver branch, when the session was resolved during this startup. */
@@ -1822,6 +1881,22 @@ export interface ToolExecutionEndEvent {
 
 export type ModelSelectSource = "set" | "cycle" | "restore" | "fallback" | "fallback-revert";
 
+/**
+ * Fired when an extension-registered provider's OAuth login starts, before the provider's own login code runs.
+ * Every handler is awaited in order, so a host can acquire what the login needs first (for example download and
+ * pin the Claude Code binary and set `CLAUDE_CODE_EXECUTABLE`). A handler that throws is reported and the login
+ * still runs. There is no handler budget: the login's own cancel and idle timeout bound it, through `signal`.
+ */
+export interface ProviderLoginStartEvent {
+	type: "provider_login_start";
+	/** The provider id passed to `pi.registerProvider`. */
+	provider: string;
+	/** Aborts when the login is cancelled. */
+	signal: AbortSignal;
+	/** Shows a progress line in the login UI. */
+	progress: (message: string) => void;
+}
+
 /** Fired when a new model is selected */
 export interface ModelSelectEvent {
 	type: "model_select";
@@ -1891,6 +1966,12 @@ export interface UserBashEvent {
 /** Source of user input */
 export type InputSource = "interactive" | "rpc" | "extension";
 
+/**
+ * Who the input came from: `"user"` for a person (typed in the TUI, sent by an RPC client, or a person's answer
+ * delivered through the extension API); `"agent"` for input an extension, tool, subagent or the session itself sends.
+ */
+export type InputAttribution = "user" | "agent";
+
 /** Fired when user input is received, before agent processing */
 export interface InputEvent {
 	type: "input";
@@ -1902,6 +1983,8 @@ export interface InputEvent {
 	images?: ImageContent[];
 	/** Where the input came from */
 	source: InputSource;
+	/** Whether a person or an agent sent the input; `source` says only which channel it arrived on. */
+	attribution: InputAttribution;
 	/** How the input will be delivered during streaming, or undefined when idle */
 	streamingBehavior?: "steer" | "followUp";
 }
@@ -2142,6 +2225,7 @@ export function isToolCallEventType(toolName: string, event: ToolCallEvent): boo
 export type ExtensionEvent =
 	| ProjectTrustEvent
 	| ResourcesDiscoverEvent
+	| McpServersChangeEvent
 	| SessionEvent
 	| ContextEvent
 	| ContextWithSystemEvent
@@ -2166,6 +2250,7 @@ export type ExtensionEvent =
 	| ToolExecutionUpdateEvent
 	| ToolExecutionEndEvent
 	| ModelSelectEvent
+	| ProviderLoginStartEvent
 	| SystemPromptChangeEvent
 	| ThinkingLevelSelectEvent
 	| ToolActivatedEvent
@@ -2231,9 +2316,14 @@ export interface MessageEndEventResult {
 }
 
 export interface BeforeAgentStartEventResult {
-	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
+	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details"> & {
+		/** Insert before this turn's triggering prompt instead of appending after it. */
+		placement?: "before-prompt";
+	};
 	/** Replace the complete system prompt for this turn. Later handlers observe this exact override. */
 	systemPrompt?: string;
+	/** Exact render parts of a complete replacement, used only by preview accounting. */
+	readonly systemPromptParts?: readonly DynamicSystemPromptPart[];
 }
 
 export interface SessionBeforeSwitchResult {
@@ -2412,6 +2502,8 @@ export type ExtensionHandler<E, R = undefined> = (event: E, ctx: ExtensionContex
  * ExtensionAPI passed to extension factory functions.
  */
 export interface ExtensionAPI {
+	/** Durable engine custody and generation-fenced child/workflow reporting. */
+	readonly lifecycle: LifecycleApi;
 	// =========================================================================
 	// Session Context
 	// =========================================================================
@@ -2468,6 +2560,7 @@ export interface ExtensionAPI {
 	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): () => void;
 	on(event: "session_compact_failed", handler: ExtensionHandler<SessionCompactFailedEvent>): () => void;
 	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): () => void;
+	on(event: "mcp_servers_change", handler: ExtensionHandler<McpServersChangeEvent>): () => void;
 	on(event: "session_abort", handler: ExtensionHandler<SessionAbortEvent>): () => void;
 	on(event: "session_extensions_removed", handler: ExtensionHandler<SessionExtensionsRemovedEvent>): () => void;
 	on(event: "session_move_export", handler: ExtensionHandler<SessionMoveExportEvent>): () => void;
@@ -2518,6 +2611,7 @@ export interface ExtensionAPI {
 	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): () => void;
 	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): () => void;
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent, ModelSelectEventResult>): () => void;
+	on(event: "provider_login_start", handler: ExtensionHandler<ProviderLoginStartEvent>): () => void;
 	on(event: "system_prompt_change", handler: ExtensionHandler<SystemPromptChangeEvent>): () => void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): () => void;
 	on(event: "tool_activated", handler: ExtensionHandler<ToolActivatedEvent>): () => void;
@@ -2564,8 +2658,21 @@ export interface ExtensionAPI {
 	/** Registers a file-backed module `ctx.offload(id, ...)` can run (see {@link ChildModuleRegistration}). */
 	registerChildModule(registration: ChildModuleRegistration): void;
 
-	/** Register an MCP server that the agent can use. Factory-time only. */
+	/**
+	 * Register an MCP server for this session, with the same config as an `mcpServers` entry in
+	 * `mcp.json`. Servers registered while the extension loads connect on `session_start`; the
+	 * extension that handles `mcp_servers_change` connects later registrations right away.
+	 * Registering a name again replaces this extension's earlier registration. When several extensions
+	 * register the same name, the declaration from the extension earliest in the session's extension
+	 * order is kept, regardless of which registered first (see `getMcpServers` in docs/extensions.md
+	 * for that order). The registration is not saved: register again on every load.
+	 * Throws for invalid configs.
+	 */
 	registerMcpServer(name: string, config: McpServerDeclaration): void;
+	/** Remove an MCP server this extension registered. */
+	unregisterMcpServer(name: string): void;
+	/** Every MCP server registered by extensions. For extensions that connect MCP servers. */
+	getMcpServers(): RegisteredMcpServer[];
 
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
@@ -2719,6 +2826,16 @@ export interface ExtensionAPI {
 	/** Get the names of the active tools, which are the tools declared to the model. */
 	getActiveTools(): string[];
 
+	/**
+	 * Arm the session's tool barrier (senpi#3717): until `releaseToolBarrier(id)`, the end of the turn it
+	 * belongs to, or `deadlineMs`, tools not declared `workspaceEffect: "read"` wait before they run.
+	 * Armed while idle, it belongs to the next turn.
+	 */
+	armToolBarrier(spec: ToolBarrierSpec): void;
+
+	/** Open the barrier armed under `id`; false (a no-op) when no barrier with that id is armed. */
+	releaseToolBarrier(id: string): boolean;
+
 	/** Get all configured tools with parameter schema, prompt guidelines, exposure, and source metadata. */
 	getAllTools(): ToolInfo[];
 
@@ -2780,9 +2897,12 @@ export interface ExtensionAPI {
 	 * Register or override a model provider.
 	 *
 	 * If `models` is provided: replaces all existing models for this provider.
-	 * If only `baseUrl` is provided: overrides the URL for existing models.
+	 * If only `baseUrl` is provided: overrides the URL for existing models, unless the user's
+	 * models.json sets a `baseUrl` for this provider or model, which always wins.
 	 * If `oauth` is provided: registers OAuth provider for /login support.
-	 * If `streamSimple` is provided: registers a custom API stream handler.
+	 * If `streamSimple` is provided: registers a custom API stream handler. It must send each
+	 * request to `model.baseUrl`: when models.json sets a `baseUrl`, every model of the provider
+	 * carries it.
 	 *
 	 * During initial extension load this call is queued and applied once the
 	 * runner has bound its context. After that it takes effect immediately, so
@@ -2809,7 +2929,7 @@ export interface ExtensionAPI {
 	 * });
 	 *
 	 * @example
-	 * // Override baseUrl for an existing provider
+	 * // Override baseUrl for an existing provider (a models.json baseUrl still wins)
 	 * pi.registerProvider("anthropic", {
 	 *   baseUrl: "https://proxy.example.com"
 	 * });
@@ -2878,7 +2998,7 @@ export interface ExtensionAPI {
 	readonly session: SessionControlActions;
 }
 
-export type ExtensionRpcRequestHandler = (data: unknown) => unknown | Promise<unknown>;
+export type { ExtensionRpcRequestContext, ExtensionRpcRequestHandler } from "./rpc-context.ts";
 
 // ============================================================================
 // Provider Registration Types
@@ -2894,7 +3014,12 @@ export interface ExtensionVirtualModel<TState = unknown> extends Omit<VirtualMod
 export interface ProviderConfig {
 	/** Display name for the provider in UI. */
 	name?: string;
-	/** Base URL for the API endpoint. Required when defining models. */
+	/**
+	 * Base URL for the API endpoint. Required when defining models. A models.json `baseUrl` for this
+	 * provider (or a models.json `models[i].baseUrl`) takes precedence over it and over model-level
+	 * `baseUrl` values declared here, for every model of the provider. `streamSimple`, `images` and
+	 * `classifiers` must therefore send each request to `model.baseUrl`, not to this value.
+	 */
 	baseUrl?: string;
 	/** API key literal, env interpolation ($ENV_VAR or ${ENV_VAR}), or leading !command. Required when defining models (unless oauth provided). */
 	apiKey?: string;
@@ -2948,7 +3073,12 @@ export interface ProviderConfig {
 		 * supplies no credential, so the provider stays unavailable. A returned
 		 * result should carry `ambient: true`.
 		 */
-		resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
+		resolve(input: {
+			ctx: AuthContext;
+			signal: AbortSignal;
+			/** Read-only env of another provider's stored credential; routing metadata only, never keys. */
+			storedProviderEnv?(providerId: string): Promise<Record<string, string> | undefined>;
+		}): Promise<AuthResult | undefined>;
 	};
 	/** OAuth provider for /login support. The `id` is set automatically from the provider name. */
 	oauth?: {
@@ -3107,6 +3237,8 @@ type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 export interface SendMessageOptions {
 	triggerTurn?: boolean;
 	deliverAs?: "steer" | "followUp" | "nextTurn";
+	/** A delivery ticket from `pi.lifecycle.obligations` (senpi#3864). */
+	ticket?: string;
 }
 
 /** One wake inside an itemized `sendMessage` batch (senpi#3811 design 4.5). */
@@ -3281,6 +3413,8 @@ export interface ExtensionRuntimeState {
 	pendingNativeProviderRegistrations: PendingNativeProviderRegistration[];
 	/** Virtual model registrations queued during extension loading, processed when runner binds. */
 	pendingVirtualModelRegistrations: Array<{ definition: VirtualModelDefinition; extensionPath: string }>;
+	/** Servers registered with `pi.registerMcpServer()`. */
+	mcpServers: McpServerRegistry;
 	/** Create an extension context. Throws before the runner binds. */
 	createContext: () => ExtensionContext;
 	/** Throws when this extension instance is stale after runtime replacement. */
@@ -3302,6 +3436,8 @@ export interface ExtensionRuntimeState {
 	registerRemovedToolHint: RegisterRemovedToolHintHandler;
 	registerVirtualModel: (definition: VirtualModelDefinition, extensionPath?: string) => void;
 	unregisterVirtualModel: (provider: string, id: string) => void;
+	/** Awaits every `provider_login_start` handler. Resolves at once until a runner owns this runtime. */
+	emitProviderLoginStart: (event: ProviderLoginStartEvent) => Promise<void>;
 	/** The session's eval handle host, set by `pi.provideEvalHandleHost`; cleared when the runtime is invalidated. */
 	evalHandleHost?: EvalHandleHost;
 }
@@ -3311,6 +3447,7 @@ export interface ExtensionRuntimeState {
  * Provided to runner.initialize(), copied into the shared runtime.
  */
 export interface ExtensionActions {
+	lifecycle?: LifecycleApi;
 	sendMessage: SendMessageHandler;
 	/** Hosts without itemized custody omit it: an itemized send is then delivered plainly and answers no receipts. */
 	sendItemizedMessage?: SendItemizedMessageHandler;
@@ -3341,6 +3478,9 @@ export interface ExtensionActions {
 	setSessionFastMode: SetSessionFastModeHandler;
 	/** Bound by `AgentSession`; a runtime bound without it keeps the pre-bind stub. */
 	sessionControl?: SessionControlActions;
+	/** Bound by `AgentSession` (senpi#3717); a runtime bound without them has no tool barrier. */
+	armToolBarrier?: (spec: ToolBarrierSpec) => void;
+	releaseToolBarrier?: (id: string) => boolean;
 }
 
 /**
@@ -3387,6 +3527,7 @@ export interface ExtensionContextActions {
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getBrowserEngine?: () => BrowserEngine | undefined;
+	getSessionEnv?: () => Readonly<Record<string, string>> | undefined;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
@@ -3458,11 +3599,16 @@ export interface ExtensionCommandContextActions {
  */
 export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {}
 
-/** Loaded extension with all registered items. */
-export interface RegisteredMcpServerDeclaration {
+/** An MCP server registered with `pi.registerMcpServer()`, as `pi.getMcpServers()` lists it. */
+export interface RegisteredMcpServer {
 	name: string;
 	config: McpServerDeclaration;
+	/** Path of the extension that registered the server. */
 	extensionPath: string;
+}
+
+/** A registration as the built-in MCP gateway reads it: the public shape plus the registering extension's cwd. */
+export interface RegisteredMcpServerDeclaration extends RegisteredMcpServer {
 	registrationCwd: string;
 }
 

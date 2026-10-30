@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { runClaudeCodeModelSupportReport, runPackageLockRefresh, runProviderDefaultsCheck } from "./release-artifacts.mjs";
+import {
+	runClaudeCodeModelSupportReport,
+	runGenerateModels,
+	runPackageLockRefresh,
+	runProviderDefaultsCheck,
+} from "./release-artifacts.mjs";
 
 describe("release package-lock refresh", () => {
 	it("refreshes package-lock.json, reconciles native optionals, then refreshes bun.lock", () => {
@@ -71,6 +76,24 @@ describe("release provider-default check (senpi#2645)", () => {
 		};
 
 		assert.throws(() => runProviderDefaultsCheck(false, failingCheck, () => {}, () => {}), /check:provider-defaults/);
+	});
+});
+
+describe("release model regeneration", () => {
+	// senpi#4067: an OpenGateway feed break keeps the committed catalog in the release; the dedicated
+	// `--strict --providers opengateway` refresh workflow is what fails on it.
+	it("opts into keeping the last good OpenGateway catalog", () => {
+		const commands = [];
+		runGenerateModels(
+			false,
+			(command, args) => commands.push([command, args]),
+			() => {},
+			() => {},
+		);
+
+		assert.deepEqual(commands, [
+			["npm", ["--prefix", "packages/ai", "run", "generate-models", "--", "--keep-last-good-opengateway"]],
+		]);
 	});
 });
 

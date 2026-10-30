@@ -1,5 +1,6 @@
 import { isBrowserEngine } from "../../core/browser-engine.ts";
 import { clientMessageIdentitySchema } from "../../core/client-message-identity.ts";
+import { MAX_TOOL_BARRIER_ID_LENGTH, toolBarrierSpecError } from "../../core/tool-barrier.ts";
 import { validatePauseCommand } from "./pause-command-validation.ts";
 
 export const MAX_RPC_MESSAGE_CHARACTERS = 1_000_000;
@@ -94,6 +95,20 @@ export function rpcCommandPayloadError(command: unknown): string | undefined {
 		!clientMessageIdentitySchema.safeParse(value).success
 	) {
 		return "clientMessageId and clientTurnId must be non-empty strings of at most 256 characters.";
+	}
+	if (value.type === "prompt" && value.toolBarrier !== undefined) {
+		const barrierError = toolBarrierSpecError(value.toolBarrier);
+		if (barrierError !== undefined) return barrierError;
+	}
+	if (
+		value.type === "release_tool_barrier" &&
+		!(
+			typeof value.barrierId === "string" &&
+			value.barrierId.length > 0 &&
+			value.barrierId.length <= MAX_TOOL_BARRIER_ID_LENGTH
+		)
+	) {
+		return `barrierId must be a non-empty string of at most ${MAX_TOOL_BARRIER_ID_LENGTH} characters.`;
 	}
 	if (
 		(value.type === "dequeue_message" || value.type === "edit_queued_message") &&

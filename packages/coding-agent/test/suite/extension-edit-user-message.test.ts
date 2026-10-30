@@ -48,6 +48,7 @@ async function fixture(mode: Mode, metadata = false) {
 		editor: { getText: () => "", setText: vi.fn() },
 		renderInitialMessages: vi.fn(),
 		showStatus: vi.fn(),
+		setExtensionStatus: vi.fn(),
 		flushCompactionQueue: vi.fn(async () => {}),
 		setupAutocompleteProvider: vi.fn(),
 		setupExtensionShortcuts: vi.fn(),

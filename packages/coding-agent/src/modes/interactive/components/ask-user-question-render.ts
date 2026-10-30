@@ -88,8 +88,8 @@ export function renderSubmitLine(state: AskUserQuestionState): string {
 	}
 	const hint =
 		state.focus === "options" && state.activeQuestion.multiSelect
-			? " — Enter toggles; Tab to Submit"
-			: " — Enter advances";
+			? " - Enter toggles; Tab to Submit"
+			: " - Enter advances";
 	return theme.fg("accent", theme.bold(`Submit (${answered}/${total} answered)`)) + theme.fg("muted", hint);
 }
 

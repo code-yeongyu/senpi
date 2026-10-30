@@ -163,6 +163,11 @@ export interface Provider<TApi extends Api = Api> {
 	readonly id: string;
 	readonly name: string;
 
+	/**
+	 * The provider's endpoint. Transports send each request to `model.baseUrl`, never to this value or a
+	 * hard-coded host: senpi sets every model's `baseUrl` (and this field) to a user's models.json
+	 * `baseUrl` when one is configured for the provider.
+	 */
 	readonly baseUrl?: string;
 	readonly headers?: ProviderHeaders;
 	/** Omitting it means the shipped senpi default profile applies. */
@@ -1246,6 +1251,15 @@ export function hasApi<TApi extends Api>(model: AnyModel, api: TApi): model is M
 }
 
 export function calculateCost(model: AnyModel, usage: Usage, atMs: number = Date.now()): Usage["cost"] {
+	if (model.cost.unknown) {
+		usage.cost.input = 0;
+		usage.cost.output = 0;
+		usage.cost.cacheRead = 0;
+		usage.cost.cacheWrite = 0;
+		usage.cost.total = 0;
+		usage.costUnknown = true;
+		return usage.cost;
+	}
 	const inputTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 	const card = costCardAt(model.cost, atMs);
 	let rates: ModelCostRates = card;

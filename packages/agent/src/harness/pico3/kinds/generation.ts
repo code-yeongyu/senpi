@@ -6,7 +6,11 @@ import type {
 	DeferredHandle,
 	ToolCall,
 } from "@earendil-works/pi-ai";
-import { AssistantMessageFrameEncoder, isRetryableAssistantError } from "@earendil-works/pi-ai";
+import {
+	AssistantMessageFrameEncoder,
+	isRetryableAssistantError,
+	sanitizeProviderErrorMessage,
+} from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { planManagedEntry, prepareDraft, type SystemInstructionsHooks, sameSnapshot, takeSnapshot } from "../system.ts";
 import {
@@ -403,6 +407,8 @@ async function stream(
 			errorMessage: String(error),
 			timestamp: rt.now(),
 		};
+		// A thrown provider error never passed the stream boundary: classify and redact it the same way (senpi#4282).
+		sanitizeProviderErrorMessage(terminal);
 	}
 	if (pending.length > 0) await flush();
 	if (terminal === undefined && deferred === undefined) throw new Error("stream ended without a terminal message");

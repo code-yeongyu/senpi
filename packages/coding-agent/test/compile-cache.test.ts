@@ -42,7 +42,16 @@ function runDriver(env: NodeJS.ProcessEnv): { status: number | null; stdout: str
 	writeFileSync(payload, payloadSource);
 	const result = spawnSync(process.execPath, [driver], {
 		encoding: "utf8",
-		env: { ...process.env, MODULE_URL: MODULE_PATH, PAYLOAD_URL: payload, ...env },
+		// The host may disable or redirect the cache (#4114: receipt runners export
+		// NODE_DISABLE_COMPILE_CACHE=1); each case states its own cache settings instead.
+		env: {
+			...process.env,
+			NODE_DISABLE_COMPILE_CACHE: undefined,
+			NODE_COMPILE_CACHE: undefined,
+			MODULE_URL: MODULE_PATH,
+			PAYLOAD_URL: payload,
+			...env,
+		},
 	});
 	return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }

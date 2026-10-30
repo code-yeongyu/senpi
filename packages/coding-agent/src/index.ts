@@ -63,6 +63,8 @@ export {
 	engineBuildIdentityFrom,
 } from "./core/engine-build-identity.ts";
 export { createEventBus, type EventBus, type EventBusController } from "./core/event-bus.ts";
+// Job widgets: hosts register background jobs and their widget-author model route
+export * from "./core/extensions/builtin/job-widgets/public.ts";
 export {
 	type CancelReceipt,
 	EVAL_HANDLE_ERROR_CODES,
@@ -133,6 +135,7 @@ export type {
 	ExtensionFlag,
 	ExtensionHandler,
 	ExtensionRpcRequestHandler,
+	ExtensionRpcRequestContext,
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,
@@ -148,6 +151,7 @@ export type {
 	FindToolCallEvent,
 	GrepToolCallEvent,
 	InlineExtension,
+	InputAttribution,
 	InputDispositionEvent,
 	InputEvent,
 	InputEventResult,
@@ -159,6 +163,7 @@ export type {
 	MarkdownTransformContext,
 	MarkdownTransformer,
 	McpServerDeclaration,
+	McpServersChangeEvent,
 	MessageEndEvent,
 	MessageEndEventResult,
 	MessageRenderer,
@@ -179,6 +184,7 @@ export type {
 	ProviderStreamEvent,
 	ReadToolCallEvent,
 	RegisteredCommand,
+	RegisteredMcpServer,
 	RegisteredTool,
 	ResolvedCommand,
 	ResourcesDiscoverEvent,
@@ -257,6 +263,7 @@ export {
 	type KernelToolInvokeScope,
 	kernelToolsStorage,
 } from "./core/extensions/kernel-tools-context.ts";
+export { ReservedCustodyKey } from "./core/extensions/lifecycle-api.ts";
 // Notice primitives
 export {
 	buildNoticeBox,
@@ -340,6 +347,22 @@ export {
 	createWriteTool,
 	type PromptTemplate,
 } from "./core/sdk.ts";
+export type {
+	ChildLifecycleReport,
+	DeliveryTicketId,
+	HumanWait,
+	LifecycleApi,
+	LifecycleHold,
+	LifecycleWaits,
+	ObligationKind,
+	ObligationToken,
+	SelfSettleResult,
+	SessionLifecycle,
+	SessionLifecycleEvent,
+	SessionLifecycleState,
+	SpawnedBy,
+	WorkObligations,
+} from "./core/session-lifecycle-types.ts";
 export {
 	type BranchSummaryEntry,
 	buildContextEntries,

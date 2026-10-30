@@ -1,3 +1,57 @@
+## 2026-10-27 - Moonshot Kimi K3.1 Pro rows get the K3 request contract (senpi#4442)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `MOONSHOT_KIMI_K3_SERIES_COSTS` (`kimi-k3`, `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`) replaces the `modelId === "kimi-k3"` checks in the Moonshot variant loop and in `applyOpenAICompletionsTranscriptMetadata`. Every listed row on `moonshotai` and `moonshotai-cn` gets the K3 compat (`supportsReasoningEffort`, `thinkingFormat: "openai"`, `requiresReasoningContentOnAssistantMessages`, mid-conversation system and tool messages), the low / high / max `MOONSHOT_KIMI_K3_SERIES_THINKING_LEVEL_MAP`, and its official USD list price. Regenerated `moonshotai.json`, `moonshotai-cn.json` and the manifest; only the K3.1 Pro rows changed.
+
+### Why
+
+- Moonshot documents that K3.1 Pro has the same parameter constraints as `kimi-k3` (top-level `reasoning_effort`, no K2-style `thinking` parameter). The generic Moonshot compat sent `thinking` and dropped the effort level, and `moonshotai-cn` billed a daily-drifting currency conversion instead of the USD list price (senpi#4441).
+
+### Why an extension could not handle it
+
+- The catalog rows are generated build data; an extension cannot correct a built-in model's compat or price before the provider sends the request.
+
+### Expected merge conflict zones
+
+- LOW: the Moonshot variant loop and the Kimi constants near `KIMI_K3_COST` in `generate-models.ts`; regenerated `providers/data/moonshotai*.json` and `.manifest.json` conflict with any other regeneration and are resolved by regenerating.
+
+## 2026-10-24 - Implied costs for Kimi Code K3.1 Pro (senpi#4183)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: `KIMI_CODING_IMPLIED_COSTS` adds `k3.1-pro` (2 / 10 / 0.2 / 2) and `k3.1-pro-highspeed` (4 / 20 / 0.2 / 4), the Moonshot API rates models.dev publishes for `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed`.
+
+### Why
+
+- Kimi Code subscription rows carry the equivalent API rates so usage-value estimates do not read zero; the hand-owned shard rows use the same numbers.
+
+### Why an extension could not handle it
+
+- The implied-cost table is internal to the catalog generator.
+
+### Expected merge conflict zones
+
+- LOW: the `KIMI_CODING_IMPLIED_COSTS` literal in `packages/ai/scripts/generate-models.ts`.
+
+## 2026-10-23 - Release regeneration can keep the last good OpenGateway catalog (senpi#4067)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: new `--keep-last-good-opengateway` flag, passed to `fetchOpenGatewayModels` as `keepLastGoodOnFailure`. With it, an OpenGateway feed failure under `--strict` keeps the committed `data/opengateway.json` and prints a `::warning::` annotation; without it `--strict` still throws. The flag is refused together with `--providers`, and without `--strict` (where it would do nothing).
+
+### Why
+
+- `packages/ai/scripts/generate-models.ts`: an OpenGateway price-table format change stopped the release's `--strict` regeneration (senpi#4067). The release must not stop on one gateway feed, but the dedicated `--strict --providers opengateway` refresh workflow has to keep failing so a persistent feed break stays visible.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts`: committed catalog generation runs before runtime extensions.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: `readGeneratorOptions` and the `fetchOpenGatewayModels` call in `generateModels`.
+
 ## 2026-10-21 - Launch-gated Fable 5.5 generation (senpi#3893)
 
 ### What changed

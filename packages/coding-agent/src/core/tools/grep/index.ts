@@ -85,6 +85,7 @@ export function createGrepToolDefinition(
 	return {
 		...(options?.filesystemPolicy !== undefined ? { serverPinned: true } : {}),
 		name: "grep",
+		workspaceEffect: "read",
 		label: "grep",
 		exposure: "eval",
 		description:

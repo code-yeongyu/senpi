@@ -243,7 +243,8 @@ export function createCacheKeepAliveExtension(
 			}
 		}
 
-		pi.on("session_start", (_event, nextCtx) => {
+		pi.on("session_start", (event, nextCtx) => {
+			if (event.sizesOnly) return;
 			prewarm.start(nextCtx);
 			stop("session-restart");
 			ctx = nextCtx;

@@ -79,6 +79,8 @@ import {
 	type AskUserSettings,
 	type HandoffHintSettings,
 	type ImageSettings,
+	JOB_WIDGETS_DEFAULT_AUTHOR_AFTER_MS,
+	type JobWidgetsSettings,
 	type LookAtSettings,
 	type MarkdownSettings,
 	type MermaidRenderingMode,
@@ -223,9 +225,11 @@ export interface Settings {
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: QuietStartup; // default: false
 	tips?: boolean; // default: true
+	reducedMotion?: boolean; // default: false - keep decorative TUI indicators static
 	tipsHistory?: Record<string, number>; // tipId -> epoch ms last shown
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
+	tools?: { bash?: { redactSecretsInOutput?: boolean } }; // default: false; output only
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
@@ -249,6 +253,7 @@ export interface Settings {
 	images?: ImageSettings;
 	lookAt?: LookAtSettings;
 	askUser?: AskUserSettings;
+	jobWidgets?: JobWidgetsSettings;
 	/** Bounds on turns the engine starts without a user message (senpi#2967). */
 	engineTurns?: { maxPerUserInput?: number; maxToolFreePerMinute?: number; maxPerResumeWindow?: number };
 	turn_inactivity_ms?: number; // default: 3_600_000, min 60_000, 0 disables; see core/turn-deadline.ts
@@ -1116,6 +1121,20 @@ export class SettingsManager {
 			enabled: typeof configured?.enabled === "boolean" ? configured.enabled : true,
 			timeoutMinutes: resolveAskUserTimeoutMinutes(configured?.timeoutMinutes),
 			bell: typeof configured?.bell === "boolean" ? configured.bell : true,
+		};
+	}
+
+	getJobWidgetsSettings(): { enabled: boolean; model: string | undefined; authorAfterMs: number } {
+		const configured = this.settings.jobWidgets;
+		const model = typeof configured?.model === "string" ? configured.model.trim() : "";
+		const after = configured?.authorAfterMs;
+		return {
+			enabled: typeof configured?.enabled === "boolean" ? configured.enabled : true,
+			model: model.length > 0 ? model : undefined,
+			authorAfterMs:
+				typeof after === "number" && Number.isFinite(after) && after >= 0
+					? Math.trunc(after)
+					: JOB_WIDGETS_DEFAULT_AUTHOR_AFTER_MS,
 		};
 	}
 
@@ -2153,6 +2172,10 @@ export class SettingsManager {
 		return this.settings.tips ?? true;
 	}
 
+	getReducedMotion(): boolean {
+		return this.settings.reducedMotion ?? false;
+	}
+
 	getTipsHistory(): Record<string, number> {
 		const history = this.settings.tipsHistory;
 		if (typeof history !== "object" || history === null || Array.isArray(history)) {
@@ -2188,6 +2211,10 @@ export class SettingsManager {
 
 	getShellCommandPrefix(): string | undefined {
 		return this.settings.shellCommandPrefix;
+	}
+
+	getBashRedactSecretsInOutput(): boolean {
+		return this.settings.tools?.bash?.redactSecretsInOutput === true;
 	}
 
 	setShellCommandPrefix(prefix: string | undefined): void {

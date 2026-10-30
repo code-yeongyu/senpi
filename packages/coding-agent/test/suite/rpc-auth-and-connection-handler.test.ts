@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../src/core/extensions/builtin/anthropic-subscription/index.ts";
+import type { AgentSessionRuntime } from "../../src/core/agent-session-runtime.ts";
+import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handler.ts";
+import { createHarness } from "./harness.ts";
 import { makeHarness, makeSink } from "./rpc-connection-harness.ts";
 
 describe("RPC auth and connection handler contracts", () => {
@@ -132,6 +135,73 @@ describe("RPC auth and connection handler contracts", () => {
 			false,
 		);
 		expect(anthropic?.status).toMatchObject({ configured: expect.any(Boolean) });
+		await handler.dispose();
+	});
+
+	// senpi#4328 (omo-desktop-app#4711): a provider defined outside the app cannot be deleted in it,
+	// so each row says where it is defined.
+	it("tells where each listed provider is defined", async () => {
+		const customProvider = () => ({
+			baseUrl: "http://127.0.0.1:9/v1",
+			api: "openai-completions",
+			apiKey: "not-needed",
+			models: [
+				{
+					id: "custom-model",
+					name: "custom-model",
+					reasoning: false,
+					input: ["text" as const],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+					contextWindow: 32000,
+					maxTokens: 4000,
+				},
+			],
+		});
+		const harness = await createHarness({
+			modelsJson: { providers: { "file-box": customProvider() } },
+			extensionFactories: [
+				{
+					path: "/extensions/proxy-provider.ts",
+					factory: (pi) => pi.registerProvider("proxy-box", customProvider()),
+				},
+				...["anthropic-subscription", "cursor-cli-oauth", "vertex-model-garden"].map((id) => ({
+					path: `<builtin:${id}>`,
+					factory: (pi: ExtensionAPI) => pi.registerProvider(id, customProvider()),
+				})),
+				(pi) => pi.registerProvider("inline-box", customProvider()),
+				{
+					path: "<unknown>",
+					factory: (pi) => pi.registerProvider("unknown-box", customProvider()),
+				},
+			],
+		});
+		cleanup = harness.cleanup;
+		const collected = makeSink();
+		const handler = createRpcConnectionHandler(
+			{
+				session: harness.session,
+				setRebindSession: vi.fn(),
+				dispose: vi.fn(async () => {}),
+			} as unknown as AgentSessionRuntime,
+			collected.sink,
+		);
+
+		await handler.handleInputLine(JSON.stringify({ id: "origins", type: "get_auth_providers" }));
+		const response = await collected.waitFor((message) => message.id === "origins");
+		const rows = (response.data as { providers: Array<{ id: string; authType: string; origin?: unknown }> })
+			.providers;
+		const originOf = (id: string) => rows.find((row) => row.id === id && row.authType === "api_key")?.origin;
+		expect(originOf("anthropic")).toEqual({ kind: "builtin" });
+		expect(originOf("file-box")).toEqual({
+			kind: "models_json",
+			modelsJsonPath: join(harness.tempDir, "models.json"),
+		});
+		expect(originOf("proxy-box")).toEqual({ kind: "extension", extensionPath: "/extensions/proxy-provider.ts" });
+		for (const id of ["anthropic-subscription", "cursor-cli-oauth", "vertex-model-garden"]) {
+			expect(originOf(id)).toEqual({ kind: "builtin" });
+		}
+		expect(originOf("inline-box")).toEqual({ kind: "extension" });
+		expect(originOf("unknown-box")).toEqual({ kind: "extension" });
 		await handler.dispose();
 	});
 

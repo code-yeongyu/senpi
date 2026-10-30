@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { formatCompactionFailure } from "../../src/core/compaction-failure-text.ts";
 import {
 	createBeforeAgentStartEvent,
 	createBlockingContext,
@@ -18,6 +19,7 @@ import {
  * transient.
  */
 
+const WORKER_FAILURE = "500 Worker exceeded memory limit.";
 const registrations: Array<{ unregister: () => void }> = [];
 
 afterEach(() => {
@@ -25,7 +27,7 @@ afterEach(() => {
 });
 
 function workerOomResponse() {
-	return fauxAssistantMessage("", { stopReason: "error", errorMessage: "500 Worker exceeded memory limit." });
+	return fauxAssistantMessage("", { stopReason: "error", errorMessage: WORKER_FAILURE });
 }
 
 describe("blocking compaction shares the bounded summarization retry", () => {
@@ -47,7 +49,7 @@ describe("blocking compaction shares the bounded summarization retry", () => {
 			expect(harness.registration.state.callCount).toBe(2);
 			expect(harness.ctx.applyCompaction).toHaveBeenCalled();
 			expect(harness.endCompaction).not.toHaveBeenCalledWith(
-				expect.objectContaining({ errorMessage: "Compaction failed: 500 Worker exceeded memory limit." }),
+				expect.objectContaining({ errorMessage: formatCompactionFailure("compaction", WORKER_FAILURE) }),
 			);
 		});
 	});
@@ -72,7 +74,7 @@ describe("blocking compaction shares the bounded summarization retry", () => {
 			expect(harness.registration.state.callCount).toBe(4);
 			// …and exactly one terminal failure surfaced, upstream text intact.
 			const failures = harness.endCompaction.mock.calls.filter(
-				([options]) => options?.errorMessage === "Compaction failed: 500 Worker exceeded memory limit.",
+				([options]) => options?.errorMessage === formatCompactionFailure("compaction", WORKER_FAILURE),
 			);
 			expect(failures).toHaveLength(1);
 		});

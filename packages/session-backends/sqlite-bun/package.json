@@ -1,0 +1,30 @@
+{
+	"name": "@earendil-works/pi-storage-sqlite-bun",
+	"version": "2026.10.27-2",
+	"private": true,
+	"description": "Source-only Bun SQLite backend of the durable core's DurableStore contract",
+	"type": "module",
+	"main": "./src/index.ts",
+	"types": "./src/index.ts",
+	"exports": {
+		".": "./src/index.ts",
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"src"
+	],
+	"scripts": {
+		"test": "node ../../../scripts/run-tests.mjs bun --bun ../../../node_modules/vitest/vitest.mjs run",
+		"clean": "node -e \"\"",
+		"build": "node -e \"\""
+	},
+	"engines": {
+		"bun": ">=1.4.0"
+	},
+	"dependencies": {
+		"@earendil-works/pi-agent-core": "^2026.10.27-2"
+	},
+	"devDependencies": {
+		"vitest": "5.0.1"
+	}
+}

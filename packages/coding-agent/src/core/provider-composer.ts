@@ -15,13 +15,13 @@ import {
 	isModelType,
 	lazyStream,
 	type Model,
+	type ModelCost,
 	type OAuthAuth,
 	type OAuthCredential,
 	type OAuthCredentials,
 	type OAuthLoginCallbacks,
 	type Provider,
 	type ProviderClassifier,
-	type ProviderHeaders,
 	type ProviderImages,
 	type RefreshModelsContext,
 	type SimpleStreamOptions,
@@ -33,15 +33,15 @@ import {
 import { classifierErrorResult, imageErrorResult } from "@earendil-works/pi-ai/utils/model-operations";
 import type { RetryPolicyProfile } from "@earendil-works/pi-ai/utils/retry-profile/types";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
-import { composeApiKeyAuth, configuredApiKey, configuredHeaders, withConfiguredAuth } from "./provider-api-key-auth.ts";
-import { configuredHeaderAuthStatus, type HeaderAuthStatusSource } from "./provider-header-auth.ts";
+import { applyUserBaseUrl } from "./provider-base-url-override.ts";
 import {
-	clearConfigValueCache,
-	getConfigValueEnvVarNames,
-	isCommandConfigValue,
-	isConfigValueConfigured,
-	resolveHeadersOrThrow,
-} from "./resolve-config-value.ts";
+	composeApiKeyAuth,
+	configuredHeaders,
+	type StoredProviderEnvReader,
+	withConfiguredAuth,
+} from "./provider-api-key-auth.ts";
+import type { HeaderAuthStatusSource } from "./provider-header-auth.ts";
+import { clearConfigValueCache, resolveHeadersOrThrow } from "./resolve-config-value.ts";
 
 export interface ExtensionOAuthConfig {
 	name: string;
@@ -162,7 +162,12 @@ export interface ProviderAmbientAuth {
 	 * supplies no credential, so the provider stays unavailable. A returned
 	 * result should carry `ambient: true`.
 	 */
-	resolve(input: { ctx: AuthContext; signal: AbortSignal }): Promise<AuthResult | undefined>;
+	resolve(input: {
+		ctx: AuthContext;
+		signal: AbortSignal;
+		/** Read-only env of another provider's stored credential; routing metadata only, never keys. */
+		storedProviderEnv?(providerId: string): Promise<Record<string, string> | undefined>;
+	}): Promise<AuthResult | undefined>;
 }
 
 export type AuthStatus = {
@@ -179,6 +184,12 @@ export type AuthStatus = {
 	/** Environment auth that came only from a shared cloud credential chain (`AuthCheck.ambient`). */
 	ambient?: true;
 };
+
+export {
+	configuredRequestAuthStatus,
+	resolveCompatibilityRequestHeaders,
+	resolveConfiguredModelHeaders,
+} from "./provider-request-auth.ts";
 
 export const clearApiKeyCache = clearConfigValueCache;
 
@@ -266,6 +277,8 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 					cacheWrite: override.cost.cacheWrite ?? model.cost.cacheWrite,
 					tiers: override.cost.tiers ?? model.cost.tiers,
 					// A user-set price is the price: the catalog's scheduled cards would replace it on their date.
+					// An unknown price stays unknown until the override sets every rate (senpi#3844).
+					...(model.cost.unknown && !setsEveryRate(override.cost) ? { unknown: true as const } : {}),
 				}
 			: model.cost,
 		promptCache: override.promptCache ? { ...model.promptCache, ...override.promptCache } : model.promptCache,
@@ -279,11 +292,26 @@ function applyModelOverride(model: Model<Api>, override: ModelsJsonModelOverride
 	};
 }
 
+// A custom model with no price anywhere has no known cost, which is not the same as a free one. A local Ollama model
+// is the exception: it runs on the user's machine, so an omitted price is a real $0.
+const UNKNOWN_COST: ModelCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, unknown: true };
+const FREE_COST: ModelCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
+function setsEveryRate(cost: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }): boolean {
+	return (
+		cost.input !== undefined &&
+		cost.output !== undefined &&
+		cost.cacheRead !== undefined &&
+		cost.cacheWrite !== undefined
+	);
+}
+
 function modelFromJson(
 	providerId: string,
 	definition: ModelsJsonModel,
 	providerConfig: ModelsJsonProvider,
 	defaults: { api?: Api; baseUrl?: string } | undefined,
+	catalogCost: ModelCost | undefined,
 ): ModelWithConfigMetadata {
 	const api = definition.api ?? providerConfig.api ?? defaults?.api;
 	if (!api) {
@@ -312,7 +340,7 @@ function modelFromJson(
 		defaultThinkingLevel: definition.defaultThinkingLevel,
 		input: (definition.input ?? ["text"]) as ("text" | "image" | "video")[],
 		inputLimits: definition.inputLimits,
-		cost: definition.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		cost: definition.cost ?? catalogCost ?? (providerId === "ollama" ? FREE_COST : UNKNOWN_COST),
 		promptCache: definition.promptCache,
 		contextWindow: definition.contextWindow ?? 128000,
 		maxTokens: definition.maxTokens ?? 16384,
@@ -417,23 +445,22 @@ function applyModelsJson(
 		// Extension-provided api/baseUrl still win over the resolved defaults so a
 		// models.json extension can retarget an inherited built-in entry, and remain
 		// the fallback when no built-in default exists (empty catalog).
-		const model = modelFromJson(providerId, definition, config, {
-			...defaults,
-			api: extension?.api ?? defaults?.api,
-			baseUrl: extension?.baseUrl ?? defaults?.baseUrl,
-		});
+		const existing = existingIndex >= 0 ? models[existingIndex] : undefined;
+		const model = modelFromJson(
+			providerId,
+			definition,
+			config,
+			{
+				...defaults,
+				api: extension?.api ?? defaults?.api,
+				baseUrl: extension?.baseUrl ?? defaults?.baseUrl,
+			},
+			existing?.cost,
+		);
 		if (existingIndex >= 0) models[existingIndex] = model;
 		else models.push(model);
 	}
-	const whitelist = config.whitelist ? new Set(config.whitelist) : undefined;
-	const blacklist = config.blacklist ? new Set(config.blacklist) : undefined;
-	const hideFree = config.hideFreeModels === true;
-	return models.filter(
-		(model) =>
-			(whitelist === undefined || whitelist.has(model.id)) &&
-			(blacklist === undefined || !blacklist.has(model.id)) &&
-			!(hideFree && model.cost.input === 0 && model.cost.output === 0),
-	);
+	return models;
 }
 
 function applyExtension(
@@ -508,27 +535,6 @@ function composeOAuthAuth(
 	};
 }
 
-function rawModelHeaders(
-	model: AnyModel,
-	config: ModelsJsonProvider | undefined,
-	extension: ProviderConfigInput | undefined,
-): Record<string, string> | undefined {
-	// models.json definitions and overrides are chat-only. Extension definitions
-	// are matched by operation and id so colliding models cannot share headers.
-	const chatDefinition = isModelType(model, "chat")
-		? config?.models?.find((entry) => entry.id === model.id)
-		: undefined;
-	const extensionModel = extension?.models?.find(
-		(entry) => (entry.type ?? "chat") === (model.type ?? "chat") && entry.id === model.id,
-	);
-	const headers = {
-		...(isModelType(model, "chat") ? config?.modelOverrides?.[model.id]?.headers : undefined),
-		...chatDefinition?.headers,
-		...extensionModel?.headers,
-	};
-	return Object.keys(headers).length > 0 ? headers : undefined;
-}
-
 function rawModelExtraBody(
 	model: Model<Api>,
 	config: ModelsJsonProvider | undefined,
@@ -567,13 +573,15 @@ export function composeModelProvider(
 	base: Provider | undefined,
 	modelConfig: ModelConfig,
 	extension: ProviderConfigInput | undefined,
+	/** Deferred ambient reads; the reader runs during auth resolution, never at composition. */
+	options?: { storedProviderEnv?: StoredProviderEnvReader },
 ): Provider {
 	const config = modelConfig.getProvider(providerId);
 	let extensionOAuthCredential: OAuthCredentials | undefined;
 	let refreshedExtensionModels: ProviderConfigInput["models"];
 	const currentExtension = (): ProviderConfigInput | undefined =>
 		extension && refreshedExtensionModels ? { ...extension, models: refreshedExtensionModels } : extension;
-	// models.json modelOverrides are the topmost user-config layer: they apply once,
+	// models.json overrides and visibility are the topmost user-config layer: they apply once,
 	// after custom-model upserts, extension model replacement, and legacy OAuth projection.
 	const getAllModels = (): AnyModel[] => {
 		let models = applyExtension(
@@ -592,6 +600,17 @@ export function composeModelProvider(
 				...models.filter((model) => !isModelType(model, "chat")),
 			];
 		}
+		const whitelist = config?.whitelist ? new Set(config.whitelist) : undefined;
+		const blacklist = config?.blacklist ? new Set(config.blacklist) : undefined;
+		const hideFree = config?.hideFreeModels === true;
+		models = models.filter(
+			(model) =>
+				(whitelist === undefined || whitelist.has(model.id)) &&
+				(blacklist === undefined || !blacklist.has(model.id)) &&
+				!(hideFree && !model.cost.unknown && model.cost.input === 0 && model.cost.output === 0),
+		);
+		// The user's models.json baseUrl is applied after every extension rewrite, modifyModels included.
+		models = applyUserBaseUrl(models, config);
 		return models.map((model) => {
 			const override = config?.modelOverrides?.[model.id];
 			return override && isModelType(model, "chat") ? applyModelOverride(model, override) : model;
@@ -599,7 +618,9 @@ export function composeModelProvider(
 	};
 	// Validate eagerly so registration/reload reports structural errors immediately.
 	getAllModels();
-	const apiKey = composeApiKeyAuth(providerId, base, config, extension);
+	const apiKey = composeApiKeyAuth(providerId, base, config, extension, {
+		storedProviderEnv: options?.storedProviderEnv,
+	});
 	const oauth = composeOAuthAuth(providerId, base, config, extension);
 	if (!apiKey && !oauth) throw new Error(`Provider ${providerId}: no authentication method configured.`);
 	// The documented local `ollama` models.json catalog must not invoke the Cloud builtin's refresh with its
@@ -644,7 +665,7 @@ export function composeModelProvider(
 	const provider: Provider = {
 		id: providerId,
 		name: extension?.name ?? config?.name ?? base?.name ?? extension?.oauth?.name ?? providerId,
-		baseUrl: extension?.baseUrl ?? config?.baseUrl ?? base?.baseUrl,
+		baseUrl: config?.baseUrl ?? extension?.baseUrl ?? base?.baseUrl,
 		headers: base?.headers,
 		// Composed providers must not silently drop provider-declared retry profiles.
 		retryPolicy: extension?.retryPolicy ?? base?.retryPolicy,
@@ -728,19 +749,6 @@ export function composeModelProvider(
 	return provider;
 }
 
-export function resolveConfiguredModelHeaders(
-	model: AnyModel,
-	config: ModelsJsonProvider | undefined,
-	extension: ProviderConfigInput | undefined,
-	env?: Record<string, string>,
-): Promise<Record<string, string> | undefined> {
-	return resolveHeadersOrThrow(
-		rawModelHeaders(model, config, extension),
-		`model "${model.provider}/${model.id}"`,
-		env,
-	);
-}
-
 /**
  * Request shape a compatibility provider needs beside its credential. Headers are NOT
  * part of it: a configured header value can be a `!command`, and resolving one requires
@@ -751,21 +759,6 @@ export interface CompatibilityRequestConfig {
 	upstreamModelId?: string;
 	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	authHeader: boolean;
-}
-
-/** Configured provider and model headers, resolved off the event loop. */
-export async function resolveCompatibilityRequestHeaders(
-	model: Model<Api>,
-	config: ModelsJsonProvider | undefined,
-	extension: ProviderConfigInput | undefined,
-	env?: Record<string, string>,
-): Promise<ProviderHeaders | undefined> {
-	const configured = await resolveHeadersOrThrow(
-		{ ...configuredHeaders(config, extension), ...rawModelHeaders(model, config, extension) },
-		`model "${model.provider}/${model.id}"`,
-		env,
-	);
-	return model.headers || configured ? { ...model.headers, ...configured } : undefined;
 }
 
 export function resolveCompatibilityRequestConfig(
@@ -786,22 +779,4 @@ export function resolveCompatibilityRequestConfig(
 		serviceTier: extensionModel?.serviceTier ?? modelDefinition?.serviceTier ?? model.serviceTier,
 		authHeader: extension?.authHeader ?? config?.authHeader ?? false,
 	};
-}
-
-export function configuredRequestAuthStatus(
-	config: ModelsJsonProvider | undefined,
-	extension: ProviderConfigInput | undefined,
-): AuthStatus | undefined {
-	const value = configuredApiKey(config, extension);
-	if (value === undefined) {
-		return configuredHeaderAuthStatus(config?.headers, extension?.headers);
-	}
-	if (isCommandConfigValue(value)) return { configured: true, source: "models_json_command" };
-	const names = getConfigValueEnvVarNames(value);
-	if (names.length > 0) {
-		return isConfigValueConfigured(value)
-			? { configured: true, source: "environment", label: names.join(", ") }
-			: { configured: false };
-	}
-	return { configured: true, source: extension?.apiKey !== undefined ? "fallback" : "models_json_key" };
 }
