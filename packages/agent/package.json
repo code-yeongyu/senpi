@@ -14,6 +14,10 @@
 			"types": "./dist/node.d.ts",
 			"import": "./dist/node.js"
 		},
+		"./conformance": {
+			"types": "./dist/conformance/index.d.ts",
+			"import": "./dist/conformance/index.js"
+		},
 		"./harness/context": {
 			"types": "./dist/harness/context.d.ts",
 			"import": "./dist/harness/context.js"
@@ -37,6 +41,10 @@
 		"./harness/session/testing": {
 			"types": "./dist/harness/session/testing/index.d.ts",
 			"import": "./dist/harness/session/testing/index.js"
+		},
+		"./testing/win32-sim": {
+			"types": "./dist/testing/win32-sim.d.ts",
+			"import": "./dist/testing/win32-sim.js"
 		},
 		"./package.json": "./package.json"
 	},

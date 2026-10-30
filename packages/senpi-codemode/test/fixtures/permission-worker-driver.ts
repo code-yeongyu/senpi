@@ -109,6 +109,8 @@ try {
 							const bare=open(); parentPort.postMessage(bare,[bare]);
 							const nested=open(); parentPort.postMessage({p:nested},[nested]);
 							const keyed=open(); postMessage({p:keyed},[keyed]);
+							// Longer than the engine's spread-argument limit, so port discovery cannot spread it.
+							const deep=open(); const huge=new Array(3000000).fill(0); huge[1500000]=deep; parentPort.postMessage(huge,[deep]);
 							parentPort.postMessage("unforwardable");
 							postMessage("done");
 						};
@@ -121,7 +123,7 @@ try {
 						var frames=[]; var errors=[]; child.onmessageerror=e=>errors.push(e.data?.message);
 						var received=new Promise(resolve=>child.onmessage=e=>{if(e.data==="done") resolve(); else frames.push(e.data);});
 						child.postMessage(null); await received;
-						var ports=[frames[0], frames[1]?.p, frames[2]?.p];
+						var ports=[frames[0], frames[1]?.p, frames[2]?.p, frames[3]?.[1500000]];
 						var replies=await Promise.all(ports.map(port=>new Promise((resolve,reject)=>{
 							if(typeof port?.postMessage!=="function") return reject(new Error("missing port: "+String(port)));
 							port.on("message",reply=>{port.close(); resolve(reply);}); port.postMessage("ping");
@@ -129,8 +131,8 @@ try {
 						child.terminate();
 						return {frames:frames.length, replies, errors};`),
 						JSON.stringify({
-							frames: 3,
-							replies: ["pong:ping", "pong:ping", "pong:ping"],
+							frames: 4,
+							replies: ["pong:ping", "pong:ping", "pong:ping", "pong:ping"],
 							errors: ["Worker message could not be forwarded (DataCloneError): forced clone failure"],
 						}),
 					);

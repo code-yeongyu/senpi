@@ -5,20 +5,25 @@ import {
 	type Model,
 	type ProviderDiagnostic,
 	type ProviderDiagnosticCategory,
+	PROVIDER_NOT_CONFIGURED_PREFIX,
 	sanitizeProviderDiagnostic,
+	stripTurnRetrySuppressionPrefix,
 } from "@earendil-works/pi-ai";
 import { type FallbackModelLookup, parseFallbackSelector } from "./retry-fallback/chains.ts";
 
 /**
  * `request_refused`: an `auth` failure on a credential that served a response moments before, so the
  * provider refused this request rather than the key (senpi#2491).
+ * `model_unavailable`: an `unknown` failure the provider answered with HTTP 404, the status a model
+ * endpoint returns for a model id this account cannot use (senpi#4578).
  */
-export type ProviderFailureCategory = ProviderDiagnosticCategory | "request_refused";
+export type ProviderFailureCategory = ProviderDiagnosticCategory | "request_refused" | "model_unavailable";
 
 /**
  * Structured failure of a turn that ended with a provider error, attached to `agent_end`.
- * Built only from the adapter-minted `ProviderDiagnostic` and the runtime's typed served-credential
- * mark; message text is never read.
+ * Built only from the adapter-minted `ProviderDiagnostic`, the runtime's typed served-credential
+ * mark, and the auth-miss sentinel auth resolution throws before any request (`PROVIDER_NOT_CONFIGURED_PREFIX`);
+ * provider message text is never read.
  * Every category, `unknown` included, carries a reason and an action.
  */
 export interface ProviderFailure {
@@ -46,6 +51,10 @@ const ACTIONS: Record<Exclude<ProviderFailureCategory, "unknown">, { reason: str
 	request_refused: {
 		reason: "the provider refused this request, but the same key worked moments ago, so it may still be valid",
 		action: "send the message again or choose another model; if it keeps failing, re-authenticate",
+	},
+	model_unavailable: {
+		reason: "the model is not available for this account",
+		action: "choose another model, or check that your plan or key includes this model",
 	},
 	rate_limit: { reason: "the provider is rate limiting requests", action: "retry later or set a fallback model" },
 	quota: { reason: "the provider account is out of quota", action: "check the plan or credits" },
@@ -96,7 +105,9 @@ export function describeProviderFailure(
 ): ProviderFailure {
 	const category: ProviderFailureCategory = options.requestRefused
 		? "request_refused"
-		: (diagnostic?.category ?? "unknown");
+		: diagnostic?.category === "unknown" && diagnostic.httpStatus === 404
+			? "model_unavailable"
+			: (diagnostic?.category ?? "unknown");
 	const detail =
 		category === "unknown"
 			? {
@@ -139,14 +150,33 @@ export function providerFailureOf(
 ): ProviderFailure | undefined {
 	const last = messages.findLast((message) => message.role === "assistant");
 	if (last === undefined || last.role !== "assistant" || last.stopReason !== "error") return undefined;
-	const failure = describeProviderFailure(sanitizeProviderDiagnostic(last.providerDiagnostic), last.provider, {
-		model: last.model,
-		requestRefused: isRequestLevelRefusal(last),
-	});
+	const failure =
+		notConfiguredFailure(last) ??
+		describeProviderFailure(sanitizeProviderDiagnostic(last.providerDiagnostic), last.provider, {
+			model: last.model,
+			requestRefused: isRequestLevelRefusal(last),
+		});
 	if (selected === undefined || (selected.provider === last.provider && selected.model === last.model)) {
 		return failure;
 	}
 	return { ...failure, selectedProvider: selected.provider, selectedModel: selected.model };
+}
+
+/**
+ * No request was sent: auth resolution found no API key or sign-in for the provider and threw its sentinel.
+ * Without this the turn read as an `unknown` provider error with a resend step that cannot work (senpi#4329).
+ */
+function notConfiguredFailure(message: AssistantMessage): ProviderFailure | undefined {
+	const text = stripTurnRetrySuppressionPrefix(message.errorMessage ?? "");
+	if (!text.startsWith(PROVIDER_NOT_CONFIGURED_PREFIX)) return undefined;
+	const provider = text.slice(PROVIDER_NOT_CONFIGURED_PREFIX.length).trim() || message.provider;
+	return {
+		category: "auth",
+		provider: message.provider,
+		model: message.model,
+		reason: `no API key or sign-in is saved for ${provider}`,
+		action: `connect ${provider} (sign in or add an API key), or choose another model`,
+	};
 }
 
 export function formatProviderFailure(failure: ProviderFailure): string {
