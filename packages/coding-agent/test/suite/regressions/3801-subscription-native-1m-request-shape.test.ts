@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { type Api, InMemoryCredentialStore, type Model } from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { addAccount, emptyCredential } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import {
+	type AnthropicSubscriptionCredential,
+	addAccount,
+	emptyCredential,
+} from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import {
 	overrideAuthLaneBoundary,
 	queryWithAuthLane,
@@ -145,7 +149,7 @@ function refusingOnce(models: Array<string | undefined>): SdkQuery {
 	};
 }
 
-async function runTurn(id: string, lane: "ambient" | "oauth-slots"): Promise<Array<string | undefined>> {
+async function runTurn(id: string, lane: "ambient" | "oauth-slots") {
 	const store = new InMemoryCredentialStore();
 	await store.modify("anthropic-subscription", async () =>
 		addAccount(emptyCredential(), {
@@ -183,19 +187,24 @@ async function runTurn(id: string, lane: "ambient" | "oauth-slots"): Promise<Arr
 	} catch {
 		// A native model's refusal is an ordinary failure of the turn.
 	}
-	return models;
+	const credential = (await store.read("anthropic-subscription")) as AnthropicSubscriptionCredential;
+	return { models, account: credential.accounts?.find((account) => account.name === "main") };
 }
 
 describe("#3801: only a legacy [1m] request enters the long-context refusal fallback", () => {
 	it.each(["ambient", "oauth-slots"] as const)("%s lane: a native model is never retried at 200k", async (lane) => {
-		const models = await runTurn("claude-fable-5", lane);
+		const { models, account } = await runTurn("claude-fable-5", lane);
 
 		expect(models).toEqual(["claude-fable-5"]);
 		expect(longContextAvailable()).toBe(true);
+		expect(account).toBeDefined();
+		expect(account?.blockedUntil).toBeUndefined();
+		expect(account?.blockReason).toBeUndefined();
+		expect(account?.modelBlocks).toBeUndefined();
 	});
 
 	it.each(["ambient", "oauth-slots"] as const)("%s lane: a legacy model retries once without [1m]", async (lane) => {
-		const models = await runTurn("claude-opus-4-6", lane);
+		const { models } = await runTurn("claude-opus-4-6", lane);
 
 		expect(models).toEqual(["claude-opus-4-6[1m]", "claude-opus-4-6"]);
 		expect(longContextAvailable()).toBe(false);

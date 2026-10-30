@@ -12,7 +12,6 @@ export const CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW = 200_000;
  * window on every plan and is requested by its plain id.
  */
 export const LEGACY_LONG_CONTEXT_MODEL_IDS: ReadonlySet<string> = new Set([
-	"claude-3-7-sonnet",
 	"claude-opus-4-6",
 	"claude-sonnet-4-0",
 	"claude-sonnet-4-5",

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Context, Message } from "@earendil-works/pi-ai";
 import { appendSdkContentBlocks } from "./content-blocks.ts";
+import { LEGACY_LONG_CONTEXT_MODEL_IDS } from "./context-window.ts";
 import { longContextAvailable } from "./long-context.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { ContentBlockParam, Options } from "./sdk-boundary.ts";
@@ -143,9 +144,10 @@ export function configFingerprint(
 			// Bump HOST_TOOL_POLICY_FINGERPRINT in tools.ts when denial copy or hooks change.
 			hostToolPolicy: HOST_TOOL_POLICY_FINGERPRINT,
 			settingSources: options.settingSources,
-			// A refused 1M window must restart the resident process at the standard one (senpi#3408). Only
-			// the refusal state is hashed: a live model switch reaches the process through setModel.
-			longContextRefused: !longContextAvailable(),
+			// Only legacy models lose their opt-in on refusal, including with SDK-owned compaction
+			// (no window env). Native sessions must not restart on an unrelated legacy refusal (#3801).
+			longContextRefused:
+				LEGACY_LONG_CONTEXT_MODEL_IDS.has(options.model?.replace(/\[1m\]$/, "") ?? "") && !longContextAvailable(),
 			// Claude Code reads its window once at spawn, so a switch to a model planned at another window
 			// restarts the resident process at that window instead of keeping the old one (senpi#3801).
 			contextWindow: options.env?.CLAUDE_CODE_MAX_CONTEXT_TOKENS,

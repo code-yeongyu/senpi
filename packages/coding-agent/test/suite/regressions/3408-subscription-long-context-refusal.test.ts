@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import type { AccountSlot } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
@@ -123,30 +124,37 @@ describe("#3408: an account that refuses the 1M window plans and requests 200k",
 		expect(lane.window()).toBe(200_000);
 	});
 
-	it("keeps the resident fingerprint across a live switch at the same window, and changes it on a refusal", () => {
-		const fingerprintFor = (id: string, contextWindow: number) =>
-			configFingerprint(
-				buildAnthropicSubscriptionQueryOptions({
-					model: { ...modelFor(id), contextWindow },
-					context: { messages: [] },
-					cwd: directory,
-					providerSettings: {},
-				}),
-				{ messages: [] },
-				"ambient",
-				"ambient",
-			).toolsetHash;
-		const opus = fingerprintFor("claude-opus-4-6", 1_000_000);
-		const sonnet = fingerprintFor("claude-sonnet-4-6", 1_000_000);
-		const haiku = fingerprintFor("claude-haiku-4-5", 200_000);
+	it.each(["senpi", "sdk"] as const)(
+		"%s compaction: only legacy fingerprints change on refusal, while window changes restart",
+		(compactionOwner) => {
+			const fingerprintFor = (id: string, contextWindow: number) =>
+				configFingerprint(
+					buildAnthropicSubscriptionQueryOptions({
+						model: { ...modelFor(id), contextWindow },
+						context: { messages: [] },
+						cwd: directory,
+						providerSettings: { compactionOwner },
+					}),
+					{ messages: [] },
+					"ambient",
+					"ambient",
+				).toolsetHash;
+			const opus = fingerprintFor("claude-opus-4-6", 1_000_000);
+			const sonnet = fingerprintFor("claude-sonnet-4-6", 1_000_000);
+			const haiku = fingerprintFor("claude-haiku-4-5", 200_000);
+			const native = fingerprintFor("claude-fable-5", 1_000_000);
 
-		markLongContextRefused();
+			markLongContextRefused();
 
-		expect(sonnet).toBe(opus);
-		// Claude Code reads its window once at spawn: a different window restarts the process (#3801).
-		expect(haiku).not.toBe(opus);
-		expect(fingerprintFor("claude-opus-4-6", 1_000_000)).not.toBe(opus);
-	});
+			expect(sonnet).toBe(opus);
+			// Claude Code reads its window once at spawn: a different window restarts the process (#3801).
+			if (compactionOwner === "senpi") expect(haiku).not.toBe(opus);
+			else expect(haiku).toBe(opus);
+			expect(fingerprintFor("claude-opus-4-6", 1_000_000)).not.toBe(opus);
+			expect(fingerprintFor("claude-fable-5", 1_000_000)).toBe(native);
+			expect(fingerprintFor("claude-haiku-4-5", 200_000)).toBe(haiku);
+		},
+	);
 
 	it("still re-registers the live session when an older runtime's extension context is stale", async () => {
 		const stale = await liveLane();
@@ -181,7 +189,7 @@ describe("#3408: an account that refuses the 1M window plans and requests 200k",
 				yield "answer";
 			},
 			classify: classifySdkError,
-			store: {} as Parameters<typeof runFailover>[0]["store"],
+			store: new InMemoryCredentialStore(),
 			providerId: PROVIDER,
 			onLongContextRefused: () => markLongContextRefused(),
 		})) {
