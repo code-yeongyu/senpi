@@ -1,4 +1,5 @@
-import { homedir } from "os";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, it, vi } from "vitest";
 import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
@@ -139,6 +140,56 @@ describe("skills", () => {
 			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("at line"))).toBe(true);
 			expect(diagnostics[0]).toMatchObject({ kind: "parse-error" });
 		});
+
+		// senpi#4943 review: the scalar hint belongs only to the YAML error code it fixes.
+		it("adds the YAML scalar hint only to compact-mapping scalar errors", () => {
+			const scalar = loadSkillsFromDir({ dir: join(fixturesDir, "invalid-scalar"), source: "test" });
+			expect(scalar.diagnostics).toHaveLength(1);
+			expect(scalar.diagnostics[0]).toMatchObject({ kind: "parse-error" });
+			expect(scalar.diagnostics[0]?.hint).toContain("description: >-");
+
+			const dir = mkdtempSync(join(tmpdir(), "senpi-skill-yaml-"));
+			try {
+				const cases = {
+					"duplicate-key": "---\nname: duplicate-key\nname: again\ndescription: d\n---\n",
+					"tab-indent": "---\nname: tab-indent\nmetadata:\n\tkey: v\ndescription: d\n---\n",
+					"bad-indent": "---\nmetadata:\n  a: 1\n b: 2\nname: bad-indent\ndescription: d\n---\n",
+				};
+				for (const [name, content] of Object.entries(cases)) {
+					mkdirSync(join(dir, name));
+					writeFileSync(join(dir, name, "SKILL.md"), content);
+				}
+				const other = loadSkillsFromDir({ dir, source: "test" });
+				expect(other.diagnostics).toHaveLength(3);
+				for (const diagnostic of other.diagnostics) {
+					expect(diagnostic).toMatchObject({ kind: "parse-error" });
+					expect(diagnostic.hint).toBeUndefined();
+				}
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
+
+		// senpi#4943 review: a directory that cannot be listed is reported, not skipped silently.
+		it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+			"reports an unreadable skill subdirectory as a read error",
+			() => {
+				const dir = mkdtempSync(join(tmpdir(), "senpi-skill-unreadable-"));
+				const locked = join(dir, "locked");
+				mkdirSync(locked);
+				chmodSync(locked, 0o000);
+				try {
+					const result = loadSkillsFromDir({ dir, source: "test" });
+					expect(result.skills).toHaveLength(0);
+					expect(result.diagnostics).toHaveLength(1);
+					expect(result.diagnostics[0]).toMatchObject({ type: "warning", kind: "read-error", path: locked });
+					expect(result.diagnostics[0]?.message).toContain("EACCES");
+				} finally {
+					chmodSync(locked, 0o700);
+					rmSync(dir, { recursive: true, force: true });
+				}
+			},
+		);
 
 		// senpi#4940: classify failures where they occur, not by their display message.
 		it("classifies a file read failure independently of a parse failure", () => {
