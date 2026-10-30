@@ -16,10 +16,15 @@ export class CompactSeededDraft {
 		this.values = new CompactValues(store);
 	}
 
-	fields(value: object, previous: SeededFields = {}): SeededFields {
+	/** `removeNull` reads a message-metadata change, where `null` removes the field. */
+	fields(value: object, previous: SeededFields = {}, removeNull = false): SeededFields {
 		const result = { ...previous };
 		for (const [key, item] of Object.entries(value)) {
 			if (item === undefined) continue;
+			if (item === null && removeNull) {
+				Reflect.deleteProperty(result, key);
+				continue;
+			}
 			const ref = this.values.own(item);
 			this.releases.push(() => this.store.adjust(ref.owner, -1, 0));
 			Object.defineProperty(result, key, { value: ref, enumerable: true, configurable: true, writable: true });

@@ -9,7 +9,11 @@ import {
 } from "@earendil-works/pi-ai/auth/pool/slots";
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
-import { getCredentialAccounts, renameCredentialAccount } from "../../../src/core/credential-accounts.ts";
+import {
+	credentialPoolRepository,
+	getCredentialAccounts,
+	renameCredentialAccount,
+} from "../../../src/core/credential-accounts.ts";
 import { subscribeProviderAccountEvents } from "../../../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
 import { getProviderAccounts } from "../../../src/core/extensions/builtin/anthropic-subscription/account-management.ts";
 import { emptyCredential } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
@@ -121,6 +125,16 @@ describe.each(["chatgpt-subscription", "anthropic-subscription"])("%s display na
 
 	it("exposes only safe descriptors and keeps labels through named refresh", async () => {
 		const { storage } = fixture(provider);
+		// Generic rotation reads sidecar health, not the stored slot's block fields (senpi#4885).
+		const repository = credentialPoolRepository(storage);
+		const credentialRevision = await repository.storedCredentialRevision(provider, "second", {
+			access: "fake-b",
+			refresh: "fake-s",
+		});
+		await repository.mutateSlotState(provider, "stored", "second", () => ({
+			blockedUntil: 4102444800000,
+			credentialRevision,
+		}));
 		await renameCredentialAccount(storage, provider, "default", "Personal");
 		await storage.modify(provider, async (current) =>
 			mergeRefreshedSlot(current!, "default", {

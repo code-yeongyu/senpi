@@ -90,10 +90,23 @@ const TRANSIENT_ENV_NAMES = new Set([
 	"SENPI_RPC_HOST_GENERATION",
 	"SENPI_RPC_HOST_DAEMON_DIR",
 	"SENPI_RPC_HOST_EXPECTED_RUNTIME_BUILD_ID",
+	// The rest of a supervisor's hand-off to its own host child. A daemon ensured BY a host child
+	// would otherwise inherit its parent's lane: with the key sentinel set and no key on its stdin,
+	// the new daemon exits "internal_key_unavailable" before it ever listens (senpi#4528).
+	"SENPI_RPC_INTERNAL_KEY_STDIN",
+	"SENPI_RPC_HOST_WATCH_PSTART",
+	"SENPI_RPC_HOST_WATCH_PSTART_TICKS",
+	"SENPI_RPC_HOST_LIFETIME_FIFO",
+	"SENPI_RPC_SOCKET_SECRET_FILE",
 	// Engine trust launch plumbing: a daemon gets the generation only through its forced hand-off.
 	"SENPI_ENGINE_TRUST",
 	"SENPI_ENGINE_TRUST_HOP",
 ]);
+
+/** A name one session or one host generation owns; a caller may never pass it to a child either (senpi#4381). */
+export function isTransientDaemonEnvName(name: string): boolean {
+	return TRANSIENT_ENV_NAMES.has(name);
+}
 
 export function daemonEnvIsAllowed(name: string, platform: NodeJS.Platform = process.platform): boolean {
 	const upper = name.toUpperCase();

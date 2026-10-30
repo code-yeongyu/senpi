@@ -99,7 +99,8 @@ export function rendezvousOrder(key: string, accounts: readonly AccountSlot[]): 
 		.map(({ account }) => account);
 }
 
-function isAccountBlocked(account: AccountSlot, now: number): boolean {
+/** Account-level block for selection; an auth block with no deadline or a passed one is re-probed (senpi#3264). */
+export function isAccountBlocked(account: Pick<AccountSlot, "blockedUntil">, now: number): boolean {
 	return account.blockedUntil !== undefined && account.blockedUntil > now;
 }
 
