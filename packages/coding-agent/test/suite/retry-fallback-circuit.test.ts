@@ -178,17 +178,22 @@ describe("fallback-chain circuit breaker across sessions sharing one runtime", (
 		expect(y.session.model?.id).toBe("faux-1");
 	});
 
-	it("still sends the request when every entry of the chain is open", async () => {
+	it.each(["succeeds", "fails"] as const)("probes an all-open head once when the wrap probe %s", async (outcome) => {
 		const origin = await first();
-		origin.setResponses([overloaded(), overloaded(), answer("probe answer")]);
+		origin.setResponses([
+			overloaded(),
+			overloaded(),
+			outcome === "succeeds" ? answer("wrap probe answer") : overloaded(),
+			answer("sibling probe answer"),
+		]);
 
 		await origin.session.prompt("both entries fail out of the chain");
-		expect(calledModels(origin)).toEqual(["faux-1", "faux-2"]);
+		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-1"]);
 
 		const next = await sibling(origin);
 		await next.session.prompt("the chain must not refuse the turn");
 
-		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-1"]);
+		expect(calledModels(origin)).toEqual(["faux-1", "faux-2", "faux-1", "faux-1"]);
 		const last = next.session.messages.at(-1);
 		expect(last).toMatchObject({ role: "assistant", stopReason: "stop" });
 	});
