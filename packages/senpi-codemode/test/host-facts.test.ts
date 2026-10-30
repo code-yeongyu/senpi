@@ -46,7 +46,9 @@ describe("pinnedDisplayPath SENPI_TEST_WORKSTATION repoRoot", () => {
 
 	test("a path under from is shown under to; a path outside it, even sharing its prefix, is unchanged", () => {
 		const env = { SENPI_TEST_WORKSTATION: REPO_PIN };
-		expect(pinnedDisplayPath(skill, env)).toBe("/eq-synthetic/checkout/packages/senpi-codemode/src/skill/bun-1-4/SKILL.md");
+		expect(pinnedDisplayPath(skill, env)).toBe(
+			"/eq-synthetic/checkout/packages/senpi-codemode/src/skill/bun-1-4/SKILL.md",
+		);
 		expect(pinnedDisplayPath("/work/checkout", env)).toBe("/eq-synthetic/checkout");
 		expect(pinnedDisplayPath("/work/checkout-2/SKILL.md", env)).toBe("/work/checkout-2/SKILL.md");
 	});
@@ -61,7 +63,9 @@ describe("pinnedDisplayPath SENPI_TEST_WORKSTATION repoRoot", () => {
 		JSON.stringify({ ...HOST, repoRoot: { from: "/work/checkout" } }),
 		JSON.stringify({ ...HOST, repoRoot: { from: "/work/checkout", to: "/eq", extra: 1 } }),
 	])("malformed repoRoot %s throws naming the variable", (value) => {
-		expect(() => pinnedDisplayPath(skill, { SENPI_TEST_WORKSTATION: value })).toThrow(/SENPI_TEST_WORKSTATION must be a JSON object/);
+		expect(() => pinnedDisplayPath(skill, { SENPI_TEST_WORKSTATION: value })).toThrow(
+			/SENPI_TEST_WORKSTATION must be a JSON object/,
+		);
 		expect(() => hostLine({ SENPI_TEST_WORKSTATION: value })).toThrow(/SENPI_TEST_WORKSTATION must be a JSON object/);
 	});
 });
