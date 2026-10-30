@@ -286,7 +286,9 @@ describe("transient failures never classify as a permanent credential verdict (s
 
 	test("an unknown, codeless custom-provider error never blocks a slot", () => {
 		const action = classifyCredentialFailure(
-			new Error("The provider returned an error that could not be classified (custom-gateway, no code)"),
+			new Error(
+				"The provider returned an unexpected error. Action: send the message again; if it repeats, choose another model.",
+			),
 		);
 		expect(action).toEqual({ kind: "fail_request" });
 	});

@@ -190,9 +190,10 @@ describe("transient failures never poison credential slots (senpi#2081)", () => 
 		}
 		expect(thrown).toBeInstanceOf(Error);
 		const message = thrown instanceof Error ? thrown.message : "";
-		const recheck = new Date(NOW + AUTH_BLOCK_REPROBE_MS).toISOString();
-		expect(message).toContain(`pinned (auth_error until ${recheck})`);
-		expect(message).toContain(`other (auth_error until ${recheck})`);
+		// senpi#4329: the shown time is local; the typed retryAt carries the re-probe deadline.
+		expect(Reflect.get(thrown as object, "retryAt")).toBe(NOW + AUTH_BLOCK_REPROBE_MS);
+		expect(message).toContain("pinned (auth_error until ");
+		expect(message).toContain("other (auth_error until ");
 	});
 });
 
@@ -399,7 +400,9 @@ describe("a custom provider's unknown or transient error shapes never persist a 
 		],
 		[
 			"an unknown, codeless error",
-			errorEvent("The provider returned an error that could not be classified (custom-gateway, no code)"),
+			errorEvent(
+				"The provider returned an unexpected error. Action: send the message again; if it repeats, choose another model.",
+			),
 		],
 	] as const)("%s leaves every slot usable for the next request", async (_label, failure) => {
 		const run = async (event: AssistantMessageEvent): Promise<AssistantMessageEvent | undefined> => {

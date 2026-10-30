@@ -59,6 +59,8 @@ const HANDOFF_LOCK_WAIT_MS =
 
 export interface HandoffHostOptions {
 	readonly presenterBootstrap?: Duplex;
+	/** Deployment opt-in. An enforcing predecessor never downgrades during replacement. */
+	readonly mcpPresenterEnforcement?: boolean;
 	readonly socket: string;
 	readonly agentDir?: string;
 	/** Extra CLI arguments the successor's host child is launched with (provider pinning, extensions). */

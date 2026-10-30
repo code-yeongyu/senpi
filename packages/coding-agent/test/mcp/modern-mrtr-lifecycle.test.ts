@@ -11,7 +11,27 @@ import { mrtrTui } from "./fixtures/mrtr-presentation.ts";
 
 afterEach(cleanupMrtrLifecycle);
 
+vi.mock("@modelcontextprotocol/sdk/shared/protocol.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@modelcontextprotocol/sdk/shared/protocol.js")>()),
+	DEFAULT_REQUEST_TIMEOUT_MSEC: 2345,
+}));
+
 describe("MRTR deadlines and settlement", () => {
+	it("uses the SDK default for both attempt and operation budgets when timeout is omitted", async () => {
+		const f = await fixture([undefined]);
+		const pending = f.client.callTool({ name: "test" });
+		const rejected = expect(pending).rejects.toMatchObject({ code: "MCP_MRTR_TIMEOUT" });
+		await f.transport.received.promise;
+		const options = f.underlying.mock.calls[0]?.[2];
+		f.clock.advance(840000);
+		await rejected;
+		expect(options).toMatchObject({
+			timeout: 2345,
+			maxTotalTimeout: 321105,
+		});
+		expect(f.transport.cancellations).toHaveLength(1);
+		expect(f.clock.timers.size).toBe(0);
+	});
 	it.each(["Decline", "Cancel"] as const)(
 		"a stopped multi-input batch (%s) never dispatches partial answers",
 		async (stop) => {

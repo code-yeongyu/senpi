@@ -1,5 +1,11 @@
 import { join } from "node:path";
-import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import {
+	Agent,
+	type AgentMessage,
+	createInternalAgentChannel,
+	setDefaultStreamFn,
+	type ThinkingLevel,
+} from "@earendil-works/pi-agent-core";
 import type { SimpleStreamOptions, ThinkingSelection } from "@earendil-works/pi-ai";
 import { type Api, type Message, type Model, modelsAreEqual, streamSimple } from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
@@ -145,6 +151,8 @@ export interface CreateAgentSessionOptions {
 	promptSurface?: PromptSurface;
 	/** Browser engine this session's skills drive (`open_session.browserEngine`); omitted means none was chosen. */
 	browserEngine?: BrowserEngine;
+	/** Caller env for this session's tool subprocesses (`open_session.env`, senpi#4381); omitted means none. */
+	sessionEnv?: Readonly<Record<string, string>>;
 	/** Tool runtime for this session (senpi#3566); absent means `in-process`. */
 	toolRuntime?: ToolRuntimeKind;
 }
@@ -318,8 +326,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && sessionModel) {
+		// Keep the saved reference exactly, signed out or not; the first prompt asks for a login (senpi#4410).
 		const restored = resolveStoredModelReference(sessionModel.provider, sessionModel.modelId, modelRuntime);
-		if (restored && modelRuntime.hasConfiguredAuth(restored.model.provider)) {
+		if (restored) {
 			model = restored.model;
 			initialResolvedThinkingLevel = restored.thinkingLevel;
 			initialThinkingSelection = restored.thinkingSelection;
@@ -476,7 +485,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		});
 	};
 
+	const internalChannel = createInternalAgentChannel();
 	agent = new Agent({
+		internalChannel,
 		initialState: {
 			systemPrompt: "",
 			model,
@@ -587,6 +598,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const session = new AgentSession({
 		agent,
+		internalChannel,
 		serviceTier: options.serviceTier,
 		sessionManager,
 		settingsManager,
@@ -608,6 +620,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		autoTitleSessions: options.autoTitleSessions,
 		promptSurface: options.promptSurface,
 		browserEngine: options.browserEngine,
+		sessionEnv: options.sessionEnv,
 		initialThinkingLevelSource: thinkingLevelSource,
 		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 	});

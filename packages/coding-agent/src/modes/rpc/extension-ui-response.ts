@@ -1,5 +1,6 @@
 import type { QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
+import type { UiAnswerLedger } from "./ui-answer-ledger.ts";
 
 /**
  * An `extension_ui_response` carries two ids: `id`, the frame's own correlation id that its reply
@@ -43,6 +44,8 @@ export type ExtensionUiResponseReply = {
 	readonly id: string;
 	readonly type: "response";
 	readonly command: "extension_ui_response";
+	/** The answer's outcome for its request; absent when a malformed answer was refused before settling anything. */
+	readonly disposition?: "applied" | "replay" | "already_answered" | "unknown";
 } & ({ readonly success: true } | { readonly success: false; readonly error: string });
 
 type QuestionAnswers = {
@@ -55,8 +58,9 @@ type DialogAnswers = { resolve(response: RpcExtensionUIResponse, beforeAnswer?: 
 
 /**
  * Settles one response on a host connection and returns its reply, keyed by the frame `id`.
- * `undefined` only on an unrouted (single-session stdio) connection for a response no request here
- * matches: that connection has always ignored such a response, and still does.
+ * `undefined` only on an unrouted (single-session stdio) connection for an unnamed response no
+ * request here matches: that connection has always ignored such a response, and still does. A named
+ * response (`answerId`) asks for a receipt, so every connection answers it.
  */
 export function settleExtensionUiResponse(
 	response: RpcExtensionUIResponse,
@@ -64,24 +68,50 @@ export function settleExtensionUiResponse(
 		readonly questions: QuestionAnswers;
 		readonly dialogs: DialogAnswers;
 		readonly routed: boolean;
+		readonly ledger?: UiAnswerLedger;
 		readonly beforeAnswer?: () => void;
 	},
 ): ExtensionUiResponseReply | undefined {
+	if (
+		response.answerId !== undefined &&
+		(typeof response.answerId !== "string" || response.answerId.length < 1 || response.answerId.length > 256)
+	)
+		return refusedExtensionUiResponse(response.id, "invalid_answer_id");
 	const requestId = answeredUiRequestId(response) ?? response.id;
+	const receipt = response.answerId === undefined ? undefined : targets.ledger?.lookup(requestId, response.answerId);
+	if (receipt === "replay") return { ...reply(response.id), success: true, disposition: "replay" };
+	if (receipt === "already_answered")
+		return { ...reply(response.id), success: false, error: "already_answered", disposition: receipt };
 	const answer = requestId === response.id ? response : { ...response, id: requestId };
 	const question = targets.questions.respond(answer, targets.beforeAnswer);
-	if (typeof question === "string") return refused(response.id, question);
-	if (question || targets.dialogs.resolve(answer, targets.beforeAnswer))
-		return { ...reply(response.id), success: true };
+	if (typeof question === "string")
+		return refusedExtensionUiResponse(
+			response.id,
+			response.answerId !== undefined && question === "question_already_resolved"
+				? "unknown_extension_ui_request"
+				: question,
+		);
+	if (question || targets.dialogs.resolve(answer, targets.beforeAnswer)) {
+		targets.ledger?.record(requestId, response.answerId);
+		return { ...reply(response.id), success: true, disposition: "applied" };
+	}
 	// A routed binding owns exactly one session's request map: an unmatched response is a protocol
 	// error for its sender, never a cross-session match.
-	return targets.routed ? refused(response.id, "unknown_extension_ui_request") : undefined;
+	return targets.routed || response.answerId !== undefined
+		? refusedExtensionUiResponse(response.id, "unknown_extension_ui_request")
+		: undefined;
 }
 
 function reply(id: string) {
 	return { id, type: "response", command: "extension_ui_response" } as const;
 }
 
-function refused(id: string, error: string): ExtensionUiResponseReply {
-	return { ...reply(id), success: false, error };
+export function refusedExtensionUiResponse(id: string, error: string): ExtensionUiResponseReply {
+	const disposition =
+		error === "question_already_resolved"
+			? "already_answered"
+			: error === "unknown_extension_ui_request"
+				? "unknown"
+				: undefined;
+	return { ...reply(id), success: false, error, ...(disposition === undefined ? {} : { disposition }) };
 }

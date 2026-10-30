@@ -1,3 +1,86 @@
+## 2026-10-27 - Preserve seed emission frontier in the staged projection (part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/json-event.ts` forwards validated `nextOffset` unchanged on text, thinking, and tool seeds.
+
+### Why
+
+- `packages/coding-agent/src/modes/json-event.ts` must distinguish replay from continuation without inspecting later deltas or a mutable partial.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/json-event.ts` is the internal structured-record projection boundary.
+
+### Expected merge conflict zones
+
+- Seed types and start projection in `packages/coding-agent/src/modes/json-event.ts`.
+
+## 2026-10-26 - Handle directory metadata before startup side effects (#4368)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: handle `config agent-dir --json` before enabling compile caches or preparing a runtime snapshot.
+- `packages/coding-agent/dist/cli.js`: regenerate the tracked launcher through the production package build so it carries the same early metadata dispatch.
+- `packages/coding-agent/src/cli-main.ts`: handle the same command before cache setup and lazily import the full agent entry only afterward.
+- `packages/coding-agent/src/bun/cli.ts`: handle metadata before lazily importing provider/runtime setup on the actual compiled-binary entry path. Normal runs retain restore, runtime-setup, then full-CLI ordering.
+- `packages/coding-agent/src/package-manager-cli.ts`: document the metadata subcommand and JSON exit contract in config help; `docs/agent-directory-selection.md` records the version-1 contract.
+
+### Why
+
+- A selector query must not initialize the directory whose location it is only being asked to report. Both the source launcher and compiled direct-entry path must obey that contract.
+
+### Why an extension could not handle it
+
+- The command decides the store before extension discovery and host admission.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/cli.ts` and `packages/coding-agent/src/cli-main.ts` startup dispatch.
+
+## 2026-10-26 - Opt-in seeded projection in toJsonEvent (senpi#4349, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/json-event.ts`: adds the `toJsonEvent(event, { blockSeeds: 1 })` overload. It projects
+  `message_update` from the producer-time capture only (S02a): start seeds (`seed.block`, `coveredCodeUnits`, tool
+  `rawArgumentPrefix`/`parsedThrough`), deltas with `offset` (and `parsedThrough` for tool arguments), ends with the frozen
+  block, `done`/`error` with the terminal message, plus frozen `usage` and changed `messageMetadata`. Assistant
+  `message_start`/`message_end` take the capture's frozen message. A record with no capture has no seeded form
+  (`undefined`), so no seed is ever read from the live partial; identity fields are passed through, never minted.
+  The no-options call is unchanged byte for byte; `print-mode.ts` and `rpc-mode.ts` keep it.
+
+### Why
+
+- R3.C6.2: a seed read from the shared live partial at serialization time can already contain later bytes, and an
+  ordinary delta must not copy or reserialize a growing block.
+
+### Why an extension could not handle it
+
+- The capture carriers are internal to the provider/agent pipeline and are not exposed to extension events.
+
+### Expected merge conflict zones
+
+- LOW: the `toJsonEvent` overload list in `json-event.ts`.
+
+## 2026-10-25 - Keep presenter bootstrap through CLI re-execution (senpi#4247)
+
+### What changed
+
+- `packages/coding-agent/src/cli.ts`: explicitly preserves the live reserved presenter descriptor through runtime selection and isolated CLI re-execution, keeping the lifetime descriptor separate.
+
+### Why
+
+- `packages/coding-agent/src/cli.ts`: inheriting only standard I/O dropped fd 4 before the public host command could enroll its caller.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/cli.ts`: runtime re-execution precedes extension loading and owns descriptor inheritance.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli.ts`: the runtime-selection and isolated-process spawn options.
+
 ## 2026-10-25 - Host-owned MCP presenter deployment options (#4197)
 
 ### What changed

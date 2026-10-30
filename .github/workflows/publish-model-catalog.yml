@@ -32,12 +32,21 @@ on:
         default: false
         type: boolean
 
+# Only a pull_request run is superseded by a newer head of the same PR; cancelling it frees a runner for a
+# result that still matters. workflow_run, schedule and workflow_dispatch runs each serve one event and key on
+# their own run id, so they are never grouped together and never cancelled (senpi#4609).
+concurrency:
+  group: publish-model-catalog-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
 jobs:
   generate:
-    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
+    # A workflow_run checks out workflow_run.head_sha, so it must come from this repository's own push to
+    # main: the branch name alone does not say which repository the triggering run belongs to (senpi#4342).
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event == 'push') }}
     runs-on: ubuntu-latest
     env:
       SOURCE_REF: ${{ github.event.workflow_run.head_sha || inputs.source_ref || github.sha }}
@@ -77,7 +86,7 @@ jobs:
   publish:
     # The upload targets the upstream pi-artifacts R2 bucket, whose credentials only the upstream
     # repository holds. Forks generate and validate the catalog but never publish it (senpi#1522).
-    if: ${{ github.repository == 'badlogic/pi-mono' && (github.event_name == 'schedule' || github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch' && inputs.publish)) }}
+    if: ${{ github.repository == 'badlogic/pi-mono' && (github.event_name == 'schedule' || (github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event == 'push') || (github.event_name == 'workflow_dispatch' && inputs.publish)) }}
     needs: generate
     runs-on: ubuntu-latest
     environment: pi-model-upload

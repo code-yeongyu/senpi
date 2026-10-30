@@ -105,6 +105,19 @@ tools stay registered; the next call reconnects transparently). Default `10`.
 ### `requestTimeoutMs`
 Per-request timeout. Default `30000`.
 
+### `SENPI_MCP_TASK_TIMEOUT_MS` (environment setting)
+Maximum task lifetime in milliseconds, separate from `requestTimeoutMs`.
+Default `1800000` (30 minutes); set a positive integer up to `2147483647`.
+Applies only to tool calls on modern servers advertising the
+`io.modelcontextprotocol/tasks` extension. After a task handle arrives, the tool
+row stays pending and displays task status until completion, failure, cancellation,
+or this cap. Each poll has its own `requestTimeoutMs` timeout and follows the
+server's `pollIntervalMs`; absent that hint, polling backs off from 1 to 30 seconds.
+Esc requests `tasks/cancel`. Reaching the cap also requests cancellation and fails
+with an error naming the task ID and this setting. Cancellation is cooperative;
+it does not guarantee that the server stops its work. Tasks are not resumed after
+a restart. Ordinary non-task calls retain their existing whole-operation deadline.
+
 ### `connectTimeoutMs`
 Connect + initialize handshake timeout. Default `15000`.
 
@@ -385,6 +398,26 @@ skill's recorded provenance; a skill loaded without one keeps the trust rules
 above.
 
 ## Resources and prompts
+
+MCP 2026-07-28 tool schemas use JSON Schema 2020-12 by default. Explicit
+2020-12 declarations are supported; other dialect declarations produce
+`MCP_SCHEMA_UNSUPPORTED_DIALECT`. Tool discovery, the disk cache, and MCP
+exposure retain the full schema, including `$defs`, `$ref` siblings, and
+`additionalProperties`. Boolean roots use an equivalent `allOf` container
+at the object-shaped model-tool API boundary.
+
+Modern structured results may be any JSON value, including `null`, `false`,
+and `0`. Successful results with an `outputSchema` must contain conforming
+`structuredContent`; execution-error results are exempt. Validation never
+coerces values, inserts defaults, removes properties, or fetches references
+from the network. Unresolved references are rejected. Schemas are bounded
+to 64 nesting levels and 16,384 JSON nodes; `format` is an annotation.
+
+Object-only model providers may require a lossy schema adaptation in the AI
+provider layer. That wire adaptation does not change MCP's source schema
+or the arguments sent to the server: modern calls validate the model's
+arguments without coercion. Legacy connections retain the SDK's existing
+schema validation and compatibility conversion.
 
 - `mcp_list_resources` / `mcp_read_resource` register automatically when a
   connected server lists resources.

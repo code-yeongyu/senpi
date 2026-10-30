@@ -1,3 +1,40 @@
+## 2026-10-26 - Read the canonical agent directory without opening state (#4368)
+
+### What changed
+
+- `packages/coding-agent/src/cli/agent-dir-command.ts`: add `config agent-dir --json`, reporting the exact `getAgentDir()` result and its directory source, selection rule and branded prefix. Every success or failure is one version-1 JSON record with `ok`; invalid arguments exit 2 and selector failures exit 1.
+- `packages/coding-agent/src/cli/config-command-help.ts`: extract the config help text and document the metadata command and its typed JSON exit contract.
+
+### Why
+
+- The desktop must ask the same engine version that will run its sessions instead of copying the CLI's directory-selection policy. Part of desktop#4753; the reporter's billing-error root cause remains unproven.
+
+### Why an extension could not handle it
+
+- Directory selection must be available before settings, extensions, data-home checks or host startup. The command only reads selector inputs and filesystem layout; it creates no marker or state files.
+
+### Expected merge conflict zones
+
+- LOW: metadata-command routing before full CLI startup.
+
+## 2026-10-25 - Public host commands accept presenter enforcement (senpi#4247)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command-args.ts` and `packages/coding-agent/src/cli/host-command.ts`: accept and forward `--mcp-presenter-enforcement` only for ensure and handoff, separately from the launch specification.
+
+### Why
+
+- The public deployment path could pass fd 4 but not the enforcement option required to enroll.
+
+### Why an extension could not handle it
+
+- Host launch arguments are parsed before any session or extension exists.
+
+### Expected merge conflict zones
+
+- The host argument parser, help text and request options.
+
 ## 2026-10-25 - Private presenter bootstrap launch options (#4197)
 
 ### What changed

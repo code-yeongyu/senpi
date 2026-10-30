@@ -25,7 +25,7 @@ function exitCodeOf(value: unknown): number | null {
 
 export function childBashOperations(runner: ToolChildKindRunner, options?: { shellPath?: string }): BashOperations {
 	return {
-		exec: async (command, cwd, { onData, signal, timeout, env }) => {
+		exec: async (command, cwd, { onData, signal, timeout, env, redactSecretsInOutput }) => {
 			if (signal?.aborted) throw new Error("aborted");
 			const shellEnv: Record<string, string> = {};
 			for (const [name, value] of Object.entries(env ?? getShellEnv()))
@@ -36,6 +36,7 @@ export function childBashOperations(runner: ToolChildKindRunner, options?: { she
 					command,
 					cwd,
 					env: shellEnv,
+					redactSecretsInOutput: redactSecretsInOutput === true,
 					...(options?.shellPath === undefined ? {} : { shellPath: options.shellPath }),
 					...(timeout === undefined || timeout <= 0 ? {} : { timeoutSeconds: timeout }),
 				},
@@ -44,7 +45,10 @@ export function childBashOperations(runner: ToolChildKindRunner, options?: { she
 					signal,
 					onUpdate: (update) => {
 						const chunk = chunkOf(update);
-						if (chunk !== undefined) onData(chunk);
+						if (chunk !== undefined) {
+							const stream = Reflect.get(update as object, "stream");
+							onData(chunk, stream === "stderr" ? "stderr" : "stdout");
+						}
 					},
 				},
 			);

@@ -37,6 +37,10 @@ export function parseBeginHandover(record: Readonly<Record<string, unknown>>): I
 	}
 	const policy = isRecord(record.policy) ? record.policy : undefined;
 	const { agent_dir } = record;
+	const mcpPresenterEnforcement = record.mcp_presenter_enforcement;
+	if (mcpPresenterEnforcement !== undefined && typeof mcpPresenterEnforcement !== "boolean") {
+		return "mcp_presenter_enforcement must be a boolean";
+	}
 	if (agent_dir !== undefined && (typeof agent_dir !== "string" || agent_dir === "")) {
 		return "agent_dir must be a non-empty string";
 	}
@@ -48,6 +52,7 @@ export function parseBeginHandover(record: Readonly<Record<string, unknown>>): I
 		launch: { command: launch.command, args: launch.args },
 		hostArgs: host_args,
 		env: env as Readonly<Record<string, string>>,
+		...(mcpPresenterEnforcement !== undefined && { mcpPresenterEnforcement }),
 		...(policy !== undefined && { policy }),
 		...(agent_dir !== undefined && { agentDir: agent_dir }),
 	};
@@ -145,6 +150,7 @@ export async function performIdleHandover(context: {
 	Object.assign(env, request.env);
 	const result = await handoffHost({
 		presenterBootstrap: context.presenterBootstrap,
+		mcpPresenterEnforcement: request.mcpPresenterEnforcement,
 		socket,
 		agentDir,
 		hostArgs: request.hostArgs,

@@ -29,6 +29,7 @@ import {
 	RETAIN_ON_DISCONNECT_CAPABILITY,
 	RETRY_FALLBACK_PROFILE_CAPABILITY,
 	SESSION_CONTEXT_CAPABILITY,
+	SESSION_ENV_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
 	SESSION_RELOCATION_CAPABILITY,
@@ -63,6 +64,9 @@ export function multiSessionHostCapabilities(options: {
 	return [
 		...new Set([
 			"multi_session",
+			"snapshot_cursor",
+			"ui_answer_ledger",
+			"dialog_observer",
 			...(options.mcpPresenters ? ["mcp_form_presenter_v1"] : []),
 			"session_lifecycle",
 			"expected_host_instance",
@@ -119,6 +123,8 @@ export function multiSessionHostCapabilities(options: {
 			PROMPT_SURFACE_CHAT_CAPABILITY,
 			// Each session's tool subprocesses and eval kernel get its own OMO_BROWSER_ENGINE from its launch profile.
 			BROWSER_ENGINE_CAPABILITY,
+			// Each session's caller env lives on its own launch profile; the host process never holds it (senpi#4381).
+			SESSION_ENV_CAPABILITY,
 			// Each session's fallback chain is its own in-memory settings override, never the host's file.
 			RETRY_FALLBACK_PROFILE_CAPABILITY,
 			ACCEPT_EDITS_PERMISSION_PRESET_CAPABILITY,

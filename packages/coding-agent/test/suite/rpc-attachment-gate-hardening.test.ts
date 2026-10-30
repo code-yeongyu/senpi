@@ -39,6 +39,8 @@ it("exempts exactly the reviewed commands from the attach gate", () => {
 			"get_protocol_info",
 			"get_provider_accounts",
 			"get_session_stats",
+			// senpi#4266: a snapshot is an observing read, like get_state.
+			"get_snapshot",
 			"get_state",
 			"get_steering_messages",
 			"get_subscription_limits",

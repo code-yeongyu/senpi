@@ -9,8 +9,11 @@ import { isEphemeralIdentity } from "./config-identity-key.ts";
 import type { McpServerDeclaredConfig } from "./config-schema.ts";
 import type { ServerConnection } from "./connection.ts";
 import { collectAllPages } from "./expose/pagination.ts";
+import { listMcpTools } from "./tool-client.ts";
+import type { McpListedTool as ListedTool } from "./tool-contracts.ts";
+import { isModernMcpClient } from "./modern/request.ts";
+import { hasSupportedModernToolSchemas } from "./modern/tool-schema.ts";
 
-type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
 type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
 type ListedPrompt = Awaited<ReturnType<Client["listPrompts"]>>["prompts"][number];
@@ -21,6 +24,7 @@ export interface McpCatalogCacheFile {
 }
 
 export interface McpCachedServerCatalog {
+	readonly modern?: boolean;
 	readonly configHash: string;
 	readonly credentialIdentity?: string;
 	readonly fetchedAt: number;
@@ -76,7 +80,7 @@ export async function collectServerCatalogForCache(
 	credentialIdentity?: string,
 ): Promise<McpCachedServerCatalog> {
 	const tools = await collectAllPages<ListedTool>((cursor) =>
-		connection.client.listTools(cursor === undefined ? {} : { cursor }, {
+		listMcpTools(connection.client, cursor === undefined ? {} : { cursor }, {
 			timeout: config.requestTimeoutMs,
 		}),
 	);
@@ -97,6 +101,7 @@ export async function collectServerCatalogForCache(
 	);
 	return {
 		configHash,
+		...(isModernMcpClient(connection.client) ? { modern: true } : {}),
 		credentialIdentity,
 		fetchedAt: Date.now(),
 		instructions: connection.client.getInstructions(),
@@ -180,7 +185,7 @@ function normalizeCachedServer(value: unknown): McpCachedServerCatalog | undefin
 	if (!isRecord(value) || typeof value.configHash !== "string" || typeof value.fetchedAt !== "number") {
 		return undefined;
 	}
-	const tools = normalizeTools(value.tools);
+	const tools = normalizeTools(value.tools, value.modern === true);
 	if (tools === undefined) return undefined;
 	const resources = Array.isArray(value.resources) ? (value.resources as ListedResource[]) : [];
 	const prompts = Array.isArray(value.prompts) ? (value.prompts as ListedPrompt[]) : [];
@@ -190,6 +195,7 @@ function normalizeCachedServer(value: unknown): McpCachedServerCatalog | undefin
 	const instructions = typeof value.instructions === "string" ? value.instructions : undefined;
 	return {
 		configHash: value.configHash,
+		...(value.modern === true ? { modern: true } : {}),
 		credentialIdentity: typeof value.credentialIdentity === "string" ? value.credentialIdentity : undefined,
 		fetchedAt: value.fetchedAt,
 		instructions,
@@ -200,17 +206,23 @@ function normalizeCachedServer(value: unknown): McpCachedServerCatalog | undefin
 	};
 }
 
-function normalizeTools(value: unknown): ListedTool[] | undefined {
+function normalizeTools(value: unknown, modern: boolean): ListedTool[] | undefined {
 	if (!Array.isArray(value)) return undefined;
 	const tools: ListedTool[] = [];
 	for (const item of value) {
-		if (!isRecord(item) || typeof item.name !== "string" || !isRecord(item.inputSchema)) return undefined;
-		tools.push({
+		if (!isRecord(item) || typeof item.name !== "string") return undefined;
+		if (!isRecord(item.inputSchema) && !(modern && typeof item.inputSchema === "boolean")) return undefined;
+		const tool: ListedTool = {
+			...(modern ? item : {}),
 			annotations: isRecord(item.annotations) ? (item.annotations as ListedTool["annotations"]) : undefined,
 			description: typeof item.description === "string" ? item.description : undefined,
 			inputSchema: item.inputSchema as ListedTool["inputSchema"],
+			...(modern && (isRecord(item.outputSchema) || typeof item.outputSchema === "boolean")
+				? { outputSchema: item.outputSchema }
+				: {}),
 			name: item.name,
-		});
+		};
+		if (!modern || hasSupportedModernToolSchemas(tool)) tools.push(tool);
 	}
 	return tools;
 }

@@ -26,6 +26,7 @@ import { ResourceUpdatedNotificationSchema, registerMcpNotificationHandler } fro
 import { type McpRequestOrigin, mcpRequestOptions } from "./request-origin.ts";
 import { McpMrtrError } from "./modern/errors.ts";
 import { ensureMcpToolCallConnection } from "./health.ts";
+import { isModernMcpClient } from "./modern/request.ts";
 
 export interface McpResourceServer {
 	readonly ensureFresh?: () => Promise<void>;
@@ -51,6 +52,8 @@ export async function ensureMcpResourceSubscriptions(
 	client: Client,
 	resources: ReadonlyArray<{ uri: string }>,
 ): Promise<void> {
+	// Modern streams derive their resource URI filter from resources/list results.
+	if (isModernMcpClient(client)) return;
 	if (client.getServerCapabilities()?.resources?.subscribe !== true) return;
 	await Promise.all(
 		resources.map((resource) => client.subscribeResource({ uri: resource.uri }).catch(() => undefined)),

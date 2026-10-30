@@ -4,12 +4,17 @@ import { isBunBinary } from "../../config.ts";
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { ownProcessStartedAtMs } from "../../core/extensions/builtin/terminal/process-identity.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { isSecurityNoticeState } from "../../core/security-notices.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
 import { roleConnection } from "./connection-roles.ts";
+import { answeredUiRequestId } from "./extension-ui-response.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
+import type { RpcExtensionUIResponse } from "./rpc-types.ts";
+import { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
+import { frameUnit } from "./compact-canonical-pairing.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
 import type {
@@ -21,6 +26,8 @@ import type {
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
+import { WorkerOwnerGates } from "./session-worker-owners.ts";
+import { sessionWorkerDataRegistry } from "./session-worker-data.ts";
 import { randomUUID } from "node:crypto";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 
@@ -40,6 +47,28 @@ const compiledWorkerEntry =
 		? SENPI_RPC_SESSION_WORKER_ENTRY
 		: "./src/modes/rpc/session-worker.ts";
 
+function spawnSessionWorker(webviewBroker: ReturnType<typeof createWebViewBroker>) {
+	return sessionWorkerDataRegistry.spawn(
+		(issued) =>
+			new Worker(
+				isBunBinary
+					? fileURLToPath(new URL(compiledWorkerEntry, import.meta.url)).replaceAll("\\", "/")
+					: new URL(
+							import.meta.url.endsWith(".ts") ? "./session-worker.ts" : "./session-worker.js",
+							import.meta.url,
+						),
+				{
+					workerData: {
+						hostProcessStartedAtMs: ownProcessStartedAtMs(),
+						extensionData: issued.extensionData,
+						...(webviewBroker ? { webviewBroker: webviewBroker.port } : {}),
+					},
+					transferList: [...(webviewBroker ? [webviewBroker.port] : []), ...issued.transfer],
+				},
+			),
+	);
+}
+
 export class SessionWorkerClient {
 	private privateBinding?: McpFormBinding;
 	private stopPrivateBinding?: () => void;
@@ -49,18 +78,8 @@ export class SessionWorkerClient {
 	>();
 	/** The worker's own route to the main-thread Bun.WebView service; released when the worker exits. */
 	private readonly webviewBroker = createWebViewBroker();
-	readonly worker = new Worker(
-		isBunBinary
-			? fileURLToPath(new URL(compiledWorkerEntry, import.meta.url)).replaceAll("\\", "/")
-			: new URL(import.meta.url.endsWith(".ts") ? "./session-worker.ts" : "./session-worker.js", import.meta.url),
-		{
-			workerData: {
-				hostProcessStartedAtMs: ownProcessStartedAtMs(),
-				...(this.webviewBroker ? { webviewBroker: this.webviewBroker.port } : {}),
-			},
-			...(this.webviewBroker ? { transferList: [this.webviewBroker.port] } : {}),
-		},
-	);
+	private readonly spawned: ReturnType<typeof spawnSessionWorker>;
+	readonly worker: Worker;
 	readonly exited: Promise<void>;
 	snapshot?: WorkerSnapshot;
 	/** Main marks this only after installing the unique routing binding. */
@@ -79,15 +98,24 @@ export class SessionWorkerClient {
 	private cancelUiPending = false;
 	private terminalFailure?: string;
 	private stopLimitMirror: () => void = () => {};
+	/** The host's ordered acceptance lane for this worker incarnation, present only while the flag is on. */
+	readonly acceptance = compactUpdatesEnabled() ? new SessionAcceptanceLane() : undefined;
+	private expectedOrdinal = 0;
+	private readonly owners = new WorkerOwnerGates();
 
 	private readonly callbacks: SessionWorkerCallbacks;
 
 	constructor(callbacks: SessionWorkerCallbacks) {
 		this.callbacks = callbacks;
+		// Spawned here, with nothing between it and the exit listener that owns its cleanup (senpi#4728).
+		this.spawned = spawnSessionWorker(this.webviewBroker);
+		this.worker = this.spawned.result;
 		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
 				this.stopPrivateBinding?.();
 				this.privateBinding?.dispose();
+				this.owners.retireAll();
+				this.spawned.issued.dispose();
 				for (const operation of this.privateOperations.values()) operation.operation.abort();
 				this.privateOperations.clear();
 				if (!this.stopped && !this.closeTimer) this.fail("session_worker_exited");
@@ -150,8 +178,17 @@ export class SessionWorkerClient {
 	}
 
 	async commit(): Promise<WorkerSnapshot> {
-		const result = await this.request({ type: "commit" });
+		const nonce = randomUUID();
+		const result = await this.request({
+			type: "commit",
+			...(this.acceptance ? { acceptance: true, recoveryEpoch: nonce } : {}),
+		});
 		if (result.type !== "ready") throw new Error("Invalid worker commit response");
+		if (this.acceptance) {
+			// Accepted before the open resolves, so the entry is admitted only after its baseline (R3.C1.1).
+			if (!result.bootstrap) throw new Error("Invalid worker commit response");
+			this.acceptance.bootstrap(result.bootstrap, nonce);
+		}
 		this.snapshot = result.snapshot;
 		return result.snapshot;
 	}
@@ -164,6 +201,7 @@ export class SessionWorkerClient {
 	): Promise<RpcSessionBinding> {
 		this.sessionId = sessionId;
 		this.writer = writer;
+		if (this.acceptance) writer.registerAcceptance(sessionId, this.acceptance);
 		this.requestClose = requestClose;
 		this.options = options;
 		await this.request({
@@ -178,23 +216,27 @@ export class SessionWorkerClient {
 			handle: async (command) => {
 				if (writer.handleMcpForm(command)) return;
 				const connection = writer.currentConnection();
-				if (
-					"type" in command &&
-					command.type === "extension_ui_response" &&
-					"id" in command &&
-					typeof command.id === "string" &&
-					writer.acceptWorkerGrantResponse(sessionId, command.id, connection) === false
-				)
+				const owner = this.owners.capture(writer.connectionContext, connection, command);
+				// The grant rules apply to the request this response answers (`uiRequestId`, or `id` in the
+				// short form), the same request the worker settles.
+				const answered =
+					"type" in command && command.type === "extension_ui_response"
+						? answeredUiRequestId(command as RpcExtensionUIResponse)
+						: undefined;
+				if (answered !== undefined && writer.acceptWorkerGrantResponse(sessionId, answered, connection) === false)
 					return;
 				await this.request({
 					type: "command",
 					command,
 					connection,
 					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
+					...(owner === undefined ? {} : { owner }),
 				});
 			},
 			cancelPendingExtensionUiRequests: () => this.post({ type: "cancel_ui" }),
+			connectionDetached: (connection) => this.postRetired(this.owners.detach(writer.connectionContext, connection)),
 			dispose: async () => {
+				this.postRetired(this.owners.retireAll());
 				this.post({ type: "cancel_ui" });
 			},
 		};
@@ -229,6 +271,10 @@ export class SessionWorkerClient {
 
 	private request(message: WorkerRequestInput): ReturnType<SessionWorkerRequests["request"]> {
 		return this.requests.request(message);
+	}
+
+	private postRetired(owners: ReturnType<WorkerOwnerGates["retireAll"]>): void {
+		if (owners.length > 0) this.post({ type: "owners_retired", owners });
 	}
 
 	private post(message: HostToSessionWorker): void {
@@ -365,6 +411,8 @@ export class SessionWorkerClient {
 					acknowledge(message.signal, false);
 					return;
 				}
+				const lane = this.acceptance;
+				if (!this.inOrder(message)) return;
 				// Identity and activity commit before publication; clients may attach or disconnect on that event.
 				if (message.snapshot) {
 					this.snapshot = message.snapshot;
@@ -421,6 +469,12 @@ export class SessionWorkerClient {
 					outputConnection = target.connection;
 				}
 				const enqueue = () => {
+					// Applied before routing, and so before this frame's credit returns.
+					if (message.bootstrap) lane?.bootstrap(message.bootstrap);
+					else {
+						lane?.applyTranscript(message.transitions ?? []);
+						lane?.accept(message.record, message.recovery, frameUnit(message));
+					}
 					if (!writer.enqueue(sessionId, message.record)) {
 						acknowledge(message.signal, false);
 						this.fail("session_output_overflow_or_closed");
@@ -430,9 +484,13 @@ export class SessionWorkerClient {
 				};
 				const consumed = Promise.resolve(
 					message.snapshot ? this.callbacks.reconcile(message.snapshot.liveSessionPaths) : undefined,
-				).then(() =>
-					outputConnection === undefined ? enqueue() : writer.withConnection(outputConnection, enqueue),
-				);
+				).then(() => {
+					// Resolved after reconciliation: a retired or replaced destination consumes the frame normally.
+					if (outputConnection === undefined) return enqueue();
+					return message.owner === undefined || outputConnection !== message.connection
+						? writer.withConnection(outputConnection, enqueue)
+						: writer.connectionContext.runCaptured(outputConnection, message.owner, enqueue);
+				});
 				void consumed.then(
 					() => acknowledge(message.signal, true),
 					(cause: unknown) => {
@@ -442,6 +500,19 @@ export class SessionWorkerClient {
 				);
 				return;
 			}
+			case "canonical":
+			case "canonical_unavailable":
+				// Credited under the same condition as an output frame: only a bound, running incarnation accepts units.
+				if (!this.writer || !this.sessionId || this.stopped) {
+					acknowledge(message.signal, false);
+					return;
+				}
+				if (!this.inOrder(message)) return;
+				if (message.type === "canonical")
+					this.acceptance?.acceptControl(frameUnit({ ...message, canonical: message.record }));
+				else this.acceptance?.compactUnavailable(message.reason);
+				acknowledge(message.signal, true);
+				return;
 			case "capabilities":
 				if (message.connection === undefined)
 					this.options = { ...this.options, capabilities: message.capabilities };
@@ -479,8 +550,22 @@ export class SessionWorkerClient {
 		}
 	}
 
+	/** A gap, duplicate or reordered frame is denied and ends this incarnation before any mutation. */
+	private inOrder(message: { readonly ordinal?: number; readonly signal: SharedArrayBuffer }): boolean {
+		if (!this.acceptance) return true;
+		if (message.ordinal === this.expectedOrdinal) {
+			this.expectedOrdinal += 1;
+			return true;
+		}
+		acknowledge(message.signal, false);
+		const kind = (message.ordinal ?? Number.POSITIVE_INFINITY) < this.expectedOrdinal ? "duplicate" : "gap";
+		this.fail(`session_worker_frame_${kind}`);
+		return false;
+	}
+
 	private fail(error: string): void {
 		if (this.stopped) return;
+		this.acceptance?.retire("worker_failed");
 		this.callbacks.failure(error);
 		this.terminalFailure = error;
 		if (this.writer && this.sessionId) {

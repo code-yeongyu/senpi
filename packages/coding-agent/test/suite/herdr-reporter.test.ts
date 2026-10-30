@@ -28,8 +28,8 @@ describe("herdr lifecycle reporter (senpi#1645)", () => {
 		await f.start();
 		expect(f.requests.map((r) => r.method)).toEqual([
 			"pane.report_metadata",
-			"pane.report_agent_session",
 			"pane.report_agent",
+			"pane.report_agent_session",
 		]);
 		expect(f.requests[0]?.params).toMatchObject({ title: "Reporter QA", display_agent: "Reporter QA" });
 		expect(f.requests[1]?.params).toMatchObject({ agent_session_path: "/sessions/root.jsonl" });
@@ -228,8 +228,8 @@ describe("herdr lifecycle reporter (senpi#1645)", () => {
 		await f.emit("agent_start");
 		expect(transport.requests.map((r) => r.method)).toEqual([
 			"pane.report_metadata",
-			"pane.report_agent_session",
 			"pane.report_agent",
+			"pane.report_agent_session",
 			"pane.report_agent",
 			"pane.report_agent",
 			"pane.release_agent",

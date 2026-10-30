@@ -61,6 +61,7 @@ export async function openHeaderFixture(
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const address = server.address();
 	if (!address || typeof address === "string") throw new Error("Missing fixture address");
+	const logger = createMcpLogger("headers", { logDir: root });
 	const connection = new ServerConnection({
 		serverName: "configured-fixture",
 		config: normalizeServer({
@@ -69,7 +70,7 @@ export async function openHeaderFixture(
 			auth: false,
 			...("headers" in options ? { headers: options.headers } : {}),
 		}),
-		logger: createMcpLogger("headers", { logDir: root }),
+		logger,
 	});
 	const close = async () => {
 		try {
@@ -82,7 +83,7 @@ export async function openHeaderFixture(
 	};
 	try {
 		await connection.connect();
-		return { client: connection.client, requests, tools, close };
+		return { client: connection.client, requests, tools, logger, close };
 	} catch (error) {
 		await close();
 		throw error;

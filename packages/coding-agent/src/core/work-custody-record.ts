@@ -1,4 +1,5 @@
 import type { CustomMessage } from "./messages.ts";
+import { normalizeWaitItems, type WaitSourceItems } from "./lifecycle-wait-items.ts";
 import type { ObligationKind } from "./session-lifecycle-types.ts";
 
 export interface CustodyPayload {
@@ -9,7 +10,7 @@ export interface CustodyPayload {
 }
 
 /** Mutable only by the registry; every replacement is appended before installation. */
-export interface WorkCustodyRecord {
+export interface WorkCustodyRecord extends WaitSourceItems {
 	readonly id: string;
 	readonly key: string;
 	readonly kind: ObligationKind;
@@ -51,6 +52,7 @@ export function readWorkCustody(value: unknown): WorkCustodyRecord | undefined {
 		key: value.key,
 		kind: value.kind,
 		state: value.state,
+		...normalizeWaitItems(value.items, value.omittedItems),
 		...(typeof value.source === "string" ? { source: value.source } : {}),
 		...(typeof value.activeCount === "number" ? { activeCount: value.activeCount } : {}),
 		...(typeof value.detail === "string" ? { detail: value.detail } : {}),

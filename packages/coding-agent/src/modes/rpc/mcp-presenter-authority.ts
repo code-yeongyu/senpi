@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { hostInstanceId } from "./protocol-identity.ts";
 import { queuedForm } from "../../core/extensions/builtin/mcp/modern/consent-queue.ts";
 import { isRecord, validateMrtrForm } from "../../core/extensions/builtin/mcp/modern/form-schema.ts";
 import type {
@@ -51,7 +52,8 @@ interface Grant {
 
 /** Host-owned only. No public session command can call enrollment or install a registration. */
 export class McpPresenterAuthority {
-	readonly instance = randomUUID();
+	/** The host process this authority belongs to: its protocol `instanceId`, so a launcher can name the host it replaces. */
+	readonly instance = hostInstanceId();
 	private readonly clock: McpFormClock;
 	private readonly connections = new Map<McpPresenterConnection, Connection>();
 	private readonly bindings = new Map<string, Binding>();

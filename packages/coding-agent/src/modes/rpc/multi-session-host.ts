@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -117,6 +118,14 @@ export async function runMultiSessionHost(options: MultiSessionHostOptions): Pro
 			? runStdioHost(options)
 			: runSocketHost(options, resolveSocketPath(options.listen, options.agentDir)),
 	);
+}
+
+/**
+ * The Windows presenter control pipe. Its name comes from its own random value, never the host's public
+ * protocol instanceId, so nothing can learn it before the host listens and squat it.
+ */
+export function presenterPipePath(): string {
+	return `\\\\.\\pipe\\senpi-presenter-${randomUUID()}`;
 }
 
 export function createHostCore(
@@ -344,9 +353,9 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 						generation: hostGeneration(process.env),
 						runtimeBuildId,
 					}),
-					perform: (request) =>
+					perform: async (request) =>
 						performIdleHandover({
-							presenterBootstrap: presenterControl?.successorBootstrap(),
+							presenterBootstrap: await presenterControl?.successorBootstrap(),
 							request,
 							socket: hostWatchdogBinding()?.publicSocket ?? socketPath,
 							agentDir: options.agentDir,
@@ -365,9 +374,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 				if (process.platform !== "win32") presenterDir = await mkdtemp(join(tmpdir(), "senpi-presenter-"));
 				presenterControl = new McpPresenterControl(
 					writer,
-					presenterDir
-						? join(presenterDir, "control.sock")
-						: `\\\\.\\pipe\\senpi-presenter-${writer.mcpPresenters?.instance}`,
+					presenterDir ? join(presenterDir, "control.sock") : presenterPipePath(),
 				);
 				await presenterControl.listen();
 				presenterControl.bootstrap(bootstrap);

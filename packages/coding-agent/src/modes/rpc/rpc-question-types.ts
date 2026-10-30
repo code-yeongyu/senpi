@@ -110,7 +110,12 @@ export type RpcExtensionUIRequest =
  * Response to an extension UI request. `id` is this frame's correlation id, echoed by its reply;
  * `uiRequestId` names the request answered, and without it `id` does (the short form).
  */
-export type RpcExtensionUIResponseFrame = { type: "extension_ui_response"; id: string; uiRequestId?: string };
+export type RpcExtensionUIResponseFrame = {
+	type: "extension_ui_response";
+	id: string;
+	uiRequestId?: string;
+	answerId?: string;
+};
 
 export type RpcExtensionUIResponse =
 	| (RpcExtensionUIResponseFrame & { value: string })

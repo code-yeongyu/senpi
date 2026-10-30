@@ -3,18 +3,17 @@ name: CI
 on:
   push:
     branches: [main]
-  # Every pull request runs CI, whatever its base: a PR stacked on another feature branch must not reach main untested
-  # (senpi#2759).
-  pull_request:
-  # ci-full-label.yml calls this workflow when a PR gets the run-full-ci label (senpi#3957).
+  # No pull_request trigger: merges are decided on a local whole-suite receipt, so hosted PR CI runs only for a PR
+  # labelled run-full-ci, through ci-full-label.yml, which calls this workflow on the label and on every later push of
+  # the labelled PR, whatever its base (senpi#2759, senpi#3957, senpi#4968).
   workflow_call:
 
 # A pull request has one run group (its ref is refs/pull/<n>/merge): a push or restack cancels the run it
 # supersedes. A main push gets its own group per commit, so its run never waits behind another main run and is
 # never cancelled or replaced by a later merge: every main commit ends with its own "Check and test" result, which
 # the release reuses as its test evidence (senpi#2960). After the fixed per-file prefix comes the workflow name, which is
-# the caller's when ci-full-label.yml calls this workflow, so a label-forced full run never cancels the PR's own run, and
-# the label run's other called workflows (their own prefixes) never cancel this one (senpi#3957).
+# the caller's when ci-full-label.yml calls this workflow, so the label run's other called workflows (their own
+# prefixes) never cancel this one (senpi#3957), and a newer push of the labelled PR cancels its superseded run.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -111,7 +110,7 @@ jobs:
       - name: Codemode package tests (including gate regressions)
         run: bun run --cwd packages/senpi-codemode test -- test/gate
       - name: Gate harness types
-        run: bunx tsc --noEmit --project packages/senpi-codemode/scripts/tsconfig.gate.json
+        run: bun check --no-script --all -p packages/senpi-codemode/scripts/tsconfig.gate.json
       - name: Upload gate report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -162,10 +161,35 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=10240
         run: npm run check
 
+      # Dead-code check: fails on a new unused file, export or dependency (knip.jsonc; senpi#4419).
+      - name: Knip dead-code check
+        run: npm run knip:check
+
       - name: Snapshot OS temp before tests
         id: test_temp_snapshot
         shell: bash
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      # Export coverage never shrinks: every file knip export-checks under the base branch's knip.jsonc stays
+      # export-checked (scripts/check-knip-export-coverage.mjs; senpi#4421). The shallow checkout lacks the base, and for
+      # a pull request its own commits (used when the base has no knip.jsonc yet), so fetch both first. The server can refuse
+      # the --shallow-exclude fetch ("error processing shallow info") for a stacked PR whose base just merged; then fetch
+      # the PR head with a bounded depth instead (senpi#4714).
+      - name: Knip export coverage
+        env:
+          BASE_REF: ${{ github.base_ref || github.event.repository.default_branch }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git fetch --no-tags --depth=1 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          history=HEAD
+          if [ -n "$PR_NUMBER" ]; then
+            if ! git fetch --no-tags --shallow-exclude="refs/heads/${BASE_REF}" origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/origin/pr-head"; then
+              echo "knip-export-coverage: --shallow-exclude fetch of the PR head failed; falling back to --depth=500 (senpi#4714)"
+              git fetch --no-tags --depth=500 origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/origin/pr-head"
+            fi
+            history=origin/pr-head
+          fi
+          KNIP_COVERAGE_BASE="origin/${BASE_REF}" KNIP_COVERAGE_HISTORY="$history" node scripts/run-tests.mjs node --test scripts/check-knip-export-coverage.mjs
 
       - name: Real CLI text-tool recovery self-test
         timeout-minutes: 5
@@ -193,6 +217,54 @@ jobs:
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # `npm run build` (scripts/build-all.mjs) is a pure function of the checked-out tree and writes only
+  # `packages/**/dist`, yet each of the four shards below used to run it: 4 x ~35 s of identical work on a
+  # congested runner pool (senpi#4610). It runs once here and the shards unpack its output.
+  #
+  # The outputs travel as ONE tarball, not as a bare artifact path: `packages/*/dist` is thousands of small
+  # files (slow to upload one by one) and actions/upload-artifact does not preserve the executable bit that
+  # the committed CLI stubs carry.
+  #
+  # `node_modules` is NOT shared. Restoring it would mean either an artifact or an actions/cache entry
+  # holding a ~1 GB tree with workspace symlinks and platform-specific optional dependencies, which is both
+  # slower to transfer than this repository's `npm ci --ignore-scripts` (measured 12-13 s per shard with
+  # setup-node's npm cache) and unsafe to reuse across runners. Each shard therefore keeps its own `npm ci`.
+  build-coding-agent:
+    name: Build (coding-agent shards)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      # Every `dist` directory the build writes, including the nested packages/session-backends/* ones.
+      - name: Pack the build outputs
+        shell: bash
+        run: |
+          find packages -mindepth 2 -maxdepth 3 -type d -name dist -print0 \
+            | tar --null --files-from - -czf "$RUNNER_TEMP/workspace-dist.tar.gz"
+          tar -tzf "$RUNNER_TEMP/workspace-dist.tar.gz" | wc -l
+
+      - name: Upload the workspace build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: workspace-dist
+          path: ${{ runner.temp }}/workspace-dist.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
   # The coding-agent vitest suite dominates CI wall time (2467+ files; three
   # shards reached 27-minute jobs). Sharding it across four
   # runners divides that wall while each shard keeps the CI fork-pool settings
@@ -200,6 +272,7 @@ jobs:
   # subprocess-suite pool hang.
   test-coding-agent:
     name: Test (coding-agent ${{ matrix.shard }}/4)
+    needs: build-coding-agent
     strategy:
       fail-fast: false
       matrix:
@@ -226,8 +299,15 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build workspace package entries
-        run: npm run build
+      - name: Download the workspace build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: workspace-dist
+          path: ${{ runner.temp }}
+
+      - name: Restore the workspace build
+        shell: bash
+        run: tar -xzmf "$RUNNER_TEMP/workspace-dist.tar.gz"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -252,6 +332,54 @@ jobs:
             echo "## Test (coding-agent ${{ matrix.shard }}/4)"
             echo "- Status: ${{ job.status }}"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check OS temp after tests
+        if: always() && steps.test_temp_snapshot.outcome == 'success'
+        shell: bash
+        run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
+
+  # Fused-path equivalence (EQ, plan P0-05b): the real CLI on the Bun child runs cases E01-E20 against the fake model
+  # server and must match the B0 goldens recorded for this platform; the Z1.n smoke compares a Node and a Bun child.
+  fused-equivalence:
+    name: Fused equivalence (EQ E01-E20, Node smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace package entries
+        run: npm run build
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+
+      - name: Snapshot OS temp before tests
+        id: test_temp_snapshot
+        shell: bash
+        run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
+
+      - name: Normalizer unit tests
+        run: node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs
+
+      - name: EQ compare against the B0 goldens
+        timeout-minutes: 25
+        run: node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --compare --pipeline legacy --placement fused --evidence eq-ci
+
+      - name: Z1.n Node smoke (node vs bun)
+        timeout-minutes: 10
+        run: node .agents/skills/senpi-qa/scripts/scenarios/node-smoke-qa.mjs --compare --runtimes node,bun --evidence node-smoke
+
       - name: Check OS temp after tests
         if: always() && steps.test_temp_snapshot.outcome == 'success'
         shell: bash
@@ -518,6 +646,144 @@ jobs:
         run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
 
 
+  # sisyphuslabs/omo-desktop-app#4199: native receipts 27 (PID-4 kernel-session identity) and 28
+  # (FileFsDriverPathInformation locality) need a real Windows kernel; this job's RECEIPT_ lines are
+  # the receipt. Fixture-dependent cases are #[ignore] elsewhere and run here with --ignored.
+  socket-secret-native-windows:
+    name: Socket-secret native receipts (Windows)
+    needs: platform-scope
+    if: needs.platform-scope.outputs.full == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: socket-secret-native-windows
+
+      - name: Classifier tests and fixture-free receipts
+        shell: bash
+        run: cargo test -p senpi-socket-secret --locked -- --nocapture 2>&1 | tee "$RUNNER_TEMP/receipts-base.log"
+
+      - name: Install WinFsp and Dokany
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tmp = $env:RUNNER_TEMP
+          # Exact versioned release assets, each pinned by its SHA-256 (equal to the digest GitHub
+          # publishes for the asset). A mismatch fails the job before anything is installed.
+          $assets = @(
+            @{ Url = 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi'; File = "$tmp\winfsp.msi"; Sha256 = '073A70E00F77423E34BED98B86E600DEF93393BA5822204FAC57A29324DB9F7A' },
+            @{ Url = 'https://github.com/dokan-dev/dokany/releases/download/v2.3.1.1000/Dokan_x64.msi'; File = "$tmp\dokan.msi"; Sha256 = '69FF8CB37BFEC3A75921C85FFD1C6370B50A9EC4ECEF2CF3A009D488DCBF5465' },
+            @{ Url = 'https://github.com/dokan-dev/dokany/releases/download/v2.3.1.1000/dokan.zip'; File = "$tmp\dokan.zip"; Sha256 = 'CBFB89718D4E671F8DD65187912C1141FDE0E5197F40AC2979B3216753D42C7C' }
+          )
+          foreach ($asset in $assets) {
+            Invoke-WebRequest $asset.Url -OutFile $asset.File
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset.File).Hash
+            if ($actual -ne $asset.Sha256) {
+              throw "SHA-256 mismatch for $($asset.Url): expected $($asset.Sha256), got $actual; refusing to install"
+            }
+            Write-Host "verified $($asset.Url) sha256=$actual"
+          }
+          foreach ($msi in @("$tmp\winfsp.msi", "$tmp\dokan.msi")) {
+            $install = Start-Process msiexec -ArgumentList '/i', $msi, '/qn', '/norestart', 'INSTALLLEVEL=1000' -Wait -PassThru
+            if ($install.ExitCode -ne 0) { throw "$msi exited $($install.ExitCode)" }
+          }
+          Expand-Archive "$tmp\dokan.zip" "$tmp\dokan"
+
+      - name: Mount receipt fixtures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tmp = $env:RUNNER_TEMP
+          $memfs = "${env:ProgramFiles(x86)}\WinFsp\bin\memfs-x64.exe"
+          # A disk-type WinFsp volume that reports NTFS, and a network-type one.
+          Start-Process $memfs -ArgumentList '-i', '-F', 'NTFS', '-m', 'M:'
+          Start-Process $memfs -ArgumentList '-i', '-u', '\memfs\receipt', '-m', 'N:'
+          # A disk-type Dokany mirror of an NTFS directory (the mirror sample reports the mirrored name).
+          New-Item -ItemType Directory "$tmp\mirror-source" | Out-Null
+          Start-Process "$tmp\dokan\x64\Release\mirror.exe" -ArgumentList '/r', "$tmp\mirror-source", '/l', 'O:'
+          # A local SMB share, mapped and by UNC path.
+          New-Item -ItemType Directory "$tmp\share" | Out-Null
+          New-SmbShare -Name receipt -Path "$tmp\share" -FullAccess Everyone | Out-Null
+          net use S: \\localhost\receipt
+          if ($LASTEXITCODE -ne 0) { throw "net use exited $LASTEXITCODE" }
+          # A VHDX-mounted NTFS volume (positive control).
+          @(
+            "create vdisk file=`"$tmp\receipt.vhdx`" maximum=64 type=expandable",
+            "select vdisk file=`"$tmp\receipt.vhdx`"",
+            'attach vdisk',
+            'create partition primary',
+            'format fs=ntfs quick label=receipt',
+            'assign letter=V'
+          ) | Set-Content "$tmp\vhdx.txt"
+          diskpart /s "$tmp\vhdx.txt"
+          if ($LASTEXITCODE -ne 0) { throw "diskpart exited $LASTEXITCODE" }
+          foreach ($drive in @('M:\', 'N:\', 'O:\', 'S:\', 'V:\')) {
+            $deadline = (Get-Date).AddSeconds(60)
+            while (-not (Test-Path $drive)) {
+              if ((Get-Date) -gt $deadline) { throw "$drive did not mount" }
+              Start-Sleep -Milliseconds 500
+            }
+          }
+          # senpi#4354: NTFS directory junctions on the fixed volume. The classifying handle follows
+          # reparse points, so each is classified by its target volume.
+          New-Item -ItemType Junction -Path "$tmp\junction-winfsp" -Target 'M:\' | Out-Null
+          New-Item -ItemType Junction -Path "$tmp\junction-vhdx" -Target 'V:\' | Out-Null
+          @(
+            'RECEIPT_WINFSP_DISK_NTFS=M:\',
+            'RECEIPT_WINFSP_NETWORK=N:\',
+            'RECEIPT_DOKANY_DISK_MIRROR=O:\',
+            'RECEIPT_SMB_MAPPED_DRIVE=S:\',
+            'RECEIPT_SMB_UNC=\\localhost\receipt\',
+            'RECEIPT_VHDX_NTFS=V:\',
+            "RECEIPT_JUNCTION_WINFSP=$tmp\junction-winfsp",
+            "RECEIPT_JUNCTION_VHDX=$tmp\junction-vhdx"
+          ) | Add-Content $env:GITHUB_ENV
+          # senpi#4354: a ReFS-formatted VHDX (kernel ReFS driver => local). An image that cannot format
+          # ReFS records why instead of failing the job; the receipt then prints that reason.
+          @(
+            "create vdisk file=`"$tmp\receipt-refs.vhdx`" maximum=4096 type=expandable",
+            "select vdisk file=`"$tmp\receipt-refs.vhdx`"",
+            'attach vdisk',
+            'create partition primary',
+            'format fs=refs quick label=refs',
+            'assign letter=R'
+          ) | Set-Content "$tmp\vhdx-refs.txt"
+          diskpart /s "$tmp\vhdx-refs.txt" | Tee-Object "$tmp\vhdx-refs.log"
+          $refsExit = $LASTEXITCODE
+          $deadline = (Get-Date).AddSeconds(60)
+          while ($refsExit -eq 0 -and -not (Test-Path 'R:\') -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+          if ($refsExit -eq 0 -and (Test-Path 'R:\')) {
+            'RECEIPT_REFS_VHDX=R:\' | Add-Content $env:GITHUB_ENV
+          } else {
+            "RECEIPT_REFS_UNAVAILABLE=diskpart exit $refsExit; R: mounted=$(Test-Path 'R:\')" | Add-Content $env:GITHUB_ENV
+          }
+
+      - name: Fixture receipts
+        shell: bash
+        run: cargo test -p senpi-socket-secret --locked --test native_receipts -- --ignored --nocapture 2>&1 | tee "$RUNNER_TEMP/receipts-fixtures.log"
+
+      - name: Receipt summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Socket-secret native receipts (Windows)"
+            echo '```'
+            grep -h '^RECEIPT_' "$RUNNER_TEMP"/receipts-*.log || echo "no receipt lines"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   rpc-windows:
     name: RPC named pipes (Windows)
     needs: platform-scope
@@ -585,7 +851,7 @@ jobs:
       # lists it as a live tui endpoint, and a client attaches and drives it (senpi#4267).
       - name: Run interactive TUI control endpoint tests (win32)
         shell: bash
-        run: node ../../scripts/run-tests.mjs vitest run test/suite/interactive-session-control-win32.test.ts src/modes/rpc/tui-socket.observer.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tui-control-win32.json
+        run: node ../../scripts/run-tests.mjs vitest run test/suite/interactive-session-control-win32.test.ts src/modes/rpc/tui-socket.observer.test.ts src/modes/interactive/attach.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tui-control-win32.json
         working-directory: packages/coding-agent
 
       # A skipped suite exits 0: fail unless the win32-only cases (the named-pipe wrong-secret test and
@@ -593,7 +859,7 @@ jobs:
       - name: Require the win32 gateway parity tests to have executed
         shell: bash
         run: |
-          for pair in vitest-socket-transport.json:rpc-socket-transport.test.ts vitest-tui-control-win32.json:interactive-session-control-win32.test.ts; do
+          for pair in vitest-socket-transport.json:rpc-socket-transport.test.ts vitest-tui-control-win32.json:interactive-session-control-win32.test.ts vitest-tui-control-win32.json:attach.test.ts; do
             node -e '
               const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
               const file = r.testResults.find((t) => t.name.replace(/\\/g, "/").endsWith(process.argv[2]));
@@ -731,6 +997,21 @@ jobs:
               if (passed === 0 || other !== 0) process.exit(1);
             ' "$report"
           done
+        working-directory: packages/coding-agent
+
+      # Whether the bundled CLI runs a .cmd BROWSER helper decides the Windows default sign-in method; a skipped
+      # test must fail the job, not pass it.
+      - name: Run Claude CLI BROWSER=<.cmd> sign-in test
+        shell: bash
+        run: |
+          node ../../scripts/run-tests.mjs vitest run test/anthropic-subscription-claude-cli-auth-windows.test.ts --reporter=default --reporter=json --outputFile=vitest-cli-auth.json
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("vitest-cli-auth.json", "utf8"));
+            const file = r.testResults.find((t) => t.name.replace(/\\/g, "/").endsWith("anthropic-subscription-claude-cli-auth-windows.test.ts"));
+            const passed = file ? file.assertionResults.filter((a) => a.status === "passed").length : 0;
+            console.log("claude cli BROWSER .cmd test passed=" + passed);
+            if (passed === 0) process.exit(1);
+          '
         working-directory: packages/coding-agent
       - name: Check OS temp after tests
         if: always() && steps.test_temp_snapshot.outcome == 'success'
@@ -1130,9 +1411,12 @@ jobs:
           --if-present
           --workspace packages/agent
           --workspace packages/ai
+          --workspace packages/client
+          --workspace packages/protocol
           --workspace packages/pty
           --workspace packages/senpi-codemode
           --workspace packages/server
+          --workspace packages/telemetry
           --workspace packages/tui
           test
 
@@ -1171,6 +1455,11 @@ jobs:
         run: |
           command -v cc >/dev/null || { echo "::error::Missing C compiler 'cc' on PATH for POSIX process-exit tests"; exit 1; }
           cc --version
+      # 3044's bun-owner case spawns `bun` as the RPC owner (#4845), so this job needs the pinned bun on PATH.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
       - name: Install dependencies
         run: npm ci --ignore-scripts
       - name: Build workspace package entries
@@ -1206,6 +1495,7 @@ jobs:
         check,
         codemode-gate,
         test-coding-agent,
+        fused-equivalence,
         rpc-owner-lifetime,
         macos-combined,
         grep-native-contract,
@@ -1213,6 +1503,7 @@ jobs:
         tui-mouse-windows,
         schedule-windows,
         rpc-windows,
+        socket-secret-native-windows,
         tool-child-windows,
         compiled-extensions-windows,
         claude-executable-windows,
@@ -1249,6 +1540,7 @@ jobs:
             echo "- check: ${{ needs.check.result }}"
             echo "- codemode-gate: ${{ needs.codemode-gate.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
+            echo "- fused-equivalence: ${{ needs.fused-equivalence.result }}"
             echo "- rpc-owner-lifetime: ${{ needs.rpc-owner-lifetime.result }}"
             echo "- macos-combined: ${{ needs.macos-combined.result }}"
             echo "- grep-native-contract: ${{ needs.grep-native-contract.result }}"

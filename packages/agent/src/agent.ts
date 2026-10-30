@@ -6,6 +6,7 @@ import {
 	readProviderDiagnostic,
 	type SimpleStreamOptions,
 	sanitizeProviderDiagnostic,
+	sanitizeProviderErrorMessage,
 	type TextContent,
 	type ThinkingBudgets,
 	type TranscriptContext,
@@ -17,6 +18,12 @@ import {
 	runAgentLoopContinue,
 } from "./agent-loop.ts";
 import { ProviderRetryWatchdogAbortError } from "./assistant-terminal-state.ts";
+import {
+	dispatchInternalAgent,
+	type InternalAgentChannel,
+	type InternalLoopConfig,
+	internalLoopSink,
+} from "./internal-events.ts";
 import { isLocalFailure, localFailurePort } from "./local-failure.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
@@ -126,6 +133,8 @@ function createMutableAgentState(initialState?: AgentInitialState): MutableAgent
 
 /** Options for constructing an {@link Agent}. */
 export interface AgentOptions {
+	/** @internal Construction-time channel for senpi's session layer only. */
+	internalChannel?: InternalAgentChannel;
 	initialState?: AgentInitialState;
 	convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
@@ -283,6 +292,7 @@ type ActiveRun = {
  * and exposes queueing APIs for steering and follow-up messages.
  */
 export class Agent {
+	readonly #internalChannel: InternalAgentChannel | undefined;
 	private _state: MutableAgentState;
 	private readonly listeners = new Set<(event: AgentEvent, signal: AbortSignal) => Promise<void> | void>();
 	private readonly steeringQueue: PendingMessageQueue;
@@ -347,6 +357,7 @@ export class Agent {
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
 		const runtimeOptions: Partial<AgentOptions> = options ?? {};
+		this.#internalChannel = runtimeOptions.internalChannel;
 		this._state = createMutableAgentState(runtimeOptions.initialState);
 		this.convertToLlm = runtimeOptions.convertToLlm ?? defaultConvertToLlm;
 		this.transformContext = runtimeOptions.transformContext;
@@ -739,7 +750,7 @@ export class Agent {
 			initialRequestTimeoutMs?: number;
 			initialRequestStreamStartTimeoutMs?: number;
 		} = {},
-	): AgentLoopConfig {
+	): InternalLoopConfig {
 		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
 		let steeringQueueGeneration = this.steeringQueue.getClearGeneration();
 		let followUpQueueGeneration = this.followUpQueue.getClearGeneration();
@@ -749,6 +760,7 @@ export class Agent {
 			this.giveBack(queue, messages, queue === "steering" ? steeringQueueGeneration : followUpQueueGeneration);
 		const reasoning = (this._state.reasoningBaseline as ThinkingLevel | undefined) ?? this._state.thinkingLevel;
 		return {
+			...internalLoopSink(this.#internalChannel),
 			model: this._state.model,
 			reasoning: reasoning === "off" ? undefined : reasoning,
 			thinkingSelection: this._state.thinkingSelection,
@@ -910,6 +922,8 @@ export class Agent {
 			...(!aborted && isLocalFailure(error) ? { failureSource: "local" as const } : {}),
 			timestamp: Date.now(),
 		} satisfies AgentMessage;
+		// A thrown provider error never passed the stream boundary: classify and redact it the same way (senpi#4282).
+		sanitizeProviderErrorMessage(failureMessage);
 		await this.processEvents({ type: "message_start", message: failureMessage });
 		await this.processEvents({ type: "message_end", message: failureMessage });
 		await this.processEvents({ type: "turn_end", message: failureMessage, toolResults: [] });
@@ -976,6 +990,8 @@ export class Agent {
 		if (!signal) {
 			throw new Error("Agent listener invoked outside active run");
 		}
+		const internal = dispatchInternalAgent(this.#internalChannel, { event });
+		if (internal) await internal;
 		for (const listener of this.listeners) {
 			await listener(event, signal);
 		}

@@ -77,7 +77,7 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout
 		});
 	});
 
-	it("serves the default backend: native WebKit in the worker on macOS, the main-thread Chrome elsewhere", async () => {
+	it("serves the default backend from the main-thread service on every platform", async () => {
 		const value = await cell(
 			[
 				`await using view = new Bun.WebView({ width: 320, height: 240 });`,
@@ -88,7 +88,7 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout
 		);
 		expect(value).toEqual({
 			greeting: "hello from the fixture",
-			proxied: process.platform !== "darwin",
+			proxied: true,
 			isWebView: true,
 		});
 	});
@@ -107,5 +107,58 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout
 			].join("\n"),
 		);
 		expect(value).toEqual({ logged: [["log", "from the page", 7]], answer: 42 });
+	});
+
+	it("walks the default-backend view's history with goBack() and goForward()", async () => {
+		// goBack()/goForward() resolve before the history navigation commits; the cell waits for the view's
+		// navigated event, so the check reads the committed page.
+		const value = await cell(
+			[
+				`await using view = new Bun.WebView({ width: 320, height: 240 });`,
+				`await view.navigate(${JSON.stringify(fixtureUrl())});`,
+				`await view.navigate(${JSON.stringify(`${fixtureUrl()}?second`)});`,
+				`const settled = (move) => new Promise((resolve, reject) => { view.onNavigated = (url) => resolve(url); move().catch(reject); });`,
+				`const back = await settled(() => view.goBack());`,
+				`const forward = await settled(() => view.goForward());`,
+				`return { back, forward };`,
+			].join("\n"),
+		);
+		expect(value).toEqual({ back: fixtureUrl(), forward: `${fixtureUrl()}?second` });
+	});
+
+	// senpi#4794: Bun's WebKit host client is bound to the first thread that spawns it, so a WebKit view
+	// built in a kernel worker broke every view after that worker exited and corrupted the heap once a
+	// second worker used one.
+	describe.skipIf(process.platform !== "darwin")("the macOS default (WebKit) backend", () => {
+		const openDefaultView = () =>
+			[
+				`const view = new Bun.WebView({ width: 320, height: 240 });`,
+				`await view.navigate(${JSON.stringify(fixtureUrl())});`,
+				`const greeting = await view.evaluate("document.getElementById('greeting').textContent");`,
+				`view.close();`,
+				`return greeting;`,
+			].join("\n");
+
+		it("serves a fresh view after the kernel that opened the first one resets", async () => {
+			const kernel = openKernel();
+			const run = async () =>
+				parseJavaScriptResult((await runJavaScriptCell(kernel, openDefaultView(), CELL_TIMEOUT_MS)).result);
+			expect(await run()).toBe("hello from the fixture");
+			await kernel.reset();
+			expect(await run()).toBe("hello from the fixture");
+		});
+
+		it("drives views from two kernels at once", async () => {
+			const first = openKernel();
+			const second = openKernel();
+			const run = async (kernel: JavaScriptKernel) =>
+				parseJavaScriptResult((await runJavaScriptCell(kernel, openDefaultView(), CELL_TIMEOUT_MS)).result);
+			for (let round = 0; round < 3; round++) {
+				expect(await Promise.all([run(first), run(second)])).toEqual([
+					"hello from the fixture",
+					"hello from the fixture",
+				]);
+			}
+		});
 	});
 });

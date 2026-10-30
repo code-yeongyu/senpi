@@ -8,7 +8,8 @@ import type { ExtensionUIContext } from "../../core/extensions/types.ts";
 import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { takeOverStdout } from "../../core/output-guard.ts";
 import type { SecurityNoticeSnapshot } from "../../core/security-notices.ts";
-import { getDefaultSessionDir } from "../../core/session-manager.ts";
+import { recoveryCarrier, setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
+import { getDefaultSessionDir, type SessionManager } from "../../core/session-manager.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { liveSessionWritePaths } from "../../core/session-write-reservation.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
@@ -24,13 +25,17 @@ import { canonicalSessionPath } from "./session-path-key.ts";
 import type { RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
 import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
+import { type CanonicalControl, carriedCanonical } from "./compact-canonical-pairing.ts";
+import { CompactProducerStamp } from "./compact-producer-stamp.ts";
 import {
 	type HostToSessionWorker,
 	SESSION_WORKER_LIMITS,
 	type SessionWorkerToHost,
 	type WorkerSnapshot,
+	withinFrameLimit,
 } from "./session-worker-protocol.ts";
 import { createSessionWorkerRegistry } from "./session-worker-registry.ts";
+import { IssuedWorkerOwners } from "./session-worker-owners.ts";
 import { McpFormWorker } from "./mcp-form-worker.ts";
 
 if (isBunBinary) {
@@ -93,8 +98,8 @@ class WorkerEventWriter extends SessionEventWriter {
 		}));
 	}
 	override enqueue(_sessionId: string, record: object): boolean {
-		if (Buffer.byteLength(JSON.stringify(record)) > SESSION_WORKER_LIMITS.outputBytes)
-			failWorker("session_worker_output_limit");
+		const line = JSON.stringify(record);
+		if (Buffer.byteLength(line) > SESSION_WORKER_LIMITS.outputBytes) failWorker("session_worker_output_limit");
 		const session = entry?.runtime?.session;
 		if (!session) throw new Error("Session output preceded runtime creation");
 		const activity = {
@@ -112,19 +117,67 @@ class WorkerEventWriter extends SessionEventWriter {
 				: undefined;
 		if (replacement && Buffer.byteLength(JSON.stringify(replacement)) > SESSION_WORKER_LIMITS.outputBytes)
 			failWorker("session_worker_snapshot_limit");
+		const replaced = "type" in record && record.type === "session_replaced";
+		const issued = this.connectionContext.owner?.wire;
+		const owner = issued && { ownerId: issued.ownerId, bindingGeneration: issued.bindingGeneration };
+		if (ordered && replaced) {
+			journaled = session.sessionManager;
+			stamp.forget();
+			canonicalLost = false;
+		}
+		const transitions = ordered && !replaced ? (journaled?.drainTranscript() ?? []) : [];
+		const epochSignal = ordered && replaced ? new SharedArrayBuffer(36) : undefined;
+		const recovery = recoveryCarrier(record);
+		const canonical = carriedCanonical(record);
+		const order = ordered
+			? {
+					...stamp.stamp(recovery, canonical, record),
+					recovery,
+					...(canonical ? { canonical } : {}),
+					...(replaced
+						? {
+								bootstrap: {
+									transcript: withinFrameLimit(session.sessionManager.beginTranscriptJournal()),
+									epochSignal,
+								},
+							}
+						: {}),
+					...(transitions.length > 0 ? { transitions: withinFrameLimit(transitions) } : {}),
+				}
+			: {};
 		exchange((signal) => ({
+			...order,
 			type: "output",
-			record,
+			// Keep one JSON-normal transfer format, including toJSON and non-cloneable fields.
+			// S12 replaces this whole-record serialization with compact records and permits.
+			record: JSON.parse(line) as object,
 			connection: this.currentConnection(),
+			...(owner === undefined ? {} : { owner }),
 			signal,
 			activity,
 			snapshot: replacement,
 		}));
+		if (epochSignal) setSessionRecoveryEpoch(session, Buffer.from(epochSignal).toString("ascii"));
 		return true;
+	}
+	override enqueueCanonical(_sessionId: string, control: CanonicalControl): void {
+		if (!ordered) return;
+		const { ordinal, firstOrdinal = ordinal } = stamp.stamp(control.carrier, control.record);
+		const { record, carrier: recovery } = control;
+		exchange((signal) => ({ type: "canonical", ordinal, firstOrdinal, recovery, record, signal }));
+	}
+	override canonicalUnavailable(_sessionId: string, cause: unknown): void {
+		// The host's compact state for this epoch is already gone after the first; later ones would only cost exchanges.
+		if (!ordered || canonicalLost) return;
+		canonicalLost = true;
+		const { ordinal } = stamp.stamp(undefined, undefined);
+		const reason = cause instanceof Error ? cause.message : String(cause);
+		exchange((signal) => ({ type: "canonical_unavailable", ordinal, reason, signal }));
 	}
 }
 
 const writer = new WorkerEventWriter();
+const issuedOwners = new IssuedWorkerOwners();
 // One session per isolate: the roles of the connections it serves, adopted from the host before each command.
 const connectionRoles = new ConnectionRoles();
 let prepared: Extract<HostToSessionWorker, { type: "prepare" }> | undefined;
@@ -132,6 +185,14 @@ let registry: RpcSessionRegistry | undefined;
 let entry: RpcSessionEntry | undefined;
 let binding: RpcSessionBinding | undefined;
 let closing = false;
+/** Set by `commit` when the host owns an acceptance lane; each output frame then carries the next ordinal. */
+let ordered = false;
+/** The output-frame ordinal (S04a) is the compact producer ordinal: one numbering (RULING-36). */
+const stamp = new CompactProducerStamp();
+/** One `canonical_unavailable` frame per epoch: set by the first, cleared with `stamp.forget()` at a replacement. */
+let canonicalLost = false;
+/** The manager whose committed transcript changes ride the next output frame; replaced with the session. */
+let journaled: SessionManager | undefined;
 let unsubscribe: (() => void) | undefined;
 let unsubscribeWake: (() => void) | undefined;
 
@@ -199,7 +260,18 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			registry = createSessionWorkerRegistry(prepared.configuration.agentDir, factory);
 			const opened = await registry.openSession(prepared.profile);
 			entry = registry.getForCommand(opened.sessionId, "open_session");
-			send({ type: "ready", request: message.request, snapshot: snapshot() });
+			ordered = message.acceptance === true;
+			if (message.recoveryEpoch && entry.runtime)
+				setSessionRecoveryEpoch(entry.runtime.session, message.recoveryEpoch);
+			journaled = ordered ? entry.runtime?.session.sessionManager : undefined;
+			send({
+				type: "ready",
+				request: message.request,
+				snapshot: snapshot(),
+				...(ordered
+					? { bootstrap: { transcript: withinFrameLimit(journaled?.beginTranscriptJournal() ?? []) } }
+					: {}),
+			});
 			return;
 		}
 		case "bind": {
@@ -247,9 +319,13 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			if (!binding || (closing && !privileged)) throw new Error("session_closing");
 			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
 			const activeBinding = binding;
-			await (message.connection === undefined
-				? activeBinding.handle(message.command)
-				: writer.withConnection(message.connection, () => activeBinding.handle(message.command)));
+			const run = () => activeBinding.handle(message.command);
+			const connection = message.connection;
+			await (connection === undefined
+				? run()
+				: message.owner === undefined
+					? writer.withConnection(connection, run)
+					: writer.connectionContext.runIssued(connection, issuedOwners.adopt(message.owner), run));
 			publishSnapshot();
 			send({ type: "result", request: message.request });
 			return;
@@ -271,6 +347,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			return;
 		case "subscription_limits":
 			for (const limits of message.accounts) subscriptionLimits.adopt(limits);
+			return;
+		case "owners_retired":
+			issuedOwners.retire(message.owners);
 			return;
 		case "cancel_ui":
 			binding?.cancelPendingExtensionUiRequests?.();

@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import { type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
 import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
-import { applyAccountOrder, withoutOrderedAccount } from "@earendil-works/pi-ai/auth/pool/select";
+import { applyAccountOrder, isSlotBlocked, withoutOrderedAccount } from "@earendil-works/pi-ai/auth/pool/select";
 import {
 	accountDisplayName,
 	listSlots,
@@ -12,12 +12,20 @@ import {
 } from "@earendil-works/pi-ai/auth/pool/slots";
 import type { AuthStorage } from "./auth-storage.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
+import { isAvailable } from "./credential-pool/failover.ts";
 import { type ModelBlocks, pruneModelBlocks } from "./credential-pool/model-scope.ts";
-import { CredentialSlotRepository, type CredentialSlotState, slotHealth } from "./credential-pool/state-store.ts";
+import { CredentialSlotRepository, type CredentialSlotState } from "./credential-pool/state-store.ts";
 import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
 import { SENTINEL_OAUTH_FIELDS } from "./extensions/builtin/anthropic-subscription/accounts.ts";
+import { isAccountBlocked } from "./extensions/builtin/anthropic-subscription/affinity.ts";
 
 export type CredentialAccountSource = "login" | "import" | "env";
+
+/**
+ * Why a blocked account sits out (senpi#4327): `auth_error` means the key was rejected and is skipped
+ * until its re-probe time, `rate_limit` is a cooldown, `disabled` lasts until the credential is replaced.
+ */
+export type CredentialAccountBlockedReason = "auth_error" | "rate_limit" | "disabled";
 
 /** Account metadata safe to surface: names and health only, never key material. */
 export type CredentialAccountSummary = {
@@ -25,6 +33,10 @@ export type CredentialAccountSummary = {
 	readonly displayName?: string;
 	readonly source: CredentialAccountSource;
 	readonly blocked: boolean;
+	/** Present only while `blocked`; absent when the stored block names no reason. */
+	readonly blockedReason?: CredentialAccountBlockedReason;
+	/** Epoch ms when the block lifts (the re-probe time for `auth_error`); absent for `disabled`. */
+	readonly blockedUntil?: number;
 	readonly pinned: boolean;
 	/** Usage limits binding one model (family) while the account serves the rest (senpi#2555). */
 	readonly blockedModels?: readonly { readonly model: string; readonly until: number }[];
@@ -66,17 +78,76 @@ function stringField(value: object, key: string): string | undefined {
 }
 
 /**
- * Block state has two sources and both are authoritative: a slot persisted by an
- * existing provider lane carries its own `blockedUntil`/`blockReason` inside
- * auth.json, while generic pool failover records health in the sidecar. Reading
- * only one would silently downgrade a real block to "available".
+ * Cursor and Claude persist their lane's blocks in auth.json. Generic pool
+ * rotation ignores those fields and reads revision-matched sidecar health.
  */
-function slotBlocked(slot: object, sidecar: CredentialSlotState | undefined, now: number): boolean {
-	if (slotHealth(sidecar, now) === "blocked") return true;
-	const reason = stringField(slot, "blockReason");
-	if (reason === "account_disabled") return true;
+type SlotBlock = Pick<CredentialAccountSummary, "blocked" | "blockedReason" | "blockedUntil">;
+
+const UNBLOCKED: SlotBlock = { blocked: false };
+
+function accountBlockedReason(reason: string | undefined): CredentialAccountBlockedReason | undefined {
+	switch (reason) {
+		case "auth_error":
+		case "rate_limit":
+			return reason;
+		case "account_disabled":
+			return "disabled";
+		default:
+			return undefined;
+	}
+}
+
+/** A live block with its reason and, unless disabled, the time it lifts. */
+function liveBlock(reason: string | undefined, blockedUntil: number | undefined, now: number): SlotBlock {
+	const blockedReason = accountBlockedReason(reason);
+	if (blockedReason === "disabled") return { blocked: true, blockedReason };
+	if (blockedUntil === undefined || blockedUntil <= now) return UNBLOCKED;
+	return { blocked: true, ...(blockedReason === undefined ? {} : { blockedReason }), blockedUntil };
+}
+
+function sidecarBlock(sidecar: CredentialSlotState | undefined, now: number): SlotBlock {
+	if (sidecar === undefined || isAvailable(sidecar, now)) return UNBLOCKED;
+	return liveBlock(sidecar?.blockReason, sidecar?.blockedUntil, now);
+}
+
+/**
+ * A block a provider lane stored on its own slot holds exactly while that lane's selector skips the slot, so a
+ * listing never calls a skipped account available (senpi#4365 follow-up). The Claude lane re-probes an auth block
+ * whose deadline passed; the Cursor lane keeps one until re-login, with no deadline to report.
+ */
+function storedSlotBlock(provider: string, slot: object, now: number): SlotBlock {
+	const blockReason = stringField(slot, "blockReason");
 	const blockedUntil = numberField(slot, "blockedUntil");
-	return blockedUntil !== undefined && blockedUntil > now;
+	const blockedReason = accountBlockedReason(blockReason);
+	if (blockedReason === "disabled") return { blocked: true, blockedReason };
+	const skipped =
+		normalizeProviderId(provider) === "anthropic-subscription"
+			? isAccountBlocked({ blockedUntil }, now)
+			: isSlotBlocked({ blockReason, blockedUntil }, now);
+	if (!skipped) return UNBLOCKED;
+	return {
+		blocked: true,
+		...(blockedReason === undefined ? {} : { blockedReason }),
+		...(blockedUntil === undefined || blockedUntil <= now ? {} : { blockedUntil }),
+	};
+}
+
+function slotBlocked(provider: string, slot: object, sidecar: CredentialSlotState | undefined, now: number): SlotBlock {
+	const fromSidecar = sidecarBlock(sidecar, now);
+	const lane = normalizeProviderId(provider);
+	// rotation-slots overlays only sidecar health; generic failover never sees auth.json block fields.
+	if (lane !== "cursor-cli-oauth" && lane !== "anthropic-subscription") return fromSidecar;
+	const fromSlot = storedSlotBlock(provider, slot, now);
+	// A disabled account outranks a timed block from the other source: it never lifts on its own.
+	if (fromSlot.blockedReason === "disabled") return fromSlot;
+	if (fromSidecar.blockedReason === "disabled" || !fromSlot.blocked) return fromSidecar;
+	// So does a stored block with no deadline: only a re-login lifts it, so no expiry may be borrowed for it.
+	if (!fromSidecar.blocked || fromSlot.blockedUntil === undefined) return fromSlot;
+	// Both sources hold a timed block: the account is usable only once the later one lifts, and a
+	// rejected key stays the reason so a client still skips it.
+	const later = (fromSlot.blockedUntil ?? 0) > (fromSidecar.blockedUntil ?? 0) ? fromSlot : fromSidecar;
+	const rejected = [fromSidecar, fromSlot].some((block) => block.blockedReason === "auth_error");
+	return rejected ? { ...later, blockedReason: "auth_error" } : later;
 }
 
 function storedModelBlocks(slot: object): ModelBlocks | undefined {
@@ -170,7 +241,7 @@ async function summarizeInStoredOrder(
 				name: slot.name,
 				...(displayName === undefined ? {} : { displayName }),
 				source: slot.source ?? "login",
-				blocked: slotBlocked(slot, applicable, now),
+				...slotBlocked(provider, slot, applicable, now),
 				pinned: pinned === slot.name,
 				...blockedModels(now, applicable?.modelBlocks, storedModelBlocks(slot)),
 				...(usable.has(slot.name) ? {} : { unused: true as const }),
@@ -188,7 +259,7 @@ async function summarizeInStoredOrder(
 		summaries.push({
 			name: slot.name,
 			source: "env",
-			blocked: slotHealth(applicable, now) === "blocked",
+			...sidecarBlock(applicable, now),
 			pinned: pinned === slot.name,
 			...blockedModels(now, applicable?.modelBlocks),
 		});

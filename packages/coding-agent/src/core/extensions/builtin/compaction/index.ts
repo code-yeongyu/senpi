@@ -1,6 +1,7 @@
 import type { Tool } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { createWarmAnchorSnapshot, isWarmSummaryAnchorValid } from "../../../compaction/warm-anchor.ts";
+import { formatCompactionFailure } from "../../../compaction-failure-text.ts";
 import { AccountUsageLimitError } from "../../../retry-fallback/usage-limit.ts";
 import type {
 	BeforeAgentStartEvent,
@@ -592,7 +593,9 @@ export default function compactionExtension(
 							reason: "extension",
 							signal: feedbackSignal,
 							aborted: feedbackSignal?.aborted,
-							errorMessage: `Compaction failed: ${stripTurnRetrySuppressionPrefix(inheritedFailure.message)}`,
+							errorMessage: formatCompactionFailure("compaction", inheritedFailure.message, {
+								model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+							}),
 						});
 						state = breaker.recordFailure(state, Date.now(), { route: "extension" });
 						return { applied: false, reason: "failed" };
@@ -683,7 +686,9 @@ export default function compactionExtension(
 				reason: "extension",
 				signal: feedbackSignal,
 				aborted: feedbackSignal?.aborted,
-				errorMessage: `Compaction failed: ${stripTurnRetrySuppressionPrefix(message)}`,
+				errorMessage: formatCompactionFailure("compaction", message, {
+					model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+				}),
 			});
 			const transient = isTransientSummarizationFailure(error, message);
 			if (transient) {
@@ -819,9 +824,15 @@ export default function compactionExtension(
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				const failureKind = classifyRequiredCompactionFallbackFailure(error);
+				// A terminal provider failure (dead model, dead credential) has no cheaper
+				// recovery on any compaction kind: without this, a soft-threshold pre_prompt
+				// compaction cancelled instead, the session rejected it, and the pending
+				// prompt failed with RequiredCompactionError while shouldCompact still said
+				// compact (the "Compaction rejected: compaction generator failed" wedge).
 				if (
 					(requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) ||
-						failureKind === "unsafe-retained-content") &&
+						failureKind === "unsafe-retained-content" ||
+						failureKind === "summarization-provider-failure") &&
 					failureKind !== undefined &&
 					!event.signal.aborted
 				) {

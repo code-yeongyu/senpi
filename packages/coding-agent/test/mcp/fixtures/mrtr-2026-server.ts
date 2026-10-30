@@ -27,7 +27,7 @@ export class MrtrScript {
 	readonly requests: FixtureRequest[] = [];
 	readonly methods = new Set(["tools/call", "resources/read", "prompts/get"]);
 	outputSchema?: Record<string, unknown>;
-	tools?: Array<{ name: string; inputSchema: { type: "object" } }>;
+	tools?: unknown[];
 	onRequest?: (request: FixtureRequest) => Promise<void>;
 	disconnectAfterRound?: number;
 	continuationStatus?: 401 | 403;

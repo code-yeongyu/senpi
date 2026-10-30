@@ -8,6 +8,8 @@ import type { McpInvocation, McpInvocationError } from "../invocation.ts";
 import type { McpToolDefinition } from "./register.ts";
 import { mcpRequestOptions } from "../request-origin.ts";
 import { McpMrtrError } from "../modern/errors.ts";
+import { callMcpToolRequest } from "../tool-client.ts";
+import type { McpToolResult } from "../tool-contracts.ts";
 
 export async function callMcpTool(
 	entry: McpToolCatalogEntry,
@@ -20,7 +22,7 @@ export async function callMcpTool(
 	| {
 			kind: "called";
 			entry: McpToolCatalogEntry;
-			result: Awaited<ReturnType<McpToolCatalogEntry["connection"]["client"]["callTool"]>>;
+			result: McpToolResult;
 	  }
 	| { kind: "refused"; error: McpInvocationError }
 > {
@@ -49,9 +51,10 @@ export async function callMcpTool(
 						if (prepared?.kind === "refused") return prepared;
 						if (prepared !== undefined && !prepared.isCurrent()) continue;
 						const current = prepared?.entry ?? entry;
-						const result = await current.connection.client.callTool(
+						const result = await callMcpToolRequest(
+							current.connection.client,
 							{ name: current.tool, arguments: args },
-							undefined,
+							current.outputSchema,
 							mcpRequestOptions(current.requestOrigin?.(), {
 								onprogress: (progress) => {
 									onUpdate?.(

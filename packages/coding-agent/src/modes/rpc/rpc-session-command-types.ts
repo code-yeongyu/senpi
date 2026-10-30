@@ -148,6 +148,7 @@ export type RpcSessionCommand =
 
 	// State
 	| { id?: string; type: "get_state" }
+	| { id?: string; type: "get_snapshot"; tail?: number; maxBytes?: number; observe?: boolean }
 	| { id?: string; type: "request_self_settle" }
 	/**
 	 * The newest receipt of one effect (capability `effect_ledger`). With `sessionId` it answers from the

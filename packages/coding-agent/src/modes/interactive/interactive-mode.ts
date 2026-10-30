@@ -142,6 +142,7 @@ import {
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { formatProviderFailure } from "../../core/provider-failure.ts";
+import { failureAlreadyDescribed } from "./provider-error-description.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -269,6 +270,7 @@ import {
 	takeOverInteractiveStderr,
 } from "./interactive-stderr-guard.ts";
 import { applyKeybindingsFileEdit, seedKeybindingsFile } from "./keybindings-command.ts";
+import { LIFECYCLE_STATUS_KEY, LifecycleStatus } from "./lifecycle-status.ts";
 import {
 	buildResourceScopeGroups,
 	type DisplaySourceInfo,
@@ -345,6 +347,9 @@ import {
 	type WorkingStatusRgbColor,
 } from "./working-status.ts";
 
+/** Footer statuses the host owns: an extension UI reset (e.g. /reload) keeps them. */
+const HOST_STATUS_KEYS: ReadonlySet<string> = new Set([LIFECYCLE_STATUS_KEY]);
+
 export { createInteractiveTui, createInteractiveTuiReference } from "./tui-renderer.ts";
 
 /** Interface for components that can be expanded/collapsed */
@@ -359,6 +364,12 @@ interface ActiveEditor extends EditorComponent {
 interface WorkingStatusEditor extends EditorComponent {
 	readonly embedWorkingStatus: boolean;
 	setWorkingStatusIndicator(indicator: StatusIndicator | undefined): void;
+}
+
+/** Copy the default editor's action handlers (clear, suspend, model switching, etc.) onto a custom editor. */
+function adoptDefaultEditorActions(defaultEditor: CustomEditor, editor: EditorComponent): void {
+	if (editor === defaultEditor || !("actionHandlers" in editor) || !(editor.actionHandlers instanceof Map)) return;
+	for (const [action, handler] of defaultEditor.actionHandlers) editor.actionHandlers.set(action, handler);
 }
 
 function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatusEditor {
@@ -1082,6 +1093,8 @@ export class InteractiveMode {
 
 	// Agent subscription unsubscribe function
 	private unsubscribe?: () => void;
+	private agentSubscriptionGeneration = 0;
+	private readonly lifecycleStatus = new LifecycleStatus();
 	private signalCleanupHandlers: Array<() => void> = [];
 
 	// Track if editor is in bash mode (text starts with !)
@@ -1785,13 +1798,6 @@ export class InteractiveMode {
 		this.fdPath = fdPath;
 		time("ensureTools", "tui");
 
-		// Enable the remaining input handlers only after managed-tool setup completes.
-		this.setupKeyHandlers();
-		this.setupEditorSubmitHandler();
-		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
-		this.ui.requestRender();
-		time("keyHandlers", "tui");
-
 		// Initialize extensions first so resources are shown before messages
 		await this.rebindCurrentSession();
 		time("rebindSession", "tui");
@@ -1800,6 +1806,15 @@ export class InteractiveMode {
 		this.renderInitialMessages();
 		this.session.releaseSettledSessionMemory();
 		time("renderInitial", "tui");
+
+		// Enable the remaining input handlers only once the restored transcript is rendered (senpi#4826): a
+		// submit accepted earlier painted its echo above the history that startup appended afterwards.
+		this.setupKeyHandlers();
+		this.setupEditorSubmitHandler();
+		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
+		adoptDefaultEditorActions(this.defaultEditor, this.editor);
+		this.ui.requestRender();
+		time("keyHandlers", "tui");
 
 		// Set up theme file watcher
 		onThemeChange(() => {
@@ -2737,7 +2752,8 @@ export class InteractiveMode {
 	 */
 	private unsubscribeSecurityNotices?: () => void;
 	private detachMcpGrantPresentation?: () => void;
-	private mcpMrtrPresentationLifetime = new AbortController();
+	/** A presentation is optional until extension UI is created; shutdown may precede it. */
+	private mcpMrtrPresentationLifetime?: AbortController;
 	private mcpLocalPresenter?: McpFormBinding;
 	private async bindCurrentSessionExtensions(): Promise<void> {
 		this.mcpMrtrPresentationLifetime?.abort();
@@ -2901,6 +2917,7 @@ export class InteractiveMode {
 		this.externalOwnerCompactionNoticeShown = false;
 		this.footer?.setCompactionDelegated?.(false);
 		const session = this.session;
+		this.agentSubscriptionGeneration++;
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.applyRuntimeSettings();
@@ -3542,7 +3559,7 @@ export class InteractiveMode {
 		this.setExtensionFooter(undefined);
 		this.setExtensionHeader(undefined);
 		this.clearExtensionWidgets();
-		this.footerDataProvider.clearExtensionStatuses();
+		this.footerDataProvider.clearExtensionStatuses(HOST_STATUS_KEYS);
 		this.footer.invalidate();
 		this.autocompleteProviderWrappers = [];
 		this.setCustomEditorComponent(undefined);
@@ -3714,6 +3731,7 @@ export class InteractiveMode {
 
 	private createExtensionUIContext(): ExtensionUIContext {
 		this.mcpMrtrPresentationLifetime ??= new AbortController();
+		if (this.isShuttingDown) this.mcpMrtrPresentationLifetime.abort();
 		const context: ExtensionUIContext = {
 			select: (title, options, opts) =>
 				this.withBlockedHostDialog(
@@ -3743,7 +3761,10 @@ export class InteractiveMode {
 				request.waitForAnswer ? this.showQuestionOverlay(request, opts) : this.showAsyncQuestion(request, opts),
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
-			setStatus: (key, text) => this.setExtensionStatus(key, text),
+			// The host owns the lifecycle status; an extension cannot overwrite or clear it.
+			setStatus: (key, text) => {
+				if (key !== LIFECYCLE_STATUS_KEY) this.setExtensionStatus(key, text);
+			},
 			setSubagentCost: (costUsd) => {
 				this.footerDataProvider.setSubagentCost(costUsd);
 				this.ui.requestRender();
@@ -4430,7 +4451,7 @@ export class InteractiveMode {
 			newEditor.onSubmit = (text) => {
 				this.defaultEditor.onSubmit?.(expandSubmittedText(newEditor, text));
 			};
-			newEditor.onChange = this.defaultEditor.onChange;
+			newEditor.onChange = (text) => this.defaultEditor.onChange?.(text);
 			observeComposerActivity(newEditor, () => emitUserActivity(this.session, "draft"));
 
 			// Copy text (and any collapsed paste/image markers) from previous editor.
@@ -4482,10 +4503,7 @@ export class InteractiveMode {
 				if (!customEditor.onExtensionShortcut) {
 					customEditor.onExtensionShortcut = (data: string) => this.defaultEditor.onExtensionShortcut?.(data);
 				}
-				// Copy action handlers (clear, suspend, model switching, etc.)
-				for (const [action, handler] of this.defaultEditor.actionHandlers) {
-					(customEditor.actionHandlers as Map<string, () => void>).set(action, handler);
-				}
+				adoptDefaultEditorActions(this.defaultEditor, customEditor);
 			}
 
 			this.editor = newEditor;
@@ -5236,8 +5254,28 @@ export class InteractiveMode {
 		};
 	}
 
+	private showLifecycleStatus(session: AgentSession): void {
+		this.lifecycleStatus.bind(session.sessionId, session.lifecycle);
+		this.setExtensionStatus(LIFECYCLE_STATUS_KEY, this.lifecycleStatus.text());
+	}
+
 	private subscribeToAgent(): void {
-		this.unsubscribe = this.session.subscribe(async (event) => {
+		this.unsubscribe?.();
+		const session = this.session;
+		const generation = ++this.agentSubscriptionGeneration;
+		this.showLifecycleStatus(session);
+		this.unsubscribe = session.subscribe(async (event) => {
+			if (generation !== this.agentSubscriptionGeneration || session !== this.session) return;
+			if (event.type === "session_lifecycle") {
+				if (event.sessionId !== session.sessionId) return;
+				if (!this.lifecycleStatus.owns(event.lifecycle))
+					this.lifecycleStatus.bind(session.sessionId, session.lifecycle);
+				this.lifecycleStatus.accept(event.lifecycle);
+				const text = this.lifecycleStatus.text();
+				if (this.footerDataProvider.getExtensionStatuses().get(LIFECYCLE_STATUS_KEY) !== text)
+					this.setExtensionStatus(LIFECYCLE_STATUS_KEY, text);
+				return;
+			}
 			await this.handleEvent(event);
 		});
 	}
@@ -5595,7 +5633,8 @@ export class InteractiveMode {
 				}
 				this.detachAssistantTextSegments();
 				this.clearPendingTools();
-				if (event.failure !== undefined && !event.willRetry) this.showError(formatProviderFailure(event.failure));
+				if (event.failure !== undefined && !event.willRetry && !failureAlreadyDescribed(event.messages))
+					this.showError(formatProviderFailure(event.failure));
 
 				this.ui.requestRender();
 				break;
@@ -5611,6 +5650,10 @@ export class InteractiveMode {
 					this.clearStatusIndicator("working");
 				}
 				this.ui.requestRender();
+				break;
+
+			case "session_recovered":
+				this.showWarning(sanitizeTerminalLabel(event.notice));
 				break;
 
 			case "continuation_error":
@@ -6349,9 +6392,11 @@ export class InteractiveMode {
 				index += 1;
 			}
 			const runMessage: AssistantMessage = { ...message, content: runBlocks };
+			// Only the run that ends the message shows the turn's error; earlier runs repeat it otherwise (senpi#4954).
+			const errorShownElsewhere = isNetworkProviderMessage(message) || index < content.length;
 			const existing = this.assistantTextSegments.get(runStart);
 			if (existing) {
-				existing.setProviderErrorOwned(isNetworkProviderMessage(message));
+				existing.setProviderErrorOwned(errorShownElsewhere);
 				existing.updateContent(runMessage, true);
 				continue;
 			}
@@ -6364,7 +6409,7 @@ export class InteractiveMode {
 				this.getMarkdownTransformers(),
 			);
 			segment.setExpanded(this.toolOutputExpanded);
-			segment.setProviderErrorOwned(isNetworkProviderMessage(message));
+			segment.setProviderErrorOwned(errorShownElsewhere);
 			this.assistantTextSegments.set(runStart, segment);
 			const followingToolCall = content.slice(index).find((block) => block.type === "toolCall");
 			const followingToolCallId = followingToolCall?.type === "toolCall" ? followingToolCall.id : undefined;
@@ -9178,7 +9223,10 @@ export class InteractiveMode {
 		try {
 			providerOptions = await this.getLogoutProviderOptions();
 		} catch (error) {
-			this.showError(`Could not read stored credentials: ${error instanceof Error ? error.message : String(error)}`);
+			const message = error instanceof Error ? error.message : String(error);
+			this.showError(
+				`Could not read your saved sign-ins: ${message}${/[.!?]$/.test(message) ? "" : "."} Restart senpi; if it happens again, run /login to sign in again.`,
+			);
 			return;
 		}
 		if (providerOptions.length === 0) {
@@ -10320,6 +10368,9 @@ export class InteractiveMode {
 		this.clearExtensionTerminalInputListeners();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
+		this.agentSubscriptionGeneration++;
+		// The footer is disposed: clear the data without scheduling a frame.
+		this.footerDataProvider.setExtensionStatus(LIFECYCLE_STATUS_KEY, undefined);
 		if (this.unsubscribe) {
 			this.unsubscribe();
 		}

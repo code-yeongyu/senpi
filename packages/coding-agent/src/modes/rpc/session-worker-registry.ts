@@ -11,5 +11,5 @@ export function createSessionWorkerRegistry(
 	agentDir: string,
 	createRuntime: PreparableRuntimeFactory,
 ): RpcSessionRegistry {
-	return new RpcSessionRegistry({ agentDir, createRuntime, sessionFileLoad: "blocking" });
+	return new RpcSessionRegistry({ agentDir, createRuntime, sessionFileLoad: "blocking", workerIsolate: true });
 }

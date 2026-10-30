@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import { hermeticProviderEnv } from "../helpers/rpc-hermetic.ts";
-import { killAndWait, reapProcessesUnder } from "../helpers/spawned-host-reaper.ts";
+import { reapSpawnedHosts } from "../helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 export type Wire = Record<string, unknown>;
 export type LaunchPath = "bare" | "direct" | "ensured";
@@ -42,7 +43,7 @@ export async function launchHost(
 	const child = spawn(process.execPath, [cli, ...args], {
 		cwd: qa.root,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...hermeticProviderEnv(),
 			SENPI_RUNTIME: "node",
 			SENPI_CODING_AGENT_DIR: qa.agentDir,
@@ -91,23 +92,35 @@ export async function launchHost(
 	return { child, stderr: () => stderr };
 }
 
+export interface PeerOptions {
+	/** Backstop for one wait; a closed connection fails a wait at once regardless. */
+	readonly deadlineMs?: number;
+}
+
 export class Peer {
 	readonly records: Wire[] = [];
 	private readonly notifications = new Set<() => void>();
+	private ended = false;
 	readonly closed: Promise<unknown>;
 	readonly socket: Socket;
-	constructor(socket: Socket) {
+	readonly deadlineMs: number;
+	constructor(socket: Socket, options: PeerOptions = {}) {
 		this.socket = socket;
+		this.deadlineMs = options.deadlineMs ?? 5000;
 		this.closed = new Promise((resolve) => socket.once("close", resolve));
+		socket.once("close", () => {
+			this.ended = true;
+			for (const notify of this.notifications) notify();
+		});
 		socket.on("error", () => {});
 		attachJsonlLineReader(socket, (line) => {
 			this.records.push(JSON.parse(line));
 			for (const notify of this.notifications) notify();
 		});
 	}
-	static async connect(path: string) {
+	static async connect(path: string, options: PeerOptions = {}) {
 		const socket = createConnection(path);
-		const peer = new Peer(socket);
+		const peer = new Peer(socket, options);
 		await once(socket, "connect");
 		return peer;
 	}
@@ -118,16 +131,17 @@ export class Peer {
 	}
 	waitFor(predicate: (value: Wire) => boolean): Promise<Wire> {
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => finish(undefined), 5000);
+			const timer = setTimeout(() => finish(undefined, "missing response"), this.deadlineMs);
 			const notify = () => {
 				const found = this.records.find(predicate);
-				if (found) finish(found);
+				if (found) finish(found, "");
+				else if (this.ended) finish(undefined, "connection closed before the expected record");
 			};
-			const finish = (found: Wire | undefined) => {
+			const finish = (found: Wire | undefined, failure: string) => {
 				clearTimeout(timer);
 				this.notifications.delete(notify);
 				if (found) resolve(found);
-				else reject(new Error(`missing response: ${JSON.stringify(this.records)}`));
+				else reject(new Error(`${failure}: ${JSON.stringify(this.records)}`));
 			};
 			this.notifications.add(notify);
 			notify();
@@ -168,7 +182,6 @@ export async function authenticate(peer: Peer, agentDir: string) {
 }
 
 export async function teardown(root: string, child?: ChildProcess) {
-	if (child) await killAndWait(child);
-	await reapProcessesUnder(root);
+	await reapSpawnedHosts({ roots: [root], children: child ? [child] : [] });
 	await rm(root, { recursive: true, force: true });
 }
