@@ -112,6 +112,22 @@ describe("Python canonical identity equals the JS native canonicalizer", () => {
 		const values: { py: unknown[] } = JSON.parse(result.stdout);
 		expect(values.py).toEqual([{}, {}, {}]);
 	});
+	it("sends no canonical, and still loads, when the interpreter has no ctypes", async () => {
+		if (!python.ok) throw new Error("Python is required for canonical parity tests");
+		const asset = fileURLToPath(new URL("../src/kernels/py/path_identity.py", import.meta.url));
+		// A None entry makes `import ctypes` raise ImportError, as on a Python built without it.
+		const code = [
+			"import json, os, sys",
+			"sys.modules['ctypes'] = None",
+			"namespace = {'__file__': sys.argv[1]}",
+			"with open(sys.argv[1], 'rb') as source:",
+			"    exec(compile(source.read(), sys.argv[1], 'exec'), namespace)",
+			"identity = namespace['create_identity']('node')",
+			"print(json.dumps([identity(os.path.join(os.getcwd(), p)) for p in ('flink', 'Real/secret')]))",
+		].join("\n");
+		const result = await execute(python.path, ["-c", code, asset], { cwd: root, timeout: 20_000 });
+		expect(JSON.parse(result.stdout)).toEqual([{}, {}]);
+	});
 	it("matches Win32 lexical joining without dropping earlier path components", async () => {
 		if (!python.ok) throw new Error("Python is required for canonical parity tests");
 		const inputs = [
