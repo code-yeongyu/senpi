@@ -108,6 +108,7 @@ import { AgentRunContinuations } from "./agent-run-continuation.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
+import { formatCompactionFailure } from "./compaction-failure-text.ts";
 import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
@@ -319,6 +320,7 @@ import {
 	modelChangeLogFields,
 	SDK_MODEL_CHANGE,
 } from "./model-change-origin.ts";
+import { ModelNotReadyError } from "./model-not-ready-error.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -565,7 +567,9 @@ function withProviderFailure(
 
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
-	| WithParentToolCallId<Exclude<AgentEvent, { type: "agent_end" | "message_update" }>>
+	| WithParentToolCallId<Exclude<AgentEvent, { type: "agent_start" | "agent_end" | "message_update" }>>
+	/** The lifecycle run identity, bound before asynchronous event delivery; older engines omit it. */
+	| { type: "agent_start"; runId?: string }
 	| AgentSessionAgentEndEvent
 	| SessionMessageUpdateEvent
 	| { type: "agent_settled" }
@@ -1037,14 +1041,6 @@ function isCompactionExecutionAborted(error: unknown): boolean {
 		error instanceof CompactionCancelledError ||
 		(error instanceof Error && error.name === "AbortError")
 	);
-}
-
-/** A turn cannot start: no model is selected, or its provider has no credentials. */
-class ModelNotReadyError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "ModelNotReadyError";
-	}
 }
 
 /** The error a turn ends with when a required compaction could not bring the context back under the window. */
@@ -1775,10 +1771,14 @@ export class AgentSession {
 		this._browserEngine = config.browserEngine;
 		this._sessionEnv = config.sessionEnv;
 		this.agent = config.agent;
-		this._structuredLane = new StructuredSessionLane(config.internalChannel, (deliver) => {
-			if (!this._unsubscribeAgent) return;
-			this._agentEventQueue = this._agentEventQueue.then(deliver, deliver);
-		});
+		this._structuredLane = new StructuredSessionLane(
+			config.internalChannel,
+			(deliver) => {
+				if (!this._unsubscribeAgent) return;
+				this._agentEventQueue = this._agentEventQueue.then(deliver, deliver);
+			},
+			(control) => this._recoveryIdentity?.own(control),
+		);
 		this.sessionManager = config.sessionManager;
 		this._unsubscribeRecovery = this.sessionManager.onRecovery((recovery) => {
 			this._standingRecovery = { type: "session_recovered", ...recovery };
@@ -2975,10 +2975,11 @@ export class AgentSession {
 					: { ...event, message };
 		}
 		carryRecovery(produced, event);
+		// The canonical projection goes first: its acceptance unit waits for this event's legacy record (senpi#4272).
+		if (this._structuredLane.active) this._structuredLane.emitEvent(event, captureSource);
 		for (const l of [...this._eventListeners]) {
 			l(event);
 		}
-		if (this._structuredLane.active) this._structuredLane.emitEvent(event, captureSource);
 	}
 
 	private async _emitSessionCompactFailed(event: Omit<SessionCompactFailedEvent, "type">): Promise<void> {
@@ -3500,6 +3501,9 @@ export class AgentSession {
 			this._lifecycleBinding.startRun();
 			this._requestSelectedModel = undefined;
 		}
+		// Bind now: the core can start another run before this event's asynchronous delivery.
+		const queuedEvent =
+			event.type === "agent_start" ? { ...event, runId: this._lifecycleBinding.controller.ledger.runId } : event;
 		// Bound at emission: the core can start the next run before the queue reaches this end (senpi#3864).
 		if (event.type === "agent_end") {
 			this._lifecycleBinding.bindTurnEnd(event);
@@ -3579,8 +3583,8 @@ export class AgentSession {
 		}
 
 		const processing = this._agentEventQueue.then(
-			() => this._processAgentEvent(event, signal),
-			() => this._processAgentEvent(event, signal),
+			() => this._processAgentEvent(queuedEvent, signal),
+			() => this._processAgentEvent(queuedEvent, signal),
 		);
 		this._agentEventQueue =
 			pendingMessage !== undefined
@@ -4707,8 +4711,11 @@ export class AgentSession {
 	 * block controls at their position. Attach before a turn's first provider push; a stream already pushing keeps
 	 * its decision and yields no capture.
 	 */
-	subscribeStructured(listener: (record: AgentSessionStructuredRecord) => void): () => void {
-		return this._structuredLane.subscribe(listener);
+	subscribeStructured(
+		listener: (record: AgentSessionStructuredRecord) => void,
+		failed?: (cause: unknown) => void,
+	): () => void {
+		return this._structuredLane.subscribe(listener, failed);
 	}
 
 	/**
@@ -9975,7 +9982,7 @@ export class AgentSession {
 			const error = new Error(
 				lastEntry?.type === "compaction" ? "Already compacted" : "Nothing to compact (session too small)",
 			);
-			const errorMessage = `Compaction failed: ${error.message}`;
+			const errorMessage = formatCompactionFailure("compaction", error.message);
 			this._emit({ type: "compaction_start", reason: "manual", requestId });
 			this._emit({
 				type: "compaction_end",
@@ -10034,7 +10041,9 @@ export class AgentSession {
 			}
 			const message = error instanceof Error ? error.message : String(error);
 			const aborted = isCompactionExecutionAborted(error);
-			const errorMessage = aborted ? undefined : `Compaction failed: ${message}`;
+			const errorMessage = aborted
+				? undefined
+				: formatCompactionFailure("compaction", message, { model: this._compactionFailureModel() });
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -10125,7 +10134,9 @@ export class AgentSession {
 				aborted,
 				willRetry: false,
 				requestId,
-				errorMessage: aborted ? undefined : `Compaction failed: ${message}`,
+				errorMessage: aborted
+					? undefined
+					: formatCompactionFailure("compaction", message, { model: this._compactionFailureModel() }),
 			});
 			return { applied: false, reason: "rejected" };
 		} finally {
@@ -10640,7 +10651,7 @@ export class AgentSession {
 	 */
 	private async _assertModelReadyForTurn(): Promise<void> {
 		if (!this.model) {
-			throw new ModelNotReadyError(formatNoModelSelectedMessage());
+			throw new ModelNotReadyError(formatNoModelSelectedMessage(), "no_model_selected");
 		}
 		const hasConfiguredAuth =
 			this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
@@ -10655,9 +10666,15 @@ export class AgentSession {
 				`Authentication failed for "${this.model.provider}". ` +
 					`Credentials may have expired or network is unavailable. ` +
 					`Run '/login ${this.model.provider}' to re-authenticate.`,
+				"provider_credentials_expired",
+				this.model.provider,
 			);
 		}
-		throw new ModelNotReadyError(formatNoApiKeyFoundMessage(this.model.provider));
+		throw new ModelNotReadyError(
+			formatNoApiKeyFoundMessage(this.model.provider),
+			"provider_credentials_missing",
+			this.model.provider,
+		);
 	}
 
 	/** Shows the provider guidance for a refused background turn once until a turn is admitted again. */
@@ -11528,9 +11545,9 @@ export class AgentSession {
 			const aborted = isCompactionExecutionAborted(error);
 			const formattedErrorMessage = aborted
 				? undefined
-				: reason === "overflow"
-					? `Context overflow recovery failed: ${errorMessage}`
-					: `Auto-compaction failed: ${errorMessage}`;
+				: formatCompactionFailure(reason === "overflow" ? "overflow-recovery" : "auto-compaction", errorMessage, {
+						model: this._compactionFailureModel(),
+					});
 			this._emit({
 				type: "compaction_end",
 				reason,
@@ -12024,7 +12041,9 @@ export class AgentSession {
 								aborted,
 								willRetry: false,
 								requestId,
-								errorMessage: aborted ? undefined : `Compaction failed: ${message}`,
+								errorMessage: aborted
+									? undefined
+									: formatCompactionFailure("compaction", message, { model: this._compactionFailureModel() }),
 							});
 							const err = error instanceof Error ? error : new Error(String(error));
 							options?.onError?.(err);
@@ -12791,6 +12810,10 @@ export class AgentSession {
 				this._emit({ type: "summarization_retry_finished" });
 			},
 		};
+	}
+
+	private _compactionFailureModel(): string | undefined {
+		return this.model ? `${this.model.provider}/${this.model.id}` : undefined;
 	}
 
 	/**
