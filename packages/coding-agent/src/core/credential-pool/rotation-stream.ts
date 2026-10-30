@@ -3,6 +3,7 @@ import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { applyAccountOrder, rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { emitProviderAccountsChanged } from "../extensions/builtin/anthropic-subscription/account-events.ts";
+import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
 import { AUTH_BLOCK_REPROBE_MS } from "./auth-reprobe.ts";
 import { type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 import { runCredentialFailover } from "./failover.ts";
@@ -10,12 +11,16 @@ import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { modelBlockKey, pruneModelBlocks, withModelBlock } from "./model-scope.ts";
 import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
 import { listRotationSlots, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
+import { preferHeadroom } from "./selection-order.ts";
 import type { CredentialSlotState } from "./state-store.ts";
 
 export { listRotationSlots, type RotationLane, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
 
 /** The exact hash the claude-sdk-oauth affinity oracle uses, so pools never remap. */
 export const sha256SlotHasher: SlotHasher = (input) => createHash("sha256").update(input).digest().readBigUInt64BE(0);
+
+/** Only headroom-induced changes are remembered; ordinary HRW membership changes keep their existing behavior. */
+const headroomAffinities = new WeakMap<RotationSources["repository"], Map<string, string>>();
 
 /**
  * A limit naming one model family lands on that family only: the slot's own
@@ -112,6 +117,7 @@ export function streamWithCredentialRotation(
 	const useAffinity = sources.policy?.affinity !== false;
 	const pooled: PooledCredential | undefined = sources.credential;
 	const now = sources.now ?? Date.now;
+	const rememberAffinity = useAffinity && options.affinityKey !== undefined;
 
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
 		listSlots: () => listRotationSlots(sources, options.modelId === undefined ? {} : { modelId: options.modelId }),
@@ -121,8 +127,21 @@ export function streamWithCredentialRotation(
 			const ranked = useAffinity ? rendezvousOrder(affinityKey, candidates, hasher) : candidates;
 			const ordered = applyAccountOrder(pooled?.order, ranked);
 
-			const winner = ordered[0];
+			const sessionKey = `${sources.providerId}\0${affinityKey}`;
+			const remembered = rememberAffinity ? headroomAffinities.get(sources.repository)?.get(sessionKey) : undefined;
+			const winner = preferHeadroom(
+				ordered,
+				sources.providerId,
+				subscriptionLimits.snapshot(),
+				now(),
+				remembered,
+			)[0];
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
+			if (rememberAffinity && (remembered !== undefined || winner !== ordered[0])) {
+				const sessions = headroomAffinities.get(sources.repository) ?? new Map<string, string>();
+				sessions.set(sessionKey, winner.name);
+				headroomAffinities.set(sources.repository, sessions);
+			}
 			return winner;
 		},
 		runAttempt,
