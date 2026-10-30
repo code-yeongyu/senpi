@@ -1,4 +1,4 @@
-import { PROVIDER_NOT_CONFIGURED_PREFIX } from "@earendil-works/pi-ai";
+import { PROVIDER_NOT_CONFIGURED_PREFIX, readProviderDiagnostic } from "@earendil-works/pi-ai";
 import { DEFAULT_SLOT_BLOCK_MS, MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { normalizeProviderError } from "@earendil-works/pi-ai/utils/error-body";
 import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
@@ -89,6 +89,31 @@ const ABORT_TEXT = /\baborted?\b/i;
 const TEMPORARY_FAULT_TEXT =
 	/time[ds]?[ _-]?out|timed out|disconnect|reset before|connection reset|gateway|temporarily|unavailable/i;
 
+/**
+ * What the provider's own error code, minted by the adapter from the response's structured fields,
+ * says about a limit. It outranks the message prose: the ChatGPT adapter words every 429 that carries
+ * an error object as a spent account, so a per-request `rate_limit_exceeded` throttle read as prose
+ * blocked the account until its far window reset (senpi#3216). Undefined when no code proves either.
+ */
+function limitFromProviderCode(
+	error: unknown,
+): { kind: "throttle" } | { kind: "spent"; resetsAt?: number } | undefined {
+	const diagnostic = readProviderDiagnostic(error);
+	if (diagnostic?.evidence !== "structured_code") return undefined;
+	switch (diagnostic.code) {
+		case "rate_limit_exceeded":
+		case "rate_limit_error":
+			return { kind: "throttle" };
+		case "usage_limit_reached":
+		case "usage_not_included":
+			return diagnostic.resetsAt === undefined
+				? { kind: "spent" }
+				: { kind: "spent", resetsAt: diagnostic.resetsAt };
+		default:
+			return undefined;
+	}
+}
+
 function isAbort(error: unknown, message: string): boolean {
 	if (error instanceof Error && error.name === "AbortError") return true;
 	return ABORT_TEXT.test(message);
@@ -127,8 +152,10 @@ export function classifyCredentialFailure(
 		(status !== undefined && status >= 500 && status < 600) ||
 		(status === undefined &&
 			(TEMPORARY_FAULT_TEXT.test(text) || NETWORK_TEXT.test(text) || OVERLOAD_TEXT.test(text)));
-	const usageLimit = isAccountUsageLimitText(text) && !isOverflowText(text);
-	const limitText = RATE_LIMIT_TEXT.test(text) || usageLimit;
+	const codedLimit = limitFromProviderCode(error);
+	const usageLimit =
+		codedLimit !== undefined ? codedLimit.kind === "spent" : isAccountUsageLimitText(text) && !isOverflowText(text);
+	const limitText = codedLimit !== undefined || RATE_LIMIT_TEXT.test(text) || usageLimit;
 	// A slot whose material no longer resolves to usable auth is a per-credential
 	// fault, not a provider-wide one: failing the request here would let ONE bad
 	// slot dead-end a pool whose siblings are healthy. The block is permanent
@@ -157,9 +184,16 @@ export function classifyCredentialFailure(
 		// A spent account is out until its reset time, so that time (a reset
 		// header, a reset field or reset prose) floors its cooldown; without one,
 		// the default cooldown stands. Plain rate limits keep today's hint only.
+		// A coded throttle's text is the adapter's spent-account wording, so neither it nor the window
+		// reset it names is this throttle's wait; a coded spent account's reset is the diagnostic's own.
+		const codedReset =
+			codedLimit?.kind === "spent" && codedLimit.resetsAt !== undefined ? codedLimit.resetsAt - nowMs : undefined;
 		const hint =
-			extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs) ??
-			(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : undefined);
+			codedLimit?.kind === "throttle"
+				? undefined
+				: (codedReset ??
+					extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs) ??
+					(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : undefined));
 		const modelFamily = rateLimitModelFamily(text);
 		const policy = { baseMs: context.cooldownBaseMs, capMs: context.cooldownCapMs };
 		return {
