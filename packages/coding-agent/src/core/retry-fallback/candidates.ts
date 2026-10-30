@@ -22,8 +22,8 @@ export interface CandidateFilters {
 	isCircuitOpen(base: string): boolean;
 	/** A model whose every rung is out for this walk (a network blip on it, senpi#3344). */
 	isModelSkipped?(base: string): boolean;
-	/** Providers whose account-wide usage limit or billing failure this session saw: their entries are skipped. */
-	isProviderSpent?(provider: string): boolean;
+	/** Entries whose account or upstream this session saw hit a usage limit or billing failure: they are skipped. */
+	isSpent?(selector: Pick<FallbackSelector, "provider" | "id">): boolean;
 	/** Provider-wide conservative skip after a request refusal; credentials are unavailable at this scan (senpi#2491). */
 	isProviderRefused?(provider: string): boolean;
 	skip(candidate: string, skipReason: string): void;
@@ -41,7 +41,7 @@ export function firstUsableCandidate(
 	current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
 	filters: CandidateFilters,
 ): UsableCandidate | undefined {
-	return scanCandidates(entries, current, filters, (provider) => filters.isProviderSpent?.(provider) ?? false);
+	return scanCandidates(entries, current, filters, (selector) => filters.isSpent?.(selector) ?? false);
 }
 
 /**
@@ -62,7 +62,7 @@ function scanCandidates(
 	entries: readonly string[],
 	current: { model: Model<Api>; thinkingLevel?: ThinkingLevel },
 	filters: CandidateFilters,
-	avoidProvider: (provider: string) => boolean,
+	avoid: (selector: FallbackSelector) => boolean,
 ): UsableCandidate | undefined {
 	let probe: UsableCandidate | undefined;
 	for (const raw of candidatesAfter(entries, formatSelector(current.model, current.thinkingLevel))) {
@@ -75,7 +75,7 @@ function scanCandidates(
 			filters.skip(raw, "self");
 			continue;
 		}
-		if (avoidProvider(selector.provider)) {
+		if (avoid(selector)) {
 			filters.skip(raw, "account-limit");
 			continue;
 		}

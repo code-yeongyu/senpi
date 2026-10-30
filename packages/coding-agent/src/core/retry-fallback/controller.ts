@@ -54,7 +54,7 @@ export class RetryFallbackController {
 	constructor(deps: RetryFallbackControllerDeps) {
 		this.deps = deps;
 		this.probes = new CircuitProbes(deps.circuits);
-		this.unusable = new UnusableEntries(deps.cooldowns);
+		this.unusable = new UnusableEntries(deps.cooldowns, deps.registry);
 	}
 
 	get activeState(): Readonly<ActiveFallbackState> | undefined {
@@ -69,8 +69,14 @@ export class RetryFallbackController {
 		return this.unusable.isProviderSpent(provider);
 	}
 
-	accountError(provider: string): string | undefined {
-		return this.unusable.accountError(provider);
+	/** Whether `model`'s account, or the upstream serving it, is held by a usage limit or billing failure. */
+	isSpent(model: Pick<Model<Api>, "provider" | "id">): boolean {
+		return this.unusable.isSpent(model);
+	}
+
+	/** The failure text of the hold that rules `model` out, if one does. */
+	spentError(model: Pick<Model<Api>, "provider" | "id">): string | undefined {
+		return this.unusable.spentError(model);
 	}
 
 	resetTurn(): void {
@@ -218,10 +224,15 @@ export class RetryFallbackController {
 		this.deps.circuits?.close(formatSelector(model));
 	}
 
-	/** A response this session got from `selector` succeeded: the entry serves it again (senpi#3467). */
+	/**
+	 * A response this session got from `selector` succeeded: the entry serves it again (senpi#3467),
+	 * and the usage-limit holds that response disproves are released (senpi#4577).
+	 */
 	noteServed(selector: string): void {
 		this.ownFailures.delete(selector);
 		this.probes.accept(selector);
+		const slash = selector.indexOf("/");
+		if (slash > 0) this.unusable.noteServed({ provider: selector.slice(0, slash), id: selector.slice(slash + 1) });
 	}
 
 	/**
@@ -292,7 +303,9 @@ export class RetryFallbackController {
 		// noteHealthFailure) so the final chain entry opens too.
 		if (failureObserved && current && reason === "transient")
 			this.noteHealthFailure(current.model, current.thinkingLevel, failure);
-		const limit = usageLimitScope(failure.errorMessage);
+		const limit = current
+			? this.unusable.scope(current.model, failure.errorMessage)
+			: usageLimitScope(failure.errorMessage);
 		if (failureObserved && current) this.unusable.note(current.model, failure);
 		// A model-wide park (transient, billing) can rule out the current model's other rungs, so the
 		// walk re-scans after noting it; the first scan logs only when no re-scan follows.
@@ -393,7 +406,7 @@ export class RetryFallbackController {
 			isSuppressed: (base) => this.deps.cooldowns.isSuppressed(base),
 			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
 			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
-			isProviderSpent: (provider) => this.unusable.isProviderSpent(provider),
+			isSpent: (selector) => this.unusable.isSpent(selector),
 			isProviderRefused: (provider) => provider === refusedProvider || this.refusedProviders.has(provider),
 			isModelSkipped: (base) => base === this.blipModel,
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
