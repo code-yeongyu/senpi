@@ -44,7 +44,7 @@ export function staleDeferredEntries(entries, root = EQ_DIR) {
 	return entries.filter((entry) => existsSync(deferredGoldenPath(entry, root)));
 }
 
-export const deferredLabel = (entry) => `DEFERRED(${entry.owner}, ${entry.issue})`;
+const deferredLabel = (entry) => `DEFERRED(${entry.owner}, ${entry.issue})`;
 
 /** What a compare run does with one cell: compare its golden, report it DEFERRED, or fail it as missing. */
 export function goldenCellVerdict(entries, cell, root = EQ_DIR) {

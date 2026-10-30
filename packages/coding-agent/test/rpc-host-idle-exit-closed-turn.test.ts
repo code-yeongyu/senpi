@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished } from "vitest";
 import { HOST_IDLE_EXIT_MS_ENV } from "../src/modes/rpc/host-lifecycle-policy.ts";
 import { HeldAnthropicModel, JsonlPeer, openedSessionId, type WireRecord } from "./helpers/rpc-generation-support.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 import {
 	endpointScratch,
 	hostArgs,
@@ -47,7 +48,7 @@ async function clockHostWithHeldTurn(label: string, signal: AbortSignal) {
 		[join(import.meta.dirname, "fixtures", "rpc-lifecycle-clock.ts"), qa.legacy, qa.agentDir, ...hostArgs()],
 		{
 			env: {
-				...process.env,
+				...hostSpawnEnv(),
 				...hostEnv(qa),
 				SENPI_CODING_AGENT_DIR: qa.agentDir,
 				[HOST_IDLE_EXIT_MS_ENV]: String(IDLE_EXIT_MS),
