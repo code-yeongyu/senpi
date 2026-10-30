@@ -67,7 +67,11 @@ describe("ModelRuntime credential synchronization", () => {
 		await runtime.login("dynamic", "api_key", { prompt: async () => "unused", notify: () => {} });
 		expect(runtime.hasConfiguredAuth("dynamic")).toBe(true);
 		expect(runtime.getAvailableSnapshot().map((entry) => entry.id)).toContain("dynamic");
-		expect(await credentials.read("dynamic")).toEqual({ type: "api_key", key: "dynamic-key" });
+		expect(await credentials.read("dynamic")).toEqual({
+			type: "api_key",
+			key: "dynamic-key",
+			loginId: expect.any(String),
+		});
 
 		await runtime.logout("dynamic");
 		expect(runtime.hasConfiguredAuth("dynamic")).toBe(false);
@@ -306,7 +310,7 @@ describe("ModelRuntime credential synchronization", () => {
 			name: "CredentialSynchronizationError",
 			credential: { type: "api_key", key: "delayed-commit-key" },
 		});
-		expect(stored).toEqual({ type: "api_key", key: "delayed-commit-key" });
+		expect(stored).toEqual({ type: "api_key", key: "delayed-commit-key", loginId: expect.any(String) });
 	});
 
 	it("reports a typed error when cancellation interrupts post-commit synchronization", async () => {
@@ -346,6 +350,7 @@ describe("ModelRuntime credential synchronization", () => {
 		expect(await credentials.read("cancelled-sync")).toEqual({
 			type: "api_key",
 			key: "cancelled-sync-key",
+			loginId: expect.any(String),
 		});
 	});
 
@@ -370,6 +375,10 @@ describe("ModelRuntime credential synchronization", () => {
 			credential: { type: "api_key", key: "broken-sync-key" },
 		});
 		await expect(login).rejects.toBeInstanceOf(CredentialSynchronizationError);
-		expect(await credentials.read("broken-sync")).toEqual({ type: "api_key", key: "broken-sync-key" });
+		expect(await credentials.read("broken-sync")).toEqual({
+			type: "api_key",
+			key: "broken-sync-key",
+			loginId: expect.any(String),
+		});
 	});
 });

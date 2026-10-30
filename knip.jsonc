@@ -195,7 +195,7 @@
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_KIMI_CODE_REGION, KIMI_CODE_REGION_PROFILES, isKimiCodeRegion
       "packages/ai/src/auth/oauth/kimi-region.ts": ["DEFAULT_KIMI_CODE_REGION", "KIMI_CODE_REGION_PROFILES", "isKimiCodeRegion"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_SLOT_NAME, assertValidSlotName, DISPLAY_NAME_MAX_COLUMNS, findSlot, managedSentinelMaterials
-      "packages/ai/src/auth/pool/slots.ts": ["DEFAULT_SLOT_NAME", "DISPLAY_NAME_MAX_COLUMNS", "assertValidSlotName", "findSlot", "managedSentinelMaterials"],
+      "packages/ai/src/auth/pool/slots.ts": ["DEFAULT_SLOT_NAME", "DISPLAY_NAME_MAX_COLUMNS", "assertValidSlotName", "findSlot"],
       // pre-existing at origin main aceb1cc1d9: unused exports ALIBABA_TOKEN_PLAN_IMAGE_MODELS, ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS
       "packages/ai/src/providers/alibaba-token-plan.models.ts": ["ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS", "ALIBABA_TOKEN_PLAN_IMAGE_MODELS"],
       // pre-existing at origin main aceb1cc1d9: unused exports AMAZON_BEDROCK_IMAGE_MODELS, AMAZON_BEDROCK_CLASSIFIER_MODELS

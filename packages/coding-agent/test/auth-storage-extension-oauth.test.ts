@@ -43,7 +43,7 @@ describe("AuthStorage extension OAuth providers", () => {
 			onAuth: async () => {},
 			onManualCodeInput: async () => "",
 		} as never);
-		expect(await storage.read("anthropic-subscription")).toEqual(credential);
+		expect(await storage.read("anthropic-subscription")).toEqual({ ...credential, loginId: expect.any(String) });
 	});
 
 	test("unregisterOAuthProvider hides the provider again", () => {
