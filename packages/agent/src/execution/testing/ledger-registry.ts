@@ -23,14 +23,14 @@ export const LEDGER_REGISTRY: readonly RegisteredCase[] = [
 			index < 6
 				? "packages/agent/src/execution/testing/ledger-cases.ts"
 				: "packages/agent/src/execution/testing/ledger-recovery-cases.ts",
-		intro: "S08 (#4997)",
+		intro: "#5004",
 		adapters: ["store"],
 		expected,
 	})),
 	...KILL_LEDGER_DECLARATIONS.map(({ id, operation, point }): RegisteredCase => ({
 		id,
 		impl: "packages/agent/src/execution/testing/kill-ledger.ts",
-		intro: "S08 (#4997)",
+		intro: "#5004",
 		adapters: ["store"],
 		expected: `everywhere: kill ${point.at}${point.at === "write" ? ` ${point.index}` : ""} ${operation}; journal and row recover atomically, with no repeated dispatch`,
 	})),
