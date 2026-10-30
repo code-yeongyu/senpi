@@ -160,6 +160,10 @@ function noSlotsMessage(slots: readonly RunSlot[], now: number): string {
 		: `No credential slots available: ${blocked.join(", ")}. ${step}`;
 }
 
+function isRateLimitBlock(action: CredentialAction): boolean {
+	return action.kind === "failover" && action.block.reason === "rate_limit";
+}
+
 /** The soonest due-back time when a rate or usage limit is among the blocks, else undefined. */
 function limitedUntil(slots: readonly RunSlot[], now: number): number | undefined {
 	const limited = slots.some(
@@ -219,7 +223,10 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 		const available = slots.filter((slot) => !attempted.has(slot.name) && isAvailable(slot, now()));
 		const candidates = available.length > 0 ? available : coolingProbe(slots, attempted);
 		if (candidates.length === 0) {
-			const limitedRetryAt = limitedUntil(slots, now());
+			// Only a refusal that is itself a limit is the pool's rate limit: a probe refused for auth, billing
+			// or a missing model keeps its own classification, which the goal's auth block reads (senpi#3975).
+			const limitedRetryAt =
+				lastError === undefined || isRateLimitBlock(lastError.action) ? limitedUntil(slots, now()) : undefined;
 			if (lastTerminalEvent !== undefined) {
 				yield limitedRetryAt === undefined || options.withPoolRetryAt === undefined
 					? lastTerminalEvent

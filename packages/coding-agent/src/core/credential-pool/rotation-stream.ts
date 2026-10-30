@@ -83,14 +83,16 @@ function blockPatch(
 
 /**
  * The last slot's error, forwarded when every slot is limited, carries the time the first slot is due back:
- * a limit the provider classified keeps its own reset when it named one, and an unclassified failure becomes
- * the pool's rate limit (senpi#3975). Any other classification (auth, overflow) is left as the provider said.
+ * a limit the provider classified keeps its own reset when it named one, and a failure with no diagnostic or
+ * an unclassified 429 becomes the pool's rate limit (senpi#3975). Anything else (auth, a 402/403/404 status)
+ * is left exactly as the provider said, status included.
  */
 export function withPoolRetryAt(event: AssistantMessageEvent, retryAt: number): AssistantMessageEvent {
 	if (event.type !== "error") return event;
 	const own = sanitizeProviderDiagnostic(event.error.providerDiagnostic);
 	const limit = own?.category === "rate_limit" || own?.category === "quota";
-	if (own !== undefined && !limit && own.category !== "unknown") return event;
+	const unclassifiedLimit = own === undefined || (own.category === "unknown" && own.httpStatus === 429);
+	if (!limit && !unclassifiedLimit) return event;
 	const providerDiagnostic =
 		own !== undefined && limit
 			? (sanitizeProviderDiagnostic({ ...own, resetsAt: own.resetsAt ?? retryAt }) ?? own)
