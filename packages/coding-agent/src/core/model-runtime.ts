@@ -33,6 +33,8 @@ import {
 	type ImagesOptions,
 	isModelType,
 	type LoginOptions,
+	type LogoutOptions,
+	type OAuthRevocationResult,
 	lazyStream,
 	type Message,
 	type Model,
@@ -199,6 +201,7 @@ function mightHoldCredentialPool(
 ): boolean {
 	if (credential) {
 		const accounts = Object.entries(credential).find(([key]) => key === "accounts")?.[1];
+		if (providerId === "chatgpt-subscription" && credential.type === "oauth") return true;
 		return (Array.isArray(accounts) && accounts.length > 1) || Object.keys(policySlots ?? {}).length > 0;
 	}
 	return discoverEnvSlots(providerId, env).length + Object.keys(policySlots ?? {}).length > 1;
@@ -307,9 +310,15 @@ export class ModelRuntime implements Models {
 	private availabilityError: string | undefined;
 	private readonly credentialOperations = new Map<string, Promise<unknown>>();
 	private readonly servedCredentials = new ServedCredentials();
+	/** Actual stored-slot attempts, scoped to the session rather than a predicted list winner. */
+	private readonly activeCredentialAccounts = new Map<string, string>();
+
+	getActiveCredentialAccount(providerId: string, sessionId: string): string | undefined {
+		return this.activeCredentialAccounts.get(`${providerId}\0${sessionId}`);
+	}
 	/**
-	 * The credential pool is loaded lazily and only for a provider that actually
-	 * has more than one slot. Importing it eagerly would pull the pool's schema
+	 * The credential pool is loaded lazily for pooled providers and ChatGPT
+	 * registrations whose health must be tracked even alone. Importing it eagerly would pull the pool's schema
 	 * validator - and its module-level global registry - into every consumer of
 	 * ModelRuntime, which the import-graph guard forbids.
 	 */
@@ -1169,7 +1178,9 @@ export class ModelRuntime implements Models {
 			policy,
 		};
 		const slots = await pool.rotation.listRotationSlots(sources, { acquireLeases: false });
-		return slots.length > 1 ? sources : undefined;
+		return slots.length > 1 || (model.provider === "chatgpt-subscription" && credential?.type === "oauth")
+			? sources
+			: undefined;
 	}
 
 	stream<TApi extends Api>(
@@ -1233,7 +1244,7 @@ export class ModelRuntime implements Models {
 	 * One provider request with the #2297 recovery: a stored OAuth token the provider
 	 * refuses before any output is re-exchanged once and the request re-sent.
 	 */
-	private attemptWithTokenRecovery<TOptions extends ProviderRequestOptions & ModelsRequestTransforms>(
+	private attemptWithTokenRecovery<TOptions extends StreamOptions & ModelsRequestTransforms & { affinityKey?: string }>(
 		model: Model<Api>,
 		options: TOptions | undefined,
 		slotAuth: { apiKey?: string; slotName?: string } | undefined,
@@ -1246,6 +1257,14 @@ export class ModelRuntime implements Models {
 				options,
 				rejectedAccess === undefined ? slotAuth : { ...slotAuth, rejectedAccess },
 			);
+			const sessionId = options?.affinityKey ?? options?.sessionId;
+			if (model.provider === "chatgpt-subscription" && slotAuth?.slotName !== undefined && sessionId !== undefined) {
+				const key = `${model.provider}\0${sessionId}`;
+				if (this.activeCredentialAccounts.get(key) !== slotAuth.slotName) {
+					this.activeCredentialAccounts.set(key, slotAuth.slotName);
+					emitProviderAccountsChanged(model.provider);
+				}
+			}
 			const capturing = {
 				...prepared,
 				options: withLimitCapture(prepared.options, prepared.model.provider, limitAccountOf(slotAuth)),
@@ -1451,30 +1470,38 @@ export class ModelRuntime implements Models {
 			await this.synchronizeCredentialState(providerId, "login", credential, signal);
 			// A fresh login is the remedy a usage-limit refusal names: holds sessions keep on this provider are stale.
 			emitProviderAccountsChanged(providerId, "login");
+			for (const key of this.activeCredentialAccounts.keys()) {
+				if (key.startsWith(`${providerId}\0`)) this.activeCredentialAccounts.delete(key);
+			}
 			return credential;
 		});
 	}
 
-	async logout(providerId: string, options: AuthOperationOptions = {}): Promise<void> {
-		await this.logoutProvider(providerId, options);
+	async logout(providerId: string, options: LogoutOptions = {}): Promise<OAuthRevocationResult | void> {
+		return (await this.logoutProvider(providerId, options)).revocation;
 	}
 
 	/**
 	 * {@link logout}, answering what the user should know: an Anthropic Subscription `claude-cli` account is signed out
 	 * of the Claude CLI's own store before the credential is deleted (senpi#4436), and `notices` names any account that
-	 * could not be signed out cleanly.
+	 * could not be signed out cleanly. `revocation` reports a ChatGPT OAuth remote revocation; `slotId` signs out one
+	 * stored account and keeps its registration and signed-in siblings.
 	 */
 	logoutProvider(
 		providerId: string,
-		options: AuthOperationOptions = {},
-	): Promise<{ readonly notices: readonly string[] }> {
+		options: LogoutOptions = {},
+	): Promise<{ readonly notices: readonly string[]; readonly revocation?: OAuthRevocationResult }> {
 		const signal = operationSignal(options.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
 			const storage = this.authStorage;
 			const notices = storage === undefined ? [] : await signOutClaudeCliSlotsForLogout(storage, providerId, process.env, signal);
-			await this.models.logout(providerId, { signal });
-			await this.synchronizeCredentialState(providerId, "logout", undefined, signal);
-			return { notices };
+			const result = await this.models.logout(providerId, { ...options, signal });
+			const surviving = await this.credentials.read(providerId, { signal });
+			await this.synchronizeCredentialState(providerId, "logout", surviving, signal);
+			for (const key of this.activeCredentialAccounts.keys()) {
+				if (key.startsWith(`${providerId}\0`)) this.activeCredentialAccounts.delete(key);
+			}
+			return result === undefined ? { notices } : { notices, revocation: result };
 		});
 	}
 

@@ -1,6 +1,6 @@
 import { lstat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { type Credential, normalizeProviderId } from "@earendil-works/pi-ai";
+import { type Credential, type OAuthCredential, normalizeProviderId } from "@earendil-works/pi-ai";
 import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
 import { applyAccountOrder, isSlotBlocked, withoutOrderedAccount } from "@earendil-works/pi-ai/auth/pool/select";
 import {
@@ -8,6 +8,7 @@ import {
 	listSlots,
 	type PooledCredential,
 	pinSlot,
+	projectSlot,
 	removeSlot,
 	renameSlotDisplayName,
 } from "@earendil-works/pi-ai/auth/pool/slots";
@@ -75,6 +76,9 @@ export type CredentialAccountSummary = {
 	/** The sign-in connection test's last result. */
 	readonly check?: CredentialAccountCheck;
 	readonly signIn?: "signed_in" | "needs_sign_in";
+	readonly active?: boolean;
+	readonly paused?: true;
+	readonly usageUrl?: string;
 };
 
 export type CredentialAccountCheck = {
@@ -135,6 +139,14 @@ export function assertValidAccountName(name: string): void {
 	}
 }
 
+/** Resolve the immutable account ID, never its display name or its position in a list. */
+export function selectedOAuthAccount(storage: AuthStorage, provider: string, name: string): OAuthCredential {
+	assertValidAccountName(name);
+	const credential = projectSlot(storage.get(provider), name);
+	if (credential?.type !== "oauth") throw new Error(`OAuth account not found: ${name}`);
+	return credential;
+}
+
 function pooledFrom(credential: Credential | undefined): PooledCredential | undefined {
 	return credential === undefined ? undefined : credential;
 }
@@ -162,7 +174,7 @@ function stringField(value: object, key: string): string | undefined {
  * Cursor and Claude persist their lane's blocks in auth.json. Generic pool
  * rotation ignores those fields and reads revision-matched sidecar health.
  */
-type SlotBlock = Pick<CredentialAccountSummary, "blocked" | "blockedReason" | "blockedUntil">;
+type SlotBlock = Pick<CredentialAccountSummary, "blocked" | "blockedReason" | "blockedUntil" | "paused" | "usageUrl">;
 
 const UNBLOCKED: SlotBlock = { blocked: false };
 
@@ -187,6 +199,7 @@ function liveBlock(reason: string | undefined, blockedUntil: number | undefined,
 }
 
 function sidecarBlock(sidecar: CredentialSlotState | undefined, now: number): SlotBlock {
+	if (sidecar?.usageLimit) return { blocked: true, paused: true, usageUrl: "https://chatgpt.com/settings/usage" };
 	if (sidecar === undefined || isAvailable(sidecar, now)) return UNBLOCKED;
 	return liveBlock(sidecar?.blockReason, sidecar?.blockedUntil, now);
 }
@@ -269,13 +282,19 @@ export async function getCredentialAccounts(
 	provider: string,
 	env: NodeJS.ProcessEnv = process.env,
 	repository?: CredentialSlotRepository,
+	activeName?: string,
 ): Promise<CredentialAccountSummary[]> {
-	return summarizeCredentialAccounts(
+	const accounts = await summarizeCredentialAccounts(
 		provider,
 		storage.get(provider),
 		env,
 		repository ?? credentialPoolRepository(storage),
 	);
+	if (normalizeProviderId(provider) !== "chatgpt-subscription") return accounts;
+	return accounts.map((account) => ({
+		...account,
+		active: account.name === activeName && !account.blocked && !account.signedOut && !account.unused,
+	}));
 }
 
 /** Storage-free variant for callers that already hold the credential (e.g. auth check). */

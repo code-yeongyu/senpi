@@ -1,11 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createModels, type OAuthCredential } from "@earendil-works/pi-ai";
+import { createModels, type OAuthCredential, type OAuthAuth } from "@earendil-works/pi-ai";
 import { listSlots, projectSlot } from "@earendil-works/pi-ai/auth/pool/slots";
 import { chatgptSubscriptionProvider } from "@earendil-works/pi-ai/providers/chatgpt-subscription";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { subscribeProviderAccountEvents } from "../../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
 import gptAccountExtension, { type GptAccountExtensionDeps } from "../../src/core/extensions/builtin/gpt-account.ts";
 import {
@@ -55,6 +56,53 @@ function collectAccountsChanged(): { changed: string[]; unsubscribe: () => void 
 }
 
 describe("/gpt-account add", () => {
+	it.each([false, true])(
+		"reauthorizes the selected immutable account and preserves siblings (reject=%s)",
+		async (reject) => {
+			const selected: OAuthCredential = {
+				type: "oauth",
+				route: "siwc",
+				issuer: "https://auth.openai.com",
+				subject: "selected",
+				clientId: "oaiapp_selected",
+				access: "synthetic-old",
+				refresh: "synthetic-refresh",
+				expires: 4102444800000,
+			};
+			await storage.modify("chatgpt-subscription", async () => ({
+				...selected,
+				accounts: [
+					{ ...selected, name: "default" },
+					{ ...selected, name: "work", subject: "sibling", clientId: "oaiapp_sibling" },
+				],
+			}));
+			const sibling = projectSlot(storage.get("chatgpt-subscription"), "work");
+			const provider = chatgptSubscriptionProvider();
+			const login = vi.fn<OAuthAuth["login"]>(async (_interaction, options) => {
+				expect(options?.reauthorize).toEqual(selected);
+				if (reject) throw new Error("ChatGPT reauthorization returned a different account");
+				return { ...selected, access: "synthetic-new" };
+			});
+			const runtime = await ModelRuntime.create({
+				credentials: storage,
+				modelsPath: null,
+				agentDir: dir,
+				allowModelNetwork: false,
+			});
+			await runtime.registerNativeProvider({ ...provider, auth: { oauth: { ...provider.auth.oauth!, login } } });
+			const { ctx, notices } = createLoginContext(async () => {});
+			Object.assign(ctx.modelRegistry, { modelRuntime: runtime });
+			await registeredGptCommand().handler("reauthorize default", ctx);
+			expect(login).toHaveBeenCalledOnce();
+			expect(projectSlot(storage.get(provider.id), "default")).toMatchObject({
+				access: reject ? selected.access : "synthetic-new",
+			});
+			expect(projectSlot(storage.get(provider.id), "work")).toEqual(sibling);
+			expect(listSlots(storage.get(provider.id)).map((slot) => slot.name)).toEqual(["default", "work"]);
+			expect(notices.some((notice) => notice.type === "error")).toBe(reject);
+		},
+	);
+
 	// #5003 W12: the command must append through Models.login, not replace or log out the pool.
 	it("adds a registration through the shared login while keeping saved accounts", async () => {
 		const legacy: OAuthCredential = {

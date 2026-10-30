@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
+import { openaiChatGPTOAuth } from "../src/auth/oauth/openai-chatgpt.ts";
 import { appendLoginSlot, listSlots, projectSlot, type PooledCredential } from "../src/auth/pool/slots.ts";
 import type { OAuthCredential, ProviderAuthInteraction } from "../src/auth/types.ts";
 import { createModels } from "../src/models.ts";
@@ -19,7 +20,10 @@ beforeAll(async () => {
 	signingKey = pair.privateKey;
 	publicKey = await crypto.subtle.exportKey("jwk", pair.publicKey);
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+	vi.unstubAllGlobals();
+	vi.restoreAllMocks();
+});
 
 // #5003 W12: the shared provider choice reaches CLI, TUI and RPC login clients.
 it("offers SIWC first and preserves the legacy sign-in choice", async () => {
@@ -60,6 +64,28 @@ function saved(subject: string, clientId = "oaiapp_one"): OAuthCredential {
 		scopes: ["chatgpt.tokens.use.direct"],
 	};
 }
+
+it("routes selected SIWC reauthorization without offering legacy or registering a new client", async () => {
+	const credential = saved("one");
+	const login = vi.spyOn(openaiChatGPTOAuth, "login").mockImplementation(async (_interaction, options) => {
+		expect(options?.reauthorize).toEqual(credential);
+		return { ...credential, access: "synthetic-returning" };
+	});
+	const prompt = vi.fn(async () => {
+		throw new Error("must not offer a route switch");
+	});
+	const result = await chatgptSubscriptionProvider().auth.oauth!.login(
+		{
+			signal: new AbortController().signal,
+			prompt,
+			notify() {},
+		},
+		{ reauthorize: credential },
+	);
+	expect(login).toHaveBeenCalledOnce();
+	expect(prompt).not.toHaveBeenCalled();
+	expect(result).toMatchObject({ route: "siwc", clientId: credential.clientId, subject: credential.subject });
+});
 
 // #4086 / #5003: tuple identity survives token rotation; email is only display metadata.
 it("replaces the same SIWC identity in place while retaining its name, pin, order and siblings", () => {
