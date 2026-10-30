@@ -1,7 +1,5 @@
 import type { ExtensionAPI, ToolDefinition } from "./core/extensions/types.ts";
 
-/** Public callable names the opening host may serve, encoded as a comma-separated session label. */
-export const HOST_TOOL_NAMES_CONTEXT_KEY = "host_tool_names";
 /** Event-bus channel on which a host bridge sets (`execute`) or clears (no `execute`) the route for one name. */
 export const HOST_TOOL_ROUTE_CHANNEL = "senpi:host-tool-route";
 /** The `Error.name` a route throws when its host cannot serve the call; the call then runs on the standalone tool. */

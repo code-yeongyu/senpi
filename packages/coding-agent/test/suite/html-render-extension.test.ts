@@ -14,11 +14,7 @@ import {
 import { inlineLocalImages } from "../../src/extensions/html-render/images.ts";
 import { showHtmlPageTool, writeHtmlPage } from "../../src/extensions/html-render/tool.ts";
 import { builtInExtensions } from "../../src/extensions/index.ts";
-import {
-	HOST_TOOL_NAMES_CONTEXT_KEY,
-	HOST_TOOL_ROUTE_CHANNEL,
-	HOST_TOOL_ROUTE_UNAVAILABLE,
-} from "../../src/host-tools.ts";
+import { HOST_TOOL_ROUTE_CHANNEL, HOST_TOOL_ROUTE_UNAVAILABLE } from "../../src/host-tools.ts";
 import { createHarness } from "./harness.ts";
 
 const PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 0)]);
@@ -97,7 +93,6 @@ describe("host HTML attachment", () => {
 			agentDir: tempDir,
 			eventBus: bus,
 			settingsManager: SettingsManager.inMemory({ disabledBuiltinExtensions: ["codemode"] }),
-			sessionContext: { [HOST_TOOL_NAMES_CONTEXT_KEY]: "show_html_page" },
 			extensionFactories: builtInExtensions,
 			noExtensions: true,
 			noSkills: true,
