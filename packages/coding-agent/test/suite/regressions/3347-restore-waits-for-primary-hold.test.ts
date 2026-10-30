@@ -2,7 +2,10 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { createFallbackCircuitAccess, FallbackCircuitBreaker } from "../../../src/core/retry-fallback/circuit.ts";
-import { RetryFallbackController, type RetryFallbackControllerDeps } from "../../../src/core/retry-fallback/controller.ts";
+import {
+	RetryFallbackController,
+	type RetryFallbackControllerDeps,
+} from "../../../src/core/retry-fallback/controller.ts";
 import { SelectorCooldowns } from "../../../src/core/retry-fallback/cooldown.ts";
 
 const MINUTE = 60_000;
