@@ -9,7 +9,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { COOLDOWN_BASE_MS } from "../../../src/core/credential-pool/classify.ts";
 import { streamWithCredentialRotation } from "../../../src/core/credential-pool/rotation-stream.ts";
 import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
-import { AllAccountsBlockedError } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
+import type { AccountSlot } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import {
+	AllAccountsBlockedError,
+	selectAccount,
+} from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import { allAccountsBlockedDiagnostic } from "../../../src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts";
 import type { ExtensionToolContext } from "../../../src/core/extensions/types.ts";
 import { terminalProviderAuthFailure } from "../../../src/core/extensions/builtin/goal/terminal-provider-error.ts";
@@ -215,14 +219,46 @@ describe("goal parks while every pool slot is blocked (#3975)", () => {
 		expect(message.providerDiagnostic?.category).not.toBe("rate_limit");
 	});
 
-	it("classifies the Anthropic Subscription lane's own all-accounts refusal the same way", () => {
+	it.each([
+		["rate limits", ["rate_limit", "rate_limit"], true],
+		["billing blocks", ["billing", "billing"], false],
+		["organization refusals", ["org_not_allowed", "org_not_allowed"], false],
+		["auth blocks", ["auth_error", "auth_error"], false],
+		["mixed billing and rate limits", ["billing", "rate_limit"], false],
+		["mixed organization and rate limits", ["org_not_allowed", "rate_limit"], false],
+		["mixed auth and rate limits", ["auth_error", "rate_limit"], false],
+		["unknown blocks", [undefined, undefined], false],
+		["model limits", ["model_limit", "model_limit"], true],
+		["mixed model and account limits", ["model_limit", "rate_limit"], true],
+		["mixed model limits and billing", ["model_limit", "billing"], false],
+	] as const)("classifies the Anthropic Subscription lane's %s refusal", (_label, reasons, isLimit) => {
 		const until = NOW + 2 * HOUR;
+		const accounts: AccountSlot[] = reasons.map((reason, index) => ({
+			name: `synthetic-${index}`,
+			refresh: "",
+			access: "",
+			expires: 0,
+			source: "login",
+			...(reason === "model_limit"
+				? { modelBlocks: { [MODEL.id]: { blockedUntil: until } } }
+				: { blockedUntil: until, blockReason: reason }),
+		}));
 
-		expect(allAccountsBlockedDiagnostic(new AllAccountsBlockedError(until))).toMatchObject({
-			category: "rate_limit",
-			resetsAt: until,
-		});
-		expect(allAccountsBlockedDiagnostic(new AllAccountsBlockedError(until, "auth_error"))).toBeUndefined();
+		let refusal: unknown;
+		try {
+			selectAccount(accounts, { now: NOW, model: MODEL.id });
+		} catch (error) {
+			refusal = error;
+		}
+		expect(refusal).toBeInstanceOf(AllAccountsBlockedError);
+		const diagnostic = allAccountsBlockedDiagnostic(refusal);
+		if (isLimit) expect(diagnostic).toMatchObject({ category: "rate_limit", resetsAt: until });
+		else expect(diagnostic).toBeUndefined();
+	});
+
+	it("does not infer an Anthropic rate limit from a deadline alone", () => {
+		expect(allAccountsBlockedDiagnostic(new AllAccountsBlockedError(NOW + HOUR))).toBeUndefined();
+		expect(allAccountsBlockedDiagnostic(new AllAccountsBlockedError(NOW + HOUR, "auth_error"))).toBeUndefined();
 		expect(allAccountsBlockedDiagnostic(new AllAccountsBlockedError(undefined))).toBeUndefined();
 	});
 
