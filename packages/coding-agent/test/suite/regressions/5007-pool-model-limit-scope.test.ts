@@ -118,7 +118,9 @@ describe("the turn in which the last account goes out keeps the pool's limit sco
 				accounts: pool,
 				selectFn: (accounts) => selectAccount(accounts, { sessionId: "mixed-pool", now: NOW, model: fable.id }),
 				runAttempt: async function* () {
-					throw new Error(replies.shift());
+					const reply = replies.shift();
+					if (reply !== undefined) throw new Error(reply);
+					yield* [];
 				},
 				classify: classifySdkError,
 				store: new InMemoryCredentialStore(),
