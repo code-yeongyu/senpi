@@ -247,6 +247,11 @@ export interface ApiKeyAuth {
 /** App-supplied context for `Models.login`. */
 export interface LoginOptions {
 	/**
+	 * The explicitly selected saved account for reauthorization. Omit when adding
+	 * an account; callers must not infer this from the provider's active credential.
+	 */
+	reauthorize?: OAuthCredential;
+	/**
 	 * Returns the stable ID of this app installation, e.g. sent to OpenAI as its
 	 * agent host ID. Called only by login flows that need it, so apps can create
 	 * the ID on first use and must return the same ID on every later call.

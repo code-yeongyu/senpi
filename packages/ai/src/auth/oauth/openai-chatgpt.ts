@@ -14,7 +14,7 @@ import type { LoginOptions, OAuthAuth, OAuthCredential, ProviderAuthInteraction 
 import { createOpenAIIdTokenVerifier, type OpenAIIdTokenDependencies } from "./openai-id-token.ts";
 import { generatePKCE } from "./pkce.ts";
 
-// every login registers a new client with this ID; OpenAI returns the issued client ID in the callback
+// Only first-time registration uses this entrypoint; returning accounts keep their issued ID.
 const DYNAMIC_CLIENT_ID = "dynamic_agent_client";
 const AGENT_NAME_HINT = "Pi";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -48,22 +48,50 @@ type TokenResponse = {
 	scope?: unknown;
 };
 
+export class OpenAIReauthorizationError extends Error {
+	readonly code: "invalid_account" | "client_mismatch" | "subject_mismatch";
+
+	constructor(code: "invalid_account" | "client_mismatch" | "subject_mismatch") {
+		super(
+			code === "invalid_account"
+				? "The selected ChatGPT account needs an issued client ID and verified subject"
+				: code === "client_mismatch"
+					? "ChatGPT reauthorization returned a different client ID"
+					: "ChatGPT reauthorization returned a different account",
+		);
+		this.name = "OpenAIReauthorizationError";
+		this.code = code;
+	}
+}
+
 function randomValue(): string {
 	return randomBytes(32).toString("base64url");
 }
 
-function authorizationResultFromCallback(url: URL, expectedState: string): AuthorizationResult {
+function authorizationResultFromCallback(
+	url: URL,
+	expectedState: string,
+	pendingClientId?: string,
+): AuthorizationResult {
 	const code = url.searchParams.get("code");
 	if (!code) throw new Error("Missing authorization code");
 	const state = url.searchParams.get("state");
 	if (!state) throw new Error("Missing OAuth state");
 	if (state !== expectedState) throw new Error("OAuth state mismatch");
-	const clientId = url.searchParams.get("client_id")?.trim();
+	const suppliedClientId = url.searchParams.get("client_id");
+	if (pendingClientId !== undefined && suppliedClientId !== null && suppliedClientId !== pendingClientId) {
+		throw new OpenAIReauthorizationError("client_mismatch");
+	}
+	const clientId = pendingClientId ?? suppliedClientId?.trim();
 	if (!clientId) throw new Error("OpenAI OAuth registration callback did not contain an issued client ID");
 	return { code, clientId };
 }
 
-function authorizationResultFromManualInput(input: string, expectedState: string): AuthorizationResult {
+function authorizationResultFromManualInput(
+	input: string,
+	expectedState: string,
+	pendingClientId?: string,
+): AuthorizationResult {
 	let url: URL;
 	try {
 		url = new URL(input.trim());
@@ -76,7 +104,7 @@ function authorizationResultFromManualInput(input: string, expectedState: string
 	}
 	const error = url.searchParams.get("error");
 	if (error) throw new Error(`ChatGPT authorization failed: ${error}`);
-	return authorizationResultFromCallback(url, expectedState);
+	return authorizationResultFromCallback(url, expectedState, pendingClientId);
 }
 
 function sendHtml(response: ServerResponse, status: number, body: string): void {
@@ -84,7 +112,7 @@ function sendHtml(response: ServerResponse, status: number, body: string): void 
 	response.end(body);
 }
 
-function startCallbackServer(expectedState: string): Promise<CallbackServer> {
+function startCallbackServer(expectedState: string, pendingClientId?: string): Promise<CallbackServer> {
 	return new Promise((resolve, reject) => {
 		let resolveResult!: (result: AuthorizationResult) => void;
 		let rejectResult!: (error: Error) => void;
@@ -110,10 +138,11 @@ function startCallbackServer(expectedState: string): Promise<CallbackServer> {
 
 				let authorizationResult: AuthorizationResult;
 				try {
-					authorizationResult = authorizationResultFromCallback(url, expectedState);
+					authorizationResult = authorizationResultFromCallback(url, expectedState, pendingClientId);
 				} catch (error) {
 					const message = error instanceof Error ? error.message : "Invalid callback";
 					sendHtml(response, 400, oauthErrorHtml(message));
+					if (error instanceof OpenAIReauthorizationError) rejectResult(error);
 					return;
 				}
 
@@ -250,13 +279,25 @@ async function loginOpenAIChatGPT(
 	deps: OpenAIIdTokenDependencies,
 	verifyIdToken: ReturnType<typeof createOpenAIIdTokenVerifier>,
 ): Promise<OAuthCredential> {
+	const existing = options?.reauthorize;
+	if (
+		existing &&
+		(typeof existing.clientId !== "string" ||
+			!existing.clientId.trim() ||
+			existing.clientId === DYNAMIC_CLIENT_ID ||
+			typeof existing.subject !== "string" ||
+			!existing.subject.trim())
+	) {
+		throw new OpenAIReauthorizationError("invalid_account");
+	}
+	const pendingClientId = existing?.clientId;
 	const hostId = agentHostId(options?.getDeviceId?.());
 	const { verifier, challenge } = await generatePKCE();
 	const state = randomValue();
 	const nonce = randomValue();
 	let callback: CallbackServer | undefined;
 	try {
-		callback = await startCallbackServer(state);
+		callback = await startCallbackServer(state, pendingClientId);
 	} catch (error) {
 		interaction.notify({
 			type: "info",
@@ -266,8 +307,7 @@ async function loginOpenAIChatGPT(
 
 	const authorizationUrl = new URL(AUTHORIZE_URL);
 	authorizationUrl.search = new URLSearchParams({
-		client_id: DYNAMIC_CLIENT_ID,
-		agent_name_hint: AGENT_NAME_HINT,
+		client_id: pendingClientId ?? DYNAMIC_CLIENT_ID,
 		ext_agent_host_id: hostId,
 		response_type: "code",
 		redirect_uri: REDIRECT_URI,
@@ -278,6 +318,12 @@ async function loginOpenAIChatGPT(
 		code_challenge_method: "S256",
 		nonce,
 	}).toString();
+	if (existing) {
+		if (existing.idToken) authorizationUrl.searchParams.set("id_token_hint", existing.idToken);
+		if (existing.email) authorizationUrl.searchParams.set("login_hint", existing.email);
+	} else {
+		authorizationUrl.searchParams.set("agent_name_hint", AGENT_NAME_HINT);
+	}
 	interaction.notify({
 		type: "auth_url",
 		url: authorizationUrl.toString(),
@@ -293,12 +339,12 @@ async function loginOpenAIChatGPT(
 			placeholder: REDIRECT_URI,
 			signal: AbortSignal.any([manualAbort.signal, interaction.signal]),
 		})
-		.then((input) => authorizationResultFromManualInput(input, state));
+		.then((input) => authorizationResultFromManualInput(input, state, pendingClientId));
 
 	try {
 		const result = await (callback ? Promise.race([callback.result, manualCode]) : manualCode);
 		interaction.notify({ type: "progress", message: "Exchanging authorization code for tokens..." });
-		return await exchangeAuthorizationCode(
+		const credential = await exchangeAuthorizationCode(
 			result.code,
 			verifier,
 			result.clientId,
@@ -307,6 +353,10 @@ async function loginOpenAIChatGPT(
 			deps,
 			verifyIdToken,
 		);
+		if (existing && credential.subject !== existing.subject) {
+			throw new OpenAIReauthorizationError("subject_mismatch");
+		}
+		return credential;
 	} catch (error) {
 		if (interaction.signal.aborted) throw new Error("Login cancelled");
 		throw error;
