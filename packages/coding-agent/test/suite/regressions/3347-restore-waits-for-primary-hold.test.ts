@@ -7,6 +7,8 @@ import {
 	type RetryFallbackControllerDeps,
 } from "../../../src/core/retry-fallback/controller.ts";
 import { SelectorCooldowns } from "../../../src/core/retry-fallback/cooldown.ts";
+import { emitProviderAccountsChanged } from "../../../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
+import { followProviderAccountChanges } from "../../../src/core/retry-fallback/controller.ts";
 
 const MINUTE = 60_000;
 const primary = "openai-codex/gpt-5.6-sol";
@@ -81,5 +83,37 @@ describe("retry fallback: restoring the primary honours its account hold (senpi#
 
 		expect(await controller.maybeRestorePrimary("cooldown-expiry")).toBe(true);
 		expect(selector()).toBe(primary);
+	});
+
+	it("drops the hold when the primary's provider accounts change (a login or an added account)", async () => {
+		const { controller, selector, advance } = harness();
+		const unfollow = followProviderAccountChanges(controller);
+		try {
+			await controller.tryFallback("transient", usageLimit);
+			controller.resetTurn();
+			emitProviderAccountsChanged("openai-codex");
+			advance(31 * MINUTE);
+
+			expect(await controller.maybeRestorePrimary("cooldown-expiry")).toBe(true);
+			expect(selector()).toBe(primary);
+		} finally {
+			unfollow();
+		}
+	});
+
+	it("keeps the hold when another provider's accounts change", async () => {
+		const { controller, selector, advance } = harness();
+		const unfollow = followProviderAccountChanges(controller);
+		try {
+			await controller.tryFallback("transient", usageLimit);
+			controller.resetTurn();
+			emitProviderAccountsChanged("anthropic");
+			advance(31 * MINUTE);
+
+			expect(await controller.maybeRestorePrimary("cooldown-expiry")).toBe(false);
+			expect(selector()).toBe(fallback);
+		} finally {
+			unfollow();
+		}
 	});
 });
