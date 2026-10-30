@@ -53,6 +53,7 @@ export class CompactAdmissions {
 				peer,
 				directory: mkdtemp(join(tmpdir(), "senpi-admissions-")),
 				hot: new Map(),
+				failures: new Map(),
 				tail: Promise.resolve(),
 				entries: 0,
 				ended: false,
@@ -123,7 +124,6 @@ export class CompactAdmissions {
 				break;
 		}
 		let produced: Produced | undefined;
-		let failed = false;
 		try {
 			produced = await runAdmissionProducer(
 				epoch.producer.signal,
@@ -161,12 +161,11 @@ export class CompactAdmissions {
 					process.stderr.write(
 						`senpi rpc admission activation failed; releasing subscription: ${cause instanceof Error ? cause.message : String(cause)}\n`,
 					);
-					await writeAdmissionRow(epoch, key, {
+					epoch.failures.set(key, {
 						state: "failed",
 						fingerprint: identity.fingerprint,
 						failure: "storage_unavailable",
 					});
-					failed = true;
 					throw new CompactAdmissionError("storage_unavailable");
 				}
 				return false;
@@ -179,16 +178,28 @@ export class CompactAdmissions {
 			registered.pending.resolve(value);
 			return value;
 		} catch (cause) {
+			let failure = cause;
+			const row: Row = {
+				state: "failed",
+				fingerprint: identity.fingerprint,
+				...(cause instanceof CompactAdmissionError && cause.reason === "storage_unavailable"
+					? { failure: "storage_unavailable" as const }
+					: {}),
+			};
+			if (row.failure) epoch.failures.set(key, row);
 			if (produced) await produced.release();
 			try {
-				if (!failed)
-					await this.serial(epoch, () =>
-						writeAdmissionRow(epoch, key, { state: "failed", fingerprint: identity.fingerprint }),
-					);
+				await this.serial(epoch, () => writeAdmissionRow(epoch, key, row));
+			} catch (storageCause) {
+				process.stderr.write(
+					`senpi rpc admission failure row write failed: ${storageCause instanceof Error ? storageCause.message : String(storageCause)}\n`,
+				);
+				epoch.failures.set(key, { ...row, failure: "storage_unavailable" });
+				failure = new CompactAdmissionError("storage_unavailable");
 			} finally {
-				registered.pending.reject(cause);
+				registered.pending.reject(failure);
 			}
-			throw cause;
+			throw failure;
 		} finally {
 			epoch.hot.delete(key);
 		}
