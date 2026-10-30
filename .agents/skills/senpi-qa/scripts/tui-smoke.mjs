@@ -111,9 +111,14 @@ async function smokeTmux(box) {
 	const launch = launchArgs();
 	const session = `senpi-qa-tui-${process.pid}`;
 	// A private server inherits the scrubbed sandbox env, not a pre-existing tmux server's env.
-	const socketPath = join(box.dir, "tmux.sock");
-	const tmux = (...args) => execFileSync("tmux", ["-S", socketPath, ...args], {
-		encoding: "utf8", env: box.env, stdio: ["ignore", "pipe", "pipe"],
+	// Name it with -L so the socket lives in tmux's own short dir: a socket under a long TMPDIR
+	// overflows the ~104-byte Unix socket path limit. Dropping TMUX_TMPDIR pins that dir to tmux's
+	// default (/tmp/tmux-<uid>) for this process and the in-session launch gate alike.
+	const socketName = session;
+	const env = { ...box.env };
+	delete env.TMUX_TMPDIR;
+	const tmux = (...args) => execFileSync("tmux", ["-L", socketName, ...args], {
+		encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"],
 	});
 	const capture = () => {
 		try {
@@ -157,7 +162,7 @@ async function smokeTmux(box) {
 	let screen = "";
 	let renderError = "";
 	try {
-		const gate = `tmux -S ${shq(socketPath)} wait-for start`;
+		const gate = `tmux -L ${shq(socketName)} wait-for start`;
 		const cmd = `${gate}; exec ${shq(launch.command)} ${launch.args.map(shq).join(" ")}`;
 		tmux("new-session", "-d", "-s", session, "-x", "120", "-y", "34", "-c", box.cwd, cmd);
 		tmux("pipe-pane", "-O", "-t", session,
