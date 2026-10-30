@@ -581,8 +581,6 @@
       "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-block-recovery.ts": ["isAuthBlockRecoverable"],
       // pre-existing at origin main aceb1cc1d9: unused exports ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, resolveEffectiveLane
       "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts": ["ANTHROPIC_SUBSCRIPTION_PROVIDER_ID", "resolveEffectiveLane"],
-      // pre-existing at origin main aceb1cc1d9: unused exports CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW
-      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/context-window.ts": ["CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW"],
       // pre-existing at origin main aceb1cc1d9: unused exports objectToShape
       "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/custom-tools-schema.ts": ["objectToShape"],
       // pre-existing at origin main aceb1cc1d9: unused exports TRANSIENT_RETRIES_PER_TURN, TRANSIENT_RETRY_DELAY_MS
