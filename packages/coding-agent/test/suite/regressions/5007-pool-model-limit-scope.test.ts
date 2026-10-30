@@ -30,7 +30,12 @@ function createController() {
 	const deps: RetryFallbackControllerDeps = {
 		getSettings: () => ({
 			modelFallback: true,
-			chains: { "anthropic-subscription/claude-fable-5-1": ["anthropic-subscription/claude-opus-5-5", "kimi-coding/kimi-k3"] },
+			chains: {
+				"anthropic-subscription/claude-fable-5-1": [
+					"anthropic-subscription/claude-opus-5-5",
+					"kimi-coding/kimi-k3",
+				],
+			},
 		}),
 		registry: {
 			find: (provider, id) => models.find((entry) => entry.provider === provider && entry.id === id),
