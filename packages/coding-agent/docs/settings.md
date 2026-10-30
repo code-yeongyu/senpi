@@ -216,7 +216,7 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the senpi version update check. Use `--
 
 Files receive budget nearest-first: the current directory, its ancestors, then the global file. A cut prefers a newline in the last quarter of the available content budget; otherwise it uses a UTF-8 character boundary. An open backtick or tilde fence is closed with the same marker before the truncation note; the closing marker's bytes count against the budget. Files with less than 1024 bytes of budget left are skipped when they would need truncation, with a warning distinguishing an undersized per-file limit from budget used by nearer files. Both limits accept positive numbers (rounded down); invalid values use the defaults.
 
-The skills section has a fixed 48 KiB rendered UTF-8 byte cap, including its roots table and markup. Above 100 visible skills or 64 KiB of descriptions, descriptions become one line of at most 160 characters. If needed to meet the section cap, smaller catalogs also use compact descriptions, then all descriptions are dropped. If names and locations still exceed the cap, only the first skills that fit are listed, with the omitted count inside the section. Skills remain available for explicit invocation.
+The skills section has a fixed 48 KiB rendered UTF-8 byte cap, including its roots table and markup. Above 100 visible skills or 16 KiB of descriptions, the catalog lists one line per skill, `- name [location]: description`, where the location is the shortest path that still resolves against the roots table and the description is cut to at most 160 characters. A cut keeps the description's when-to-use sentence ("Use when ...", "MUST USE for ...", "Triggers: ...") and fills the remaining room with the text around it. If needed to meet the section cap, smaller catalogs also use the one-line form, then all descriptions are dropped (`- name [location]`). If names and locations still exceed the cap, only the first skills that fit are listed, with the omitted count inside the section. Skills remain available for explicit invocation.
 
 Context cuts, skipped files, and compacted or omitted skills share the "Context size limits" resource notice in interactive mode and appear once on stderr at startup in print, JSON, and RPC modes, with the affected path when present. Ordinary skill validation warnings keep their existing diagnostic behavior and are not printed to stderr by this size check.
 
@@ -504,6 +504,20 @@ run.
 | `handoffHint.enabled` | boolean | `true` | Offer the hint at all |
 | `handoffHint.minContextTokens` | number | `200000` | No hint below this context size |
 | `handoffHint.minSavingUsd` | number | `1` | No hint unless a fresh session saves at least this much on the next reply |
+
+### Job widgets
+
+A background command that keeps printing numbers (a render, a benchmark, a test run) gets a small live chart:
+once it has run for `authorAfterMs` and printed a few lines, a model reads the command and a redacted sample of
+its output once and writes a chart spec, and every update after that is computed locally from new output. Jobs
+whose output has nothing worth charting stay plain. It needs no setup; the views reach clients through the
+`job_widget_state` event ([RPC](rpc.md#job-widgets)).
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `jobWidgets.enabled` | boolean | `true` | Build widgets at all; `false` taps no output and never calls a model |
+| `jobWidgets.model` | string | - | `provider/model-id` that writes the specs; otherwise a model the host provides, else the session's model |
+| `jobWidgets.authorAfterMs` | number | `15000` | Job age in milliseconds before its spec is written |
 
 ### Shell
 

@@ -5,7 +5,14 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { SESSION_WORKER_LIMITS } from "../../src/modes/rpc/session-worker-protocol.ts";
 import { waitForFifoReader } from "./rpc-worker-host-support.ts";
-import { reservationPhase as phase, reservationHost } from "./rpc-worker-reservation-support.ts";
+import { reservationHost, reservationStep as phase } from "./rpc-worker-reservation-support.ts";
+
+// Each case boots eleven real worker isolates (three per round, the sibling, the next epoch's).
+// Every open answers within the product's own open budget or fails, so the ceiling is that sum
+// plus one budget for the exits: the case fails on the product's verdict, never on how long the
+// isolates took to boot on a loaded host (senpi#4688).
+const WORKER_OPENS = 11;
+const CASE_CEILING_MS = (WORKER_OPENS + 1) * SESSION_WORKER_LIMITS.openMs;
 
 it.each(["close", "deadline"])(
 	"repeated %s retains real-worker ownership until late exit and isolates replacement epochs",
@@ -243,5 +250,5 @@ export default function () {
 			}
 		}
 	},
-	60_000,
+	CASE_CEILING_MS,
 );

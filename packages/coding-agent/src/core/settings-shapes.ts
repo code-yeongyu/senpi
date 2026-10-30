@@ -31,6 +31,14 @@ export interface ImageSettings {
 	maxHistoricalImages?: number; // default: undefined (preserve existing transport behavior)
 }
 
+export const JOB_WIDGETS_DEFAULT_AUTHOR_AFTER_MS = 15_000;
+
+export interface JobWidgetsSettings {
+	enabled?: boolean; // default: true (live widgets for long background jobs)
+	model?: string; // default: undefined (host-injected model, else the session's model); `provider/model-id`
+	authorAfterMs?: number; // default: 15000 (job age before its widget is written)
+}
+
 export interface LookAtSettings {
 	enabled?: boolean; // default: true
 	models?: string[]; // default: undefined (use the default look-at chain)

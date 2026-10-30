@@ -177,3 +177,47 @@ export function rewriteImports(code: string): string {
 	}
 	return applyEdits(code, edits);
 }
+
+/** Host-side preflight: worker assets stay dependency-free, and direct eval keeps native lexical scope. */
+export function hasDynamicCodeCapability(code: string): boolean {
+	if (!/\b(?:eval|Function|plugin)\b/u.test(code)) return false;
+	const ast = parseProgram(code);
+	if (!ast) return false;
+	let unsupported = false;
+	walkNodes(ast.program, (node) => {
+		if (node.type === "MemberExpression" && !node.value.computed) {
+			const owner = nodeFrom(node.value.object);
+			const member = nodeFrom(node.value.property);
+			const outer = owner && nodeFrom(owner.value.object);
+			const inner = owner && nodeFrom(owner.value.property);
+			if (
+				member?.value.name === "plugin" &&
+				(owner?.value.name === "Bun" || (outer?.value.name === "globalThis" && inner?.value.name === "Bun"))
+			) {
+				unsupported = true;
+			}
+		}
+		if (node.type !== "CallExpression" && node.type !== "NewExpression") return;
+		const callee = nodeFrom(node.value.callee);
+		const object = callee && nodeFrom(callee.value.object);
+		const property = callee && nodeFrom(callee.value.property);
+		const name =
+			callee?.type === "Identifier"
+				? callee.value.name
+				: callee?.type === "MemberExpression" && !callee.value.computed && object?.value.name === "globalThis"
+					? property?.value.name
+					: undefined;
+		if (name !== "eval" && name !== "Function") return;
+		const args = node.value.arguments;
+		if (!Array.isArray(args)) return;
+		for (const argument of args) {
+			const value = nodeFrom(argument);
+			if (value?.type !== "StringLiteral") unsupported = true;
+		}
+		const body = nodeFrom(args.at(-1));
+		if (body?.type === "StringLiteral" && typeof body.value.value === "string") {
+			unsupported ||= hasDynamicCodeCapability(body.value.value);
+		}
+	});
+	return unsupported;
+}

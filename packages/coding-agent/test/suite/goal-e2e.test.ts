@@ -36,9 +36,7 @@ describe("goal extension end-to-end through the real AgentSession", () => {
 		const harness = await createHarness({ extensionFactories: [goalExtension] });
 		harnesses.push(harness);
 
-		expect(harness.session.getActiveToolNames()).toEqual(
-			expect.arrayContaining(["create_goal", "update_goal", "get_goal"]),
-		);
+		expect(harness.session.getActiveToolNames()).toEqual(expect.arrayContaining(["create_goal", "update_goal"]));
 
 		harness.setResponses([
 			fauxAssistantMessage([fauxToolCall("create_goal", { objective: "Ship the goal builtin" })], {

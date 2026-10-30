@@ -6,6 +6,7 @@ import type { KernelLifecycle } from "./kernel-death.ts";
 import type { FootprintReader } from "./kernel-memory-host.ts";
 import type { SubprocessSpawn } from "./subprocess-process.ts";
 import type { SubprocessStartupOptions } from "./subprocess-startup.ts";
+import type { InvocationPermissions } from "./invocation-authority.ts";
 
 export type KernelRunInput = EvalKernelRunInput;
 
@@ -19,6 +20,7 @@ export interface SubprocessKernelMemory {
 }
 
 export interface SubprocessKernelOptions extends KernelLifecycle {
+	readonly permissions?: InvocationPermissions;
 	readonly command: string;
 	readonly args: readonly string[];
 	readonly cwd?: string;
