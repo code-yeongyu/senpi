@@ -12,6 +12,40 @@
 
 ### Removed
 
+## [2026.10.30-1] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+- Added the host-decider core for JS eval permission checks on `child_process.spawnSync`, `Bun.spawnSync`, and `fs.writeFileSync`, with per-invocation authority, bounded shared-memory checks, instrumented Workers and fail-closed revocation. Permission-extension integration and broader API coverage follow separately ([#4387](https://github.com/code-yeongyu/senpi/pull/4387)).
+- No-deny async continuations and Workers remain usable across cells, including after a cell times out or is interrupted. Worker data, messages, transferred MessagePorts and lifecycle events are preserved; a Worker message the host cannot forward arrives as `messageerror`; and interrupted permission checks release their shared slots.
+- Known limitation: reads performed by the runtime's native module resolver (bare packages, tsconfig aliases, package.json #imports, symlinked packages) are not covered by this work; tracked in #4380.
+- Refuse cross-session JavaScript and Python kernel tools before their bodies run when either session enforces a deny rule, and mint invoker-scoped JS tokens when neither enforces ([#4390](https://github.com/code-yeongyu/senpi/pull/4390), part of #4309).
+- Known limitation: reads performed by the runtime's native module resolver (bare packages, tsconfig aliases, package.json #imports, symlinked packages) are not covered by this work; tracked in #4380.
+- Extend eval permission checks across JS filesystem, process, Bun resource, and SQLite APIs, including descriptor grants and relative/absolute module imports ([#4391](https://github.com/code-yeongyu/senpi/pull/4391)).
+- Known limitation: reads performed by the runtime's native module resolver (bare packages, tsconfig aliases, package.json #imports, symlinked packages) are not covered by this work; tracked in #4380.
+- Known limitation: in natively loaded dependencies, Bun.plugin registration and non-literal eval are not refused (Bun 1.4.4 makes Bun.plugin immutable); code loaded that way still runs under the enforced spawn and write checks; tracked in #4380.
+- Known limitation: file reads through Bun.fetch on file: URLs (immutable in Bun 1.4.4) and native consumers of a handle obtained that way. Writes through such a handle are refused at each enumerated write sink: filesystem operations, Bun.write destinations and parts, BunFile write/writer/delete/unlink, and every Bun.spawn/Bun.spawnSync redirect, meaning the stdout/stderr keys and each stdio[] slot, including descriptors at index 3 and above. Every one of those sinks is a row in the operation sink table and the mutation driver, so a sink that is not listed there is not proven.
+- Eval cells now send the path they execute in addition to the path as written, together with its canonical form, so permission rules for `read`, `edit`, `list` and `grep` paths apply to the same file under every spelling that resolves to it; a module's own imports and top-level file access are decided under the importing cell's authority instead of being refused as unavailable ([#4391](https://github.com/code-yeongyu/senpi/pull/4391)).
+- Known limitation: path rules do not follow hard links; tracked in #4576.
+- Enforce host-supplied deny decisions inside Python eval cells and callbacks, including file modes, descriptor grants, process APIs, SQLite, module sources, and package resources; refuse Ruby and Julia cells while enforcement is active ([#4392](https://github.com/code-yeongyu/senpi/pull/4392), part of #4309).
+- Revoke Python invocation authority immediately and wait for observed interpreter retirement before admitting a replacement ([#4392](https://github.com/code-yeongyu/senpi/pull/4392)).
+- Keep Python permission checks intact after stdlib rebinding, guard native aliases and direct extension entry points, and preserve cross-cell background I/O when no deny applies ([#4392](https://github.com/code-yeongyu/senpi/pull/4392)).
+- Leave the interpreter's own import registries in place while guarding them, so C-level imports such as `pickle`, `datetime.strptime` and `xml.etree.ElementTree` keep working inside Python cells ([#4392](https://github.com/code-yeongyu/senpi/pull/4392)).
+- Known limitation: reads performed by the runtime's native module resolver (bare packages, tsconfig aliases, package.json #imports, symlinked packages) are not covered by this work; tracked in #4380.
+- Python eval cells now send the path they execute in addition to the path as written, so permission rules for `read`, `edit`, `list` and `grep` paths apply to the same file under every spelling a Python cell resolves to it, including relative spellings after `os.chdir`; a path spelling that is not valid UTF-8 is refused as uncheckable ([#4392](https://github.com/code-yeongyu/senpi/pull/4392)).
+- Python eval cells supply the same versioned native path identity as JavaScript cells, preserving identity-based decisions when the host resolver is unavailable; inputs without an exact local representation retain host fallback ([#4392](https://github.com/code-yeongyu/senpi/pull/4392)).
+
+### Changed
+
+### Fixed
+
+- On macOS, eval cells that open a `Bun.WebView` no longer crash the process (SIGSEGV) when another kernel uses one too, WebViews keep working after a kernel reset, and `goBack()`/`goForward()` work on every eval-cell view ([#4797](https://github.com/code-yeongyu/senpi/pull/4797))
+- The Python eval kernel starts again on interpreters built without `ctypes`: it then sends no canonical path form, and the host decides as it does for any request without one ([#4895](https://github.com/code-yeongyu/senpi/pull/4895), fixes #4894).
+
+### Removed
+
 ## [2026.10.27-2] - 2026-10-27
 
 ### Breaking Changes

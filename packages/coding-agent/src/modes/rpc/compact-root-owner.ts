@@ -4,7 +4,12 @@ import { lstat, open, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { readProcessIdentity, processIsLive, processStartTimeMs } from "../../utils/process-identity.ts";
+import {
+	type ProcessIdentityResult,
+	readProcessIdentity,
+	processIsLive,
+	processStartTimeMs,
+} from "../../utils/process-identity.ts";
 
 export const ROOT_MARKER = ".compact-spool-owner";
 const Owner = z.object({
@@ -47,7 +52,7 @@ export function currentRootOwner(): Promise<RootOwner | null> {
 	self ??= (async () => {
 		const bootNonceValue = await bootNonce();
 		if (!bootNonceValue) return null;
-		const start = await readProcessIdentity(process.pid, process.platform, 2_000, processIsLive, "UTC");
+		const start = await rootProcessIdentity(process.pid);
 		return start.kind === "present"
 			? { bootNonce: bootNonceValue, pid: process.pid, startTime: start.identity }
 			: null;
@@ -55,12 +60,28 @@ export function currentRootOwner(): Promise<RootOwner | null> {
 	return self;
 }
 
+/** RULING-101b: an unstarted probe is UNKNOWN, never ownership or death evidence. */
+async function rootProcessIdentity(pid: number): Promise<ProcessIdentityResult> {
+	try {
+		return await readProcessIdentity(pid, process.platform, 2_000, processIsLive, "UTC");
+	} catch (cause) {
+		if (
+			cause instanceof Error &&
+			"syscall" in cause &&
+			typeof cause.syscall === "string" &&
+			/^spawn(?: |$)/.test(cause.syscall)
+		)
+			return { kind: "error", error: cause };
+		throw cause;
+	}
+}
+
 /** Only these three proofs permit reclaim. A probe failure never becomes evidence of death. */
 export async function rootOwnerState(owner: RootOwner | null): Promise<"dead" | "alive" | "unknown"> {
 	const currentBoot = await bootNonce();
 	if (!owner || !currentBoot) return "unknown";
 	if (owner.bootNonce !== currentBoot) return "dead";
-	const start = await readProcessIdentity(owner.pid, process.platform, 2_000, processIsLive, "UTC");
+	const start = await rootProcessIdentity(owner.pid);
 	switch (start.kind) {
 		case "absent":
 			return processIsLive(owner.pid) ? "unknown" : "dead";
