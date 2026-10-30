@@ -4206,7 +4206,7 @@
    {
     "accept": "application/json",
     "accept-encoding": "gzip, deflate, br, zstd",
-    "authorization": "sha256:01274dd5010dcac7",
+    "authorization": "<redacted:sha256:01274dd5010dcac7>",
     "content-type": "application/json",
     "host": "<model-server-host>",
     "user-agent": "pi (darwin <host:release>; arm64)",
@@ -4222,7 +4222,7 @@
    {
     "accept": "application/json",
     "accept-encoding": "gzip, deflate, br, zstd",
-    "authorization": "sha256:01274dd5010dcac7",
+    "authorization": "<redacted:sha256:01274dd5010dcac7>",
     "content-type": "application/json",
     "host": "<model-server-host>",
     "user-agent": "pi (darwin <host:release>; arm64)",
@@ -4238,7 +4238,7 @@
    {
     "accept": "application/json",
     "accept-encoding": "gzip, deflate, br, zstd",
-    "authorization": "sha256:01274dd5010dcac7",
+    "authorization": "<redacted:sha256:01274dd5010dcac7>",
     "content-type": "application/json",
     "host": "<model-server-host>",
     "user-agent": "pi (darwin <host:release>; arm64)",
@@ -6837,37 +6837,11 @@
       "statusKey": "loop"
      }
     ],
-    "surfaces": {
-     "settled": [
-      {
-       "name": "fxhttp",
-       "toolCount": 1,
-       "status": "connected",
-       "authStatus": "unsupported"
-      },
-      {
-       "name": "fxstdio",
-       "toolCount": 1,
-       "status": "connected",
-       "authStatus": "unsupported"
-      }
-     ],
-     "after": [],
-     "final": [
-      {
-       "name": "fxhttp",
-       "toolCount": 1,
-       "status": "connected",
-       "authStatus": "unsupported"
-      },
-      {
-       "name": "fxstdio",
-       "toolCount": 1,
-       "status": "connected",
-       "authStatus": "unsupported"
-      }
-     ]
-    }
+    "surfaces": [
+     {
+      "type": "loaded_surfaces_changed"
+     }
+    ]
    }
   ],
   "O7": {

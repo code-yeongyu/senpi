@@ -14,7 +14,11 @@ import type {
 	PendingWakeup,
 } from "../../src/core/extensions/builtin/loop/types.ts";
 
-function makeFixed(loopId: string, nextFireAt: number, phase: FixedCronEntry["phase"] = "waiting"): CronEntry {
+function makeFixed(
+	loopId: string,
+	nextFireAt: number,
+	phase: Exclude<FixedCronEntry["phase"], "ended"> = "waiting",
+): CronEntry {
 	return {
 		id: loopId,
 		kind: "fixed",
@@ -41,13 +45,13 @@ function makeFixed(loopId: string, nextFireAt: number, phase: FixedCronEntry["ph
 		cronExpression: "*/5 * * * *",
 		nextFireAt,
 		intervalMs: 300_000,
-	} as FixedCronEntry;
+	};
 }
 
 function makeDynamic(
 	loopId: string,
 	pendingWakeup: PendingWakeup | null,
-	phase: DynamicCronEntry["phase"] = "waiting",
+	phase: Exclude<DynamicCronEntry["phase"], "ended"> = "waiting",
 ): CronEntry {
 	return {
 		id: loopId,
@@ -72,7 +76,7 @@ function makeDynamic(
 		wakeSources: [],
 		pendingWakeup,
 		keepaliveCredit: 1,
-	} as DynamicCronEntry;
+	};
 }
 
 function makeWakeup(loopId: string, dueAt: number): PendingWakeup {

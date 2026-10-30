@@ -70,11 +70,6 @@ export async function startCaseRun(spec) {
 		sessionIds: [],
 		states: [],
 		effects: [],
-		/**
-		 * A settle barrier a case records when its startup surfaces race (`{ client, at, mcpServers, final }`); O6 then
-		 * compares the surfaces list through it (collectors.mjs). Unset for every other case.
-		 */
-		surfacesSettled: undefined,
 		/** Run-scoped prefixes a case allocates itself (a fixture server's origin), replaced like the sandbox root. */
 		extraRoots: [],
 		/** Cleanups a case registers (fixture servers it started); run after every child has exited. */
