@@ -906,9 +906,7 @@ class ModelsImpl implements MutableModels {
 						...model,
 						...(auth.baseUrl ? { baseUrl: auth.baseUrl } : {}),
 						...(auth.api && isModelType(model, "chat") ? { api: auth.api } : {}),
-						...(auth.compat && isModelType(model, "chat")
-							? { compat: { ...model.compat, ...auth.compat } }
-							: {}),
+						...(auth.compat && isModelType(model, "chat") ? { compat: { ...model.compat, ...auth.compat } } : {}),
 					}
 				: model;
 		const { transformHeaders: _transformHeaders, ...providerOptions } = options ?? {};

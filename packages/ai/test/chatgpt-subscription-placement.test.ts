@@ -1,13 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as codexStream } from "../src/api/openai-codex-responses.ts";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
-import {
-	appendLoginSlot,
-	listSlots,
-	mergeRefreshedSlot,
-	projectSlot,
-	removeSlot,
-} from "../src/auth/pool/slots.ts";
+import { appendLoginSlot, listSlots, mergeRefreshedSlot, projectSlot, removeSlot } from "../src/auth/pool/slots.ts";
 import type { OAuthCredential } from "../src/auth/types.ts";
 import type { Model } from "../src/types.ts";
 import { createModels } from "../src/models.ts";
@@ -88,9 +82,12 @@ describe("ChatGPT credential placement (#5003 W11)", () => {
 				headers: new Headers(init?.headers),
 				body: typeof init?.body === "string" ? JSON.parse(init.body) : {},
 			});
-			return new Response('data: {"type":"response.completed","response":{"id":"resp_fixture","status":"completed","output":[]}}\n\n', {
-				headers: { "content-type": "text/event-stream" },
-			});
+			return new Response(
+				'data: {"type":"response.completed","response":{"id":"resp_fixture","status":"completed","output":[]}}\n\n',
+				{
+					headers: { "content-type": "text/event-stream" },
+				},
+			);
 		};
 		vi.stubGlobal("fetch", fetchStub);
 		const result = await models[method](model, context, {
@@ -177,7 +174,10 @@ describe("ChatGPT credential placement (#5003 W11)", () => {
 		};
 		vi.stubGlobal("fetch", fetchStub);
 		const options = { fetch: fetchStub, transport: "sse" as const, sessionId: "fixture-session", maxRetries: 0 };
-		const before = await codexStream(model, normalizeContext(context), { ...options, apiKey: stored.access }).result();
+		const before = await codexStream(model, normalizeContext(context), {
+			...options,
+			apiKey: stored.access,
+		}).result();
 		const after = await models.stream(model, context, options).result();
 		expect(before.stopReason, before.errorMessage).toBe("stop");
 		expect(after.stopReason, after.errorMessage).toBe("stop");
