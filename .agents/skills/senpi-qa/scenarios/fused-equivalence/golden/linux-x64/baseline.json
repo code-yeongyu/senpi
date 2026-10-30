@@ -1,6 +1,6 @@
 {
  "repo": {
-  "head": "49b02c1b1a109247ccfb16d6500fbc2434c174d7",
+  "head": "b06b1936d7f1933bc0b446080c5a09849cc9539a",
   "dirty": false
  },
  "platform": "linux-x64",
@@ -13,12 +13,13 @@
   "normalizer": "sha256:84514c2fcc12276a4ff77acbbee2903ab61a040de09f87bf7650ca74d1c5fa7e",
   "fakeModelServer": "sha256:cab5b6866b7854287218de51d1fafcc242a8602b2c83fb85572abe332f9f6560",
   "cases": "sha256:76f40a54fbff42b6e0653d760f283c9408e5d4f566b63a1ca03ecfd54e415831",
-  "fixtures": "sha256:639344488dbf5c7b39cbf7f3d6b151565ec71a4557c6717a904147ab864ceb8f"
+  "fixtures": "sha256:406b03cc838ea251953667f945a0bc821242c6d378bfb290fbbf76402890fc7e"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --cases E27 --repeat 3 --evidence ny-rec1-all",
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --pipeline legacy --placement fused --cases E27 --repeat 3 --evidence tp-recA",
  "hostPin": {
   "cpuModel": "EQ-Synthetic CPU",
   "cores": 997,
-  "kernel": "Linux 0.0.0-eq-synthetic"
+  "kernel": "Linux 0.0.0-eq-synthetic",
+  "repoRoot": "/eq-synthetic/checkout"
  }
 }
