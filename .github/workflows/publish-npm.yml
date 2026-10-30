@@ -28,6 +28,16 @@ name: Release
         required: false
         type: boolean
         default: false
+      local_receipt_sha:
+        description: 'Test evidence from a green local whole-suite receipt: the exact sha it covers, which must equal sha. No CI wait and no npm test; the job runs check and build only (senpi#4981). Needs local_receipt.'
+        required: false
+        type: string
+        default: ''
+      local_receipt:
+        description: 'Label or path of that green local whole-suite receipt; recorded in the run summary.'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   actions: read
@@ -187,6 +197,8 @@ jobs:
           GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
           SENPI_SKIP_PM_VERIFY: '1'
           RELEASE_SHA: ${{ inputs.sha }}
+          LOCAL_RECEIPT_SHA: ${{ inputs.local_receipt_sha }}
+          LOCAL_RECEIPT: ${{ inputs.local_receipt }}
           # The release runs the same `npm run check` as CI, so it needs CI's TypeScript heap (ci.yml Check,
           # senpi#4022): on the default ~4 GB heap the check ran out of memory in the 2026.10.23-1 release.
           NODE_OPTIONS: --max-old-space-size=10240
@@ -208,6 +220,9 @@ jobs:
           fi
           if [ "${{ inputs.force_tests }}" = "true" ]; then
             ARGS+=(--force-tests)
+          fi
+          if [ -n "$LOCAL_RECEIPT_SHA" ] || [ -n "$LOCAL_RECEIPT" ]; then
+            ARGS+=(--local-receipt-sha "$LOCAL_RECEIPT_SHA" --local-receipt "$LOCAL_RECEIPT")
           fi
           npm run release -- "${ARGS[@]}"
 
@@ -236,6 +251,9 @@ jobs:
       - name: Workflow summary
         if: always()
         shell: bash
+        env:
+          LOCAL_RECEIPT_SHA: ${{ inputs.local_receipt_sha }}
+          LOCAL_RECEIPT: ${{ inputs.local_receipt }}
         run: |
           if [ "${{ inputs.publish-only }}" = true ]; then
             commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
@@ -251,6 +269,8 @@ jobs:
             echo "| Mode | ${{ inputs.publish-only && 'publish-only' || 'release' }} |"
             echo "| Dry run | ${{ inputs.dry_run }} |"
             echo "| Force tests | ${{ inputs.force_tests }} |"
+            echo "| Local receipt | ${LOCAL_RECEIPT:-none} |"
+            echo "| Local receipt sha | ${LOCAL_RECEIPT_SHA:-none} |"
             echo "| Version | ${{ inputs.version || 'auto' }} |"
             echo "| Commit | $commit |"
           } >> "$GITHUB_STEP_SUMMARY"
