@@ -210,7 +210,7 @@ for (const lane of ["ambient", "managed", "resident"] as const) {
 			const stream = streamAnthropicSubscription(
 				model,
 				{ messages: [{ role: "user", content: "Synthetic prompt.", timestamp: 1 }] },
-				lane === "resident" ? { streamKind: "main", sessionId } : undefined,
+				lane === "resident" ? { cwd: process.cwd(), streamKind: "main", sessionId } : { cwd: process.cwd() },
 			);
 			for await (const _ of stream) {
 			}
