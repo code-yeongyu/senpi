@@ -236,6 +236,8 @@ export interface ApiKeyAuth {
 
 /** App-supplied context for `Models.login`. */
 export interface LoginOptions {
+	/** Configured product display name, consistent across installations of this app. */
+	appName?: string;
 	/**
 	 * Returns the stable ID of this app installation, e.g. sent to OpenAI as its
 	 * agent host ID. Called only by login flows that need it, so apps can create

@@ -1,0 +1,51 @@
+<!-- changes-log: packages/ai/src/changes.md -->
+## 2026-10-30 - Stable SIWC host identity and app name (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/cli.ts`: persist the standalone AI CLI's UUIDv4 in user-level state and reuse it across invocations and working directories.
+- `packages/ai/src/auth/types.ts`: add the configured product display name to login options.
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: use that configured name for initial registration, with the standalone wire identity as the default, and require UUIDv4 host IDs.
+
+### Why
+
+- `packages/ai/src/cli.ts`, `packages/ai/src/auth/types.ts`, `packages/ai/src/auth/oauth/openai-chatgpt.ts`: OpenAI requires a stable host identifier and the app's actual name rather than a fresh UUID and upstream's hard-coded name.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/cli.ts`, `packages/ai/src/auth/types.ts`, `packages/ai/src/auth/oauth/openai-chatgpt.ts`: the standalone CLI owns installation persistence and the bundled OAuth flow owns the authorization parameters.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/cli.ts`: login options and installation persistence.
+- `packages/ai/src/auth/types.ts`: `LoginOptions`.
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: authorization URL construction and host ID validation.
+
+<!-- changes-log: packages/coding-agent/src/core/changes.md -->
+## 2026-10-30 - Configured product name in OAuth registration (part of senpi#5003)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: provide `APP_NAME` to the shared login options, including branded distributions whose user-agent token differs from their display name.
+
+### Why
+
+- `packages/coding-agent/src/core/model-runtime.ts`: the app's branding resolver owns the display name used consistently across installations.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-runtime.ts`: every built-in login passes through this shared runtime.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `login()` option forwarding.
+
+<!-- changes-log: packages/ai/CHANGELOG.md -->
+### Fixed
+
+- Sign in with ChatGPT reuses the standalone AI CLI's installation ID and uses the configured app name during registration (part of [#5003](https://github.com/code-yeongyu/senpi/issues/5003)).
+
+<!-- changes-log: packages/coding-agent/CHANGELOG.md -->
+### Fixed
+
+- OAuth registration receives the configured product display name, including branded distributions (part of [#5003](https://github.com/code-yeongyu/senpi/issues/5003)).
