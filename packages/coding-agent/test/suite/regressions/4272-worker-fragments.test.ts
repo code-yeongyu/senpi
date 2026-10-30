@@ -234,23 +234,25 @@ it.skipIf(BUN_NO_STRUCTURED_FRAMES).each([
 	120_000,
 );
 
-// Golden: with the flag OFF, the worker transport and bytes are exactly the legacy ones.
-it("S12b golden: flag OFF, no permit block and no fragment; the 150 KB record crosses as one structured output frame", async () => {
+// #4272 RULING-66 S17-Q1: internal worker transport is unconditional; public output remains legacy.
+it("S12b golden: flag OFF, bounded worker fragments reconstruct the complete legacy 150 KB record", async () => {
+	vi.stubEnv(FLAG, "0");
 	const sent = vi.spyOn(Worker.prototype, "postMessage");
 	const { host, worker, posted } = await promptedWorker(PROMPT);
 	try {
-		expect(worker.intake).toBeUndefined();
+		expect(worker.intake).toBeDefined();
 		const commit = sent.mock.calls.map(([message]) => message).find((message) => message?.type === "commit");
-		expect(commit).toEqual({ type: "commit", request: expect.any(Number) });
-		expect(posted.some((each) => each.type === "fragment")).toBe(false);
-		const start = posted.find(
-			(each) => each.type === "output" && textOf(Object(Reflect.get(each, "record"))) === PROMPT,
-		);
-		expect(start, "the whole record in one frame").toMatchObject({
-			type: "output",
-			record: { type: "message_start" },
+		expect(commit).toEqual({
+			type: "commit",
+			request: expect.any(Number),
+			acceptance: true,
+			recoveryEpoch: expect.any(String),
+			permits: expect.any(SharedArrayBuffer),
 		});
-		expect(start).not.toHaveProperty("ordinal");
+		const fragments = posted.filter(isFragment);
+		expect(fragments.length).toBeGreaterThan(2);
+		for (const fragment of fragments) expect(fragment.text.length * 2).toBeLessThanOrEqual(FRAGMENT_MAX_BYTES);
+		expect(host.records.find((record) => record.type === "message_start" && textOf(record) === PROMPT)).toBeDefined();
 		expect(host.records.find((record) => record.type === "message_end" && textOf(record) === PROMPT)).toBeDefined();
 		expect(host.failures).toEqual([]);
 	} finally {

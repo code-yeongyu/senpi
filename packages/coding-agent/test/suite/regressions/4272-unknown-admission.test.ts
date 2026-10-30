@@ -75,8 +75,8 @@ it("RULING-94 every routed command validates before dispatch and answers exactly
 	const subscribe = vi.spyOn(host.writer.status, "subscribe");
 	let serial = 0;
 	for (const type of admissionCommands) {
-		// Open and subscribe introduce an ID rather than selecting existing authority.
-		const introduces = type === "open_session" || type === "subscribe_sessions";
+		// #4272 C4.1: attach also introduces a fresh client-generated route ID on the selected socket.
+		const introduces = type === "open_session" || type === "attach_session" || type === "subscribe_sessions";
 		for (const admissionId of ["", "..", 1, null, ...(introduces ? [] : ["missing"])]) {
 			const id = `table-${++serial}`;
 			const from = peer.inbox.length;

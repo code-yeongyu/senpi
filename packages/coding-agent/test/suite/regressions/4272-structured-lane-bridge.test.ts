@@ -62,8 +62,9 @@ interface Run {
 
 async function runControls(flag: boolean): Promise<Run> {
 	vi.unstubAllEnvs();
-	if (flag) vi.stubEnv(FLAG, "1");
-	expect(structuredLaneEnabled()).toBe(flag);
+	vi.stubEnv(FLAG, flag ? "1" : "0");
+	// #4272 RULING-66 S17-Q1: internal capture is unconditional, not selected socket output.
+	expect(structuredLaneEnabled()).toBe(true);
 	const extension: object[] = [];
 	// Holds the session's event queue at the first thinking_start until the agent has emitted message_end, so a
 	// control that skipped the queue would overtake the queued events.
@@ -148,11 +149,12 @@ describe("T6 structured lane bridge", () => {
 		expect(run.extension.length).toBeGreaterThan(10);
 	});
 
-	it("keeps legacy socket and classic stdout bytes identical with the flag off, and opens no lane", async () => {
+	it("keeps legacy socket and classic stdout bytes identical with the flag off and capture active", async () => {
 		const on = await runControls(true);
 		const off = await runControls(false);
-		expect(off.hasWriteStructured).toEqual([false, false]);
+		expect(off.hasWriteStructured).toEqual([true, true]);
 		expect(on.hasWriteStructured).toEqual([true, true]);
+		for (const records of off.lane) expect(messageLabels(firstAssistantMessage(records))).toEqual(ASSISTANT_TURN);
 		expect(updates(on.socket).length).toBeGreaterThan(10);
 		expect(updates(on.socket)).toEqual(updates(off.socket));
 		expect(updates(on.stdout)).toEqual(updates(off.stdout));

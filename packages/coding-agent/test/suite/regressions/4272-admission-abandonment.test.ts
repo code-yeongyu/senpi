@@ -117,6 +117,16 @@ it.each(["connection release", "host dispose"] as const)(
 		vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
 		const host = await statusHost();
 		const peer = host.client("peer");
+		// #4272 C8.2 / RULING-73: direct routing bypasses request()'s admission prelude.
+		const pair = ["compact_message_updates_v1", "event_resync"];
+		expect(await peer.request({ type: "get_protocol_info" })).toMatchObject({
+			data: { capabilities: expect.arrayContaining(pair) },
+		});
+		expect(await peer.request({ type: "set_client_info", capabilities: pair })).toMatchObject({
+			success: true,
+			data: { capabilities: pair },
+		});
+		const beforeOpen = peer.inbox.length;
 		const entered = Promise.withResolvers<void>();
 		const finish = Promise.withResolvers<void>();
 		const closed = Promise.withResolvers<void>();
@@ -169,7 +179,9 @@ it.each(["connection release", "host dispose"] as const)(
 			expect(closeSession).toHaveBeenCalledTimes(1);
 			expect(host.core.router.sessionCount).toBe(0);
 			expect(peer.inbox.some((record) => record.type === "session_opened")).toBe(false);
-			expect(peer.inbox.some((record) => record.type === "response" && record.success === true)).toBe(false);
+			expect(
+				peer.inbox.slice(beforeOpen).some((record) => record.type === "response" && record.success === true),
+			).toBe(false);
 			expect(peer.received.slice(beforeLateOpen)).toEqual([]);
 		} finally {
 			vi.useRealTimers();
