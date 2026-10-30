@@ -54,15 +54,16 @@ export function goldenCellVerdict(entries, cell, root = EQ_DIR) {
 }
 
 /**
- * The run's summary line and exit code. DEFERRED cells are counted on their own and do not fail the run; a failed
- * case or a stale deferred entry does, and so does a run with nothing selected.
+ * The run's summary line and exit code. DEFERRED and SKIPPED cells are counted on their own and do not fail the run;
+ * a failed case or a stale deferred entry does, and so does a run with nothing selected.
  */
 export function summarizeRun(results, staleEntries, mode) {
 	const passed = results.filter((r) => r.pass).length;
 	const deferred = results.filter((r) => r.deferred).length;
-	const failed = results.length - passed - deferred + staleEntries.length;
+	const skipped = results.filter((r) => r.skipped).length;
+	const failed = results.length - passed - deferred - skipped + staleEntries.length;
 	return {
-		line: `fused-equivalence-qa ${mode}: ${passed}/${results.length} passed, ${deferred} deferred, ${failed} failed`,
+		line: `fused-equivalence-qa ${mode}: ${passed}/${results.length} passed, ${deferred} deferred, ${failed} failed${skipped ? `, ${skipped} skipped` : ""}`,
 		exitCode: failed === 0 && results.length > 0 ? 0 : 1,
 	};
 }

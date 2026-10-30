@@ -16,6 +16,22 @@ import {
 } from "./equivalence-deferred.mjs";
 
 const CASE_IDS = cases.map((c) => c.id);
+
+function withEnv(patch, body) {
+	const saved = Object.fromEntries(Object.keys(patch).map((key) => [key, process.env[key]]));
+	const apply = (values) => {
+		for (const [key, value] of Object.entries(values)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	};
+	apply(patch);
+	try {
+		return body();
+	} finally {
+		apply(saved);
+	}
+}
 const ENTRY = Object.freeze({
 	platform: "linux-x64",
 	case: "E25",
@@ -79,6 +95,35 @@ test("a listed cell whose golden exists is stale and fails the run", () => {
 		const passing = [{ id: "E25", pass: true }];
 		assert.equal(summarizeRun(passing, [ENTRY], "compare").exitCode, 1);
 		assert.match(summarizeRun(passing, [ENTRY], "compare").line, /1\/1 passed, 0 deferred, 1 failed/);
+	});
+});
+
+test("a SKIPPED case is never PASS, is counted on its own, and does not fail the run (senpi#4964)", () => {
+	const results = [
+		{ id: "E29", pass: false, skipped: "no gondolin image store" },
+		{ id: "E27", pass: true },
+	];
+	assert.deepEqual(summarizeRun(results, [], "compare"), {
+		line: "fused-equivalence-qa compare: 1/2 passed, 0 deferred, 0 failed, 1 skipped",
+		exitCode: 0,
+	});
+	const withFailure = [...results, { id: "E26", pass: false }];
+	assert.equal(summarizeRun(withFailure, [], "compare").exitCode, 1);
+});
+
+test("E29 is skipped only on a hosted runner without a gondolin image store; elsewhere a missing store fails (senpi#4964)", () => {
+	const e29 = cases.find((c) => c.id === "E29");
+	assert.ok(e29);
+	withEnv({ GITHUB_ACTIONS: "true", EQ_GONDOLIN_IMAGE_STORE: undefined }, () => {
+		assert.match(String(e29.skip()), /^no gondolin image store/);
+	});
+	withEnv({ GITHUB_ACTIONS: undefined, CI: "1", EQ_GONDOLIN_IMAGE_STORE: undefined }, () => {
+		assert.equal(e29.skip(), undefined);
+		assert.throws(() => e29.spec(), /E29 needs EQ_GONDOLIN_IMAGE_STORE/);
+	});
+	withEnv({ GITHUB_ACTIONS: "true", EQ_GONDOLIN_IMAGE_STORE: "/images" }, () => {
+		assert.equal(e29.skip(), undefined);
+		assert.equal(e29.spec().env.GONDOLIN_IMAGE_STORE, "/images");
 	});
 });
 

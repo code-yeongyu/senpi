@@ -12,7 +12,9 @@
 // The CLI child runs on Bun unless `--child` says otherwise (lib/common.mjs). Exit code 0 only when every selected
 // case matches its golden on every declared observable and its witness matches `--pipeline`, except a cell listed in
 // fused-equivalence/deferred-goldens.mjs whose golden is missing: it is reported DEFERRED(<owner>, <issue>), never PASS,
-// and does not fail the run. A listed cell whose golden exists fails the run (lib/equivalence-deferred.mjs).
+// and does not fail the run. A listed cell whose golden exists fails the run (lib/equivalence-deferred.mjs). A case whose
+// skip() names a reason (E29 on a hosted runner without a gondolin image store, senpi#4964) is reported SKIPPED with that
+// reason, never PASS, and does not fail the run.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cases } from "../../scenarios/fused-equivalence/cases/index.mjs";
@@ -129,6 +131,12 @@ async function main() {
 	const cell = { platform: goldenPlatform(), mode: tui ? "tui" : "rpc" };
 	const results = [];
 	for (const testCase of selected) {
+		const skipped = testCase.skip?.();
+		if (skipped) {
+			results.push({ id: testCase.id, title: testCase.title, pass: false, skipped });
+			process.stdout.write(`[SKIPPED] ${testCase.id} ${testCase.title} - skipped: ${skipped}\n`);
+			continue;
+		}
 		const verdict =
 			options.mode === "compare" ? goldenCellVerdict(deferredGoldens, { ...cell, case: testCase.id }) : undefined;
 		if (verdict?.kind === "deferred") {
