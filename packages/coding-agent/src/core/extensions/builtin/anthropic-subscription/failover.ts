@@ -396,11 +396,17 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	let transientRetriesUsed = 0;
 	let longContextRetried = false;
 	let retryAccountName: string | undefined;
-	// The one cold seat this turn may use (oh-my-openagent#10304), and whether its next attempt is a bounded
-	// same-seat retry (a transient failure, a refused 1M window, a superseded token) rather than another seed.
-	const warm = options.accountFallback === false ? undefined : options.warmAccount;
-	let coldSeat = warm === undefined ? undefined : spentColdSeat(options.sessionKey, options.turnKey);
-	let coldSeatRetry = false;
+	// The one cold seat this turn may use (oh-my-openagent#10304). A warm account that left the pool names no seat.
+	const warm =
+		options.accountFallback === false || !options.accounts.some((slot) => slot.name === options.warmAccount)
+			? undefined
+			: options.warmAccount;
+	let coldSeat = warm === undefined ? undefined : spentColdSeat(options.sessionKey, options.turnKey, now());
+	// While the warm seat can still serve, a cold attempt (a pin) spends nothing: a failure there falls through to it.
+	const warmUsable = (): boolean => {
+		const slot = accounts.find((candidate) => candidate.name === warm);
+		return slot !== undefined && usable(slot, now(), options.model);
+	};
 	const coldSeedLimit = (cold: string) =>
 		new ColdSeedLimitError(warm ?? cold, cold, dueBackAt(accounts, [warm ?? cold, cold], now(), options.model));
 
@@ -412,12 +418,12 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 		retryAccountName = undefined;
 		const account = { ...(retrySlot ?? options.selectFn(accounts)) };
 		const cold = warm !== undefined && account.name !== warm;
-		if (cold) {
-			if (coldSeat !== undefined && !(coldSeatRetry && account.name === coldSeat)) throw coldSeedLimit(coldSeat);
+		if (cold && !warmUsable()) {
+			// The seat that already holds this turn's prefix may run it again; any other cold seat is refused.
+			if (coldSeat !== undefined && account.name !== coldSeat) throw coldSeedLimit(coldSeat);
 			coldSeat = account.name;
-			recordColdSeat(options.sessionKey, options.turnKey, account.name);
+			recordColdSeat(options.sessionKey, options.turnKey, account.name, now());
 		}
-		coldSeatRetry = false;
 		let visibleDeltaEmitted = false;
 		let completed = false;
 		const startedAt = now();
@@ -443,7 +449,6 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				longContextRetried = true;
 				options.onLongContextRefused?.();
 				retryAccountName = account.name;
-				coldSeatRetry = cold;
 				attempt--;
 				continue;
 			}
@@ -463,8 +468,6 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 					throw classified;
 				}
 				retryAccountName = account.name;
-				// The same seat again re-sends an identical prefix (senpi#4299): not another cold seed.
-				coldSeatRetry = cold;
 				attempt--;
 				continue;
 			}
@@ -485,7 +488,6 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				// account once on the stored material instead of failing over.
 				retriedOnStoredMaterial.add(account.name);
 				accounts = replaceAccount(accounts, superseded);
-				coldSeatRetry = cold;
 				attempt--;
 				continue;
 			}
@@ -496,16 +498,17 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				attempt: attempt + 1,
 				visibleDeltaEmitted,
 			};
+			// The cold seat failed while the warm seat cannot serve: seeding a further seat would re-send the conversation again.
+			const stopCold = cold && !warmUsable();
 			try {
-				if (!visibleDeltaEmitted && !cold && attempt + 1 < attemptLimit) {
+				if (!visibleDeltaEmitted && !stopCold && attempt + 1 < attemptLimit) {
 					event.nextAccount = options.selectFn(accounts);
 				}
 			} finally {
 				await options.onFailover?.(event);
 			}
 			if (visibleDeltaEmitted) throw classified;
-			// The one cold seat failed too: seeding a further seat would re-send the conversation again.
-			if (cold) throw coldSeedLimit(account.name);
+			if (stopCold) throw coldSeedLimit(account.name);
 		}
 		if (completed) {
 			forgetSessionBlock(options.sessionKey, account.name);

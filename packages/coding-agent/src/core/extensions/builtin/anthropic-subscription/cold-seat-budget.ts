@@ -8,18 +8,29 @@
 
 /** Sessions whose current turn a long-lived host remembers; the oldest-touched is dropped past it. */
 const MAX_TRACKED_SESSIONS = 256;
-const coldSeatByTurn = new Map<string, { turnKey: string; seat: string }>();
+/** A seat's copy of the prefix lasts no longer than the subscription lane's 1h prompt cache, so the record does not either. */
+export const COLD_SEAT_RECORD_TTL_MS = 60 * 60 * 1_000;
+const coldSeatByTurn = new Map<string, { turnKey: string; seat: string; recordedAt: number }>();
 
-export function spentColdSeat(sessionKey: string | undefined, turnKey: string | undefined): string | undefined {
+export function spentColdSeat(
+	sessionKey: string | undefined,
+	turnKey: string | undefined,
+	now: number,
+): string | undefined {
 	if (sessionKey === undefined || turnKey === undefined) return undefined;
 	const spent = coldSeatByTurn.get(sessionKey);
-	return spent?.turnKey === turnKey ? spent.seat : undefined;
+	return spent?.turnKey === turnKey && now - spent.recordedAt < COLD_SEAT_RECORD_TTL_MS ? spent.seat : undefined;
 }
 
-export function recordColdSeat(sessionKey: string | undefined, turnKey: string | undefined, seat: string): void {
+export function recordColdSeat(
+	sessionKey: string | undefined,
+	turnKey: string | undefined,
+	seat: string,
+	now: number,
+): void {
 	if (sessionKey === undefined || turnKey === undefined) return;
 	coldSeatByTurn.delete(sessionKey);
-	coldSeatByTurn.set(sessionKey, { turnKey, seat });
+	coldSeatByTurn.set(sessionKey, { turnKey, seat, recordedAt: now });
 	const oldest = coldSeatByTurn.keys().next().value;
 	if (coldSeatByTurn.size > MAX_TRACKED_SESSIONS && oldest !== undefined) coldSeatByTurn.delete(oldest);
 }
