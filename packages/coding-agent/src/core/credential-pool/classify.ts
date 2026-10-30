@@ -1,6 +1,7 @@
-import { PROVIDER_NOT_CONFIGURED_PREFIX } from "@earendil-works/pi-ai";
+import { PROVIDER_NOT_CONFIGURED_PREFIX, readProviderDiagnostic } from "@earendil-works/pi-ai";
 import { DEFAULT_SLOT_BLOCK_MS, MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { normalizeProviderError } from "@earendil-works/pi-ai/utils/error-body";
+import { ModelsError } from "@earendil-works/pi-ai/utils/models-error";
 import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
 import { getOverflowPatterns } from "@earendil-works/pi-ai/utils/overflow";
 import { extract429RetryAfterMs } from "@earendil-works/pi-ai/utils/retry-hint";
@@ -67,6 +68,25 @@ export function usageLimitCooldown(
 }
 
 const INVALID_KEY_TEXT = /invalid[ _-]?(?:api[ _-]?)?key|authentication[_ ]?error|invalid x-api-key|unauthorized/i;
+// Last resort for a revoked or invalidated token reported as prose with no status and no code
+// (Codex: "Encountered invalidated oauth token for user, failing request", senpi#3037).
+const REVOKED_TOKEN_TEXT =
+	/invalidated (?:oauth )?token|token[ _-](?:invalidated|revoked)|(?:token|session) (?:has been|was) (?:invalidated|revoked)/i;
+// Provider error codes that name a refused credential: the auth allowlist of the provider diagnostic
+// vocabulary plus the token codes OpenAI's backends send (`token_revoked` arrives on a statusless
+// Codex frame, the refresh_token_* codes on its token endpoint).
+const AUTH_ERROR_CODES: ReadonlySet<string> = new Set([
+	"authentication_error",
+	"invalid_api_key",
+	"invalid_grant",
+	"token_expired",
+	"token_invalidated",
+	"token_revoked",
+	"refresh_token_expired",
+	"refresh_token_invalidated",
+	"refresh_token_reused",
+]);
+const MAX_CAUSE_LINKS = 16;
 const ACCOUNT_SCOPED_403_TEXT = /account|credential|token|api[ _-]?key|organization|subscription/i;
 const RATE_LIMIT_TEXT = /rate[ _-]?limit|too many requests|resource_exhausted/i;
 const BILLING_TEXT =
@@ -92,6 +112,29 @@ const TEMPORARY_FAULT_TEXT =
 function isAbort(error: unknown, message: string): boolean {
 	if (error instanceof Error && error.name === "AbortError") return true;
 	return ABORT_TEXT.test(message);
+}
+
+/**
+ * The stored login itself could not produce auth: its refresh grant was refused (`invalid_grant`, an
+ * expired or reused refresh token: a 4xx from the token endpoint) or its tokens could not be derived.
+ * Auth resolution reports every such failure as `ModelsError` code `oauth`; the transient ones (network,
+ * 408/429/5xx) are `OAuthRefreshUnavailableError` and are handled before this runs (senpi#2304).
+ */
+function isRejectedStoredLogin(error: unknown): boolean {
+	const seen = new Set<unknown>();
+	while (typeof error === "object" && error !== null && !seen.has(error) && seen.size < MAX_CAUSE_LINKS) {
+		seen.add(error);
+		if (error instanceof ModelsError) return error.code === "oauth";
+		error = Reflect.get(error, "cause");
+	}
+	return false;
+}
+
+/** A structured provider diagnostic that names a refused credential, with or without a status. */
+function hasAuthDiagnostic(error: unknown): boolean {
+	const diagnostic = readProviderDiagnostic(error);
+	if (diagnostic === undefined) return false;
+	return diagnostic.category === "auth" || (diagnostic.code !== undefined && AUTH_ERROR_CODES.has(diagnostic.code));
 }
 
 function isOverflowText(text: string): boolean {
@@ -136,9 +179,18 @@ export function classifyCredentialFailure(
 	if (text.includes(PROVIDER_NOT_CONFIGURED_PREFIX)) {
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
+	// Structured auth evidence is a verdict on this one account, so it fails over to a sibling before
+	// any prose is read; a server or rate-limit status still says the provider, not the login, failed.
+	const statusFault = status === 408 || status === 429 || (status !== undefined && status >= 500 && status < 600);
+	if (!statusFault && (isRejectedStoredLogin(error) || hasAuthDiagnostic(error))) {
+		return { kind: "failover", block: { reason: "auth_error" } };
+	}
 	// Only a 401, or auth text on a response whose status cannot mean something temporary, is an auth
 	// rejection; a 429 that mentions authentication is still a rate limit and cools down.
-	if (status === 401 || (!providerFault && status !== 429 && INVALID_KEY_TEXT.test(text))) {
+	if (
+		status === 401 ||
+		(!providerFault && status !== 429 && (INVALID_KEY_TEXT.test(text) || REVOKED_TOKEN_TEXT.test(text)))
+	) {
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
 	if (status === 403 && !limitText) {
