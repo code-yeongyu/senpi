@@ -142,6 +142,7 @@ import {
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { formatProviderFailure } from "../../core/provider-failure.ts";
+import { failureAlreadyDescribed } from "./provider-error-description.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -5632,7 +5633,8 @@ export class InteractiveMode {
 				}
 				this.detachAssistantTextSegments();
 				this.clearPendingTools();
-				if (event.failure !== undefined && !event.willRetry) this.showError(formatProviderFailure(event.failure));
+				if (event.failure !== undefined && !event.willRetry && !failureAlreadyDescribed(event.messages))
+					this.showError(formatProviderFailure(event.failure));
 
 				this.ui.requestRender();
 				break;
@@ -6136,17 +6138,18 @@ export class InteractiveMode {
 		const end = streamingIndex >= 0 ? streamingIndex : children.length;
 		const last = end > 0 ? children[end - 1] : undefined;
 		const secondLast = end > 1 ? children[end - 2] : undefined;
+		this.lastStatusMessage = message;
+		// Each row owns its content, even if its first render or a theme invalidation happens after another notice.
+		const text = new ThemedText(() => theme.fg("dim", message), 1, 0);
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
-			this.lastStatusMessage = message;
-			this.lastStatusText.invalidate();
+			children[end - 1] = text;
+			this.lastStatusText = text;
 			this.ui.requestRender();
 			return;
 		}
 
 		const spacer = new Spacer(1);
-		this.lastStatusMessage = message;
-		const text = new ThemedText(() => theme.fg("dim", this.lastStatusMessage), 1, 0);
 		if (streamingIndex >= 0) {
 			children.splice(streamingIndex, 0, spacer, text);
 		} else {
@@ -6390,9 +6393,11 @@ export class InteractiveMode {
 				index += 1;
 			}
 			const runMessage: AssistantMessage = { ...message, content: runBlocks };
+			// Only the run that ends the message shows the turn's error; earlier runs repeat it otherwise (senpi#4954).
+			const errorShownElsewhere = isNetworkProviderMessage(message) || index < content.length;
 			const existing = this.assistantTextSegments.get(runStart);
 			if (existing) {
-				existing.setProviderErrorOwned(isNetworkProviderMessage(message));
+				existing.setProviderErrorOwned(errorShownElsewhere);
 				existing.updateContent(runMessage, true);
 				continue;
 			}
@@ -6405,7 +6410,7 @@ export class InteractiveMode {
 				this.getMarkdownTransformers(),
 			);
 			segment.setExpanded(this.toolOutputExpanded);
-			segment.setProviderErrorOwned(isNetworkProviderMessage(message));
+			segment.setProviderErrorOwned(errorShownElsewhere);
 			this.assistantTextSegments.set(runStart, segment);
 			const followingToolCall = content.slice(index).find((block) => block.type === "toolCall");
 			const followingToolCallId = followingToolCall?.type === "toolCall" ? followingToolCall.id : undefined;

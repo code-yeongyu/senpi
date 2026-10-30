@@ -14,7 +14,13 @@ import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
 import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
-import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
+import {
+	createEventBus,
+	type EventBus,
+	EXTENSION_RPC_EVENT_CHANNEL,
+	EXTENSION_RPC_SUBSCRIBED_CHANNEL,
+	type ExtensionRpcEvent,
+} from "../event-bus.ts";
 import { type InputOrigin, inputAttributionOf, inputOriginOf } from "../input-origin.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import { inheritMcpMrtrPresentation } from "../mcp-mrtr-presentations.ts";
@@ -1026,10 +1032,13 @@ export class ExtensionRunner {
 		);
 	}
 
+	/** Subscribes an RPC client to extension events, then tells extensions a client just subscribed. */
 	onRpcEvent(handler: (event: ExtensionRpcEvent) => void): () => void {
-		return this.eventBus.on(EXTENSION_RPC_EVENT_CHANNEL, (data) => {
+		const off = this.eventBus.on(EXTENSION_RPC_EVENT_CHANNEL, (data) => {
 			handler(data as ExtensionRpcEvent);
 		});
+		this.eventBus.emit(EXTENSION_RPC_SUBSCRIBED_CHANNEL, undefined);
+		return off;
 	}
 
 	/**

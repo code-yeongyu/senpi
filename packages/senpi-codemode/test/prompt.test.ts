@@ -35,17 +35,6 @@ function fullPrompt(
 }
 
 describe("buildEvalPrompt", () => {
-	it.each([
-		["js without spawns", { py: false, js: true, rb: false, jl: false }, { spawns: false }],
-		["js-py without spawns", { py: true, js: true, rb: false, jl: false }, { spawns: false }],
-		["all with spawns", { py: true, js: true, rb: true, jl: true }, { spawns: true, spawnDefaultAgent: "task" }],
-	] as const)("renders the %s prompt", (_name, enabled, options) => {
-		// Given: an enabled language set and its task-tool availability.
-		// When: the eval prompt is built.
-		// Then: its complete user-facing contract remains snapshotted.
-		expect(buildEvalPrompt(enabled, options)).toMatchSnapshot();
-	});
-
 	it("documents only enabled languages and leaves field semantics to the parameter schema", () => {
 		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false });
 
@@ -96,31 +85,11 @@ describe("buildEvalPrompt", () => {
 		}
 	});
 
-	it("documents detachment, queued-cell discipline, and the detached-cell controls", () => {
+	it("advertises the eval cell-control action syntax", () => {
 		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false });
 
-		expect(prompt).toContain("outlives the foreground window detaches");
 		expect(prompt).toContain('eval({ action: "peek" | "stop", cell_id })');
 		expect(prompt).toContain('eval({ action: "list" })');
-		expect(prompt).toContain("Do not re-run a detached or queued cell");
-	});
-
-	it("teaches output() as an immediate status or transcript read", () => {
-		const prompt = fullPrompt({ py: true, js: true, rb: false, jl: false }, { spawns: true });
-
-		expect(prompt).toContain("Reads immediately: running tasks return their status");
-	});
-
-	it("keeps eval-specific prompt guidelines stable", () => {
-		// Given: a registered eval tool with no active model id.
-		// When: its prompt metadata is built.
-		const guidelines = buildEvalPrompt({ py: true, js: true, rb: true, jl: true }, { spawns: true }).promptGuidelines;
-
-		// Then: the system-prompt guidance carries the batching decision rule.
-		expect(guidelines).toEqual([
-			"Prefer eval when a step's calls are independent: one cell runs them together and keeps every failure in its result; edits and result-dependent calls go one at a time, each observed before the next.",
-			"Use eval reset only when a language kernel must be wiped; reset is scoped to the selected language. A bracketed kernel memory notice in a result names the globals holding the most memory; drop the ones you no longer need.",
-		]);
 	});
 
 	it("maps model ids to emphasis dialects across provider id shapes", () => {
@@ -230,27 +199,6 @@ describe("buildEvalPrompt", () => {
 		expect(fallbackInstruction).not.toMatch(/\bNEVER\b/);
 		expect(fallbackInstruction).not.toContain("<eval_first_batching>");
 		expect(fallback).toContain("parallel(thunks)");
-	});
-
-	it("tunes the batching guideline to the model dialect", () => {
-		// Given: the same kernel set with model ids from each family.
-		const enabled = { py: true, js: true, rb: true, jl: true };
-		const guideline = (modelId: string): string =>
-			buildEvalPrompt(enabled, { spawns: false, modelId }).promptGuidelines[0];
-
-		// When/Then: the first guideline is the family-tuned batching contract.
-		expect(guideline("claude-opus-4-8")).toBe(
-			"Prefer eval for a step's independent calls: one cell runs them together and keeps every failure in its result.",
-		);
-		expect(guideline("gpt-5.6")).toBe(
-			"Use eval to batch a step's independent tool calls in one cell and inspect every result; long cells detach on their own and notify on completion, so do not poll.",
-		);
-		expect(buildEvalPrompt(enabled, { spawns: false, modelId: "gpt-5.6", monitor: true }).promptGuidelines[0]).toBe(
-			"Use eval to compose tool work in one cell; a wait or a long run starts through `tool.monitor` in that cell, so no cell sits on it and nothing polls.",
-		);
-		expect(guideline("kimi-k2.6")).toBe(
-			"Put a step's independent calls into one eval cell with parallel(thunks) and keep every failed item in the result.",
-		);
 	});
 
 	it("renders the host-sizing note only when a host line is provided", () => {

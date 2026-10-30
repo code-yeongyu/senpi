@@ -1,3 +1,197 @@
+## 2026-10-29 - Eval-kernel WebKit Bun.WebViews are served from the main thread (senpi#4794)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/worker-webview.js`: `needsMainThread()` routes every kernel `Bun.WebView` to the main-thread WebView service, the macOS default WebKit backend included; only a process-mode kernel keeps native views, because its cells already run on the child's main thread.
+- `packages/senpi-codemode/src/kernels/js/worker-webview.js`: the proxied view exposes `goBack()`/`goForward()`, the names `Bun.WebView` has; it had `back()`/`forward()`, which no real view answers, so a proxied view could not walk its history.
+- `packages/senpi-codemode/test/js-kernel-webview.test.ts`: a default-backend view walks its history with `goBack()`/`goForward()`; the default-backend case expects a proxied view on every platform, and two darwin cases cover a fresh view after a kernel reset and two kernels driving WebKit views at once.
+
+### Why
+
+- Bun's WebKit host client is one per process, bound to the thread that first spawns it, and settles every view's replies in that thread's heap (oven-sh/bun#47334). A second kernel worker's WebKit views corrupted the process heap (omo sessions died with SIGSEGV), and after the binding worker exited every later view failed with `Failed to spawn WebView host process`.
+
+### Why an extension could not handle it
+
+- The kernel's `Bun` stand-in and its WebView routing are installed inside the kernel worker by codemode itself, before any extension code runs in a cell.
+
+### Expected merge conflict zones
+
+- LOW: the `goBack()`/`goForward()` methods in `worker-webview.js`; `needsMainThread()` and the header comment in `worker-webview.js`; the default-backend case in `js-kernel-webview.test.ts`.
+
+## 2026-10-26 - Python eval permission enforcement (senpi#4392, part of #4309)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/interpose.py` and `packages/senpi-codemode/src/kernels/py/permission_bridge.py`: install Python API wrappers and synchronous, invocation-authenticated checks before user code. Cover process creation, mode-aware files and descriptors, filesystem mutations, listing, SQLite, loader sources, and package resources.
+- `packages/senpi-codemode/src/kernels/py/permission-host.ts`, `packages/senpi-codemode/src/kernels/py/kernel.ts`, `packages/senpi-codemode/src/kernels/py/kernel-contract.ts`, `packages/senpi-codemode/src/kernels/py/kernel-tools-host.ts`, `packages/senpi-codemode/src/kernels/py/transport.ts`, and `packages/senpi-codemode/src/kernels/py/prelude.py`: carry host-minted tokens through cells and callbacks, publish read-only mapped authority words, cancel pending checks, and gate replacement on observed interpreter exit.
+- `packages/senpi-codemode/src/bridge/permission-check.ts` and `packages/senpi-codemode/src/bridge/http-server.ts`: add the nonce-bound permission-check route without using the owner's bridge bearer.
+- `packages/senpi-codemode/src/kernels/js/permission-slots.d.mts`: add `read` and `ls` to the shared operation type without changing the JavaScript slot protocol.
+- `packages/senpi-codemode/src/kernels/shared/subprocess-contract.ts`, `packages/senpi-codemode/src/kernels/shared/subprocess-kernel.ts`, `packages/senpi-codemode/src/kernels/rb/kernel.ts`, and `packages/senpi-codemode/src/kernels/jl/kernel.ts`: refuse Ruby and Julia cells while enforcement is active, including queued-cell admission.
+- `packages/senpi-codemode/src/kernels/py/permission-core.md`: document transport, lifetime, engine provenance, and integration ownership. The Python API matrix, lifetime tests, and unsupported-kernel tests provide RED/GREEN coverage.
+- Review fold: capture private stdlib dependencies and JSON/socket primitives; cover native `posix`/`nt` aliases, direct builtin/dynamic extension loading, path metadata mutations, and base-descriptor registry writes. Keep inactive copied contexts and background tasks usable after their originating cell settles. Load engine assets without bytecode-cache writes and keep the raw FileIO constructor out of the adapter's MRO. The import registries (`sys.modules`, `sys.meta_path`, `sys.path_hooks`) are never replaced: CPython's C-level import reads the interpreter's own module dict rather than the `sys` attribute, so any substitute diverges from it and modules first imported in a cell become invisible to C importers. Cells reach the registries only through views that refuse mutation, and every enforced decision re-verifies that they are still the interpreter's own objects with their captured entries.
+- `packages/senpi-codemode/test/gate/allowlist.json`: approve the 468 measured additive contracts owned by this PR without editing the frozen compatibility baseline or inherited stack approvals.
+
+### Why
+
+- Python code could previously perform operations that the user's configured tool deny rules would refuse. Kernel-tool callbacks also need their own authority lifetime rather than borrowing the current cell.
+- Revocation must invalidate new operations immediately and must observe interpreter exit before admitting a replacement. Ruby and Julia cannot yet provide equivalent API coverage and therefore fail closed only when enforcement applies.
+
+### Why an extension could not handle it
+
+- Interposition must precede user code inside the interpreter, while invocation tokens, the bridge, authority publication, and process retirement belong to the kernel host. The permission extension supplies the decision service and reload events through the typed seam; it cannot retrofit these boundaries from outside a running cell.
+
+### Expected merge conflict zones
+
+- Python bootstrap, init/run frames, callback dispatch, and retirement in the listed Python files; the HTTP bridge route table; Ruby/Julia startup options and shared subprocess admission.
+- The `CellOperation` union may overlap the JavaScript API-coverage stack member. No slot layout or transition changes are included.
+- Known limitation: reads performed by the runtime's native module resolver (bare packages, tsconfig aliases, package.json #imports, symlinked packages) are not covered by this work; tracked in #4380.
+
+## 2026-10-29 - Python cells send executed spellings and canonical identity (senpi#4392)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/py/interpose.py`: preserve the written and cwd-joined executed spellings, including directory-descriptor listings, and compute canonical identity before sending the request. Invalid UTF-8 input retains the existing wire-contract handling.
+- `packages/senpi-codemode/src/kernels/py/path_identity.py`, `packages/senpi-codemode/src/kernels/py/path_identity_posix.py`, and `packages/senpi-codemode/src/kernels/py/path_identity_windows.py`: mirror the JS version-1 ancestor climb, dangling links, missing tails, native casing, Darwin NFC normalization and per-volume case probe. Captured native primitives follow the hosting runtime. Inputs without a proven local representation omit canonical identity and retain host fallback.
+- `packages/senpi-codemode/src/bridge/permission-check.ts`: admit validated canonical and unresolvable fields alongside the written and executed paths. The permission service uses its existing shared version check.
+- `packages/senpi-codemode/src/kernels/py/permission-host.ts` and `packages/senpi-codemode/src/kernels/py/permission_bridge.py`: carry the hosting runtime into canonicalizer initialization.
+- `packages/senpi-codemode/src/kernels/py/permission-core.md`: document the identity contract and explicit fallback classes.
+- `packages/senpi-codemode/test/py-kernel-permission-path-identity.test.ts`: the Python dimension of the rule-spelling x request-spelling table (symlinked directory and file, relative spelling, `link/../x`, `os.chdir`, case and Unicode-form aliases where the volume folds them, directory listings through a path and through a directory descriptor, the lossy-bytes refusal), under an active deny and an inactive kernel.
+
+### Why
+
+- Python and JavaScript cells need the same path-identity decision when the resolver cannot start. The interpreter knows its executed spelling and can supply the versioned native identity independently of that worker.
+
+### Why an extension could not handle it
+
+- The executed spelling and native primitives belong to the Python kernel. The bridge must preserve their versioned result for the existing permission service.
+
+### Expected merge conflict zones
+
+- `packages/senpi-codemode/src/kernels/py/interpose.py` (`install` captures, `path_input`), the Python native identity modules and bootstrap fields, and `packages/senpi-codemode/src/bridge/permission-check.ts` (input field admission).
+
+## 2026-10-26 - Extend JS eval operation permission checks (senpi#4391)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/interpose.js`: install operation families before builtin namespaces and hand engine-owned originals to their consumers once.
+- `packages/senpi-codemode/src/kernels/js/interpose-fs.js`, `packages/senpi-codemode/src/kernels/js/interpose-resources.js`, and `packages/senpi-codemode/src/kernels/js/interpose-paths.js`: check filesystem operations, both-path effects, numeric open flags, and per-worker resource grants.
+- `packages/senpi-codemode/src/kernels/js/interpose-process.js`: check actual shell text and shell-quoted argv for process APIs and Bun shell calls.
+- `packages/senpi-codemode/src/kernels/js/interpose-bun.js`: check Bun file methods, writers, listing, file fetches, and mappings. Check file sources entering native writes, Response/Request bodies, fetch, Blob/File constructors, FormData and `Bun.serve` route/static maps while preserving memory-backed Blob operations.
+- `packages/senpi-codemode/src/kernels/js/interpose-bun.js` and `packages/senpi-codemode/src/kernels/js/interpose-process.js`: decide every file handle by the intrinsic path read through the native `name` getter captured at startup, so a copied handle or a per-instance `name` override reaches the same decision, and close `Bun.write` destinations and parts, `BunFile` write/writer/delete/unlink, and `Bun.spawn`/`Bun.spawnSync` stdio redirects. A file-backed handle whose path cannot be read neither receives bytes nor hands any out.
+- `packages/senpi-codemode/src/kernels/js/interpose-process.js`: decide each `Bun.spawn`/`Bun.spawnSync` redirect in both of the forms that can carry it. Bun gives an explicit `stdio[i]` entry priority over the matching `stdin`/`stdout`/`stderr` key, so each named key and each array slot is now decided on its own instead of one standing in for the other, and every slot is decided, not only the first three. A slot at index 3 or above has no named option and reaches the child as an ordinary descriptor it can both read and write, so it is decided in both directions.
+- `packages/senpi-codemode/src/kernels/js/interpose-bun.js`: walk nested `Bun.serve` route values. A route may be a per-method map (`{'/f':{GET: handle}}`) that Bun reads the handle out of exactly like the flat form, so nested values are decided the same way the top-level ones are.
+- `packages/senpi-codemode/src/kernels/js/interpose-bun.js`: decide reads of a handle whose path cannot be read at all. A clone of an fd-backed `BunFile` keeps the file and loses the grant and the intrinsic path that could name it, so it is refused rather than allowed; a memory-backed Blob carries no file, answers nothing from the native `stat`, and is untouched.
+- `packages/senpi-codemode/src/kernels/js/interpose-bun.js`: decide `size`, `lastModified`, `exists` and `stat` on the stand-in handed out for a read-denied path, so metadata about the file is refused the way its content is.
+- `packages/senpi-codemode/src/kernels/js/interpose-modules.js` and `packages/senpi-codemode/src/kernels/js/interpose.js`: keep a cell's own worker transparent to itself. A user worker's script reaches its own `workerData` and `parentPort` through `node:worker_threads`, which #4387 guarantees, so the module is treated as a capability only in the cell context; sealing it in every worker left such a script unable to read the data it was started with.
+- `packages/senpi-codemode/src/kernels/js/interpose.js`, `packages/senpi-codemode/src/kernels/js/permission-runtime.js` and `packages/senpi-codemode/src/kernels/js/permission-host.ts`: hand a user worker started under an active token the guarded `Worker` through `require` and through `import` alike. Bun copies a builtin's ESM namespace from the module object at the worker's first import and never refreshes it (`module.syncBuiltinESMExports()` does not reach it, and a resolver plugin never sees `node:` specifiers), so swapping the constructor later left `import` handing out the raw one, and a grandchild started through it wrote a file the rule denied. The host now marks such a worker as enforced, and its entry puts a non-writable, non-configurable forwarder on the module before any namespace exists; the forwarder constructs the guarded class, so deleting or overwriting it cannot reach the raw constructor. Every other context, including a kernel with no permission rules, keeps the engine's own `Worker` on the module, with `eval: true`, `.once` and `threadId`.
+- `packages/senpi-codemode/src/kernels/js/interpose-modules.js`: refuse only the `node:worker_threads` bindings that escape the interposition, and only when the decision refuses. The guard decides first: with nothing enforced the cell gets the engine's own module, export for export, exactly as `import()` returns it, so no-rules behaviour is unchanged. When the decision refuses, `require` hands back a frozen namespace of `MessageChannel`, `MessagePort` and `BroadcastChannel`, which grants nothing a cell cannot already reach through `globalThis`, while `Worker`, `parentPort` and `workerData` stay absent, because the raw `Worker` would spawn an uninterposed one. `import` and `process.getBuiltinModule` cannot substitute a namespace, so under enforcement they refuse the module outright.
+- `packages/senpi-codemode/src/kernels/js/permission-slots.mjs`: keep waiting when a park ends on something other than the answer. The host claims a slot before it decides and that claim does not notify, so a worker that parked after the claim woke on a state carrying no answer and reported the check as interrupted, refusing an operation the decider had allowed. The requester now waits while the slot is still its own request or held by the host, bounded by the same deadline; only a timeout or a foreign state ends the wait.
+- `packages/senpi-codemode/src/kernels/js/permission-host.ts`: hold an invoker binding per retained token instead of losing track of it. A released live token with no deny rules was dropped from the registry without giving its binding back, so only worker retirement could clear it. The binding now ends with the token, and closing the kernel ends every token it still holds. It does not end earlier: a token released alive is still alive, because #4387's rule keeps a settled continuation's async resources, so until the kernel closes that invoker can still revoke and retire the owner's kernel. That residual is the invariant #4390 pins, a settled cross-session continuation stays revocable by its invoker, and it cannot be narrowed by tying the binding to the continuation itself, because the runtime reports no such event: `node:async_hooks` `createHook` emits no init or destroy callbacks under Bun 1.4.4.
+- `packages/senpi-codemode/src/kernels/js/interpose-fs.js` and `packages/senpi-codemode/src/kernels/js/interpose-resources.js`: preserve omitted, undefined and null open flags and callback overloads; cover lchown/lchmod in callback, sync and promise forms without losing requested path spelling.
+- `packages/senpi-codemode/src/kernels/js/interpose-modules.js`: remove the unused engine module set; the existing bootstrap seal still gates module authorization.
+- `packages/senpi-codemode/src/kernels/js/interpose-modules.js`: resolving an observed specifier re-enters the resolver hook, which asked again for the same import and amplified one nested-worker import into roughly two thousand identical read decisions. The hook now treats its own re-entry as the import it is already deciding, so every route still decides each import, and none of them loop.
+- `packages/senpi-codemode/src/kernels/js/permission-slots.mjs`, `packages/senpi-codemode/src/kernels/js/permission-runtime.js`, `packages/senpi-codemode/src/kernels/js/permission-host.ts`, and `packages/senpi-codemode/src/kernels/js/kernel-contract.ts`: make the permission-check wait deadline injectable through `permissions.checkDeadlineMs`. Production keeps its 2s deadline; integration suites raise it so host load cannot turn an allowed check into a timeout, and the deadline behaviour stays covered by the held-host tests.
+- Prove refusal attribution is deterministic: a denied spawn whose stdio target is also denied reports the rule of the first decision in request order, whichever decision the decider delays.
+- `packages/senpi-codemode/src/kernels/js/interpose-sqlite.js`: check database constructors and aliases, secondary-file operations, authorizers, and extension capabilities.
+- `packages/senpi-codemode/src/kernels/js/interpose-modules.js`, `packages/senpi-codemode/src/kernels/js/interpose-capabilities.js`, and `packages/senpi-codemode/src/kernels/js/interpose-code.js`: guard relative/absolute resolution, mutable capability surfaces, and prepared-cell dynamic-code preflight.
+- `packages/senpi-codemode/src/kernels/js/local-module-loader.ts` and `packages/senpi-codemode/src/kernels/js/rewrite-imports.ts`: prepare dynamic-code checks on the host and guard cell import routes without changing native import attributes.
+- `packages/senpi-codemode/src/kernels/js/permission-runtime.js` and `packages/senpi-codemode/src/kernels/js/worker-core.js`: activate guards before user statements, including nested Worker preloads, and preserve the existing slot/token protocol.
+- `packages/senpi-codemode/src/kernels/js/worker-cwd.js`: avoid resolving covered paths before permission checks.
+- `packages/senpi-codemode/src/kernels/js/worker-runtime.js` and `packages/senpi-codemode/src/kernels/js/worker-file-helpers.js`: extract prelude file helpers so requested spelling is authorized before engine-owned execution I/O.
+- `packages/senpi-codemode/src/kernels/js/worker-package-resolve.js`, `packages/senpi-codemode/src/kernels/js/process-tree.js`, and `packages/senpi-codemode/src/kernels/js/windows-tree-kill.js`: preserve engine resolution and retirement through one-time private-original handoffs.
+- `packages/senpi-codemode/src/kernels/js/worker-webview.js`: use the existing cell-local Bun binding for its guarded plugin entry.
+- `packages/senpi-codemode/src/kernels/js/permission-core.md`: document the coverage and native-library capability residual.
+- Add operation, capability/resource/module, lexical-eval, and numeric-flag test tables with denied-effect and inactive compatibility controls.
+- Add `permission-native-loader-driver.ts` and `js-kernel-permission-native-loader.test.ts`: prove native plugin-loaded and dynamically evaluated code retains synchronous/asynchronous write and spawn enforcement, with allowed and inactive controls in worker and inline modes.
+- `packages/senpi-codemode/test/gate/allowlist.json` and `packages/senpi-codemode/test/gate/baseline.json`: record only this PR's ten new first-kernel imports and thirteen measured contract cells; inherited stack additions remain with their owning PRs.
+- `packages/senpi-codemode/src/kernels/shared/path-identity.mjs` (+ `.d.mts`): the canonical form of a path for permission decisions, computed from the native `realpath` of the deepest existing ancestor plus the missing tail, dangling links followed, Unicode and case folded where the volume does; plain JS with injected primitives and a `PATH_IDENTITY_VERSION` the host checks before trusting a kernel value.
+- `packages/senpi-codemode/src/kernels/js/interpose-paths.js` and `interpose.js`: cells now send the path they execute in addition to the path as written (`input.executedPath`), plus the canonical form computed in the kernel thread (`input.canonical: { v, path, foldCase }`, or `input.unresolvable` with the error code). `input.path` stays byte-for-byte the written spelling, so existing rules keep matching exactly as before. The prelude `read`/`write` helpers report the artifact path as the executed one, and the module guard reports the resolved module path as both.
+- `packages/senpi-codemode/src/kernels/js/permission-slots.d.mts`: declares the additive `executedPath`, `canonical` and `unresolvable` input fields and corrects the `tool` union to `bash | read | write | ls`, which is what the kernel sends.
+- `packages/senpi-codemode/src/kernels/js/permission-runtime.js` and `local-module-loader.ts`: a module's own imports and top-level file access are decided under the importing cell's authority instead of being refused as unavailable. Module resolution hooks and module bodies run outside the cell's async context, so the cell's `import()` (and a user worker's script and preload imports) open a per-token loading window; an out-of-context operation is attributed to that token only while it is the sole loader, bound, active and alive, and no other bound token is active. Every other shape keeps today's refusal.
+- `packages/senpi-codemode/test/fixtures/path-identity.ts`: the drivers' decider now decides by file identity, so the boundary driver passes with a symlinked `TMPDIR` (CI runs it with `TMPDIR=/tmp` on macOS). `permission-path-identity-driver.ts`/`js-kernel-permission-path-identity.test.ts` prove the rule-spelling x request-spelling x operation table (symlinks, `/tmp`, case, Unicode form, relative, `file:` URL, dangling links, imports, user workers, zero rules); `permission-module-chain-driver.ts`/`js-kernel-permission-module-chain.test.ts` prove the loading window rows.
+
+### Why
+
+- Cell code could reach file and process APIs without consulting the user's tool deny rules.
+- Resource operations need their open-time access grants and current authority liveness, rather than trusting arbitrary integer descriptors.
+- Engine cleanup and package resolution must remain functional when user operations are denied.
+
+### Why an extension could not handle it
+
+- These APIs execute inside the JS kernel without re-entering the host extension dispatcher. Interposition must precede builtin namespace creation, and the kernel must preserve original engine operations privately.
+
+### Expected merge conflict zones
+
+- `packages/senpi-codemode/src/kernels/js/interpose.js`, `packages/senpi-codemode/src/kernels/js/permission-runtime.js`, and `packages/senpi-codemode/src/kernels/js/worker-core.js`: bootstrap and invocation setup.
+- `packages/senpi-codemode/src/kernels/js/worker-cwd.js`, `packages/senpi-codemode/src/kernels/js/local-module-loader.ts`, and `packages/senpi-codemode/src/kernels/js/rewrite-imports.ts`: cwd and import preparation.
+- `packages/senpi-codemode/src/kernels/js/worker-runtime.js`, `packages/senpi-codemode/src/kernels/js/worker-webview.js`, `packages/senpi-codemode/src/kernels/js/worker-package-resolve.js`, `packages/senpi-codemode/src/kernels/js/process-tree.js`, and `packages/senpi-codemode/src/kernels/js/windows-tree-kill.js`: engine-owned I/O handoffs.
+
+### Behaviour change under a deny
+
+- With no deny configured, every handle, consumer and transport behaves exactly as before, and `Bun.file` still returns the native `BunFile`.
+- Under a deny, `Bun.file` of a read-denied path returns a non-native stand-in instead of a `BunFile`. It cannot be cloned, posted to a Worker or a MessagePort, or handed to a native API; those calls fail instead of reading or writing the file. Its metadata is refused with its content. Operations whose decision passes, such as writing to a read-denied destination, still run.
+- `Bun.file()` asks for its read decision when the handle is minted, including for a handle the cell goes on to use only for writing, so an `ask` read rule prompts on write-only use. That decision cannot be deferred to the first read or metadata call, because the decision is what selects the object to return: an allowed path has to return the native `BunFile` (the identity and native-consumer rows require the real handle while enforcement is active), and a read-denied path has to return the stand-in, which is what keeps a native consumer this interposer does not enumerate from reading the file. Both choices are made before the handle escapes, so the question cannot be asked afterwards.
+
+### Native-library capability residual
+
+- Native-library registration/evaluation itself remains available under the provisional lane ruling, subject to the lead's final acceptance. The regression matrix proves the resulting code cannot perform the denied writes or spawns. The engine adds no onLoad transform.
+
+## 2026-10-26 - Cross-session kernel-tool permission authority (senpi#4390, part of #4309)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/permission-host.ts`, `kernel-contract.ts`, and `context-manager.ts`: mint invoker tokens and reject cross-session invocations before dispatch when either session enforces. A settled inactive invocation keeps its invoker binding until the worker retires, so that session's revocation still reaches the continuations it left behind.
+- `packages/senpi-codemode/src/kernels/js/permission-worker-frames.ts`: discover transferred MessagePorts without spreading collections, so a frame with an array or Set past the engine's argument limit is still delivered (#4387 review follow-up).
+- `packages/senpi-codemode/src/kernels/shared/invocation-authority.ts` and `kernel-tools-pump.ts`: resolve host-only session snapshots, forward invocation options into the host hook, and release authority on settlement. Cross-session refusals identify the authority barrier and enforcing session, not an operation matched by the first deny rule.
+- `packages/senpi-codemode/src/kernels/py/kernel.ts` and `kernel-contract.ts`: apply the same refusal before Python tool bodies execute.
+- `packages/senpi-codemode/src/kernels/js/permission-core.md`: document the integration resolver for invoking sessions without kernels.
+- `packages/senpi-codemode/test/gate/allowlist.json` and `baseline.json`: approve only this PR's two invocation-authority import memberships and invocation contracts, preserving every inherited baseline cell and approval.
+
+### Why
+
+- Kernel tools retained the owning session's authority even when another session invoked them. Either session's deny rules must prevent sharing retained kernel resources.
+
+### Why an extension could not handle it
+
+- Caller identity and invocation admission belong to the dispatcher, shared pump, and kernel host; cell code cannot authenticate its own caller.
+
+### Expected merge conflict zones
+
+- Kernel-tool invocation, permission token minting, Python startup/close, and the shared host pump.
+- The real permission-system registry is connected by the integration PR through the typed session resolver; this PR remains stacked on the JS permission core.
+- Known limitation: reads performed by the runtime's native module resolver (bare packages, tsconfig aliases, package.json #imports, symlinked packages) are not covered by this work; tracked in #4380.
+
+## 2026-10-26 - JS eval permission core (senpi#4387, part of #4309)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/interpose.js`, `worker-entry.js`, `inline-worker-entry.js`, `permission-runtime.js`, and `permission-worker-entry.js`: patch synchronous spawn/write builtins before runtime imports, retain originals privately, carry per-context authority, and bootstrap cell-created Workers.
+- `packages/senpi-codemode/src/kernels/js/permission-slots.mjs` and `permission-slots.d.mts`: implement four generation-tagged CAS slots, bounded messages, a 2000 ms deadline, stale-interrupt protection and pre-wrap retirement.
+- `packages/senpi-codemode/src/kernels/js/permission-authority.mjs` and `permission-authority.d.mts`: decide present-token and no-token authority, with dead words always refusing.
+- `packages/senpi-codemode/src/kernels/js/permission-host.ts`, `permission-sessions.ts`, `kernel-contract.ts`, `context-manager.ts`, `worker-host.ts`, `inline-worker.ts`, `worker-slot.ts`, and `worker-startup.ts`: mint owner-session tokens, dispatch a host CellDecider, revoke session kernels, observe main/child Worker exits, fence abandoned sessions, and emit the typed onRevocationFailed hook.
+- `packages/senpi-codemode/src/kernels/js/worker-core.js`, `worker-core.d.ts`, `kernel-tools-pump.js`, and `worker-cwd.js`: bind cell/invocation async contexts and preserve the requested path spelling for policy before cwd resolution.
+- `packages/senpi-codemode/src/bridge/protocol.ts`: allow structured deciding-rule identity on a permission refusal.
+- `packages/senpi-codemode/src/kernels/js/permission-core.md`: document integration seams and scope.
+- Review fold: preserve inactive continuations and long-lived Workers after cell settlement while revocation still refuses them; restore user workerData, arbitrary message values, error metadata and close events.
+- Review fold: claim a slot before decoding its request and reclaim interrupted generations; add deterministic slot, lifetime and Worker parity matrices.
+- Review fold: `permission-host.ts` forwards MessagePorts a cell-created Worker transfers through raw `parentPort` frames, reports a frame it cannot forward as the Worker's `messageerror` (handled in `permission-runtime.js`) instead of throwing in the host listener, and releases inactive tokens on interrupt and timeout exactly as settlement does.
+- `packages/senpi-codemode/scripts/gate-import-observer.ts` and `packages/coding-agent/test/runtime-snapshot/inventory-preload.mjs`: capture the direct write primitive so trusted loader observations do not re-enter the cell's interposed writer during bootstrap.
+
+### Why
+
+- Direct-tool deny enforcement did not cover operations issued by eval code. The core needs a synchronous fail-closed check without blocking the host event loop.
+- Revocation must mean observed termination, including nested Workers, rather than a termination request. A late response or stale interrupt must never corrupt a successor slot.
+
+### Why an extension could not handle it
+
+- The extension cannot interpose already-created builtin namespaces or carry authority into worker-local async contexts. These mechanisms belong to the worker bootstrap and kernel host.
+
+### Expected merge conflict zones
+
+- Kernel startup, WorkerSlot retirement, context-manager admission, worker-core execution, kernel-tool invocation, and worker-cwd wrappers.
+- Direct-tool DEAD enforcement and the real permission-system decider belong to the integration PR. Cross-session invocation refusal belongs to PR 2b. Full API coverage belongs to PR 3.
+- Known limitation: reads performed by the runtime's native module resolver (bare packages, tsconfig aliases, package.json #imports, symlinked packages) are not covered by this work; tracked in #4380.
+
 ## 2026-10-23 - Product copy punctuation (senpi#4040)
 
 ### What changed
