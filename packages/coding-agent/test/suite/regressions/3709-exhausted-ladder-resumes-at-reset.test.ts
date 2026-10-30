@@ -113,56 +113,60 @@ describe("an exhausted fallback ladder resumes the goal at the soonest known res
 		expect(runsAfterExhaustion(harness)).toBe(1);
 	}, 30_000);
 
-	it("schedules no resume when no rung named a reset time", async () => {
-		vi.useFakeTimers({ now: NOW });
-		const harness = await goalOnLadder([
-			failure("429 You've hit your session limit for this model"),
-			failure("HTTP 429: rate_limit_exceeded"),
-			failure("429 You've hit your weekly limit for this model"),
-		]);
-		harnesses.push(harness);
+	it.each([
+		[
+			"429 You've hit your session limit for this model",
+			"HTTP 429: rate_limit_exceeded",
+			"429 You've hit your weekly limit for this model",
+		],
+		["HTTP 429: rate_limit_exceeded", "HTTP 429: rate_limit_exceeded", "HTTP 429: rate_limit_exceeded"],
+		["HTTP 429: rate_limit_exceeded", "HTTP 503: upstream unavailable", "network error: connection reset"],
+	])(
+		"schedules no resume for a limit-shaped ladder without a reset: %s",
+		async (...errors) => {
+			vi.useFakeTimers({ now: NOW });
+			const harness = await goalOnLadder(errors.map(failure));
+			harnesses.push(harness);
 
-		await harness.session.prompt("start");
-		expect(harness.eventsOfType("retry_fallback_exhausted")).toHaveLength(1);
+			await harness.session.prompt("start");
+			expect(harness.eventsOfType("retry_fallback_exhausted")).toHaveLength(1);
 
-		await advanceTo(NOW + 80 * HOUR);
-		expect(runsAfterExhaustion(harness)).toBe(0);
-		expect(harness.getPendingResponseCount()).toBe(2);
-	}, 30_000);
+			await advanceTo(NOW + 80 * HOUR);
+			expect(runsAfterExhaustion(harness)).toBe(0);
+			expect(harness.getPendingResponseCount()).toBe(2);
+		},
+		30_000,
+	);
 
 	it.each([
 		"HTTP 503: upstream unavailable",
 		"network error: connection reset",
 		"Error: provider rejected the request permanently",
-	])(
-		"keeps immediate recovery and subsequent backoff after an outage ladder: %s",
-		async (error) => {
-			vi.useFakeTimers({ now: NOW });
-			const harness = await goalOnLadder([
-				failure(error),
-				failure(error),
-				failure("HTTP 503: upstream unavailable"),
-				failure("HTTP 503: upstream unavailable"),
-			]);
-			harnesses.push(harness);
-			const backedOff = waitForSettles(harness, 2);
-			void backedOff.catch(() => {});
+	])("keeps immediate recovery and subsequent backoff after an outage ladder: %s", async (error) => {
+		vi.useFakeTimers({ now: NOW });
+		const harness = await goalOnLadder([
+			failure(error),
+			failure(error),
+			failure("HTTP 503: upstream unavailable"),
+			failure("HTTP 503: upstream unavailable"),
+		]);
+		harnesses.push(harness);
+		const backedOff = waitForSettles(harness, 2);
 
-			await harness.session.prompt("start");
-			// The first outage recovery must be admitted immediately, not parked without a reset.
-			expect(runsAfterExhaustion(harness)).toBe(1);
-			await backedOff;
-			expect(harness.getPendingResponseCount()).toBe(2);
-			await advanceTo(NOW + 14_999);
-			expect(runsAfterExhaustion(harness)).toBe(1);
+		await harness.session.prompt("start");
+		// The first outage recovery must be admitted immediately, not parked without a reset.
+		await backedOff;
+		expect(runsAfterExhaustion(harness)).toBe(1);
+		expect(harness.getPendingResponseCount()).toBe(2);
+		await advanceTo(NOW + 14_999);
+		expect(runsAfterExhaustion(harness)).toBe(1);
 
-			const recovered = waitForSettles(harness, 3);
-			await advanceTo(NOW + 15_000);
-			await recovered;
-			expect(runsAfterExhaustion(harness)).toBe(2);
-			expect(harness.getPendingResponseCount()).toBe(0);
-		},
-	);
+		const recovered = waitForSettles(harness, 3);
+		await advanceTo(NOW + 15_000);
+		await recovered;
+		expect(runsAfterExhaustion(harness)).toBe(2);
+		expect(harness.getPendingResponseCount()).toBe(0);
+	});
 
 	it("resumes after one second when every collected reset passed before settlement", async () => {
 		vi.useFakeTimers({ now: NOW });

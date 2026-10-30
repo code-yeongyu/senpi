@@ -1405,6 +1405,7 @@ export class AgentSession {
 	private _isAgentRunActive = false;
 	/** senpi#3709: reset moments the failed requests of this run named, and whether its fallback ladder ran out. */
 	private _runLimitResets: number[] = [];
+	private _runLimitFailure = false;
 	private _runFallbackExhausted = false;
 	private _promptsInFlight = 0;
 	/** senpi#3650: the core may continue a run after agent_end; the settle must not wait on that continuation. */
@@ -3273,16 +3274,21 @@ export class AgentSession {
 
 	/**
 	 * senpi#3709: a run whose fallback ladder ran out reports the soonest reset its failed requests
-	 * named, so a resumer can wait for it; `resumeAt` is absent when none named one. Consumed once per settle.
+	 * named after a limit failure. Outages retain ordinary provider recovery; a known reset that
+	 * passed during later rungs remains known so a resumer can retry now. Consumed once per settle.
 	 */
 	private _takeRunFallbackExhaustion(): { resumeAt?: number } | undefined {
 		const exhausted = this._runFallbackExhausted;
+		const limited = this._runLimitFailure;
 		const now = this._fallbackWallNow();
-		const upcoming = this._runLimitResets.filter((resetAt) => resetAt > now);
+		const resets = this._runLimitResets;
+		const upcoming = resets.filter((resetAt) => resetAt > now);
 		this._runFallbackExhausted = false;
+		this._runLimitFailure = false;
 		this._runLimitResets = [];
-		if (!exhausted) return undefined;
-		return upcoming.length === 0 ? {} : { resumeAt: Math.min(...upcoming) };
+		if (!exhausted || !limited) return undefined;
+		if (upcoming.length > 0) return { resumeAt: Math.min(...upcoming) };
+		return resets.length === 0 ? {} : { resumeAt: Math.max(...resets) };
 	}
 
 	private async _emitAgentSettled(agentEnd?: AgentEvent): Promise<void> {
@@ -4145,6 +4151,11 @@ export class AgentSession {
 			if (msg.stopReason === "error") {
 				const resetAt = limitResetAt(msg, this._fallbackWallNow());
 				if (resetAt !== undefined) this._runLimitResets.push(resetAt);
+				this._runLimitFailure ||=
+					resetAt !== undefined ||
+					usageLimitScope(msg) !== undefined ||
+					msg.providerDiagnostic?.category === "quota" ||
+					msg.providerDiagnostic?.category === "rate_limit";
 			}
 			this._skipNextPostRetryCompactionCheck = false;
 			this._clearCircuitProbeWatchdog();
@@ -13123,6 +13134,7 @@ export class AgentSession {
 				/rate.?limit|(?:^429(?=\s+\{)|(?:\bHTTP\/1\.[01]\s+|\bHTTP\s+|\bstatus(?:\s+code)?\s+|\berror\s+|\bcode\s+)429\b)|too many requests|resource.?exhausted/i.test(
 					errorMessage,
 				);
+			if (is429Class) this._runLimitFailure = true;
 			// Profile-driven routing: "after-turn-budget" (Kimi) keeps 429s on the
 			// ordinary same-model budget; "tiered" (senpi default) uses hint tiers.
 			if (is429Class && retryProfile.fallback.rateLimited === "after-turn-budget") {

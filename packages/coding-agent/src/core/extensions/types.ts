@@ -1788,9 +1788,9 @@ export interface AgentBeforeSettleEvent extends BoundaryState {
 export interface AgentSettledEvent {
 	type: "agent_settled";
 	/**
-	 * Present when the run ended because every rung of the model fallback ladder failed. `resumeAt`
-	 * (epoch ms) is the soonest future reset any failed request of the run named; absent when none
-	 * named one, in which case nothing is known to recover on its own.
+	 * Present when every fallback rung failed and at least one failure was limit-shaped. `resumeAt`
+	 * (epoch ms) is the soonest future reset the run named, or the latest past reset if all passed.
+	 * It is absent only when no reset was collected. Outage-only exhaustion keeps provider recovery.
 	 */
 	fallbackExhausted?: { resumeAt?: number };
 }
