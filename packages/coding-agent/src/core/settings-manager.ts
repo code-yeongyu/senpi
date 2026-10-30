@@ -119,7 +119,7 @@ export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
  * first-token latency observed through relays (a few minutes) and than Anthropic's 10-minute ceiling for a
  * non-streaming request, well short of the 60-minute turn inactivity lease.
  */
-export const DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS = 900_000;
+const DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS = 900_000;
 
 /** Warn threshold for a single `session_shutdown` extension handler. */
 export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
