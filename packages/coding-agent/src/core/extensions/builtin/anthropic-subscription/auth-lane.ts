@@ -52,6 +52,8 @@ export type AuthenticatedQueryInput = {
 	pinnedAccount?: string;
 	/** The account this session's SDK transcript lives under; preferred while it can serve (senpi#2891). */
 	preferredAccount?: string;
+	/** Identifies the turn across its retries: with `preferredAccount`, the turn may try one other account (oh-my-openagent#10304). */
+	turnKey?: string;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
 	createAttempt?: (
 		input: AuthenticatedAttemptInput,
@@ -247,6 +249,8 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		},
 		classify: (error) => classifyForRequest(error, askedLegacyLongContext),
 		...(input.sessionId === undefined ? {} : { sessionKey: input.sessionId }),
+		...(input.preferredAccount === undefined ? {} : { warmAccount: input.preferredAccount }),
+		...(input.turnKey === undefined ? {} : { turnKey: input.turnKey }),
 		onLongContextRefused: () => markLongContextRefused(),
 		store: pool.store,
 		providerId: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
