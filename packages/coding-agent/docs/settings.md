@@ -150,6 +150,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean \| `"header"` | `false` | `true` hides the startup header and loaded-resource listing. `"header"` keeps the header (version and key hints) but hides the model scope line and loaded-resource listing |
 | `tips` | boolean | `true` | Show the rotating startup and working-status tip lines |
+| `reducedMotion` | boolean | `false` | Keep decorative indicators static. Currently stops the footer's `watching` glyph from pulsing while the agent idles on monitors. Read at session start; takes effect after a reload |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
 | `collapseChangelog` | boolean | `false` | Show condensed changelog after updates |
 | `enableInstallTelemetry` | boolean | `true` | Send the anonymous install/update ping and selected provider attribution headers. This does not control update checks |
@@ -504,6 +505,20 @@ run.
 | `handoffHint.enabled` | boolean | `true` | Offer the hint at all |
 | `handoffHint.minContextTokens` | number | `200000` | No hint below this context size |
 | `handoffHint.minSavingUsd` | number | `1` | No hint unless a fresh session saves at least this much on the next reply |
+
+### Job widgets
+
+A background command that keeps printing numbers (a render, a benchmark, a test run) gets a small live chart:
+once it has run for `authorAfterMs` and printed a few lines, a model reads the command and a redacted sample of
+its output once and writes a chart spec, and every update after that is computed locally from new output. Jobs
+whose output has nothing worth charting stay plain. It needs no setup; the views reach clients through the
+`job_widget_state` event ([RPC](rpc.md#job-widgets)).
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `jobWidgets.enabled` | boolean | `true` | Build widgets at all; `false` taps no output and never calls a model |
+| `jobWidgets.model` | string | - | `provider/model-id` that writes the specs; otherwise a model the host provides, else the session's model |
+| `jobWidgets.authorAfterMs` | number | `15000` | Job age in milliseconds before its spec is written |
 
 ### Shell
 

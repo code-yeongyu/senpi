@@ -124,6 +124,39 @@ test("durations are dropped, measurement values become <measured> with their key
 	assert.equal(diffNormalized(normalize({ memory: { liveBytes: 7 } }), normalize({ memory: {} })).length, 1);
 });
 
+test("the detached-cell elapsed label in a status text becomes <elapsed>; nothing else in a status text changes", () => {
+	const normalize = createNormalizer();
+	// Every form the codemode eval-status formatter emits (formatElapsedSeconds), single- and multi-cell heads.
+	const tokenized = [
+		["↗ js · G4 detached nested calls (0s)", "↗ js · G4 detached nested calls (<elapsed>)"],
+		["↗ js · G4 detached nested calls (1s)", "↗ js · G4 detached nested calls (<elapsed>)"],
+		["↗ js · a cell that never finishes (59s)", "↗ js · a cell that never finishes (<elapsed>)"],
+		["↗ py · cell (3m)", "↗ py · cell (<elapsed>)"],
+		["↗ js · cell (2h)", "↗ js · cell (<elapsed>)"],
+		["↗ js · cell (2h 30m)", "↗ js · cell (<elapsed>)"],
+		["↗ eval 2: first, second (1d 2h 3m)", "↗ eval 2: first, second (<elapsed>)"],
+	];
+	for (const [statusText, expected] of tokenized)
+		assert.equal(normalize({ statusText }).statusText, expected, statusText);
+	const untouched = [
+		"↗ js · queued cell (queued)",
+		"↗ js · cell (1s) and more",
+		"↗ js · cell (1m 2s)",
+		"↗ js · cell (12ms)",
+		"Sending (1s)",
+		"Steering - reaches the agent at its next step",
+		"",
+	];
+	for (const statusText of untouched) assert.equal(normalize({ statusText }).statusText, statusText, statusText);
+	// Only the statusText field: the same text under another key is compared as produced.
+	assert.equal(normalize({ text: "↗ js · cell (1s)" }).text, "↗ js · cell (1s)");
+	// 0s and 1s of the same cell compare equal.
+	assert.deepEqual(
+		diffNormalized(normalize({ statusText: "↗ js · c (1s)" }), normalize({ statusText: "↗ js · c (0s)" })),
+		[],
+	);
+});
+
 test("roots and host facts are replaced longest first; other text is never masked", () => {
 	const normalize = createNormalizer({
 		roots: [

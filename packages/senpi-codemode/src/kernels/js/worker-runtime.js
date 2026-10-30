@@ -1,8 +1,7 @@
 // allow: SIZE_OK — private runtime state and installed globals must stay in one worker module.
 import { pathToFileURL } from "node:url";
 import { createCellRequire, createRequire } from "./worker-require.js";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { createFileHelpers } from "./worker-file-helpers.js";
 import { inspect } from "node:util";
 import { encodeDisplayImage, resolveDisplayOps } from "./display-image.js";
 import { terminateProcessGroups, terminateProcessTrees } from "./process-tree.js";
@@ -24,12 +23,10 @@ const PRELUDE_SOURCE_URL = "senpi:kernel-prelude";
 // How long a child gets to honour SIGTERM before SIGKILL. Short, because the
 // cell has already produced its value and the caller is waiting on settle.
 const CHILD_TERMINATION_GRACE_MS = 1_000;
-const INTERNAL_URL = /^([a-z][a-z0-9+.-]*):\/\/(.*)$/iu;
 
 export class JsWorkerRuntime {
-	#cwd;
 	#parallelPoolWidth;
-	#localRoots;
+	#files;
 	#env = new Map();
 	#hooks = null;
 	#pendingDisplays = [];
@@ -44,12 +41,10 @@ export class JsWorkerRuntime {
 	#tools;
 
 	constructor(options) {
-		this.#cwd = options.cwd;
 		this.#parallelPoolWidth = options.parallelPoolWidth;
 		this.#onChildEvent = typeof options.onChildEvent === "function" ? options.onChildEvent : null;
 		this.#onShellWaitChange = options.onShellWaitChange;
-		this.#localRoots = { ...(options.localRoots ?? {}) };
-		if (options.artifactsDir && !this.#localRoots.local) this.#localRoots.local = join(options.artifactsDir, "local");
+		this.#files = createFileHelpers(options, (event) => this.#emitStatus(event));
 		this.#tools = createKernelToolRegistry({
 			generation: options.kernelGeneration ?? 1,
 			hostToolNames: options.hostToolNames ?? [],
@@ -166,8 +161,8 @@ export class JsWorkerRuntime {
 		globalThis.log = message => this.#hooks?.emit({ type: "log", message: String(message) });
 		globalThis.phase = title => this.#hooks?.emit({ type: "phase", title: String(title) });
 		globalThis.env = (key, value) => this.#envHelper(key, value);
-		globalThis.read = async (path, options, ...rest) => await this.#read(path, helperOptions("read", options, rest));
-		globalThis.write = async (path, content) => await this.#write(path, content);
+		globalThis.read = async (path, options, ...rest) => await this.#files.read(path, helperOptions("read", options, rest));
+		globalThis.write = async (path, content) => await this.#files.write(path, content);
 		globalThis.output = async (...args) => await this.#output(args);
 		globalThis.tool_schema = async name => await this.#toolSchema(name);
 		globalThis.agent = async (prompt, options, ...rest) => await this.#agent(prompt, options, rest);
@@ -295,53 +290,6 @@ export class JsWorkerRuntime {
 		const result = this.#env.get(name) ?? process.env[name];
 		this.#emitStatus({ op: "env", key: name, value: result, action: "get" });
 		return result;
-	}
-
-	async #read(rawPath, options) {
-		const path = this.#resolvePath(String(rawPath), "read");
-		const info = await stat(path);
-		if (info.isDirectory()) throw new Error(`Directory paths are not supported by read(): ${path}`);
-		let text = await readFile(path, "utf8");
-		const offset = typeof options.offset === "number" ? options.offset : 1;
-		const limit = typeof options.limit === "number" ? options.limit : undefined;
-		if (offset > 1 || limit !== undefined) {
-			const lines = text.split(/\r?\n/u);
-			const start = Math.max(0, offset - 1);
-			text = lines.slice(start, limit === undefined ? undefined : start + limit).join("\n");
-		}
-		this.#emitStatus({ op: "read", path, bytes: info.size, chars: text.length });
-		return text;
-	}
-
-	async #write(rawPath, content) {
-		const path = this.#resolvePath(String(rawPath), "write");
-		const data = await writeData(content);
-		await mkdir(dirname(path), { recursive: true });
-		await writeFile(path, data);
-		this.#emitStatus({ op: "write", path, bytes: typeof data === "string" ? Buffer.byteLength(data) : data.byteLength });
-		return path;
-	}
-
-	#resolvePath(rawPath, operation) {
-		const match = INTERNAL_URL.exec(rawPath);
-		if (!match) return isAbsolute(rawPath) ? normalize(rawPath) : resolve(this.#cwd, rawPath);
-		const scheme = match[1].toLowerCase();
-		const root = this.#localRoots[scheme];
-		if (!root) throw new Error(`Protocol paths are not supported by ${operation}(): ${rawPath}`);
-		let relative;
-		try {
-			relative = decodeURIComponent(match[2].replaceAll("\\", "/"));
-		} catch (error) {
-			if (error instanceof URIError) throw new Error(`Invalid URL encoding in ${scheme}:// path: ${rawPath}`);
-			throw error;
-		}
-		if (isAbsolute(relative) || relative.split("/").includes("..")) {
-			throw new Error(`Path traversal is not allowed in ${scheme}:// URLs: ${rawPath}`);
-		}
-		const rootPath = resolve(root);
-		const path = resolve(rootPath, relative);
-		if (path !== rootPath && !path.startsWith(`${rootPath}${sep}`)) throw new Error(`${scheme}:// path escapes its root`);
-		return path;
 	}
 
 	async #output(args) {
@@ -500,14 +448,6 @@ function reservedTool(globalName, helperName) {
 	const value = globalThis[globalName];
 	if (typeof value !== "string") throw new Error(`${helperName}() bridge is unavailable`);
 	return value;
-}
-
-async function writeData(value) {
-	if (typeof value === "string" || value instanceof Uint8Array) return value;
-	if (value instanceof Blob) return new Uint8Array(await value.arrayBuffer());
-	if (value instanceof ArrayBuffer) return new Uint8Array(value);
-	if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-	throw new TypeError("write() expects string, Blob, ArrayBuffer, or TypedArray data");
 }
 
 function chunkToString(chunk, encoding) {

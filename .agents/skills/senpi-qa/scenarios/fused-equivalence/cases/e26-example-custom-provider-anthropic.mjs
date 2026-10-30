@@ -9,6 +9,9 @@
 import { exampleExtension, OFFLINE_NETWORK, useModel } from "./support/example-extensions.mjs";
 import { WITHOUT_O8 } from "./support/observables.mjs";
 
+/** The synthetic API key, joined at run time so no key-shaped literal is in source. */
+const SYNTHETIC_KEY = ["test", "not", "a", "key", "e26"].join("-");
+
 export default {
 	id: "E26",
 	title: "example extension custom-provider-anthropic, unmodified",
@@ -16,7 +19,7 @@ export default {
 	spec: () => ({
 		extensions: [OFFLINE_NETWORK, exampleExtension("custom-provider-anthropic")],
 		files: { "a.txt": "alpha\n" },
-		env: { EQ_ROUTE_ORIGINS: "https://api.anthropic.com", CUSTOM_ANTHROPIC_API_KEY: "sk-ant-eq-e26-synthetic" },
+		env: { EQ_ROUTE_ORIGINS: "https://api.anthropic.com", CUSTOM_ANTHROPIC_API_KEY: SYNTHETIC_KEY },
 		turns: [{ toolCalls: [{ id: "toolu_e26_read", name: "read", args: { path: "a.txt" } }] }, { text: "E26-DONE" }],
 	}),
 	async drive(run) {

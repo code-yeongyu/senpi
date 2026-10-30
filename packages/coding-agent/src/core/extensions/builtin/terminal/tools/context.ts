@@ -25,8 +25,10 @@ export interface TerminalToolContext {
 	 * expose PI_* session metadata to spawned commands like the core bash tool does.
 	 */
 	readonly getSessionContext?: () => import("../../../types.ts").ExtensionContext | undefined;
-	/** Registers a session when it transitions to background liveness. */
-	readonly onBackgroundStart?: (id: string, description: string, startedAtMs: number) => void;
+	/** Registers a session when it transitions to background liveness; `command` is what it runs, when known. */
+	readonly onBackgroundStart?: (id: string, description: string, startedAtMs: number, command?: string) => void;
+	/** A person or the model wrote to a session's stdin (`bash_input`): it is interactive from now on. */
+	readonly onSessionInput?: (id: string) => void;
 	/** Notified when a background session exits, so the notify layer can wake the agent. */
 	readonly onBackgroundExit?: (id: string, runtime: TerminalExitView) => void;
 	/** Session-scoped monitor state, sharing the terminal manager's bash-id namespace. */

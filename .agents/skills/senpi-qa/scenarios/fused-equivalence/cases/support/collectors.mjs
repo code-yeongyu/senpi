@@ -34,6 +34,8 @@ const fileContent = (bytes) => {
 	return bytes.length <= TEXT_LIMIT && Buffer.from(text, "utf8").equals(bytes) ? { text } : { sha: sha(bytes) };
 };
 const sha = (value) => `sha256:${createHash("sha256").update(value).digest("hex").slice(0, 16)}`;
+/** A credential header's value as its hash, marked redacted so it never reads as a key (O4 still compares it). */
+const redactedSha = (value) => `<redacted:${sha(value)}>`;
 /**
  * The MCP inventory announcement is emitted on the extension's own schedule: in E11 (darwin-arm64, today's code) it
  * landed before the startup `pi-websearch` status events in one run and after them in another, and with the servers
@@ -69,7 +71,7 @@ export const collectors = {
 				Object.entries(request.headers ?? {})
 					.filter(([name]) => !FRAMING_HEADERS.has(name))
 					.sort(([a], [b]) => a.localeCompare(b))
-					.map(([name, value]) => [name, CREDENTIAL_HEADERS.has(name) ? sha(String(value)) : value]),
+					.map(([name, value]) => [name, CREDENTIAL_HEADERS.has(name) ? redactedSha(String(value)) : value]),
 			),
 		),
 	O5: (run) => ({ calls: effectCalls(run), tree: sandboxTree(run.box.cwd), extra: run.effects }),

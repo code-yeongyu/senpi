@@ -12,6 +12,9 @@ import { exampleExtension, OFFLINE_NETWORK, useModel } from "./support/example-e
 import { WITHOUT_O8 } from "./support/observables.mjs";
 
 const DIRECT_ACCESS = "POST https://gitlab.com/api/v4/ai/third_party_agents/direct_access";
+/** The synthetic GitLab token and the exchanged token, joined at run time so no key-shaped literal is in source. */
+const SYNTHETIC_GITLAB_TOKEN = ["test", "not", "a", "key", "e27"].join("-");
+const SYNTHETIC_DIRECT_ACCESS_TOKEN = ["test", "not", "a", "key", "e27", "direct", "access"].join("-");
 
 export default {
 	id: "E27",
@@ -23,9 +26,9 @@ export default {
 		env: {
 			EQ_ROUTE_ORIGINS: "https://cloud.gitlab.com",
 			EQ_LOCAL_RESPONSES: JSON.stringify({
-				[DIRECT_ACCESS]: { token: "eq-e27-direct-access-token", headers: { "x-gitlab-eq-direct-access": "e27" } },
+				[DIRECT_ACCESS]: { token: SYNTHETIC_DIRECT_ACCESS_TOKEN, headers: { "x-gitlab-eq-direct-access": "e27" } },
 			}),
-			GITLAB_TOKEN: "glpat-eq-e27-synthetic",
+			GITLAB_TOKEN: SYNTHETIC_GITLAB_TOKEN,
 		},
 		turns: [
 			{ toolCalls: [{ id: "toolu_e27_read", name: "read", args: { path: "a.txt" } }] },

@@ -9,6 +9,9 @@
 //   can trail one emitted after it, so even their relative order is a race; event and entry order are compared directly;
 // - durations are dropped (duration/elapsed/latency/queued keys); resource measurements (kernel memory byte counts)
 //   keep their key and compare as `<measured>`, so a measurement that appears or disappears is still a difference;
+// - the wall-clock elapsed label of the codemode detached-cell status (`\u2197 js \u00b7 <summary> (1s)`, formatElapsedSeconds in
+//   packages/senpi-codemode/src/extension/eval-status.ts) becomes `(<elapsed>)`, under the statusText key only: a cell that
+//   detaches at its 1 s timeout reads `(0s)` or `(1s)` depending on host load;
 // - only run-scoped prefixes are replaced: the roots the harness allocates (sandbox, checkout, fake-server origin) and
 //   the host facts the CLI renders about the machine it runs on;
 // - nothing else is masked: every other string, number, key and array order is compared as produced.
@@ -56,6 +59,8 @@ const DURATION_KEY =
 /** Measured resource quantities (a kernel's live heap after a cell): the key is compared, the value is `<measured>`. */
 const MEASUREMENT_KEY = /^(liveBytes|rssBytes|heapUsedBytes|heapTotalBytes|externalBytes)$/;
 const MEASURED = "<measured>";
+/** The detached-cell status text with its trailing elapsed label, in exactly the forms formatElapsedSeconds emits. */
+const EVAL_STATUS_ELAPSED = /^(\u2197 .* )\((?:\d+s|\d+m|\d+h(?: \d+m)?|\d+d \d+h \d+m)\)$/u;
 // Epoch numbers under a time key: seconds or milliseconds between 2001 and 2286.
 const EPOCH_MS_MIN = 1e12;
 const EPOCH_MS_MAX = 1e13;
@@ -162,7 +167,8 @@ export function createNormalizer({ roots = [], hostFacts = [] } = {}) {
 			const namespace = parent === undefined ? (key ?? "text") : `${parent}.${key ?? "text"}`;
 			if (typeof node === "string") {
 				if (key !== undefined && ID_KEYS.has(key) && !PURE_UUID.test(node)) return onId("id", node);
-				return rewriteString(node, namespace);
+				const text = key === "statusText" ? node.replace(EVAL_STATUS_ELAPSED, "$1(<elapsed>)") : node;
+				return rewriteString(text, namespace);
 			}
 			if (typeof node === "number") {
 				const epoch = key !== undefined && TIME_KEY.test(key) ? epochOfNumber(node) : undefined;

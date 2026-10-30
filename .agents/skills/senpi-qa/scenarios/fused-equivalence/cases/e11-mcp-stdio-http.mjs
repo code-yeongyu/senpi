@@ -2,8 +2,8 @@
 //
 // Two real MCP servers from the repo's MCP fixtures (packages/coding-agent/test/mcp/fixtures): one over stdio, spawned
 // by the CLI, and one over Streamable HTTP, started by the case. Both are configured in the sandbox's global mcp.json with
-// the eager lifecycle, and the case waits until both report connected before the prompt; one model turn calls a tool on
-// each. The HTTP server's origin is a run-scoped root like the sandbox.
+// the eager lifecycle, and the case waits until both report connected with their tool listed before the prompt; one model
+// turn calls a tool on each. The HTTP server's origin is a run-scoped root like the sandbox.
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -37,13 +37,18 @@ function startHttpFixture(run) {
 	});
 }
 
-/** Resolve once every configured MCP server reports connected, re-reading surfaces on each change event. */
+/**
+ * Resolve once every configured MCP server reports connected with its tool listed, re-reading surfaces on each change
+ * event (subscribed before each read, bounded by the turn timeout).
+ */
 async function bothConnected(run) {
 	for (;;) {
 		const changed = run.nextEvent((e) => e.type === "loaded_surfaces_changed");
 		const surfaces = await run.send({ type: "get_loaded_surfaces" });
 		const servers = surfaces.data.mcpServers ?? [];
-		if (servers.length === 2 && servers.every((server) => server.status === "connected")) return;
+		if (servers.length === 2 && servers.every((server) => server.status === "connected" && server.toolCount >= 1)) {
+			return;
+		}
 		await changed;
 	}
 }
