@@ -119,7 +119,9 @@ export class RetryFallbackController {
 	 * suppressed and is still usable; pinned state and the "never" policy hold the
 	 * fallback model. One exception outranks both the cooldown and the policy: a
 	 * fallback that is itself known unusable (billing or an account limit) while the
-	 * original is not is never where the session rests (senpi#2376).
+	 * original is not is never where the session rests (senpi#2376). An original that is
+	 * itself still held (an account usage limit with the reset it named, which can outlast
+	 * the circuit's 30-minute ceiling) is not restored before that hold ends (senpi#3347).
 	 */
 	async maybeRestorePrimary(
 		revertPolicy: "cooldown-expiry" | "never",
@@ -135,7 +137,11 @@ export class RetryFallbackController {
 		const model = this.deps.registry.find(selector.provider, selector.id);
 		if (!model) return false;
 		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
-		if (!stranded && (heldForNetworkBlip || !this.originalRecovered(state, revertPolicy))) return false;
+		if (
+			!stranded &&
+			(heldForNetworkBlip || this.unusable.isUnusable(model) || !this.originalRecovered(state, revertPolicy))
+		)
+			return false;
 		// User override wins: only restore the original thinking level when the
 		// current level still equals the level the fallback switch applied. A manual
 		// setThinkingLevel clears lastAppliedThinkingLevel (see noteManualThinkingLevel).
