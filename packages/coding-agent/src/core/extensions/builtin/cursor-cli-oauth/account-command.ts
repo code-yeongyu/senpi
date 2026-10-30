@@ -1,4 +1,5 @@
 import type { Credential } from "@earendil-works/pi-ai";
+import { stampLogin } from "@earendil-works/pi-ai/auth/pool/login-id";
 import { accountLabel } from "@earendil-works/pi-ai/auth/pool/slots";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../types.ts";
 import { emitProviderAccountsChanged } from "../anthropic-subscription/account-events.ts";
@@ -305,7 +306,8 @@ async function importAccount(
 					: await importCredential(before, importDeps);
 			const existing = new Set(listAccounts(before).map((account) => account.name));
 			importedName = listAccounts(updated).find((account) => !existing.has(account.name))?.name;
-			return updated;
+			// An import adds a signed-in account, so it stamps a login id like a login (senpi#4099).
+			return stampLogin(updated);
 		});
 	} catch (error) {
 		ctx.ui.notify(
