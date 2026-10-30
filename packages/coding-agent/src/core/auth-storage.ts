@@ -30,6 +30,7 @@ import {
 } from "@earendil-works/pi-ai/auth/pool/slots";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
+import { createHash } from "node:crypto";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
@@ -159,7 +160,7 @@ let sharedAuthFileReadState: { authPath: string; readState: AuthFileReadState } 
  */
 export type AuthReloadResult = "loaded" | "busy" | "failed";
 
-export interface AuthStorageBackend {
+export interface AuthStorageBackend extends Pick<CredentialStore, "withRefreshLock"> {
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T;
 	withLockAsync<T>(
 		fn: (current: string | undefined) => Promise<LockResult<T>>,
@@ -262,6 +263,8 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 	private async acquireLockAsync(
 		signal: AbortSignal | undefined,
 		onCompromised: (error: Error) => void,
+		path = this.authPath,
+		budgetMs = FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
 	): Promise<() => Promise<void>> {
 		signal?.throwIfAborted();
 		const startedAt = Date.now();
@@ -271,7 +274,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		// whole budget, and `onCompromised` is rebound per attempt.
 		while (true) {
 			try {
-				const { release } = await lockWithLossHandling(this.authPath, {
+				const { release } = await lockWithLossHandling(path, {
 					...FILE_STORAGE_LOCK_OPTIONS,
 					retries: 0,
 					onLost: onCompromised,
@@ -285,17 +288,43 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 				signal?.throwIfAborted();
 				if (!isLockError(error)) throw error;
 				const waitedMs = Date.now() - startedAt;
-				if (waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) {
-					throw new CredentialStoreBusyError(this.authPath, waitedMs, error);
+				if (waitedMs >= budgetMs) {
+					throw new CredentialStoreBusyError(path, waitedMs, error);
 				}
 				const delayMs = Math.min(
 					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
 					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
-					FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs,
+					budgetMs - waitedMs,
 				);
 				attempt++;
 				await raceWithAbortSignal(new Promise<void>((resolve) => setTimeout(resolve, delayMs)), signal);
 			}
+		}
+	}
+
+	async withRefreshLock<T>(
+		providerId: string,
+		slotName: string,
+		fn: (signal: AbortSignal) => Promise<T>,
+		options?: AuthOperationOptions,
+	): Promise<T> {
+		this.ensureParentDir();
+		const identity = createHash("sha256")
+			.update(JSON.stringify([providerId, slotName]))
+			.digest("hex");
+		const path = `${this.authPath}.refresh-${identity}`;
+		const lost = new AbortController();
+		const signal = options?.signal ? AbortSignal.any([options.signal, lost.signal]) : lost.signal;
+		// The normal 5.5s write-lock budget is shorter than a token exchange.
+		// This independent lock may wait for the full 15s exchange plus persistence.
+		const release = await this.acquireLockAsync(signal, (error) => lost.abort(error), path, 30_000);
+		try {
+			signal.throwIfAborted();
+			const result = await fn(signal);
+			lost.signal.throwIfAborted();
+			return result;
+		} finally {
+			await release();
 		}
 	}
 
@@ -456,6 +485,7 @@ export class InMemoryAuthStorageBackend implements AuthStorageBackend {
  * Credential storage backed by a JSON file.
  */
 export class AuthStorage implements CredentialStore {
+	readonly withRefreshLock?: CredentialStore["withRefreshLock"];
 	private data: AuthStorageData = {};
 	private readonly runtimeOverrides = new Map<string, string>();
 	private readonly extensionOAuthProviders = new Map<string, OAuthAuth>();
@@ -475,6 +505,21 @@ export class AuthStorage implements CredentialStore {
 	private constructor(storage: AuthStorageBackend, authPath?: string) {
 		this.storage = storage;
 		this.authPath = authPath;
+		const refreshLock = storage.withRefreshLock?.bind(storage);
+		if (refreshLock) {
+			this.withRefreshLock = (providerId, slotName, fn, options) =>
+				refreshLock(
+					providerId,
+					slotName,
+					async (signal) => {
+						// A best-effort cached read is not safe after a rotating-token
+						// waiter acquires its lock: reload strictly or fail before exchange.
+						await this.reloadFromStorageAsync({ signal });
+						return fn(signal);
+					},
+					options,
+				);
+		}
 		this.readState =
 			authPath && sharedAuthFileReadState?.authPath === authPath ? sharedAuthFileReadState.readState : { data: {} };
 		if (authPath && !sharedAuthFileReadState) {
