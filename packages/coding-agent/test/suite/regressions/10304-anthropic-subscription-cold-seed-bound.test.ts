@@ -1,4 +1,4 @@
-import { type CredentialStore, InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type CredentialStore, InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type AccountSlot,
@@ -13,6 +13,7 @@ import {
 	forgetSessionBlocksFor,
 	runFailover,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
+import { providerRetryAt, providerRetryDelayMs } from "../../../src/core/extensions/builtin/goal/provider-retry.ts";
 
 /**
  * oh-my-openagent#10304, root cause 4: Anthropic prompt caches are per organization and every subscription
@@ -180,8 +181,52 @@ describe("oh-my-openagent#10304: one failing turn seeds at most one cold seat", 
 			name: "ColdSeedLimitError",
 			warmAccount: "warm",
 			coldAccount: fake.coldSeeds("s-limited", "warm")[0],
-			soonestUnblockAt: NOW + HOUR_MS,
+			soonestUnblockAt: undefined,
 		});
+	});
+
+	it.each([false, true])("goal recovery waits only when seat C is blocked: %s", async (blockedC) => {
+		const store = await storeWithSeats();
+		await store.modify(PROVIDER, async (credential) => ({
+			...emptyCredential(),
+			...credential,
+			accounts: seats.slice(0, 3).map((seat) =>
+				seat.name === "warm" || (blockedC && seat.name === "seat-c")
+					? { ...seat, blockedUntil: NOW + 4 * HOUR_MS, blockReason: "rate_limit" as const }
+					: seat,
+			),
+		}));
+		const fake = new FakeSeats((seat) => (seat === "seat-b" ? "long_limit" : "ok"));
+		const input = { store, fake, session: `s-goal-${blockedC}`, warm: "warm", pinned: "seat-b" };
+		const result = await tryTurn({ ...input, turnKey: "turn-1" });
+		expect(fake.dispatches.map((dispatch) => dispatch.seat)).toEqual(["seat-b"]);
+		expect(blockedTurn(result)?.name).toBe("ColdSeedLimitError");
+		if (result.ok || !(result.error instanceof Error)) throw new Error("Expected the cold-seat refusal");
+		const message: AssistantMessage = {
+			role: "assistant",
+			api: "anthropic-messages",
+			provider: PROVIDER,
+			model: "claude-sonnet-4-6",
+			content: [],
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "error",
+			errorMessage: result.error.message,
+			timestamp: NOW,
+		};
+		const retryAt = providerRetryAt([message], NOW);
+		expect(retryAt).toBe(blockedC ? NOW + 3 * HOUR_MS : undefined);
+		expect(blockedTurn(result)?.soonestUnblockAt).toBe(retryAt);
+		expect(providerRetryDelayMs(1, retryAt, NOW)).toBe(blockedC ? 3 * HOUR_MS + 1_000 : 0);
+		if (!blockedC) {
+			expect(await tryTurn({ ...input, turnKey: "turn-2" })).toEqual({ ok: true, seat: "seat-c" });
+		}
 	});
 
 	it("sessions sharing a spent seat each seed one cold seat, not one per remaining seat", async () => {
