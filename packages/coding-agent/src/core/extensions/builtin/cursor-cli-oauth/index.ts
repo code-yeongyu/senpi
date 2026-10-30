@@ -79,6 +79,8 @@ export function registerCursorCliOauthExtension(pi: ExtensionAPI, deps: CursorCl
 			// Like the Anthropic Subscription lane, this lane selects and fails over among its own
 			// accounts, so the generic credential pool must not choose a second time (senpi#2081).
 			ownsAccountSelection: true,
+			// Requests run the cursor-agent CLI as a subprocess, under Cursor logins on this machine.
+			localOnly: true,
 			models: models.map((entry) => ({ ...entry })),
 			// Settings, accounts, and the executable are re-resolved inside every
 			// turn; nothing captured here outlives a settings or credential change.
