@@ -1,5 +1,23 @@
 # core/tools changes
 
+## 2026-10-27 - The core bash tool applies the session's caller env (fixes senpi#4381)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/bash.ts`: `resolveSpawnContext` applies `ctx.sessionEnv` to the subprocess environment after the session's `PI_*` values, when the session environment is exposed.
+
+### Why
+
+- On a shared host the process environment is every session's; the variables a caller passed for ONE session must come from that session's context, as `OMO_BROWSER_ENGINE` does.
+
+### Why an extension could not handle it
+
+- The core bash tool's spawn environment is built inside the tool, out of reach of the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the `exposeSessionEnvironment` block in `resolveSpawnContext`.
+
 ## 2026-10-26 - Redact shell output before accumulation (senpi#4358)
 
 ### What changed

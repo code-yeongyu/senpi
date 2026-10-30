@@ -978,9 +978,6 @@
   "packages/coding-agent/test/anthropic-subscription-unconfirmed-binding.test.ts": {
     "typescript/no-non-null-assertion": 10
   },
-  "packages/coding-agent/test/bash-execution-width.test.ts": {
-    "typescript/no-explicit-any": 1
-  },
   "packages/coding-agent/test/builtin-tool-strict-mode.test.ts": {
     "typescript/no-non-null-assertion": 1
   },

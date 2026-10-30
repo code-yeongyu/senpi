@@ -18,6 +18,8 @@ const dirs: string[] = [];
 const clients: RpcClient[] = [];
 const models: (FakeModelServer | HeldAnthropicModel)[] = [];
 const closeWires: (() => Promise<void>)[] = [];
+// Captured once: a rig after a cleanup that never reached restoreAllMocks would otherwise capture its own spy (#4890).
+const ensureHost = hostEnsure.ensureHost;
 export function scratch(): string {
 	const dir = mkdtempSync(join(tmpdir(), "hs-unit-"));
 	dirs.push(dir);
@@ -42,9 +44,8 @@ export async function rig(held = false, hostEnv: Readonly<Record<string, string>
 	const fake = held ? await HeldAnthropicModel.start() : await startFakeModelServer();
 	models.push(fake);
 	writeRpcModelsJson(qa.agentDir, fake.origin, ["mock-claude-rpc-2"]);
-	const ensure = hostEnsure.ensureHost;
 	vi.spyOn(hostEnsure, "ensureHost").mockImplementation((options) =>
-		ensure({ ...options, _test: { launch: supervisorLaunch, readinessTimeoutMs: 30_000 } }),
+		ensureHost({ ...options, _test: { launch: supervisorLaunch, readinessTimeoutMs: 30_000 } }),
 	);
 	const target = { socket: qa.socket, agentDir: qa.agentDir };
 	const spec = {
