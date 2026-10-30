@@ -411,6 +411,22 @@ function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["t
 	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
 }
 
+/** `before_agent_start` dispatch order: every handler in load order, then the `runLast` ones (senpi#4448). */
+function beforeAgentStartDispatchOrder(extensions: Extension[]) {
+	const snapshot = snapshotEventHandlers(extensions, "before_agent_start");
+	const runsLast = (ext: Extension, handler: EventHandlerFn) => ext.runLastHandlers?.has(handler) === true;
+	const isBuiltin = (ext: Extension) => ext.path.startsWith("<builtin:");
+	const phase = (keep: (ext: Extension, handler: EventHandlerFn) => boolean) =>
+		snapshot.map(({ ext, handlers }) => ({ ext, handlers: handlers.filter((handler) => keep(ext, handler)) }));
+	// Builtin run-last handlers close the phase order, so MCP instructions stay last even after another
+	// extension's run-last handler (senpi#4448).
+	return [
+		...phase((ext, handler) => !runsLast(ext, handler)),
+		...phase((ext, handler) => runsLast(ext, handler) && !isBuiltin(ext)),
+		...phase((ext, handler) => runsLast(ext, handler) && isBuiltin(ext)),
+	];
+}
+
 type EventHandlerFn = NonNullable<ReturnType<Extension["handlers"]["get"]>>[number];
 interface HandlerEntry {
 	readonly path: string;
@@ -2496,7 +2512,7 @@ export class ExtensionRunner {
 		let systemPromptModified = false;
 		let stableLength = systemPrompt.length;
 
-		dispatch: for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_agent_start")) {
+		dispatch: for (const { ext, handlers } of beforeAgentStartDispatchOrder(this.extensions)) {
 			for (const handler of handlers) {
 				if (options.signal?.aborted === true) break dispatch;
 				// A preview reaches only handlers that declared themselves side-effect free (senpi#2115).
