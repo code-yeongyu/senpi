@@ -129,6 +129,10 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 		return this.fanout.hasRegisteredConnectionCapabilities(id);
 	}
 
+	compactSelection(id: string) {
+		return this.fanout.get(id)?.selection;
+	}
+
 	getConnectionCapabilities(id: string): readonly string[] | undefined {
 		return this.fanout.getConnectionCapabilities(id);
 	}

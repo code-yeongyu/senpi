@@ -8,7 +8,7 @@ import type { RouterContext } from "./session-router-context.ts";
 import { error } from "./session-router-errors.ts";
 
 export type OpenAcceptance = (opened: OpenRpcSession) => Promise<void>;
-type OpenCommand = Extract<RpcCommand, { type: "open_session" }>;
+type OpenCommand = Extract<RpcCommand, { type: "open_session" | "attach_session" }>;
 
 class OpenRefused extends Error {
 	readonly response: RpcResponse;
@@ -45,7 +45,7 @@ export async function compactOpen(
 		return {
 			id: command.id,
 			type: "response" as const,
-			command: "open_session" as const,
+			command: command.type,
 			success: false as const,
 			error: "attempt_cancelled",
 			errorCode: "attempt_cancelled",
@@ -83,7 +83,7 @@ export async function compactOpen(
 				result = {
 					answer: {
 						type: "response",
-						command: "open_session",
+						command: command.type,
 						success: true,
 						sessionId,
 						admissionId,

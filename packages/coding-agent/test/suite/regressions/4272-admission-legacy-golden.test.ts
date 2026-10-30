@@ -96,6 +96,20 @@ it("T7/X06 golden h: absent admissionId preserves every legacy producer frame an
 	vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-29T00:00:00.000Z") });
 	const legacy = await record("0");
 	const absent = await record("1");
+	// Discovery advertises the new opt-in; all unselected content and request bytes remain unchanged.
+	const pair = ["compact_message_updates_v1", "event_resync"];
+	const oldInfo = JSON.parse(legacy.rpcClientFrames.split("\n")[0]);
+	const lines = absent.rpcClientFrames.trimEnd().split("\n");
+	const info = JSON.parse(lines[0]);
+	expect(info.data.capabilities).toEqual([
+		...oldInfo.data.capabilities,
+		...pair.filter((cap) => !oldInfo.data.capabilities.includes(cap)),
+	]);
+	info.data.capabilities = info.data.capabilities.filter(
+		(cap: string) => !pair.includes(cap) || oldInfo.data.capabilities.includes(cap),
+	);
+	lines[0] = JSON.stringify(info);
+	absent.rpcClientFrames = lines.join("\n") + "\n";
 	if (process.env.SENPI_PRINT_ADMISSION_GOLDEN === "1") console.log(JSON.stringify({ legacy, absent }));
 	expect(absent).toEqual(legacy);
 	expect(Object.values(legacy).every((bytes) => bytes.length > 0)).toBe(true);

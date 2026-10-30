@@ -60,6 +60,7 @@ export interface WorkerSnapshot {
 	streaming: boolean;
 }
 
+import type { AdmissionReplyScope } from "./compact-admission-reply.ts";
 export type HostToSessionWorker =
 	| {
 			type: "prepare";
@@ -89,6 +90,7 @@ export type HostToSessionWorker =
 	| { type: "mcp_form_settlement"; id: string; epoch: string; settlementId: string; outcome: McpFormOutcome }
 	| {
 			type: "command";
+			admissionReply?: AdmissionReplyScope;
 			request: number;
 			command: object;
 			connection?: string;
@@ -128,6 +130,7 @@ export type SessionWorkerToHost =
 	| { type: "control_done"; control: "cancel_ui" }
 	| {
 			type: "output";
+			admissionReply?: AdmissionReplyScope;
 			/** One per output frame of this worker incarnation, from 0; continuity only, never the accepted sequence. */
 			ordinal?: number;
 			record: object;

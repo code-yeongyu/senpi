@@ -1,5 +1,5 @@
 import { detachConnection } from "./connection-detach.ts";
-import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
+import { compactAdmissionGate, declareSocketClient } from "./compact-socket-commands.ts";
 import { invalidCompactAdmission, unknownCompactAdmission } from "./compact-admission-validation.ts";
 import { compactSubscribe } from "./compact-subscribe-admission.ts";
 import { withAdmissionRequest } from "./compact-admission-reply.ts";
@@ -48,8 +48,13 @@ export function handle(host: RouterContext, command: RpcCommand): Promise<RpcRes
 }
 
 function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
-	const refusal = attachmentGate(host, command);
+	const refusal = attachmentGate(host, command) ?? compactAdmissionGate(host, command);
 	if (refusal) return Promise.resolve(refusal);
+	if (command.type === "set_client_info") {
+		const reply = declareSocketClient(host, command);
+		if (!reply.success) return Promise.resolve(reply);
+		if (command.id === undefined && command.capabilities === undefined) return Promise.resolve(undefined);
+	}
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;
 	// A parked handle is answered by its terminal record and connection close, never unknown_session.
 	if (host.draining && sessionId !== undefined && host.handoffClosed.has(sessionId)) return Promise.resolve(undefined);
@@ -164,25 +169,8 @@ export async function dispatch(
 			command,
 		);
 	}
-	if (command.type === "set_client_info" && !command.sessionId) {
-		const connection = host.writer.currentConnection();
-		if (
-			command.capabilities !== undefined &&
-			!host.connectionRoles.declare(roleConnection(connection), command.capabilities)
-		)
-			return {
-				id: command.id,
-				type: "response",
-				command: "set_client_info",
-				success: false,
-				error: CONNECTION_ROLE_FIXED,
-			} as RpcResponse;
-		if (connection !== undefined) {
-			host.pendingCapabilities.set(connection, command.capabilities ?? []);
-			host.writer.setConnectionCapabilities(connection, command.capabilities ?? []);
-		}
-		return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
-	}
+	if (command.type === "set_client_info" && !command.sessionId)
+		return command.id === undefined ? undefined : declareSocketClient(host, command);
 	if (command.type === "subscribe_sessions") {
 		if (host.admissions && command.admissionId !== undefined) return compactSubscribe(host, command);
 		const connection = host.writer.currentConnection();

@@ -111,7 +111,6 @@ import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth
 import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
-import { compactUpdatesEnabled } from "./engine-socket-flag.ts";
 import { QueuedInputDispositions } from "./queued-input-dispositions.ts";
 import { carryRecovery, recoveryCarrier, SessionRecoveryIdentity } from "./session-recovery-identity.ts";
 import type { BrowserEngine } from "./browser-engine.ts";
@@ -1565,7 +1564,7 @@ export class AgentSession {
 	// prompt-owned run's prompt throws the first one once the queue settles; any other run reports it
 	// as a continuation error when it happens.
 	private readonly _transcriptWriteFailures = new TranscriptWriteFailures();
-	private readonly _recoveryIdentity = compactUpdatesEnabled() ? new SessionRecoveryIdentity(undefined, this) : undefined;
+	private readonly _recoveryIdentity = new SessionRecoveryIdentity(undefined, this);
 	private _promptOwnsRun = false;
 	// Preserve provenance across agent-core's conversion of our admission error
 	// into an assistant error message. Matching provider text alone is not proof

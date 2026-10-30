@@ -26,7 +26,8 @@ export function unknownCompactAdmission(
 ): RpcResponse | undefined | Promise<RpcResponse | undefined> {
 	if (!host.admissions || command.admissionId === undefined) return undefined;
 	// These commands introduce client IDs; their bounded attempt index owns retry/conflict/retirement.
-	if (command.type === "open_session" || command.type === "subscribe_sessions") return undefined;
+	if (command.type === "open_session" || command.type === "attach_session" || command.type === "subscribe_sessions")
+		return undefined;
 	// RULING-96: recovery IDs select token/lease authority, not the ordinary attempt ledger.
 	if (command.type === "get_recovery_page" || command.type === "release_recovery") return undefined;
 	const admissionId = command.admissionId;

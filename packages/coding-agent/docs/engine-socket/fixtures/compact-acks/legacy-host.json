@@ -1,0 +1,6 @@
+{
+	"id": "h",
+	"type": "response",
+	"command": "set_client_info",
+	"success": true
+}

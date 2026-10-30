@@ -1,10 +1,11 @@
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
-import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { isSecurityNoticeState } from "../../core/security-notices.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
+import { workerCapabilities } from "./worker-client-capabilities.ts";
+import { captureAdmissionReply, withAdmissionReply } from "./compact-admission-reply.ts";
 import { roleConnection } from "./connection-roles.ts";
 import { answeredUiRequestId, isGrantSelectRequest } from "./extension-ui-response.ts";
 import { enqueueLegacyRecord } from "./legacy-record-depth.ts";
@@ -79,7 +80,7 @@ export class SessionWorkerClient {
 
 	constructor(callbacks: SessionWorkerCallbacks, agentDir = recoveryAgentDir) {
 		this.callbacks = callbacks;
-		this.acceptance = compactUpdatesEnabled() ? new SessionAcceptanceLane(undefined, undefined, agentDir) : undefined;
+		this.acceptance = new SessionAcceptanceLane(undefined, undefined, agentDir);
 		this.intake = this.acceptance && new WorkerIntake(this.acceptance.staging, (error) => this.fail(error));
 		// Spawned here, with nothing between it and the exit listener that owns its cleanup (senpi#4728).
 		this.spawned = startSessionWorker(this.webviewBroker);
@@ -202,6 +203,7 @@ export class SessionWorkerClient {
 					return;
 				await this.requests.request({
 					type: "command",
+					admissionReply: captureAdmissionReply(),
 					command,
 					connection,
 					roles: options.connectionRoles?.rolesOf(roleConnection(connection)),
@@ -430,20 +432,21 @@ export class SessionWorkerClient {
 					}
 					outputConnection = target.connection;
 				}
-				const enqueue = () => {
-					// Applied before routing, and so before this frame's credit returns.
-					if (message.bootstrap) lane?.bootstrap(message.bootstrap);
-					else {
-						lane?.applyTranscript(message.transitions ?? []);
-						lane?.accept(record, message.recovery, frameUnit(message), message.canonicalRefused === true);
-					}
-					if (!enqueueLegacyRecord(writer, sessionId, record)) {
-						acknowledge(message.signal, false);
-						this.fail("session_output_overflow_or_closed");
-						return Promise.reject(new Error("session_output_overflow_or_closed"));
-					}
-					return writer.waitForSessionBackpressure(sessionId);
-				};
+				const enqueue = () =>
+					withAdmissionReply(message.admissionReply, () => {
+						// Applied before routing, and so before this frame's credit returns.
+						if (message.bootstrap) lane?.bootstrap(message.bootstrap);
+						else {
+							lane?.applyTranscript(message.transitions ?? []);
+							lane?.accept(record, message.recovery, frameUnit(message), message.canonicalRefused === true);
+						}
+						if (!enqueueLegacyRecord(writer, sessionId, record)) {
+							acknowledge(message.signal, false);
+							this.fail("session_output_overflow_or_closed");
+							return Promise.reject(new Error("session_output_overflow_or_closed"));
+						}
+						return writer.waitForSessionBackpressure(sessionId);
+					});
 				const consumed = Promise.resolve(
 					message.snapshot ? this.callbacks.reconcile(message.snapshot.liveSessionPaths) : undefined,
 				).then(() => {
@@ -476,17 +479,7 @@ export class SessionWorkerClient {
 				acknowledge(message.signal, true);
 				return;
 			case "capabilities":
-				if (message.connection === undefined)
-					this.options = { ...this.options, capabilities: message.capabilities };
-				// The isolate already refused a changed role; a refusal here means the two registries drifted.
-				if (
-					this.options.connectionRoles?.declare(roleConnection(message.connection), message.capabilities) === false
-				)
-					process.stderr.write(
-						`senpi rpc worker role drift: connection ${roleConnection(message.connection)} declared a changed role\n`,
-					);
-				this.options.clientInfo?.setCapabilities(message.connection, message.capabilities);
-				acknowledge(message.signal, true);
+				this.options = workerCapabilities(this.options, message, this.writer);
 				return;
 			case "loaded_surfaces": {
 				// The host owns the per-(connection, session) dedupe on both runtimes (#3198 review, L5).

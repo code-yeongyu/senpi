@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { parentPort, workerData } from "node:worker_threads";
+import { captureAdmissionReply } from "./compact-admission-reply.ts";
+import { workerAdmissionCommand } from "./worker-admission-command.ts";
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { isBunBinary } from "../../config.ts";
 import { WAKE_SOURCE_STATE_EVENT } from "../../core/extensions/builtin/monitor-state-event.ts";
@@ -48,6 +50,7 @@ if (isBunBinary) {
 takeOverStdout();
 registerWebViewBroker(Reflect.get(Object(workerData), "webviewBroker"));
 const port = parentPort;
+// Reply identity follows the command across the isolate without a per-request lookup table.
 if (!port) throw new Error("Session worker requires a parent port");
 const send = (message: SessionWorkerToHost): void => port.postMessage(message);
 const privateForms = new McpFormWorker(send);
@@ -154,6 +157,7 @@ class WorkerEventWriter extends SessionEventWriter {
 			return {
 				...order,
 				type: "output",
+				admissionReply: captureAdmissionReply(),
 				// Keep one JSON-normal transfer format, including toJSON and non-cloneable fields; with the flag ON a record
 				// over one fragment then travels as bounded fragments of this message's JSON (S12b).
 				...(jsonTextDeeperThan(line, COMPACT_PROTOCOL_MAX_DEPTH)
@@ -318,12 +322,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
 			const activeBinding = binding;
 			const run = () => activeBinding.handle(message.command);
-			const connection = message.connection;
-			await (connection === undefined
-				? run()
-				: message.owner === undefined
-					? writer.withConnection(connection, run)
-					: writer.connectionContext.runIssued(connection, issuedOwners.adopt(message.owner), run));
+			await workerAdmissionCommand(message, writer, issuedOwners, run);
 			publishSnapshot();
 			send({ type: "result", request: message.request });
 			return;

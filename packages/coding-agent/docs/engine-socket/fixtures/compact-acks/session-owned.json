@@ -1,0 +1,13 @@
+{
+	"id": "h",
+	"type": "response",
+	"command": "set_client_info",
+	"success": true,
+	"data": {
+		"capabilities": [
+			"compact_message_updates_v1",
+			"event_resync"
+		]
+	},
+	"sessionId": "<session>"
+}

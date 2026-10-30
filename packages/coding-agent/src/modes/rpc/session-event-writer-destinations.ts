@@ -7,6 +7,7 @@ import { compactDelta, demoteToDeltaOnly, MESSAGE_KEY, type RpcRecord } from "./
 import { SessionEventWriterRecovery } from "./session-event-writer-recovery.ts";
 import { isCorrelatedReply } from "./socket-peer-recovery.ts";
 import { materializerLine } from "./compact-materializer-line.ts";
+import { declarationReply } from "./compact-negotiation.ts";
 
 /** A record's legacy line, encoded on first use: a record no legacy destination needs never builds it (RULING-81 X06). */
 export class RecordLine {
@@ -93,8 +94,19 @@ export abstract class SessionEventWriterDestinations extends SessionEventWriterR
 	 * gets a typed refusal and its connection closes (fail closed, like a plain peer's overflow).
 	 */
 	private eventLine(target: string, sessionId: string, record: object, line: RecordLine): EventLine {
+		const reply = declarationReply(record, this.compactSelection(target));
+		if (reply !== undefined && reply !== record) return { line: serializeJsonLine(reply) };
 		const events = this.fanout.events;
 		const lane = this.fanout.acceptance.get(sessionId);
+		if (
+			!lane &&
+			this.compactSelection(target)?.selected &&
+			this.status.mirrorTargets(sessionId, String(Reflect.get(record, "type"))).includes(target)
+		)
+			return {
+				line: serializeJsonLine({ type: "compact_refused", sessionId, reason: "compact_endpoint_unsupported" }),
+				undelivered: () => this.fanout.get(target)?.connection.close?.(),
+			};
 		const admissionId =
 			this.ordinaryRoute(target, sessionId)?.routes[0] ?? this.fanout.admissionOf(target, sessionId);
 		const socketEpoch = this.fanout.get(target)?.socketEpoch;

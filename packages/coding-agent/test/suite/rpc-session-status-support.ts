@@ -28,7 +28,7 @@ export interface RawClient {
 
 const DEADLINE_MS = 30_000;
 
-export async function statusHost() {
+export async function statusHost(options: { supportsCompact?: (profile?: { cwd: string }) => boolean } = {}) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-status-"));
 	const cwd = join(scratch, "cwd");
 	const agentDir = join(scratch, "agent");
@@ -74,6 +74,7 @@ export async function statusHost() {
 		},
 	);
 	const clock = { now: 1_000_000 };
+	if (options.supportsCompact) Object.assign(createRuntime, { supportsCompact: options.supportsCompact });
 	const writer = new SessionEventWriter(() => {});
 	const core = createHostCore({ agentDir, createRuntime, cwd }, writer, [], {
 		now: () => clock.now,
@@ -130,6 +131,26 @@ export async function statusHost() {
 			received,
 			waitFor,
 			async request(command) {
+				// Admission fixtures start after an explicit selection prelude; real negotiation is tested over TCP.
+				if (
+					command.admissionId !== undefined &&
+					process.env.SENPI_ENGINE_SOCKET_COMPACT_UPDATES === "1" &&
+					!writer.compactSelection(name)?.selected
+				) {
+					const selected = await writer.withConnection(name, () =>
+						core.router.handle({
+							type: "set_client_info",
+							width: 100,
+							capabilities: ["compact_message_updates_v1", "event_resync"],
+							id: "compact-prelude",
+						}),
+					);
+					if (!selected?.success) throw new Error("compact fixture prelude refused: " + JSON.stringify(selected));
+					if (!writer.getConnectionCapabilities(name)?.includes("compact_events"))
+						throw new Error(
+							"missing compact transport: " + JSON.stringify(writer.getConnectionCapabilities(name)),
+						);
+				}
 				const id = `${name}-${++serial}`;
 				const answered = waitFor((record) => record.type === "response" && record.id === id);
 				const line = JSON.stringify({ ...command, id });
