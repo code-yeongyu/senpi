@@ -1,4 +1,4 @@
-import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
+import { type AssistantMessageEvent, sanitizeProviderDiagnostic } from "@earendil-works/pi-ai";
 import { attachProviderDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-carrier";
 
 /**
@@ -23,13 +23,14 @@ export function isRotationStreamStart(event: AssistantMessageEvent): boolean {
 }
 
 /**
- * The failure a terminal error event carries, with the adapter's structured diagnostic (HTTP status,
- * provider error code) for classification: a statusless frame can still name a revoked token by code.
+ * The failure a terminal error event carries, with the adapter's structured diagnostic for
+ * classification: its HTTP status, and the provider's own error code, which outranks the message
+ * prose (senpi#3216).
  */
 export function rotationErrorFromEvent(event: AssistantMessageEvent): unknown {
 	if (event.type !== "error") return undefined;
-	const diagnostic = event.error.providerDiagnostic;
-	const failure = attachProviderDiagnostic(new Error(event.error.errorMessage ?? "provider stream error"), diagnostic);
-	const status = diagnostic?.httpStatus;
+	const failure = new Error(event.error.errorMessage ?? "provider stream error");
+	attachProviderDiagnostic(failure, sanitizeProviderDiagnostic(event.error.providerDiagnostic));
+	const status = event.error.providerDiagnostic?.httpStatus;
 	return status === undefined ? failure : Object.assign(failure, { status });
 }
