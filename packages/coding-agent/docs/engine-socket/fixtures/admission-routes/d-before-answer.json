@@ -336,8 +336,8 @@
 				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
 				"sequence": 12,
 				"componentRef": "record",
-				"length": 640,
-				"digest": "4e90553f9801bdb5a4ffd95a5bb57ae6da23a144e8849221bbde00d9dba4fad3"
+				"length": 500,
+				"digest": "02c48cc30e2d838b9883c815697fbee3ce555c609c97f2ef47d2de1389c45190"
 			},
 			"materializer": {
 				"sessionEpoch": "00000000-0000-4000-8000-000000000001",
@@ -350,8 +350,8 @@
 					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
 					"sequence": 12,
 					"componentRef": "record",
-					"length": 640,
-					"digest": "4e90553f9801bdb5a4ffd95a5bb57ae6da23a144e8849221bbde00d9dba4fad3"
+					"length": 500,
+					"digest": "02c48cc30e2d838b9883c815697fbee3ce555c609c97f2ef47d2de1389c45190"
 				},
 				"controls": []
 			},
@@ -448,5 +448,39 @@
 			}
 		},
 		"id": "peer-1"
+	},
+	"entryPage": {
+		"id": "peer-4",
+		"type": "response",
+		"command": "get_recovery_page",
+		"success": true,
+		"sessionId": "rpc-1",
+		"admissionId": "golden-a",
+		"generation": 1,
+		"data": {
+			"requestId": "golden-entry",
+			"lease": {
+				"kind": "event",
+				"id": "event:socket-1:11"
+			},
+			"componentRef": "record",
+			"ordinal": 1,
+			"offset": 0,
+			"cursor": null,
+			"complete": true,
+			"repair": {
+				"state": "ok",
+				"healthRevision": "0",
+				"source": {
+					"sessionEpoch": "00000000-0000-4000-8000-000000000001",
+					"sequence": 14
+				},
+				"hint": "restart_from_catalog",
+				"retryAfterMs": 0
+			},
+			"length": 500,
+			"digest": "37789d95595aa7db3c151617b2429f917be9d81e59c4298c87159745b2db87b6",
+			"bytes": "ewAiAHQAeQBwAGUAIgA6ACIAZQBuAHQAcgB5AF8AYQBwAHAAZQBuAGQAZQBkACIALAAiAGUAbgB0AHIAeQAiADoAewAiAHQAeQBwAGUAIgA6ACIAYwB1AHMAdABvAG0AIgAsACIAYwB1AHMAdABvAG0AVAB5AHAAZQAiADoAIgBwAGkALQByAHUAbABlAHMALgBzAGMAYQBuACIALAAiAGQAYQB0AGEAIgA6AHsAIgBjAHcAZAAiADoAIgA8AHIAbwBvAHQAPgAvAGMAdwBkACIALAAiAHIAZQBhAHMAbwBuACIAOgAiAHMAdABhAHIAdAB1AHAAIgB9ACwAIgBzAHQAYQByAHQAdQBwAEIAbwBvAGsAawBlAGUAcABpAG4AZwAiADoAdAByAHUAZQAsACIAaQBkACIAOgAiADAAMAAwADAAMAAwADAAMQAiACwAIgBwAGEAcgBlAG4AdABJAGQAIgA6ACIAMAAwADAAMAAwADAAMAAyACIALAAiAHQAaQBtAGUAcwB0AGEAbQBwACIAOgAiADIAMAAyADYALQAxADAALQAyADkAVAAwADAAOgAwADAAOgAwADAALgAwADAAMABaACIAfQAsACIAcwBlAHMAcwBpAG8AbgBJAGQAIgA6ACIAcgBwAGMALQAxACIAfQA="
+		}
 	}
 }
