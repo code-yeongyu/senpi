@@ -1,3 +1,39 @@
+## 2026-10-27 - Account for the capture responsibility split (part of #4272)
+
+### What changed
+
+- `scripts/check-entry-graphs.mjs` accounts for the two browser-safe capture leaves: `./models` reaches 33 files and `./utils/event-stream` reaches 8.
+
+### Why
+
+- `scripts/check-entry-graphs.mjs` measures module count; the mandatory 250-code-line split moves existing capture construction to one leaf and shares the frontier contract in another. No new external dependency, barrel reachability, wildcard budget increase, or forbid-rule change.
+
+### Why an extension could not handle it
+
+- `scripts/check-entry-graphs.mjs` is repository validation tooling.
+
+### Expected merge conflict zones
+
+- The two named budgets in `scripts/check-entry-graphs.mjs`.
+
+## 2026-10-26 - pi-ai models entry budget covers the provider-error boundary (senpi#4282)
+
+### What changed
+
+- `check-entry-graphs.mjs`: the `@earendil-works/pi-ai/models` entry budget is 31 files: `utils/provider-error.ts`, which `event-stream.ts` now imports to redact every provider error at the stream boundary, and the token-wise redactor it runs, split by responsibility into `utils/secret-redaction.ts`, `utils/secret-classifier.ts` and `utils/secret-lexer.ts`, alongside main's `utils/assistant-capture.ts`. A wildcard budget may name one expanded export in `overrides`: `./utils/event-stream` reaches 6 files and `./utils/provider-error` 4, while every other `./utils/*` entry stays at 3.
+
+### Why
+
+- The lightweight models entry runs provider streams, so it carries the redaction those streams apply.
+
+### Why an extension could not handle it
+
+- The entry-graph budget is repository tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `./models` and `./utils/*` budget blocks, and the two lines that read a budget's `maxFiles`.
+
 ## 2026-10-25 - The ./models entry budget admits the capture leaf (senpi#4277, part of #4272)
 
 ### What changed

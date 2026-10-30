@@ -2,11 +2,13 @@ import { join } from "node:path";
 import type { BridgeConnectionConfig, KernelToHostMessage } from "../../bridge/protocol.ts";
 import type { SessionEnvironment } from "../session-env.ts";
 import type { KernelLifecycle } from "../shared/kernel-death.ts";
+import type { InvocationPermissions } from "../shared/invocation-authority.ts";
 import { readProcessGroupCpuTime } from "../shared/process-group-cpu.ts";
 import { type CodemodeRuntimeAssetEnvironment, requireCodemodeRuntimeAsset } from "../shared/runtime-asset.ts";
 import { SubprocessKernel, type SubprocessKernelMemory, type SubprocessSpawn } from "../shared/subprocess-kernel.ts";
 
 export interface JuliaKernelStartOptions extends KernelLifecycle {
+	readonly permissions?: InvocationPermissions;
 	readonly cwd: string;
 	readonly sessionId: string;
 	readonly connection: BridgeConnectionConfig;
@@ -55,6 +57,7 @@ export class JuliaKernel extends SubprocessKernel {
 			onMessage: options.onMessage,
 			memory: options.memory && { language: "jl", ...options.memory },
 			onDeath: options.onDeath,
+			permissions: options.permissions,
 			startup: { label: "Julia", readGroupCpuTime: readProcessGroupCpuTime },
 		});
 	}

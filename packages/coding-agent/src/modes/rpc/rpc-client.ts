@@ -475,6 +475,8 @@ export class RpcClient {
 		browserEngine?: BrowserEngine;
 		/** This session's own fallback policy, in memory only; needs the host's `retry_fallback_profile`. */
 		retryFallback?: SessionRetryFallbackProfile;
+		/** Caller env for this one session's tool subprocesses (senpi#4381); needs the host's `session_env`. */
+		env?: Record<string, string>;
 	}): Promise<{ sessionId: string; state: RpcSessionState; attached?: boolean }> {
 		if (this.pendingOpenSession) throw new RpcClientOpenInFlightError();
 		this.pendingOpenSession = true;

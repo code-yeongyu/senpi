@@ -9,6 +9,7 @@ import { assertRequestedModelResolved } from "./open-session-model.ts";
 
 import { canonicalSessionPath } from "./session-path-key.ts";
 import { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
+import { setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
 import {
 	type PendingClaims,
@@ -173,6 +174,7 @@ export async function openRegistrySession(
 		if (compactUpdatesEnabled() && host.options.workerIsolate !== true) {
 			entry.acceptance = new SessionAcceptanceLane();
 			entry.acceptance.bootstrap({ transcript: manager.beginTranscriptJournal() });
+			setSessionRecoveryEpoch(entry.runtime.session, entry.acceptance.recoveryEpoch);
 		}
 		entry.state = "open";
 		settleOpen.resolve();

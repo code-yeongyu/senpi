@@ -33,6 +33,7 @@ import { EventLoopSlicer, mapInSlices } from "./event-loop-slicer.ts";
 import { projectRetainedMessages } from "./extensions/builtin/compaction/retained-message-projection.ts";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
 import type { InputSource } from "./extensions/types.ts";
+import type { RecoveryCarrier } from "./session-recovery-identity.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
 import type { RepositoryIdentity } from "./repository-identity.ts";
@@ -61,9 +62,11 @@ import {
 	type FileIdentity,
 	snapshotTranscript,
 	TranscriptJournal,
+	type TranscriptFlow,
 	type TranscriptPersistence,
 	type TranscriptTransition,
 } from "./session-transcript-journal.ts";
+import { branchFlow, compactionFlow, contextEditFlow, ownedFlowMessage } from "./session-transcript-flows.ts";
 import { TranscriptFile } from "./session-transcript-file.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
@@ -1923,7 +1926,12 @@ export class SessionManager {
 		return bytes;
 	}
 
-	private _appendEntry(entry: SessionEntry, shareable?: object): void {
+	private _appendEntry(
+		entry: SessionEntry,
+		shareable?: object,
+		recoveryOwner?: RecoveryCarrier,
+		flow?: () => TranscriptFlow | undefined,
+	): void {
 		const residentEntry = this.residentStore.externalize(entry);
 		const bytes = this._persist(residentEntry);
 		const committed = this._shareMessage(residentEntry, shareable);
@@ -1932,11 +1940,14 @@ export class SessionManager {
 			const serialized = bytes ?? this._transcriptEntryBytes(residentEntry);
 			if (this.persist && !this.transcriptFile.unavailable && (!this.flushed || !this.transcriptFile.identity))
 				this.transcriptBytes.set(committed, serialized);
+			const change = flow?.();
 			this.transcriptJournal.record({
 				kind: "append",
 				id: residentEntry.id,
 				entry: serialized,
 				persistence: this._transcriptPersistence(),
+				...(recoveryOwner ? { owningMessageId: recoveryOwner.messageId, recoveryEpoch: recoveryOwner.epoch } : {}),
+				...(change ? { flow: change } : {}),
 			});
 		}
 	}
@@ -2059,15 +2070,16 @@ export class SessionManager {
 	 */
 	appendOwnedMessage(
 		message: Message | CustomMessage | BashExecutionMessage,
-		options?: { readonly inputSource?: InputSource | undefined },
+		options?: { readonly inputSource?: InputSource | undefined; readonly recoveryOwner?: RecoveryCarrier },
 	): string {
-		return this._appendMessage(message, true, options?.inputSource);
+		return this._appendMessage(message, true, options?.inputSource, options?.recoveryOwner);
 	}
 
 	private _appendMessage(
 		message: Message | CustomMessage | BashExecutionMessage,
 		owned: boolean,
 		inputSource?: InputSource,
+		recoveryOwner?: RecoveryCarrier,
 	): string {
 		const entry: SessionMessageEntry = {
 			type: "message",
@@ -2077,7 +2089,7 @@ export class SessionManager {
 			message,
 			...(inputSource === undefined ? {} : { inputSource }),
 		};
-		this._appendEntry(entry, owned ? message : undefined);
+		this._appendEntry(entry, owned ? message : undefined, recoveryOwner);
 		const order = this.entryOrdersById.get(entry.id);
 		if (order !== undefined) {
 			this.messageEntryPositions.set(message, { entryId: entry.id, order });
@@ -2204,7 +2216,8 @@ export class SessionManager {
 		usage?: Usage,
 	): string {
 		const timestamp = new Date().toISOString();
-		const systemMessage = getCurrentSystemMessage(this.buildSessionProjection().messages);
+		const from = this.buildSessionProjection();
+		const systemMessage = getCurrentSystemMessage(from.messages);
 		const id = generateId(this.idsInUse);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
@@ -2219,7 +2232,9 @@ export class SessionManager {
 			fromHook,
 			...(systemMessage ? { systemMessage: { ...systemMessage, timestamp: new Date(timestamp).getTime() } } : {}),
 		};
-		this._appendEntry(entry);
+		this._appendEntry(entry, undefined, undefined, () =>
+			compactionFlow(from.entries, this.buildSessionProjection().entries),
+		);
 		this._trimMirrorAfterCompaction(entry);
 		return entry.id;
 	}
@@ -2341,6 +2356,7 @@ export class SessionManager {
 		content: string | (TextContent | ImageContent)[],
 		display: boolean,
 		details?: T,
+		options?: { readonly recoveryOwner?: RecoveryCarrier },
 	): string {
 		const entry: CustomMessageEntry<T> = {
 			type: "custom_message",
@@ -2352,7 +2368,7 @@ export class SessionManager {
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 		};
-		this._appendEntry(entry);
+		this._appendEntry(entry, undefined, options?.recoveryOwner);
 		return entry.id;
 	}
 
@@ -2393,7 +2409,10 @@ export class SessionManager {
 			targetId,
 			replacement: normalizedReplacement,
 		};
-		this._appendEntry(entry);
+		this._appendEntry(entry, undefined, undefined, () => {
+			const edited = this.getEntry(targetId);
+			return contextEditFlow(entry, edited && ownedFlowMessage(projectContextEntry(edited, entry)[0]));
+		});
 		return entry.id;
 	}
 
@@ -2938,9 +2957,10 @@ export class SessionManager {
 		if (!this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
+		const from = this.transcriptJournal && this.buildSessionProjection().entries;
 		this.leafId = branchFromId;
 		this.mutationCount++;
-		this.transcriptJournal?.record({ kind: "leaf", leafId: branchFromId });
+		this.transcriptJournal?.record({ kind: "leaf", leafId: branchFromId, ...this._branchFlow(from) });
 	}
 
 	/**
@@ -2949,9 +2969,10 @@ export class SessionManager {
 	 * Use this when navigating to re-edit the first user message.
 	 */
 	resetLeaf(): void {
+		const from = this.transcriptJournal && this.buildSessionProjection().entries;
 		this.leafId = null;
 		this.mutationCount++;
-		this.transcriptJournal?.record({ kind: "leaf", leafId: null });
+		this.transcriptJournal?.record({ kind: "leaf", leafId: null, ...this._branchFlow(from) });
 	}
 
 	/**
@@ -2982,8 +3003,14 @@ export class SessionManager {
 			usage,
 			fromHook,
 		};
-		this._appendEntry(entry);
+		const from = this.transcriptJournal && this.buildSessionProjection().entries;
+		this._appendEntry(entry, undefined, undefined, () => this._branchFlow(from).flow);
 		return entry.id;
+	}
+
+	/** The messages a leaf move took off and put on the active path, when a consumer journals the transcript. */
+	private _branchFlow(from: readonly ProjectedSessionEntry[] | undefined): { flow?: TranscriptFlow } {
+		return from ? { flow: branchFlow(from, this.buildSessionProjection().entries) } : {};
 	}
 
 	/**

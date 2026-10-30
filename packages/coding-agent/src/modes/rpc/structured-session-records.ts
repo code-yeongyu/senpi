@@ -1,8 +1,9 @@
-import { getAssistantCapture } from "@earendil-works/pi-ai";
+import { getAssistantCapture, SeedFrontierError } from "@earendil-works/pi-ai";
 import { envValue } from "../../core/brand.ts";
 import type { AgentSession, AgentSessionEvent } from "../../core/agent-session.ts";
+import { carryRecovery } from "../../core/session-recovery-identity.ts";
 import type { AgentSessionStructuredRecord } from "../../core/structured-session-lane.ts";
-import { toJsonEvent } from "../json-event.ts";
+import { type SeededJsonAgentSessionEvent, toJsonEvent } from "../json-event.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
 
 /**
@@ -28,26 +29,58 @@ const SEEDS = { blockSeeds: 1 } as const;
  */
 class SeededBlockGate {
 	private blocks: Map<number, BlockState> | undefined;
+	private readonly nextOffsets = new Map<number, number>();
 
 	accept(record: AgentSessionStructuredRecord): object | undefined {
 		if (record.type === "message_block_state" || record.type === "message_block_metadata")
 			return this.control(record, record.type === "message_block_state" ? record.phase : undefined);
-		if (record.type === "message_tool_arguments_reset") return this.control(record);
+		if (record.type === "message_tool_arguments_reset") {
+			const accepted = this.control(record);
+			if (accepted) this.nextOffsets.set(record.contentIndex, record.rawArgumentPrefix.length);
+			return accepted;
+		}
 		if (record.type === "message_start" && record.message.role === "assistant") {
 			const seeded = toJsonEvent(record, SEEDS);
 			this.blocks = seeded && new Map();
+			this.nextOffsets.clear();
 			return seeded;
 		}
 		if (record.type === "message_end" && record.message.role === "assistant") return this.end(record);
 		if (record.type !== "message_update") return toJsonEvent(record, SEEDS);
 		if (!this.blocks) return undefined;
-		const seeded = toJsonEvent(record, SEEDS);
 		const update = record.assistantMessageEvent;
-		if (!("contentIndex" in update)) return seeded;
+		if (!("contentIndex" in update)) {
+			// A nested terminal carries its capture cutoff, so the reducer drops raw spelling at and above it.
+			const seeded = toJsonEvent(record, SEEDS);
+			const rewrittenFrom = getAssistantCapture(record)?.rewrittenFrom;
+			return seeded && rewrittenFrom !== undefined ? { ...seeded, rewrittenFrom } : seeded;
+		}
 		const index = getAssistantCapture(record)?.contentIndex ?? update.contentIndex;
 		const starts =
 			update.type === "text_start" || update.type === "thinking_start" || update.type === "toolcall_start";
+		if (starts && this.nextOffsets.has(index)) {
+			this.blocks.set(index, "invalid");
+			return undefined;
+		}
+		if (this.blocks.get(index) === "invalid") return undefined;
 		if (!starts && this.blocks.get(index) !== "open") return undefined;
+		let seeded: SeededJsonAgentSessionEvent | undefined;
+		try {
+			seeded = toJsonEvent(record, SEEDS);
+		} catch (error) {
+			if (!(error instanceof SeedFrontierError)) throw error;
+			this.blocks.set(index, "invalid");
+			return undefined;
+		}
+		const capture = getAssistantCapture(record);
+		if (starts && seeded && capture?.nextOffset !== undefined) this.nextOffsets.set(index, capture.nextOffset);
+		if ("delta" in update && seeded) {
+			if (capture?.offset !== this.nextOffsets.get(index) || capture?.offset === undefined) {
+				this.blocks.set(index, "invalid");
+				return undefined;
+			}
+			this.nextOffsets.set(index, capture.offset + update.delta.length);
+		}
 		const ends = update.type === "text_end" || update.type === "thinking_end" || update.type === "toolcall_end";
 		this.blocks.set(index, seeded ? (ends ? "ended" : "open") : "invalid");
 		return seeded;
@@ -72,6 +105,7 @@ class SeededBlockGate {
 			state === "ended" && index < rewrittenFrom ? [] : [index],
 		);
 		this.blocks = undefined;
+		this.nextOffsets.clear();
 		const seeded = toJsonEvent(record, SEEDS) ?? record;
 		return invalidatedBlocks.length === 0
 			? seeded
@@ -83,13 +117,24 @@ class SeededBlockGate {
  * The session's internal structured lane, correlated like its legacy records: seeded `toJsonEvent` projections of
  * every session event plus the three block controls, in session order. Never a legacy destination.
  */
-export function subscribeStructuredSessionRecords(session: AgentSession, output: (record: object) => void): () => void {
+export function subscribeStructuredSessionRecords(
+	session: AgentSession,
+	output: (record: object) => void,
+	failed: (cause: unknown) => void,
+): () => void {
 	const gate = new SeededBlockGate();
 	return subscribeSessionRecords(session, output, undefined, (listener) =>
 		session.subscribeStructured((record) => {
-			const accepted = gate.accept(record);
-			// Correlation reads only `type`, `role` and outer fields, which seeded records and controls keep.
-			if (accepted) listener(accepted as AgentSessionEvent);
-		}),
+			// The session emits this before its legacy listeners: a failure anywhere on this path costs only the
+			// structured record, reported to `failed`, never the legacy and extension delivery of the event.
+			try {
+				const accepted = gate.accept(record);
+				// Correlation reads only `type`, `role` and outer fields, which seeded records and controls keep.
+				// The projection keeps its event's recovery carrier, which pairs it with that event's legacy record.
+				if (accepted) listener(carryRecovery(record, accepted) as AgentSessionEvent);
+			} catch (cause) {
+				failed(cause);
+			}
+		}, failed),
 	);
 }

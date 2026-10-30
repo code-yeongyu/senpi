@@ -46,6 +46,7 @@ export {
 	pushAssistantProgress,
 	subscribeAssistantCapture,
 } from "./utils/assistant-capture.ts";
+export { SeedFrontierError, seedNextOffset } from "./utils/assistant-seed-frontier.ts";
 export type { MistralOptions } from "./api/mistral-conversations.ts";
 export type {
 	ChatGptSubscriptionWebSocketDebugStats,

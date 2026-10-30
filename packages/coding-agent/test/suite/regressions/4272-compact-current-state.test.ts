@@ -6,7 +6,7 @@ import {
 } from "../../../src/modes/rpc/compact-content-store.ts";
 import { CompactSessionState } from "../../../src/modes/rpc/compact-session-state.ts";
 import type { CompactTransition } from "../../../src/modes/rpc/compact-transition.ts";
-import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
+import { controlledIo, spoolRoot, startIdentity } from "../compact-storage-support.ts";
 
 // senpi#4272 (R3.C6.4, T6/X07 S03 slice): the compact owner retains current content, not the
 // cumulative prefixes a growing message has had, and rejects coverage it was never declared.
@@ -18,9 +18,13 @@ afterEach(async () => {
 
 async function setup(options: Partial<CompactContentStoreOptions> = {}) {
 	const root = await spoolRoot();
-	cleanups.push(root.cleanup);
 	const control = controlledIo();
-	return { state: new CompactSessionState({ dir: root.dir, io: control.io, ...options }), control, dir: root.dir };
+	const state = new CompactSessionState({ dir: root.dir, io: control.io, ...options });
+	cleanups.push(async () => {
+		await state.retire();
+		await root.cleanup();
+	});
+	return { state, control, dir: root.dir };
 }
 
 async function text(state: CompactSessionState, messageId = "m1"): Promise<string | undefined> {
@@ -35,7 +39,15 @@ const body = (chunks: number, size: number) =>
 	Array.from({ length: chunks }, (_, i) => String.fromCharCode(97 + (i % 26)).repeat(size)).join("");
 
 function streamBody(state: CompactSessionState, chunks: number, size: number): void {
-	state.accept({ type: "block_start", messageId: "m1", contentIndex: 0, kind: "text", seed: "", coveredCodeUnits: 0 });
+	state.accept({
+		type: "block_start",
+		...startIdentity(),
+		messageId: "m1",
+		contentIndex: 0,
+		kind: "text",
+		seed: "",
+		coveredCodeUnits: 0,
+	});
 	const full = body(chunks, size);
 	for (let i = 0; i < chunks; i++) {
 		state.accept({
@@ -58,7 +70,7 @@ describe("4272 compact current state: 1 MiB over 1,024 updates with zero peers",
 
 		expect(coarse.state.acceptedSequence).toBe(1025);
 		expect(status.residentPayloadBytes + status.spilledLiveBytes + status.residentTailBytes).toBe(2 * MiB);
-		expect(status.spillBytesWritten).toBe(status.spilledLiveBytes);
+		expect(status.spillBytesWritten).toBe(status.spilledLiveBytes + status.structuredBytes.spilled);
 		expect(status.residentPayloadBytes).toBeLessThanOrEqual(spill.spillTargetBytes);
 		expect(await text(coarse.state)).toBe(body(1024, 1024));
 
@@ -68,15 +80,16 @@ describe("4272 compact current state: 1 MiB over 1,024 updates with zero peers",
 		expect(fine.state.storageStatus()).toMatchObject({
 			residentPayloadBytes: status.residentPayloadBytes,
 			spilledLiveBytes: status.spilledLiveBytes,
-			spillBytesWritten: status.spillBytesWritten,
 		});
-		expect((await readdir(fine.dir)).length).toBe((await readdir(coarse.dir)).length);
+		const leaves = async (dir: string) => (await readdir(dir)).filter((name) => name.startsWith("leaf-")).length;
+		expect(await leaves(fine.dir)).toBe(await leaves(coarse.dir));
+		expect(fine.state.storageStatus().structuredBytes.spilled).toBeLessThan(4096);
 		expect(await text(fine.state)).toBe(body(4096, 256));
 	});
 
 	it("keeps the whole accepted body readable while the first spill write is held", async () => {
 		const { state, control } = await setup({ spillAboveBytes: 256 * 1024, spillTargetBytes: 128 * 1024 });
-		const write = control.hold("write");
+		const write = control.hold("write", (path) => /[/\\]leaf-/.test(path));
 		streamBody(state, 1024, 1024);
 		await write.entered;
 		expect(state.storageStatus()).toMatchObject({
@@ -97,6 +110,7 @@ describe("4272 compact current state: declared coverage and exact UTF-16 content
 		const { state } = await setup();
 		state.accept({
 			type: "block_start",
+			...startIdentity(),
 			messageId: "m1",
 			contentIndex: 0,
 			kind: "text",
@@ -117,15 +131,21 @@ describe("4272 compact current state: declared coverage and exact UTF-16 content
 
 	it("rejects backwards, partially covered and conflicting overlap with a typed error and no partial apply", async () => {
 		const { state } = await setup();
-		const seed = (messageId: string, value: string, covered: number): CompactTransition => ({
+		const seed = (
+			messageId: string,
+			value: string,
+			covered: number,
+		): Extract<CompactTransition, { type: "block_start" }> => ({
 			type: "block_start",
+			...startIdentity(),
 			messageId,
 			contentIndex: 0,
 			kind: "tool_arguments",
 			seed: value,
 			coveredCodeUnits: covered,
 		});
-		state.accept(seed("plain", "abc", 0));
+		const plain = seed("plain", "abc", 0);
+		state.accept(plain);
 		state.accept({ type: "block_delta", messageId: "plain", contentIndex: 0, offset: 3, text: "def" });
 		state.accept(seed("replay", "abc", 3));
 
@@ -137,7 +157,7 @@ describe("4272 compact current state: declared coverage and exact UTF-16 content
 				"conflicting_overlap",
 			],
 			[{ type: "block_delta", messageId: "missing", contentIndex: 0, offset: 0, text: "x" }, "unknown_block"],
-			[seed("plain", "again", 0), "duplicate_block"],
+			[{ ...plain, seed: "again", ...startIdentity(plain.firstOrdinal) }, "duplicate_block"],
 			[seed("bad", "ab", 3), "invalid_coverage"],
 		];
 		const sequence = state.acceptedSequence;
@@ -159,6 +179,7 @@ describe("4272 compact current state: declared coverage and exact UTF-16 content
 		const { state } = await setup();
 		const start = (messageId: string, covered: number): CompactTransition => ({
 			type: "block_start",
+			...startIdentity(),
 			messageId,
 			contentIndex: 0,
 			kind: "text",
@@ -195,6 +216,7 @@ describe("4272 compact current state: declared coverage and exact UTF-16 content
 		const value = `${"a".repeat(LEAF - 1)}\u{1F600}b\uD800`;
 		state.accept({
 			type: "block_start",
+			...startIdentity(),
 			messageId: "m1",
 			contentIndex: 0,
 			kind: "thinking",
@@ -203,7 +225,9 @@ describe("4272 compact current state: declared coverage and exact UTF-16 content
 		});
 		state.accept({ type: "message_status", messageId: "m1", persistence: "pending" });
 		await state.idle();
-		expect(state.storageStatus()).toMatchObject({ residentPayloadBytes: 0, spilledLiveBytes: value.length * 2 });
+		// The final short tail now belongs to the spillable block descriptor, not a seal-time text leaf.
+		expect(state.storageStatus()).toMatchObject({ residentPayloadBytes: 0, spilledLiveBytes: LEAF * 2 });
+		expect(state.storageStatus().structuredBytes.resident).toBe(0);
 		expect(await text(state)).toBe(value);
 	});
 });
