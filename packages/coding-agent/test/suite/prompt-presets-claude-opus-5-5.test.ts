@@ -28,7 +28,7 @@ function hasOpus55CatalogSignal(model: Model<Api>): boolean {
 }
 
 function getOpus55CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasOpus55CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasOpus55CatalogSignal));
 }
 
 describe("Claude Opus 5.5 prompt preset", () => {

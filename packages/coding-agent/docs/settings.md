@@ -150,6 +150,7 @@ When this value is anything other than `"auto"`, it overrides any model-level `p
 | `externalEditor` | string | `$VISUAL`, then `$EDITOR`, then Notepad on Windows or `nano` elsewhere | Command for Ctrl+G external editor; takes precedence over environment variables |
 | `quietStartup` | boolean \| `"header"` | `false` | `true` hides the startup header and loaded-resource listing. `"header"` keeps the header (version and key hints) but hides the model scope line and loaded-resource listing |
 | `tips` | boolean | `true` | Show the rotating startup and working-status tip lines |
+| `reducedMotion` | boolean | `false` | Keep decorative indicators static. Currently stops the footer's `watching` glyph from pulsing while the agent idles on monitors. Read at session start; takes effect after a reload |
 | `defaultProjectTrust` | string | `"ask"` | Fallback project trust behavior: `"ask"`, `"always"`, or `"never"`. Global setting only |
 | `collapseChangelog` | boolean | `false` | Show condensed changelog after updates |
 | `enableInstallTelemetry` | boolean | `true` | Send the anonymous install/update ping and selected provider attribution headers. This does not control update checks |
@@ -293,7 +294,8 @@ See [compaction.md](compaction.md) for trigger and summarization behavior.
 | `fallback.circuitMaxCooldownMs` | number | `1800000` | Ceiling for the doubled circuit-breaker cooldown (30 minutes) |
 | `retry.maxAgentDelayMs` | number | `60000` | Hard ceiling on agent-level retry delay (60s), applied after the retry profile and jitter |
 | `retry.provider.timeoutMs` | number | `300000` | Provider/SDK request timeout and stream idle timeout in milliseconds |
-| `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables |
+| `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables. Keep-alive bytes (SSE pings, comment keep-alives) received within the bound extend it |
+| `retry.provider.keepAliveTimeoutMs` | number | `900000` | Maximum time keep-alive bytes alone may hold a request without any response content; `0` disables the cap. Checked when the start or idle bound fires, so it has no effect when both are disabled |
 | `retry.provider.streamRetryTimeoutMs` | number | `30000` | First-request liveness cap after a known provider stream/transport timeout; `0` disables the cap |
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Max server-requested delay honored on the same model before the fallback chain engages (60s) |
@@ -318,6 +320,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
     "provider": {
       "timeoutMs": 3600000,
       "streamStartTimeoutMs": 300000,
+      "keepAliveTimeoutMs": 900000,
       "streamRetryTimeoutMs": 30000,
       "maxRetries": 0,
       "maxRetryDelayMs": 60000

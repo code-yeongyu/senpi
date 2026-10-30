@@ -109,20 +109,10 @@ async function startHost(supervised: boolean): Promise<{
 	await mkdir(agentDir);
 	const socketPath = join(root, "rpc.sock");
 	const args = supervised
-		? [
-				"--import",
-				"tsx",
-				join(packageRoot, "src/modes/rpc/host-lifecycle.ts"),
-				"--socket",
-				socketPath,
-				"--agent-dir",
-				agentDir,
-			]
+		? [join(packageRoot, "src/modes/rpc/host-lifecycle.ts"), "--socket", socketPath, "--agent-dir", agentDir]
 		: [join(packageRoot, "src/cli.ts"), "--mode", "rpc", "--listen", `unix://${socketPath}`];
 	const child = spawn(process.execPath, args, {
-		// The package root keeps `--import tsx` resolvable from node_modules for the
-		// supervisor route (the existing lifecycle suite spawns the same way); the
-		// hermetic scratch directories above carry every path the host touches.
+		// The hermetic scratch directories above carry every path the host touches.
 		cwd: packageRoot,
 		env: {
 			...hostSpawnEnv(),

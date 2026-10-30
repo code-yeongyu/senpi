@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { getAgentDir } from "../../../src/config.ts";
 import { CompactContentStore } from "../../../src/modes/rpc/compact-content-store.ts";
-import { nodeCompactStorageIo } from "../../../src/modes/rpc/compact-storage-io.ts";
+import { type CompactStorageOperation, nodeCompactStorageIo } from "../../../src/modes/rpc/compact-storage-io.ts";
 import { RecoveryStorageHealth } from "../../../src/modes/rpc/compact-storage-health.ts";
 import { RecoveryCheckpoints } from "../../../src/modes/rpc/compact-recovery-state.ts";
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
@@ -33,6 +33,71 @@ async function repairWrite() {
 		await file.close();
 	}
 }
+
+// #4272 RULING-101a: every operation that halts spilling must participate in recovery health.
+const halts = {
+	spool_create: true,
+	spill_write: true,
+	value_write: true,
+	node_write: true,
+	page_write: false,
+	leaf_read: false,
+	page_read: false,
+	reclaim: false,
+} satisfies Record<CompactStorageOperation, boolean>;
+
+it.each(Object.keys(halts) as CompactStorageOperation[])(
+	"counts every halting reason in recovery health: %s",
+	async (operation) => {
+		const health = new RecoveryStorageHealth(base);
+		const initial = await health.revision();
+		const store = new CompactContentStore({ dir: join(base, "senpi-current-halt"), health });
+		store.enqueue(operation, async () => {
+			throw new Error("injected storage failure");
+		});
+		await store.idle();
+
+		expect(store.spillAllowed).toBe(!halts[operation]);
+		expect(health.needsRecovery).toBe(halts[operation] || operation === "page_write");
+		const recovered = await health.recover(repairWrite);
+		expect(recovered).toBe(String(BigInt(initial) + (halts[operation] || operation === "page_write" ? 1n : 0n)));
+		await store.retire();
+	},
+);
+
+it.each(["node_write", "spool_create"] as const)(
+	"advances the health clock once after a real %s halt and repair",
+	async (operation) => {
+		const health = new RecoveryStorageHealth(base);
+		const initial = await health.revision();
+		const dir = join(base, "senpi-current-write-halt");
+		if (operation === "spool_create") await mkdir(dir, { mode: 0o700 });
+		const store = new CompactContentStore({
+			dir,
+			health,
+			io: {
+				...nodeCompactStorageIo,
+				writeFile: async () => {
+					throw Object.assign(new Error("disk full"), { code: "ENOSPC" });
+				},
+			},
+		});
+		try {
+			expect(await store.writeFile(Buffer.from("accepted"), "node_write", 8)).toBeUndefined();
+			await store.idle();
+			expect(store.status().failures[0]?.operation).toBe(operation);
+			expect(store.spillAllowed).toBe(false);
+			expect(health.needsRecovery).toBe(true);
+			expect(await health.revision()).toBe(initial);
+			const repaired = await store.repair();
+			expect(repaired).toBe(String(BigInt(initial) + 1n));
+			expect(await health.recover(repairWrite)).toBe(repaired);
+			expect(store.spillAllowed).toBe(true);
+		} finally {
+			await store.retire();
+		}
+	},
+);
 
 it("S14 R84 disk full then space freed advances health with no accepted-source progress and survives restart", async () => {
 	const health = new RecoveryStorageHealth(base);
