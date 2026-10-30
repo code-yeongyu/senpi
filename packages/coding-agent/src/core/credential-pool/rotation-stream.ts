@@ -165,9 +165,10 @@ export function streamWithCredentialRotation(
 		},
 		// A probe that ended without a verdict hands its lease back at once instead of holding the slot
 		// for the lease's whole TTL (senpi#4094).
+		// Only the lease this request took: `slot.lease` mirrors the shared file and can be another request's.
 		releaseSlot: async (slot) => {
-			if (slot.lease === undefined) return;
-			await releaseProbeLease(sources.repository, sources.providerId, slot.lane, slot.name, slot.lease.id);
+			if (slot.heldLeaseId === undefined) return;
+			await releaseProbeLease(sources.repository, sources.providerId, slot.lane, slot.name, slot.heldLeaseId);
 		},
 		persistBlock: async (slot, block) => {
 			const revision =

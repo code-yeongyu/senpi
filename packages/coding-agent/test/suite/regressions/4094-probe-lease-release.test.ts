@@ -71,8 +71,13 @@ function abortError(): Error {
 	return error;
 }
 
-async function request(attempt: () => AsyncIterable<AssistantMessageEvent>, attempts: string[]): Promise<unknown> {
+async function request(
+	attempt: () => AsyncIterable<AssistantMessageEvent>,
+	attempts: string[],
+	modelId?: string,
+): Promise<unknown> {
 	const stream = streamWithCredentialRotation({
+		...(modelId === undefined ? {} : { modelId }),
 		sources: {
 			providerId: PROVIDER,
 			credential: oneAccount(),
@@ -131,5 +136,46 @@ describe("senpi#4094: a half-open probe lease never strands a slot", () => {
 		expect(outcome).toBeInstanceOf(CredentialFailoverError);
 		expect((outcome as CredentialFailoverError).retryAt).toBe(lease.expiresAt);
 		expect(attempts).toEqual(["alpha"]);
+	});
+
+	// The persisted lease is copied onto every listed slot, so it proves nothing about who took it: a
+	// request may hand back only the lease it took itself, or a second probe runs beside the first.
+	it("#given another caller's live lease on a model-blocked slot #when this request's attempt there aborts #then that lease is kept", async () => {
+		const attempts: string[] = [];
+		clock = (await coolDownAlpha(attempts)) + 1;
+		const lease = await acquireHalfOpenLease(repository, PROVIDER, "stored", "alpha", { now: clock });
+		if (lease === undefined) throw new Error("expected to take the probe lease");
+		await repository.mutateSlotState(PROVIDER, "stored", "alpha", (current) =>
+			current === undefined
+				? undefined
+				: { ...current, modelBlocks: { "gpt-test": { blockedUntil: clock + HOUR } } },
+		);
+
+		await request(
+			() => {
+				throw abortError();
+			},
+			attempts,
+			"gpt-test",
+		);
+
+		expect((await repository.listSlots(PROVIDER, "stored")).alpha?.lease?.id).toBe(lease.leaseId);
+	});
+
+	// A same-slot retry must not be refused by the probe lease the request itself still holds.
+	it("#given the probe hits a provider fault #when the request retries the same slot #then it runs again instead of refusing on its own lease", async () => {
+		const attempts: string[] = [];
+		clock = (await coolDownAlpha(attempts)) + 1;
+		let calls = 0;
+
+		const outcome = await request(() => {
+			calls += 1;
+			if (calls === 1) throw Object.assign(new Error("Service Unavailable"), { status: 503 });
+			return served();
+		}, attempts);
+
+		expect(outcome).toBeUndefined();
+		expect(attempts).toEqual(["alpha", "alpha", "alpha"]);
+		expect((await repository.listSlots(PROVIDER, "stored")).alpha?.lease).toBeUndefined();
 	});
 });

@@ -261,7 +261,13 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 				if (action.kind === "retry_same" && !committedOutput) {
 					const used = (retriesBySlot.get(slot.name) ?? 0) + 1;
 					retriesBySlot.set(slot.name, used);
-					if (used < action.maxAttempts) continue;
+					if (used < action.maxAttempts) {
+						// Hand back what the attempt reserved before listing again: the next pass takes its own
+						// reservation, and a lease kept here would list this slot as another request's probe.
+						unsettled = undefined;
+						await options.releaseSlot?.(slot);
+						continue;
+					}
 					if (terminalEvent !== undefined) {
 						yield terminalEvent;
 						return;

@@ -96,6 +96,11 @@ export type RotationSlot = RunSlot & {
 	envVarName?: string;
 	/** Stored-lane material revision binding sidecar health to the current credential; never serialized. */
 	storedRevision?: string;
+	/**
+	 * The half-open probe lease THIS listing took for the attempt; never serialized. `lease` is copied
+	 * from the shared file and may be another request's, so only this id may be handed back.
+	 */
+	heldLeaseId?: string;
 };
 
 export type RotationSources = {
@@ -259,6 +264,7 @@ export async function listRotationSlots(
 								lane: "stored",
 								pinned: (credential as PooledCredential).pinned === slot.name,
 								storedRevision,
+								...(leasedModelUntil === undefined ? { heldLeaseId: lease.leaseId } : {}),
 							},
 							leasedApplicable,
 						),
@@ -315,6 +321,7 @@ async function listEnvRotationSlots(
 		const revision = await repository.envCredentialRevision(slot.envVarName, slot.key);
 		let applicable = persisted?.credentialRevision === revision ? persisted : undefined;
 		let modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
+		let heldLeaseId: string | undefined;
 		if (
 			acquireLeases &&
 			modelUntil === undefined &&
@@ -340,6 +347,7 @@ async function listEnvRotationSlots(
 				applicable = leasedState?.credentialRevision === revision ? leasedState : undefined;
 				modelUntil = activeModelBlockUntil(applicable?.modelBlocks, modelId, now());
 				await releaseLeaseIfModelBlocked(repository, providerId, "env", slot.name, lease.leaseId, modelUntil);
+				if (modelUntil === undefined) heldLeaseId = lease.leaseId;
 			}
 		}
 		slots.push(
@@ -350,6 +358,7 @@ async function listEnvRotationSlots(
 						lane: "env",
 						envKey: slot.key,
 						envVarName: slot.envVarName,
+						...(heldLeaseId === undefined ? {} : { heldLeaseId }),
 					},
 					applicable,
 				),
