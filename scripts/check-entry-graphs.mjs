@@ -49,8 +49,12 @@ const BUDGETS = {
 			// below 250 pure LOC; assistant-seed-frontier.ts shares the producer/projector frontier contract.
 			// Both are browser-safe leaves without new runtime dependencies. Measured: 33 files.
 			// +1 (senpi#4099): auth/pool/login-id.ts, the one-function leaf that stamps a fresh loginId on a sign-in's
-			// credential so a re-login (never a token refresh) releases a billing-pinned fallback. Measured: 34 files.
-			maxFiles: 34,
+			// credential so a re-login (never a token refresh) releases a billing-pinned fallback.
+			// +3 (senpi#3975): api/lazy.ts keeps the diagnostic a credential pool attaches to its all-blocked refusal
+			// (a rate limit with the soonest unblock time), read through provider-diagnostic.ts, which validates it
+			// against utils/provider-diagnostic-vocabulary.ts from utils/provider-diagnostic-carrier.ts. All three are
+			// dependency-free leaves. Measured: 37 files.
+			maxFiles: 37,
 			forbid: ["providers/", "models.generated.ts", "index.ts", "utils/validation.ts", "utils/typebox-helpers.ts"],
 		},
 		"./utils/*": {

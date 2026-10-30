@@ -7,6 +7,16 @@ import type {
 /** Serialized UTF-8 budget for one emitted diagnostic. */
 export const PROVIDER_DIAGNOSTIC_MAX_BYTES = 512;
 
+/** A credential pool whose every account is limited until `resetsAt`, the soonest one is due back (senpi#3975). */
+export function accountPoolBlockedDiagnostic(resetsAt: number): ProviderDiagnostic | undefined {
+	return buildProviderDiagnostic({
+		category: "rate_limit",
+		code: "account_pool_blocked",
+		evidence: "structured_code",
+		resetsAt,
+	});
+}
+
 /**
  * Closed allowlist of provider error tokens and the family each one proves.
  * Exact tokens only: Anthropic `error.type` values, OpenAI-compatible
