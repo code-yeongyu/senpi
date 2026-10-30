@@ -201,6 +201,114 @@ describe("OpenAI ChatGPT OAuth", () => {
 
 	// #5003: recovery is driven by the OAuth code, never diagnostic prose.
 	it.each([
+		{
+			shape: "RFC 6749 error string",
+			body: JSON.stringify({ error: "invalid_grant" }),
+			status: 400,
+			expected: OAuthReauthorizationRequiredError,
+			classification: "permanent",
+		},
+		{
+			shape: "error object code",
+			body: JSON.stringify({ error: { code: "refresh_token_expired" } }),
+			status: 400,
+			expected: OAuthReauthorizationRequiredError,
+			classification: "permanent",
+		},
+		{
+			shape: "error object type",
+			body: JSON.stringify({ error: { type: "invalid_client" } }),
+			status: 400,
+			expected: OAuthClientConfigurationError,
+			classification: "permanent",
+		},
+		{
+			shape: "error object code before type",
+			body: JSON.stringify({ error: { code: "refresh_token_reused", type: "invalid_request_error" } }),
+			status: 400,
+			expected: OAuthReauthorizationRequiredError,
+			classification: "permanent",
+		},
+		{
+			shape: "nested error string",
+			body: JSON.stringify({ error: { error: "invalid_client" } }),
+			status: 400,
+			expected: OAuthClientConfigurationError,
+			classification: "permanent",
+		},
+		{
+			shape: "nested error object",
+			body: JSON.stringify({ error: { error: { code: "invalid_refresh_token" } } }),
+			status: 400,
+			expected: OAuthReauthorizationRequiredError,
+			classification: "permanent",
+		},
+		{
+			shape: "top-level code",
+			body: JSON.stringify({ code: "invalid_client" }),
+			status: 400,
+			expected: OAuthClientConfigurationError,
+			classification: "permanent",
+		},
+		{
+			shape: "diagnostic-only code",
+			body: JSON.stringify({ error_description: "invalid_grant" }),
+			status: 400,
+			expected: OAuthTokenEndpointError,
+			classification: "permanent",
+		},
+		{
+			shape: "non-JSON terminal response",
+			body: "invalid_client",
+			status: 400,
+			expected: OAuthTokenEndpointError,
+			classification: "permanent",
+		},
+		{
+			shape: "empty terminal response",
+			body: "",
+			status: 400,
+			expected: OAuthTokenEndpointError,
+			classification: "permanent",
+		},
+		{
+			shape: "nested code on transient server response",
+			body: JSON.stringify({ error: { code: "invalid_grant" } }),
+			status: 503,
+			expected: OAuthTokenEndpointError,
+			classification: "transient",
+		},
+		{
+			shape: "non-JSON transient response",
+			body: "<html>unavailable</html>",
+			status: 500,
+			expected: OAuthTokenEndpointError,
+			classification: "transient",
+		},
+		{
+			shape: "empty transient response",
+			body: "",
+			status: 429,
+			expected: OAuthTokenEndpointError,
+			classification: "transient",
+		},
+	])("classifies refresh response $shape", async ({ body, status, expected, classification }) => {
+		// Given a token endpoint response in a supported wire shape.
+		vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status })));
+
+		// When the saved session refreshes.
+		const error = await openaiChatGPTOAuth
+			.refresh(connectedCredential(), neverAbortedSignal)
+			.catch((error: unknown) => error);
+
+		// Then only machine-readable codes select recovery, after the status rule.
+		expect(error).toBeInstanceOf(expected);
+		expect(error instanceof Error && error.constructor).toBe(expected);
+		expect(error).toHaveProperty("status", status);
+		expect(classifyOAuthRefreshFailure(error)).toBe(classification);
+	});
+
+	it.each([
 		"invalid_grant",
 		"invalid_refresh_token",
 		"token_expired",

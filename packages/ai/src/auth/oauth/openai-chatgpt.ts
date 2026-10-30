@@ -137,6 +137,17 @@ function startCallbackServer(expectedState: string): Promise<CallbackServer> {
 	});
 }
 
+/** Read machine codes only; error_description is diagnostic text, not a recovery signal. */
+function tokenErrorCode(value: unknown): string | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const error: unknown = Reflect.get(value, "error");
+	if (typeof error === "string") return error;
+	const code: unknown = Reflect.get(value, "code");
+	if (typeof code === "string") return code;
+	const type: unknown = Reflect.get(value, "type");
+	return tokenErrorCode(error) ?? (typeof type === "string" ? type : undefined);
+}
+
 async function requestToken(body: URLSearchParams, signal: AbortSignal): Promise<TokenResponse> {
 	const response = await fetch(TOKEN_URL, {
 		method: "POST",
@@ -154,10 +165,10 @@ async function requestToken(body: URLSearchParams, signal: AbortSignal): Promise
 			response.status,
 		);
 		if (body.get("grant_type") === "refresh_token" && classifyOAuthRefreshFailure(error) === "permanent") {
-			let code: unknown;
+			let code: string | undefined;
 			try {
 				const parsed: unknown = JSON.parse(responseBody);
-				if (typeof parsed === "object" && parsed !== null) code = Reflect.get(parsed, "error");
+				code = tokenErrorCode(parsed);
 			} catch {
 				// Non-JSON errors retain the HTTP status and diagnostic below.
 			}
