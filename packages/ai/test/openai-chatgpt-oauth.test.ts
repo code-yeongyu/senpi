@@ -294,7 +294,10 @@ describe("OpenAI ChatGPT OAuth", () => {
 		},
 	])("classifies refresh response $shape", async ({ body, status, expected, classification }) => {
 		// Given a token endpoint response in a supported wire shape.
-		vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status })));
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response(body, { status })),
+		);
 
 		// When the saved session refreshes.
 		const error = await openaiChatGPTOAuth
