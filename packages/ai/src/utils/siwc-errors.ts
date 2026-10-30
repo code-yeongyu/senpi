@@ -4,11 +4,14 @@ type SiwcRecovery = "usage_limit" | "account_disabled" | "auth" | "request" | "t
 
 /** Exact Responses codes, not prose: errors-and-recovery#structured-responses-errors. */
 const SIWC_ERRORS: Readonly<
-	Record<string, {
-		readonly category: ProviderDiagnosticCategory;
-		readonly status: number;
-		readonly recovery: SiwcRecovery;
-	}>
+	Record<
+		string,
+		{
+			readonly category: ProviderDiagnosticCategory;
+			readonly status: number;
+			readonly recovery: SiwcRecovery;
+		}
+	>
 > = {
 	subscription_sharing_usage_limit_exceeded: { category: "quota", status: 429, recovery: "usage_limit" },
 	subscription_sharing_user_not_eligible: { category: "unknown", status: 403, recovery: "account_disabled" },

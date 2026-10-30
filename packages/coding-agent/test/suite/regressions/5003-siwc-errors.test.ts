@@ -49,18 +49,14 @@ function sse(events: readonly unknown[]): Response {
 async function run(response: () => Response, selectedModel = model, maxRetries = 0) {
 	let calls = 0;
 	const events: AssistantMessageEvent[] = [];
-	const source = stream(
-		selectedModel,
-		normalizeContext({ messages: [] }),
-		{
-			apiKey: "synthetic-test-token",
-			maxRetries,
-			fetch: async () => {
-				calls++;
-				return response();
-			},
+	const source = stream(selectedModel, normalizeContext({ messages: [] }), {
+		apiKey: "synthetic-test-token",
+		maxRetries,
+		fetch: async () => {
+			calls++;
+			return response();
 		},
-	);
+	});
 	for await (const event of source) events.push(event);
 	const event = events.at(-1);
 	if (event === undefined) throw new Error("Missing terminal event");
@@ -92,7 +88,8 @@ describe("SIWC structured recovery through HTTP and SSE", () => {
 			const classified = classifyCredentialFailure(rotationErrorFromEvent(result.event), { failureCount: 20 });
 			if (action === "limit") {
 				expect(classified).toMatchObject({ kind: "failover", block: { reason: "rate_limit" } });
-				if (classified.kind !== "failover" || classified.block.reason !== "rate_limit") throw new Error("not limited");
+				if (classified.kind !== "failover" || classified.block.reason !== "rate_limit")
+					throw new Error("not limited");
 				expect(classified.block.cooldownMs).toBeGreaterThan(0);
 				expect(classified.block.cooldownMs).toBeLessThanOrEqual(30 * 60_000);
 				expect(result.message.errorMessage).toContain("https://chatgpt.com/settings/usage");
@@ -102,7 +99,9 @@ describe("SIWC structured recovery through HTTP and SSE", () => {
 					block: { reason: action === "auth" ? "auth_error" : "account_disabled" },
 				});
 			} else {
-				expect(classified).toEqual(action === "retry" ? { kind: "retry_same", maxAttempts: 2 } : { kind: "fail_request" });
+				expect(classified).toEqual(
+					action === "retry" ? { kind: "retry_same", maxAttempts: 2 } : { kind: "fail_request" },
+				);
 			}
 			if (code === "subscription_sharing_unsupported_capability") {
 				expect(result.message.errorMessage).toContain("temperature");
@@ -127,21 +126,18 @@ describe("SIWC structured recovery through HTTP and SSE", () => {
 	it.each([
 		["subscription_sharing_usage_limit_exceeded", 429],
 		["subscription_sharing_user_not_eligible", 403],
-	] as const)(
-		"%s is not replayed by HTTP retries, even with retry guidance",
-		async (code, status) => {
-			const result = await run(
-				() =>
-					Response.json(
-						{ error: { code, message: "retry later" } },
-						{ status, headers: { "x-should-retry": "true", "retry-after": "0" } },
-					),
-				model,
-				3,
-			);
-			expect(result.calls).toBe(1);
-		},
-	);
+	] as const)("%s is not replayed by HTTP retries, even with retry guidance", async (code, status) => {
+		const result = await run(
+			() =>
+				Response.json(
+					{ error: { code, message: "retry later" } },
+					{ status, headers: { "x-should-retry": "true", "retry-after": "0" } },
+				),
+			model,
+			3,
+		);
+		expect(result.calls).toBe(1);
+	});
 
 	it.each(["response.completed", "response.incomplete", "interrupted"])(
 		"%s has distinct completion semantics",
@@ -150,22 +146,26 @@ describe("SIWC structured recovery through HTTP and SSE", () => {
 				sse(
 					type === "interrupted"
 						? []
-						: [{
-								type,
-								response: {
-									id: "synthetic",
-									status: type === "response.completed" ? "completed" : "incomplete",
-									incomplete_details: { reason: "max_output_tokens" },
-									output: [],
-									usage: { input_tokens: 9, output_tokens: 4, total_tokens: 13 },
+						: [
+								{
+									type,
+									response: {
+										id: "synthetic",
+										status: type === "response.completed" ? "completed" : "incomplete",
+										incomplete_details: { reason: "max_output_tokens" },
+										output: [],
+										usage: { input_tokens: 9, output_tokens: 4, total_tokens: 13 },
+									},
 								},
-							}],
+							],
 				),
 			);
 			expect(result.message.stopReason).toBe(type === "response.completed" ? "stop" : "error");
 			if (type !== "interrupted") expect(result.message.usage.totalTokens).toBe(13);
 			if (type !== "response.completed") {
-				expect(result.message.errorMessage).toContain(type === "interrupted" ? "terminal response event" : "incomplete");
+				expect(result.message.errorMessage).toContain(
+					type === "interrupted" ? "terminal response event" : "incomplete",
+				);
 			}
 		},
 	);
@@ -231,7 +231,8 @@ describe("SIWC structured recovery through HTTP and SSE", () => {
 					);
 					yield result.event;
 				},
-			})) events.push(event);
+			}))
+				events.push(event);
 			expect(attempts).toEqual(expectedAttempts);
 			const health = await repository.listSlots(model.provider, "stored");
 			expect(health.alpha?.blockReason).toBe(blockReason);

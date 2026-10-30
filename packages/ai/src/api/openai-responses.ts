@@ -252,11 +252,7 @@ function formatOpenAIResponsesError(error: unknown, provider: string, siwc = fal
 		normalizeProviderError(error),
 		`${provider === "openai" ? "OpenAI" : provider} API error`,
 	);
-	if (
-		siwc &&
-		error instanceof Error &&
-		Reflect.get(error, "code") === "subscription_sharing_unsupported_capability"
-	) {
+	if (siwc && error instanceof Error && Reflect.get(error, "code") === "subscription_sharing_unsupported_capability") {
 		const param = Reflect.get(error, "param");
 		if (typeof param === "string") errorMessage += `\nUnsupported parameter: ${param}`;
 	}
