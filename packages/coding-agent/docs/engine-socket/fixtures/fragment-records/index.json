@@ -2,7 +2,7 @@
 	"contract": "CONTRACT-r6",
 	"section": "B3",
 	"digestAlgorithm": "sha256",
-	"digestRule": "digest is lowercase hex SHA-256 over the exact raw bytes of one fragment; sourceDigest and binding.digest cover the whole value. Pending the S09-Q1 ruling; a different ruling regenerates every file.",
+	"digestRule": "digest is lowercase hex domain-separated SHA-256 via compact-catalog-codec.ts: fragment uses u8 tagLen + \"senpi-recovery-catalog/1/utf16le/fragment\" + u64BE byteLength + exact fragment bytes; sourceDigest and binding.digest use the leaf domain over the whole value (RULING-57/58, RULING-98).",
 	"limits": {
 		"D": 131072,
 		"F": 262144,
