@@ -34,8 +34,10 @@ for (const row of index.cases)
 				sessionId = (await peer.request({ type: "open_session", cwd: host.cwd, admissionId: "session" })).sessionId;
 			if (fixture.expectedAck === null) {
 				const before = peer.records.length;
-				peer.send(fixture.request);
-				await peer.request({ type: "get_protocol_info" });
+				peer.send({ ...fixture.request, ...(sessionId === undefined ? {} : { sessionId }) });
+				await peer.request(
+					sessionId === undefined ? { type: "get_protocol_info" } : { type: "get_state", sessionId },
+				);
 				expect(peer.records.slice(before).filter((record) => record.command === "set_client_info")).toEqual([]);
 			} else {
 				const reply = await peer.request({ ...fixture.request, ...(sessionId === undefined ? {} : { sessionId }) });

@@ -65,6 +65,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 
 	/** Queue a session record. Content events target connections attached to the session. */
 	enqueue(sessionId: string, value: object): boolean {
+		if (declarationReply(value, undefined) === undefined) return true;
 		if (this.sealedSessions.has(sessionId)) return false;
 		const targetId = this.connectionContext.getStore();
 		const record = normalizeJsonValue(value).value as RpcRecord;

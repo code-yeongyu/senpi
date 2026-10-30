@@ -1,0 +1,17 @@
+{
+	"contractIds": [
+		"T7",
+		"RULING-73"
+	],
+	"flag": true,
+	"selected": true,
+	"session": true,
+	"request": {
+		"type": "set_client_info",
+		"capabilities": [
+			"compact_message_updates_v1",
+			"event_resync"
+		]
+	},
+	"expectedAck": null
+}
