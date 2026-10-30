@@ -39,10 +39,11 @@ const seats: AccountSlot[] = ["warm", "seat-b", "seat-c", "seat-d"].map((name) =
 }));
 
 type Event = { type: "done"; seat: string };
-type Reply = "ok" | "rate_limit" | "server_error" | "usage_limit";
+type Reply = "ok" | "rate_limit" | "long_limit" | "server_error" | "usage_limit";
 
 const REPLY_ERROR: Record<Exclude<Reply, "ok">, string> = {
 	rate_limit: `rate_limit retry-after-ms: ${HOUR_MS}`,
+	long_limit: `rate_limit retry-after-ms: ${3 * HOUR_MS}`,
 	server_error: "server_error",
 	usage_limit: "You've hit your session limit \u00b7 resets in 4 hours",
 };
@@ -87,20 +88,6 @@ class FakeSeats {
 		return this.dispatches.filter((d) => d.session === session && d.seat !== warm).map((d) => d.seat);
 	}
 
-	/**
-	 * Moves off the warm seat: every cold dispatch except a same-seat retry inside the same try, which re-sends
-	 * the identical prefix to the seat that was just sent it (senpi#4299) and is left alone.
-	 */
-	seatChanges(session: string, warm: string): string[] {
-		const own = this.dispatches.filter((d) => d.session === session);
-		return own
-			.filter((d, index) => {
-				const previous = own[index - 1];
-				return d.seat !== warm && !(previous?.tryId === d.tryId && previous.seat === d.seat);
-			})
-			.map((d) => d.seat);
-	}
-
 	triesThatDispatched(session: string): number {
 		return new Set(this.dispatches.filter((d) => d.session === session).map((d) => d.tryId)).size;
 	}
@@ -112,18 +99,27 @@ async function tryTurn(input: {
 	session: string;
 	warm: string;
 	turnKey: string;
+	pinned?: string;
+	at?: number;
 }): Promise<{ ok: true; seat: string } | { ok: false; error: unknown }> {
 	const accounts = await storedSeats(input.store);
+	const at = input.at ?? NOW;
 	try {
 		const events: Event[] = [];
 		for await (const event of runFailover<Event>({
 			accounts,
-			selectFn: (pool) => selectAccount(pool, { sessionId: input.session, preferredAccount: input.warm, now: NOW }),
+			selectFn: (pool) =>
+				selectAccount(pool, {
+					sessionId: input.session,
+					preferredAccount: input.warm,
+					...(input.pinned === undefined ? {} : { pinnedAccount: input.pinned }),
+					now: at,
+				}),
 			runAttempt: input.fake.attempt(input.session),
 			classify: classifySdkError,
 			store: input.store,
 			providerId: PROVIDER,
-			now: () => NOW,
+			now: () => at,
 			sleep: async () => {},
 			sessionKey: input.session,
 			warmAccount: input.warm,
@@ -157,20 +153,16 @@ afterEach(() => {
 });
 
 describe("oh-my-openagent#10304: one failing turn seeds at most one cold seat", () => {
-	it("a cold seat that keeps failing transiently is moved to once; the session's turn retries do not seed it again", async () => {
+	it("a cold seat that keeps failing transiently is the turn's only cold seat; its retries re-send the prefix it already holds", async () => {
 		const store = await storeWithSeats();
 		// The warm seat hits a rate limit; every other seat answers a server error.
 		const fake = new FakeSeats((seat) => (seat === "warm" ? "rate_limit" : "server_error"));
 
 		const results = await failingTurn({ store, fake, session: "s-transient", warm: "warm", turnKey: "turn-1" });
 
-		const moves = fake.seatChanges("s-transient", "warm");
-		expect({ seatChanges: moves.length, triesThatDispatched: fake.triesThatDispatched("s-transient") }).toEqual({
-			seatChanges: 1,
-			triesThatDispatched: 1,
-		});
-		expect(results.every((result) => !result.ok)).toBe(true);
-		for (const result of results.slice(1)) expect(blockedTurn(result)?.name).toBe("ColdSeedLimitError");
+		expect(new Set(fake.coldSeeds("s-transient", "warm")).size).toBe(1);
+		expect(fake.triesThatDispatched("s-transient")).toBe(SESSION_TURN_RETRIES + 1);
+		for (const result of results) expect(blockedTurn(result)?.name).toBe("ClassifiedSdkError");
 	});
 
 	it("a cold seat that is rate limited too ends the turn instead of seeding every other seat", async () => {
@@ -215,16 +207,83 @@ describe("oh-my-openagent#10304: one failing turn seeds at most one cold seat", 
 	it("a later turn may try one cold seat again, and a recovered warm seat always serves", async () => {
 		const store = await storeWithSeats();
 		let warmDown = true;
-		const fake = new FakeSeats((seat) => (seat === "warm" ? (warmDown ? "rate_limit" : "ok") : "server_error"));
+		const fake = new FakeSeats((seat) => (seat === "warm" ? (warmDown ? "rate_limit" : "ok") : "rate_limit"));
 
 		await failingTurn({ store, fake, session: "s-next", warm: "warm", turnKey: "turn-1" });
 		await tryTurn({ store, fake, session: "s-next", warm: "warm", turnKey: "turn-2" });
-		expect(fake.seatChanges("s-next", "warm")).toHaveLength(2);
+		const cold = fake.coldSeeds("s-next", "warm");
+		expect(cold).toHaveLength(2);
+		expect(new Set(cold).size).toBe(2);
 
 		forgetSessionBlocksFor("warm");
 		warmDown = false;
 		const recovered = await tryTurn({ store, fake, session: "s-next", warm: "warm", turnKey: "turn-2" });
 		expect(recovered).toEqual({ ok: true, seat: "warm" });
+	});
+
+	it("a pinned account that fails falls through to the healthy warm seat instead of ending the turn", async () => {
+		const store = await storeWithSeats();
+		const fake = new FakeSeats((seat) => (seat === "seat-b" ? "rate_limit" : "ok"));
+
+		const result = await tryTurn({
+			store,
+			fake,
+			session: "s-pin",
+			warm: "warm",
+			pinned: "seat-b",
+			turnKey: "turn-1",
+		});
+
+		expect(fake.dispatches.map((d) => d.seat)).toEqual(["seat-b", "warm"]);
+		expect(result).toEqual({ ok: true, seat: "warm" });
+	});
+
+	it("a turn retry may re-run on the cold seat it already sent this prefix to", async () => {
+		const store = await storeWithSeats();
+		let coldCalls = 0;
+		const fake = new FakeSeats((seat) => {
+			if (seat === "warm") return "rate_limit";
+			coldCalls += 1;
+			return coldCalls <= 3 ? "server_error" : "ok";
+		});
+
+		const results = await failingTurn({ store, fake, session: "s-rerun", warm: "warm", turnKey: "turn-1" });
+
+		expect(results.at(-1)).toMatchObject({ ok: true });
+		expect(new Set(fake.coldSeeds("s-rerun", "warm")).size).toBe(1);
+	});
+
+	it("the turn's cold-seat record expires, so a much later retry of the same turn may use another seat", async () => {
+		const store = await storeWithSeats();
+		let firstCold: string | undefined;
+		const fake = new FakeSeats((seat) => {
+			if (seat === "warm") return "long_limit";
+			firstCold ??= seat;
+			return seat === firstCold ? "long_limit" : "ok";
+		});
+
+		const first = await tryTurn({ store, fake, session: "s-ttl", warm: "warm", turnKey: "turn-1" });
+		expect(blockedTurn(first)?.name).toBe("ColdSeedLimitError");
+
+		const later = await tryTurn({
+			store,
+			fake,
+			session: "s-ttl",
+			warm: "warm",
+			turnKey: "turn-1",
+			at: NOW + 2 * HOUR_MS,
+		});
+		expect(later).toMatchObject({ ok: true });
+		expect(new Set(fake.coldSeeds("s-ttl", "warm")).size).toBe(2);
+	});
+
+	it("a warm account that left the pool does not make every account cold", async () => {
+		const store = await storeWithSeats();
+		const fake = new FakeSeats(() => "rate_limit");
+
+		await tryTurn({ store, fake, session: "s-gone", warm: "removed-account", turnKey: "turn-1" });
+
+		expect(new Set(fake.dispatches.map((d) => d.seat)).size).toBe(seats.length);
 	});
 
 	it("a session with no warm seat keeps walking the pool as before", async () => {
