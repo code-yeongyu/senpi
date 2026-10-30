@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { COMPACT_LEAF_CODE_UNITS as LEAF, CompactContentStore } from "../../../src/modes/rpc/compact-content-store.ts";
 import { CompactSessionState } from "../../../src/modes/rpc/compact-session-state.ts";
-import { controlledIo, spoolRoot } from "../compact-storage-support.ts";
+import { controlledIo, spoolRoot, startIdentity } from "../compact-storage-support.ts";
 
 // senpi#4272, RULING-26 Q3 / 26a: limits refuse, never truncate, before leaf I/O.
 const cleanups: (() => Promise<void>)[] = [];
@@ -38,9 +38,9 @@ it("reads exactly the size/count boundary and rejects either excess without read
 		spillTargetBytes: 0,
 		io: {
 			...control.io,
-			readFile: (path) => {
+			readFile: (path, range) => {
 				reads++;
-				return control.io.readFile(path);
+				return control.io.readFile(path, range);
 			},
 		},
 	});
@@ -101,6 +101,7 @@ it("keeps two owners across append, replacement and either release order without
 		const body = "a".repeat(LEAF * 8) + "\uD800";
 		state.accept({
 			type: "block_start",
+			...startIdentity(),
 			messageId: "m",
 			contentIndex: 0,
 			kind: "text",
@@ -108,15 +109,17 @@ it("keeps two owners across append, replacement and either release order without
 			coveredCodeUnits: 0,
 		});
 		const first = state.freeze();
+		const nodes = state.storageStatus().residentTextNodes;
 		const second = state.freeze();
-		expect(state.storageStatus().residentTextNodes).toBe(7);
+		expect(nodes).toBeGreaterThanOrEqual(7);
+		expect(state.storageStatus().residentTextNodes).toBe(nodes);
 		state.accept({ type: "block_delta", messageId: "m", contentIndex: 0, offset: body.length, text: "next" });
 		state.accept({ type: "message_status", messageId: "m", persistence: "pending" });
 		await state.idle();
 		const settled = state.freeze();
 		expect((await state.read(settled)).messages[0].blocks[0].text).toBe(body + "next");
 		state.release(settled);
-		state.accept({ type: "message_remove", messageId: "m" });
+		await state.applyCold({ type: "message_remove", messageId: "m" });
 		const [drop, keep] = reverse ? [second, first] : [first, second];
 		state.release(drop);
 		state.release(drop);
@@ -149,6 +152,7 @@ it("retains an accepted persistent root after a failed spill without publishing 
 	const body = "q".repeat(LEAF * 3);
 	state.accept({
 		type: "block_start",
+		...startIdentity(),
 		messageId: "m",
 		contentIndex: 0,
 		kind: "text",

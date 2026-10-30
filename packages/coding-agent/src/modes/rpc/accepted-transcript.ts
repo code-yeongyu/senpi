@@ -49,6 +49,10 @@ export class AcceptedTranscript {
 		return this.version;
 	}
 
+	get available(): boolean {
+		return this.unavailable === null;
+	}
+
 	apply(transition: TranscriptTransition): void {
 		this.version += 1;
 		if (transition.kind === "replace") {

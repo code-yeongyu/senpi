@@ -1,3 +1,107 @@
+## 2026-10-29 - An unanchored discovery record never steers OAuth traffic (senpi#4924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`: `discoveryState()` returns nothing for a stored record that does not show where its authorization server came from: it has neither that server's metadata, nor protected-resource metadata naming it, nor the MCP server's own origin (`discoveryNamesItsServer`). The SDK's `auth()` (transport 401, modern HTTP fetch, sign-in start and code exchange) and senpi's own `discover()` (sign-in preflight, client_credentials) then discover from the MCP server, and `saveDiscoveryState` applies the senpi#2940 binding before any request to an authorization server.
+- `packages/coding-agent/test/mcp/2940-oauth-issuer-binding.test.ts`: every case fails on any fetch or name resolution outside its fixture, and a table runs each OAuth entry point against a grant that belongs to another authorization server.
+
+### Why
+
+- Given only a stored URL, the SDK fetched that server's metadata and posted the saved refresh token (or an authorization code, or a client_credentials request) to it, before anything checked that the MCP server still names it. The 2940 test passed only because the `.invalid` lookup failed fast, and it timed out on a slow resolver.
+
+### Why an extension could not handle it
+
+- The record is handed to the SDK by the builtin MCP OAuth provider; no hook runs between `discoveryState()` and the SDK's first request.
+
+### Expected merge conflict zones
+
+- LOW: the top of `McpOAuthProvider.discoveryState()` in `oauth-provider.ts`.
+
+## 2026-10-29 - One startup inventory announcement per RPC MCP attach (senpi#4850, fixes #4828)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-window.ts`: new `McpStartupWindows`, a per-session window that holds inventory notifications from an RPC attach until every connect that attach backgrounded has settled, then releases them once.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `attachSession` opens the window for RPC sessions and collects the attach's deferred connects (`#syncFromConfig` `startupConnects`); `#captureWireStatus` holds changed snapshots while the window is open and announces the release with `startupSettled`; `dispose` clears the windows.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts` and `control-inventory.ts`: forward `startupSettled: true` on `senpi.rpc.mcp_inventory.changed`.
+
+### Why
+
+- With parallel eager servers, every connection state change, tool registration and inventory read could announce an intermediate inventory, so the startup event count depended on connect timing and client polling (#4828).
+
+### Why an extension could not handle it
+
+- The capture points and the attach's connect set are private to the builtin MCP service.
+
+### Expected merge conflict zones
+
+- LOW: `attachSession`, the `onDeferred` callback in `#syncFromConfig`, and `#captureWireStatus` in `service.ts`.
+
+## 2026-10-28 - Registered-server ownership handoff to extensions that handle mcp_servers_change (senpi#4604, fixes #4597)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: on attach, extension-registered servers are merged into the config only when `ctx.extensionConnectsMcpServers?.()` is not `true`; `mcp.json` servers are merged as before.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`: `McpSessionContext` gains the optional `extensionConnectsMcpServers` getter.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, `service-types.ts`: upstream's rule is that the extension handling `mcp_servers_change` connects registered servers; if the built-in gateway also connected them, every registered server would get two connections.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, `service-types.ts`: the built-in gateway decides what it connects; another extension cannot stop it from merging registered servers.
+
+### Expected merge conflict zones
+
+- LOW: the `mergeExtensionMcpServers` call in `attachSession` and the `McpSessionContext` type.
+
+## 2026-10-27 - Negotiate advertised legacy MCP versions (senpi#4402)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts`: use the SDK's supported legacy versions when discovery rejects the modern version, select the existing legacy handshake when appropriate, and name server versions when neither era is supported.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`: retain the actionable version-negotiation diagnostic in stdio connection errors.
+
+### Why
+
+- Servers advertising implemented legacy versions in a `-32022` error failed to connect because the probe considered only modern versions. Modern selection and its single retry remain unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts` and `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts` own transport negotiation before extension requests can run.
+
+### Expected merge conflict zones
+
+- LOW: version selection in `packages/coding-agent/src/core/extensions/builtin/mcp/modern/era.ts` and discovery errors in `packages/coding-agent/src/core/extensions/builtin/mcp/modern/stdio-probe.ts`.
+
+## 2026-10-25 - Follow negotiated modern MCP tasks (senpi#4195, #4238)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: negotiate `io.modelcontextprotocol/tasks` only with advertising modern servers and follow `tools/call` task handles before SDK output validation; reuse the originating MRTR presenter and authority checks for task input.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/tasks.ts`: own polling, terminal results, deduplicated task input, and `tasks/cancel` on abort or the separate 30-minute cap (`SENPI_MCP_TASK_TIMEOUT_MS`).
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/errors.ts`: name the task and lifetime setting on cap expiry and retain numeric task failure codes.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts`: route task requests with `Mcp-Name = taskId`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: centralize abortable polling timers and close observers, and remove interrupted-promise listeners immediately on abort.
+- `packages/coding-agent/docs/mcp.md`: document the lifetime setting beside request timeout settings.
+- `packages/coding-agent/test/mcp/modern-tasks.test.ts`, `modern-tasks-http.test.ts`, and `fixtures/mrtr-lifecycle.ts`: cover task settlement, cancellation, polling, consent, disconnect cleanup, routing headers, and tool-row status through real modern SDK requests.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: the adapter rejected every task handle. The lead selected Option 2: task lifetime is separate from RPC timeouts, while ordinary calls retain `min(maxTotalTimeout, 9 * requestTimeout + 300000)`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/tasks.ts`: per-poll deadlines must not prematurely end a valid long-running task; the independent cap and abort path explicitly request task cancellation.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: negotiation, request origins, MRTR presenters, and final SDK result validation are owned by the builtin client.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/request.ts`: modern dispatch and consent collection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/modern/wire.ts`: routing-header method selection.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/wrap.ts`: safe lifecycle helpers.
+
 ## 2026-10-25 - MRTR review cleanup and startup diagnostics (#4226)
 
 ### What changed

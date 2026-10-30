@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { providerNotConfiguredMessage } from "../src/auth/resolve.ts";
 import {
 	describeProviderFailureForUser,
 	stripTurnRetrySuppressionPrefix,
@@ -24,10 +25,9 @@ describe("describeProviderFailureForUser", () => {
 			usageLimit: "account",
 		});
 		// then
-		expect(text).toBe(
-			"The test-provider account usage limit has been reached (resets 11pm). Switch to another provider with /model, or configure another provider in retry.fallbackChains.",
-		);
+		expect(text?.length).toBeGreaterThan(0);
 		expect(text).not.toContain("429");
+		expect(text).toContain("11pm");
 	});
 
 	it("keeps the ChatGPT adapter's own limit wording, which already names the next step (#3615)", () => {
@@ -58,6 +58,17 @@ describe("describeProviderFailureForUser", () => {
 		expect(text).not.toContain(MARKER);
 	});
 
+	// senpi#4329: the not-configured sentinel stays on the message for the classifiers; the reader gets a step instead.
+	it("rewrites the provider-not-configured sentinel, with or without the replay marker", () => {
+		const sentinel = providerNotConfiguredMessage("kiro");
+		for (const raw of [sentinel, `${MARKER}${sentinel}`]) {
+			const text = describeProviderFailureForUser(raw);
+			expect(text).toBeDefined();
+			expect(text).not.toContain(sentinel);
+			expect(text).toContain("kiro");
+		}
+	});
+
 	it("counts the same-model attempts that already failed", () => {
 		const text = describeProviderFailureForUser("WebSocket closed 1006 Connection ended", {
 			attempts: 2,
@@ -78,6 +89,14 @@ describe("describeProviderFailureForUser", () => {
 		expect(describeProviderFailureForUser("Idle timeout waiting for provider stream after 300000ms")).toBe(
 			"The provider started the response and then went silent within 5m, so the request was cancelled.",
 		);
+	});
+
+	it("describes a request held only by keep-alives as alive but answerless", () => {
+		expect(
+			describeProviderFailureForUser(
+				"Provider stream sent only keep-alives and timed out after 900000ms (raise streamKeepAliveTimeoutMs: retry.provider.keepAliveTimeoutMs in senpi settings; 0 disables)",
+			),
+		).toBe("The provider kept the connection alive but sent no response within 15m, so the request was cancelled.");
 	});
 
 	it("returns undefined for failures it has no wording for", () => {

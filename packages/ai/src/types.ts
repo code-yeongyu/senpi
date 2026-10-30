@@ -272,6 +272,12 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * Adapter support is explicit; unsupported adapters do not invoke it.
 	 */
 	onProviderStreamEvent?: (data: unknown, model: Model<Api>) => void | Promise<void>;
+	/**
+	 * Called whenever the response body delivers bytes, keep-alives included (SSE `ping` events, `:` comments).
+	 * Liveness only: it says the connection is alive, not that the model produced anything. Adapter support is
+	 * explicit; unsupported adapters do not invoke it.
+	 */
+	onTransportActivity?: () => void;
 	temperature?: number;
 	/**
 	 * Arbitrary sampling parameters merged into the request body as-is, after the named request

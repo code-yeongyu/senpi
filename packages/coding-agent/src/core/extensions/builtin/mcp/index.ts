@@ -43,9 +43,12 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 				data.respond(service.refreshWireStatusSnapshot(data.sessionId));
 			},
 		);
-		const unsubscribeWireStatus = service.onWireStatusChanged((sessionId, snapshot) => {
+		const unsubscribeWireStatus = service.onWireStatusChanged((sessionId, snapshot, startupSettled) => {
 			if (sessionId === undefined || sessionId !== attachedSessionId) return;
-			pi.events.emit(MCP_CONTROL_INVENTORY_CHANGED_EVENT, { sessionId, snapshot });
+			pi.events.emit(
+				MCP_CONTROL_INVENTORY_CHANGED_EVENT,
+				startupSettled ? { sessionId, snapshot, startupSettled: true } : { sessionId, snapshot },
+			);
 		});
 		const disposeControlInventory = (): void => {
 			if (controlInventoryDisposed) return;

@@ -56,9 +56,9 @@ export class CompactTextRoots {
 	}
 
 	/** Transfers one live root and one newly owned bounded leaf into the new root. */
-	append(root: LeafId, text: string): LeafId {
+	append(root: LeafId, text: string, structured = false): LeafId {
 		this.units(root);
-		const leaf = this.store.createLeaf(text);
+		const leaf = this.store.createLeaf(text, structured);
 		if (root === 0) return leaf;
 		const result = this.appendLeaf(root, leaf);
 		this.store.adjust(root, -1, 0);
@@ -66,23 +66,30 @@ export class CompactTextRoots {
 		return result;
 	}
 
+	/** Iterative, so a value owner chain of any depth (S03b-4) is released on the same bounded stack. */
 	adjust(id: LeafId, live: number, pins: number): void {
-		const node = this.node(id);
-		const beforeLive = Number(node.live > 0);
-		const beforePin = Number(node.live === 0 && node.pins > 0);
-		if (node.live + live < 0 || node.pins + pins < 0) throw new CompactReadError("ownership");
-		node.live += live;
-		node.pins += pins;
-		const liveChange = Number(node.live > 0) - beforeLive;
-		const pinChange = Number(node.live === 0 && node.pins > 0) - beforePin;
-		// Extra cuts on a live subtree do not visit children. Only category transitions propagate.
-		if (liveChange || pinChange) {
-			this.store.adjust(node.left, liveChange, pinChange);
-			this.store.adjust(node.right, liveChange, pinChange);
-		}
-		if (node.live === 0 && node.pins === 0) {
-			this.pending.delete(id);
-			this.nodes.delete(id);
+		const work: [LeafId, number, number][] = [[id, live, pins]];
+		for (let next = work.pop(); next; next = work.pop()) {
+			const [id, live, pins] = next;
+			if (id >= 0) {
+				this.store.adjust(id, live, pins);
+				continue;
+			}
+			const node = this.node(id);
+			const beforeLive = Number(node.live > 0);
+			const beforePin = Number(node.live === 0 && node.pins > 0);
+			if (node.live + live < 0 || node.pins + pins < 0) throw new CompactReadError("ownership");
+			node.live += live;
+			node.pins += pins;
+			const liveChange = Number(node.live > 0) - beforeLive;
+			const pinChange = Number(node.live === 0 && node.pins > 0) - beforePin;
+			// Extra cuts on a live subtree do not visit children. Only category transitions propagate.
+			if (liveChange || pinChange)
+				work.push([node.right, liveChange, pinChange], [node.left, liveChange, pinChange]);
+			if (node.live === 0 && node.pins === 0) {
+				this.pending.delete(id);
+				this.nodes.delete(id);
+			}
 		}
 	}
 
@@ -145,6 +152,21 @@ export class CompactTextRoots {
 		const node = this.nodes.get(id);
 		if (!node) throw new CompactReadError("ownership");
 		return node;
+	}
+
+	/** Compatibility assembly visits actual leaves, including short append-only delta leaves. */
+	async *chunks(root: LeafId, valid: () => void): AsyncGenerator<string> {
+		valid();
+		if (root === 0) return;
+		if (root > 0) {
+			const text = await this.read(root, "", 0, this.units(root), 1, valid);
+			valid();
+			yield text;
+		} else {
+			const node = this.node(root);
+			yield* this.chunks(node.left, valid);
+			yield* this.chunks(node.right, valid);
+		}
 	}
 
 	private appendLeaf(root: LeafId, leaf: LeafId): LeafId {

@@ -226,6 +226,13 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 */
 	streamStartTimeoutMs?: number;
 
+	/**
+	 * Bytes the provider reports through `onTransportActivity` (SSE pings, keep-alive comments) keep the start and
+	 * idle bounds from firing while they keep arriving within one bound. This caps how long keep-alives alone may
+	 * hold a request without any assistant event. Unset or non-positive values leave keep-alives unbounded.
+	 */
+	streamKeepAliveTimeoutMs?: number;
+
 	/** Provider/SDK timeout override for only the first request in this loop invocation. */
 	initialRequestTimeoutMs?: number;
 

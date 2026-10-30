@@ -73,7 +73,7 @@ function hasGpt6AstraCatalogSignal(model: Model<Api>): boolean {
 }
 
 function getGpt6AstraCatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasGpt6AstraCatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasGpt6AstraCatalogSignal));
 }
 
 const EXPECTED_CONCERN: Record<Gpt6AstraRuleId, Gpt6AstraConcern> = {

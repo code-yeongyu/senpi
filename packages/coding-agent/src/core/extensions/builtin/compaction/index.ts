@@ -1,6 +1,7 @@
 import type { Tool } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { createWarmAnchorSnapshot, isWarmSummaryAnchorValid } from "../../../compaction/warm-anchor.ts";
+import { formatCompactionFailure } from "../../../compaction-failure-text.ts";
 import { AccountUsageLimitError } from "../../../retry-fallback/usage-limit.ts";
 import type {
 	BeforeAgentStartEvent,
@@ -592,7 +593,9 @@ export default function compactionExtension(
 							reason: "extension",
 							signal: feedbackSignal,
 							aborted: feedbackSignal?.aborted,
-							errorMessage: `Compaction failed: ${stripTurnRetrySuppressionPrefix(inheritedFailure.message)}`,
+							errorMessage: formatCompactionFailure("compaction", inheritedFailure.message, {
+								model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+							}),
 						});
 						state = breaker.recordFailure(state, Date.now(), { route: "extension" });
 						return { applied: false, reason: "failed" };
@@ -683,7 +686,9 @@ export default function compactionExtension(
 				reason: "extension",
 				signal: feedbackSignal,
 				aborted: feedbackSignal?.aborted,
-				errorMessage: `Compaction failed: ${stripTurnRetrySuppressionPrefix(message)}`,
+				errorMessage: formatCompactionFailure("compaction", message, {
+					model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+				}),
 			});
 			const transient = isTransientSummarizationFailure(error, message);
 			if (transient) {

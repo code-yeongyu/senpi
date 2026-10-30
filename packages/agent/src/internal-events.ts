@@ -1,3 +1,4 @@
+/** Internal to senpi packages; not a public API; may change without notice. */
 import { type AssistantProgress, subscribeAssistantCapture } from "@earendil-works/pi-ai";
 import type { AgentEvent, AgentLoopConfig } from "./types.ts";
 
