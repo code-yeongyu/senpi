@@ -2693,13 +2693,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:3>",
        "parentId": "<id:1>",
@@ -2731,6 +2731,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:1>"
       }
      },
@@ -2741,7 +2742,8 @@
       "statusKey": "todo-waiting"
      },
      {
-      "type": "agent_start"
+      "type": "agent_start",
+      "runId": "<uuid:17>"
      },
      {
       "type": "turn_start"
@@ -2865,6 +2867,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:1>"
@@ -3016,6 +3019,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:3>"
       }
      },
@@ -3044,6 +3048,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_write",
@@ -3378,13 +3383,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:10>",
        "parentId": "<id:8>",
@@ -3416,6 +3421,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_write",
@@ -3634,6 +3640,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:6>"
       }
      },
@@ -3894,6 +3901,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:4>"
@@ -4019,6 +4027,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:8>"
       }
      },
@@ -4339,6 +4348,7 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "completionId": "<uuid:16>:1",
         "completion": {
          "kind": "reply",
@@ -4354,8 +4364,7 @@
          "endedBy": "clean",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:17>"
+        }
        },
        "id": "<id:17>",
        "parentId": "<id:18>",
@@ -4387,6 +4396,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "completionId": "<uuid:16>:1",
        "completion": {
         "kind": "reply",
@@ -4522,13 +4532,13 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:4>",
      "parentId": "<id:3>",
@@ -4644,13 +4654,13 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:11>",
      "parentId": "<id:8>",
@@ -4923,6 +4933,7 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "completionId": "<uuid:1>:1",
       "completion": {
        "kind": "reply",
@@ -4938,8 +4949,7 @@
        "endedBy": "clean",
        "budgetSpent": false,
        "deadlineStop": false
-      },
-      "runId": "<uuid:2>"
+      }
      },
      "id": "<id:23>",
      "parentId": "<id:22>",
