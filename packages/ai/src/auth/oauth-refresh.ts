@@ -107,7 +107,9 @@ async function exchangeAndStore(request: OAuthRefreshRequest, signal: AbortSigna
 	const { credentials, providerId, oauth, slotName } = request;
 	const view = (credential: Credential | undefined): OAuthCredential | undefined => {
 		if (credential?.type !== "oauth") return undefined;
-		return slotName === undefined ? credential : projectOAuthSlot(credential, slotName);
+		const projected = slotName === undefined ? credential : projectOAuthSlot(credential, slotName);
+		if (projected?.signedOut === true || (!projected?.access && !projected?.refresh)) return undefined;
+		return projected;
 	};
 
 	let latest: Credential | undefined;
