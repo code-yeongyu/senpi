@@ -140,7 +140,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime, toolRuntime?:
 				.filter((line) => line.length > 0)
 				.map((line) => {
 					const value = JSON.parse(line) as { type?: string };
-					return JSON.stringify(value.type === "message_update" ? toJsonEvent(value as AgentSessionEvent) : value);
+					return JSON.stringify(
+						value.type === "message_update" && "message" in value
+							? toJsonEvent(value as AgentSessionEvent)
+							: value,
+					);
 				})
 				.join("\n");
 			writeRawStdout(linearized.length > 0 ? `${linearized}\n` : "");

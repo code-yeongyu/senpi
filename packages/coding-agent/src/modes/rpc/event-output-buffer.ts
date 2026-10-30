@@ -1,4 +1,6 @@
 import { serializeJsonLine } from "./jsonl.ts";
+import type { AgentSessionEvent } from "../../core/agent-session.ts";
+import { toJsonEvent } from "../json-event.ts";
 
 type RawWriter = (chunk: string) => void;
 type FlushScheduler = (flush: () => void) => void;
@@ -14,6 +16,7 @@ export function createRpcEventOutputBuffer(
 	scheduleFlush: FlushScheduler = queueMicrotask,
 ): RpcEventOutputBuffer {
 	let pendingEventLines: string[] = [];
+	const latestPartials = new Map<unknown, { index: number; deltaOnlyLine: string }>();
 	let flushScheduled = false;
 
 	const flushEvents = (): void => {
@@ -21,10 +24,22 @@ export function createRpcEventOutputBuffer(
 		if (pendingEventLines.length === 0) return;
 		writeRaw(pendingEventLines.join(""));
 		pendingEventLines = [];
+		latestPartials.clear();
 	};
 
 	return {
 		enqueueEvent(event) {
+			if ("type" in event && event.type === "message_update") {
+				const key = "sessionId" in event ? event.sessionId : undefined;
+				const previous = latestPartials.get(key);
+				if (previous) pendingEventLines[previous.index] = previous.deltaOnlyLine;
+				latestPartials.set(key, {
+					index: pendingEventLines.length,
+					deltaOnlyLine: serializeJsonLine(
+						"message" in event ? (toJsonEvent(event as AgentSessionEvent) ?? event) : event,
+					),
+				});
+			}
 			pendingEventLines.push(serializeJsonLine(event));
 			if (flushScheduled) return;
 			flushScheduled = true;

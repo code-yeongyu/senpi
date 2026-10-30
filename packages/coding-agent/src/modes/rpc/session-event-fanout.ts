@@ -1,4 +1,5 @@
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
+import { demoteMessageUpdate } from "./demote-message-update.ts";
 import { ExtensionTransportOwner } from "./extension-owner.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
@@ -49,10 +50,11 @@ type RegisteredConnection = {
  * media-bearing records parse their frozen line, once.
  */
 type SnapshotRecord = {
-	readonly line: string;
+	line: string;
 	placeholderLine?: string;
-	readonly hasMessage: boolean;
+	hasMessage: boolean;
 	readonly mayCarryMedia: boolean;
+	deltaOnlyLine?: string;
 };
 
 /** The placeholder variant of a remembered record, derived and memoized on first use. */
@@ -71,6 +73,7 @@ export class SessionEventFanout {
 	readonly acceptance = new Map<string, SessionAcceptanceLane>();
 	private readonly connections = new Map<string, RegisteredConnection>();
 	private readonly sessionSnapshots = new Map<string, SnapshotRecord[]>();
+	private readonly latestPartials = new Map<string, SnapshotRecord>();
 	private readonly lifecycleSnapshots = new Map<string, SnapshotRecord>();
 	private readonly pendingQuestions = new Map<string, Map<string, Record<string, unknown>>>();
 	private readonly connectionCapabilities = new Map<string, Set<string>>();
@@ -263,10 +266,25 @@ export class SessionEventFanout {
 		const event = value.assistantMessageEvent as Record<string, unknown> | undefined;
 		if (value.type === "message_start" || (value.type === "message_update" && event?.type === "text_start")) {
 			this.sessionSnapshots.set(sessionId, [record]);
+			this.latestPartials.delete(sessionId);
 		} else if (this.sessionSnapshots.has(sessionId)) {
 			this.sessionSnapshots.get(sessionId)?.push(record);
 		}
-		if (value.type === "message_end") this.sessionSnapshots.delete(sessionId);
+		if (value.type === "message_update" && this.sessionSnapshots.has(sessionId)) {
+			const previous = this.latestPartials.get(sessionId);
+			if (previous?.deltaOnlyLine !== undefined) {
+				previous.line = previous.deltaOnlyLine;
+				previous.placeholderLine = undefined;
+				previous.hasMessage = false;
+				previous.deltaOnlyLine = undefined;
+			}
+			record.deltaOnlyLine = serializeJsonLine(demoteMessageUpdate(value));
+			this.latestPartials.set(sessionId, record);
+		}
+		if (value.type === "message_end" || value.type === "agent_end" || value.type === "session_abort") {
+			this.sessionSnapshots.delete(sessionId);
+			this.latestPartials.delete(sessionId);
+		}
 	}
 
 	forgetSession(sessionId: string): void {
@@ -274,6 +292,7 @@ export class SessionEventFanout {
 		this.acceptance.delete(sessionId);
 		this.pendingQuestions.delete(sessionId);
 		this.sessionSnapshots.delete(sessionId);
+		this.latestPartials.delete(sessionId);
 		this.lifecycleSnapshots.delete(sessionId);
 	}
 

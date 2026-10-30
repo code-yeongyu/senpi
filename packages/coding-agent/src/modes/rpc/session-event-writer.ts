@@ -1,4 +1,5 @@
 import { SessionConnectionContext } from "./session-connection-context.ts";
+import { demoteMessageUpdate } from "./demote-message-update.ts";
 import type { ExtensionUIContext, SessionKind } from "../../core/extensions/types.ts";
 import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-types.ts";
 import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
@@ -68,12 +69,6 @@ function compactDelta(value: RpcRecord): { type: CompactDeltaType; contentIndex:
 		contentIndex: typedEvent.contentIndex,
 		delta: typedEvent.delta,
 	};
-}
-
-/** The delta-only form of a compact message_update: cumulative snapshot fields blanked, delta kept. */
-function demoteToDeltaOnly(value: RpcRecord): RpcRecord {
-	const event = value.assistantMessageEvent as Record<string, unknown>;
-	return { ...value, message: null, assistantMessageEvent: { ...event, partial: null } };
 }
 
 function toolUpdateKey(value: RpcRecord): string | undefined {
@@ -481,12 +476,12 @@ export class SessionEventWriter {
 			const wants =
 				placeholderLine !== undefined && this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY);
 			if (registered) {
-				const keyed = compactDelta(tagged) !== undefined && tagged.message !== null;
+				const keyed = tagged.type === "message_update" && tagged.message != null;
 				registered.actor.enqueue(
 					wants ? placeholderLine : line,
 					keyed ? MESSAGE_KEY : undefined,
 					undefined,
-					keyed ? serializeJsonLine(demoteToDeltaOnly(tagged)) : undefined,
+					keyed ? serializeJsonLine(demoteMessageUpdate(tagged)) : undefined,
 					isCorrelatedReply(tagged),
 					current,
 				);
@@ -1016,10 +1011,14 @@ export class SessionEventWriter {
 			this.queues.set(key, queue);
 		}
 
-		const delta = compactDelta(value);
-		if (delta) {
-			const previousFull = queue.latestByKey.get(MESSAGE_KEY);
-			if (previousFull) this.demoteAndMerge(queue, previousFull);
+		if (value.type === "message_update" && value.message != null) {
+			let previousFull = queue.tail;
+			while (previousFull && !(previousFull.value.type === "message_update" && previousFull.value.message != null))
+				previousFull = previousFull.previous;
+			if (previousFull) {
+				if (queue.latestByKey.get(MESSAGE_KEY) === previousFull) this.demoteAndMerge(queue, previousFull);
+				else this.records.replace(previousFull, demoteMessageUpdate(previousFull.value) as RpcRecord);
+			}
 			const node = this.records.append(queue, value, MESSAGE_KEY);
 			queue.latestByKey.set(MESSAGE_KEY, node);
 			this.markReady(queue);
@@ -1037,7 +1036,7 @@ export class SessionEventWriter {
 		}
 
 		// All non-compactable records are ordering barriers. In particular this
-		// includes delta-only/full non-delta message updates, protocol responses,
+		// includes delta-only message updates, protocol responses,
 		// extension UI requests, errors, retries, lifecycle, and unknown records.
 		queue.latestByKey.clear();
 		this.records.append(queue, value);
@@ -1045,7 +1044,7 @@ export class SessionEventWriter {
 	}
 
 	private demoteAndMerge(queue: RecordQueue, node: QueueNode): void {
-		this.records.replace(node, demoteToDeltaOnly(node.value));
+		this.records.replace(node, demoteMessageUpdate(node.value) as RpcRecord);
 		const current = compactDelta(node.value);
 		const preceding = node.previous;
 		const previous = preceding ? compactDelta(preceding.value) : undefined;
