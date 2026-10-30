@@ -2,14 +2,17 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
+import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
+import { SettingsManager } from "../../src/core/settings-manager.ts";
 import {
 	HTML_RENDER_CONTENT_SECURITY_POLICY,
 	injectHtmlRenderBootstrap,
-} from "../../src/core/extensions/builtin/html-render/bootstrap.ts";
-import { inlineLocalImages } from "../../src/core/extensions/builtin/html-render/images.ts";
-import htmlRenderExtension from "../../src/core/extensions/builtin/html-render/index.ts";
-import { showHtmlPageTool } from "../../src/core/extensions/builtin/html-render/tool.ts";
-import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
+} from "../../src/extensions/html-render/bootstrap.ts";
+import { inlineLocalImages } from "../../src/extensions/html-render/images.ts";
+import { showHtmlPageTool } from "../../src/extensions/html-render/tool.ts";
+import { builtInExtensions } from "../../src/extensions/index.ts";
+import { HOST_TOOL_NAMES_CONTEXT_KEY } from "../../src/host-tools.ts";
 import { createHarness } from "./harness.ts";
 
 const PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 0)]);
@@ -23,7 +26,7 @@ const ctxFor = (cwd: string): ExtensionToolContext =>
 		executeTool: () => Promise.reject(new Error("not used")),
 	}) as unknown as ExtensionToolContext;
 
-describe("html-render builtin", () => {
+describe("host HTML attachment", () => {
 	let tempDir: string;
 	beforeEach(() => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-html-render-"));
@@ -32,8 +35,29 @@ describe("html-render builtin", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
+	// #5005: host presentation tools must not enter a bare engine through its builtin catalog.
+	it("does not register host HTML tools without a host attachment", async () => {
+		const loader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir: tempDir,
+			settingsManager: SettingsManager.inMemory({ disabledBuiltinExtensions: ["codemode"] }),
+			noExtensions: true,
+			noSkills: true,
+			noThemes: true,
+			noPromptTemplates: true,
+			noContextFiles: true,
+		});
+		await loader.reload();
+		const loaded = loader.getExtensions();
+		expect(loaded.errors).toEqual([]);
+		const names = loaded.extensions.flatMap((extension) => [...extension.tools.keys()]);
+		expect(names).not.toContain("show_html_page");
+		expect(names).not.toContain("html_render");
+		expect(names).not.toContain("html_preview");
+	});
+
 	it("registers show_html_page", async () => {
-		const harness = await createHarness({ extensionFactories: [htmlRenderExtension] });
+		const harness = await createHarness({ extensionFactories: builtInExtensions });
 		try {
 			const names = harness.session.getAllTools().map((tool) => tool.name);
 			expect(names).toContain("show_html_page");
@@ -41,6 +65,50 @@ describe("html-render builtin", () => {
 			harness.cleanup();
 		}
 	});
+
+	it.each([
+		{ supplied: "show_html_page", registered: false },
+		{ supplied: "another_host_tool", registered: true },
+	])("yields standalone defaults only to the opening host's $supplied attachment", async (row) => {
+		const loader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir: tempDir,
+			settingsManager: SettingsManager.inMemory({ disabledBuiltinExtensions: ["codemode"] }),
+			sessionContext: { [HOST_TOOL_NAMES_CONTEXT_KEY]: row.supplied },
+			extensionFactories: builtInExtensions,
+			noExtensions: true,
+			noSkills: true,
+			noThemes: true,
+			noPromptTemplates: true,
+			noContextFiles: true,
+		});
+		await loader.reload();
+		const loaded = loader.getExtensions();
+		expect(loaded.errors).toEqual([]);
+		const names = loaded.extensions.flatMap((extension) => [...extension.tools.keys()]);
+		expect(names.includes("show_html_page")).toBe(row.registered);
+	});
+
+	it.each([{ enabledBuiltinExtensions: ["goal"] }, { disabledBuiltinExtensions: ["html-render", "codemode"] }])(
+		"preserves the standalone host extension's settings opt-out %j",
+		async (settings) => {
+			const loader = new DefaultResourceLoader({
+				cwd: tempDir,
+				agentDir: tempDir,
+				settingsManager: SettingsManager.inMemory(settings),
+				extensionFactories: builtInExtensions,
+				noExtensions: true,
+				noSkills: true,
+				noThemes: true,
+				noPromptTemplates: true,
+				noContextFiles: true,
+			});
+			await loader.reload();
+			const loaded = loader.getExtensions();
+			expect(loaded.errors).toEqual([]);
+			expect(loaded.extensions.flatMap((extension) => [...extension.tools.keys()])).not.toContain("show_html_page");
+		},
+	);
 
 	it("writes a prepared page with the theme bootstrap injected ahead of the head content", async () => {
 		const result = await showHtmlPageTool.execute(

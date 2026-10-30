@@ -1,4 +1,5 @@
 // Core session management
+export { attachHostTools, HOST_TOOL_NAMES_CONTEXT_KEY } from "./host-tools.ts";
 
 export { sanitizeTerminalLabel, visibleWidth } from "@earendil-works/pi-tui";
 export { type Args, parseArgs } from "./cli/args.ts";

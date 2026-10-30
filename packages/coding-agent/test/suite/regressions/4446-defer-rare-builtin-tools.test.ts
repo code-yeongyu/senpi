@@ -1,10 +1,10 @@
 import { fauxAssistantMessage, fauxToolCall, getCurrentTools } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import goalExtension from "../../../src/core/extensions/builtin/goal/index.ts";
-import htmlRenderExtension from "../../../src/core/extensions/builtin/html-render/index.ts";
 import registerTerminalExtension from "../../../src/core/extensions/builtin/terminal/index.ts";
 import toolSearchExtension from "../../../src/core/extensions/builtin/tool-search/index.ts";
 import type { ExtensionFactory } from "../../../src/core/extensions/types.ts";
+import { builtInExtensions } from "../../../src/extensions/index.ts";
 import { createHarness, type Harness } from "../harness.ts";
 
 // Regression for code-yeongyu/senpi#4446: builtin tools most sessions never call stay out of the
@@ -21,10 +21,9 @@ async function makeHarness(): Promise<Harness> {
 	const extensionFactories: Array<{ factory: ExtensionFactory; path: string }> = [
 		{ factory: registerTerminalExtension, path: "<builtin:terminal>" },
 		{ factory: goalExtension, path: "<builtin:goal>" },
-		{ factory: htmlRenderExtension, path: "<builtin:html-render>" },
 		{ factory: toolSearchExtension, path: "<builtin:tool-search>" },
 	];
-	const harness = await createHarness({ extensionFactories });
+	const harness = await createHarness({ extensionFactories: [...extensionFactories, ...builtInExtensions] });
 	harnesses.push(harness);
 	await harness.session.bindExtensions({});
 	return harness;

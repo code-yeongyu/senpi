@@ -1825,3 +1825,21 @@ The provider id is resolved inside the package before any extension loads, and t
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/core/extensions/builtin/account/index.ts`: `statusOf`.
+## 2026-10-30 - Remove unconditional host HTML registration (#5005)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/index.ts` no longer imports or registers `html-render`.
+- Its file-producing implementation now belongs to the standalone host's `src/extensions/html-render/`; the single-tool registration wrapper was removed.
+
+### Why
+
+- Host tools attach through the SDK rather than being unconditional engine builtins.
+
+### Why an extension could not handle it
+
+- Removing the unconditional catalog entry requires changing the builtin composition root.
+
+### Expected merge conflict zones
+
+- Import and registration entries in `packages/coding-agent/src/core/extensions/builtin/index.ts`.

@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Type } from "typebox";
-import { defineTool, type ExtensionToolContext } from "../../types.ts";
+import { defineTool, type ExtensionToolContext } from "../../core/extensions/types.ts";
 import { injectHtmlRenderBootstrap } from "./bootstrap.ts";
 import { inlineLocalImages } from "./images.ts";
 
