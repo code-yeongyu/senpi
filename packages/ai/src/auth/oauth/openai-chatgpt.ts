@@ -8,7 +8,12 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
-import { OAuthTokenEndpointError } from "../../utils/oauth-refresh-error.ts";
+import {
+	classifyOAuthRefreshFailure,
+	OAuthClientConfigurationError,
+	OAuthReauthorizationRequiredError,
+	OAuthTokenEndpointError,
+} from "../../utils/oauth-refresh-error.ts";
 import { getProviderEnvValue } from "../../utils/provider-env.ts";
 import type { LoginOptions, OAuthAuth, OAuthCredential, ProviderAuthInteraction } from "../types.ts";
 import { generatePKCE } from "./pkce.ts";
@@ -144,10 +149,31 @@ async function requestToken(body: URLSearchParams, signal: AbortSignal): Promise
 	});
 	if (!response.ok) {
 		const responseBody = await response.text().catch(() => "");
-		throw new OAuthTokenEndpointError(
+		const error = new OAuthTokenEndpointError(
 			`OpenAI OAuth token request failed (${response.status}): ${responseBody || response.statusText}`,
 			response.status,
 		);
+		if (body.get("grant_type") === "refresh_token" && classifyOAuthRefreshFailure(error) === "permanent") {
+			let code: unknown;
+			try {
+				const parsed: unknown = JSON.parse(responseBody);
+				if (typeof parsed === "object" && parsed !== null) code = Reflect.get(parsed, "error");
+			} catch {
+				// Non-JSON errors retain the HTTP status and diagnostic below.
+			}
+			switch (code) {
+				case "invalid_grant":
+				case "invalid_refresh_token":
+				case "token_expired":
+				case "refresh_token_expired":
+				case "refresh_token_invalidated":
+				case "refresh_token_reused":
+					throw new OAuthReauthorizationRequiredError(code, response.status);
+				case "invalid_client":
+					throw new OAuthClientConfigurationError(response.status);
+			}
+		}
+		throw error;
 	}
 	const data: unknown = await response.json();
 	if (typeof data !== "object" || data === null || Array.isArray(data)) {

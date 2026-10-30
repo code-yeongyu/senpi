@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { openaiChatGPTOAuth } from "../src/auth/oauth/openai-chatgpt.ts";
+import { resolveProviderAuth } from "../src/auth/resolve.ts";
 import type { OAuthCredential, ProviderAuthInteraction } from "../src/auth/types.ts";
+import {
+	classifyOAuthRefreshFailure,
+	isOAuthRefreshUnavailableError,
+	OAuthClientConfigurationError,
+	OAuthReauthorizationRequiredError,
+	OAuthTokenEndpointError,
+} from "../src/utils/oauth-refresh-error.ts";
 
 const TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token";
 const REQUIRED_SCOPE = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
@@ -69,6 +78,7 @@ function connectedCredential(): OAuthCredential {
 describe("OpenAI ChatGPT OAuth", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
 	});
 
 	it("registers a user-owned client and stores its issued ID and granted scopes", async () => {
@@ -151,29 +161,127 @@ describe("OpenAI ChatGPT OAuth", () => {
 		);
 	});
 
-	it("refreshes with the credential's issued client ID and stores replacement scopes", async () => {
-		let refreshBody: URLSearchParams | undefined;
-		stubTokenEndpoint({ ...tokenResponse(), access_token: "new-access", refresh_token: "new-refresh" }, (body) => {
-			refreshBody = body;
-		});
+	it.each(["oaiapp_existing", "oaiapp_second"])(
+		"refreshes and atomically persists the token set for %s",
+		async (clientId) => {
+			const now = 1_800_000_000_000;
+			vi.spyOn(Date, "now").mockReturnValue(now);
+			const store = new InMemoryCredentialStore();
+			await store.modify("siwc-fixture", async () => ({ ...connectedCredential(), clientId }));
+			let refreshBody: URLSearchParams | undefined;
+			const scope = "resource.invoke chatgpt.tokens.use.direct";
+			stubTokenEndpoint(
+				{ ...tokenResponse(scope), access_token: "new-access", refresh_token: "new-refresh" },
+				(body) => {
+					refreshBody = body;
+				},
+			);
 
-		const before = Date.now();
-		const credential = await openaiChatGPTOAuth.refresh(connectedCredential(), neverAbortedSignal);
+			const result = await resolveProviderAuth({ id: "siwc-fixture", auth: { oauth: openaiChatGPTOAuth } }, store, {
+				env: async () => undefined,
+				fileExists: async () => false,
+			});
+			expect(result?.auth.apiKey).toBe("new-access");
 
-		// expires_in is 3600 seconds; the credential expires 3 minutes early so it is refreshed in time.
-		expect(credential.expires).toBeGreaterThanOrEqual(before + (3600 - 180) * 1000);
-		expect(credential.expires).toBeLessThanOrEqual(Date.now() + (3600 - 180) * 1000);
+			expect(refreshBody?.get("grant_type")).toBe("refresh_token");
+			expect(refreshBody?.get("client_id")).toBe(clientId);
+			expect(refreshBody?.get("refresh_token")).toBe("old-refresh");
+			expect(refreshBody?.get("resource")).toBe("https://api.openai.com/v1");
+			expect(refreshBody?.has("scope")).toBe(false);
+			expect(await store.read("siwc-fixture")).toEqual({
+				type: "oauth",
+				access: "new-access",
+				refresh: "new-refresh",
+				expires: now + (3600 - 180) * 1000,
+				clientId,
+				scopes: scope.split(" "),
+			});
+		},
+	);
 
-		expect(refreshBody?.get("grant_type")).toBe("refresh_token");
-		expect(refreshBody?.get("client_id")).toBe("oaiapp_existing");
-		expect(refreshBody?.get("refresh_token")).toBe("old-refresh");
-		expect(refreshBody?.get("resource")).toBe("https://api.openai.com/v1");
-		expect(refreshBody?.has("scope")).toBe(false);
-		expect(credential).toMatchObject({
-			access: "new-access",
-			refresh: "new-refresh",
-			clientId: "oaiapp_existing",
-			scopes: REQUIRED_SCOPE.split(" "),
-		});
+	// #5003: recovery is driven by the OAuth code, never diagnostic prose.
+	it.each([
+		"invalid_grant",
+		"invalid_refresh_token",
+		"token_expired",
+		"refresh_token_expired",
+		"refresh_token_invalidated",
+		"refresh_token_reused",
+	])("requires reauthorization on refresh code %s", async (code) => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => jsonResponse({ error: code, error_description: "opaque" }, 400)),
+		);
+		const error = await openaiChatGPTOAuth
+			.refresh(connectedCredential(), neverAbortedSignal)
+			.catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(OAuthReauthorizationRequiredError);
+		expect(error).toMatchObject({ name: "OAuthReauthorizationRequiredError", code, status: 400 });
+		expect(classifyOAuthRefreshFailure(error)).toBe("permanent");
+	});
+
+	it("reports invalid_client as configuration rather than reauthorization", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => jsonResponse({ error: "invalid_client" }, 400)),
+		);
+		const error = await openaiChatGPTOAuth
+			.refresh(connectedCredential(), neverAbortedSignal)
+			.catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(OAuthClientConfigurationError);
+		expect(error).toMatchObject({ name: "OAuthClientConfigurationError", code: "invalid_client", status: 400 });
+		expect(classifyOAuthRefreshFailure(error)).toBe("permanent");
+	});
+
+	it.each(["network", 500, 503, 599] as const)(
+		"preserves credentials on a transient %s refresh failure",
+		async (failure) => {
+			const stored = connectedCredential();
+			const store = new InMemoryCredentialStore();
+			await store.modify("siwc-fixture", async () => stored);
+			vi.spyOn(console, "warn").mockImplementation(() => {});
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async () => {
+					if (failure === "network") throw Object.assign(new TypeError("opaque"), { code: "ECONNRESET" });
+					return jsonResponse({ error: "invalid_grant" }, failure);
+				}),
+			);
+			await expect(
+				resolveProviderAuth({ id: "siwc-fixture", auth: { oauth: openaiChatGPTOAuth } }, store, {
+					env: async () => undefined,
+					fileExists: async () => false,
+				}),
+			).rejects.toSatisfy(isOAuthRefreshUnavailableError);
+			expect(await store.read("siwc-fixture")).toEqual(stored);
+		},
+	);
+
+	it.each([JSON.stringify({ error: "unknown_error", error_description: "invalid_grant" }), "invalid_client"])(
+		"does not infer recovery from diagnostic text: %s",
+		async (responseBody) => {
+			vi.stubGlobal(
+				"fetch",
+				vi.fn(async () => new Response(responseBody, { status: 400 })),
+			);
+			const error = await openaiChatGPTOAuth
+				.refresh(connectedCredential(), neverAbortedSignal)
+				.catch((error: unknown) => error);
+			expect(error).toBeInstanceOf(OAuthTokenEndpointError);
+			expect(error).not.toBeInstanceOf(OAuthReauthorizationRequiredError);
+			expect(error).not.toBeInstanceOf(OAuthClientConfigurationError);
+		},
+	);
+
+	it("does not classify an authorization-code invalid_grant as an expired renewable session", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => jsonResponse({ error: "invalid_grant" }, 400)),
+		);
+		const error = await openaiChatGPTOAuth
+			.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), { getDeviceId: () => DEVICE_ID })
+			.catch((error: unknown) => error);
+		expect(error).toBeInstanceOf(OAuthTokenEndpointError);
+		expect(error).not.toBeInstanceOf(OAuthReauthorizationRequiredError);
 	});
 });
