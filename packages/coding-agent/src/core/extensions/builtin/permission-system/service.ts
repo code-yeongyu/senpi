@@ -59,10 +59,6 @@ export class PermissionService {
 		this.preset = preset;
 		this.resolver = resolver;
 		this.mountRewrite = createMountRewrite(readFirmlinks());
-		// The resolver is shared by every session of the process and outlives this service, so the
-		// subscription is released by dispose(); an unreleased one keeps the service's emitter and
-		// its extension generation reachable across every reload.
-		this.releaseResolverState = resolver?.onState((event) => this.emitter.emitResolverState(event)) ?? (() => {});
 		this.ruleIdentities = new RuleIdentityCache(resolver, projectDir, () => this.pathRules(), emitter);
 		this.ruleIdentities.fillAll();
 		this.pendingRequests = new PendingRequests({
@@ -79,6 +75,11 @@ export class PermissionService {
 			agentDir !== undefined && projectDir !== undefined ? approvedStoreRealPath(agentDir, projectDir) : undefined;
 		this.approvedVersion =
 			agentDir === undefined || projectDir === undefined ? undefined : approvedFileVersion(agentDir, projectDir);
+		// The resolver is shared by every session of the process and outlives this service, so the
+		// subscription is released by dispose(); an unreleased one keeps the service's emitter and
+		// its extension generation reachable across every reload. It is taken last: a constructor that
+		// throws earlier never hands out the service, so nothing could ever release it.
+		this.releaseResolverState = resolver?.onState((event) => this.emitter.emitResolverState(event)) ?? (() => {});
 	}
 
 	private readonly preset?: PermissionPresetName;

@@ -20,8 +20,8 @@ import { childRuntime, cliEntry, repoRoot, resolveBun, track } from "./common.mj
 
 const SELF = fileURLToPath(import.meta.url);
 const RELAY_FLAG = "--pty-relay";
-export const TUI_COLS = 100;
-export const TUI_ROWS = 30;
+const TUI_COLS = 100;
+const TUI_ROWS = 30;
 const WAIT_TIMEOUT_MS = 120_000;
 /** A loaded host can hold a Bun child's first file opens for minutes (case-run.mjs OPEN_TIMEOUT_MS). */
 const BOOT_TIMEOUT_MS = 300_000;

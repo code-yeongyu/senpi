@@ -1,3 +1,93 @@
+## 2026-10-29 - Public session-worker-data subpath (senpi#4728, #4775)
+
+### What changed
+
+- `packages/coding-agent/package.json`: export `./session-worker-data` (`dist/modes/rpc/session-worker-data.{js,d.ts}`) so an extension host can provide per-session-Worker data.
+
+### Why
+
+- An extension host needs a private, per-session-Worker channel that it provides before the first session Worker spawns; the API lives in the RPC host, so it needs its own package entry.
+
+### Why an extension could not handle it
+
+- Session Workers are spawned by the host's `SessionWorkerClient`; an extension cannot add data or transfers to their `workerData`.
+
+### Expected merge conflict zones
+
+- LOW: the `exports` map in `packages/coding-agent/package.json`.
+
+## 2026-10-29 - Public `private-fds` subpath (senpi#4771)
+
+### What changed
+
+- `packages/coding-agent/package.json`: exports `./private-fds` (`dist/private-fds.js` and its types), the receiver API for named private descriptors.
+
+### Why
+
+- Extensions that receive a launcher's private channel import `takeInheritedPrivateChannel` and `privateChannelDeclared` from a stable public path instead of an internal module (#4749).
+
+### Why an extension could not handle it
+
+- The export map is package metadata; an extension cannot add an export to the engine package.
+
+### Expected merge conflict zones
+
+- The `exports` map in `packages/coding-agent/package.json`, next to `./pending-input-public`.
+
+## 2026-10-28 - re2js runtime dependency for job widgets (P1b)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new runtime dependency `re2js`, pinned exactly at `2.8.6` (registry integrity `sha512-xLgQil4kIUCrAzVk9fRSkxkFNwmygLFjVxXrLc65aE1F0+Zsb8rxumFBy4XKyvgMCTL6kilDq3EZ0piE2dP/Dg==`), recorded in `bun.lock`, `package-lock.json` and `install-lock/`. It is pure JavaScript with no install scripts and no runtime dependencies, so once the matcher is wired the Node bundle inlines it (checked with the bundle's own esbuild options and `validateExternalImports`: no externals) and the Bun binary compiles it in; no external-package list changes.
+
+### Why
+
+- The job-widgets line matcher needs a linear-time regex engine. The package passed a read-only safety review (MIT, no lifecycle scripts, no network/exec/env access in the shipped build, registry integrity recomputed); 2.8.6 is the newest release with months of exposure, and moves up only through a reviewed bump.
+
+### Why an extension could not handle it
+
+- A builtin's runtime dependency must be declared in the package manifest that ships it.
+
+### Expected merge conflict zones
+
+- LOW: the `dependencies` map in `packages/coding-agent/package.json`.
+
+## 2026-10-27 - Public engine trust launch contract export (senpi#4525)
+
+### What changed
+
+- `packages/coding-agent/package.json`: new `./engine-trust` export (`dist/engine-trust/index.js`): marker version 1 parse and serialize, `classifyTrustArrival`, `buildTrustLaunchEnvironment`, `applyEngineTrustRestore`, and the adopted-generation record with its daemon hand-off.
+
+### Why
+
+- omo#10762: omo's compiled launcher, senpi's spawners and the desktop app all write the engine trust marker, so its format and the one launch-environment builder live in one exported module (design r13 5.4).
+
+### Why an extension could not handle it
+
+- The writers are separate packages and processes; the contract has to be importable from the senpi package itself.
+
+### Expected merge conflict zones
+
+- LOW: the `exports` map in `packages/coding-agent/package.json`.
+
+## 2026-10-28 - Compile the path identity worker into the binary build (senpi#4391)
+
+### What changed
+
+- `packages/coding-agent/package.json` (`build:binary`): passes `src/core/extensions/builtin/permission-system/path-identity-worker.ts` as an explicit compile entry beside `image-resize-worker.ts`, so the permission system's resolver worker is embedded in the compiled binary at its source path.
+
+### Why
+
+- The permission system starts its path identity resolver from a worker file beside its host module; a binary compiled without that entry has no worker to start.
+
+### Why an extension could not handle it
+
+- The binary compile entry list is package build tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `build:binary` script line in `packages/coding-agent/package.json`.
+
 ## 2026-10-26 - Remove the internal-events test alias (senpi#4349, part of #4272)
 
 ### What changed

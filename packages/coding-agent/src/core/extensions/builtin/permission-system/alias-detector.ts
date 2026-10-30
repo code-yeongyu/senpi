@@ -4,8 +4,27 @@ import { realpathWithoutOpenStrict } from "../../../../utils/paths.ts";
 import type { MountSnapshot } from "./mount-table.ts";
 import { foldCaseText } from "./path-identity.ts";
 
-/** Filesystem types whose names a positive confirmation may trust: only types with a measured set. */
-export const REAL_FS: ReadonlySet<string> = new Set(["apfs", "btrfs", "overlay", "virtiofs", "tmpfs", "nfs"]);
+/**
+ * Filesystem types whose names a positive confirmation may trust: the design's measured allowlist. On
+ * these, a path whose every component its parent lists verbatim is the spelling native realpath returns
+ * (case folding, per-directory included, only resolves spellings the parent does not list). Every other
+ * type (devfs, fuse*, autofs, proc, SMB, unmeasured local types) stays alias-bearing.
+ */
+export const REAL_FS: ReadonlySet<string> = new Set([
+	"apfs",
+	"hfs",
+	"ext4",
+	"xfs",
+	"btrfs",
+	"zfs",
+	"tmpfs",
+	"ntfs",
+	"exfat",
+	"overlay",
+	"virtiofs",
+	"nfs",
+	"nfs4",
+]);
 export const DETECTOR_MAX_READDIR = 256;
 export const DETECTOR_MAX_ENTRIES = 5000;
 

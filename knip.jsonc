@@ -123,8 +123,8 @@
       "packages/agent/src/harness/utils/output-capture.ts": ["OUTPUT_MIN_EMIT_INTERVAL_MS", "OUTPUT_TARGET_BYTES_PER_SECOND"],
       // pre-existing at origin main aceb1cc1d9: unused exports hierarchy
       "packages/agent/src/harness/utils/read-folders/compose.ts": ["hierarchy"],
-      // pre-existing at origin main aceb1cc1d9: unused exports TREE_SITTER_PARSE_BUDGET_MS, resetTreeSitterGrammars
-      "packages/agent/src/harness/utils/read-folders/tree-sitter/engine.ts": ["TREE_SITTER_PARSE_BUDGET_MS", "resetTreeSitterGrammars"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TREE_SITTER_PARSE_BUDGET_MS
+      "packages/agent/src/harness/utils/read-folders/tree-sitter/engine.ts": ["TREE_SITTER_PARSE_BUDGET_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports TREE_SITTER_RUNTIME_FILE
       "packages/agent/src/harness/utils/read-folders/tree-sitter/grammar-assets.ts": ["TREE_SITTER_RUNTIME_FILE"],
       // pre-existing at origin main aceb1cc1d9: unused exports toolNameCorrectionNotice
@@ -182,7 +182,6 @@
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_OAUTH_REFRESH_TIMEOUT_MS
       "packages/ai/src/auth/oauth-refresh.ts": ["DEFAULT_OAUTH_REFRESH_TIMEOUT_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports CALLBACK_PATH, callbackRedirectUri
-      "packages/ai/src/auth/oauth/anthropic-callback-listener.ts": ["CALLBACK_PATH", "callbackRedirectUri"],
       // pre-existing at origin main aceb1cc1d9: unused exports CHATGPT_CALLBACK_PORTS
       "packages/ai/src/auth/oauth/chatgpt-subscription-callback.ts": ["CHATGPT_CALLBACK_PORTS"],
       // pre-existing at origin main aceb1cc1d9: unused exports buildCursorLoginUrl
@@ -195,12 +194,8 @@
       "packages/ai/src/auth/oauth/devin-token.ts": ["DEVIN_API_ENDPOINT", "DEVIN_FALLBACK_EXPIRY_MS", "DEVIN_TOKEN_URL", "devinCredential"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_KIMI_CODE_REGION, KIMI_CODE_REGION_PROFILES, isKimiCodeRegion
       "packages/ai/src/auth/oauth/kimi-region.ts": ["DEFAULT_KIMI_CODE_REGION", "KIMI_CODE_REGION_PROFILES", "isKimiCodeRegion"],
-      // pre-existing at origin main aceb1cc1d9: unused exports loadOpenAIChatGPTOAuth
-      "packages/ai/src/auth/oauth/load.ts": ["loadOpenAIChatGPTOAuth"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_SLOT_NAME, assertValidSlotName, DISPLAY_NAME_MAX_COLUMNS, findSlot, managedSentinelMaterials
       "packages/ai/src/auth/pool/slots.ts": ["DEFAULT_SLOT_NAME", "DISPLAY_NAME_MAX_COLUMNS", "assertValidSlotName", "findSlot", "managedSentinelMaterials"],
-      // pre-existing at origin main aceb1cc1d9: unused exports registerBundledOAuthFlowLoaders
-      "packages/ai/src/oauth.ts": ["registerBundledOAuthFlowLoaders"],
       // pre-existing at origin main aceb1cc1d9: unused exports ALIBABA_TOKEN_PLAN_IMAGE_MODELS, ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS
       "packages/ai/src/providers/alibaba-token-plan.models.ts": ["ALIBABA_TOKEN_PLAN_CLASSIFIER_MODELS", "ALIBABA_TOKEN_PLAN_IMAGE_MODELS"],
       // pre-existing at origin main aceb1cc1d9: unused exports AMAZON_BEDROCK_IMAGE_MODELS, AMAZON_BEDROCK_CLASSIFIER_MODELS
@@ -538,7 +533,6 @@
       // pre-existing at origin main aceb1cc1d9: unused exports RESUME_EFFECT_ENTRY
       "packages/coding-agent/src/core/agent-session.ts": ["RESUME_EFFECT_ENTRY"],
       // pre-existing at origin main aceb1cc1d9: unused exports IMPORTED_GRANTS_FIELD
-      "packages/coding-agent/src/core/anthropic-oauth-migration.ts": ["IMPORTED_GRANTS_FIELD"],
       // pre-existing at origin main aceb1cc1d9: unused exports getProviderLoginHelp
       "packages/coding-agent/src/core/auth-guidance.ts": ["getProviderLoginHelp"],
       // pre-existing at origin main aceb1cc1d9: unused exports buildLogoutProviderInfos
@@ -577,10 +571,6 @@
       "packages/coding-agent/src/core/event-loop-slicer.ts": ["DEFAULT_SLICE_BUDGET_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports ansiToHtml
       "packages/coding-agent/src/core/export-html/ansi-to-html.ts": ["ansiToHtml"],
-      // pre-existing at origin main aceb1cc1d9: unused exports isAuthBlockRecoverable
-      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-block-recovery.ts": ["isAuthBlockRecoverable"],
-      // pre-existing at origin main aceb1cc1d9: unused exports ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, resolveEffectiveLane
-      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/auth-lane.ts": ["ANTHROPIC_SUBSCRIPTION_PROVIDER_ID", "resolveEffectiveLane"],
       // pre-existing at origin main aceb1cc1d9: unused exports CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW
       "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/context-window.ts": ["CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW"],
       // pre-existing at origin main aceb1cc1d9: unused exports objectToShape
@@ -1159,12 +1149,8 @@
       "packages/coding-agent/src/modes/rpc/host-stop-start-time.ts": ["readLiveStartTime"],
       // pre-existing at origin main aceb1cc1d9: unused exports ABSENT_CONFIRMATIONS
       "packages/coding-agent/src/modes/rpc/host-supersession.ts": ["ABSENT_CONFIRMATIONS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports HOST_WATCH_IDENTITY_INTERVAL_MS, HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS
-      "packages/coding-agent/src/modes/rpc/host-supervisor-poll.ts": ["HOST_WATCH_IDENTITY_INTERVAL_MS", "HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports HostWarmer
       "packages/coding-agent/src/modes/rpc/host-warm.ts": ["HostWarmer"],
-      // pre-existing at origin main aceb1cc1d9: unused exports HOST_WATCH_BACKSTOP_INTERVAL_MS, HOST_WATCH_IDENTITY_INTERVAL_MS, HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS
-      "packages/coding-agent/src/modes/rpc/host-watchdog.ts": ["HOST_WATCH_BACKSTOP_INTERVAL_MS", "HOST_WATCH_IDENTITY_INTERVAL_MS", "HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports DECLINE_TRIM_PAUSE_FACTOR, collectFully
       "packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts": ["DECLINE_TRIM_PAUSE_FACTOR", "collectFully"],
       // pre-existing at origin main aceb1cc1d9: unused exports loopLagErrorMs, LOOP_LAG_WARN_INTERVAL_MS
@@ -1205,8 +1191,6 @@
       "packages/coding-agent/src/modes/rpc/socket-ownership.ts": ["SOCKET_IDENTITY_WAIT_MS", "lsofSocketHolders"],
       // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_CUT_GRACE_MS
       "packages/coding-agent/src/modes/rpc/socket-sink.ts": ["SOCKET_CUT_GRACE_MS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_SECRET_SUFFIX
-      "packages/coding-agent/src/modes/rpc/socket-transport.ts": ["SOCKET_SECRET_SUFFIX"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_LAUNCH_SLOTS
       "packages/coding-agent/src/modes/rpc/tool-child/barrier-clock.ts": ["DEFAULT_LAUNCH_SLOTS"],
       // pre-existing at origin main aceb1cc1d9: unused exports wrapChannelSocket
@@ -1599,6 +1583,8 @@
         "!examples/extensions/{with-deps,custom-provider-anthropic,custom-provider-gitlab-duo,sandbox,gondolin}/**",
         // The vitest setup file vitest.config.ts loads by path.
         "test/setup.ts",
+        // The vitest globalSetup file vitest.config.ts loads by path (shared Node compile cache, #4614).
+        "test/helpers/source-compile-cache-global-setup.ts",
       ],
       "includeEntryExports": true,
       // Minified vendor bundles read as text by export-html.

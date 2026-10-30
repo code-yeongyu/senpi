@@ -45,6 +45,11 @@ import {
 } from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../core/extensions/builtin/anthropic-subscription/account-management.ts";
 import {
+	ProviderAccountTestError,
+	testClaudeCliAccount,
+} from "../../core/extensions/builtin/anthropic-subscription/claude-cli-account-test.ts";
+import { takeClaudeCliLoginOutcome } from "../../core/extensions/builtin/anthropic-subscription/claude-cli-login-outcome.ts";
+import {
 	isMcpControlInventoryChanged,
 	MCP_CONTROL_INVENTORY_CHANGED_EVENT,
 	MCP_CONTROL_INVENTORY_REQUEST_EVENT,
@@ -86,6 +91,7 @@ import {
 	ENTRIES_TAIL_CAPABILITY,
 	INTERACTIVE_USER_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
+	PROVIDER_ACCOUNT_TEST_CAPABILITY,
 	QUESTION_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
 	RESUME_SESSION_CAPABILITY,
@@ -219,6 +225,8 @@ export interface RpcConnectionSink {
 	writeRecord?(record: object): void;
 	/** The internal structured lane (senpi#4272): seeded records and block controls, never a legacy destination. */
 	writeStructured?(record: object): void;
+	/** A structured record was lost (its projection or a receiver threw); the event's legacy delivery continues. */
+	structuredFailed?(cause: unknown): void;
 	waitForBackpressure(): Promise<void>;
 	/** Tears the transport down once its event queue can no longer deliver (overflow, write failure). */
 	close?(): void;
@@ -297,6 +305,12 @@ function loadedMcpServers(snapshot: McpWireStatusSnapshot): RpcLoadedMcpServer[]
 		...(server.lastError === undefined ? {} : { lastError: server.lastError }),
 	}));
 }
+
+/**
+ * The prior digest a startup-settled announcement reports: the session leaves its MCP startup window, whatever digest
+ * the connection last recorded, so a shared host's per-connection dedupe never drops it as a no-op transition.
+ */
+const MCP_STARTUP_PENDING_DIGEST = "mcp-startup-pending";
 
 function loadedSurfacesFingerprint(
 	session: AgentSession,
@@ -399,6 +413,7 @@ export function createRpcConnectionHandler(
 	let loadedSurfacesDigest: string | undefined;
 	let rpcCommandsDigest: string | undefined;
 	let suppressLoadedSurfaceEvents = false;
+	let mcpStartupSettledPending = false;
 	const eventOutput = sink.writeRecord
 		? undefined
 		: createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
@@ -450,6 +465,17 @@ export function createRpcConnectionHandler(
 		else outputEvent({ type: "loaded_surfaces_changed" });
 	};
 
+	/** The one event that ends the MCP startup window, emitted even when the digest is unchanged (senpi#4828). */
+	const announceMcpStartupSettled = (): void => {
+		if (suppressLoadedSurfaceEvents) {
+			mcpStartupSettledPending = true;
+			return;
+		}
+		mcpStartupSettledPending = false;
+		loadedSurfacesDigest = currentLoadedSurfaces().digest;
+		emitLoadedSurfacesChanged(MCP_STARTUP_PENDING_DIGEST, loadedSurfacesDigest);
+	};
+
 	const requestMcpWireStatus = async (): Promise<void> => {
 		let response: Promise<McpWireStatusSnapshot> | undefined;
 		const request: McpControlInventoryRequest = {
@@ -469,7 +495,8 @@ export function createRpcConnectionHandler(
 			(data) => {
 				if (!isMcpControlInventoryChanged(data) || data.sessionId !== session.sessionId) return;
 				mcpWireStatus = data.snapshot;
-				if (!suppressLoadedSurfaceEvents) recordLoadedSurfaces(true);
+				if (data.startupSettled === true) announceMcpStartupSettled();
+				else if (!suppressLoadedSurfaceEvents) recordLoadedSurfaces(true);
 			},
 		);
 	};
@@ -836,7 +863,9 @@ export function createRpcConnectionHandler(
 		if (!wasSuppressed && commandsChanged) {
 			outputEvent(commandsChanged);
 		}
-		if (!wasSuppressed && previousDigest !== undefined && previousDigest !== loadedSurfacesDigest) {
+		if (!wasSuppressed && mcpStartupSettledPending) {
+			announceMcpStartupSettled();
+		} else if (!wasSuppressed && previousDigest !== undefined && previousDigest !== loadedSurfacesDigest) {
 			emitLoadedSurfacesChanged(previousDigest, loadedSurfacesDigest);
 		}
 	};
@@ -1045,13 +1074,19 @@ export function createRpcConnectionHandler(
 		function installSessionSubscriptions(): void {
 			unsubscribe?.();
 			unsubscribeBackpressure?.();
+			unsubscribeStructured?.();
+			unsubscribe = unsubscribeBackpressure = undefined;
+			// Structured first: an Agent built outside the session layer refuses it before anything is installed.
+			unsubscribeStructured = sink.writeStructured
+				? subscribeStructuredSessionRecords(
+						session,
+						(record) => sink.writeStructured?.(tagSessionRecord(record)),
+						(cause) => sink.structuredFailed?.(cause),
+					)
+				: undefined;
 			unsubscribe = subscribeSessionRecords(session, outputEvent, (abortSource) => {
 				lastAbortSource = abortSource;
 			});
-			unsubscribeStructured?.();
-			unsubscribeStructured = sink.writeStructured
-				? subscribeStructuredSessionRecords(session, (record) => sink.writeStructured?.(tagSessionRecord(record)))
-				: undefined;
 			unsubscribeBackpressure = session.agent.subscribe(async () => {
 				await waitForRpcBackpressure();
 			});
@@ -1122,7 +1157,9 @@ export function createRpcConnectionHandler(
 			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
 			// The client shows what this login replaced and where the previous credential is (senpi#3486).
 			const replacement = authStorage.takeReplacement(provider);
-			outputEvent({ type: "auth_login_end", provider, success: true, ...replacement });
+			// A Claude CLI sign-in names the account it signed in and its connection test (senpi#4436).
+			const signedIn = takeClaudeCliLoginOutcome(controller.signal);
+			outputEvent({ type: "auth_login_end", provider, success: true, ...replacement, ...signedIn });
 		} catch (loginError: unknown) {
 			const message = loginError instanceof Error ? loginError.message : String(loginError);
 			outputEvent({ type: "auth_login_end", provider, success: false, error: message });
@@ -1187,6 +1224,7 @@ export function createRpcConnectionHandler(
 								CONTINUE_FROM_LEAF_CAPABILITY,
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
+								PROVIDER_ACCOUNT_TEST_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
@@ -2005,9 +2043,9 @@ export function createRpcConnectionHandler(
 			}
 
 			case "get_loaded_surfaces": {
+				// A read answers with the inventory and never announces: changes are announced by their own notifications.
 				await requestMcpWireStatus();
-				const inventory = recordLoadedSurfaces(true);
-				return success(id, "get_loaded_surfaces", inventory.data);
+				return success(id, "get_loaded_surfaces", currentLoadedSurfaces().data);
 			}
 
 			case "extension_request":
@@ -2108,9 +2146,12 @@ export function createRpcConnectionHandler(
 			}
 
 			case "logout": {
-				session.modelRegistry.authStorage.logout(command.provider);
+				// The runtime's logout signs every Claude CLI account out of the CLI before deleting the credential
+				// (senpi#4436); the runtime key is dropped too, as `AuthStorage.logout` did.
+				const { notices } = await session.modelRuntime.logoutProvider(command.provider);
+				session.modelRegistry.authStorage.removeRuntimeApiKey(command.provider);
 				await session.modelRegistry.refresh();
-				return success(id, "logout");
+				return success(id, "logout", notices.length === 0 ? undefined : { notices });
 			}
 
 			case "get_provider_accounts": {
@@ -2124,8 +2165,28 @@ export function createRpcConnectionHandler(
 			}
 
 			case "account_remove": {
-				await removeCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
-				return success(id, "account_remove");
+				const { notice } = await removeCredentialAccount(
+					session.modelRegistry.authStorage,
+					command.provider,
+					command.name,
+				);
+				return success(id, "account_remove", notice === undefined ? undefined : { notice });
+			}
+
+			case "test_provider_account": {
+				try {
+					const check = await testClaudeCliAccount({
+						provider: command.provider,
+						name: command.name,
+						cwd: session.cwd,
+						store: session.modelRegistry.authStorage,
+					});
+					return success(id, "test_provider_account", { check });
+				} catch (testError) {
+					if (testError instanceof ProviderAccountTestError)
+						return error(id, "test_provider_account", testError.code);
+					throw testError;
+				}
 			}
 
 			case "account_order": {
