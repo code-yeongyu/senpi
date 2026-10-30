@@ -57,7 +57,21 @@ export class SecretInputPresentations {
 				}
 				const line = serializeJsonLine({ ...record, sessionId: session });
 				if (owner.connection === undefined) this.writeSole(line);
-				else this.fanout.get(owner.connection)?.actor.enqueue(line);
+				else
+					this.fanout
+						.get(owner.connection)
+						?.actor.enqueue(
+							line,
+							undefined,
+							undefined,
+							undefined,
+							true,
+							undefined,
+							() =>
+								this.owners.get(id) === owner &&
+								this.live(owner) &&
+								(!("type" in record && record.type === "extension_ui_request") || owner.cancel !== undefined),
+						);
 				this.flush();
 			},
 			settled: (id) => {

@@ -16,6 +16,8 @@ import { AnswerRefusedError } from "../../src/modes/interactive/attach-client.ts
 import { KeybindingsManager } from "../../src/core/keybindings.ts";
 import type { TUI } from "@earendil-works/pi-tui";
 import { createTuiLifecycle, invoke } from "./tui-lifecycle-harness.ts";
+import { SecretInputPresentations } from "../../src/modes/rpc/secret-input-presentations.ts";
+import { SessionEventFanout } from "../../src/modes/rpc/session-event-fanout.ts";
 
 const resources: Array<{ dir: string; harness: Harness; handler: RpcConnectionHandler }> = [];
 afterEach(async () => {
@@ -54,7 +56,10 @@ async function fixture(shared = false, inherited: readonly string[] = []) {
 					sessionId: "secret-session",
 					clientInfo: {
 						connectionId: () => connection,
-						setCapabilities: (id: string | undefined, caps: readonly string[]) => capabilities.set(id!, caps),
+						setCapabilities: (id: string | undefined, caps: readonly string[]) => {
+							if (id === undefined) throw new Error("Shared fixture needs a connection ID");
+							capabilities.set(id, caps);
+						},
 						hasCapability: (id: string, cap: string) => capabilities.get(id)?.includes(cap) === true,
 					},
 				}
@@ -199,22 +204,23 @@ it("rejects progress without extending the authoritative deadline and refuses a 
 	await Promise.resolve();
 	const frame = f.collected.messages().find((r) => r.method === "input");
 	expect(frame).toMatchObject({ secret: true, deadlineAtMs: Date.now() + 1000 });
+	if (!frame) throw new Error("Missing private input request");
 	await vi.advanceTimersByTimeAsync(500);
-	await f.send({ type: "extension_ui_progress", id: frame!.id, answers: {} });
+	await f.send({ type: "extension_ui_progress", id: frame.id, answers: {} });
 	await f.send({ type: "get_state", id: "snapshot" });
 	await vi.advanceTimersByTimeAsync(500);
 	await expect(pending).resolves.toBeUndefined();
 	await f.send({
 		type: "extension_ui_response",
 		id: "late",
-		uiRequestId: frame!.id,
+		uiRequestId: frame.id,
 		answerId: "late",
 		secret: true,
 		value: "late",
 	});
 	expect(f.collected.messages().at(-1)).toMatchObject({ success: false });
 	expect(f.collected.messages().filter((r) => r.type === "secret_input_settled")).toEqual([
-		expect.objectContaining({ id: frame!.id, outcome: "timed_out" }),
+		expect.objectContaining({ id: frame.id, outcome: "timed_out" }),
 	]);
 });
 
@@ -232,6 +238,63 @@ it("does not overflow a finite positive deadline into immediate expiry", async (
 		await pending;
 	}
 });
+
+it("checks ownership before looking up private receipts", async () => {
+	const f = await fixture(true);
+	await f.handshake("a", true);
+	await f.handshake("b", true);
+	f.select("b");
+	await f.send({
+		type: "extension_ui_response",
+		id: "foreign-unknown",
+		uiRequestId: "unknown",
+		answerId: "unknown",
+		secret: true,
+		value: "synthetic",
+	});
+	expect(f.collected.messages().at(-1)).toMatchObject({ success: false, error: "secret_answer_refused" });
+});
+
+it.each(["withdrawn", "settled"] as const)(
+	"drops queued private requests once their presentation is %s",
+	async (state) => {
+		const gate = Promise.withResolvers<void>();
+		const writes: string[] = [];
+		const fanout = new SessionEventFanout();
+		fanout.registerConnection("a", {
+			writeRaw: (line) => {
+				writes.push(line);
+			},
+			waitForBackpressure: () => gate.promise,
+		});
+		fanout.attachConnectionToSession("a", "s");
+		fanout.setConnectionCapabilities("a", ["interactive_user", "secret_input_v1"]);
+		const presentation = new SecretInputPresentations(
+			fanout,
+			() => "a",
+			() => {},
+			() => {},
+		);
+		const route = presentation.route("s");
+		const connection = fanout.get("a");
+		if (!connection) throw new Error("Missing fixture connection");
+		connection.actor.enqueue("blocker\n");
+		expect(route.select("private", () => {})).toBeUndefined();
+		route.send("private", { type: "extension_ui_request", id: "private", method: "input", secret: true });
+		if (state === "withdrawn") {
+			fanout.setConnectionCapabilities("a", ["interactive_user"]);
+			presentation.recheck();
+		} else {
+			route.send("private", { type: "secret_input_settled", id: "private", outcome: "timed_out" });
+			route.settled("private");
+		}
+		gate.resolve();
+		await connection.actor.flush();
+		expect(writes.some((line) => line.includes("extension_ui_request"))).toBe(false);
+		if (state === "settled") expect(writes.some((line) => line.includes("secret_input_settled"))).toBe(true);
+		fanout.unregisterConnection("a");
+	},
+);
 
 it("maps typed login secrets only on supporting contexts without a plain retry", async () => {
 	for (const supported of [false, true]) {

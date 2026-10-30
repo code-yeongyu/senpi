@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { cliEntry, evidenceDir, guardRealAuth, makeSandbox, resolveBun } from "../lib/common.mjs";
 import { hermeticEnv } from "../lib/mock-loop-support.mjs";
@@ -9,8 +9,10 @@ import { RpcClient } from "../lib/rpc-client.mjs";
 
 // The sentinel is generated only in this process. Neither command arguments nor fixture source contains it.
 function variants(value) {
-	return [value, JSON.stringify(value).slice(1, -1), Buffer.from(value).toString("base64"),
-		Buffer.from(value).toString("hex"), encodeURIComponent(value)];
+	const roots = new Set([value, value.trim(), value.trim().slice(0, 16), value.trim().slice(-16)]);
+	return [...new Set([...roots].flatMap((root) => [root, JSON.stringify(root).slice(1, -1),
+		Buffer.from(root).toString("base64"), Buffer.from(root).toString("base64url"),
+		Buffer.from(root).toString("hex"), encodeURIComponent(root)]))];
 }
 function scan(outputs, value) {
 	const needles = variants(value);
@@ -90,6 +92,14 @@ async function rpc() {
 		const messages = await client.send({ type: "get_messages" });
 		const exported = await client.send({ type: "export_html", outputPath: join(box.dir, "transcript.html") });
 		assert.equal(exported.success, true);
+		assert.equal(typeof state.data.sessionFile, "string");
+		const entries = await client.send({ type: "get_entries" });
+		const userEntry = entries.data.entries.find((entry) => entry.type === "message" && entry.message?.role === "user");
+		assert.equal(typeof userEntry?.id, "string", "fork anchor exists");
+		assert.equal((await client.send({ type: "fork", entryId: userEntry.id })).success, true);
+		await client.send({ type: "append_user_message", content: "Synthetic post-fork anchor" });
+		const forkState = await client.send({ type: "get_state" });
+		assert.equal(forkState.data.answeredUiRequests.some((r) => r.answerId === answerId), false);
 		// Parser diagnostics must not reflect a malformed, sensitive JSON fragment.
 		const parsed = new Promise((resolve) => {
 			const original = client._onData.bind(client);
@@ -99,9 +109,21 @@ async function rpc() {
 		await deadline(parsed, "parse refusal");
 		client.close();
 		await deadline(closed, "RPC close");
-		assert.equal(Object.keys(files(box.dir, stage)).some((path) => path.endsWith(".jsonl")), true, "real session file exists");
+		const resumed = new RpcClient({ env: environment(box, stage), cwd: box.cwd,
+			extraArgs: ["--no-extensions", "--no-skills", "--session", forkState.data.sessionFile, "--extension", fixture(box)] });
+		const resumedClosed = once(resumed.child, "close");
+		let resumedState;
+		try {
+			resumedState = await resumed.send({ type: "get_state" });
+			assert.equal(resumedState.data.answeredUiRequests.some((r) => r.answerId === answerId), false);
+		} finally {
+			resumed.close();
+			await deadline(resumedClosed, "resumed RPC close");
+		}
 		const outputs = { ...files(box.dir, stage), rpc: JSON.stringify([client.events, client.responses]),
-			stderr: client.stderr, state: JSON.stringify(state), transcript: JSON.stringify(messages) };
+			session: readFileSync(state.data.sessionFile, "utf8"), fork: readFileSync(forkState.data.sessionFile, "utf8"),
+			stderr: client.stderr + resumed.stderr, state: JSON.stringify([state, forkState, resumedState]),
+			resumed: JSON.stringify([resumed.events, resumed.responses]), transcript: JSON.stringify(messages) };
 		assert.equal(scan(outputs, sentinel).length, 0, "secret leak in enumerated RPC artifacts");
 		rmSync(stage);
 		assert.equal(scan(files(box.dir), sentinel).length, 0, "secret leak after staging cleanup");
@@ -112,7 +134,8 @@ async function rpc() {
 			assert.equal(scan(files(box.dir), sentinel).includes("deliberately-leaky-trace.ndjson"), true);
 		}
 		rmSync(leaky);
-		return { checks: "exact callback; private receipt; session; exported transcript; RPC output/stderr; state; every sandbox file; raw/JSON/base64/hex/URI scanner controls", artifacts: Object.keys(outputs).length };
+		return { checks: "exact callback; private receipt; real session and fork files; restart; exported transcript; RPC output/stderr; state; every sandbox file; raw/trimmed/partial/JSON/base64/base64url/hex/URI scanner controls",
+			artifacts: Object.keys(outputs).length, negativeControls: variants(sentinel).length };
 	} finally {
 		client.close();
 		await deadline(closed, "RPC teardown").catch(() => { client.child.kill("SIGKILL"); });
@@ -125,6 +148,7 @@ async function tui(outputDir) {
 	const box = makeSandbox("secret-tui-qa");
 	const stage = join(box.dir, "private-callback");
 	const sentinel = randomUUID();
+	const cancelledSentinel = randomUUID();
 	const listeners = new Set();
 	let output = "";
 	const wait = (predicate, label) => {
@@ -165,16 +189,33 @@ async function tui(outputDir) {
 		assert.equal(readFileSync(stage, "utf8") === sentinel, true, "TUI callback exact bytes");
 		assert.equal(scan({ output, ...files(box.dir, stage) }, sentinel).length, 0, "terminal/listener leak");
 		rmSync(stage);
+		const reopenStart = output.length;
+		const reopened = wait((text) => text.slice(reopenStart).includes("SECRET_QA_FIELD"), "reopened field");
+		const typedAgain = wait((text) => text.slice(reopenStart).includes("/secret-qa"), "second command");
+		proc.terminal.write("/secret-qa");
+		await typedAgain;
+		proc.terminal.write("\r");
+		await reopened;
+		const cancelStart = output.length;
+		const cancelMask = wait((text) => text.slice(cancelStart).includes("********"), "cancelled mask");
+		proc.terminal.write(`\x1b[200~${cancelledSentinel}\x1b[201~`);
+		await cancelMask;
+		const cancelled = wait((text) => text.slice(cancelStart).includes("SECRET_QA_CANCELLED"), "cancelled");
+		proc.terminal.write("\x1b");
+		await cancelled;
+		assert.equal(existsSync(stage), false, "cancelled input did not reach private consumer");
 		const quitting = wait((text) => text.includes("/quit"), "quit command");
 		proc.terminal.write("/quit");
 		await quitting;
 		proc.terminal.write("\r");
 		await deadline(proc.exited, "TUI close");
 		assert.equal(scan({ output, ...files(box.dir) }, sentinel).length, 0, "TUI shutdown leak");
+		assert.equal(scan({ output, ...files(box.dir) }, cancelledSentinel).length, 0, "TUI cancellation leak");
 		writeFileSync(join(outputDir, "tui-output.ansi"), output);
-		return { checks: "native PTY; masked paste; resize 100x30 to 50x20; exact callback; raw listener exclusion; submit and cleanup", capturedBytes: Buffer.byteLength(output) };
+		return { checks: "native PTY; masked paste; resize 100x30 to 50x20; exact callback; raw listener exclusion; submit/cancel and cleanup", capturedBytes: Buffer.byteLength(output) };
 	} finally {
-		if (scan({ output }, sentinel).length === 0) writeFileSync(join(outputDir, "tui-output.ansi"), output);
+		if ([sentinel, cancelledSentinel].every((value) => scan({ output }, value).length === 0))
+			writeFileSync(join(outputDir, "tui-output.ansi"), output);
 		if (proc.exitCode === null) proc.kill();
 		await deadline(proc.exited, "TUI teardown").catch(() => proc.kill("SIGKILL"));
 		proc.terminal?.close();
@@ -186,11 +227,11 @@ const guard = guardRealAuth();
 const directory = evidenceDir("secret-input-5108");
 try {
 	const rpcResult = await rpc();
-	writeFileSync(join(directory, "rpc-result.json"), JSON.stringify({ ...rpcResult, sentinelLeaks: 0, scannerNegativeControl: "five encoded representations detected" }, null, 2));
+	writeFileSync(join(directory, "rpc-result.json"), JSON.stringify({ ...rpcResult, sentinelLeaks: 0 }, null, 2));
 	const tuiResult = process.argv.includes("--rpc-only") ? undefined : await tui(directory);
 	guard.assertUnchanged();
 	writeFileSync(join(directory, "result.json"), JSON.stringify({ rpc: rpcResult, tui: tuiResult, sentinelLeaks: 0,
-		scannerNegativeControl: "all five representations detected", authUnchanged: true, cleanup: "sandboxes removed" }, null, 2));
+		scannerNegativeControl: `${rpcResult.negativeControls} variants detected`, authUnchanged: true, cleanup: "sandboxes removed" }, null, 2));
 	console.log(`SECRET_INPUT_QA PASS ${directory}`);
 } catch (error) {
 	// Do not print a request-bearing assertion actual or a transport cause.

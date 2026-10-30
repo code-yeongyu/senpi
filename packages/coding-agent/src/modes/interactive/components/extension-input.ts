@@ -65,8 +65,8 @@ export class ExtensionInputComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 
 		if (this.secret) {
-			const remaining = Math.max(0, (opts?.deadlineAtMs ?? Date.now() + (opts?.timeout ?? 1800000)) - Date.now());
-			this.secretTimer = armSecretInputDeadline(Date.now() + remaining, () => this.onCancelCallback());
+			const deadline = opts?.deadlineAtMs ?? Date.now() + (opts?.timeout ?? 1800000);
+			this.secretTimer = armSecretInputDeadline(deadline, () => this.onCancelCallback());
 		} else if (opts?.timeout && opts.timeout > 0 && opts.tui) {
 			this.countdown = new CountdownTimer(
 				opts.timeout,

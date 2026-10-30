@@ -92,11 +92,12 @@ export class SecretInputRequests {
 	respond(frame: Record<string, unknown>): ExtensionUiResponseReply {
 		const id = typeof frame.id === "string" ? frame.id : "";
 		const requestId = answeredUiRequestId(frame);
-		if (!requestId || !this.has(requestId)) return refusedExtensionUiResponse(id, "unknown_extension_ui_request");
-		if (!this.route.accepts(requestId)) return refusedExtensionUiResponse(id, "secret_answer_refused");
+		if (!requestId || !this.route.accepts(requestId)) return refusedExtensionUiResponse(id, "secret_answer_refused");
+		if (!this.has(requestId)) return refusedExtensionUiResponse(id, "unknown_extension_ui_request");
 		const allowed = new Set(["type", "id", "uiRequestId", "answerId", "sessionId", "secret", "value", "cancelled"]);
 		if (
 			frame.secret !== true ||
+			typeof frame.id !== "string" ||
 			typeof frame.answerId !== "string" ||
 			frame.answerId.length < 1 ||
 			frame.answerId.length > 256 ||
