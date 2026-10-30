@@ -1,13 +1,13 @@
 import {
 	ACCOUNT_LIMIT_NEXT_STEP_LEAD,
 	type AssistantMessage,
-	describeProviderFailureForUser,
 	SERVER_FALLBACK_ABORTED_DIAGNOSTIC,
 	stripTurnRetrySuppressionPrefix,
 } from "@earendil-works/pi-ai";
 import { usageLimitScope } from "../../../core/retry-fallback/usage-limit.ts";
 import { formatDuration } from "../../../utils/duration.ts";
 import { formatProviderNativeBody, formatProviderNativeSummary } from "../../provider-native-rendering.ts";
+import { describedProviderError } from "../provider-error-description.ts";
 import { theme } from "../theme/theme.ts";
 import { type HandoffSegment, splitHandoffBlocks } from "./handoff-fold.ts";
 
@@ -215,13 +215,7 @@ export function createAssistantRenderDescriptors(
 			// wording so the retry engine can read it; the transcript gets the
 			// plain-language version, without the recovery advice a retry still in
 			// flight would contradict, and never the internal replay marker.
-			const described =
-				message.errorCause?.type === "usage_limit" && message.errorCause.scope === "account"
-					? message.errorMessage
-					: describeProviderFailureForUser(message.errorMessage, {
-							model: `${message.provider}/${message.model}`,
-							usageLimit: usageLimitScope(message),
-						});
+			const described = describedProviderError(message);
 			// Auth resolution is not a public pi-ai subpath. The component test feeds this boundary
 			// providerNotConfiguredMessage output so its classifier sentinel cannot drift.
 			const commandHint = stripTurnRetrySuppressionPrefix(message.errorMessage ?? "").startsWith(
