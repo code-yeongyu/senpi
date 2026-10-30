@@ -74,10 +74,10 @@ const INVALID_KEY_TEXT = /invalid[ _-]?(?:api[ _-]?)?key|authentication[_ ]?erro
 // Last resort for a revoked or invalidated token reported as prose with no status and no code
 // (Codex: "Encountered invalidated oauth token for user, failing request", senpi#3037).
 const REVOKED_TOKEN_TEXT =
-	/invalidated (?:oauth )?token|token[ _-](?:invalidated|revoked)|(?:token|session) (?:has been|was) (?:invalidated|revoked)/i;
+	/invalidated (?:oauth )?token|token[ _-](?:invalidated|revoked)|token (?:has been|was) (?:invalidated|revoked)/i;
 // OAuth error codes with which a token endpoint refuses the refresh grant itself (RFC 6749
-// `invalid_grant`, OpenAI's refresh_token_* and `token_revoked`). Only these make a failed refresh a
-// verdict on the account; a refresh that failed any other way says nothing about the login.
+// `invalid_grant`, OpenAI's refresh_token_* and `token_revoked`). Besides a token endpoint's 401,
+// these make a failed refresh a verdict on the account.
 const REFUSED_GRANT_CODES: ReadonlySet<string> = new Set([
 	"invalid_grant",
 	"refresh_token_expired",
@@ -157,16 +157,17 @@ function oauthBodyErrorCode(message: string): string | undefined {
 }
 
 /**
- * The token endpoint refused this account's refresh grant: a 400/401 that names a refused-grant code,
- * or a 403 whose OAuth JSON body does. A refresh that failed in any other way (TLS interception, a
+ * The token endpoint refused this account's credential: a 401, a 400 that names a refused-grant code,
+ * or a 403/404 whose OAuth JSON body does. A refresh that failed in any other way (TLS interception, a
  * captive portal's HTML, a WAF page, a moved endpoint) is not a verdict on the login.
  */
 function isRefusedGrant(refresh: ModelsError): boolean {
 	const cause: unknown = refresh.cause;
 	if (!(cause instanceof OAuthTokenEndpointError)) return false;
+	if (cause.status === 401) return true;
 	const code = oauthBodyErrorCode(cause.message);
-	if (code !== undefined && REFUSED_GRANT_CODES.has(code)) return [400, 401, 403].includes(cause.status);
-	return (cause.status === 400 || cause.status === 401) && REFUSED_GRANT_TOKEN.test(cause.message);
+	if (code !== undefined && REFUSED_GRANT_CODES.has(code)) return [400, 403, 404].includes(cause.status);
+	return cause.status === 400 && REFUSED_GRANT_TOKEN.test(cause.message);
 }
 
 /** A structured provider diagnostic that names a refused credential, with or without a status. */
@@ -219,7 +220,7 @@ export function classifyCredentialFailure(
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
 	// Structured auth evidence is a verdict on this one account, so it fails over to a sibling before
-	// any prose is read; a server or rate-limit status still says the provider, not the login, failed.
+	// any auth prose is read; a provider fault or rate-limit status still says the login did not fail.
 	const statusFault = status === 408 || status === 429 || (status !== undefined && status >= 500 && status < 600);
 	const refresh = failedRefresh(error);
 	if (refresh !== undefined) {
@@ -227,7 +228,7 @@ export function classifyCredentialFailure(
 			? { kind: "failover", block: { reason: "auth_error" } }
 			: { kind: "fail_request" };
 	}
-	if (!statusFault && hasAuthDiagnostic(error)) {
+	if (!providerFault && status !== 429 && hasAuthDiagnostic(error)) {
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
 	// Only a 401, or auth text on a response whose status cannot mean something temporary, is an auth

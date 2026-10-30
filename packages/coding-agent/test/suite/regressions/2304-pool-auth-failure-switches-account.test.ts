@@ -47,10 +47,7 @@ describe("a failed OAuth refresh blocks the account only when the grant itself w
 		["401 plain", () => refreshRejected(401, "Unauthorized"), FAILOVER],
 		[
 			"401 Copilot Bad credentials",
-			() =>
-				refreshFailed(
-					new OAuthTokenEndpointError('401 Unauthorized: {"message":"Bad credentials"}', 401),
-				),
+			() => refreshFailed(new OAuthTokenEndpointError('401 Unauthorized: {"message":"Bad credentials"}', 401)),
 			FAILOVER,
 		],
 		["401 RFC 6749 invalid_grant", () => refreshRejected(401, '{"error":"invalid_grant"}'), FAILOVER],
