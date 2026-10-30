@@ -87,10 +87,10 @@ export function memoryIo(): CompactStorageIo {
 			if (files.has(path)) throw Object.assign(new Error(`EEXIST ${path}`), { code: "EEXIST" });
 			files.set(path, Buffer.from(data));
 		},
-		async readFile(path) {
+		async readFile(path, range) {
 			const data = files.get(path);
 			if (!data) throw missing(path);
-			return data;
+			return Buffer.from(range ? data.subarray(range.offset, range.offset + range.length) : data);
 		},
 		async unlink(path) {
 			if (!files.delete(path)) throw missing(path);
