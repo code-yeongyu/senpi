@@ -230,7 +230,8 @@ function loadSkillsFromDirInternal(
 			// For symlinks, check if they point to a directory and follow them
 			let isDirectory = entry.isDirectory();
 			let isFile = entry.isFile();
-			if (entry.isSymbolicLink()) {
+			const isLink = entry.isSymbolicLink();
+			if (isLink) {
 				try {
 					const stats = statSync(fullPath);
 					isDirectory = stats.isDirectory();
@@ -241,9 +242,11 @@ function loadSkillsFromDirInternal(
 				}
 			}
 
+			// A linked directory gets its own ignore context, as in collectSkillEntries (senpi#5060).
+			const linkedDirectory = isLink && isDirectory;
 			const relPath = toPosixPath(relative(root, fullPath));
 			const ignorePath = isDirectory ? `${relPath}/` : relPath;
-			if (ig.ignores(ignorePath)) {
+			if (!linkedDirectory && ig.ignores(ignorePath)) {
 				continue;
 			}
 
@@ -252,7 +255,7 @@ function loadSkillsFromDirInternal(
 					fullPath,
 					source,
 					false,
-					ig,
+					linkedDirectory ? ignore() : ig,
 					root,
 					provenance,
 					allowedSet,
