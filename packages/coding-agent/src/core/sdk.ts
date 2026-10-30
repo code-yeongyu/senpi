@@ -34,6 +34,7 @@ import {
 } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
+import { sessionAffinityStreamOptions } from "./session-affinity-key.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
@@ -524,6 +525,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			);
 			return modelRuntime.streamSimple(model, context, {
 				...options,
+				...sessionAffinityStreamOptions(model, options, settingsManager.getPromptCacheSessionAffinity(), agentDir),
 				cwd,
 				serviceTier,
 				timeoutMs,

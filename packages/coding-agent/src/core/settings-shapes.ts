@@ -10,6 +10,7 @@ export interface PromptCacheSettings {
 	safetyBufferSeconds?: number; // default: 30 (headroom subtracted from the cache TTL)
 	goalBackstopMaxSeconds?: number; // default: 270 (Goal monitor re-check backstop while wake sources are live; 5m TTL - 30s buffer)
 	keepAlive?: PromptCacheKeepAliveSettings;
+	sessionAffinity?: boolean; // default: true (send a hashed per-session key on Anthropic Messages requests so a multi-account gateway keeps a session on one account)
 }
 
 export interface HandoffHintSettings {

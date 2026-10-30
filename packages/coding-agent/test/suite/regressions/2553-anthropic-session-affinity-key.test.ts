@@ -182,13 +182,11 @@ describe("senpi#2553 Anthropic session affinity key", () => {
 		expect(userId(request)?.match(USER_ID_SHAPE)?.[1]).toBe(header);
 	});
 
-	it("sends neither key when the setting opts out, and the opt-out leaves every other request byte unchanged", async () => {
+	it("sends no key when the setting opts out, and the key leaves every other request byte unchanged", async () => {
 		// Given
 		const endpoint = await recorder();
-		const compat = { sendSessionAffinityHeaders: true };
-		const keyed = await openSession(endpoint.baseUrl, SessionManager.inMemory(), { compat });
+		const keyed = await openSession(endpoint.baseUrl, SessionManager.inMemory());
 		const optedOut = await openSession(endpoint.baseUrl, SessionManager.inMemory(), {
-			compat,
 			settings: { promptCache: { sessionAffinity: false } },
 		});
 

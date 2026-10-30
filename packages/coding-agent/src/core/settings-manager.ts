@@ -1111,6 +1111,10 @@ export class SettingsManager {
 		);
 	}
 
+	getPromptCacheSessionAffinity(): boolean {
+		return this.settings.promptCache?.sessionAffinity ?? true;
+	}
+
 	getPromptCacheKeepAliveSettings(): Required<PromptCacheKeepAliveSettings> {
 		const configured = this.settings.promptCache?.keepAlive;
 		return {
