@@ -72,6 +72,19 @@ export const GOAL_CONTINUATION_RESUMED_EVENT = "goal_continuation_resumed";
 export const GOAL_CONTINUATION_TIMER_STATE_EVENT = "goal_continuation_timer_state";
 export const GOAL_MONITOR_STALL_EVENT = "goal_monitor_continuation_stall";
 
+/** The one notice a provider-limit park shows: when the goal resumes, in local time and as the exact instant. */
+function providerPauseNotice(retryAt: number): string {
+	const local = new Date(retryAt).toLocaleString("en-US", {
+		year: "numeric",
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+		timeZoneName: "short",
+	});
+	return `Goal paused until ${local} (${new Date(retryAt).toISOString()}): the provider cannot serve before then. It resumes once at that time.`;
+}
+
 export class MonitorAwareGoalContinuation {
 	readonly #pi: ExtensionAPI;
 	readonly #isContinuationPending: () => boolean;
@@ -150,7 +163,11 @@ export class MonitorAwareGoalContinuation {
 			this.#resetContinuationState();
 			return options.goal;
 		}
-		this.#recordToollessContinuationTurn(options.goal, turnUsedTools || humanInput);
+		// A turn the provider refused (a blocked pool, an outage) was not the model choosing to skip tools:
+		// it neither counts toward nor clears the stall streak (senpi#3975).
+		if (lastAssistantMessage(options.messages)?.stopReason !== "error") {
+			this.#recordToollessContinuationTurn(options.goal, turnUsedTools || humanInput);
+		}
 		const immediateInput = this.#buildVerdictInput(options.ctx, options.goal, "immediate", options.messages);
 		const madeProgress =
 			this.#recordToolEffect(options.messages) || humanInput || hasGoalTodoProgress(immediateInput);
@@ -258,15 +275,15 @@ export class MonitorAwareGoalContinuation {
 		}
 		this.#providerRetryAttempts += 1;
 		const now = Date.now();
-		const delayMs = providerRetryDelayMs(
-			this.#providerRetryAttempts,
-			providerRetryAt(pendingProvider.messages, now),
-			now,
-		);
+		const retryAt = providerRetryAt(pendingProvider.messages, now);
+		const delayMs = providerRetryDelayMs(this.#providerRetryAttempts, retryAt, now);
 		if (delayMs > 0) {
 			this.#cancelTimer();
 			this.#providerRetryDelayMs = delayMs;
 			this.#schedule(pendingProvider.goal, "providerRetry");
+			if (retryAt !== undefined && this.#ctxHasUI(pendingProvider.ctx)) {
+				pendingProvider.ctx.ui.notify(providerPauseNotice(retryAt), "info");
+			}
 			return pendingProvider.goal;
 		}
 		return (
