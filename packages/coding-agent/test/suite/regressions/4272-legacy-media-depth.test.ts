@@ -13,24 +13,30 @@ import { builtFauxPath, workerAcceptanceHost } from "./4272-worker-acceptance-su
 // behaviour too. A record under the JSON engine limit reaches it unchanged (the media walk once overflowed the stack
 // from about 3,000 levels on Node and ended the worker); past the engine limit it is the typed, counted refusal.
 
-type Deep = string | Deep[];
-const nest = (depth: number): Deep => {
-	let value: Deep = "leaf";
+type Deep = string | Date | Deep[];
+const nest = (depth: number, leaf: string | Date = "leaf"): Deep => {
+	let value: Deep = leaf;
 	for (let level = 0; level < depth; level++) value = [value];
 	return value;
 };
 const serializes = (depth: number): boolean => {
 	try {
-		JSON.stringify(nest(depth));
+		// Date.toJSON selects the native recursive path even when plain arrays serialize iteratively (Node 26).
+		JSON.stringify(nest(depth, new Date(0)));
 		return true;
-	} catch {
-		return false;
+	} catch (error) {
+		if (error instanceof RangeError && error.message.startsWith("Maximum call stack size exceeded")) return false;
+		throw error;
 	}
 };
 function engineLimit(): number {
 	let low = 1;
 	let high = 2;
-	while (serializes(high)) [low, high] = [high, high * 2];
+	while (serializes(high)) {
+		// A fixture budget, not a protocol cap: fail instead of allocating until OOM if the engine changes again.
+		if (high >= 65_536) throw new Error("JSON depth fixture did not reach a native stack overflow");
+		[low, high] = [high, high * 2];
+	}
 	while (high - low > 1) {
 		const middle = (low + high) >> 1;
 		if (serializes(middle)) low = middle;
@@ -39,6 +45,8 @@ function engineLimit(): number {
 	return low;
 }
 const LIMIT = engineLimit();
+// The recursive path's exact stack limit varies by call site/JIT; use a bounded, definitively deep refusal fixture.
+const OVER_ENGINE = 65_536;
 const DEEP = 4_000;
 const PNG = "aGVsbG8gd29ybGQh";
 const REFUSED =
@@ -48,11 +56,11 @@ const content = () => [
 	{ type: "text" as const, text: "returned" },
 	{ type: "image" as const, data: PNG, mimeType: "image/png" },
 ];
-const deepToolEnd = (depth: number) => ({
+const deepToolEnd = (depth: number, leaf: string | Date = "leaf") => ({
 	type: "tool_execution_end",
 	toolCallId: "call_deep",
 	toolName: "deep_result",
-	result: { content: content(), details: nest(depth) },
+	result: { content: content(), details: nest(depth, leaf) },
 	isError: false,
 });
 const detailsOf = (record: WireRecord | undefined) => (record?.result as { details?: unknown } | undefined)?.details;
@@ -140,7 +148,7 @@ it("in process: a media-placeholder client receives a 4,000-deep tool result unc
 it("in process: past the engine limit with placeholders on, the record is a typed counted refusal; the session runs on", async () => {
 	let accepted: boolean | undefined;
 	const { records, refusals, stderr } = await inProcess((host, sessionId) => {
-		accepted = enqueueLegacyRecord(host.writer, sessionId, deepToolEnd(LIMIT + 1));
+		accepted = enqueueLegacyRecord(host.writer, sessionId, deepToolEnd(OVER_ENGINE, new Date(0)));
 	});
 	expect(accepted, "consumed, not an overflow or a closed session").toBe(true);
 	expect(records.filter(isDeepEnd)).toEqual([]);
