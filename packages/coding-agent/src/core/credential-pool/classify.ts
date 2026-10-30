@@ -4,6 +4,7 @@ import { normalizeProviderError } from "@earendil-works/pi-ai/utils/error-body";
 import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
 import { getOverflowPatterns } from "@earendil-works/pi-ai/utils/overflow";
 import { extract429RetryAfterMs } from "@earendil-works/pi-ai/utils/retry-hint";
+import { siwcRecoveryFromDiagnostic } from "@earendil-works/pi-ai/utils/siwc-errors";
 import { rateLimitModelFamily } from "./model-scope.ts";
 import { usageLimitResetMs } from "./reset-time.ts";
 import { isAccountUsageLimitText } from "./usage-limit.ts";
@@ -143,6 +144,33 @@ export function classifyCredentialFailure(
 	const status = normalized.status;
 	const failureCount = context.failureCount ?? 0;
 
+	if (error instanceof Error && error.name === "AbortError") return { kind: "fail_request" };
+	const siwc = siwcRecoveryFromDiagnostic(readProviderDiagnostic(error));
+	switch (siwc) {
+		case "usage_limit":
+			// No provider reset is known. This is a guessed probe cooldown, not a reset
+			// time; ignore reset-like prose and cap the guess at #5034's 30 minutes.
+			return {
+				kind: "failover",
+				block: {
+					reason: "rate_limit",
+					...rateLimitCooldown(failureCount, undefined, {
+						baseMs: context.cooldownBaseMs,
+						capMs: Math.min(context.cooldownCapMs ?? COOLDOWN_CAP_MS, 30 * 60_000),
+					}),
+				},
+			};
+		case "account_disabled":
+			return { kind: "failover", block: { reason: "account_disabled" } };
+		case "auth":
+			return { kind: "failover", block: { reason: "auth_error" } };
+		case "request":
+			return { kind: "fail_request" };
+		case "transient":
+			return { kind: "retry_same", maxAttempts: RETRY_SAME_MAX_ATTEMPTS };
+		case undefined:
+			break;
+	}
 	if (isAbort(error, text)) return { kind: "fail_request" };
 	if (text.includes(ACCOUNT_POOL_REFUSAL_NOTE)) return { kind: "fail_request" };
 	// A server, gateway or timeout status describes the provider, not the credential: its body may
