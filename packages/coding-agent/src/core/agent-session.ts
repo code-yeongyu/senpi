@@ -321,6 +321,7 @@ import {
 	modelChangeLogFields,
 	SDK_MODEL_CHANGE,
 } from "./model-change-origin.ts";
+import { ModelNotReadyError } from "./model-not-ready-error.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -1039,14 +1040,6 @@ function isCompactionExecutionAborted(error: unknown): boolean {
 		error instanceof CompactionCancelledError ||
 		(error instanceof Error && error.name === "AbortError")
 	);
-}
-
-/** A turn cannot start: no model is selected, or its provider has no credentials. */
-class ModelNotReadyError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "ModelNotReadyError";
-	}
 }
 
 /** The error a turn ends with when a required compaction could not bring the context back under the window. */
@@ -10647,7 +10640,7 @@ export class AgentSession {
 	 */
 	private async _assertModelReadyForTurn(): Promise<void> {
 		if (!this.model) {
-			throw new ModelNotReadyError(formatNoModelSelectedMessage());
+			throw new ModelNotReadyError(formatNoModelSelectedMessage(), "no_model_selected");
 		}
 		const hasConfiguredAuth =
 			this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
@@ -10662,9 +10655,15 @@ export class AgentSession {
 				`Authentication failed for "${this.model.provider}". ` +
 					`Credentials may have expired or network is unavailable. ` +
 					`Run '/login ${this.model.provider}' to re-authenticate.`,
+				"provider_credentials_expired",
+				this.model.provider,
 			);
 		}
-		throw new ModelNotReadyError(formatNoApiKeyFoundMessage(this.model.provider));
+		throw new ModelNotReadyError(
+			formatNoApiKeyFoundMessage(this.model.provider),
+			"provider_credentials_missing",
+			this.model.provider,
+		);
 	}
 
 	/** Shows the provider guidance for a refused background turn once until a turn is admitted again. */

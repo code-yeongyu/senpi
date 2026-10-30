@@ -6837,37 +6837,11 @@
       "statusKey": "loop"
      }
     ],
-    "surfaces": {
-     "settled": [
-      {
-       "name": "fxhttp",
-       "toolCount": 1,
-       "status": "connected",
-       "authStatus": "unsupported"
-      },
-      {
-       "name": "fxstdio",
-       "toolCount": 1,
-       "status": "connected",
-       "authStatus": "unsupported"
-      }
-     ],
-     "after": [],
-     "final": [
-      {
-       "name": "fxhttp",
-       "toolCount": 1,
-       "status": "connected",
-       "authStatus": "unsupported"
-      },
-      {
-       "name": "fxstdio",
-       "toolCount": 1,
-       "status": "connected",
-       "authStatus": "unsupported"
-      }
-     ]
-    }
+    "surfaces": [
+     {
+      "type": "loaded_surfaces_changed"
+     }
+    ]
    }
   ],
   "O7": {
