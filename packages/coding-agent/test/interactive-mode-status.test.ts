@@ -1718,7 +1718,9 @@ describe("InteractiveMode.showLoadedResources", () => {
 			const invalidOutput = normalizeRenderedOutput(fakeThis.loadedResourcesContainer, 240);
 			expect(invalidOutput).toContain("Invalid skill files");
 			expect(invalidOutput).not.toContain("Skill conflicts");
-			expect(invalidOutput).toContain(brokenPath.replace(/\\/g, "/"));
+			const home = homedir();
+			const displayedPath = brokenPath.startsWith(home) ? `~${brokenPath.slice(home.length)}` : brokenPath;
+			expect(invalidOutput).toContain(displayedPath.replace(/\\/g, "/"));
 			expect(invalidOutput).toContain("Nested mappings are not allowed");
 			expect(invalidOutput).toMatch(/at line \d+, column \d+/);
 			expect(invalidOutput).toContain("quote");
@@ -1741,6 +1743,37 @@ describe("InteractiveMode.showLoadedResources", () => {
 			expect(duplicates.diagnostics[0]).toMatchObject({ kind: "collision", type: "collision" });
 		},
 	);
+
+	// senpi#4943 review: the checkout may live under HOME (GitHub runners do); the notice shows the ~ form.
+	test("shows a home-shortened path for an invalid skill file under HOME", () => {
+		const fixtureRoot = path.resolve(__dirname, "fixtures");
+		const brokenPath = path.join(fixtureRoot, "skills/invalid-scalar/SKILL.md");
+		const fakeHome = path.dirname(fixtureRoot);
+		vi.stubEnv("HOME", fakeHome);
+		vi.stubEnv("USERPROFILE", fakeHome);
+		try {
+			expect(os.homedir()).toBe(fakeHome);
+			const invalid = loadSkills({
+				cwd: fixtureRoot,
+				agentDir: path.join(fixtureRoot, "empty-agent"),
+				includeDefaults: false,
+				skillPaths: [brokenPath],
+			});
+			const fakeThis = createShowLoadedResourcesThis({ quietStartup: true, skillDiagnostics: invalid.diagnostics });
+			for (const name of ["formatDiagnostics", "formatPathWithSource", "findSourceInfoForPath"]) {
+				fakeThis[name] = Reflect.get(InteractiveMode.prototype, name);
+			}
+			Reflect.get(InteractiveMode.prototype, "showLoadedResources").call(fakeThis, {
+				showDiagnosticsWhenQuiet: true,
+			});
+			const output = normalizeRenderedOutput(fakeThis.loadedResourcesContainer, 240);
+			expect(output).toContain("Invalid skill files");
+			expect(output).toContain("~/fixtures/skills/invalid-scalar/SKILL.md");
+			expect(output).not.toContain(brokenPath.replace(/\\/g, "/"));
+		} finally {
+			vi.unstubAllEnvs();
+		}
+	});
 
 	test("renders legacy read diagnostics with a home-relative path without calling them conflicts", () => {
 		const fakeThis = createShowLoadedResourcesThis({

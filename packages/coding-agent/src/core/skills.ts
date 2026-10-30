@@ -316,9 +316,10 @@ function loadSkillFromFile(
 				kind: "parse-error",
 				message,
 				path: filePath,
-				...(error instanceof YAMLParseError && {
-					hint: "Check YAML scalars: quote values containing ': ' or use a block scalar such as description: >-.",
-				}),
+				...(error instanceof YAMLParseError &&
+					error.code === "BLOCK_AS_IMPLICIT_KEY" && {
+						hint: "Check YAML scalars: quote values containing ': ' or use a block scalar such as description: >-.",
+					}),
 			});
 		}
 		return { skill: null, diagnostics };
