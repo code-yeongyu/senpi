@@ -160,13 +160,14 @@ export class CompactPagedTree<T> {
 	}
 
 	/**
-	 * Commits a round as one segment file: nodes replaced within it were released and are skipped, so only
+	 * Commits a round as `node-` files of at most 64 KiB each, published together once the last one is
+	 * durable (RULING-54): nodes replaced within the round were released and are skipped, so only
 	 * survivors are written. Until then a round's built nodes stay resident, at most 384 keys x 3 nodes per
 	 * level x (height + 1).
 	 */
 	async flush(): Promise<void> {
 		const dirty = this.dirty;
 		this.dirty = [];
-		await this.store.flushLeaves(dirty);
+		await this.store.flushLeaves(dirty, "node_write");
 	}
 }

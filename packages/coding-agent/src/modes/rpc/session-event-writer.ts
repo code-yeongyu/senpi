@@ -1,8 +1,9 @@
-import { AsyncLocalStorage } from "node:async_hooks";
+import { SessionConnectionContext } from "./session-connection-context.ts";
 import type { ExtensionUIContext, SessionKind } from "../../core/extensions/types.ts";
 import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-types.ts";
 import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
+import type { CanonicalControl } from "./compact-canonical-pairing.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { SessionStructuredLanes } from "./session-structured-lanes.ts";
@@ -17,6 +18,7 @@ import type {
 	RpcSessionParkedEvent,
 } from "./rpc-types.ts";
 import { RpcSecurityPresentations } from "./security-presentations.ts";
+import type { RecoveryCheckpoints } from "./compact-recovery-state.ts";
 import type { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
 import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 import { SessionOpenTurns } from "./session-open-turns.ts";
@@ -54,20 +56,16 @@ function compactDelta(value: RpcRecord): { type: CompactDeltaType; contentIndex:
 	if (value.type !== "message_update" || !Object.hasOwn(value, "message")) return undefined;
 	const event = value.assistantMessageEvent;
 	if (typeof event !== "object" || event === null) return undefined;
-	const typedEvent = event as Record<string, unknown>;
+	const { type, contentIndex, delta } = event as Record<string, unknown>;
 	if (
-		typeof typedEvent.type !== "string" ||
-		!COMPACT_DELTA_TYPES.has(typedEvent.type as CompactDeltaType) ||
-		typeof typedEvent.contentIndex !== "number" ||
-		typeof typedEvent.delta !== "string"
+		typeof type !== "string" ||
+		!COMPACT_DELTA_TYPES.has(type as CompactDeltaType) ||
+		typeof contentIndex !== "number" ||
+		typeof delta !== "string"
 	) {
 		return undefined;
 	}
-	return {
-		type: typedEvent.type as CompactDeltaType,
-		contentIndex: typedEvent.contentIndex,
-		delta: typedEvent.delta,
-	};
+	return { type: type as CompactDeltaType, contentIndex, delta };
 }
 
 /** The delta-only form of a compact message_update: cumulative snapshot fields blanked, delta kept. */
@@ -183,7 +181,7 @@ export class SessionEventWriter {
 	private readonly records = new SessionRecordAccounting();
 	private readonly queues = new Map<string, RecordQueue>();
 	private readonly fanout = new SessionEventFanout();
-	private readonly connectionContext = new AsyncLocalStorage<string>();
+	readonly connectionContext = new SessionConnectionContext((id) => this.fanout.get(id)?.owner);
 	private readonly securityPresentations = new RpcSecurityPresentations(
 		this.fanout,
 		(id, task) => this.withConnection(id, task),
@@ -269,6 +267,16 @@ export class SessionEventWriter {
 
 	isSessionSealed(sessionId: string): boolean {
 		return this.sealedSessions.has(sessionId);
+	}
+
+	/** Legacy views frozen for a peer's baseline and not yet released (R3.C6.4 accounting). */
+	get openLegacyViews(): number {
+		return this.fanout.replay.openCursors;
+	}
+
+	/** The checkpoint tokens frozen for peers' baselines and recoveries (S08a, R3.C1.5). */
+	get recoveryCheckpoints(): RecoveryCheckpoints {
+		return this.fanout.checkpoints;
 	}
 
 	registerConnection(
@@ -388,6 +396,12 @@ export class SessionEventWriter {
 		else this.mediaPersisters.set(sessionId, persister);
 	}
 
+	/** A worker isolate frames a canonical-only unit; an in-process host folds block controls in its own lane. */
+	enqueueCanonical(_sessionId: string, _control: CanonicalControl): void {}
+
+	/** A worker isolate reports a lost canonical record to its host lane; an in-process binding tells its lane directly. */
+	canonicalUnavailable(_sessionId: string, _cause: unknown): void {}
+
 	/** The session's records reach `lane` before `enqueue`; sealing or forgetting the session retires it. */
 	registerAcceptance(sessionId: string, lane: SessionAcceptanceLane): void {
 		if (!this.sealedSessions.has(sessionId)) this.fanout.acceptance.set(sessionId, lane);
@@ -427,6 +441,9 @@ export class SessionEventWriter {
 			record.type === "relocation_due" ||
 			(record.type === "extension_ui_request" &&
 				["select", "confirm", "input", "editor"].includes(String(record.method)));
+		// A stale reply is consumed, not a session failure: the worker still gets its output credit.
+		const current = isTargeted ? this.connectionContext.currentGuard() : undefined;
+		if (current?.() === false) return true;
 		const tagged = { ...observeLifecycleDelivery(record), sessionId } as RpcRecord;
 		const line = serializeJsonLine(tagged);
 		// Observation records are per-subscription opt-ins on the subscriber's own actor FIFO: never attachments,
@@ -477,7 +494,7 @@ export class SessionEventWriter {
 			const registered = target === undefined ? undefined : this.fanout.get(target);
 			const wants =
 				placeholderLine !== undefined && this.fanout.connectionHas(target, MEDIA_PLACEHOLDERS_CAPABILITY);
-			if (registered) {
+			if (registered && target !== undefined) {
 				const keyed = compactDelta(tagged) !== undefined && tagged.message !== null;
 				registered.actor.enqueue(
 					wants ? placeholderLine : line,
@@ -485,6 +502,10 @@ export class SessionEventWriter {
 					undefined,
 					keyed ? serializeJsonLine(demoteToDeltaOnly(tagged)) : undefined,
 					isCorrelatedReply(tagged),
+					mirrors.includes(target)
+						? undefined
+						: this.fanout.attachmentOf(target, sessionId, isTargeted, record.type),
+					current,
 				);
 			} else this.appendSessionRecord(sessionId, wants ? (redacted as RpcRecord) : tagged, target);
 		}
@@ -538,7 +559,8 @@ export class SessionEventWriter {
 		const line = serializeJsonLine({ type: "loaded_surfaces_changed", sessionId });
 		for (const id of this.fanout.attachedConnections(sessionId)) {
 			if (!this.surfaceDedupe.announce(id, sessionId, previous, digest)) continue;
-			this.fanout.get(id)?.actor.enqueue(line);
+			const held = this.fanout.attachmentOf(id, sessionId, false, "loaded_surfaces_changed");
+			this.fanout.get(id)?.actor.enqueue(line, undefined, undefined, undefined, false, held);
 		}
 		this.requestFlush();
 	}

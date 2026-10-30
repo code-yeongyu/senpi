@@ -39,6 +39,7 @@ import {
 import { createResponseTimingRecorder } from "./response-timing.ts";
 import { type InternalLoopConfig, internalProgressSink } from "./internal-events.ts";
 import { getDefaultStreamFn, withEmptyAssistantRecovery } from "./stream-fn.ts";
+import { createTransportLiveness, StreamKeepAliveTimeoutError, type TransportLiveness } from "./stream-keepalive.ts";
 import { prepareAgentToolCallArguments } from "./tool-arguments.ts";
 import { resolveCallTool, withToolNameCorrection } from "./tool-name-alias.ts";
 import type {
@@ -640,6 +641,7 @@ async function streamAssistantResponse(
 	// Dedicated controller for the provider request so the loop can tear the
 	// request down itself (idle timeout), not only when the caller aborts.
 	const requestAbortController = new AbortController();
+	const liveness = createTransportLiveness(normalizeTimeoutMs(config.streamKeepAliveTimeoutMs));
 	let detachCallerAbort: (() => void) | undefined;
 	if (signal !== undefined) {
 		if (signal.aborted) {
@@ -674,6 +676,10 @@ async function streamAssistantResponse(
 				contextUsageNotBefore: config.resolveContextUsageNotBefore?.(),
 				apiKey: resolvedApiKey,
 				signal: requestAbortController.signal,
+				onTransportActivity: () => {
+					liveness.noteActivity();
+					config.onTransportActivity?.();
+				},
 				// Cursor exec bridging (ignored by every other provider): handlers
 				// execute mid-stream; their paired results buffer here.
 				...(config.cursorExecHandlers
@@ -710,6 +716,7 @@ async function streamAssistantResponse(
 			preStream.remainingStartMs(),
 			response,
 			normalizeTimeoutMs(config.streamStartTimeoutMs),
+			liveness,
 		);
 		try {
 			while (true) {
@@ -864,7 +871,10 @@ async function streamAssistantResponse(
 		// through the same shaping and cap (#3510).
 		const callerAbortedPastBound =
 			signal?.aborted === true &&
-			(error instanceof StreamStartTimeoutError || isStreamIdleTimeoutError(error) || error === signal.reason);
+			(error instanceof StreamStartTimeoutError ||
+				error instanceof StreamKeepAliveTimeoutError ||
+				isStreamIdleTimeoutError(error) ||
+				error === signal.reason);
 		const finalMessage = createTerminalFailureAssistantMessage(
 			config.model,
 			signal?.aborted ? "aborted" : "error",
@@ -999,6 +1009,7 @@ function createAssistantEventReader(
 	// The bound the error names, when the timer only gets what is left of it (the steps before the stream used
 	// the rest); the error must name the configured bound, which users raise.
 	configuredStartTimeoutMs?: number,
+	liveness?: TransportLiveness,
 ): AssistantEventReader {
 	const idleTimeoutMs = normalizeTimeoutMs(timeoutMs);
 	const startTimeoutMs = normalizeTimeoutMs(streamStartTimeoutMs);
@@ -1035,6 +1046,8 @@ function createAssistantEventReader(
 				? (ms: number) => new StreamStartTimeoutError(reportedStartTimeoutMs ?? ms)
 				: (ms: number) => new StreamIdleTimeoutError(idleTimeoutMs ?? ms);
 			const readStartedAt = Date.now();
+			// Keep-alives are judged against the whole configured bound, not the share of it left for this read.
+			const windowMs = useStartBound ? (reportedStartTimeoutMs ?? startTimeoutMs) : idleTimeoutMs;
 			const result = await readNextAssistantEvent(
 				iterator,
 				readTimeoutMs === undefined ? undefined : Math.max(1, readTimeoutMs - silentMs),
@@ -1043,11 +1056,15 @@ function createAssistantEventReader(
 				onIdleTimeout,
 				stream,
 				signal,
+				liveness && windowMs !== undefined ? { liveness, windowMs } : undefined,
 			);
 			if (!result.done && isAssistantProgress(result.value)) silentMs += Date.now() - readStartedAt;
 			else {
 				silentMs = 0;
-				if (!result.done) sawFirstEvent = true;
+				if (!result.done) {
+					sawFirstEvent = true;
+					liveness?.contentArrived();
+				}
 			}
 			return result;
 		},
@@ -1063,6 +1080,7 @@ async function readNextAssistantEvent(
 	onIdleTimeout?: (error: Error) => void,
 	stream?: Pick<AssistantMessageEventStream, "hasPendingLocalWork">,
 	signal?: AbortSignal,
+	keepAlive?: { liveness: TransportLiveness; windowMs: number },
 ): Promise<IteratorResult<AssistantRecord>> {
 	if (idleTimeoutMs === undefined && abortPromise === undefined) {
 		return iterator.next();
@@ -1091,7 +1109,13 @@ async function readNextAssistantEvent(
 					timeout = setTimeout(onIdleDeadline, idleTimeoutMs);
 					return;
 				}
-				const error = makeTimeoutError(idleTimeoutMs);
+				// A provider that accepted the request and is still sending keep-alive bytes is working, not dead.
+				const verdict = keepAlive?.liveness.onSilenceDeadline(keepAlive.windowMs);
+				if (verdict?.kind === "extend") {
+					timeout = setTimeout(onIdleDeadline, verdict.delayMs);
+					return;
+				}
+				const error = verdict?.kind === "keep-alive-exhausted" ? verdict.error : makeTimeoutError(idleTimeoutMs);
 				closeAssistantIterator(iterator);
 				settle(() => reject(error));
 				// Abort after settling so the failure surfaces as an idle timeout,

@@ -136,4 +136,84 @@ describe("#11684: context usage after a model switch", () => {
 
 		expect(reasons.length).toBeGreaterThan(0);
 	});
+
+	it("keeps the corrected count in the retry/continuation admission gates after a manual switch", async () => {
+		const harness = await setup({ compaction: true });
+		await harness.session.setModel(model(harness, "model-a"));
+		seedTurn(harness, "model-a", "context ".repeat(245_000), 100_000);
+		await harness.session.setModel(model(harness, "model-b"));
+
+		// The gates exempt only an automatic fallback; a manual switch still estimates the transcript.
+		const estimate = Reflect.get(harness.session, "_estimatePrePromptContextTokens");
+		if (typeof estimate !== "function") throw new Error("Expected AgentSession._estimatePrePromptContextTokens");
+		const gateTokens: number = estimate.call(harness.session, [], { retryFallbackBoundary: true });
+		expect(gateTokens).toBe(estimate.call(harness.session));
+		expect(gateTokens).toBeGreaterThan(WINDOWS["model-b"] - RESERVE_TOKENS);
+	});
+
+	it("does not compact ahead of an automatic fallback, and then reports the fallback model's own usage", async () => {
+		const callsAtCompaction: number[] = [];
+		const harness = await createHarness({
+			models: [
+				{ id: "primary", contextWindow: 50_000, maxTokens: 2_048 },
+				{ id: "fallback", contextWindow: 50_000, maxTokens: 2_048 },
+			],
+			settings: {
+				compaction: {
+					enabled: true,
+					speculativeEnabled: false,
+					idleCompactionEnabled: false,
+					keepRecentTokens: 32,
+					reserveTokens: 5_000,
+				},
+				retry: {
+					enabled: true,
+					maxRetries: 0,
+					baseDelayMs: 1,
+					fallbackChains: { "faux/primary": ["faux/fallback"] },
+				},
+			},
+			extensionFactories: [
+				(pi: ExtensionAPI) => {
+					pi.on("session_before_compact", () => {
+						callsAtCompaction.push(harness.faux.getCallLog().length);
+						return { cancel: true, rejectionCause: "external-owner", reason: "observed only" };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		const primary = harness.getModel("primary");
+		if (!primary) throw new Error("missing faux model primary");
+		// The primary measured 20k; the transcript estimate (~44k) would cross the 45k threshold on its own.
+		harness.sessionManager.appendMessage({ role: "user", content: "history ".repeat(22_000), timestamp: Date.now() });
+		const seeded = fauxAssistantMessage("result ".repeat(200));
+		harness.sessionManager.appendMessage({
+			...seeded,
+			api: primary.api,
+			provider: primary.provider,
+			model: primary.id,
+			usage: { ...seeded.usage, input: 19_900, output: 100, totalTokens: 20_000 },
+		});
+		harness.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		harness.setResponses([
+			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			(_context, _options, _state, answering) => fauxAssistantMessage(`answer from ${answering.id}`),
+		]);
+
+		await harness.session.prompt("trigger fallback");
+
+		expect(harness.eventsOfType("retry_fallback_applied")).toMatchObject([
+			{ from: "faux/primary", to: "faux/fallback" },
+		]);
+		// Compaction may follow the fallback's answer, but never precedes the fallback request.
+		expect(callsAtCompaction.every((calls) => calls >= 2)).toBe(true);
+		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["primary", "fallback"]);
+		const answer = harness.session.messages.findLast((message) => message.role === "assistant");
+		expect(answer).toMatchObject({ model: "fallback", stopReason: "stop" });
+		const usage = harness.session.getContextUsage();
+		expect(usage?.estimated).toBeUndefined();
+		expect(usage?.contextWindow).toBe(50_000);
+	});
 });

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { attachJsonlLineReader } from "../../src/modes/rpc/jsonl.ts";
 import { hermeticProviderEnv } from "../helpers/rpc-hermetic.ts";
 import { reapSpawnedHosts } from "../helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 export type Wire = Record<string, unknown>;
 export type LaunchPath = "bare" | "direct" | "ensured";
@@ -42,7 +43,7 @@ export async function launchHost(
 	const child = spawn(process.execPath, [cli, ...args], {
 		cwd: qa.root,
 		env: {
-			...process.env,
+			...hostSpawnEnv(),
 			...hermeticProviderEnv(),
 			SENPI_RUNTIME: "node",
 			SENPI_CODING_AGENT_DIR: qa.agentDir,

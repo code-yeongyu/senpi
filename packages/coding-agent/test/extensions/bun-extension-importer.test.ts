@@ -32,7 +32,7 @@ function run(root: string, scenario: string): void {
 import assert from "node:assert/strict";
 import { realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createBunExtensionImporter } from ${JSON.stringify(importerPath)};
 const root = ${JSON.stringify(root)};
 const entry = join(root, "extension.ts");
@@ -176,20 +176,27 @@ assert.equal(staticModule, dynamicModule);
 
 	it("preserves real import metadata when paths contain URL-special characters", () => {
 		// Given: metadata appears both as direct properties and as the complete object.
-		const root = fixture("export default () => [import.meta.url, import.meta.path, import.meta.dir, import.meta];");
+		const root = fixture(
+			"export default () => [import.meta.url, import.meta.path, import.meta.dir, import.meta, import.meta.filename, import.meta.dirname];",
+		);
 		// When
 		run(
 			root,
 			`
 const importer = await createBunExtensionImporter({});
 const factory = await importer.import(entry, { default: true });
-const [url, path, dir, meta] = factory();
+const [url, path, dir, meta, filename, dirname] = factory();
 // Then
 assert.equal(url, pathToFileURL(realpathSync(entry)).href);
 assert.equal(path, realpathSync(entry));
 assert.equal(dir, realpathSync(root));
 assert.equal(meta.url, url);
 assert.equal(meta.path, path);
+// Node >= 20.11 and Bun: filename/dirname are the decoded file path of url and its directory (#4766).
+assert.equal(filename, fileURLToPath(url));
+assert.equal(dirname, realpathSync(root));
+assert.equal(meta.filename, filename);
+assert.equal(meta.dirname, dirname);
 `,
 		);
 	});

@@ -108,6 +108,7 @@ import { AgentRunContinuations } from "./agent-run-continuation.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
+import { formatCompactionFailure } from "./compaction-failure-text.ts";
 import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
@@ -320,6 +321,7 @@ import {
 	modelChangeLogFields,
 	SDK_MODEL_CHANGE,
 } from "./model-change-origin.ts";
+import { ModelNotReadyError } from "./model-not-ready-error.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -567,7 +569,9 @@ function withProviderFailure(
 
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
-	| WithParentToolCallId<Exclude<AgentEvent, { type: "agent_end" | "message_update" }>>
+	| WithParentToolCallId<Exclude<AgentEvent, { type: "agent_start" | "agent_end" | "message_update" }>>
+	/** The lifecycle run identity, bound before asynchronous event delivery; older engines omit it. */
+	| { type: "agent_start"; runId?: string }
 	| AgentSessionAgentEndEvent
 	| SessionMessageUpdateEvent
 	| { type: "agent_settled" }
@@ -904,6 +908,8 @@ export interface AgentSessionConfig {
 	promptSurface?: PromptSurface;
 	/** Browser engine this session's skills drive; omitted means none was chosen. */
 	browserEngine?: BrowserEngine;
+	/** Caller env for this session's tool subprocesses (`open_session.env`, senpi#4381); omitted means none. */
+	sessionEnv?: Readonly<Record<string, string>>;
 	/** Tool runtime for this session (senpi#3566); absent means `in-process`. */
 	toolRuntime?: ToolRuntimeKind;
 	/** Where the startup thinking level came from (senpi#3819); absent means `default`. */
@@ -1037,14 +1043,6 @@ function isCompactionExecutionAborted(error: unknown): boolean {
 		error instanceof CompactionCancelledError ||
 		(error instanceof Error && error.name === "AbortError")
 	);
-}
-
-/** A turn cannot start: no model is selected, or its provider has no credentials. */
-class ModelNotReadyError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "ModelNotReadyError";
-	}
 }
 
 /** The error a turn ends with when a required compaction could not bring the context back under the window. */
@@ -1768,15 +1766,21 @@ export class AgentSession {
 	private _systemPromptOverride?: string;
 	private _promptSurface: PromptSurface | undefined;
 	private _browserEngine: BrowserEngine | undefined;
+	private readonly _sessionEnv: Readonly<Record<string, string>> | undefined;
 
 	constructor(config: AgentSessionConfig) {
 		this._promptSurface = config.promptSurface;
 		this._browserEngine = config.browserEngine;
+		this._sessionEnv = config.sessionEnv;
 		this.agent = config.agent;
-		this._structuredLane = new StructuredSessionLane(config.internalChannel, (deliver) => {
-			if (!this._unsubscribeAgent) return;
-			this._agentEventQueue = this._agentEventQueue.then(deliver, deliver);
-		});
+		this._structuredLane = new StructuredSessionLane(
+			config.internalChannel,
+			(deliver) => {
+				if (!this._unsubscribeAgent) return;
+				this._agentEventQueue = this._agentEventQueue.then(deliver, deliver);
+			},
+			(control) => this._recoveryIdentity?.own(control),
+		);
 		this.sessionManager = config.sessionManager;
 		this._unsubscribeRecovery = this.sessionManager.onRecovery((recovery) => {
 			this._standingRecovery = { type: "session_recovered", ...recovery };
@@ -2974,10 +2978,11 @@ export class AgentSession {
 					: { ...event, message };
 		}
 		carryRecovery(produced, event);
+		// The canonical projection goes first: its acceptance unit waits for this event's legacy record (senpi#4272).
+		if (this._structuredLane.active) this._structuredLane.emitEvent(event, captureSource);
 		for (const l of [...this._eventListeners]) {
 			l(event);
 		}
-		if (this._structuredLane.active) this._structuredLane.emitEvent(event, captureSource);
 	}
 
 	private async _emitSessionCompactFailed(event: Omit<SessionCompactFailedEvent, "type">): Promise<void> {
@@ -3499,6 +3504,9 @@ export class AgentSession {
 			this._lifecycleBinding.startRun();
 			this._requestSelectedModel = undefined;
 		}
+		// Bind now: the core can start another run before this event's asynchronous delivery.
+		const queuedEvent =
+			event.type === "agent_start" ? { ...event, runId: this._lifecycleBinding.controller.ledger.runId } : event;
 		// Bound at emission: the core can start the next run before the queue reaches this end (senpi#3864).
 		if (event.type === "agent_end") {
 			this._lifecycleBinding.bindTurnEnd(event);
@@ -3578,8 +3586,8 @@ export class AgentSession {
 		}
 
 		const processing = this._agentEventQueue.then(
-			() => this._processAgentEvent(event, signal),
-			() => this._processAgentEvent(event, signal),
+			() => this._processAgentEvent(queuedEvent, signal),
+			() => this._processAgentEvent(queuedEvent, signal),
 		);
 		this._agentEventQueue =
 			pendingMessage !== undefined
@@ -4543,6 +4551,11 @@ export class AgentSession {
 		this._incrementMessageRevision();
 	}
 
+	private _latestModelChangeIsFallback(branch: readonly SessionEntry[]): boolean {
+		const entry = branch.findLast((candidate) => candidate.type === "model_change");
+		return entry?.type === "model_change" && (entry.reason === "fallback" || entry.reason === "fallback-revert");
+	}
+
 	/** Usage reported before the latest model switch was counted by another model's tokenizer (oh-my-openagent#11684). */
 	private _contextEstimateOptions(branch: SessionEntry[] = this.sessionManager.getBranch()): ContextEstimateOptions {
 		return modelSwitchEstimateOptions(branch, this.sessionManager, (message) =>
@@ -4716,8 +4729,11 @@ export class AgentSession {
 	 * block controls at their position. Attach before a turn's first provider push; a stream already pushing keeps
 	 * its decision and yields no capture.
 	 */
-	subscribeStructured(listener: (record: AgentSessionStructuredRecord) => void): () => void {
-		return this._structuredLane.subscribe(listener);
+	subscribeStructured(
+		listener: (record: AgentSessionStructuredRecord) => void,
+		failed?: (cause: unknown) => void,
+	): () => void {
+		return this._structuredLane.subscribe(listener, failed);
 	}
 
 	/**
@@ -5015,6 +5031,10 @@ export class AgentSession {
 
 	get browserEngine(): BrowserEngine | undefined {
 		return this._browserEngine;
+	}
+
+	get sessionEnv(): Readonly<Record<string, string>> | undefined {
+		return this._sessionEnv;
 	}
 
 	/** Current effective system prompt (includes any per-turn extension modifications) */
@@ -6975,7 +6995,8 @@ export class AgentSession {
 		options: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" } | undefined,
 	): boolean {
 		return (
-			customTurnOrigin(customType) === "engine" &&
+			(customTurnOrigin(customType) === "engine" ||
+				this._lifecycleBinding.controller.requiresHumanContinuation) &&
 			options?.deliverAs !== "nextTurn" &&
 			options?.triggerTurn !== false &&
 			(this.isStreaming || options?.triggerTurn === true)
@@ -7014,7 +7035,8 @@ export class AgentSession {
 		const { items } = options;
 		const held =
 			this._wakeGateApplies(message.customType, options) &&
-			(this._engineTurnHold.holdsSource(engineWakeSource(message.customType)) ||
+			(this._holdForInterruptedRun(options) ||
+				this._engineTurnHold.holdsSource(engineWakeSource(message.customType)) ||
 				this._runHolds.holdsWake(message.details) ||
 				items.some(
 					(item) =>
@@ -7344,14 +7366,11 @@ export class AgentSession {
 		if (
 			!releasedWake &&
 			this._wakeGateApplies(message.customType, options) &&
-			(this._engineTurnHold.holdsSource(engineWakeSource(message.customType)) ||
+			(this._holdForInterruptedRun(options) ||
+				this._engineTurnHold.holdsSource(engineWakeSource(message.customType)) ||
 				this._runHolds.holdsWake(message.details))
 		) {
-			this._engineTurnHold.note(engineWakeSource(message.customType), appMessage);
-			if (options?.ticket) {
-				const noticeId = heldLifecycleNotice(this, options.ticket, message.customType);
-				if (noticeId) this.workObligations.held(options.ticket, noticeId);
-			}
+			this._noteHeldWake(appMessage, options?.ticket);
 			deferredTurnClaim?.resolve("finished-without-start");
 			return;
 		}
@@ -7455,6 +7474,16 @@ export class AgentSession {
 					throw error;
 				} finally {
 					this._triggerTurnAdmissionAbortGeneration = undefined;
+				}
+				// The lifecycle restore awaited above can find the previous run interrupted (senpi#4683). A released
+				// wake is still in notice custody, so only a fresh send becomes a notice.
+				if (this._wakeGateApplies(message.customType, options) && this._holdForInterruptedRun(options)) {
+					if (itemized !== undefined) {
+						if (options.ticket) this._retireLifecycleDelivery(options.ticket, !this._isEngineDelivery(options.ticket));
+						this._persistWatchers.delete(appMessage);
+						itemized.droppedByAbort();
+					} else if (!releasedWake) this._noteHeldWake(appMessage, options.ticket);
+					return;
 				}
 				if (releasedWake && !releasedWake()) return;
 				const inputOrigin = customTurnOrigin(message.customType);
@@ -7823,6 +7852,15 @@ export class AgentSession {
 		return { messages, commands: run };
 	}
 
+	/**
+	 * A superseded host generation draining a session nobody is attached to (senpi#3114): automatic turns wait as
+	 * notices from here on, exactly as on an unattended reopen, so the running turn is the session's last on this
+	 * host and it parks when that turn settles. A person's input or resume_session releases the hold.
+	 */
+	holdAutomaticTurns(): void {
+		this._engineTurnHold.addHold("unattended");
+	}
+
 	/** A parent's Stop reaching this child (senpi#3811): hold every automatic turn until the parent's run Resume. */
 	async pauseForRun(owner: {
 		parentSessionId: string;
@@ -7959,6 +7997,9 @@ export class AgentSession {
 				return id;
 			},
 			emit: (event) => this._emit(event),
+			holdInterruptedRun: () => {
+				this._holdForInterruptedRun({ triggerTurn: true });
+			},
 			factsFailed: (error) => this._sessionLogger.warn("lifecycle_goal_read_failed", { error: String(error) }),
 		});
 	}
@@ -8000,6 +8041,33 @@ export class AgentSession {
 
 	get holds() {
 		return this._engineTurnHold.holds;
+	}
+
+	/**
+	 * An automatic send that would start a turn while the previous run is interrupted waits for a person (senpi#4683):
+	 * it joins the interrupted-run hold as a notice that Resume or the next message delivers. Refused as a turn it was
+	 * lost, and each refusal counted as an engine turn until the no-work limit paused the session.
+	 */
+	private _holdForInterruptedRun(options: { triggerTurn?: boolean } | undefined): boolean {
+		if (options?.triggerTurn !== true || this.isStreaming) return false;
+		if (!this._lifecycleBinding.controller.requiresHumanContinuation) return false;
+		if (this._engineTurnHold.getHold("interrupted-run") === undefined) {
+			this._engineTurnHold.addHold("session_hold", { key: "interrupted-run" });
+			this._extensionRunner
+				.getUIContext()
+				.notify(
+					"Paused: the previous run was interrupted. Automatic updates are held until you send a message or /resume.",
+					"warning",
+				);
+		}
+		return true;
+	}
+
+	private _noteHeldWake(appMessage: CustomMessage, ticket: string | undefined): void {
+		this._engineTurnHold.note(engineWakeSource(appMessage.customType), appMessage);
+		if (!ticket) return;
+		const noticeId = heldLifecycleNotice(this, ticket, appMessage.customType);
+		if (noticeId) this.workObligations.held(ticket, noticeId);
 	}
 
 	/**
@@ -9934,7 +10002,7 @@ export class AgentSession {
 			const error = new Error(
 				lastEntry?.type === "compaction" ? "Already compacted" : "Nothing to compact (session too small)",
 			);
-			const errorMessage = `Compaction failed: ${error.message}`;
+			const errorMessage = formatCompactionFailure("compaction", error.message);
 			this._emit({ type: "compaction_start", reason: "manual", requestId });
 			this._emit({
 				type: "compaction_end",
@@ -9993,7 +10061,9 @@ export class AgentSession {
 			}
 			const message = error instanceof Error ? error.message : String(error);
 			const aborted = isCompactionExecutionAborted(error);
-			const errorMessage = aborted ? undefined : `Compaction failed: ${message}`;
+			const errorMessage = aborted
+				? undefined
+				: formatCompactionFailure("compaction", message, { model: this._compactionFailureModel() });
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -10084,7 +10154,9 @@ export class AgentSession {
 				aborted,
 				willRetry: false,
 				requestId,
-				errorMessage: aborted ? undefined : `Compaction failed: ${message}`,
+				errorMessage: aborted
+					? undefined
+					: formatCompactionFailure("compaction", message, { model: this._compactionFailureModel() }),
 			});
 			return { applied: false, reason: "rejected" };
 		} finally {
@@ -10599,7 +10671,7 @@ export class AgentSession {
 	 */
 	private async _assertModelReadyForTurn(): Promise<void> {
 		if (!this.model) {
-			throw new ModelNotReadyError(formatNoModelSelectedMessage());
+			throw new ModelNotReadyError(formatNoModelSelectedMessage(), "no_model_selected");
 		}
 		const hasConfiguredAuth =
 			this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
@@ -10614,9 +10686,15 @@ export class AgentSession {
 				`Authentication failed for "${this.model.provider}". ` +
 					`Credentials may have expired or network is unavailable. ` +
 					`Run '/login ${this.model.provider}' to re-authenticate.`,
+				"provider_credentials_expired",
+				this.model.provider,
 			);
 		}
-		throw new ModelNotReadyError(formatNoApiKeyFoundMessage(this.model.provider));
+		throw new ModelNotReadyError(
+			formatNoApiKeyFoundMessage(this.model.provider),
+			"provider_credentials_missing",
+			this.model.provider,
+		);
 	}
 
 	/** Shows the provider guidance for a refused background turn once until a turn is admitted again. */
@@ -10704,11 +10782,22 @@ export class AgentSession {
 		throw new RequiredCompactionError();
 	}
 
-	/** Share resume's branch provenance rule without projecting trusted usage on every request. */
-	private _estimatePrePromptContextTokens(additions: readonly AgentMessage[] = []): number {
+	/**
+	 * Share resume's branch provenance rule without projecting trusted usage on every request.
+	 * `retryFallbackBoundary`: the retry continuation right after a fallback switch keeps the last measured count
+	 * instead of a transcript estimate, so it does not compact ahead of the fallback (#900); the retried request
+	 * reports the fallback model's own count, which every later check uses (oh-my-openagent#11684).
+	 */
+	private _estimatePrePromptContextTokens(
+		additions: readonly AgentMessage[] = [],
+		options: { retryFallbackBoundary?: boolean } = {},
+	): number {
 		const branch = this.sessionManager.getBranch();
 		const messages = [...this.sessionManager.buildSessionContext().messages, ...additions];
-		const estimateOptions = this._contextEstimateOptions(branch);
+		const estimateOptions =
+			options.retryFallbackBoundary === true && this._latestModelChangeIsFallback(branch)
+				? {}
+				: this._contextEstimateOptions(branch);
 		const estimate = estimateContextTokens(messages, estimateOptions);
 		const usageMessage = estimate.lastUsageIndex === null ? undefined : messages[estimate.lastUsageIndex];
 		const usageEntryId = usageMessage ? getSessionContextEntryId(usageMessage) : undefined;
@@ -11171,7 +11260,7 @@ export class AgentSession {
 		const settings = this._getCompactionSettings();
 		if (!model || !settings.enabled) return;
 
-		const contextTokens = this._estimatePrePromptContextTokens();
+		const contextTokens = this._estimatePrePromptContextTokens([], { retryFallbackBoundary: true });
 		// An explicit user prompt passes the proactive policy in the compaction
 		// extension's before_agent_start, which automatic continuations never emit.
 		// Sampling the same predicate here makes both routes compact at the same
@@ -11495,9 +11584,9 @@ export class AgentSession {
 			const aborted = isCompactionExecutionAborted(error);
 			const formattedErrorMessage = aborted
 				? undefined
-				: reason === "overflow"
-					? `Context overflow recovery failed: ${errorMessage}`
-					: `Auto-compaction failed: ${errorMessage}`;
+				: formatCompactionFailure(reason === "overflow" ? "overflow-recovery" : "auto-compaction", errorMessage, {
+						model: this._compactionFailureModel(),
+					});
 			this._emit({
 				type: "compaction_end",
 				reason,
@@ -11908,6 +11997,7 @@ export class AgentSession {
 				},
 				getAskUserSettings: () => this.settingsManager.getAskUserSettings(),
 				getBrowserEngine: () => this._browserEngine,
+				getSessionEnv: () => this._sessionEnv,
 				getImageSettings: () => ({
 					autoResize: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),
@@ -11990,7 +12080,9 @@ export class AgentSession {
 								aborted,
 								willRetry: false,
 								requestId,
-								errorMessage: aborted ? undefined : `Compaction failed: ${message}`,
+								errorMessage: aborted
+									? undefined
+									: formatCompactionFailure("compaction", message, { model: this._compactionFailureModel() }),
 							});
 							const err = error instanceof Error ? error : new Error(String(error));
 							options?.onError?.(err);
@@ -12759,6 +12851,10 @@ export class AgentSession {
 		};
 	}
 
+	private _compactionFailureModel(): string | undefined {
+		return this.model ? `${this.model.provider}/${this.model.id}` : undefined;
+	}
+
 	/**
 	 * User-facing text for a turn that is really over. A provider-stream stall
 	 * or a transport drop carries the classifier's own wording (`Provider stream
@@ -13357,7 +13453,7 @@ export class AgentSession {
 		// before the continuation so a rejected compaction never admits that model.
 		const model = this.model;
 		const compactionSettings = this._getCompactionSettings();
-		const contextTokens = this._estimatePrePromptContextTokens();
+		const contextTokens = this._estimatePrePromptContextTokens([], { retryFallbackBoundary: true });
 		if (
 			compactionSettings.enabled &&
 			model &&
