@@ -73,6 +73,7 @@ function blockPatch(
 			...base,
 			blockedUntil: now + Math.min(policy?.cooldownCapMs ?? block.cooldownMs, block.cooldownMs),
 			blockReason: "rate_limit",
+			...(block.usageLimit ? { usageLimit: true as const } : {}),
 		};
 	}
 	if (block.reason === "auth_error")
@@ -154,6 +155,7 @@ export function streamWithCredentialRotation(
 						lease: undefined,
 						blockedUntil: undefined,
 						blockReason: undefined,
+						usageLimit: undefined,
 						// A healthy answer ends the failure run; a later limit starts its backoff afresh (senpi#3771).
 						failureCount: undefined,
 						modelBlocks,

@@ -19,6 +19,7 @@ const slotStateSchema = z.strictObject({
 	stateVersion: z.number().int().nonnegative(),
 	blockedUntil: z.number().int().positive().optional(),
 	blockReason: z.enum(["auth_error", "rate_limit", "account_disabled"]).optional(),
+	usageLimit: z.literal(true).optional(),
 	failureCount: z.number().int().nonnegative().optional(),
 	lastSuccessAt: z.number().int().positive().optional(),
 	credentialRevision: z.string().regex(HEX_256_BIT).optional(),

@@ -68,6 +68,11 @@ export interface RpcProviderAccount {
 	route?: "siwc" | "legacy";
 	planUsageEnabled?: boolean;
 	signedOut?: boolean;
+	/** Actual session-local selection, not a prediction from account order or pin. */
+	active?: boolean;
+	/** SIWC usage pause; the internal probe cooldown is not a reset time. */
+	paused?: true;
+	usageUrl?: string;
 }
 
 // ============================================================================
