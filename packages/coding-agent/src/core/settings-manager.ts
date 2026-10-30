@@ -225,6 +225,7 @@ export interface Settings {
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows); supports leading ~ expansion
 	quietStartup?: QuietStartup; // default: false
 	tips?: boolean; // default: true
+	reducedMotion?: boolean; // default: false - keep decorative TUI indicators static
 	tipsHistory?: Record<string, number>; // tipId -> epoch ms last shown
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
@@ -2169,6 +2170,10 @@ export class SettingsManager {
 
 	getTipsEnabled(): boolean {
 		return this.settings.tips ?? true;
+	}
+
+	getReducedMotion(): boolean {
+		return this.settings.reducedMotion ?? false;
 	}
 
 	getTipsHistory(): Record<string, number> {

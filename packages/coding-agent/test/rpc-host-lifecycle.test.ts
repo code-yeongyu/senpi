@@ -40,6 +40,7 @@ import {
 import { processIsLive, processMatchesPidFile, readProcessStartTime } from "../src/utils/process-identity.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 import { processAlive, reapProcessesUnder } from "./helpers/spawned-host-reaper.ts";
+import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
 
 const roots: string[] = [];
 const peers: JsonlPeer[] = [];
@@ -399,8 +400,6 @@ describe("ensureHost-spawned host lifecycle", () => {
 		const supervisor = spawn(
 			process.execPath,
 			[
-				"--import",
-				"tsx",
 				hostLifecycleEntry(),
 				"--socket",
 				qa.socket,
@@ -677,10 +676,12 @@ function supervisorGone(supervisor: ChildProcess, type: string): Error {
 function clockSupervisor(qa: Scratch): { supervisor: ChildProcess; exited: Promise<unknown[]> } {
 	const supervisor = spawn(
 		process.execPath,
-		["--import", "tsx", join(import.meta.dirname, "fixtures", "rpc-lifecycle-clock.ts"), qa.socket, qa.agentDir],
+		// The real host child inherits exec argv. Use Node's built-in TypeScript handling,
+		// as in rpc-host-idle-exit-closed-turn, rather than paying for tsx at every cold start.
+		[join(import.meta.dirname, "fixtures", "rpc-lifecycle-clock.ts"), qa.socket, qa.agentDir],
 		{
 			env: {
-				...process.env,
+				...hostSpawnEnv(),
 				...hermeticProviderEnv(),
 				SENPI_CODING_AGENT_DIR: qa.agentDir,
 				SENPI_CODING_AGENT_SESSION_DIR: qa.sessionDir,
@@ -835,7 +836,7 @@ async function fireWatchdogOnPipeEof(options: {
 			...(options.cleanupPaths ?? []),
 		],
 		{
-			env: { ...process.env, ...(options.sidecar ? { WATCHDOG_SIDECAR: options.sidecar } : {}) },
+			env: { ...hostSpawnEnv(), ...(options.sidecar ? { WATCHDOG_SIDECAR: options.sidecar } : {}) },
 			stdio: ["ignore", "ignore", "inherit", "pipe", "ipc"],
 		},
 	);

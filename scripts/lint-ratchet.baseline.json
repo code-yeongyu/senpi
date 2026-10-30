@@ -918,9 +918,6 @@
   "packages/coding-agent/src/modes/rpc/session-event-writer.ts": {
     "typescript/no-non-null-assertion": 1
   },
-  "packages/coding-agent/src/modes/rpc/socket-event-fanout.ts": {
-    "typescript/no-non-null-assertion": 1
-  },
   "packages/coding-agent/src/package-manager-cli.ts": {
     "typescript/no-non-null-assertion": 2
   },
@@ -1181,7 +1178,7 @@
     "typescript/no-explicit-any": 10
   },
   "packages/coding-agent/test/package-manager.test.ts": {
-    "typescript/no-explicit-any": 86
+    "typescript/no-explicit-any": 85
   },
   "packages/coding-agent/test/prompt-templates.test.ts": {
     "typescript/no-non-null-assertion": 7

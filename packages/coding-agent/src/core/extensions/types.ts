@@ -547,6 +547,8 @@ export interface ExtensionContext {
 	readonly goalStoreFile?: string;
 	/** Browser engine the opener chose for THIS session (`open_session.browserEngine`); absent when it chose none. */
 	readonly browserEngine?: BrowserEngine;
+	/** Caller env the opener gave THIS session (`open_session.env`, senpi#4381); absent when it gave none. */
+	readonly sessionEnv?: Readonly<Record<string, string>>;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -649,6 +651,13 @@ export interface ExtensionContext {
 	getLookAtSettings(): { enabled: boolean; models: string[] | undefined };
 	/** Get resolved ask-user settings from global/project overrides and --no-ask-user. */
 	getAskUserSettings?(): { enabled: boolean; timeoutMinutes: number };
+	/**
+	 * Run `publish` once every `session_start` handler of the current dispatch has returned, in admission order;
+	 * outside a `session_start` dispatch it runs now. Recovered work published here cannot be answered while a
+	 * later startup handler is still preparing the session. Skipped when the session was replaced, reloaded or
+	 * disposed before dispatch ended; a returned promise's rejection is reported as an extension error.
+	 */
+	afterSessionStart?(publish: () => void | Promise<void>): void;
 	/** Get resolved image settings from global/project/user overrides. */
 	getImageSettings(): { autoResize: boolean; blockImages: boolean };
 	/** Manage retry fallback through the SettingsManager owned by this session. */
@@ -3518,6 +3527,7 @@ export interface ExtensionContextActions {
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getBrowserEngine?: () => BrowserEngine | undefined;
+	getSessionEnv?: () => Readonly<Record<string, string>> | undefined;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;

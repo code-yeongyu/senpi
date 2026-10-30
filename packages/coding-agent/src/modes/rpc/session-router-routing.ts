@@ -1,4 +1,5 @@
 import { VERSION } from "../../config.ts";
+import { sharedPathIdentityResolver } from "../../core/extensions/builtin/permission-system/path-identity-host.ts";
 
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
@@ -9,6 +10,7 @@ import { answerEffectFromTranscript } from "./effect-commands.ts";
 import { multiSessionHostCapabilities } from "./host-capabilities.ts";
 
 import { answerWarm } from "./host-warm.ts";
+import { pathIdentityResolverStatus } from "./path-identity-status.ts";
 import { protocolIdentity } from "./protocol-identity.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
@@ -94,6 +96,7 @@ export async function dispatch(
 				mode: "multi",
 				...protocolIdentity(host.defaults.agentDir),
 				memory_pressure: host.memoryPressure,
+				path_identity_resolver: pathIdentityResolverStatus(sharedPathIdentityResolver()),
 			},
 		};
 	}

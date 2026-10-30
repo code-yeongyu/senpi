@@ -8,8 +8,8 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { goldenCellVerdict } from "./equivalence-deferred.mjs";
 
-export const SURFACES = ["rpc", "tui", "desktop"];
-export const OBSERVATIONS = ["O1", "O2", "O3", "O4", "O5", "O6/O7", "O8 TUI", "O8 desktop"];
+const SURFACES = ["rpc", "tui", "desktop"];
+const OBSERVATIONS = ["O1", "O2", "O3", "O4", "O5", "O6/O7", "O8 TUI", "O8 desktop"];
 
 /**
  * Row verdicts. KILLED is the only proof; DEFERRED and NO_B0 say why a row has no proof on this platform and never
@@ -96,7 +96,7 @@ export function planRow(mutation, { platform, deferredGoldens, eqDir }) {
 const deferredNote = (m) => `DEFERRED(${m.deferred.owner}, due ${m.deferred.due}): ${m.deferred.reason}`;
 
 /** One diff row as the harness prints it, untruncated: the text the expected-message RegExp is matched against. */
-export const diffRowText = (row) =>
+const diffRowText = (row) =>
 	`${row.path}: golden=${JSON.stringify(row.golden)} actual=${JSON.stringify(row.actual)}`;
 
 /**
