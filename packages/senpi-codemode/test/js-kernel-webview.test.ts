@@ -109,22 +109,34 @@ describe.skipIf(!bunWebViewAvailable)("Bun.WebView from an eval cell", { timeout
 		expect(value).toEqual({ logged: [["log", "from the page", 7]], answer: 42 });
 	});
 
-	it("walks the default-backend view's history with goBack() and goForward()", async () => {
-		// goBack()/goForward() resolve before the history navigation commits; the cell waits for the view's
-		// navigated event, so the check reads the committed page.
-		const value = await cell(
-			[
-				`await using view = new Bun.WebView({ width: 320, height: 240 });`,
-				`await view.navigate(${JSON.stringify(fixtureUrl())});`,
-				`await view.navigate(${JSON.stringify(`${fixtureUrl()}?second`)});`,
-				`const settled = (move) => new Promise((resolve, reject) => { view.onNavigated = (url) => resolve(url); move().catch(reject); });`,
-				`const back = await settled(() => view.goBack());`,
-				`const forward = await settled(() => view.goForward());`,
-				`return { back, forward };`,
-			].join("\n"),
-		);
-		expect(value).toEqual({ back: fixtureUrl(), forward: `${fixtureUrl()}?second` });
-	});
+	it.each(["default", "chrome"])(
+		"walks the %s-backend view's history with goBack() and goForward()",
+		async (backend) => {
+			// WebKit acknowledges history commands before navigation finishes, while Chrome emits
+			// onNavigated at frame commit, before its command promise clears the navigation slot.
+			// Wait for both signals so neither backend starts the next command too early.
+			// Data URLs force document loads: Chrome's HTTP back-forward cache can restore without
+			// the load event Bun uses to settle its native history promise.
+			const firstUrl = `data:text/html,${encodeURIComponent("<title>first</title>")}`;
+			const secondUrl = `data:text/html,${encodeURIComponent("<title>second</title>")}`;
+			const value = await cell(
+				[
+					`await using view = new Bun.WebView({ width: 320, height: 240, ${backend === "chrome" ? 'backend: "chrome"' : ""} });`,
+					`await view.navigate(${JSON.stringify(firstUrl)});`,
+					`await view.navigate(${JSON.stringify(secondUrl)});`,
+					`const settled = async (move) => {`,
+					`  const navigated = new Promise((resolve, reject) => { view.onNavigated = resolve; view.onNavigationFailed = reject; });`,
+					`  const [url] = await Promise.all([navigated, move()]);`,
+					`  return url;`,
+					`};`,
+					`const back = await settled(() => view.goBack());`,
+					`const forward = await settled(() => view.goForward());`,
+					`return { back, forward };`,
+				].join("\n"),
+			);
+			expect(value).toEqual({ back: firstUrl, forward: secondUrl });
+		},
+	);
 
 	// senpi#4794: Bun's WebKit host client is bound to the first thread that spawns it, so a WebKit view
 	// built in a kernel worker broke every view after that worker exited and corrupted the heap once a
