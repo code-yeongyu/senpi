@@ -25,9 +25,6 @@ import { streamAnthropicSubscription } from "../src/core/extensions/builtin/anth
 beforeEach(() => {
 	process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY = "flat";
 });
-afterEach(() => {
-	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
-});
 
 const model: Model<Api> = {
 	id: "claude-test",
@@ -152,6 +149,7 @@ function observations(): ContinuityObservation[] {
 }
 
 afterEach(() => {
+	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
 	for (const sessionId of sessionIds) closeSession(sessionId, "test_cleanup");
 	sessionIds.clear();
 	resetSessionRegistryBoundary();

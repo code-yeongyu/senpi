@@ -23,9 +23,6 @@ import { ScriptedResidentQuery, sdkMessage, type TurnScript } from "./helpers/an
 beforeEach(() => {
 	process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY = "flat";
 });
-afterEach(() => {
-	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
-});
 
 /**
  * senpi#1973: when Claude Code rejects a fork point ("No message found with message.uuid"),
@@ -172,6 +169,7 @@ function topLevelAssistant(sessionId: string, uuid: string, parentToolUseId: str
 }
 
 afterEach(() => {
+	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
 	closeSession(SESSION_ID, "test_cleanup");
 	resetSessionRegistryBoundary();
 	resetSdkBoundary();

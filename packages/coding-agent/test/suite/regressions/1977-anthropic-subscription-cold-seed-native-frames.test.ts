@@ -203,7 +203,7 @@ function expectNativeHistory(messages: readonly WireMessage[]): void {
 	const toolResult = blocks(messages[2])[0];
 	expect(toolUse?.id).toMatch(/^[a-zA-Z0-9_-]+$/);
 	expect(toolResult?.tool_use_id).toBe(toolUse?.id);
-	expect((toolResult?.content as Block[]).map((block) => block.type)).toEqual(["text", "image"]);
+	expect((toolResult?.content as Block[] | undefined)?.map((block) => block.type)).toEqual(["text", "image"]);
 	expect(texts(messages)).not.toContain("<conversation_history>");
 	expect(texts(messages)).not.toContain("[Image: source");
 }

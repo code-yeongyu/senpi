@@ -26,9 +26,6 @@ import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 beforeEach(() => {
 	process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY = "flat";
 });
-afterEach(() => {
-	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
-});
 
 const model: Model<Api> = {
 	id: "claude-test",
@@ -130,6 +127,7 @@ function diagnosticMessage(diagnostics: AssistantMessage["diagnostics"]): Assist
 }
 
 afterEach(() => {
+	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
 	for (const sessionId of sessionIds) closeSession(sessionId, "test_cleanup");
 	sessionIds.clear();
 	resetSessionRegistryBoundary();
