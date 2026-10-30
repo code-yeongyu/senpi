@@ -64,7 +64,7 @@ export function freezeGrantAttribution(record: McpStoredAuth | undefined): McpSt
  * that server's metadata, the MCP server's protected-resource metadata naming it, or the MCP server's own origin
  * (the SDK's legacy root fallback). A bare URL from anywhere else would send the SDK to an unverified server.
  */
-export function discoveryNamesItsServer(state: OAuthDiscoveryState, serverUrl: string): boolean {
+function discoveryNamesItsServer(state: OAuthDiscoveryState, serverUrl: string): boolean {
 	if (state.authorizationServerMetadata !== undefined) return true;
 	const named = canonicalAuthorizationServerIssuer(String(state.authorizationServerUrl));
 	if (named === new URL(serverUrl).origin) return true;
