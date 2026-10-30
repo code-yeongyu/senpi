@@ -119,7 +119,14 @@ export function buildSeedTranscript(context: Context, options: SeedTranscriptOpt
 	for (let index = 0; index < historyLength; index++) {
 		const message = context.messages[index];
 		if (message === undefined || !isReplayable(message)) continue;
-		history.push(message.role === "assistant" ? { ...message, [SOURCE_COUNT]: index + 1 } : message);
+		if (message.role !== "assistant") {
+			history.push(message);
+			continue;
+		}
+		// The count rides on a symbol key: transformMessages copies messages with object spread, which keeps it.
+		const tagged: TaggedAssistantMessage = { ...message };
+		tagged[SOURCE_COUNT] = index + 1;
+		history.push(tagged);
 	}
 
 	const converted = toAnthropicMessageParams(history, options.model, { preserveThinking: true });
