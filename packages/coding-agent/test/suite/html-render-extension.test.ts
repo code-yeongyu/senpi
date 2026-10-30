@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,7 @@ import {
 	injectHtmlRenderBootstrap,
 } from "../../src/extensions/html-render/bootstrap.ts";
 import { inlineLocalImages } from "../../src/extensions/html-render/images.ts";
-import { showHtmlPageTool } from "../../src/extensions/html-render/tool.ts";
+import { showHtmlPageTool, writeHtmlPage } from "../../src/extensions/html-render/tool.ts";
 import { builtInExtensions } from "../../src/extensions/index.ts";
 import { HOST_TOOL_NAMES_CONTEXT_KEY } from "../../src/host-tools.ts";
 import { createHarness } from "./harness.ts";
@@ -64,6 +65,22 @@ describe("host HTML attachment", () => {
 		} finally {
 			harness.cleanup();
 		}
+	});
+
+	it("the exported host writer preserves the pre-migration file bytes", async () => {
+		const result = await writeHtmlPage(
+			{
+				html: '<!doctype html><html><head><title>Host attachment</title></head><body><p id="host-page">TOOLS-MCP1</p></body></html>',
+				title: "Host attachment",
+				height: 300,
+			},
+			tempDir,
+		);
+		const bytes = readFileSync(result.details.path);
+		expect(bytes.length).toBe(2680);
+		expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+			"5263f097ae148714873275e07beef128f9fa2ff62ba0918245a202af36af1aa4",
+		);
 	});
 
 	it.each([

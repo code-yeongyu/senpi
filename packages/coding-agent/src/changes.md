@@ -5652,6 +5652,7 @@ The flag changes core startup and dispatch before extensions can handle a turn.
 - `packages/coding-agent/src/host-tools.ts` provides generic host registration and a session-context public-name declaration; a standalone fallback yields only to names the opening host supplies.
 - `packages/coding-agent/src/index.ts` exports the attachment contract.
 - The HTML implementation moved from engine builtins to `src/extensions/html-render/` without changing its schema, file preparation, result, or lazy exposure.
+- The public SDK exposes writeHtmlPage and showHtmlPageTool. Both standalone execution and desktop host attachments use the same writer; its prepared bytes are compared against the pre-change output.
 
 ### Why
 
