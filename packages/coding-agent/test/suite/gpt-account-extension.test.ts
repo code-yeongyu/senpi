@@ -3,8 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
+import type { CredentialAccountSummary } from "../../src/core/credential-accounts.ts";
 import gptAccountExtension from "../../src/core/extensions/builtin/gpt-account.ts";
+import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handler.ts";
 import { type Command, createAccountCommandContext, registerCommand } from "./account-command-harness.ts";
+import { makeHarness, makeSink } from "./rpc-connection-harness.ts";
 
 let dir: string;
 let storage: AuthStorage;
@@ -40,6 +43,74 @@ async function seedCodexPool(): Promise<void> {
 }
 
 describe("/gpt-account command", () => {
+	// #5003 W12: TUI and get_provider_accounts consume the same secret-free summary.
+	it("lists mixed registrations with their route and plan permission", async () => {
+		const harness = makeHarness(dir);
+		storage = harness.authStorage;
+		const collected = makeSink();
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+		try {
+			await storage.modify("chatgpt-subscription", async () => ({
+				type: "oauth",
+				access: "synthetic-legacy",
+				refresh: "synthetic-legacy-refresh",
+				expires: 1,
+				accounts: [
+					{ name: "default", access: "synthetic-legacy", refresh: "synthetic-legacy-refresh", expires: 1 },
+					{
+						name: "login-2",
+						route: "siwc",
+						email: "same@example.test",
+						access: "synthetic-one",
+						refresh: "synthetic-one-refresh",
+						expires: 1,
+						planUsageEnabled: true,
+					},
+					{
+						name: "login-3",
+						route: "siwc",
+						email: "same@example.test",
+						access: "synthetic-two",
+						refresh: "synthetic-two-refresh",
+						expires: 1,
+						planUsageEnabled: false,
+					},
+				],
+			}));
+			const received = collected.waitFor((message) => message.id === "siwc-accounts");
+			await handler.handleInputLine(
+				JSON.stringify({
+					id: "siwc-accounts",
+					type: "get_provider_accounts",
+					provider: "chatgpt-subscription",
+				}),
+			);
+			const response = await received;
+			expect(response.success).toBe(true);
+			const listing = response.data as { accounts: CredentialAccountSummary[] };
+			expect(listing.accounts).toMatchObject([
+				{ name: "default", route: "legacy" },
+				{ name: "login-2", route: "siwc", planUsageEnabled: true },
+				{ name: "login-3", route: "siwc", planUsageEnabled: false },
+			]);
+			const { ctx, notices } = createContext();
+			await registeredGptCommand().handler("", ctx);
+			const lines = notices.at(-1)!.message.split("\n");
+			for (const account of listing.accounts) {
+				const line = lines.find((candidate) => candidate.includes(`${account.name} |`));
+				expect(line).toContain(account.route === "siwc" ? "SIWC" : "legacy");
+			}
+			expect(lines.find((line) => line.includes("login-3 |"))).toContain(
+				"plan usage not enabled: enable it or use an API key",
+			);
+			expect(notices.at(-1)!.message).toContain("https://chatgpt.com/settings/usage");
+			expect(JSON.stringify(listing)).not.toContain("synthetic-");
+		} finally {
+			await handler.dispose();
+			harness.cleanup();
+		}
+	});
+
 	it("lists ChatGPT Subscription OAuth accounts without leaking tokens", async () => {
 		await seedCodexPool();
 		const { ctx, notices } = createContext();
