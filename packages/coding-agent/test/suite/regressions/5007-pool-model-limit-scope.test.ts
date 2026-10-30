@@ -1,7 +1,16 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { describe, expect, it } from "vitest";
-import { AllAccountsBlockedError } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
+import { usageLimitResetMs } from "../../../src/core/credential-pool/reset-time.ts";
+import type { AccountSlot } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import {
+	AllAccountsBlockedError,
+	selectAccount,
+} from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
+import { classifySdkError } from "../../../src/core/extensions/builtin/anthropic-subscription/errors.ts";
+import { runFailover } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
 import { withAuthGuidance } from "../../../src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts";
 import {
 	RetryFallbackController,
@@ -88,5 +97,58 @@ describe("account pool blocked for one model reaches the fallback chain as a mod
 
 	it("#given every account is auth-blocked #when the pool refuses the turn #then it is not read as a usage limit", () => {
 		expect(usageLimitScope(shown(new AllAccountsBlockedError(undefined, "auth_error")))).toBeUndefined();
+	});
+});
+
+describe("the turn in which the last account goes out keeps the pool's limit scope (#5007)", () => {
+	const NOW = Date.UTC(2026, 9, 30, 10);
+	const pool: AccountSlot[] = [
+		{ name: "alpha", refresh: "r-alpha", access: "a-alpha", expires: NOW + 86_400_000, source: "login" },
+		{ name: "bravo", refresh: "r-bravo", access: "a-bravo", expires: NOW + 86_400_000, source: "login" },
+	];
+
+	it("#given one account is out for Fable only and the last one hits an account-wide limit #when the turn fails #then the pool reports a model-scoped limit", async () => {
+		const replies = [
+			"You've hit your Fable limit · resets Nov 3, 9am (UTC)",
+			"You've hit your session limit · resets 3pm (UTC)",
+		];
+		let thrown: unknown;
+		try {
+			for await (const _event of runFailover({
+				accounts: pool,
+				selectFn: (accounts) => selectAccount(accounts, { sessionId: "mixed-pool", now: NOW, model: fable.id }),
+				runAttempt: async function* () {
+					throw new Error(replies.shift());
+				},
+				classify: classifySdkError,
+				store: new InMemoryCredentialStore(),
+				providerId: "anthropic-subscription",
+				model: fable.id,
+				now: () => NOW,
+				sessionKey: "mixed-pool",
+			})) {
+				// drain
+			}
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect({
+			limitedModel: thrown instanceof AllAccountsBlockedError ? thrown.limitedModel : undefined,
+			scope:
+				thrown instanceof AllAccountsBlockedError
+					? usageLimitScope(withAuthGuidance(thrown, thrown.message, undefined, NOW))
+					: undefined,
+		}).toEqual({ limitedModel: fable.id, scope: "model" });
+	});
+
+	it("#given the pool is out for one model until a named time #when the refusal is shown #then the reset readers get that time", () => {
+		const until = NOW + 26 * 60 * 60_000;
+		const text = withAuthGuidance(new AllAccountsBlockedError(until, undefined, fable.id), "", undefined, NOW);
+
+		expect({ reset: usageLimitResetMs(text, NOW), marker: parseRetryAfterMsMarker(text) }).toEqual({
+			reset: until - NOW,
+			marker: until - NOW,
+		});
 	});
 });
