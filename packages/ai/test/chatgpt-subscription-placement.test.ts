@@ -9,6 +9,7 @@ import {
 	removeSlot,
 } from "../src/auth/pool/slots.ts";
 import type { OAuthCredential } from "../src/auth/types.ts";
+import type { Model } from "../src/types.ts";
 import { createModels } from "../src/models.ts";
 import { chatgptSubscriptionProvider } from "../src/providers/chatgpt-subscription.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
@@ -146,7 +147,7 @@ describe("ChatGPT credential placement (#5003 W11)", () => {
 			issuer: "https://auth.openai.com",
 			subject: "second",
 			clientId: "oaiapp_second",
-			idToken: second.idToken,
+			idToken: "synthetic-id-second",
 			refresh: "synthetic-new-refresh",
 			scopes: ["resource.invoke", "chatgpt.tokens.use.direct"],
 		});
@@ -160,7 +161,9 @@ describe("ChatGPT credential placement (#5003 W11)", () => {
 		await credentials.modify(provider.id, async () => stored);
 		const models = createModels({ credentials });
 		models.setProvider(provider);
-		const model = provider.getModels().find((candidate) => candidate.id === "gpt-6.1-sol")!;
+		const found = provider.getModels().find((candidate) => candidate.id === "gpt-6.1-sol");
+		if (found?.api !== "openai-codex-responses") throw new Error("fixture model is not on the Codex route");
+		const model = found as Model<"openai-codex-responses">;
 		const requests: { url: string; headers: Record<string, string>; body: RequestInit["body"] }[] = [];
 		const fetchStub: typeof fetch = async (input, init) => {
 			requests.push({
