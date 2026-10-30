@@ -3,6 +3,7 @@
  */
 
 import { basename } from "node:path";
+import { SecretInputUnavailableError } from "./secret-input.ts";
 import type { ExtensionRpcRequestContext } from "./rpc-context.ts";
 import { requestExtensionRpc } from "./rpc-request.ts";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
@@ -490,9 +491,14 @@ function createNoOpSessionSettings(): ExtensionContextActions["sessionSettings"]
 }
 
 const noOpUIContext: ExtensionUIContext = {
+	capabilities: { secretInput: true },
 	select: async () => undefined,
 	confirm: async () => false,
-	input: async () => undefined,
+	input: async (_title, _placeholder, opts) => {
+		if (opts?.signal?.aborted) return undefined;
+		if (opts?.secret) throw new SecretInputUnavailableError("headless");
+		return undefined;
+	},
 	notify: () => {},
 	onTerminalInput: () => () => {},
 	setStatus: () => {},
@@ -920,7 +926,7 @@ export class ExtensionRunner {
 			select: (title, options, opts) => this.withUIPrompt("select", title, () => ui.select(title, options, opts)),
 			confirm: (title, message, opts) => this.withUIPrompt("confirm", title, () => ui.confirm(title, message, opts)),
 			input: (title, placeholder, opts) =>
-				this.withUIPrompt("input", title, () => ui.input(title, placeholder, opts)),
+				this.withUIPrompt("input", opts?.secret ? undefined : title, () => ui.input(title, placeholder, opts)),
 			editor: (title, prefill) => this.withUIPrompt("editor", title, () => ui.editor(title, prefill)),
 			custom: (factory, options) => this.withUIPrompt("custom", undefined, () => ui.custom(factory, options)),
 			...(questionFn

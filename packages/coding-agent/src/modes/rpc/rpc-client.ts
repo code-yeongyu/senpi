@@ -68,6 +68,7 @@ import type {
 	RpcOpenQueuedEvent,
 	RpcProviderAccount,
 	RpcResponse,
+	RpcSecretInputSettledEvent,
 	RpcSessionModelEntry,
 	RpcSessionParkedEvent,
 	RpcSessionReplacedEvent,
@@ -129,6 +130,7 @@ type PromptOptions = ClientMessageIdentity & {
 
 export type RpcProviderAccountEvent = RpcAuthAccountsChangedEvent | RpcAccountFailoverEvent;
 export type RpcClientEvent =
+	| RpcSecretInputSettledEvent
 	| (JsonAgentSessionEvent & ClientMessageIdentity & { readonly clientMessages?: readonly ClientMessageIdentity[] })
 	| RpcProviderAccountEvent
 	| RpcExtensionEvent
@@ -1356,6 +1358,7 @@ export class RpcClient {
 					event.type === "bash_start" ||
 					event.type === "bash_end" ||
 					event.type === "extension_ui_request" ||
+					event.type === "secret_input_settled" ||
 					// Connection-level, not part of the agent's event stream.
 					event.type === "session_replaced" ||
 					event.type === "session_parked" ||

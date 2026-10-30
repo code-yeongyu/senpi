@@ -162,6 +162,11 @@ export interface ExtensionUIDialogOptions {
 	parentToolCallId?: string;
 }
 
+/** A guarded private single-line input; callers on older hosts must check capabilities first. */
+export interface ExtensionUIInputOptions extends ExtensionUIDialogOptions {
+	secret?: boolean;
+}
+
 /** Placement for extension widgets. */
 export type WidgetPlacement = "aboveEditor" | "belowEditor";
 
@@ -238,6 +243,8 @@ export interface QuestionResponse {
  * Each mode (interactive, RPC, print) provides its own implementation.
  */
 export interface ExtensionUIContext {
+	/** Implements private collection and typed refusal; a presenter is checked at call time. */
+	readonly capabilities?: { readonly secretInput?: true };
 	/** Show a selector and return the user's choice. */
 	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
@@ -245,7 +252,7 @@ export interface ExtensionUIContext {
 	confirm(title: string, message: string, opts?: ExtensionUIDialogOptions): Promise<boolean>;
 
 	/** Show a text input dialog. */
-	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
+	input(title: string, placeholder?: string, opts?: ExtensionUIInputOptions): Promise<string | undefined>;
 
 	/**
 	 * Show a multi-question prompt and resolve with the user's answers, comment, cancel, or timeout.

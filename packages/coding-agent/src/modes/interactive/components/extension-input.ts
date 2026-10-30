@@ -3,12 +3,15 @@
  */
 
 import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import { armSecretInputDeadline } from "../../../core/extensions/secret-input.ts";
 import { theme } from "../theme/theme.ts";
 import { CountdownTimer } from "./countdown-timer.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint } from "./keybinding-hints.ts";
 
 export interface ExtensionInputOptions {
+	secret?: boolean;
+	deadlineAtMs?: number;
 	tui?: TUI;
 	timeout?: number;
 	/** Text the input opens with; the cursor lands at its end. */
@@ -23,6 +26,8 @@ export class ExtensionInputComponent extends Container implements Focusable {
 	private titleText: Text;
 	private baseTitle: string;
 	private countdown: CountdownTimer | undefined;
+	private secretTimer: (() => void) | undefined;
+	readonly secret: boolean;
 
 	// Focusable implementation - propagate to input for IME cursor positioning
 	private _focused = false;
@@ -42,6 +47,7 @@ export class ExtensionInputComponent extends Container implements Focusable {
 		opts?: ExtensionInputOptions,
 	) {
 		super();
+		this.secret = opts?.secret === true;
 
 		this.onSubmitCallback = onSubmit;
 		this.onCancelCallback = onCancel;
@@ -58,7 +64,10 @@ export class ExtensionInputComponent extends Container implements Focusable {
 		}
 		this.addChild(new Spacer(1));
 
-		if (opts?.timeout && opts.timeout > 0 && opts.tui) {
+		if (this.secret) {
+			const remaining = Math.max(0, (opts?.deadlineAtMs ?? Date.now() + (opts?.timeout ?? 1800000)) - Date.now());
+			this.secretTimer = armSecretInputDeadline(Date.now() + remaining, () => this.onCancelCallback());
+		} else if (opts?.timeout && opts.timeout > 0 && opts.tui) {
 			this.countdown = new CountdownTimer(
 				opts.timeout,
 				opts.tui,
@@ -67,7 +76,17 @@ export class ExtensionInputComponent extends Container implements Focusable {
 			);
 		}
 
-		this.input = new Input();
+		this.input = new Input({
+			secret: this.secret,
+			onInvalidInput: () =>
+				this.titleText.setText(
+					theme.fg("warning", "Secret input must be a single line without control characters."),
+				),
+		});
+		if (this.secret) {
+			this.input.onSubmit = (value) => this.onSubmitCallback(value);
+			this.input.onEscape = () => this.onCancelCallback();
+		}
 		if (opts?.initialValue) {
 			// Typed in, not assigned: Input.setValue() would leave the cursor at
 			// column 0, ahead of the prefill the caller wants the user to edit.
@@ -83,6 +102,10 @@ export class ExtensionInputComponent extends Container implements Focusable {
 	}
 
 	handleInput(keyData: string): void {
+		if (this.secret) {
+			this.input.handleInput(keyData);
+			return;
+		}
 		const kb = getKeybindings();
 		if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
 			this.onSubmitCallback(this.input.getValue());
@@ -95,5 +118,9 @@ export class ExtensionInputComponent extends Container implements Focusable {
 
 	dispose(): void {
 		this.countdown?.dispose();
+		this.secretTimer?.();
+		if (this.secret) this.input.dispose();
+		this.onSubmitCallback = () => {};
+		this.onCancelCallback = () => {};
 	}
 }
