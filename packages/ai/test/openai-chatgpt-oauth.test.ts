@@ -253,7 +253,7 @@ describe("OpenAI ChatGPT OAuth", () => {
 		const credentials = new InMemoryCredentialStore();
 		const existing = { ...connectedCredential(), subject: "selected-subject", email: "user@example.test" };
 		await credentials.modify("test-siwc", async () => existing);
-		const before = await credentials.read("test-siwc");
+		const before = structuredClone(await credentials.read("test-siwc"));
 		const models = createModels({ credentials });
 		models.setProvider(
 			createProvider({
