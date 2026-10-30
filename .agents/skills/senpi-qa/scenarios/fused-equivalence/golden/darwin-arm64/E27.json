@@ -1311,7 +1311,7 @@
       }
      ],
      "stream": true,
-     "prompt_cache_key": "senpi-responses-prefix-v1-4yqohdvm3cfv",
+     "prompt_cache_key": "senpi-responses-prefix-v1-bfesvq19htx4j",
      "store": false,
      "max_output_tokens": 128000,
      "tools": [
@@ -3926,13 +3926,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:3>",
        "parentId": "<id:1>",
@@ -3964,6 +3964,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:1>"
       }
      },
@@ -3974,7 +3975,8 @@
       "statusKey": "todo-waiting"
      },
      {
-      "type": "agent_start"
+      "type": "agent_start",
+      "runId": "<uuid:17>"
      },
      {
       "type": "turn_start"
@@ -4098,6 +4100,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:1>"
@@ -4236,6 +4239,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:3>"
       }
      },
@@ -4264,6 +4268,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "read",
@@ -4745,6 +4750,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:5>"
       }
      },
@@ -4904,6 +4910,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:3>"
@@ -5031,6 +5038,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:7>"
       }
      },
@@ -5346,6 +5354,7 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "completionId": "<uuid:16>:1",
         "completion": {
          "kind": "reply",
@@ -5361,8 +5370,7 @@
          "endedBy": "clean",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:17>"
+        }
        },
        "id": "<id:13>",
        "parentId": "<id:12>",
@@ -5394,6 +5402,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "completionId": "<uuid:16>:1",
        "completion": {
         "kind": "reply",
@@ -5576,13 +5585,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:30>",
         "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:30>"
+        "interrupted": false
        },
        "id": "<id:16>",
        "parentId": "<id:17>",
@@ -5614,6 +5623,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:30>",
        "observedAt": "<ts:lifecycle.observedAt:9>"
       }
      },
@@ -5624,7 +5634,8 @@
       "statusKey": "todo-waiting"
      },
      {
-      "type": "agent_start"
+      "type": "agent_start",
+      "runId": "<uuid:30>"
      },
      {
       "type": "turn_start"
@@ -5700,6 +5711,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:30>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:4>"
@@ -5824,6 +5836,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:30>",
        "observedAt": "<ts:lifecycle.observedAt:11>"
       }
      },
@@ -6062,6 +6075,7 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:30>",
         "completionId": "<uuid:16>:2",
         "completion": {
          "kind": "reply",
@@ -6077,8 +6091,7 @@
          "endedBy": "clean",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:30>"
+        }
        },
        "id": "<id:22>",
        "parentId": "<id:21>",
@@ -6110,6 +6123,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:30>",
        "completionId": "<uuid:16>:2",
        "completion": {
         "kind": "reply",
@@ -6245,13 +6259,13 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:4>",
      "parentId": "<id:3>",
@@ -6442,6 +6456,7 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "completionId": "<uuid:1>:1",
       "completion": {
        "kind": "reply",
@@ -6457,8 +6472,7 @@
        "endedBy": "clean",
        "budgetSpent": false,
        "deadlineStop": false
-      },
-      "runId": "<uuid:2>"
+      }
      },
      "id": "<id:14>",
      "parentId": "<id:13>",
@@ -6497,13 +6511,13 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:3>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:3>"
+      "interrupted": false
      },
      "id": "<id:16>",
      "parentId": "<id:15>",
@@ -6604,6 +6618,7 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:3>",
       "completionId": "<uuid:1>:2",
       "completion": {
        "kind": "reply",
@@ -6619,8 +6634,7 @@
        "endedBy": "clean",
        "budgetSpent": false,
        "deadlineStop": false
-      },
-      "runId": "<uuid:3>"
+      }
      },
      "id": "<id:21>",
      "parentId": "<id:20>",

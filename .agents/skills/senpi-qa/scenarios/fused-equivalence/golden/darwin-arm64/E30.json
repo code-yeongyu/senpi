@@ -5275,13 +5275,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:18>",
         "sessionId": "<uuid:14>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:18>"
+        "interrupted": false
        },
        "id": "<id:5>",
        "parentId": "<id:2>",
@@ -5314,6 +5314,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "observedAt": "<ts:lifecycle.observedAt:1>"
       },
       "sessionId": "<id:1>"
@@ -5327,6 +5328,7 @@
      },
      {
       "type": "agent_start",
+      "runId": "<uuid:18>",
       "sessionId": "<id:1>"
      },
      {
@@ -5459,6 +5461,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:1>"
@@ -5793,6 +5796,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "observedAt": "<ts:lifecycle.observedAt:3>"
       },
       "sessionId": "<id:1>"
@@ -5822,6 +5826,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_write",
@@ -6177,12 +6182,14 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "observedAt": "<ts:lifecycle.observedAt:5>"
       },
       "sessionId": "<id:4>"
      },
      {
       "type": "agent_start",
+      "runId": "<uuid:22>",
       "sessionId": "<id:4>"
      },
      {
@@ -6210,6 +6217,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:3>"
@@ -6243,6 +6251,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "observedAt": "<ts:lifecycle.observedAt:7>"
       },
       "sessionId": "<id:4>"
@@ -6272,6 +6281,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_write",
@@ -6308,6 +6318,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "observedAt": "<ts:lifecycle.observedAt:9>"
       },
       "sessionId": "<id:4>"
@@ -6337,6 +6348,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:5>"
@@ -6370,6 +6382,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "observedAt": "<ts:lifecycle.observedAt:11>"
       },
       "sessionId": "<id:4>"
@@ -6407,6 +6420,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "completionId": "<uuid:15>:1",
        "completion": {
         "kind": "reply",
@@ -6597,6 +6611,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "observedAt": "<ts:lifecycle.observedAt:13>"
       },
       "sessionId": "<id:1>"
@@ -6769,6 +6784,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:6>"
@@ -7035,6 +7051,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "observedAt": "<ts:lifecycle.observedAt:15>"
       },
       "sessionId": "<id:1>"
@@ -7187,7 +7204,7 @@
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:22>",
+      "id": "<uuid:23>",
       "method": "setStatus",
       "statusKey": "goal",
       "sessionId": "<id:1>"
@@ -7353,6 +7370,7 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:18>",
         "completionId": "<uuid:14>:1",
         "completion": {
          "kind": "reply",
@@ -7368,8 +7386,7 @@
          "endedBy": "clean",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:18>"
+        }
        },
        "id": "<id:16>",
        "parentId": "<id:15>",
@@ -7402,6 +7419,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "completionId": "<uuid:14>:1",
        "completion": {
         "kind": "reply",
@@ -7424,70 +7442,70 @@
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:23>",
+      "id": "<uuid:24>",
       "method": "setWidget",
       "widgetKey": "todo-sidebar",
       "sessionId": "<id:4>"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:24>",
+      "id": "<uuid:25>",
       "method": "setStatus",
       "statusKey": "anthropic-web-search",
       "sessionId": "<id:4>"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:25>",
+      "id": "<uuid:26>",
       "method": "setWidget",
       "widgetKey": "anthropic-web-search",
       "sessionId": "<id:4>"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:26>",
+      "id": "<uuid:27>",
       "method": "setStatus",
       "statusKey": "openai-web-search",
       "sessionId": "<id:4>"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:27>",
+      "id": "<uuid:28>",
       "method": "setWidget",
       "widgetKey": "openai-web-search",
       "sessionId": "<id:4>"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:28>",
+      "id": "<uuid:29>",
       "method": "setStatus",
       "statusKey": "monitors",
       "sessionId": "<id:4>"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:29>",
+      "id": "<uuid:30>",
       "method": "setStatus",
       "statusKey": "pi-websearch",
       "sessionId": "<id:4>"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:30>",
+      "id": "<uuid:31>",
       "method": "setWidget",
       "widgetKey": "pi-websearch",
       "sessionId": "<id:4>"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:31>",
+      "id": "<uuid:32>",
       "method": "setStatus",
       "statusKey": "pi-webfetch",
       "sessionId": "<id:4>"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:32>",
+      "id": "<uuid:33>",
       "method": "setWidget",
       "widgetKey": "pi-webfetch",
       "sessionId": "<id:4>"
@@ -7510,21 +7528,21 @@
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:33>",
+      "id": "<uuid:34>",
       "method": "setStatus",
       "statusKey": "todo-waiting",
       "sessionId": "<id:4>"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:34>",
+      "id": "<uuid:35>",
       "method": "setStatus",
       "statusKey": "goal",
       "sessionId": "<id:4>"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:35>",
+      "id": "<uuid:36>",
       "method": "setWidget",
       "widgetKey": "prompt-url",
       "sessionId": "<id:4>"
@@ -7562,12 +7580,14 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "observedAt": "<ts:lifecycle.observedAt:17>"
       },
       "sessionId": "<id:1>"
      },
      {
       "type": "agent_start",
+      "runId": "<uuid:18>",
       "sessionId": "<id:1>"
      },
      {
@@ -7595,6 +7615,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:7>"
@@ -7628,6 +7649,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "observedAt": "<ts:lifecycle.observedAt:19>"
       },
       "sessionId": "<id:1>"
@@ -7657,6 +7679,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_write",
@@ -7676,14 +7699,14 @@
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:36>",
+      "id": "<uuid:37>",
       "method": "setStatus",
       "statusKey": "pi-websearch",
       "sessionId": "<id:4>"
      },
      {
       "type": "extension_ui_request",
-      "id": "<uuid:37>",
+      "id": "<uuid:38>",
       "method": "setWidget",
       "widgetKey": "pi-websearch",
       "sessionId": "<id:4>"
@@ -7712,13 +7735,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:22>",
         "sessionId": "<uuid:15>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:38>"
+        "interrupted": false
        },
        "id": "<id:19>",
        "parentId": "<id:17>",
@@ -7751,6 +7774,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "observedAt": "<ts:lifecycle.observedAt:21>"
       },
       "sessionId": "<id:4>"
@@ -7764,6 +7788,7 @@
      },
      {
       "type": "agent_start",
+      "runId": "<uuid:22>",
       "sessionId": "<id:4>"
      },
      {
@@ -7896,6 +7921,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:9>"
@@ -8230,6 +8256,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "observedAt": "<ts:lifecycle.observedAt:23>"
       },
       "sessionId": "<id:4>"
@@ -8259,6 +8286,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_write",
@@ -8770,6 +8798,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "observedAt": "<ts:lifecycle.observedAt:25>"
       },
       "sessionId": "<id:4>"
@@ -8942,6 +8971,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:11>"
@@ -9208,6 +9238,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "observedAt": "<ts:lifecycle.observedAt:27>"
       },
       "sessionId": "<id:4>"
@@ -9526,6 +9557,7 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:22>",
         "completionId": "<uuid:15>:1",
         "completion": {
          "kind": "reply",
@@ -9541,8 +9573,7 @@
          "endedBy": "clean",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:38>"
+        }
        },
        "id": "<id:27>",
        "parentId": "<id:26>",
@@ -9575,6 +9606,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:22>",
        "completionId": "<uuid:15>:1",
        "completion": {
         "kind": "reply",
@@ -9609,6 +9641,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "observedAt": "<ts:lifecycle.observedAt:29>"
       },
       "sessionId": "<id:1>"
@@ -9638,6 +9671,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:12>"
@@ -9671,6 +9705,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "observedAt": "<ts:lifecycle.observedAt:31>"
       },
       "sessionId": "<id:1>"
@@ -9708,6 +9743,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:18>",
        "completionId": "<uuid:14>:1",
        "completion": {
         "kind": "reply",
@@ -9784,13 +9820,13 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:4>",
      "parentId": "<id:3>",
@@ -9981,6 +10017,7 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "completionId": "<uuid:1>:1",
       "completion": {
        "kind": "reply",
@@ -9996,8 +10033,7 @@
        "endedBy": "clean",
        "budgetSpent": false,
        "deadlineStop": false
-      },
-      "runId": "<uuid:2>"
+      }
      },
      "id": "<id:14>",
      "parentId": "<id:13>",
@@ -10064,13 +10100,13 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:4>",
        "sessionId": "<uuid:3>",
        "attentionSeq": 0,
        "synthetic": [],
        "epochSealed": false,
        "runActive": true,
-       "interrupted": false,
-       "runId": "<uuid:4>"
+       "interrupted": false
       },
       "id": "<id:18>",
       "parentId": "<id:17>",
@@ -10261,6 +10297,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:4>",
        "completionId": "<uuid:3>:1",
        "completion": {
         "kind": "reply",
@@ -10276,8 +10313,7 @@
         "endedBy": "clean",
         "budgetSpent": false,
         "deadlineStop": false
-       },
-       "runId": "<uuid:4>"
+       }
       },
       "id": "<id:27>",
       "parentId": "<id:26>",
