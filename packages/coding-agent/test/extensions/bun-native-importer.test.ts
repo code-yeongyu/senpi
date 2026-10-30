@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { hostSpawnEnv } from "../helpers/rpc-host-spawn-env.ts";
 
 // A plain `bun` runtime (every bun-global install) must load TypeScript extensions
 // through Bun.Transpiler, not through jiti + Babel. The probe observes jiti
@@ -88,7 +89,7 @@ describe.skipIf(!bunAvailable)("extension imports on a plain bun runtime", () =>
 				encoding: "utf8",
 				timeout: 180_000,
 				env: {
-					...process.env,
+					...hostSpawnEnv(),
 					SENPI_CODING_AGENT_DIR: agentDir,
 					SENPI_JITI_PROBE_MARKER: marker,
 					PI_OFFLINE: "1",

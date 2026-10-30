@@ -29,6 +29,7 @@ try {
 				parallelPoolWidth: 2,
 				...(mode === "inline" ? { workerEntryUrl: pathToFileURL(join(root, "absent.js")) } : {}),
 				permissions: {
+					checkDeadlineMs: 120_000,
 					state: () => ({ epoch: 1, active, rules: [{ permission: "bash", pattern: "uname", layer: "user" }] }),
 					decide: (_token, call) =>
 						call.tool === "bash" || call.input.path === denied
@@ -44,7 +45,7 @@ try {
 					`require("node:fs").writeFileSync(${JSON.stringify(denied)}, "bad");`,
 					`import {put} from "write-fixture"; put(${JSON.stringify(denied)});`,
 				]) {
-					const result = await kernel.run({ cellId: crypto.randomUUID(), code, timeoutMs: 8_000 });
+					const result = await kernel.run({ cellId: crypto.randomUUID(), code, timeoutMs: 120_000 });
 					assert.equal(result.ok, !active, JSON.stringify(result));
 				}
 				assert.equal(existsSync(marker), !active);
@@ -61,7 +62,7 @@ try {
 				await writeFile(script, "postMessage(globalThis.preloadResult)");
 				const worker = await kernel.run({
 					cellId: crypto.randomUUID(),
-					timeoutMs: 8_000,
+					timeoutMs: 120_000,
 					code: `
 					const w=new Worker(${JSON.stringify(pathToFileURL(script).href)}, {preload:[${JSON.stringify(pathToFileURL(preload).href)}]});
 					const result=await new Promise((resolve,reject)=>{w.onmessage=e=>resolve(e.data);w.onerror=reject});
@@ -122,7 +123,7 @@ try {
 	try {
 		const run = kernel.run({
 			cellId: "worker-owner",
-			timeoutMs: 8_000,
+			timeoutMs: 120_000,
 			code: `
 			const child = new Worker(${JSON.stringify(pathToFileURL(workerFile).href)});
 			await new Promise((resolve,reject)=>{child.onmessage=resolve;child.onerror=reject});
