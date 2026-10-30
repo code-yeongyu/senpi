@@ -1,6 +1,8 @@
 export interface TerminalPromptOptions {
 	/** True when the session routes shell tools through eval cells, so call shapes must be `tool.<name>(`. */
 	readonly evalOnly: boolean;
+	/** Native bash replaces PTY bash, but monitor and its terminal companions remain available. */
+	readonly ptyBash?: boolean;
 }
 
 /**
@@ -15,10 +17,10 @@ export interface TerminalPromptOptions {
 export function buildTerminalPromptSection(options: TerminalPromptOptions): string {
 	const bash = options.evalOnly ? "tool.bash" : "bash";
 	const monitor = options.evalOnly ? "tool.monitor" : "monitor";
-	return `
-## Persistent terminal sessions
-
-The \`bash\` tool is PTY-backed. For long-running or interactive work, do NOT use tmux or
+	const bashGuidance =
+		options.ptyBash === false
+			? ""
+			: `The \`bash\` tool is PTY-backed. For long-running or interactive work, do NOT use tmux or
 manual \`&\` backgrounding; use the built-in session tools:
 
 - \`${bash}({ command, run_in_background: true })\` starts a persistent session and returns a
@@ -28,20 +30,31 @@ manual \`&\` backgrounding; use the built-in session tools:
   call's PTY hangup (native backend), \`nohup\` at best leaves an untracked orphan (no \`bash_id\`,
   no log) that the call's timeout still group-kills; only \`run_in_background\` creates a
   session that outlives the call.
-- \`bash_output({ bash_id, filter, view })\` peeks at a session without blocking: new output
+`;
+	return `
+## Persistent terminal sessions
+
+${bashGuidance}- \`bash_output({ bash_id, filter, view })\` peeks at a session without blocking: new output
   since the last read, the status line, or a rendered full-screen snapshot of TUIs via
   \`view: "screen"\`. Completion arrives as a notification carrying the exit code and output
   tail: peeking is for steering, never for waiting.
+- For observable state (CI checks, builds, log patterns, deploys, files or other sessions),
+  register \`${monitor}\` and keep working instead of foreground sleeping/polling or repeatedly
+  calling \`bash_output\`. Sleep loops belong inside the monitor command.
 - \`${monitor}\` subscribes you to a change. Pass exactly one source (\`command\`, \`path\` or
   \`target\`; one branch per call, never two):
   - \`${monitor}({ description, command, filter?, timeout_ms?, persistent? })\` watches a command:
     newline-terminated PTY output lines (stderr included) matching \`filter\` arrive as injected
     events while you keep working; command exit always delivers a summary. \`timeout_ms\` is
     that watch's own deadline: it KILLS the watched command when it fires (the summary says
-    \`killed at deadline\`); for a job longer than the watch, start it with \`run_in_background\`
-    and only watch it. One-shot gate: wait
+    \`killed at deadline\`); ${
+			options.ptyBash === false
+				? "for longer jobs, set `persistent: true` and stop with `kill_bash`."
+				: "for longer jobs, start with `run_in_background` and only watch them."
+		} One-shot gate: wait
     inside the command and print one sentinel (\`until <cond>; do sleep 1; done;
-    printf 'READY\\n'\`). Stream: \`tail -n 0 -F | grep --line-buffered\`. Filter noise at the
+    printf 'READY\\n'\`) with \`filter: "^READY$"\`. Stream: \`tail -n 0 -F <log> | grep --line-buffered <pat>\`
+    with \`persistent: true\`. Filter noise at the
     source and stop with \`kill_bash\`. Persistent command watches are re-run after a restart with
     \`SENPI_MONITOR_RESTORED=1\`; keep any baseline in \`$SENPI_MONITOR_STATE_DIR\` so a move during
     downtime (at most \`$SENPI_MONITOR_DOWNTIME_MS\` ms) is still reported:
@@ -52,7 +65,7 @@ manual \`&\` backgrounding; use the built-in session tools:
     appears after registration, so watch an already-existing file with \`"modify"\`; registration needs
     the parent directory to exist already, so poll with a \`command\` when the run creates that
     directory too. This branch takes no \`filter\`.
-  - \`${monitor}({ type: "rpc", target, events?, exclude?, filter?, persistent? })\` watches other
+  - \`${monitor}({ type: "rpc", target, description, events?, exclude?, filter?, persistent? })\` watches other
     sessions over every RPC host and terminal: \`target: "children"\` (sessions you spawned, including
     later ones), \`"all"\`, or one session id, path or \`st_\` task id. The result lists each matched
     session as it is now; then each status change (\`rpc <label> status running -> idle ...\`) and

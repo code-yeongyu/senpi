@@ -1,24 +1,23 @@
-import { serializeJsonLine } from "./jsonl.ts";
-import { loopBlockedMark, loopBlockedMsSince } from "./loop-blocked-time.ts";
-import { type ResyncCut, type ResyncReason, SocketPeerRecovery } from "./socket-peer-recovery.ts";
+import type { LegacyViewCursor } from "./legacy-view-cursor.ts";
+import { BaselineBarrier } from "./socket-baseline-barrier.ts";
+import { type DrainStallPeer, waitForDrainOrStall } from "./socket-drain-stall.ts";
+import { SocketEventQueueOverflowError } from "./socket-event-queue-errors.ts";
+import {
+	type AttachEntry,
+	isBarrier,
+	type QueueEntry,
+	type RecoveryEntry,
+	SocketEventQueue,
+} from "./socket-event-queue.ts";
+import { type ResyncReason, SocketPeerRecovery } from "./socket-peer-recovery.ts";
+import { type ResyncSnapshot, type ShedMode, SocketPeerShed } from "./socket-peer-shed.ts";
+
+export { SocketEventQueueOverflowError, SocketEventQueueStallError } from "./socket-event-queue-errors.ts";
+export type { ResyncSnapshot, ShedMode } from "./socket-peer-shed.ts";
 
 type SocketSink = {
 	writeRaw(chunk: string): void;
 	waitForBackpressure(): Promise<void>;
-};
-
-type QueueEntry = {
-	line: string;
-	bytes: number;
-	key?: string;
-	/**
-	 * The record with its cumulative snapshot fields blanked (delta kept). When a
-	 * later record with the same key supersedes this one, the entry is rewritten to
-	 * this line instead of being replaced, so a stalled reader never loses a delta.
-	 */
-	demotedLine?: string;
-	onWritten?: () => void;
-	reply: boolean;
 };
 
 // A handful of image tool results is several MiB of base64 each; four of them
@@ -45,67 +44,55 @@ const DEFAULT_QUEUE_BYTES = 64 * 1024 * 1024;
 // inside its window, and only a window the loop fully served ends in a cut.
 export const DEFAULT_STALL_MS = 30_000;
 
-export class SocketEventQueueStallError extends Error {
-	readonly pendingBytes: number;
-	readonly stallMs: number;
-
-	constructor(pendingBytes: number, stallMs: number) {
-		super(`socket event queue stalled: peer did not drain ${pendingBytes} queued bytes within ${stallMs}ms`);
-		this.name = "SocketEventQueueStallError";
-		this.pendingBytes = pendingBytes;
-		this.stallMs = stallMs;
-	}
-}
-
-export class SocketEventQueueOverflowError extends Error {
-	readonly queuedBytes: number;
-	readonly incomingBytes: number;
-	readonly maxQueueBytes: number;
-	readonly incomingPreview: string;
-
-	constructor(queuedBytes: number, incomingBytes: number, maxQueueBytes: number, incomingPreview: string) {
-		super(
-			`socket event queue overflow: ${queuedBytes} queued + ${incomingBytes} incoming > ${maxQueueBytes} (incoming: ${incomingPreview})`,
-		);
-		this.name = "SocketEventQueueOverflowError";
-		this.queuedBytes = queuedBytes;
-		this.incomingBytes = incomingBytes;
-		this.maxQueueBytes = maxQueueBytes;
-		this.incomingPreview = incomingPreview;
-	}
-}
-
 /** Independent FIFO actor for one socket. It never shares a drain promise with another sink. */
 export class SocketEventSinkActor {
-	private readonly queue: QueueEntry[] = [];
-	private queuedBytes = 0;
+	private readonly queue = new SocketEventQueue();
 	private draining?: Promise<void>;
 	private closed = false;
 	private failure?: unknown;
 	private recovery?: SocketPeerRecovery;
 	private recoveryEnabled = false;
+	private snapshot?: ResyncSnapshot;
+	private readonly shed: SocketPeerShed;
+	private attempt?: BaselineBarrier;
+	/** The attach frame in flight, charged against the budget until the sink accepted it. */
+	private frameBytes = 0;
 	private readonly stopped = new AbortController();
 
 	private readonly sink: SocketSink;
 	private readonly onFailure: (cause: unknown) => void;
 	private readonly maxQueueBytes: number;
-	private readonly stallMs: number;
+	private readonly stallPeer: DrainStallPeer;
 
 	constructor(
 		sink: SocketSink,
 		onFailure: (cause: unknown) => void,
 		maxQueueBytes = DEFAULT_QUEUE_BYTES,
 		stallMs = DEFAULT_STALL_MS,
+		shedMode: ShedMode = "drop",
 	) {
 		this.sink = sink;
 		this.onFailure = onFailure;
 		this.maxQueueBytes = maxQueueBytes;
-		this.stallMs = stallMs;
+		this.shed = new SocketPeerShed(this.queue, shedMode);
+		this.stallPeer = {
+			sink,
+			stallMs,
+			stopped: this.stopped.signal,
+			queuedBytes: () => this.queue.bytes,
+			shedAndPing: () => {
+				if (!this.recovery || !this.recoveryEnabled) return false;
+				this.cutOnce("stall");
+				this.recovery.ping();
+				return true;
+			},
+		};
 	}
 
-	enableRecovery(snapshot: (reason: ResyncReason) => ResyncCut): void {
+	enableRecovery(snapshot: ResyncSnapshot): void {
 		this.recoveryEnabled = true;
-		this.recovery ??= new SocketPeerRecovery((line) => this.sink.writeRaw(line), snapshot);
+		this.snapshot = snapshot;
+		this.recovery ??= new SocketPeerRecovery((line) => this.sink.writeRaw(line));
 		this.recovery.acknowledge();
 	}
 
@@ -114,67 +101,62 @@ export class SocketEventSinkActor {
 		if (!this.recovery?.pending) this.recovery = undefined;
 	}
 
-	enqueue(line: string, key?: string, onWritten?: () => void, demotedLine?: string, reply = false): void {
+	/**
+	 * A newly attached session's baseline, frozen by the caller: it takes this FIFO position, so every record
+	 * enqueued after it follows it, and a stale attempt (`live` false) writes nothing. Never holds credit. A view
+	 * with no frame installs nothing, so the next record goes in flight exactly as before the attach; while a
+	 * recovery drops records the view is dropped too, covered by the cut read at the delivery.
+	 */
+	installBaseline(cursor: LegacyViewCursor, live: () => boolean): void {
+		if (this.closed || cursor.empty || this.shed.dropsRecords) {
+			cursor.release();
+			return;
+		}
+		this.queue.push({ kind: "attach", barrier: new BaselineBarrier(cursor, live) });
+		void this.drain();
+	}
+
+	/** `held`, for a record that reaches this peer because it holds a session: whether it still does. */
+	enqueue(
+		line: string,
+		key?: string,
+		onWritten?: () => void,
+		demotedLine?: string,
+		reply = false,
+		held?: () => boolean,
+		current?: () => boolean,
+	): void {
 		if (this.closed) return;
-		if (this.recovery?.pending && !reply) {
-			onWritten?.();
-			return;
-		}
 		const bytes = Buffer.byteLength(line);
-		if (this.recovery?.pending) {
-			if (this.queuedBytes + bytes <= this.maxQueueBytes) {
-				this.queue.push({ line, bytes, onWritten, reply });
-				this.queuedBytes += bytes;
-			} else {
-				this.recovery.loseReply();
-				onWritten?.();
-			}
+		if (this.shed.dropsRecords) {
+			if (reply) this.admitReply({ line, bytes, onWritten, reply, current });
+			else onWritten?.();
 			return;
 		}
-		if (key !== undefined) {
-			const existing = this.queue.find((entry) => entry.key === key);
-			if (existing) {
-				// Lossless supersession. The old behaviour replaced the queued line
-				// outright, which threw away every delta a stalled reader had not yet
-				// received (a desktop client assembles text from deltas). Keep the
-				// superseded record - demoted to its delta-only form when the producer
-				// supplied one - and let only the newest record carry the snapshot.
-				if (existing.demotedLine !== undefined) {
-					this.queuedBytes -= existing.bytes;
-					existing.line = existing.demotedLine;
-					existing.bytes = Buffer.byteLength(existing.line);
-					this.queuedBytes += existing.bytes;
-					existing.demotedLine = undefined;
-				}
-				existing.key = undefined;
-			}
-		}
-		if (this.queuedBytes + bytes > this.maxQueueBytes) {
+		if (key !== undefined) this.queue.supersede(key);
+		if (!this.fits(bytes)) {
 			if (this.recovery && this.recoveryEnabled) {
-				this.shed("overflow");
-				this.enqueue(line, undefined, onWritten, undefined, reply);
+				if (this.shed.isPending) this.shed.supersede();
+				else this.cut("overflow");
+				// The cut covers this record; only a reply still needs its own place.
+				if (reply) this.admitReply({ line, bytes, onWritten, reply, current });
+				else onWritten?.();
 				void this.drain();
 				return;
 			}
-			const overflow = new SocketEventQueueOverflowError(
-				this.queuedBytes,
-				bytes,
-				this.maxQueueBytes,
-				line.slice(0, 120),
-			);
-			this.closed = true;
-			this.queue.length = 0;
-			this.queuedBytes = 0;
-			try {
-				this.sink.writeRaw(`${JSON.stringify({ type: "overflow", error: "overflow, resync required" })}\n`);
-			} catch (cause) {
-				this.onFailure(cause);
-			}
-			this.onFailure(overflow);
+			this.failOverflow(bytes, line);
 			return;
 		}
-		this.queue.push({ line, bytes, key, demotedLine, onWritten, reply });
-		this.queuedBytes += bytes;
+		this.queue.push({
+			line,
+			bytes,
+			key,
+			demotedLine,
+			onWritten,
+			reply,
+			held: this.shed.isPending ? held : undefined,
+			current,
+		});
 		void this.drain();
 	}
 
@@ -197,124 +179,141 @@ export class SocketEventSinkActor {
 
 	close(): void {
 		this.closed = true;
-		this.queue.length = 0;
-		this.queuedBytes = 0;
-		this.recovery?.release();
+		this.dropQueue();
 		this.stopped.abort();
 	}
 
-	private shed(reason: ResyncReason): void {
-		if (this.recovery?.pending) return;
-		const replies: QueueEntry[] = [];
-		for (const entry of this.queue) {
-			if (entry.reply) replies.push(entry);
-			else entry.onWritten?.();
-		}
-		this.queue.length = 0;
-		for (const reply of replies) this.queue.push(reply);
-		this.queuedBytes = replies.reduce((bytes, entry) => bytes + entry.bytes, 0);
-		this.recovery?.shed(reason);
+	private fits(bytes: number): boolean {
+		return this.queue.bytes + this.frameBytes + bytes <= this.maxQueueBytes;
 	}
 
-	/**
-	 * Resolve when the sink accepted the write, or throw SocketEventQueueStallError
-	 * once the peer has held the transport full for stallMs. The notice may only reach
-	 * the sink's buffer - the peer is not draining - so the transport delivers it on
-	 * close by half-closing the socket and destroying it only after a bounded grace
-	 * (socket-sink.ts).
-	 */
-	private waitForDrainOrStall(writtenBytes: number): Promise<void> {
-		return new Promise<void>((resolve, reject) => {
-			let timer: ReturnType<typeof setTimeout>;
-			let blockedMark = loopBlockedMark();
-			const cleanup = (): void => {
-				clearTimeout(timer);
-				this.stopped.signal.removeEventListener("abort", onStop);
-			};
-			const onStop = (): void => {
-				cleanup();
-				resolve();
-			};
-			const onDeadline = (): void => {
-				const blockedMs = loopBlockedMsSince(blockedMark);
-				if (blockedMs > 0) {
-					blockedMark = loopBlockedMark();
-					timer = setTimeout(onDeadline, Math.min(blockedMs, this.stallMs));
-					return;
-				}
-				if (this.recovery && this.recoveryEnabled) {
-					try {
-						this.shed("stall");
-						this.recovery.ping();
-						blockedMark = loopBlockedMark();
-						timer = setTimeout(onDeadline, this.stallMs);
-					} catch (cause) {
-						cleanup();
-						reject(cause);
-					}
-					return;
-				}
-				const stall = new SocketEventQueueStallError(this.queuedBytes + writtenBytes, this.stallMs);
-				try {
-					this.sink.writeRaw(`${JSON.stringify({ type: "overflow", error: "stalled, resync required" })}\n`);
-				} catch {
-					// The peer is unreachable either way; the failure below closes it.
-				}
-				cleanup();
-				reject(stall);
-			};
-			timer = setTimeout(onDeadline, this.stallMs);
-			this.stopped.signal.addEventListener("abort", onStop, { once: true });
-			this.sink.waitForBackpressure().then(
-				() => {
-					cleanup();
-					resolve();
-				},
-				(cause) => {
-					cleanup();
-					reject(cause);
-				},
-			);
-		});
+	private admitReply(entry: QueueEntry): void {
+		if (!this.fits(entry.bytes)) {
+			this.recovery?.loseReply();
+			entry.onWritten?.();
+			return;
+		}
+		this.shed.admitReply(entry);
+		void this.drain();
+	}
+
+	/** A plain peer's overflow: the notice, then fail closed so the client resyncs. */
+	private failOverflow(bytes: number, line: string): void {
+		const overflow = new SocketEventQueueOverflowError(
+			this.queue.bytes + this.frameBytes,
+			bytes,
+			this.maxQueueBytes,
+			line.slice(0, 120),
+		);
+		this.closed = true;
+		this.dropQueue();
+		try {
+			this.sink.writeRaw(`${JSON.stringify({ type: "overflow", error: "overflow, resync required" })}\n`);
+		} catch (cause) {
+			this.onFailure(cause);
+		}
+		this.onFailure(overflow);
+	}
+
+	/** Ends every queued baseline and the one in flight, then empties the queue. */
+	private dropQueue(): void {
+		this.queue.clear();
+		this.attempt?.cancel();
+		this.shed.clear();
+	}
+
+	/** The stall deadline's shed: one cut per pending recovery, never a re-cut while the peer stays idle. */
+	private cutOnce(reason: ResyncReason): void {
+		if (!this.recovery?.pending) this.cut(reason);
+	}
+
+	private cut(reason: ResyncReason): void {
+		if (!this.recovery || !this.snapshot) return;
+		this.attempt?.cancel();
+		this.recovery.shed(reason);
+		this.shed.cut(reason, this.snapshot, () => !this.closed);
+	}
+
+	private async write(line: string): Promise<void> {
+		this.sink.writeRaw(line);
+		await waitForDrainOrStall(this.stallPeer, Buffer.byteLength(line));
+	}
+
+	/** An attach frame is charged like the replay line it replaces: one that does not fit sheds, or overflows a plain peer. */
+	private async writeFrame(line: string): Promise<void> {
+		const bytes = Buffer.byteLength(line);
+		if (!this.fits(bytes)) {
+			if (this.recovery && this.recoveryEnabled) this.cutOnce("overflow");
+			else this.failOverflow(bytes, line);
+			return;
+		}
+		this.frameBytes = bytes;
+		try {
+			await this.write(line);
+		} finally {
+			this.frameBytes = 0;
+		}
+	}
+
+	private async deliver(entry: AttachEntry | RecoveryEntry): Promise<void> {
+		if (entry.kind === "attach") {
+			await this.stream(entry.barrier, (line) => this.writeFrame(line));
+			return;
+		}
+		// A recovery first waits for the peer to drain again; then the gap opens the frames.
+		await waitForDrainOrStall(this.stallPeer, 0);
+		if (this.closed || !this.recovery) return;
+		const barrier = this.shed.take(entry, this.snapshot, () => !this.closed);
+		const gap = this.recovery.takeGap();
+		if (!this.recoveryEnabled) this.recovery = undefined;
+		await this.stream(barrier, (line) => this.write(line), gap);
+	}
+
+	private async stream(
+		barrier: BaselineBarrier,
+		write: (line: string) => Promise<void>,
+		head?: string,
+	): Promise<void> {
+		this.attempt = barrier;
+		try {
+			await barrier.deliver(write, head);
+		} finally {
+			barrier.end();
+			if (this.attempt === barrier) this.attempt = undefined;
+		}
 	}
 
 	private drain(): Promise<void> {
 		if (this.draining) return this.draining;
 		this.draining = (async () => {
 			try {
-				while (!this.closed && (this.queue.length > 0 || this.recovery?.pending)) {
-					if (this.recovery?.pending && this.queue.length === 0) {
-						await this.waitForDrainOrStall(0);
-						if (this.closed) break;
-						const snapshot = this.recovery.takeSnapshot();
-						if (!this.recoveryEnabled) this.recovery = undefined;
-						for (const record of snapshot) {
-							if (this.closed || this.recovery?.pending) break;
-							const line = serializeJsonLine(record);
-							this.sink.writeRaw(line);
-							await this.waitForDrainOrStall(Buffer.byteLength(line));
+				while (!this.closed && this.queue.length > 0) {
+					const item = this.queue.shift();
+					if (item === undefined) break;
+					if (isBarrier(item)) {
+						// Dequeued, the entry is neither queued nor the attempt, so nothing else ends it: its barrier
+						// (a stale recovery's fresh cut included) ends here whatever deliver returned or threw.
+						try {
+							await this.deliver(item);
+						} finally {
+							item.barrier.end();
 						}
 						continue;
 					}
-					const entry = this.queue.shift()!;
-					this.queuedBytes -= entry.bytes;
-					this.sink.writeRaw(entry.line);
-					await this.waitForDrainOrStall(entry.bytes);
-					entry.onWritten?.();
+					if ((item.held?.() ?? true) && (item.current?.() ?? true)) await this.write(item.line);
+					item.onWritten?.();
 				}
 			} catch (cause) {
 				this.failure = cause;
 				this.closed = true;
-				this.queue.length = 0;
-				this.queuedBytes = 0;
-				this.recovery?.release();
+				this.dropQueue();
 				this.onFailure(cause);
 			}
 		})().finally(() => {
 			this.draining = undefined;
 			// An enqueue that lands between the loop's exit and this reaction sees the
 			// stale settled promise and starts nothing; reschedule for it here.
-			if (!this.closed && (this.queue.length > 0 || this.recovery?.pending)) void this.drain();
+			if (!this.closed && this.queue.length > 0) void this.drain();
 		});
 		return this.draining;
 	}

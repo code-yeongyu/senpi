@@ -5,6 +5,9 @@ import {
 } from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
+import type { ExtensionRpcRequestContext } from "../../core/extensions/rpc-context.ts";
+import type { ExtensionOwner } from "./extension-owner.ts";
+import { ExtensionOwnerLifetime } from "./extension-owner-lifetime.ts";
 /**
  * Per-connection RPC handler.
  *
@@ -41,6 +44,11 @@ import {
 	subscribeProviderAccountEvents,
 } from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../core/extensions/builtin/anthropic-subscription/account-management.ts";
+import {
+	ProviderAccountTestError,
+	testClaudeCliAccount,
+} from "../../core/extensions/builtin/anthropic-subscription/claude-cli-account-test.ts";
+import { takeClaudeCliLoginOutcome } from "../../core/extensions/builtin/anthropic-subscription/claude-cli-login-outcome.ts";
 import {
 	isMcpControlInventoryChanged,
 	MCP_CONTROL_INVENTORY_CHANGED_EVENT,
@@ -83,6 +91,7 @@ import {
 	ENTRIES_TAIL_CAPABILITY,
 	INTERACTIVE_USER_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
+	PROVIDER_ACCOUNT_TEST_CAPABILITY,
 	QUESTION_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
 	RESUME_SESSION_CAPABILITY,
@@ -102,7 +111,7 @@ import {
 import { EffectLedger } from "./effect-ledger.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { createRpcEventOutputBuffer } from "./event-output-buffer.ts";
-import { answeredUiRequestId, settleExtensionUiResponse } from "./extension-ui-response.ts";
+import { answeredUiRequestId, refusedExtensionUiResponse, settleExtensionUiResponse } from "./extension-ui-response.ts";
 import { answerGetEntries } from "./get-entries-command.ts";
 import { runHoldInput } from "./held-input-commands.ts";
 import { HostSessionControl } from "./host-session-control.ts";
@@ -160,6 +169,9 @@ export { buildRpcSessionState } from "./rpc-session-state.ts";
 
 /** Additive per-connection options. Absent = classic default (byte-identical). */
 export interface RpcConnectionOptions {
+	/** Trusted capture supplied by the host binding, never by a public RPC command. */
+	rpcOwner?: () => ExtensionOwner | undefined;
+	retireRpcBinding?: () => void;
 	/** Client capability flags from the handshake (e.g. custom_unsupported opt-in). */
 	capabilities?: readonly string[];
 	/** The host's per-connection role registry; a single-connection process keeps its own. */
@@ -213,6 +225,8 @@ export interface RpcConnectionSink {
 	writeRecord?(record: object): void;
 	/** The internal structured lane (senpi#4272): seeded records and block controls, never a legacy destination. */
 	writeStructured?(record: object): void;
+	/** A structured record was lost (its projection or a receiver threw); the event's legacy delivery continues. */
+	structuredFailed?(cause: unknown): void;
 	waitForBackpressure(): Promise<void>;
 	/** Tears the transport down once its event queue can no longer deliver (overflow, write failure). */
 	close?(): void;
@@ -291,6 +305,12 @@ function loadedMcpServers(snapshot: McpWireStatusSnapshot): RpcLoadedMcpServer[]
 		...(server.lastError === undefined ? {} : { lastError: server.lastError }),
 	}));
 }
+
+/**
+ * The prior digest a startup-settled announcement reports: the session leaves its MCP startup window, whatever digest
+ * the connection last recorded, so a shared host's per-connection dedupe never drops it as a no-op transition.
+ */
+const MCP_STARTUP_PENDING_DIGEST = "mcp-startup-pending";
 
 function loadedSurfacesFingerprint(
 	session: AgentSession,
@@ -372,6 +392,11 @@ export function createRpcConnectionHandler(
 	// already learns the new identity from its command response.
 	let replacementIssuedHere = false;
 	let session = runtimeHost.session;
+	const rpcOwners = new ExtensionOwnerLifetime(
+		options.sessionId === undefined,
+		options.rpcOwner,
+		options.retireRpcBinding,
+	);
 	let sessionControl: HostSessionControl | undefined;
 	let relocation: RpcSessionRelocation | undefined;
 	const promptCalls = new Set<Promise<unknown>>();
@@ -388,6 +413,7 @@ export function createRpcConnectionHandler(
 	let loadedSurfacesDigest: string | undefined;
 	let rpcCommandsDigest: string | undefined;
 	let suppressLoadedSurfaceEvents = false;
+	let mcpStartupSettledPending = false;
 	const eventOutput = sink.writeRecord
 		? undefined
 		: createRpcEventOutputBuffer(sink.writeRaw, options.eventFlushScheduler);
@@ -439,6 +465,17 @@ export function createRpcConnectionHandler(
 		else outputEvent({ type: "loaded_surfaces_changed" });
 	};
 
+	/** The one event that ends the MCP startup window, emitted even when the digest is unchanged (senpi#4828). */
+	const announceMcpStartupSettled = (): void => {
+		if (suppressLoadedSurfaceEvents) {
+			mcpStartupSettledPending = true;
+			return;
+		}
+		mcpStartupSettledPending = false;
+		loadedSurfacesDigest = currentLoadedSurfaces().digest;
+		emitLoadedSurfacesChanged(MCP_STARTUP_PENDING_DIGEST, loadedSurfacesDigest);
+	};
+
 	const requestMcpWireStatus = async (): Promise<void> => {
 		let response: Promise<McpWireStatusSnapshot> | undefined;
 		const request: McpControlInventoryRequest = {
@@ -458,7 +495,8 @@ export function createRpcConnectionHandler(
 			(data) => {
 				if (!isMcpControlInventoryChanged(data) || data.sessionId !== session.sessionId) return;
 				mcpWireStatus = data.snapshot;
-				if (!suppressLoadedSurfaceEvents) recordLoadedSurfaces(true);
+				if (data.startupSettled === true) announceMcpStartupSettled();
+				else if (!suppressLoadedSurfaceEvents) recordLoadedSurfaces(true);
 			},
 		);
 	};
@@ -825,7 +863,9 @@ export function createRpcConnectionHandler(
 		if (!wasSuppressed && commandsChanged) {
 			outputEvent(commandsChanged);
 		}
-		if (!wasSuppressed && previousDigest !== undefined && previousDigest !== loadedSurfacesDigest) {
+		if (!wasSuppressed && mcpStartupSettledPending) {
+			announceMcpStartupSettled();
+		} else if (!wasSuppressed && previousDigest !== undefined && previousDigest !== loadedSurfacesDigest) {
 			emitLoadedSurfacesChanged(previousDigest, loadedSurfacesDigest);
 		}
 	};
@@ -883,6 +923,7 @@ export function createRpcConnectionHandler(
 	};
 
 	const rebindSession = async (deferRefresh = false): Promise<void> => {
+		rpcOwners.retireBinding();
 		unbindMcpForms?.();
 		unbindMcpForms = undefined;
 		unsubscribeSecurityNotices?.();
@@ -1033,13 +1074,19 @@ export function createRpcConnectionHandler(
 		function installSessionSubscriptions(): void {
 			unsubscribe?.();
 			unsubscribeBackpressure?.();
+			unsubscribeStructured?.();
+			unsubscribe = unsubscribeBackpressure = undefined;
+			// Structured first: an Agent built outside the session layer refuses it before anything is installed.
+			unsubscribeStructured = sink.writeStructured
+				? subscribeStructuredSessionRecords(
+						session,
+						(record) => sink.writeStructured?.(tagSessionRecord(record)),
+						(cause) => sink.structuredFailed?.(cause),
+					)
+				: undefined;
 			unsubscribe = subscribeSessionRecords(session, outputEvent, (abortSource) => {
 				lastAbortSource = abortSource;
 			});
-			unsubscribeStructured?.();
-			unsubscribeStructured = sink.writeStructured
-				? subscribeStructuredSessionRecords(session, (record) => sink.writeStructured?.(tagSessionRecord(record)))
-				: undefined;
 			unsubscribeBackpressure = session.agent.subscribe(async () => {
 				await waitForRpcBackpressure();
 			});
@@ -1110,7 +1157,9 @@ export function createRpcConnectionHandler(
 			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
 			// The client shows what this login replaced and where the previous credential is (senpi#3486).
 			const replacement = authStorage.takeReplacement(provider);
-			outputEvent({ type: "auth_login_end", provider, success: true, ...replacement });
+			// A Claude CLI sign-in names the account it signed in and its connection test (senpi#4436).
+			const signedIn = takeClaudeCliLoginOutcome(controller.signal);
+			outputEvent({ type: "auth_login_end", provider, success: true, ...replacement, ...signedIn });
 		} catch (loginError: unknown) {
 			const message = loginError instanceof Error ? loginError.message : String(loginError);
 			outputEvent({ type: "auth_login_end", provider, success: false, error: message });
@@ -1145,7 +1194,10 @@ export function createRpcConnectionHandler(
 	});
 
 	// Handle a single command
-	const handleCommand = async (command: RpcCommand): Promise<RpcResponse | undefined> => {
+	const handleCommand = async (
+		command: RpcCommand,
+		requestContext?: ExtensionRpcRequestContext,
+	): Promise<RpcResponse | undefined> => {
 		const id = command.id;
 
 		switch (command.type) {
@@ -1172,6 +1224,7 @@ export function createRpcConnectionHandler(
 								CONTINUE_FROM_LEAF_CAPABILITY,
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
+								PROVIDER_ACCOUNT_TEST_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
@@ -1990,9 +2043,9 @@ export function createRpcConnectionHandler(
 			}
 
 			case "get_loaded_surfaces": {
+				// A read answers with the inventory and never announces: changes are announced by their own notifications.
 				await requestMcpWireStatus();
-				const inventory = recordLoadedSurfaces(true);
-				return success(id, "get_loaded_surfaces", inventory.data);
+				return success(id, "get_loaded_surfaces", currentLoadedSurfaces().data);
 			}
 
 			case "extension_request":
@@ -2005,6 +2058,7 @@ export function createRpcConnectionHandler(
 					const data = await session.extensionRunner.requestRpc(
 						name,
 						command.type === "extension_request" ? command.data : command,
+						requestContext,
 					);
 					return success(id, command.type, data);
 				} catch (cause) {
@@ -2092,9 +2146,12 @@ export function createRpcConnectionHandler(
 			}
 
 			case "logout": {
-				session.modelRegistry.authStorage.logout(command.provider);
+				// The runtime's logout signs every Claude CLI account out of the CLI before deleting the credential
+				// (senpi#4436); the runtime key is dropped too, as `AuthStorage.logout` did.
+				const { notices } = await session.modelRuntime.logoutProvider(command.provider);
+				session.modelRegistry.authStorage.removeRuntimeApiKey(command.provider);
 				await session.modelRegistry.refresh();
-				return success(id, "logout");
+				return success(id, "logout", notices.length === 0 ? undefined : { notices });
 			}
 
 			case "get_provider_accounts": {
@@ -2108,8 +2165,28 @@ export function createRpcConnectionHandler(
 			}
 
 			case "account_remove": {
-				await removeCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
-				return success(id, "account_remove");
+				const { notice } = await removeCredentialAccount(
+					session.modelRegistry.authStorage,
+					command.provider,
+					command.name,
+				);
+				return success(id, "account_remove", notice === undefined ? undefined : { notice });
+			}
+
+			case "test_provider_account": {
+				try {
+					const check = await testClaudeCliAccount({
+						provider: command.provider,
+						name: command.name,
+						cwd: session.cwd,
+						store: session.modelRegistry.authStorage,
+					});
+					return success(id, "test_provider_account", { check });
+				} catch (testError) {
+					if (testError instanceof ProviderAccountTestError)
+						return error(id, "test_provider_account", testError.code);
+					throw testError;
+				}
 			}
 
 			case "account_order": {
@@ -2128,7 +2205,7 @@ export function createRpcConnectionHandler(
 		}
 	};
 
-	const handleInputLine = async (line: string): Promise<void> => {
+	const handleInputLine = async (line: string, requestContext?: ExtensionRpcRequestContext): Promise<void> => {
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(line);
@@ -2173,16 +2250,23 @@ export function createRpcConnectionHandler(
 			"type" in parsed &&
 			parsed.type === "extension_ui_response"
 		) {
-			const requestId = answeredUiRequestId(parsed as RpcExtensionUIResponse);
-			if (!options.workerSecurityBridge && requestId !== undefined && grantRequests.has(requestId)) {
+			const response = parsed as RpcExtensionUIResponse;
+			// The grant rules apply to the request this response answers (`uiRequestId`, or `id` in the
+			// short form), the same request `settleExtensionUiResponse` settles.
+			const answered = answeredUiRequestId(response);
+			if (!options.workerSecurityBridge && answered !== undefined && grantRequests.has(answered)) {
 				const sender = options.clientInfo?.connectionId();
 				const capable =
 					sender === undefined
 						? clientCapabilities?.includes("grant_select") === true
 						: options.clientInfo?.hasCapability?.(sender, "grant_select") === true;
-				if (grantRequests.get(requestId) !== sender || !capable) return;
+				// The sender hears the refusal, so its dialog does not vanish as if the answer had counted.
+				if (grantRequests.get(answered) !== sender || !capable) {
+					output(refusedExtensionUiResponse(response.id, "grant_answer_refused"));
+					return;
+				}
 			}
-			const reply = settleExtensionUiResponse(parsed as RpcExtensionUIResponse, {
+			const reply = settleExtensionUiResponse(response, {
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,
@@ -2203,7 +2287,7 @@ export function createRpcConnectionHandler(
 			return;
 		}
 		try {
-			const response = await handleCommand(command);
+			const response = await handleCommand(command, requestContext);
 			if (response) {
 				output(response);
 				await waitForRpcBackpressure();
@@ -2266,8 +2350,9 @@ export function createRpcConnectionHandler(
 	return {
 		ready,
 		async handleInputLine(line: string) {
+			const requestContext = rpcOwners.capture()?.context;
 			await ready;
-			await handleInputLine(line);
+			await handleInputLine(line, requestContext);
 		},
 		pendingPrompts() {
 			return [...promptCalls];
@@ -2283,6 +2368,7 @@ export function createRpcConnectionHandler(
 			relocation?.connectionDetached(connectionId);
 		},
 		async dispose(disposeOptions) {
+			rpcOwners.dispose();
 			await ready;
 			await dispose(disposeOptions);
 		},

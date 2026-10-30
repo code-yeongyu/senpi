@@ -24,11 +24,11 @@
     },
     "packages/agent": {
       "name": "@earendil-works/pi-agent-core",
-      "version": "2026.10.27-2",
+      "version": "2026.10.30-2",
       "dependencies": {
         "@earendil-works/chord": "0.99.1",
-        "@earendil-works/pi-ai": "^2026.10.27-2",
-        "@earendil-works/pi-telemetry": "^2026.10.27-2",
+        "@earendil-works/pi-ai": "^2026.10.30-2",
+        "@earendil-works/pi-telemetry": "^2026.10.30-2",
         "diff": "9.0.0",
         "ignore": "7.0.9",
         "typebox": "1.3.34",
@@ -45,7 +45,7 @@
     },
     "packages/ai": {
       "name": "@earendil-works/pi-ai",
-      "version": "2026.10.27-2",
+      "version": "2026.10.30-2",
       "bin": {
         "pi-ai": "dist/cli.js",
       },
@@ -53,7 +53,7 @@
         "@anthropic-ai/sdk": "0.127.0",
         "@aws-sdk/client-bedrock-runtime": "3.1136.0",
         "@bufbuild/protobuf": "2.15.0",
-        "@earendil-works/pi-telemetry": "^2026.10.27-2",
+        "@earendil-works/pi-telemetry": "^2026.10.30-2",
         "@google/genai": "2.23.0",
         "@smithy/node-http-handler": "4.12.1",
         "@smithy/types": "4.18.0",
@@ -84,10 +84,10 @@
     },
     "packages/client": {
       "name": "@earendil-works/pi-client",
-      "version": "2026.10.27-2",
+      "version": "2026.10.30-2",
       "dependencies": {
         "@earendil-works/chord": "0.99.1",
-        "@earendil-works/pi-protocol": "2026.10.27-2",
+        "@earendil-works/pi-protocol": "2026.10.30-2",
       },
       "devDependencies": {
         "shx": "0.4.0",
@@ -96,7 +96,7 @@
     },
     "packages/coding-agent": {
       "name": "@code-yeongyu/senpi",
-      "version": "2026.10.27-2",
+      "version": "2026.10.30-2",
       "bin": {
         "pi": "dist/bundle/cli.js",
         "senpi": "dist/bundle/cli.js",
@@ -104,14 +104,14 @@
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.3.306",
         "@anthropic-ai/sdk": "0.127.0",
-        "@code-yeongyu/senpi-codemode": "^2026.10.27-2",
+        "@code-yeongyu/senpi-codemode": "^2026.10.30-2",
         "@earendil-works/chord": "0.99.1",
-        "@earendil-works/pi-agent-core": "^2026.10.27-2",
-        "@earendil-works/pi-ai": "^2026.10.27-2",
-        "@earendil-works/pi-client": "^2026.10.27-2",
-        "@earendil-works/pi-protocol": "^2026.10.27-2",
-        "@earendil-works/pi-pty": "^2026.10.27-2",
-        "@earendil-works/pi-tui": "^2026.10.27-2",
+        "@earendil-works/pi-agent-core": "^2026.10.30-2",
+        "@earendil-works/pi-ai": "^2026.10.30-2",
+        "@earendil-works/pi-client": "^2026.10.30-2",
+        "@earendil-works/pi-protocol": "^2026.10.30-2",
+        "@earendil-works/pi-pty": "^2026.10.30-2",
+        "@earendil-works/pi-tui": "^2026.10.30-2",
         "@modelcontextprotocol/sdk": "1.32.1",
         "@mozilla/readability": "0.6.0",
         "@silvia-odwyer/photon-node": "0.3.4",
@@ -130,6 +130,7 @@
         "minimatch": "10.2.6",
         "picomatch": "4.0.7",
         "proper-lockfile": "4.1.2",
+        "re2js": "2.8.6",
         "semver": "7.8.5",
         "signal-exit": "3.0.7",
         "turndown": "7.2.4",
@@ -190,8 +191,8 @@
       "name": "@code-yeongyu/senpi-evals",
       "version": "2026.7.25",
       "devDependencies": {
-        "@code-yeongyu/senpi": "^2026.10.27-2",
-        "@earendil-works/pi-ai": "^2026.10.27-2",
+        "@code-yeongyu/senpi": "^2026.10.30-2",
+        "@earendil-works/pi-ai": "^2026.10.30-2",
         "@types/node": "26.6.2",
         "@vitest-evals/core": "0.17.0",
         "@vitest/coverage-v8": "5.0.1",
@@ -204,7 +205,7 @@
     },
     "packages/protocol": {
       "name": "@earendil-works/pi-protocol",
-      "version": "2026.10.27-2",
+      "version": "2026.10.30-2",
       "dependencies": {
         "@earendil-works/chord": "0.99.1",
         "typebox": "1.3.34",
@@ -216,7 +217,7 @@
     },
     "packages/pty": {
       "name": "@earendil-works/pi-pty",
-      "version": "2026.10.27-2",
+      "version": "2026.10.30-2",
       "dependencies": {
         "@xterm/headless": "6.0.0",
       },
@@ -226,15 +227,15 @@
     },
     "packages/senpi-codemode": {
       "name": "@code-yeongyu/senpi-codemode",
-      "version": "2026.10.27-2",
+      "version": "2026.10.30-2",
       "dependencies": {
         "@babel/parser": "8.0.4",
-        "@earendil-works/pi-ai": "^2026.10.27-2",
+        "@earendil-works/pi-ai": "^2026.10.30-2",
         "quickjs-wasi": "3.6.2",
         "typebox": "1.3.34",
       },
       "devDependencies": {
-        "@code-yeongyu/senpi": "2026.10.27-2",
+        "@code-yeongyu/senpi": "2026.10.30-2",
       },
       "peerDependencies": {
         "@code-yeongyu/senpi": "*",
@@ -242,14 +243,24 @@
     },
     "packages/server": {
       "name": "@code-yeongyu/senpi-server",
-      "version": "2026.10.27-2",
+      "version": "2026.10.30-2",
       "dependencies": {
         "@earendil-works/chord": "0.99.1",
-        "@earendil-works/pi-ai": "^2026.10.27-2",
-        "@earendil-works/pi-protocol": "^2026.10.27-2",
+        "@earendil-works/pi-ai": "^2026.10.30-2",
+        "@earendil-works/pi-protocol": "^2026.10.30-2",
       },
       "devDependencies": {
         "shx": "0.4.0",
+        "vitest": "5.0.1",
+      },
+    },
+    "packages/session-backends/sqlite-bun": {
+      "name": "@earendil-works/pi-storage-sqlite-bun",
+      "version": "2026.10.27-2",
+      "dependencies": {
+        "@earendil-works/pi-agent-core": "^2026.10.30-2",
+      },
+      "devDependencies": {
         "vitest": "5.0.1",
       },
     },
@@ -257,8 +268,8 @@
       "name": "@earendil-works/pi-storage-sqlite-node",
       "version": "0.83.0",
       "dependencies": {
-        "@earendil-works/pi-agent-core": "^2026.10.27-2",
-        "@earendil-works/pi-ai": "^2026.10.27-2",
+        "@earendil-works/pi-agent-core": "^2026.10.30-2",
+        "@earendil-works/pi-ai": "^2026.10.30-2",
       },
       "devDependencies": {
         "@vitest/coverage-v8": "5.0.1",
@@ -267,7 +278,7 @@
     },
     "packages/telemetry": {
       "name": "@earendil-works/pi-telemetry",
-      "version": "2026.10.27-2",
+      "version": "2026.10.30-2",
       "devDependencies": {
         "@types/node": "26.6.2",
         "vitest": "5.0.1",
@@ -275,7 +286,7 @@
     },
     "packages/tui": {
       "name": "@earendil-works/pi-tui",
-      "version": "2026.10.27-2",
+      "version": "2026.10.30-2",
       "dependencies": {
         "get-east-asian-width": "1.7.0",
         "marked": "18.0.13",
@@ -417,6 +428,8 @@
     "@earendil-works/pi-protocol": ["@earendil-works/pi-protocol@workspace:packages/protocol"],
 
     "@earendil-works/pi-pty": ["@earendil-works/pi-pty@workspace:packages/pty"],
+
+    "@earendil-works/pi-storage-sqlite-bun": ["@earendil-works/pi-storage-sqlite-bun@workspace:packages/session-backends/sqlite-bun"],
 
     "@earendil-works/pi-storage-sqlite-node": ["@earendil-works/pi-storage-sqlite-node@workspace:packages/session-backends/sqlite-node"],
 
@@ -1307,6 +1320,8 @@
     "raw-body": ["raw-body@3.0.2", "", { "dependencies": { "bytes": "~3.1.2", "http-errors": "~2.0.1", "iconv-lite": "~0.7.0", "unpipe": "~1.0.0" } }, "sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA=="],
 
     "rc": ["rc@1.2.8", "", { "dependencies": { "deep-extend": "^0.6.0", "ini": "~1.3.0", "minimist": "^1.2.0", "strip-json-comments": "~2.0.1" }, "bin": "cli.js" }, "sha512-y3bGgqKj3QBdxLbLkomlohkvsA8gdAiUQlSBJnBhfn+BPxg4bc62d8TcBW15wavDfgexCgccckhcZvywyQYPOw=="],
+
+    "re2js": ["re2js@2.8.6", "", {}, "sha512-xLgQil4kIUCrAzVk9fRSkxkFNwmygLFjVxXrLc65aE1F0+Zsb8rxumFBy4XKyvgMCTL6kilDq3EZ0piE2dP/Dg=="],
 
     "readable-stream": ["readable-stream@3.6.2", "", { "dependencies": { "inherits": "^2.0.3", "string_decoder": "^1.1.1", "util-deprecate": "^1.0.1" } }, "sha512-9u/sniCrY3D5WdsERHzHE4G2YCXqoG5FTHUiCC4SIbr6XcLZBY05ya9EKjYek9O5xOAwjGq+1JdGBAS7Q9ScoA=="],
 

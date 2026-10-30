@@ -1,6 +1,11 @@
-import { type CompactSegment, CompactSegmentStorage, type CompactSlot } from "./compact-segment-storage.ts";
+import { type CompactPlacement, CompactSegmentStorage, type CompactSlot } from "./compact-segment-storage.ts";
 import { RECLAIM_WORK_ALLOWANCE_BYTES } from "./compact-spool-storage.ts";
-import { type CompactStorageFailure, type CompactStorageIo, nodeCompactStorageIo } from "./compact-storage-io.ts";
+import {
+	type CompactStorageFailure,
+	type CompactStorageIo,
+	type CompactStorageOperation,
+	nodeCompactStorageIo,
+} from "./compact-storage-io.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
 import { CompactTextRoots } from "./compact-text-roots.ts";
 
@@ -15,22 +20,21 @@ import { CompactTextRoots } from "./compact-text-roots.ts";
 
 /** 32,768 UTF-16 code units (64 KiB as UTF-16LE), so a split surrogate survives a leaf boundary exactly. */
 export const COMPACT_LEAF_CODE_UNITS = 32_768;
+/** Structural leaves committed per segment: one compaction round's selection, never one file per leaf. */
+const VALUE_FLUSH_BATCH = 128;
 
 export type LeafId = number;
 
 export class CompactWriteError extends Error {
-	readonly reason:
-		| "size_limit"
-		| "storage_unavailable"
-		| "depth_limit"
-		| "count_limit"
-		| "cycle"
-		| "unsupported_value";
+	readonly reason: "size_limit" | "storage_unavailable" | "cycle" | "unsupported_value";
+	/** Set only on a record refused at the protocol depth limit (`compact-protocol-depth.ts`): that limit. */
+	readonly limit: number | undefined;
 
-	constructor(reason: CompactWriteError["reason"]) {
-		super(`compact write refused (${reason})`);
+	constructor(reason: CompactWriteError["reason"], limit?: number) {
+		super(`compact write refused (${reason}${limit === undefined ? "" : `: depth above ${limit}`})`);
 		this.name = "CompactWriteError";
 		this.reason = reason;
+		this.limit = limit;
 	}
 }
 
@@ -200,9 +204,8 @@ export class CompactContentStore extends CompactSegmentStorage {
 		) {
 			this.valueQueued = true;
 			this.enqueue("value_write", async () => {
-				const [id] = this.ramValues;
 				try {
-					if (id !== undefined) await this.flushLeaf(id);
+					await this.flushValues();
 				} finally {
 					this.valueQueued = false;
 				}
@@ -226,14 +229,17 @@ export class CompactContentStore extends CompactSegmentStorage {
 		}
 	}
 
-	/** Commit at most one batch of structural leaves ahead of a cold-index rewrite. */
+	/** Commits one page-bounded batch of structural leaves ahead of a cold-index rewrite. */
 	async flushValues(): Promise<void> {
 		// Amortize a cold-index rewrite across a bounded batch, without waiting for every pending owner.
-		for (let n = 0; n < 128 && !this.spillStopped; n++) {
-			const [id] = this.ramValues;
-			if (id === undefined) break;
-			await this.flushLeaf(id);
+		if (this.spillStopped) return;
+		const batch: (readonly [LeafId, number])[] = [];
+		for (const id of this.ramValues) {
+			batch.push([id, this.leafUnits(id) * 2]);
+			if (batch.length === VALUE_FLUSH_BATCH) break;
 		}
+		// Count alone does not bound bytes; later runs stay resident for the next serial job.
+		await this.flushLeaves(this.segmentRuns(batch)[0] ?? []);
 	}
 
 	/** Serial storage jobs can flush one newly built structural page without waiting on their own queue. */
@@ -241,8 +247,13 @@ export class CompactContentStore extends CompactSegmentStorage {
 		return this.flushLeaves([id]);
 	}
 
-	/** Writes the resident leaves among `ids`, all of one kind, as one segment; each is read back by offset. */
-	async flushLeaves(ids: Iterable<LeafId>): Promise<void> {
+	/**
+	 * Writes the resident leaves among `ids`, all of one kind, as segment files of at most 64 KiB each, then
+	 * publishes them in one synchronous step once the last file is durable: that step is the batch's commit
+	 * record, so no leaf is committed and no file is reachable before every file of the batch exists. A
+	 * compaction round passes `node_write`; its files get the `node-` prefix.
+	 */
+	async flushLeaves(ids: Iterable<LeafId>, operation?: CompactStorageOperation): Promise<void> {
 		if (!this.spillAllowed) return;
 		const batch: [LeafId, Leaf, string][] = [];
 		for (const id of ids) {
@@ -253,21 +264,25 @@ export class CompactContentStore extends CompactSegmentStorage {
 			batch.push([id, leaf, leaf.text]);
 		}
 		if (!batch.length) return;
-		let segment: CompactSegment | undefined;
+		let placements: readonly CompactPlacement[] | undefined;
 		try {
 			const texts = batch.map(([, , text]) => text);
-			segment = await this.writeSegment(texts, batch[0][1].value ? "value_write" : "spill_write");
+			placements = await this.writeSegments(texts, operation ?? (batch[0][1].value ? "value_write" : "spill_write"));
 		} finally {
 			// A failed write, or a failure report that threw, keeps the leaves resident and spillable.
-			for (const [id, leaf] of segment ? [] : batch) {
+			for (const [id, leaf] of placements ? [] : batch) {
 				leaf.state = "ram";
 				if (this.leaves.get(id) === leaf) (leaf.value ? this.ramValues : this.ramLeaves).add(id);
 			}
 		}
-		if (!segment) return;
+		if (!placements) return;
+		// Publication point: every file of the batch is durable and nothing below awaits, so the batch becomes
+		// visible here as a whole. The commit record is this in-memory step; the spool is never crash-recovery state
+		// (a crashed epoch directory is refused as pre_existing and the state is rebuilt from the transcript).
+		// If a future slice ever adopts a spool for crash recovery, it must first add a durable commit record written last.
 		const placed: LeafId[] = [];
-		let offset = 0;
-		for (const [id, leaf] of batch) {
+		for (const [n, [id, leaf]] of batch.entries()) {
+			const [segment, offset] = placements[n];
 			const bytes = leaf.units * 2;
 			// A leaf released during the write, or any leaf once retirement began, is not published.
 			if (this.leaves.get(id) === leaf && !this.retired) {
@@ -283,9 +298,8 @@ export class CompactContentStore extends CompactSegmentStorage {
 				}
 				placed.push(id);
 			}
-			offset += bytes;
 		}
-		this.settle(segment);
+		for (const segment of new Set(placements.map(([segment]) => segment))) this.settle(segment);
 		for (const id of placed) this.committed(id);
 	}
 }

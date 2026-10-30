@@ -142,6 +142,7 @@ import {
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { formatProviderFailure } from "../../core/provider-failure.ts";
+import { failureAlreadyDescribed, headNoticeShownElsewhere } from "./provider-error-description.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
@@ -363,6 +364,12 @@ interface ActiveEditor extends EditorComponent {
 interface WorkingStatusEditor extends EditorComponent {
 	readonly embedWorkingStatus: boolean;
 	setWorkingStatusIndicator(indicator: StatusIndicator | undefined): void;
+}
+
+/** Copy the default editor's action handlers (clear, suspend, model switching, etc.) onto a custom editor. */
+function adoptDefaultEditorActions(defaultEditor: CustomEditor, editor: EditorComponent): void {
+	if (editor === defaultEditor || !("actionHandlers" in editor) || !(editor.actionHandlers instanceof Map)) return;
+	for (const [action, handler] of defaultEditor.actionHandlers) editor.actionHandlers.set(action, handler);
 }
 
 function isWorkingStatusEditor(editor: EditorComponent): editor is WorkingStatusEditor {
@@ -1791,13 +1798,6 @@ export class InteractiveMode {
 		this.fdPath = fdPath;
 		time("ensureTools", "tui");
 
-		// Enable the remaining input handlers only after managed-tool setup completes.
-		this.setupKeyHandlers();
-		this.setupEditorSubmitHandler();
-		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
-		this.ui.requestRender();
-		time("keyHandlers", "tui");
-
 		// Initialize extensions first so resources are shown before messages
 		await this.rebindCurrentSession();
 		time("rebindSession", "tui");
@@ -1806,6 +1806,15 @@ export class InteractiveMode {
 		this.renderInitialMessages();
 		this.session.releaseSettledSessionMemory();
 		time("renderInitial", "tui");
+
+		// Enable the remaining input handlers only once the restored transcript is rendered (senpi#4826): a
+		// submit accepted earlier painted its echo above the history that startup appended afterwards.
+		this.setupKeyHandlers();
+		this.setupEditorSubmitHandler();
+		this.sessionControlHost?.attachEditor(this.defaultEditor, () => this.composerHold() !== undefined);
+		adoptDefaultEditorActions(this.defaultEditor, this.editor);
+		this.ui.requestRender();
+		time("keyHandlers", "tui");
 
 		// Set up theme file watcher
 		onThemeChange(() => {
@@ -2699,8 +2708,22 @@ export class InteractiveMode {
 				);
 			}
 
+			const ignoredSkillDiagnostics = skillsResult.diagnostics.filter(
+				(diagnostic) => diagnostic.category === "skill-ignored",
+			);
+			if (ignoredSkillDiagnostics.length > 0) {
+				addDiagnosticNotice(
+					"Skills hidden by ignore files",
+					ignoredSkillDiagnostics,
+					"An ignore file in a skills folder lists these skill folders, so they did not load.",
+				);
+			}
+
 			const skillDiagnostics = skillsResult.diagnostics.filter(
-				(diagnostic) => diagnostic.category !== "size-limit" && diagnostic.category !== "skill-link-blocked",
+				(diagnostic) =>
+					diagnostic.category !== "size-limit" &&
+					diagnostic.category !== "skill-link-blocked" &&
+					diagnostic.category !== "skill-ignored",
 			);
 			if (skillDiagnostics.length > 0) {
 				addDiagnosticNotice("Skill conflicts", skillDiagnostics);
@@ -4442,7 +4465,7 @@ export class InteractiveMode {
 			newEditor.onSubmit = (text) => {
 				this.defaultEditor.onSubmit?.(expandSubmittedText(newEditor, text));
 			};
-			newEditor.onChange = this.defaultEditor.onChange;
+			newEditor.onChange = (text) => this.defaultEditor.onChange?.(text);
 			observeComposerActivity(newEditor, () => emitUserActivity(this.session, "draft"));
 
 			// Copy text (and any collapsed paste/image markers) from previous editor.
@@ -4494,10 +4517,7 @@ export class InteractiveMode {
 				if (!customEditor.onExtensionShortcut) {
 					customEditor.onExtensionShortcut = (data: string) => this.defaultEditor.onExtensionShortcut?.(data);
 				}
-				// Copy action handlers (clear, suspend, model switching, etc.)
-				for (const [action, handler] of this.defaultEditor.actionHandlers) {
-					(customEditor.actionHandlers as Map<string, () => void>).set(action, handler);
-				}
+				adoptDefaultEditorActions(this.defaultEditor, customEditor);
 			}
 
 			this.editor = newEditor;
@@ -5627,7 +5647,8 @@ export class InteractiveMode {
 				}
 				this.detachAssistantTextSegments();
 				this.clearPendingTools();
-				if (event.failure !== undefined && !event.willRetry) this.showError(formatProviderFailure(event.failure));
+				if (event.failure !== undefined && !event.willRetry && !failureAlreadyDescribed(event.messages))
+					this.showError(formatProviderFailure(event.failure));
 
 				this.ui.requestRender();
 				break;
@@ -6131,17 +6152,18 @@ export class InteractiveMode {
 		const end = streamingIndex >= 0 ? streamingIndex : children.length;
 		const last = end > 0 ? children[end - 1] : undefined;
 		const secondLast = end > 1 ? children[end - 2] : undefined;
+		this.lastStatusMessage = message;
+		// Each row owns its content, even if its first render or a theme invalidation happens after another notice.
+		const text = new ThemedText(() => theme.fg("dim", message), 1, 0);
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
-			this.lastStatusMessage = message;
-			this.lastStatusText.invalidate();
+			children[end - 1] = text;
+			this.lastStatusText = text;
 			this.ui.requestRender();
 			return;
 		}
 
 		const spacer = new Spacer(1);
-		this.lastStatusMessage = message;
-		const text = new ThemedText(() => theme.fg("dim", this.lastStatusMessage), 1, 0);
 		if (streamingIndex >= 0) {
 			children.splice(streamingIndex, 0, spacer, text);
 		} else {
@@ -6227,7 +6249,10 @@ export class InteractiveMode {
 		};
 	}
 
-	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
+	private addMessageToChat(
+		message: AgentMessage,
+		options?: { populateHistory?: boolean; replayOwnsTurnNotice?: boolean },
+	): void {
 		if (message.role === "user") this.providerErrors?.newTurn();
 		switch (message.role) {
 			case "bashExecution": {
@@ -6336,6 +6361,8 @@ export class InteractiveMode {
 				);
 				assistantComponent.setExpanded(this.toolOutputExpanded);
 				assistantComponent.setProviderErrorOwned(isNetworkProviderMessage(message));
+				if (options?.replayOwnsTurnNotice === true) assistantComponent.setOwnsTurnNotice(true);
+				if (options?.replayOwnsTurnNotice === false) assistantComponent.setProviderErrorOwned(true);
 				this.chatContainer.addChild(assistantComponent);
 				break;
 			}
@@ -6355,7 +6382,9 @@ export class InteractiveMode {
 
 	private syncTrailingAssistantText(message: AssistantMessage): void {
 		if (!this.streamingComponent) return;
-		this.streamingComponent.setProviderErrorOwned(isNetworkProviderMessage(message));
+		this.streamingComponent.setProviderErrorOwned(
+			isNetworkProviderMessage(message) || headNoticeShownElsewhere(message),
+		);
 		const head = assistantStreamingHeadMessage(message);
 		// Single writer: while smooth streaming paces the head (no toolCall block),
 		// streamingReveal owns the streaming component. Overwriting the full head
@@ -6385,9 +6414,11 @@ export class InteractiveMode {
 				index += 1;
 			}
 			const runMessage: AssistantMessage = { ...message, content: runBlocks };
+			// Only the run that ends the message shows the turn's error; earlier runs repeat it otherwise (senpi#4954).
+			const errorShownElsewhere = isNetworkProviderMessage(message) || index < content.length;
 			const existing = this.assistantTextSegments.get(runStart);
 			if (existing) {
-				existing.setProviderErrorOwned(isNetworkProviderMessage(message));
+				existing.setProviderErrorOwned(errorShownElsewhere);
 				existing.updateContent(runMessage, true);
 				continue;
 			}
@@ -6400,7 +6431,7 @@ export class InteractiveMode {
 				this.getMarkdownTransformers(),
 			);
 			segment.setExpanded(this.toolOutputExpanded);
-			segment.setProviderErrorOwned(isNetworkProviderMessage(message));
+			segment.setProviderErrorOwned(errorShownElsewhere);
 			this.assistantTextSegments.set(runStart, segment);
 			const followingToolCall = content.slice(index).find((block) => block.type === "toolCall");
 			const followingToolCallId = followingToolCall?.type === "toolCall" ? followingToolCall.id : undefined;
@@ -6505,7 +6536,8 @@ export class InteractiveMode {
 			if (message.role === "assistant") {
 				replayAssistantTools(message, {
 					expanded: this.toolOutputExpanded,
-					addMessage: (part) => this.addMessageToChat(part),
+					addMessage: (part, ownsTurnNotice) =>
+						this.addMessageToChat(part, { replayOwnsTurnNotice: ownsTurnNotice }),
 					addChild: (component) => this.chatContainer.addChild(component),
 					createTool: (name, id, args) => this.createToolExecutionComponent(name, id, args),
 					pending: renderedPendingTools,
@@ -9240,7 +9272,7 @@ export class InteractiveMode {
 					}
 
 					try {
-						await this.session.modelRuntime.logout(providerOption.id, {
+						const { notices } = await this.session.modelRuntime.logoutProvider(providerOption.id, {
 							signal: AbortSignal.timeout(15_000),
 						});
 						this.updateAvailableProviderCount();
@@ -9248,7 +9280,7 @@ export class InteractiveMode {
 							providerOption.authType === "oauth"
 								? `Logged out of ${providerOption.name}`
 								: `Removed stored API key for ${providerOption.name}. Environment variables and models.json config are unchanged.`;
-						this.showStatus(message);
+						this.showStatus([message, ...notices].join(" "));
 					} catch (error: unknown) {
 						const message = error instanceof Error ? error.message : String(error);
 						this.showError(
