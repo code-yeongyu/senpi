@@ -1,5 +1,6 @@
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
+import { expect } from "vitest";
 import { attachJsonlLineReader } from "../../../src/modes/rpc/jsonl.ts";
 import { RpcClient } from "../../../src/modes/rpc/rpc-client.ts";
 import { socketSink } from "../../../src/modes/rpc/socket-sink.ts";
@@ -31,6 +32,21 @@ export async function admissionClient() {
 	await new Promise<void>((resolve) => server.listen(socketPath, resolve));
 	const client = new RpcClient({ socketPath });
 	await client.start();
+	// #4272 C8.2 / RULING-73: compact admission starts only after support and the pair ACK.
+	if (process.env.SENPI_ENGINE_SOCKET_COMPACT_UPDATES === "1") {
+		const pair = ["compact_message_updates_v1", "event_resync"];
+		expect(
+			await host.writer.withConnection("rpc-client", () => host.core.router.handle({ type: "get_protocol_info" })),
+		).toMatchObject({ data: { capabilities: expect.arrayContaining(pair) } });
+		await client.setClientInfo(100, pair);
+		expect(frames.map((line) => JSON.parse(line))).toContainEqual(
+			expect.objectContaining({
+				command: "set_client_info",
+				success: true,
+				data: { capabilities: pair },
+			}),
+		);
+	}
 	return {
 		host,
 		client,
