@@ -1,3 +1,25 @@
+## 2026-10-29 - Preserve executable group-signal detection while ignoring inert shell text (senpi#3019)
+
+### What changed
+
+- `packages/senpi-codemode/src/kernels/js/group-signal-notice.js`: blank quoted literals, comments and inert heredoc text before scanning, while preserving executable command substitutions and shell scripts. Substitution boundaries skip shell comments and distinguish case-pattern closers from the substitution's closing parenthesis. Honor escaped ANSI-C quotes and share a finite work and nesting budget; conservatively apply the existing raw patterns when a limit is reached.
+- `packages/senpi-codemode/test/group-signal-notice.test.ts`: retain the quoted-text and executable-substitution cases and cover nested case patterns, ANSI-C quoting, hostile nesting, repeated scan work, oversized text and unclosed substitutions. Keep group-signal notices after exhausted masking, including long heredocs and all three raw patterns.
+- `packages/senpi-codemode/test/gate/allowlist.json`: register the corresponding additive detector contracts under `senpi#3019`.
+
+### Why
+
+- `packages/senpi-codemode/src/kernels/js/group-signal-notice.js`: regex-only scanning warned about inert quoted text. Quote masking must preserve executable substitutions and ANSI-C quote boundaries without letting deeply nested or repeatedly scanned text exhaust the worker's stack or work budget. Exhaustion must not hide a real group signal that the existing raw patterns identify.
+
+### Why an extension could not handle it
+
+- `packages/senpi-codemode/src/kernels/js/group-signal-notice.js`: the eval worker's spawner wrappers classify the command before running it; extensions cannot replace this internal detector.
+
+### Expected merge conflict zones
+
+- `packages/senpi-codemode/src/kernels/js/group-signal-notice.js`: substitution boundaries, quote-blanking helpers and shared advisory scan limits.
+- `packages/senpi-codemode/test/group-signal-notice.test.ts`: detector table cases.
+- `packages/senpi-codemode/test/gate/allowlist.json`: the `senpi#3019` contract block.
+
 ## 2026-10-29 - Eval-kernel WebKit Bun.WebViews are served from the main thread (senpi#4794)
 
 ### What changed
