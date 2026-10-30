@@ -12,6 +12,7 @@ import { CredentialSlotRepository } from "../../../src/core/credential-pool/stat
 import { AllAccountsBlockedError } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import { allAccountsBlockedDiagnostic } from "../../../src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts";
 import type { ExtensionToolContext } from "../../../src/core/extensions/types.ts";
+import { terminalProviderAuthFailure } from "../../../src/core/extensions/builtin/goal/terminal-provider-error.ts";
 import { providerFailureOf } from "../../../src/core/provider-failure.ts";
 import {
 	cleanupGoalMonitorTempDirs,
@@ -46,7 +47,10 @@ const MODEL = {
 const LIMIT_TEXT = "429 rate_limit_error: This request would exceed your account's rate limit.";
 const poolDirs: string[] = [];
 
-function limitEvent(): AssistantMessageEvent {
+type ProbeRefusal = { readonly status: number; readonly text: string };
+const LIMIT: ProbeRefusal = { status: 429, text: LIMIT_TEXT };
+
+function limitEvent(refusal: ProbeRefusal = LIMIT): AssistantMessageEvent {
 	const error: AssistantMessage = {
 		role: "assistant",
 		content: [],
@@ -62,8 +66,8 @@ function limitEvent(): AssistantMessageEvent {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 		stopReason: "error",
-		errorMessage: LIMIT_TEXT,
-		providerDiagnostic: { category: "unknown", httpStatus: 429, evidence: "structured_status" },
+		errorMessage: refusal.text,
+		providerDiagnostic: { category: "unknown", httpStatus: refusal.status, evidence: "structured_status" },
 		timestamp: Date.now(),
 	};
 	return { type: "error", reason: "error", error };
@@ -76,7 +80,11 @@ type SlotBlock = { readonly name: string; readonly reason: "rate_limit" | "auth_
  * The production pool behind the production lazy stream: persisted blocks, then the one cooling probe the
  * soonest rate-limited slot gets (senpi#3771), answered by the provider with a 429 event or a thrown error.
  */
-async function blockedPoolTurn(blocks: readonly SlotBlock[], answer: ProbeAnswer = "event"): Promise<AssistantMessage> {
+async function blockedPoolTurn(
+	blocks: readonly SlotBlock[],
+	answer: ProbeAnswer = "event",
+	refusal: ProbeRefusal = LIMIT,
+): Promise<AssistantMessage> {
 	const dir = mkdtempSync(join(tmpdir(), "senpi-3975-pool-"));
 	poolDirs.push(dir);
 	const repository = new CredentialSlotRepository(join(dir, "credential-pool-state.json"));
@@ -101,8 +109,8 @@ async function blockedPoolTurn(blocks: readonly SlotBlock[], answer: ProbeAnswer
 			sources: { providerId: MODEL.provider, credential, env: () => undefined, repository, now: () => Date.now() },
 			affinityKey: "session-3975",
 			runAttempt: async function* () {
-				if (answer === "throw") throw Object.assign(new Error(LIMIT_TEXT), { status: 429 });
-				yield limitEvent();
+				if (answer === "throw") throw Object.assign(new Error(refusal.text), { status: refusal.status });
+				yield limitEvent(refusal);
 			},
 		}),
 	);
@@ -175,6 +183,28 @@ describe("goal parks while every pool slot is blocked (#3975)", () => {
 			expect(message.stopReason).toBe("error");
 			expect(message.providerDiagnostic).toMatchObject({ category: "rate_limit", resetsAt: until });
 			expect(providerFailureOf([message])).toMatchObject({ category: "rate_limit", resetsAt: until });
+		},
+	);
+
+	const NON_LIMIT_REFUSALS: ReadonlyArray<readonly [ProbeAnswer, ProbeRefusal]> = [
+		["event", { status: 403, text: "403 permission_error: This organization has been disabled." }],
+		["throw", { status: 403, text: "403 permission_error: This organization has been disabled." }],
+		["event", { status: 402, text: "402 billing_error: Payment required." }],
+		["event", { status: 404, text: "404 not_found_error: model not found" }],
+	];
+
+	it.each(NON_LIMIT_REFUSALS)(
+		"keeps a cooling probe's %s %o refusal as the provider classified it, not as the pool's rate limit",
+		async (answer, refusal) => {
+			vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
+			const message = await blockedPoolTurn(rateLimitedUntil(NOW + 2 * HOUR), answer, refusal);
+
+			expect(message.providerDiagnostic?.category).not.toBe("rate_limit");
+			if (answer === "event") expect(message.providerDiagnostic?.httpStatus).toBe(refusal.status);
+			if (refusal.status === 403) {
+				const event = { type: "agent_end" as const, messages: [message], willRetry: false };
+				expect(terminalProviderAuthFailure(event)).toMatchObject({ httpStatus: 403 });
+			}
 		},
 	);
 
