@@ -619,6 +619,14 @@ reader (which stops near 4,000 levels on Node) never drops it.
 Behind the same flag, one bounded page of a frozen checkpoint component, through the recovery-token owner
 (senpi#4272, R4.B3). The command is additive: with the flag off it answers exactly as any unknown session command.
 
+Compact generations are allocated per durable session, not per socket or accepted-state epoch (RULING-99).
+A reconnect receives a higher generation; a host restart resumes above the persisted reservation ceiling in
+the agent directory. Generations may have gaps. The engine reserves ranges asynchronously before synchronous
+cut issuance; no token, manifest or event can name an unreserved generation. Exhaustion or storage failure
+refuses a new cut as `storage_unavailable`, never by resetting the counter. A concurrent owner cannot reserve
+the same session while its kernel ownership lock is held. Materializers continue to refuse lower generations
+as `stale_generation`.
+
 ```json
 {"type": "get_recovery_page", "sessionId": "rpc-1", "token": "socket-3:7", "admissionId": "attach-9",
  "componentRef": "c-0000000000000007:003", "requestId": "r-12", "cursor": "p1:1:131072:..."}

@@ -1,0 +1,51 @@
+<!-- changes-log: packages/coding-agent/src/modes/rpc/changes.md -->
+## 2026-10-30 - Durable per-session compact generations (RULING-99, part of #4272)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/compact-session-generations.ts`: one session counter reserves 1,024 values under a lifetime kernel ownership lock. File fsync, atomic rename and directory fsync finish before values become issuable; refill starts with 512 remaining. Exhaustion, corrupt metadata, competing ownership and storage failure fail closed. Restart starts at the persisted ceiling plus one, burning unused reservations.
+- `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: owns the counter across socket disconnects and accepted-state replacements and releases its lock on retirement.
+- `packages/coding-agent/src/modes/rpc/session-registry-open.ts` and `packages/coding-agent/src/modes/rpc/worker-session-open.ts`: bind the manager's durable session identity before admission, only behind the existing compact flag.
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts` and `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts`: synchronous freezes draw from the session counter; per-peer stream records no longer restart numbering.
+- `packages/coding-agent/src/modes/rpc/session-router-open.ts`: retain typed admission storage refusals after physical-open rollback.
+
+### Why
+
+- RULING-99 A requires reconnect/restart generations to exceed previously observed values without changing the RULING-95 adapter.
+- Option 2 preserves synchronous freeze and cut/suffix ordering. `CompactRequiredStreams.prepare()` freezes before accepted mutations, while `materializerLine()` and `AdmissionRoutingActor.route()` immediately serialize the generation. Cancellation replies also carry it. An open-token-only asynchronous publication barrier would not cover those paths; durable ranges make every path safe before it sees a number.
+- The storage-health revision and fresh session epoch are independent clocks, and accepted roots are ephemeral scratch. None can serve as this session's durable generation source.
+
+### Why an extension could not handle it
+
+- These RPC files own engine cut issuance, admission rollback and publication below extension delivery; an extension cannot supply or fence their durable generations.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts` freeze, `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts` issuance, `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts` retirement, both registry open paths and the physical-open error boundary in `packages/coding-agent/src/modes/rpc/session-router-open.ts`. Rollout remains off by default.
+
+<!-- changes-log: packages/client/changes.md -->
+## 2026-10-30 - Shared reconnect generation conformance (RULING-99, part of #4272)
+
+### What changed
+
+- `packages/client/src/materializer-test-kit.ts`: export the reconnect scenario used by engine tests and adapter conformance: commit generation N, reconnect at a greater generation, accept its unit, then reject lower-generation replay.
+
+### Why
+
+- Engine generation persistence must satisfy the existing adapter rather than weakening `stale_generation`.
+
+### Why an extension could not handle it
+
+- `packages/client/src/materializer-test-kit.ts` is the shared cross-implementation conformance surface.
+
+### Expected merge conflict zones
+
+- `packages/client/src/materializer-test-kit.ts` case registration. Adapter implementations remain unchanged.
+
+<!-- changes-log: packages/coding-agent/CHANGELOG.md -->
+### Fixed
+- Keep opt-in compact stream generations increasing across session reconnects and host restarts, refusing unpublished generations when durable storage is unavailable (RULING-99, part of #4272).
+
+<!-- changes-log: packages/client/CHANGELOG.md -->
+### Added
+- Shared materializer reconnect conformance case requiring a greater generation and continued rejection of lower-generation replay (RULING-99, part of #4272).

@@ -78,5 +78,5 @@ it("the exported kit rejects session-keyed frontiers and effects across generati
 	const outcomes = await Promise.allSettled(
 		materializerConformance(sessionKeyedHarness).map((scenario) => scenario.run()),
 	);
-	expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+	expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(2);
 });

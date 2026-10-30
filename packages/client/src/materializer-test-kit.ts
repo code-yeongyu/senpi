@@ -48,9 +48,32 @@ async function rejected(run: () => Promise<unknown>, code?: string): Promise<voi
 	throw new Error("materializer conformance: expected rejection");
 }
 
+/** RULING-99: connect twice to the engine; the second connection follows the first committed unit.
+ * The caller owns disconnect/reconnect. A fresh consumer must not reset the adapter's stale-generation guard.
+ */
+export async function materializerReconnect(
+	adapter: MaterializerAdapter<string>,
+	connect: () => Promise<MaterializerIdentity>,
+): Promise<void> {
+	const first = await connect();
+	equal(await new MaterializerConsumer(adapter).accept(unit(7, first)), "applied");
+	const next = await connect();
+	equal([next.sessionId, next.sessionEpoch], [first.sessionId, first.sessionEpoch]);
+	if (next.generation <= first.generation) throw new Error("reconnected generation did not advance");
+	equal(await new MaterializerConsumer(adapter).accept(unit(1, next)), "applied");
+	await rejected(() => new MaterializerConsumer(adapter).accept(unit(8, first)), "stale_generation");
+}
+
 /** Runtime-neutral test kit: register each returned run with any runner, unchanged for every adapter. */
 export function materializerConformance(create: Factory): readonly MaterializerConformanceCase[] {
 	const cases: readonly [string, (h: MaterializerHarness) => Promise<void>][] = [
+		[
+			"R99 reconnect advances generation and still refuses lower-generation replay",
+			async (h) => {
+				let generation = 0;
+				await materializerReconnect(h.adapter, async () => ({ ...key, generation: ++generation }));
+			},
+		],
 		[
 			"R95.3 effects and frontier are invisible until one atomic commit",
 			async (h) => {

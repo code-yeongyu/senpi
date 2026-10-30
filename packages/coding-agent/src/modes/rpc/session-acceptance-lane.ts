@@ -19,6 +19,7 @@ import {
 import { foldCompactRecord, foldCompactTransition } from "./session-acceptance-compact.ts";
 import { AcceptedRootReads } from "./session-acceptance-reads.ts";
 import { recoveryAgentDir, RecoveryStorageHealth } from "./compact-storage-health.ts";
+import { SessionGenerations } from "./compact-session-generations.ts";
 
 /** Where one accepted recovery record sits in its runtime incarnation (R3.C1.1). */
 interface AcceptedRef {
@@ -62,6 +63,7 @@ const RETIRED_SETTLED: SettledRoot = Object.freeze({ base: undefined, overrides:
  * with another epoch's.
  */
 export class SessionAcceptanceLane extends AcceptedRootReads {
+	readonly generations: SessionGenerations;
 	private epoch = "";
 	private sequence = 0;
 	/**
@@ -89,6 +91,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 		agentDir = recoveryAgentDir,
 	) {
 		super();
+		this.generations = new SessionGenerations(agentDir);
 		this.storage = {
 			...storage,
 			dir: storage?.dir ?? tmpdir(),
@@ -275,6 +278,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	private compact = () => ({ settled: this.settled, current: this.current });
 
 	async idle(): Promise<void> {
+		await this.generations.idle();
 		await this.cleanup;
 		await this.settled.idle();
 		await this.current.idle();
@@ -295,6 +299,7 @@ export class SessionAcceptanceLane extends AcceptedRootReads {
 	 */
 	retire(reason: "close" | "worker_failed", keep: ReadonlySet<FrozenAcceptedRoot> = new Set()): void {
 		this.retiredAs ??= reason;
+		this.generations.close();
 		this.transcript = new AcceptedTranscript(this.staging);
 		for (const root of this.live) if (!keep.has(root)) this.release(root);
 		this.retireStorage();

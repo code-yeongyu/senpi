@@ -173,6 +173,7 @@ export async function openRegistrySession(
 		// The accepted baseline precedes the open, so router admission and its reply come after it (R3.C1.1).
 		if (compactUpdatesEnabled() && host.options.workerIsolate !== true) {
 			entry.acceptance = new SessionAcceptanceLane(undefined, undefined, host.options.agentDir);
+			await entry.acceptance.generations.bind(entry.durableSessionId);
 			entry.acceptance.bootstrap({ transcript: manager.beginTranscriptJournal() });
 			setSessionRecoveryEpoch(entry.runtime.session, entry.acceptance.recoveryEpoch);
 		}
