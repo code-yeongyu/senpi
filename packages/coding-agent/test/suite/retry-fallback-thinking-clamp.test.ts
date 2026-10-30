@@ -333,8 +333,6 @@ describe("retry fallback thinking-level selection", () => {
 		});
 
 		expect(await controller.tryFallback("hard-error", {})).toBe(true);
-		expect(switches).toEqual([
-			{ provider: "anthropic", id: "claude-opus-5", thinking: "max", reason: "fallback" },
-		]);
+		expect(switches).toEqual([{ provider: "anthropic", id: "claude-opus-5", thinking: "max", reason: "fallback" }]);
 	});
 });
