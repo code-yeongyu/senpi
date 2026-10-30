@@ -5672,16 +5672,25 @@ through this event.
 
 ### extension_error
 
-Emitted when an extension throws an error.
+Emitted when an extension throws an error. `error` is the raw message; show `notice` to a person instead. Neither carries the stack, which the host writes to its debug log.
 
 ```json
 {
   "type": "extension_error",
   "extensionPath": "/path/to/extension.ts",
   "event": "tool_call",
-  "error": "Error message..."
+  "error": "Error message...",
+  "notice": {
+    "kind": "unexpected",
+    "source": "extension",
+    "title": "Something went wrong in extension",
+    "detail": "Error message... (during tool_call)",
+    "logPath": "~/.senpi/agent/senpi-debug.log"
+  }
 }
 ```
+
+`notice.kind` is `"user"` when the extension threw the user-facing contract (`UserFacingError` or a `userFacing` property, see [extensions.md](extensions.md#error-handling)); then `title` is what happened, the optional `detail` is what to do, and `code` plus the optional `docsUrl` come from the extension. For `"unexpected"`, `title` is "Something went wrong in <source>", `detail` is the first line of the message with file paths cut to file names, and `logPath` is where the details are.
 
 ## OAuth login
 

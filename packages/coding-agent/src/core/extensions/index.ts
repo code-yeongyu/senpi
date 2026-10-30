@@ -255,4 +255,5 @@ export {
 	isWriteToolResult,
 	RUNTIME_EXTENSION_PATH,
 } from "./types.ts";
+export { UserFacingError, type UserFacingErrorInfo, userFacingErrorOf } from "./user-facing-error.ts";
 export { wrapRegisteredTool, wrapRegisteredTools } from "./wrapper.ts";

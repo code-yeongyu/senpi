@@ -33,8 +33,10 @@ import {
 	VERSION,
 } from "./config.ts";
 import { brandProfile } from "./core/brand.ts";
+import { displayDebugLogPath } from "./core/extensions/error-notice.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { type HeldFileLock, lockWithLossHandling } from "./core/file-lock.ts";
+import { appendDebugLogEntry } from "./core/hidden-stdout-log.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -269,7 +271,8 @@ function reportSettingsErrors(settingsManager: SettingsManager, context: string)
 	for (const { scope, error } of errors) {
 		console.error(chalk.yellow(`Warning (${context}, ${scope} settings): ${error.message}`));
 		if (error.stack) {
-			console.error(chalk.dim(error.stack));
+			appendDebugLogEntry(`settings warning (${context}, ${scope})`, error.stack);
+			console.error(chalk.dim(`Details: ${displayDebugLogPath()}`));
 		}
 	}
 }

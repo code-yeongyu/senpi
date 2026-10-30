@@ -5,7 +5,9 @@ import {
 } from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
+import { displayDebugLogPath, recordExtensionFailure } from "../../core/extensions/error-notice.ts";
 import type { ExtensionRpcRequestContext } from "../../core/extensions/rpc-context.ts";
+import { extensionFailureFields } from "../../core/extensions/user-facing-error.ts";
 import type { ExtensionOwner } from "./extension-owner.ts";
 import { ExtensionOwnerLifetime } from "./extension-owner-lifetime.ts";
 /**
@@ -158,6 +160,7 @@ import {
 	type RelocationClientInfo,
 	relocationChannel,
 } from "./session-relocation-channel.ts";
+import { extensionErrorEvent } from "./extension-error-event.ts";
 
 export { buildRpcSessionState } from "./rpc-session-state.ts";
 
@@ -1053,12 +1056,7 @@ export function createRpcConnectionHandler(
 						}
 					},
 					onError: (err) => {
-						output({
-							type: "extension_error",
-							extensionPath: err.extensionPath,
-							event: err.event,
-							error: err.error,
-						});
+						output(extensionErrorEvent(err, displayDebugLogPath()));
 					},
 				}),
 			true,
@@ -1288,12 +1286,9 @@ export function createRpcConnectionHandler(
 					() => promptCalls.delete(settled),
 					(err: unknown) => {
 						promptCalls.delete(settled);
-						output({
-							type: "extension_error",
-							extensionPath: "runtime",
-							event: "resume_session",
-							error: err instanceof Error ? err.message : String(err),
-						});
+						const failure = { extensionPath: "runtime", event: "resume_session", ...extensionFailureFields(err) };
+						recordExtensionFailure(failure);
+						output(extensionErrorEvent(failure, displayDebugLogPath()));
 					},
 				);
 				return success(id, "resume_session", answer);
