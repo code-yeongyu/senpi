@@ -1,5 +1,6 @@
 import type { AccountLoginReceipt } from "@earendil-works/pi-ai";
 import { describeCredentialAccount } from "../../../core/credential-account-status.ts";
+import { accountLimitsFor, describeAccountLimits } from "../../subscription-limits/limit-summary.ts";
 import {
 	getCredentialAccounts,
 	pinCredentialAccount,
@@ -33,7 +34,12 @@ async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
 	const accounts = await getCredentialAccounts(ctx.modelRegistry.authStorage, CHATGPT_SUBSCRIPTION_PROVIDER_ID);
 	const lines = ["ChatGPT Subscription OAuth accounts:"];
 	if (accounts.length === 0) lines.push("  (none)");
-	for (const account of accounts) lines.push(`  ${describeCredentialAccount(account)}`);
+	const now = Date.now();
+	for (const account of accounts) {
+		lines.push(`  ${describeCredentialAccount(account)}`);
+		const limits = accountLimitsFor(CHATGPT_SUBSCRIPTION_PROVIDER_ID, account.name);
+		lines.push(`    ${describeAccountLimits(limits, now)}`);
+	}
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 
