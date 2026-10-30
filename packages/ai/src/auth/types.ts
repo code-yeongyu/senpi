@@ -37,6 +37,16 @@ export interface OAuthCredentials {
 /** Stored canonical OAuth credential. */
 export interface OAuthCredential extends OAuthCredentials {
 	type: "oauth";
+	/** Verified account identity, retained only by flows that validate an ID token. */
+	subject?: string;
+	/** Display metadata only; not proof of identity or workspace membership. */
+	email?: string;
+	issuer?: string;
+	/** Issued OAuth client ID, not the dynamic registration entrypoint. */
+	clientId?: string;
+	/** Retained for a later id_token_hint; treat as secret credential material. */
+	idToken?: string;
+	scopes?: string[];
 }
 
 /** One type-tagged credential per provider — the shape of today's auth.json. */
