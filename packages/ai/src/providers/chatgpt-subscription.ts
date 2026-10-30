@@ -32,10 +32,19 @@ export function chatgptSubscriptionProvider(): Provider<"openai-codex-responses"
 			oauth: {
 				...legacy,
 				loginLabel: "Continue with ChatGPT",
-				login: async (interaction, options) => ({
-					...(await siwc.login(interaction, options)),
-					route: "siwc",
-				}),
+				login: async (interaction, options) => {
+					const route = await interaction.prompt({
+						type: "select",
+						message: "Sign in to ChatGPT Subscription:",
+						options: [
+							{ id: "siwc", label: "Continue with ChatGPT" },
+							{ id: "legacy", label: "Legacy sign-in (existing users)" },
+						],
+					});
+					if (route === "legacy") return legacy.login(interaction, options);
+					if (route !== "siwc") throw new Error(`Unknown ChatGPT sign-in route: ${route}`);
+					return { ...(await siwc.login(interaction, options)), route: "siwc" };
+				},
 				refresh: async (credential, signal) =>
 					credential.route === "siwc"
 						? { ...credential, ...(await siwc.refresh(credential, signal)), route: "siwc" }

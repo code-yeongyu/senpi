@@ -34,10 +34,20 @@ async function showAccounts(ctx: ExtensionCommandContext): Promise<void> {
 	const lines = ["ChatGPT Subscription OAuth accounts:"];
 	if (accounts.length === 0) lines.push("  (none)");
 	for (const account of accounts) {
-		const states = [accountLabel(account), account.source, account.blocked ? "blocked" : "available"];
+		const availability = account.signedOut
+			? "signed out"
+			: account.planUsageEnabled === false
+				? "plan usage not enabled: enable it or use an API key"
+				: account.blocked
+					? "blocked"
+					: "available";
+		const states = [accountLabel(account), account.source, availability];
 		if (account.pinned) states.push("pinned");
+		if (account.route) states.push(account.route === "siwc" ? "SIWC" : "legacy");
+		if (!account.signedOut && account.planUsageEnabled === true) states.push("Using ChatGPT plan");
 		lines.push(`  ${states.join(" | ")}`);
 	}
+	lines.push("Manage usage: https://chatgpt.com/settings/usage (ChatGPT Settings > Usage)");
 	ctx.ui.notify(lines.join("\n"), "info");
 }
 

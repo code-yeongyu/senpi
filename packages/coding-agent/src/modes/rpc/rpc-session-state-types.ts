@@ -64,6 +64,10 @@ export interface RpcProviderAccount {
 	/** Epoch ms when the block lifts; absent for `disabled` and for a block that names no time. */
 	blockedUntil?: number;
 	pinned: boolean;
+	/** Same ChatGPT registration metadata rendered by /gpt-account. */
+	route?: "siwc" | "legacy";
+	planUsageEnabled?: boolean;
+	signedOut?: boolean;
 }
 
 // ============================================================================
