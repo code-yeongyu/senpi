@@ -4,6 +4,7 @@ import { buildDynamicSystemPrompt } from "../../src/core/dynamic-prompt/build.ts
 import {
 	buildWorkstationSection,
 	collectWorkstationFacts,
+	pinnedDisplayPath,
 	readWorkstationFacts,
 	type WorkstationFacts,
 } from "../../src/core/dynamic-prompt/workstation.ts";
@@ -138,6 +139,48 @@ describe("readWorkstationFacts SENPI_TEST_WORKSTATION", () => {
 		JSON.stringify({ cpuModel: "Test CPU", cores: 1.5, kernel: "TestOS 1.0" }),
 		JSON.stringify({ cpuModel: "Test CPU", cores: 4, kernel: "TestOS 1.0", gpu: "x" }),
 	])("malformed %s throws naming the variable", (value) => {
+		expect(() => readWorkstationFacts(pinned(value))).toThrow(/SENPI_TEST_WORKSTATION/);
+	});
+});
+
+// senpi#5067: the optional repoRoot pin shows a path under the pinned checkout under a synthetic root, so the checkout
+// location does not reach the prompt. Rendering only; inert when unset.
+const HOST_PIN = { cpuModel: "Test CPU", cores: 4, kernel: "TestOS 1.0" };
+const REPO_PIN = JSON.stringify({ ...HOST_PIN, repoRoot: { from: "/work/checkout", to: "/eq-synthetic/checkout" } });
+
+describe("pinnedDisplayPath SENPI_TEST_WORKSTATION repoRoot", () => {
+	const inside = "/work/checkout/packages/coding-agent/skills";
+
+	test("unset, empty, or a pin without repoRoot: every path is returned unchanged", () => {
+		const env = { ...process.env };
+		delete env.SENPI_TEST_WORKSTATION;
+		expect(pinnedDisplayPath(inside, env)).toBe(inside);
+		expect(pinnedDisplayPath(inside, pinned(""))).toBe(inside);
+		expect(pinnedDisplayPath(inside, pinned(JSON.stringify(HOST_PIN)))).toBe(inside);
+	});
+
+	test("a path under from is shown under to, and from itself as to", () => {
+		expect(pinnedDisplayPath(inside, pinned(REPO_PIN))).toBe("/eq-synthetic/checkout/packages/coding-agent/skills");
+		expect(pinnedDisplayPath("/work/checkout", pinned(REPO_PIN))).toBe("/eq-synthetic/checkout");
+	});
+
+	test("a path outside from, including a sibling that shares its prefix, is unchanged", () => {
+		expect(pinnedDisplayPath("/work/checkout-2/skills", pinned(REPO_PIN))).toBe("/work/checkout-2/skills");
+		expect(pinnedDisplayPath("/opt/skills", pinned(REPO_PIN))).toBe("/opt/skills");
+	});
+
+	test("the host facts still apply alongside repoRoot", () => {
+		expect(readWorkstationFacts(pinned(REPO_PIN)).cpu).toBe("Test CPU (4 cores)");
+	});
+
+	test.each([
+		JSON.stringify({ ...HOST_PIN, repoRoot: "/work/checkout" }),
+		JSON.stringify({ ...HOST_PIN, repoRoot: { from: "work/checkout", to: "/eq" } }),
+		JSON.stringify({ ...HOST_PIN, repoRoot: { from: "/work/checkout", to: "eq" } }),
+		JSON.stringify({ ...HOST_PIN, repoRoot: { from: "/work/checkout" } }),
+		JSON.stringify({ ...HOST_PIN, repoRoot: { from: "/work/checkout", to: "/eq", extra: 1 } }),
+	])("malformed repoRoot %s throws naming the variable", (value) => {
+		expect(() => pinnedDisplayPath(inside, pinned(value))).toThrow(/SENPI_TEST_WORKSTATION/);
 		expect(() => readWorkstationFacts(pinned(value))).toThrow(/SENPI_TEST_WORKSTATION/);
 	});
 });

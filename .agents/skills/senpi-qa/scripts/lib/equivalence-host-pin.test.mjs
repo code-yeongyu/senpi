@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import * as os from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { repoRoot, resolveBun } from "./common.mjs";
-import { HOST_PIN_ENV, hostPinEnv, pinnedHostFacts, pinnedWorkstation } from "./equivalence-host-pin.mjs";
+import {
+	HOST_PIN_ENV,
+	hostPinEnv,
+	PINNED_REPO_ROOT,
+	pinnedHostFacts,
+	pinnedWorkstation,
+} from "./equivalence-host-pin.mjs";
 
 const productModule = (...parts) => pathToFileURL(join(repoRoot(), "packages", ...parts)).href;
 const WORKSTATION = productModule("coding-agent", "src", "core", "dynamic-prompt", "workstation.ts");
@@ -15,9 +22,10 @@ const HOST_FACTS = productModule("senpi-codemode", "src", "extension", "host-fac
 // `<workstation>` block, host-facts.ts for the eval `Host:` line. Also the child's own os reads, which must stay real.
 const PROBE = `
 import * as os from "node:os";
-const { collectWorkstationFacts } = await import(${JSON.stringify(WORKSTATION)});
-const { hostLine } = await import(${JSON.stringify(HOST_FACTS)});
-process.stdout.write(JSON.stringify({ facts: collectWorkstationFacts(), hostLine: hostLine(), cores: os.availableParallelism(), release: os.release() }));
+const { collectWorkstationFacts, pinnedDisplayPath: agentPath } = await import(${JSON.stringify(WORKSTATION)});
+const { hostLine, pinnedDisplayPath: codemodePath } = await import(${JSON.stringify(HOST_FACTS)});
+const inRepo = ${JSON.stringify(join(realpathSync.native(repoRoot()), "packages", "senpi-codemode", "src", "skill"))};
+process.stdout.write(JSON.stringify({ facts: collectWorkstationFacts(), hostLine: hostLine(), cores: os.availableParallelism(), release: os.release(), agentPath: agentPath(inRepo), codemodePath: codemodePath(inRepo), cwd: process.cwd() }));
 `;
 
 function probe(command, args) {
@@ -39,6 +47,12 @@ function assertPinned(seen) {
 	// Only the prompt facts are pinned: the child's own os reads (pool sizes, etc.) still see the real host.
 	assert.equal(seen.cores, os.availableParallelism());
 	assert.equal(seen.release, os.release());
+	// senpi#5067: both prompt sites show a path inside the checkout under the pinned root; the child itself still runs
+	// in the real checkout.
+	const shown = join(PINNED_REPO_ROOT, "packages", "senpi-codemode", "src", "skill");
+	assert.equal(seen.agentPath, shown);
+	assert.equal(seen.codemodePath, shown);
+	assert.equal(realpathSync.native(seen.cwd), realpathSync.native(repoRoot()));
 }
 
 test("a Bun CLI child with the case env's pin renders the pinned facts in both prompt sites", () => {
@@ -51,13 +65,18 @@ test("a Node CLI child with the case env's pin renders the pinned facts in both 
 
 test("the pinned values are synthetic and the normalizer tokenizes each of them", () => {
 	const pin = pinnedWorkstation();
-	assert.deepEqual(JSON.parse(hostPinEnv()[HOST_PIN_ENV]), pin);
+	const { repoRoot: recorded, ...host } = pin;
+	assert.equal(recorded, PINNED_REPO_ROOT);
+	assert.deepEqual(JSON.parse(hostPinEnv()[HOST_PIN_ENV]), {
+		...host,
+		repoRoot: { from: realpathSync.native(repoRoot()), to: PINNED_REPO_ROOT },
+	});
 	assert.notEqual(pin.cores, os.availableParallelism());
 	assert.match(pin.kernel, / 0\.0\.0-eq-synthetic$/);
 	assert.equal(pinnedWorkstation("darwin", "arm64").cpuModel.startsWith("Apple "), true);
 	assert.equal(pinnedWorkstation("linux", "x64").cpuModel.startsWith("Apple "), false);
 	assert.deepEqual(
 		pinnedHostFacts().map((fact) => fact.token),
-		["<host:kernel>", "<host:release>", "<host:cpu>", "<host:cpu-model>", " <host:cores> cores"],
+		["<host:kernel>", "<host:release>", "<host:cpu>", "<host:cpu-model>", " <host:cores> cores", "<repo>"],
 	);
 });
