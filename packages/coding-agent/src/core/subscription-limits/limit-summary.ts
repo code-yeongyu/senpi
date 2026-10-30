@@ -15,7 +15,10 @@ function age(ms: number): string {
  * repeating a stale share; an account nothing has reported for says so instead of showing 0%.
  */
 export function describeAccountLimits(limits: AccountLimits | undefined, now: number): string {
-	if (limits === undefined || limits.windows.length === 0) return "limits: not reported yet";
+	if (limits === undefined) return "limits: not reported yet";
+	if (limits.windows.length === 0) {
+		return limits.error === undefined ? "limits: not reported yet" : `limits: last check failed: ${limits.error}`;
+	}
 	const windows = limits.windows.map((window) => {
 		const resetsAt = window.resetsAt === undefined ? undefined : Date.parse(window.resetsAt);
 		if (resetsAt !== undefined && resetsAt <= now) return `${window.label} reset since this reading`;

@@ -69,6 +69,23 @@ describe("account lists show each account's limit windows (oh-my-openagent#9234)
 		expect(lines[silent + 1]).toBe("    limits: not reported yet");
 	});
 
+	it("an account whose first usage check failed shows why instead of 'not reported yet'", async () => {
+		await storage.modify("chatgpt-subscription", async () => ({
+			type: "oauth",
+			...slot("gpt-9234-failed"),
+			accounts: [slot("gpt-9234-failed")],
+		}));
+		subscriptionLimits.report("chatgpt-subscription", "gpt-9234-failed", {
+			error: "sign-in needed",
+			reportedAt: new Date(),
+		});
+
+		const lines = (await listOutput(registerCommand("gpt-account", gptAccountExtension))).split("\n");
+
+		const failed = lines.findIndex((line) => line.includes("gpt-9234-failed | login"));
+		expect(lines[failed + 1]).toBe("    limits: last check failed: sign-in needed");
+	});
+
 	it("/claude-account", async () => {
 		const credential = [slot("claude-9234-reported"), slot("claude-9234-silent")].reduce(
 			(current, account) => addAccount(current, account),
