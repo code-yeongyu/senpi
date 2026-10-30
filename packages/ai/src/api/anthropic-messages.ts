@@ -2364,10 +2364,7 @@ function buildParams(
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention ?? model.cacheRetention, options?.env);
 	const initialSystemMessage = getInitialSystemMessage(context.messages);
 	const initialSystemText = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId, {
-		preserveThinking: options?.thinkingEnabled === true,
-		preserveUnsignedThinking: true,
-	});
+	const transformedMessages = transformAnthropicMessages(context.messages, model, options?.thinkingEnabled === true);
 	// The prompt travels in `params.system`; the leading system message is not a turn.
 	const conversationMessages = initialSystemMessage ? transformedMessages.slice(1) : transformedMessages;
 	// Context reduction marks the last message its frontier leaves unchanged: on a frontier step both the
@@ -2726,6 +2723,56 @@ function convertToolResult(
 interface ConvertedAnthropicMessages {
 	messages: MessageParam[];
 	assistantLevels: Map<number, AnthropicEffort>;
+	/** The transformed assistant message each assistant param was converted from, keyed by param index. */
+	assistantSources: Map<number, AssistantMessage>;
+}
+
+function transformAnthropicMessages(
+	messages: Message[],
+	model: Model<"anthropic-messages">,
+	preserveThinking: boolean,
+): Message[] {
+	return transformMessages(messages, model, normalizeToolCallId, {
+		preserveThinking,
+		preserveUnsignedThinking: true,
+	});
+}
+
+export interface AnthropicMessageParamsOptions {
+	/** Replay same-model signed thinking as `thinking` blocks; the request path sets this when thinking is enabled. */
+	preserveThinking?: boolean;
+	/** Rename tool calls to Claude Code's tool names, as an OAuth request does. */
+	isOAuthToken?: boolean;
+	/** How same-model thinking without a signature is replayed; `text` unless the endpoint accepts empty signatures. */
+	unsignedThinkingReplay?: UnsignedThinkingReplay;
+}
+
+export interface AnthropicMessageParams {
+	messages: MessageParam[];
+	/** The assistant message each assistant param was converted from, keyed by param index. */
+	assistantSources: ReadonlyMap<number, AssistantMessage>;
+}
+
+/**
+ * Convert a senpi history to Anthropic message params with the same rules a Messages API request applies: tool-call
+ * id normalization and result pairing, thinking replay (signed same-model thinking kept, anything else as text), and
+ * tool results with their images. No cache breakpoints are set. The model only needs to be Anthropic-shaped: its
+ * provider, api and id decide which assistant messages count as same-model.
+ */
+export function toAnthropicMessageParams(
+	messages: Message[],
+	model: Model<Api>,
+	options: AnthropicMessageParamsOptions = {},
+): AnthropicMessageParams {
+	const anthropicModel = model as Model<"anthropic-messages">;
+	const converted = convertMessages(
+		transformAnthropicMessages(messages, anthropicModel, options.preserveThinking ?? true),
+		anthropicModel,
+		options.isOAuthToken ?? false,
+		undefined,
+		options.unsignedThinkingReplay ?? "text",
+	);
+	return { messages: converted.messages, assistantSources: converted.assistantSources };
 }
 
 function convertMessages(
@@ -2742,6 +2789,7 @@ function convertMessages(
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
 	const assistantLevels = new Map<number, AnthropicEffort>();
+	const assistantSources = new Map<number, AssistantMessage>();
 	const loadedToolNames = new Set<string>();
 	let stablePrefixCheckpoints = 0;
 	// Later system messages are held back and emitted directly before the next assistant
@@ -2934,6 +2982,7 @@ function convertMessages(
 				role: "assistant",
 				content: blocks,
 			});
+			assistantSources.set(messageIndex, msg);
 			if (
 				cacheControl &&
 				msg.promptCacheBreakpoint === true &&
@@ -2989,7 +3038,7 @@ function convertMessages(
 	const lastParam = params[params.length - 1];
 	if (cacheControl && lastParam?.role === "system") {
 		markSystemMessageCacheCheckpoint(lastParam, cacheControl);
-		return { messages: params, assistantLevels };
+		return { messages: params, assistantLevels, assistantSources };
 	}
 	// Four breakpoints at most: system, tools or a second stable-prefix checkpoint, a stable-prefix
 	// checkpoint and the final user turn. A stable-prefix checkpoint takes the preceding tool-loop
@@ -3004,7 +3053,7 @@ function convertMessages(
 		}
 	}
 
-	return { messages: params, assistantLevels };
+	return { messages: params, assistantLevels, assistantSources };
 }
 
 function isAnthropicEffort(value: unknown): value is AnthropicEffort {
