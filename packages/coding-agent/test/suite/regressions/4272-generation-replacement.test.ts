@@ -104,9 +104,9 @@ it.each(["new_session", "switch_session", "fork"] as const)(
 			return enqueue(id, record);
 		});
 		dataOf(await client.request(fields));
-		expect.soft(Number(published), "the synchronous first cut at replacement publication").toBeGreaterThan(
-			Math.max(before, targetFloor),
-		);
+		expect
+			.soft(Number(published), "the synchronous first cut at replacement publication")
+			.toBeGreaterThan(Math.max(before, targetFloor));
 		const replaced = await cut(sessionId);
 		expect.soft(replaced).toBeGreaterThan(Number(published));
 		await prompt(sessionId);
