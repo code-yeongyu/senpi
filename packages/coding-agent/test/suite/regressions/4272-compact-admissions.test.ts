@@ -76,12 +76,16 @@ it("T2/X04 a cancelled pending open releases its late hold and RULING-94 hides u
 	const survivor = host.client("survivor");
 	const peer = host.client("peer");
 	const sessionPath = join(host.cwd, "shared.jsonl");
-	await survivor.request({
+	const survivorOpen = await survivor.request({
 		type: "open_session",
 		cwd: host.cwd,
 		sessionPath,
+		admissionId: "survivor-1",
 		retain_on_disconnect: true,
 	});
+	expect(survivorOpen.success).toBe(true);
+	const survivorGeneration = survivorOpen.generation;
+	expect(Number.isSafeInteger(survivorGeneration) && Number(survivorGeneration) > 0).toBe(true);
 	const entered = Promise.withResolvers<void>();
 	const release = Promise.withResolvers<void>();
 	const open = RpcSessionRegistry.prototype.openSession;
@@ -122,6 +126,7 @@ it("T2/X04 a cancelled pending open releases its late hold and RULING-94 hides u
 	});
 	const cancelledGeneration = cancelled.generation;
 	expect(Number.isSafeInteger(cancelledGeneration) && Number(cancelledGeneration) > 0).toBe(true);
+	expect(cancelledGeneration).toBeGreaterThan(Number(survivorGeneration));
 	expect(cancelled).not.toHaveProperty("sessionId");
 	expect(await peer.request({ type: "cancel_attempt", admissionId: "pending-1" })).toMatchObject({
 		success: false,
