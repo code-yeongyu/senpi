@@ -33,7 +33,7 @@ export async function resolveRefreshCredential(
 				owning: false,
 			});
 		} catch (error) {
-			throw oauthRefreshModelsError(error, provider.id);
+			throw oauthRefreshModelsError(error, provider.id, oauth.name);
 		}
 		return post?.type === "oauth" ? post : undefined;
 	}

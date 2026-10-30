@@ -9,6 +9,8 @@ export type RejectableAttempt = {
 	rejectableAccess?: string;
 	/** HTTP statuses that prove `rejectableAccess` was refused (`OAuthAuth.rejectedTokenStatuses`). */
 	rejectedTokenStatuses?: readonly number[];
+	/** When set, a listed status counts only when the error text matches (`OAuthAuth.rejectedTokenMessage`). */
+	rejectedTokenMessage?: RegExp;
 };
 
 // Account-scoped wording: the credential pool reads it as a per-account 403, blocks
@@ -16,19 +18,22 @@ export type RejectableAttempt = {
 const REFUSED_AFTER_REEXCHANGE =
 	"A freshly re-exchanged token for this account was refused as well; log in to this account again or switch accounts.";
 
-function refusesToken(event: AssistantMessageEvent, statuses: readonly number[]): boolean {
+type Refusal = { readonly statuses: readonly number[]; readonly message?: RegExp };
+
+function refusesToken(event: AssistantMessageEvent, refusal: Refusal): boolean {
 	if (event.type !== "error" || event.reason !== "error") return false;
 	const status = event.error.providerDiagnostic?.httpStatus;
-	return status !== undefined && statuses.includes(status);
+	if (status === undefined || !refusal.statuses.includes(status)) return false;
+	return refusal.message === undefined || refusal.message.test(event.error.errorMessage ?? "");
 }
 
 async function* markRefusalAfterReexchange(
 	stream: AsyncIterable<AssistantMessageEvent>,
-	statuses: readonly number[],
+	refusal: Refusal,
 ): AsyncGenerator<AssistantMessageEvent> {
 	let committed = false;
 	for await (const event of stream) {
-		if (!committed && event.type === "error" && refusesToken(event, statuses)) {
+		if (!committed && event.type === "error" && refusesToken(event, refusal)) {
 			// The event and the stream's `result()` share this message, so both carry the note.
 			event.error.errorMessage = `${event.error.errorMessage ?? "provider stream error"}\n${REFUSED_AFTER_REEXCHANGE}`;
 		}
@@ -54,6 +59,10 @@ export async function retryOnceOnRejectedToken(
 	const statuses = first.rejectedTokenStatuses ?? [];
 	const rejectedAccess = first.rejectableAccess;
 	if (rejectedAccess === undefined || statuses.length === 0) return first.stream;
+	const refusal: Refusal = {
+		statuses,
+		...(first.rejectedTokenMessage === undefined ? {} : { message: first.rejectedTokenMessage }),
+	};
 
 	let final: EventSource = first.stream;
 	async function* events(): AsyncGenerator<AssistantMessageEvent> {
@@ -67,11 +76,11 @@ export async function retryOnceOnRejectedToken(
 					return;
 				}
 				const event = next.value;
-				if (refusesToken(event, statuses)) {
+				if (refusesToken(event, refusal)) {
 					await iterator.return?.(undefined);
 					const retried = await attempt(rejectedAccess);
 					final = retried.stream;
-					yield* markRefusalAfterReexchange(retried.stream, statuses);
+					yield* markRefusalAfterReexchange(retried.stream, refusal);
 					return;
 				}
 				if (isCommittedRotationOutput(event)) {
