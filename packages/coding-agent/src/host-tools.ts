@@ -44,6 +44,11 @@ export function attachHostTools(
 				} catch (error) {
 					if (!(error instanceof Error) || error.name !== HOST_TOOL_ROUTE_UNAVAILABLE) throw error;
 					if (route === routed) route = undefined;
+					if (args[2]?.aborted) {
+						const abort = new Error("The operation was aborted");
+						abort.name = "AbortError";
+						throw abort;
+					}
 					return tool.execute(...args);
 				}
 			},

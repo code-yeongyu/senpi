@@ -38,6 +38,7 @@ describe("host HTML attachment", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "senpi-html-render-"));
 	});
 	afterEach(() => {
+		vi.restoreAllMocks();
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
@@ -114,7 +115,9 @@ describe("host HTML attachment", () => {
 		if (tool === undefined) throw new Error("show_html_page is not registered");
 		const pages = () => readdirSync(join(tempDir, ".senpi/html-pages")).length;
 		const args = { html: "<p>routed</p>", title: "Routed" };
-		const call = () => tool.execute("call", args, undefined, undefined, ctxFor(tempDir));
+		let callId = 0;
+		const call = (signal?: AbortSignal) =>
+			tool.execute("call", { ...args, title: `Routed ${++callId}` }, signal, undefined, ctxFor(tempDir));
 
 		await call();
 		expect(pages()).toBe(1);
@@ -126,11 +129,36 @@ describe("host HTML attachment", () => {
 		expect(pages()).toBe(1);
 
 		route.mockRejectedValueOnce(Object.assign(new Error("grant lost"), { name: HOST_TOOL_ROUTE_UNAVAILABLE }));
-		expect((await call()).details).toMatchObject({ html: args.html, prepared: true });
+		expect((await call(new AbortController().signal)).details).toMatchObject({ html: args.html, prepared: true });
 		expect(pages()).toBe(2);
 		await call();
 		expect(route).toHaveBeenCalledTimes(2);
 		expect(pages()).toBe(3);
+
+		// #5005 / PR #5045: losing a host route must not write a cancelled page standalone.
+		const standalone = vi.spyOn(showHtmlPageTool, "execute");
+		const controller = new AbortController();
+		const unavailable = vi.fn(async () => {
+			controller.abort();
+			throw Object.assign(new Error("grant lost"), { name: HOST_TOOL_ROUTE_UNAVAILABLE });
+		});
+		bus.emit(HOST_TOOL_ROUTE_CHANNEL, { name: "show_html_page", execute: unavailable });
+		await expect(call(controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+		expect(standalone).not.toHaveBeenCalled();
+		expect(pages()).toBe(3);
+		await call();
+		expect(unavailable).toHaveBeenCalledTimes(1);
+		expect(standalone).toHaveBeenCalledTimes(1);
+		expect(pages()).toBe(4);
+
+		const abort = Object.assign(new Error("host call cancelled"), { name: "AbortError" });
+		bus.emit(HOST_TOOL_ROUTE_CHANNEL, {
+			name: "show_html_page",
+			execute: () => Promise.reject(abort),
+		});
+		await expect(call()).rejects.toBe(abort);
+		expect(standalone).toHaveBeenCalledTimes(1);
+		expect(pages()).toBe(4);
 
 		bus.emit(HOST_TOOL_ROUTE_CHANNEL, {
 			name: "show_html_page",
@@ -139,7 +167,7 @@ describe("host HTML attachment", () => {
 		await expect(call()).rejects.toThrow("tool failure");
 		bus.emit(HOST_TOOL_ROUTE_CHANNEL, { name: "show_html_page" });
 		await call();
-		expect(pages()).toBe(4);
+		expect(pages()).toBe(5);
 	});
 
 	it.each([{ enabledBuiltinExtensions: ["goal"] }, { disabledBuiltinExtensions: ["html-render", "codemode"] }])(
