@@ -25,7 +25,7 @@ export type ProviderAccountSummary = {
 	readonly pinned: boolean;
 };
 
-function timedBlock(
+export function timedBlock(
 	account: Pick<AccountSlot, "blockedUntil" | "blockReason">,
 	now: number,
 ): Pick<ProviderAccountSummary, "blocked" | "blockedReason" | "blockedUntil"> {

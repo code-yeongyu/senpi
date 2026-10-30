@@ -105,7 +105,7 @@ describe("/claude-account", () => {
 
 		const output = notices.at(-1)?.message ?? "";
 		expect(output).toContain("alpha | login | available | pinned | affinity pick");
-		expect(output).toContain("bravo | import | blocked until");
+		expect(output).toContain("bravo | import | rate limited; retry after");
 		expect(output).toContain("Pinned account: alpha (settings)");
 		expect(output).toContain("Affinity pick: alpha");
 	});
