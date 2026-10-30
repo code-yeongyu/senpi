@@ -1,5 +1,7 @@
 import type { AssistantMessage } from "../types.ts";
+import { sanitizeProviderDiagnostic } from "../provider-diagnostic.ts";
 import { FORWARDED_EMPTY_RESPONSE_ERROR, FORWARDED_EMPTY_TOOL_USE_ERROR } from "./empty-response-errors.ts";
+import { siwcRecoveryFromDiagnostic } from "./siwc-errors.ts";
 
 /**
  * Diagnostic type on a terminal assistant message whose request failed because an OAuth refresh failed
@@ -124,8 +126,8 @@ const NON_RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"tools\\.\\d+\\.function\\.parameters",
 	"invalid tool schema",
 
-	// Sign in with ChatGPT: the subscription's shared usage limit, which resets
-	// after hours rather than seconds.
+	// Legacy text-only SIWC failures. Structured diagnostics take precedence below;
+	// this code alone proves no reset time.
 	"subscription_sharing_usage_limit_exceeded",
 ]);
 
@@ -486,6 +488,15 @@ export async function retryAssistantCall(
  * before restarting the assistant turn.
  */
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
+	const siwc = siwcRecoveryFromDiagnostic(sanitizeProviderDiagnostic(message.providerDiagnostic));
+	if (
+		siwc !== undefined &&
+		message.stopReason === "error" &&
+		message.stopDetails?.type !== "refusal" &&
+		message.stopDetails?.type !== "sensitive"
+	) {
+		return siwc === "transient";
+	}
 	// A route that does not serve the model answers the same on every attempt, whatever status wraps it.
 	if (message.errorCause?.type === "model_config") return false;
 	if (
