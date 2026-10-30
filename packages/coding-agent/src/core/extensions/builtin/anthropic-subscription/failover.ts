@@ -10,6 +10,7 @@ import {
 import { usageLimitResetMs } from "../../../credential-pool/reset-time.ts";
 import type { AccountSlot, AnthropicSubscriptionCredential } from "./accounts.ts";
 import { clearExpiredBlocks } from "./affinity.ts";
+import { ColdSeedLimitError, forgetColdSeat, recordColdSeat, spentColdSeat } from "./cold-seat-budget.ts";
 import type { SdkErrorClassification } from "./errors.ts";
 import { isConfirmedAccountUsageLimit, usageLimitBlockMs } from "./usage-limit-block.ts";
 
@@ -353,6 +354,23 @@ async function persistBlock(
 	return superseded;
 }
 
+function dueBackAt(
+	accounts: readonly AccountSlot[],
+	names: readonly string[],
+	now: number,
+	model: string | undefined,
+): number | undefined {
+	const times = accounts
+		.filter((account) => names.includes(account.name))
+		.map((account) => {
+			const accountUntil = (account.blockedUntil ?? 0) > now ? account.blockedUntil : undefined;
+			const modelUntil = activeModelBlockUntil(account.modelBlocks, model, now);
+			return accountUntil === undefined ? modelUntil : Math.max(accountUntil, modelUntil ?? 0);
+		})
+		.filter((time): time is number => time !== undefined);
+	return times.length === 0 ? undefined : Math.min(...times);
+}
+
 function usable(account: AccountSlot, now: number, model: string | undefined): boolean {
 	return (
 		account.blockReason === undefined &&
@@ -378,6 +396,13 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	let transientRetriesUsed = 0;
 	let longContextRetried = false;
 	let retryAccountName: string | undefined;
+	// The one cold seat this turn may use (oh-my-openagent#10304), and whether its next attempt is a bounded
+	// same-seat retry (a transient failure, a refused 1M window, a superseded token) rather than another seed.
+	const warm = options.accountFallback === false ? undefined : options.warmAccount;
+	let coldSeat = warm === undefined ? undefined : spentColdSeat(options.sessionKey, options.turnKey);
+	let coldSeatRetry = false;
+	const coldSeedLimit = (cold: string) =>
+		new ColdSeedLimitError(warm ?? cold, cold, dueBackAt(accounts, [warm ?? cold, cold], now(), options.model));
 
 	for (let attempt = 0; attempt < attemptLimit; attempt++) {
 		// Each attempt gets its own copy: prepareSlot refreshes the slot in place, and a concurrent
@@ -386,6 +411,13 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			retryAccountName === undefined ? undefined : accounts.find((slot) => slot.name === retryAccountName);
 		retryAccountName = undefined;
 		const account = { ...(retrySlot ?? options.selectFn(accounts)) };
+		const cold = warm !== undefined && account.name !== warm;
+		if (cold) {
+			if (coldSeat !== undefined && !(coldSeatRetry && account.name === coldSeat)) throw coldSeedLimit(coldSeat);
+			coldSeat = account.name;
+			recordColdSeat(options.sessionKey, options.turnKey, account.name);
+		}
+		coldSeatRetry = false;
 		let visibleDeltaEmitted = false;
 		let completed = false;
 		const startedAt = now();
@@ -411,6 +443,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				longContextRetried = true;
 				options.onLongContextRefused?.();
 				retryAccountName = account.name;
+				coldSeatRetry = cold;
 				attempt--;
 				continue;
 			}
@@ -430,6 +463,8 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 					throw classified;
 				}
 				retryAccountName = account.name;
+				// The same seat again re-sends an identical prefix (senpi#4299): not another cold seed.
+				coldSeatRetry = cold;
 				attempt--;
 				continue;
 			}
@@ -450,6 +485,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				// account once on the stored material instead of failing over.
 				retriedOnStoredMaterial.add(account.name);
 				accounts = replaceAccount(accounts, superseded);
+				coldSeatRetry = cold;
 				attempt--;
 				continue;
 			}
@@ -461,16 +497,19 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				visibleDeltaEmitted,
 			};
 			try {
-				if (!visibleDeltaEmitted && attempt + 1 < attemptLimit) {
+				if (!visibleDeltaEmitted && !cold && attempt + 1 < attemptLimit) {
 					event.nextAccount = options.selectFn(accounts);
 				}
 			} finally {
 				await options.onFailover?.(event);
 			}
 			if (visibleDeltaEmitted) throw classified;
+			// The one cold seat failed too: seeding a further seat would re-send the conversation again.
+			if (cold) throw coldSeedLimit(account.name);
 		}
 		if (completed) {
 			forgetSessionBlock(options.sessionKey, account.name);
+			if (options.sessionKey !== undefined) forgetColdSeat(options.sessionKey);
 			// Outside the attempt's try: clearing is best-effort hygiene after a finished turn, so a store
 			// failure is logged and the block stays for the next success; it never fails or replays the turn.
 			await clearBlockAfterSuccess(options.store, options.providerId, account.name, startedAt).catch(
