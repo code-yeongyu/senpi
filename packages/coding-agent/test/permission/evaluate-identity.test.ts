@@ -305,8 +305,14 @@ describe("path rules decide by file identity across spellings (design 11.1.2)", 
 		const alias = `${root}/link/secret`;
 		expect(evaluate("external_directory", alias, [rule])).toBe(rule);
 		expect(evaluateWithIdentity("external_directory", alias, [rule], undefined)).toBe(rule);
-		const service = serviceWith([allow("*", "external_directory"), rule]);
-		expect(service.dispatchDecision("external_directory", alias).action).toBe("deny");
+	});
+
+	it("external_directory: a rule written through a link denies the real path at the service boundary", () => {
+		// The direction only the inode matcher reaches: no spelling of the request matches the rule lexically.
+		const viaLink = deny(`${root}/link/secret`, "external_directory");
+		const service = serviceWith([allow("*", "external_directory"), viaLink]);
+		expect(service.dispatchDecision("external_directory", `${real}/real/secret`).action).toBe("deny");
+		expect(service.dispatchDecision("external_directory", `${real}/real/sub/a.env`).action).toBe("allow");
 	});
 
 	it("zero path rules: nothing is canonicalized and decisions are unchanged", async () => {

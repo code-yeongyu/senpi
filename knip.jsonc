@@ -1159,12 +1159,8 @@
       "packages/coding-agent/src/modes/rpc/host-stop-start-time.ts": ["readLiveStartTime"],
       // pre-existing at origin main aceb1cc1d9: unused exports ABSENT_CONFIRMATIONS
       "packages/coding-agent/src/modes/rpc/host-supersession.ts": ["ABSENT_CONFIRMATIONS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports HOST_WATCH_IDENTITY_INTERVAL_MS, HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS
-      "packages/coding-agent/src/modes/rpc/host-supervisor-poll.ts": ["HOST_WATCH_IDENTITY_INTERVAL_MS", "HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports HostWarmer
       "packages/coding-agent/src/modes/rpc/host-warm.ts": ["HostWarmer"],
-      // pre-existing at origin main aceb1cc1d9: unused exports HOST_WATCH_BACKSTOP_INTERVAL_MS, HOST_WATCH_IDENTITY_INTERVAL_MS, HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS
-      "packages/coding-agent/src/modes/rpc/host-watchdog.ts": ["HOST_WATCH_BACKSTOP_INTERVAL_MS", "HOST_WATCH_IDENTITY_INTERVAL_MS", "HOST_WATCH_SPAWNING_IDENTITY_INTERVAL_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports DECLINE_TRIM_PAUSE_FACTOR, collectFully
       "packages/coding-agent/src/modes/rpc/host-zero-session-trim.ts": ["DECLINE_TRIM_PAUSE_FACTOR", "collectFully"],
       // pre-existing at origin main aceb1cc1d9: unused exports loopLagErrorMs, LOOP_LAG_WARN_INTERVAL_MS
@@ -1205,8 +1201,6 @@
       "packages/coding-agent/src/modes/rpc/socket-ownership.ts": ["SOCKET_IDENTITY_WAIT_MS", "lsofSocketHolders"],
       // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_CUT_GRACE_MS
       "packages/coding-agent/src/modes/rpc/socket-sink.ts": ["SOCKET_CUT_GRACE_MS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports SOCKET_SECRET_SUFFIX
-      "packages/coding-agent/src/modes/rpc/socket-transport.ts": ["SOCKET_SECRET_SUFFIX"],
       // pre-existing at origin main aceb1cc1d9: unused exports DEFAULT_LAUNCH_SLOTS
       "packages/coding-agent/src/modes/rpc/tool-child/barrier-clock.ts": ["DEFAULT_LAUNCH_SLOTS"],
       // pre-existing at origin main aceb1cc1d9: unused exports wrapChannelSocket

@@ -58,17 +58,28 @@ export function parseLinuxMountLine(line: string): MountEntry | undefined {
  * `/proc/self/mounts` lists mounts in attach order, so that line is the mount visible at the point
  * (stacked mounts are ordinary on systemd hosts). darwin `mount` carries no such ordering contract, so a
  * repeated point is recorded as ambiguous there and the detector confirms nothing beneath it.
+ * On linux a mount whose point lies under a mount attached LATER is hidden by it (the table keeps listing
+ * it), so it is dropped: paths beneath it are judged by the mount actually visible there.
  */
 export function parseMountTable(text: string, platform: string = process.platform): MountSnapshot {
-	const byPoint = new Map<string, { entry: MountEntry; lines: number }>();
+	const byPoint = new Map<string, { entry: MountEntry; lines: number; last: number }>();
 	const rejected: string[] = [];
+	let order = 0;
 	for (const line of text.split("\n")) {
 		if (line.trim().length === 0) continue;
 		const entry = platform === "darwin" ? parseDarwinMountLine(line) : parseLinuxMountLine(line);
-		if (entry) byPoint.set(entry.on, { entry, lines: (byPoint.get(entry.on)?.lines ?? 0) + 1 });
+		if (entry) byPoint.set(entry.on, { entry, lines: (byPoint.get(entry.on)?.lines ?? 0) + 1, last: order++ });
 		else rejected.push(line);
 	}
-	const points = [...byPoint.values()];
+	const listed = [...byPoint.values()];
+	const under = (point: string, ancestor: string) =>
+		point !== ancestor && point.startsWith(ancestor === "/" ? "/" : `${ancestor}/`);
+	const points =
+		platform === "linux"
+			? listed.filter(
+					(point) => !listed.some((other) => other.last > point.last && under(point.entry.on, other.entry.on)),
+				)
+			: listed;
 	const mounts = points.map((point) => point.entry).sort((a, b) => b.on.length - a.on.length);
 	const ambiguous =
 		platform === "linux" ? [] : points.filter((point) => point.lines > 1).map((point) => point.entry.on);
