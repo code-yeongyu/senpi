@@ -1,3 +1,22 @@
+## 2026-10-28 - Ship the path identity worker in the bundle, the binaries and the source archive (senpi#4391)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs` emits `path-identity-worker` as a lazy entry beside the permission host's chunk, checks that the two share a directory (as it does for the image-resize worker), and lists the built worker in its input check.
+- `scripts/build-binaries.sh` (both platform branches) and `scripts/create-source-archive.sh` pass `src/core/extensions/builtin/permission-system/path-identity-worker.ts` as an explicit compile entry, mirroring `image-resize-worker`.
+
+### Why
+
+- The permission system resolves path identity in a worker started from a file beside its host module; without these entries the npm bundle and the compiled binaries would not contain the worker.
+
+### Why an extension could not handle it
+
+- The bundle, binary and source-archive builds are repository build tooling.
+
+### Expected merge conflict zones
+
+- LOW: the `lazyEntryPoints` list and the compile entry lists next to `image-resize-worker`.
+
 ## 2026-10-27 - Account for the capture responsibility split (part of #4272)
 
 ### What changed

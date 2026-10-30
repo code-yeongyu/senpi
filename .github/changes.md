@@ -1,3 +1,210 @@
+## 2026-10-30 - Pull-request CI runs only for PRs labelled run-full-ci (senpi#4968)
+
+### What changed
+
+- `.github/workflows/ci.yml`: no `pull_request` trigger. `push` (main) and `workflow_call` are unchanged. On a pull request the workflow runs only when `ci-full-label.yml` calls it.
+
+### Why
+
+- senpi#4968: merges are decided on a local whole-suite receipt at the exact head plus a review, so a hosted run on every PR push only held the account's shared runners, and a release job waited over an hour for one. Without a job-level gate, the required `Check and test` context stays expected on an unlabelled PR instead of passing as skipped.
+
+### Why an extension could not handle it
+
+- CI workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `on:` block and the comment above `concurrency` in `ci.yml`.
+
+## 2026-10-30 - Install Bun for the RPC supervisor exit job (senpi#4852, part of #4845)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `rpc-owner-lifetime` job installs the repository's pinned Bun (1.4.4) before running the owner-lifetime regressions.
+
+### Why
+
+- The owner-lifetime regression now covers a Bun owner killed with SIGKILL; it spawns `bun`, which the Node-only job did not provide.
+
+### Why an extension could not handle it
+
+- GitHub Actions provisions the runner before the agent runtime starts.
+
+### Expected merge conflict zones
+
+- LOW: the setup steps of the `rpc-owner-lifetime` job in `ci.yml`.
+
+## 2026-10-29 - Exercise all four Bun-certified suites in CI (senpi#4763)
+
+### What changed
+
+- `.github/workflows/ci.yml`: add client, protocol and telemetry to the workspace test selection beside server. The job already installs Bun 1.4.4.
+
+### Why
+
+- Root test commands discover these packages, but CI's explicit selection previously omitted three of them.
+
+### Why an extension could not handle it
+
+- GitHub Actions selects workspace suites outside the extension runtime.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `test-workspaces` job's workspace selection.
+
+## 2026-10-29 - Use Bun in direct CI type checks (senpi#4770)
+
+### What changed
+
+- `.github/workflows/ci.yml` and `.github/workflows/read-summary-binary-parity.yml` use `bun check --no-script --all -p` with their existing gate-harness and root projects.
+
+### Why
+
+- CI and the root validation script should use the same checker without invoking package scripts.
+
+### Why an extension could not handle it
+
+- GitHub Actions runs these commands before the agent runtime starts.
+
+### Expected merge conflict zones
+
+- LOW: the direct type-check steps in `ci.yml` and `read-summary-binary-parity.yml`.
+
+## 2026-10-28 - Knip export coverage falls back to a bounded fetch of the PR head (senpi#4714)
+
+### What changed
+
+- `.github/workflows/ci.yml`: in the `check` job (`Static checks`), the `Knip export coverage` step still fetches a pull request's own commits with `--shallow-exclude=refs/heads/<base>` first. When that fetch fails, it now logs the fallback and fetches `refs/pull/<n>/head` with `--depth=500` into the same `origin/pr-head` ref, so `KNIP_COVERAGE_HISTORY` stays `origin/pr-head`.
+
+### Why
+
+- For a stacked PR whose base PR has just merged into `main`, the server refuses the `--shallow-exclude` fetch (`fatal: error processing shallow info: 4`, exit 128). Static checks then failed with no code problem (senpi#4714).
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the `Knip export coverage` step in `.github/workflows/ci.yml`. Upstream pi-mono has no knip step, so on a sync keep this one.
+
+## 2026-10-28 - CI runs the fused-path equivalence harness (senpi#4639)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a new `fused-equivalence` job (ubuntu-latest) runs the EQ normalizer unit tests, `fused-equivalence-qa.mjs --compare --pipeline legacy --placement fused` against the linux-x64 B0 goldens (cases E01-E20), and `node-smoke-qa.mjs --compare --runtimes node,bun`; the `Check and test` fan-in needs it and lists it in its summary.
+
+### Why
+
+- The planned execution-pipeline work must keep today's fused-path behavior: a change to what a provider, an RPC client or the session store observes has to fail the PR that makes it (senpi#4628).
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the job list and the `check-and-test` `needs` list in `ci.yml`.
+
+## 2026-10-28 - CI builds the workspace once for the four coding-agent shards (senpi#4612)
+
+### What changed
+
+- `.github/workflows/ci.yml`: added the `build-coding-agent` job, which runs `npm ci --ignore-scripts`
+  and `npm run build` once and uploads every `packages/**/dist` directory as a single tarball artifact
+  (`workspace-dist`). The four `test-coding-agent` shards now `needs:` that job, download and untar the
+  artifact, and no longer run `npm run build` themselves. Their test command, shard count (`N/4`) and
+  `timeout-minutes` values are unchanged, so the set of tests that run is identical.
+
+### Why
+
+- Each shard rebuilt the same workspace: four identical builds per run, measured at 33-37 s each on a
+  recent `main` run, on a runner pool that is congested (senpi#4610). The build is a pure function of the
+  checked-out tree, so producing it once and fanning it out removes ~105 s of duplicated work per run.
+
+### Why an extension could not handle it
+
+- This is GitHub Actions workflow wiring; it has no runtime surface an extension could reach.
+
+### Expected merge conflict zones
+
+- LOW: `.github/workflows/ci.yml` around the `test-coding-agent` job. Upstream edits to that job's step
+  list (install, build, test shard) would collide with the removed build step and the added
+  download/restore steps.
+
+## 2026-10-28 - Superseded pull-request runs are cancelled in two workflows (senpi#4611)
+
+### What changed
+
+- `.github/workflows/automation-branch-guard.yml`: a workflow-level `concurrency` group keyed by the pull request number, with `cancel-in-progress: true`. `pull_request` is the only trigger, so a newer head always replaces the older verdict.
+- `.github/workflows/publish-model-catalog.yml`: a workflow-level `concurrency` group of `pr-<number>` for `pull_request` events and `run-<run_id>` for every other event, with `cancel-in-progress` evaluating to true only for `pull_request`. `workflow_run`, `schedule` and `workflow_dispatch` runs therefore each get their own group and are never cancelled; the `publish` job keeps its own R2 group.
+
+### Why
+
+- Every push to a PR branch left the previous head's run of these workflows executing, holding runners for a result no merge decision can use while the newest head waited behind a long queue (senpi#4609).
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the block between `on:` and `permissions:` in both workflow files.
+
+## 2026-10-27 - Windows check that the bundled Claude CLI runs a .cmd BROWSER helper (senpi#4437)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `claude-executable-windows` job gains a step that runs `test/anthropic-subscription-claude-cli-auth-windows.test.ts` and fails when that test did not pass (a skip counts as failure).
+
+### Why
+
+- The senpi#4436 design leaves open whether the bundled CLI can run a `.cmd` helper given as `BROWSER` on Windows; only a real Windows runner can say, and the answer picks the Windows default sign-in method.
+
+### Why an extension could not handle it
+
+- CI workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the step list of `claude-executable-windows` in `ci.yml`.
+
+## 2026-10-27 - CI runs the knip dead-code check (senpi#4421)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `check` job (`Static checks`) runs `npm run knip:check` right after `npm run check`, then fetches the base branch (and, for a pull request, its own commits) and runs `scripts/check-knip-export-coverage.mjs`.
+
+### Why
+
+- New dead code should fail the PR that adds it (senpi#4419), and a config change must never quietly stop knip from checking a file it checked before.
+
+### Why an extension could not handle it
+
+- CI workflow configuration, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the step list of the `check` job in `ci.yml`.
+
+## 2026-10-25 - Exercise the attachment presentation on Windows (senpi#4269)
+
+### What changed
+
+- `.github/workflows/ci.yml`: runs `attach.test.ts` in the Windows RPC named-pipe job and requires its assertions to execute and pass.
+
+### Why
+
+- `.github/workflows/ci.yml`: local socket tests alone cannot prove the native Windows pipe transport.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: runner selection and test-result verification belong to CI.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the terminal endpoint test command and executed-test guard.
+
 ## 2026-10-26 - Junction and ReFS receipts for the socket-secret adapter (senpi#4375)
 
 ### What changed

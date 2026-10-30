@@ -9,6 +9,7 @@ import { addAccount, emptyCredential } from "../../../src/core/extensions/builti
 import gptAccountExtension from "../../../src/core/extensions/builtin/gpt-account.ts";
 import type { ExtensionAPI } from "../../../src/core/extensions/types.ts";
 import { subscriptionLimits } from "../../../src/core/subscription-limits/limit-store.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 import { type Command, createAccountCommandContext, registerCommand } from "../account-command-harness.ts";
 
 // oh-my-openagent#9234: the account lists show each account's limit windows (used share, reset time, data age).
@@ -87,7 +88,7 @@ describe("account lists show each account's limit windows (oh-my-openagent#9234)
 	});
 
 	it("/claude-account", async () => {
-		const credential = [slot("claude-9234-reported"), slot("claude-9234-silent")].reduce(
+		const credential = [cliSlot("claude-9234-reported"), cliSlot("claude-9234-silent")].reduce(
 			(current, account) => addAccount(current, account),
 			emptyCredential(),
 		);
