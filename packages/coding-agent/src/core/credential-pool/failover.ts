@@ -1,4 +1,6 @@
 import { TURN_RETRY_SUPPRESSION_PREFIX } from "@earendil-works/pi-ai/auth/pool/failover";
+import { attachProviderDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-carrier";
+import { credentialPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
 import { type CredentialAction, type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 
 /**
@@ -57,6 +59,12 @@ export type RunCredentialFailoverOptions<TEvent, TSlot extends RunSlot> = {
 	persistBlock: (slot: TSlot, block: CredentialBlock) => void | Promise<void>;
 	onRotate?: (event: CredentialFailoverEvent<TSlot>) => void | Promise<void>;
 	onSuccess?: (slot: TSlot) => void | Promise<void>;
+	/**
+	 * Marks the terminal event forwarded when every slot is limited, with the time the first one is due
+	 * back, so the session and goal read a rate limit with its reset instead of one slot's bare error
+	 * (senpi#3975).
+	 */
+	withPoolRetryAt?: (event: TEvent, retryAt: number) => TEvent;
 	now?: () => number;
 };
 
@@ -152,6 +160,14 @@ function noSlotsMessage(slots: readonly RunSlot[], now: number): string {
 		: `No credential slots available: ${blocked.join(", ")}. ${step}`;
 }
 
+/** The soonest due-back time when a rate or usage limit is among the blocks, else undefined. */
+function limitedUntil(slots: readonly RunSlot[], now: number): number | undefined {
+	const limited = slots.some(
+		(slot) => slot.blockReason === "rate_limit" && slot.blockedUntil !== undefined && slot.blockedUntil > now,
+	);
+	return limited ? soonestRetryAt(slots, now) : undefined;
+}
+
 function soonestRetryAt(slots: readonly RunSlot[], now: number): number | undefined {
 	const deadlines = slots
 		.map((slot) => slot.blockedUntil)
@@ -203,18 +219,25 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 		const available = slots.filter((slot) => !attempted.has(slot.name) && isAvailable(slot, now()));
 		const candidates = available.length > 0 ? available : coolingProbe(slots, attempted);
 		if (candidates.length === 0) {
+			const limitedRetryAt = limitedUntil(slots, now());
 			if (lastTerminalEvent !== undefined) {
-				yield lastTerminalEvent;
+				yield limitedRetryAt === undefined || options.withPoolRetryAt === undefined
+					? lastTerminalEvent
+					: options.withPoolRetryAt(lastTerminalEvent, limitedRetryAt);
 				return;
 			}
 			const retryAt = soonestRetryAt(slots, now());
-			throw lastError !== undefined && lastOriginal !== undefined
-				? new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt })
-				: new CredentialFailoverError(
-						{ kind: "fail_request" },
-						new Error(noSlotsMessage(slots, now())),
-						retryAt === undefined ? {} : { retryAt },
-					);
+			const refusal =
+				lastError !== undefined && lastOriginal !== undefined
+					? new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt })
+					: new CredentialFailoverError(
+							{ kind: "fail_request" },
+							new Error(noSlotsMessage(slots, now())),
+							retryAt === undefined ? {} : { retryAt },
+						);
+			throw limitedRetryAt === undefined
+				? refusal
+				: attachProviderDiagnostic(refusal, credentialPoolBlockedDiagnostic(limitedRetryAt));
 		}
 		const slot = options.select(candidates);
 		let committedOutput = false;

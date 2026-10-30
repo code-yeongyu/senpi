@@ -29,7 +29,7 @@ import {
 	resumeModeSource,
 } from "./settings.ts";
 import { applyStreamEvent } from "./stream-events.ts";
-import { withAuthGuidance } from "./stream-guidance.ts";
+import { allAccountsBlockedDiagnostic, withAuthGuidance } from "./stream-guidance.ts";
 import { emptyOutput, errorMessage, mapStopReason, type StreamBlock, updateUsage } from "./stream-protocol.ts";
 import { toolWatch } from "./tool-watch.ts";
 import { resolveSdkTools } from "./tools.ts";
@@ -288,6 +288,8 @@ export function streamAnthropicSubscription(
 			const billed = sdkResultFailureUsage(error);
 			if (billed) updateUsage(model, output, billed, "query");
 			output.errorMessage = withAuthGuidance(error, errorMessage(error), claudeCodeRun);
+			const blocked = allAccountsBlockedDiagnostic(error);
+			if (blocked !== undefined) output.providerDiagnostic = blocked;
 			markColdSeedOverflow(output, model, coldSeedAttempt, coldSeedEstimate, options?.sessionId);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 		} finally {
