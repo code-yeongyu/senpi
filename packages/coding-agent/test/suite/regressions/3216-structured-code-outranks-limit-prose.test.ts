@@ -44,7 +44,7 @@ function twoAccounts(): PooledCredential {
 	};
 }
 
-function refusal(diagnostic: ProviderDiagnostic): AssistantMessage {
+function refusal(diagnostic: ProviderDiagnostic, errorMessage = SPENT_PROSE): AssistantMessage {
 	return {
 		role: "assistant",
 		content: [],
@@ -60,7 +60,7 @@ function refusal(diagnostic: ProviderDiagnostic): AssistantMessage {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 		stopReason: "error",
-		errorMessage: SPENT_PROSE,
+		errorMessage,
 		providerDiagnostic: diagnostic,
 		timestamp: START,
 	};
@@ -72,7 +72,7 @@ async function* served(): AsyncGenerator<AssistantMessageEvent> {
 	yield { type: "done", reason: "stop", message: ok };
 }
 
-async function alphaBlockMs(diagnostic: ProviderDiagnostic): Promise<number> {
+async function alphaBlockMs(diagnostic: ProviderDiagnostic, errorMessage = SPENT_PROSE): Promise<number> {
 	const stream = streamWithCredentialRotation({
 		sources: {
 			providerId: PROVIDER,
@@ -84,7 +84,7 @@ async function alphaBlockMs(diagnostic: ProviderDiagnostic): Promise<number> {
 		},
 		runAttempt: async function* (slot) {
 			if (slot.name === "alpha") {
-				yield { type: "error", reason: "error", error: refusal(diagnostic) };
+				yield { type: "error", reason: "error", error: refusal(diagnostic, errorMessage) };
 				return;
 			}
 			yield* served();
@@ -121,5 +121,59 @@ describe("senpi#3216: the provider's structured code outranks the limit prose", 
 		});
 
 		expect(blockMs).toBe(2 * HOUR);
+	});
+
+	// A throttle code only proves the adapter's prose and the window reset it names are not this
+	// throttle's wait; the server's own Retry-After (the adapter's header marker) still floors it.
+	it("#given a rate_limit_exceeded throttle carrying a Retry-After header marker #when alpha is blocked #then the header wait floors the cooldown", async () => {
+		const blockMs = await alphaBlockMs(
+			{ category: "rate_limit", httpStatus: 429, code: "rate_limit_exceeded", evidence: "structured_code" },
+			`${SPENT_PROSE} (retry-after-ms: 300000)`,
+		);
+
+		expect(blockMs).toBe(300_000);
+	});
+
+	// Anthropic mints `rate_limit_error` on every 429, spent Claude windows included, so that code
+	// proves nothing about the wait: its Retry-After and its window reset keep deciding the block.
+	it("#given an Anthropic rate_limit_error with a Retry-After marker #when alpha is blocked #then the server's wait floors the cooldown", async () => {
+		const blockMs = await alphaBlockMs(
+			{ category: "rate_limit", httpStatus: 429, code: "rate_limit_error", evidence: "structured_code" },
+			"429 rate_limit_error: Number of request tokens has exceeded your per-minute rate limit (retry-after-ms: 300000)",
+		);
+
+		expect(blockMs).toBe(300_000);
+	});
+
+	it("#given an Anthropic rate_limit_error for a spent Claude window #when alpha is blocked #then it stays out until the window resets", async () => {
+		const blockMs = await alphaBlockMs(
+			{
+				category: "rate_limit",
+				httpStatus: 429,
+				code: "rate_limit_error",
+				evidence: "structured_code",
+				resetsAt: START + 2 * HOUR,
+			},
+			"429 rate_limit_error: This request would exceed your account's rate limit. (retry-after-ms: 7200000)",
+		);
+
+		expect(blockMs).toBe(2 * HOUR);
+	});
+
+	// A coded reset already past proves nothing (clock skew, a stale field), so the reset the prose
+	// names still floors the block instead of the default cooldown.
+	it("#given a usage_limit_reached refusal whose coded reset already passed #when alpha is blocked #then the prose reset still floors the block", async () => {
+		const blockMs = await alphaBlockMs(
+			{
+				category: "quota",
+				httpStatus: 429,
+				code: "usage_limit_reached",
+				evidence: "structured_code",
+				resetsAt: START - 60_000,
+			},
+			"You have hit your ChatGPT usage limit (plus plan). Try again in ~10 min.",
+		);
+
+		expect(blockMs).toBe(10 * 60_000);
 	});
 });

@@ -3,7 +3,7 @@ import { DEFAULT_SLOT_BLOCK_MS, MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/
 import { normalizeProviderError } from "@earendil-works/pi-ai/utils/error-body";
 import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
 import { getOverflowPatterns } from "@earendil-works/pi-ai/utils/overflow";
-import { extract429RetryAfterMs } from "@earendil-works/pi-ai/utils/retry-hint";
+import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { rateLimitModelFamily } from "./model-scope.ts";
 import { usageLimitResetMs } from "./reset-time.ts";
 import { isAccountUsageLimitText } from "./usage-limit.ts";
@@ -93,7 +93,8 @@ const TEMPORARY_FAULT_TEXT =
  * What the provider's own error code, minted by the adapter from the response's structured fields,
  * says about a limit. It outranks the message prose: the ChatGPT adapter words every 429 that carries
  * an error object as a spent account, so a per-request `rate_limit_exceeded` throttle read as prose
- * blocked the account until its far window reset (senpi#3216). Undefined when no code proves either.
+ * blocked the account until its far window reset (senpi#3216). Undefined when no code proves either:
+ * Anthropic's `rate_limit_error` comes on every 429, spent Claude windows included, so it proves neither.
  */
 function limitFromProviderCode(
 	error: unknown,
@@ -102,7 +103,6 @@ function limitFromProviderCode(
 	if (diagnostic?.evidence !== "structured_code") return undefined;
 	switch (diagnostic.code) {
 		case "rate_limit_exceeded":
-		case "rate_limit_error":
 			return { kind: "throttle" };
 		case "usage_limit_reached":
 		case "usage_not_included":
@@ -185,12 +185,15 @@ export function classifyCredentialFailure(
 		// header, a reset field or reset prose) floors its cooldown; without one,
 		// the default cooldown stands. Plain rate limits keep today's hint only.
 		// A coded throttle's text is the adapter's spent-account wording, so neither it nor the window
-		// reset it names is this throttle's wait; a coded spent account's reset is the diagnostic's own.
-		const codedReset =
+		// reset it names is this throttle's wait; only the server's Retry-After header (the adapter's
+		// marker) is. A coded spent account's reset is the diagnostic's own; one already past proves
+		// nothing, so the reset the response names still decides.
+		const codedResetMs =
 			codedLimit?.kind === "spent" && codedLimit.resetsAt !== undefined ? codedLimit.resetsAt - nowMs : undefined;
+		const codedReset = codedResetMs !== undefined && codedResetMs > 0 ? codedResetMs : undefined;
 		const hint =
 			codedLimit?.kind === "throttle"
-				? undefined
+				? parseRetryAfterMsMarker(text)
 				: (codedReset ??
 					extract429RetryAfterMs({ status: status ?? 429, bodyText: text }, nowMs) ??
 					(usageLimit ? (normalized.retryAfterMs ?? usageLimitResetMs(text, nowMs)) : undefined));
