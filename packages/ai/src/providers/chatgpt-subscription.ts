@@ -24,7 +24,7 @@ export function chatgptSubscriptionProvider(): Provider<"openai-codex-responses"
 		id: model.upstreamModelId ?? model.id,
 		compat: { ...(model.compat as OpenAIResponsesCompat), siwc: true, webSearchToolType: "web_search" },
 	});
-	return createProvider({
+	return createProvider<"openai-codex-responses" | "openai-responses">({
 		id: "chatgpt-subscription",
 		name: "ChatGPT Subscription",
 		baseUrl: "https://chatgpt.com/backend-api",
