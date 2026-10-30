@@ -121,8 +121,8 @@ describe("a last-resort rung is reachable only through a usage limit, billing or
 	});
 
 	it("#given a last-resort entry #when the chain is validated #then it is accepted", () => {
-		expect(
-			validateFallbackChains({ "anthropic-subscription/claude-fable-5-1": lastResortChain }, registry),
-		).toEqual([]);
+		expect(validateFallbackChains({ "anthropic-subscription/claude-fable-5-1": lastResortChain }, registry)).toEqual(
+			[],
+		);
 	});
 });

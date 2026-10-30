@@ -3877,7 +3877,7 @@ export class AgentSession {
 			return true;
 		}
 		if (isCursorQuotaResourceExhausted(lastAssistant, this.model?.contextWindow ?? 0)) {
-			return this._retryFallback.canTryFallback();
+			return this._retryFallback.canTryFallback(undefined, lastAssistant);
 		}
 		if (!retryableError && this._isHardErrorFallbackEligible(lastAssistant)) {
 			return true;
@@ -3888,11 +3888,11 @@ export class AgentSession {
 		}
 
 		if (isClassifierRefusal(lastAssistant)) {
-			return this._retryAttempt + 1 <= turnMaxRetries && this._retryFallback.canTryFallback();
+			return this._retryAttempt + 1 <= turnMaxRetries && this._retryFallback.canTryFallback(undefined, lastAssistant);
 		}
 
 		if (this._retryAttempt + 1 > turnMaxRetries) {
-			return this._retryFallback.canTryFallback();
+			return this._retryFallback.canTryFallback(undefined, lastAssistant);
 		}
 
 		const errorMessage = lastAssistant.errorMessage || "Unknown error";
@@ -3904,7 +3904,7 @@ export class AgentSession {
 		if (providerDelayMs <= this.settingsManager.getProviderRetrySettings().maxRetryDelayMs) {
 			return true;
 		}
-		return this._retryFallback.canTryFallback();
+		return this._retryFallback.canTryFallback(undefined, lastAssistant);
 	}
 
 	private _isRequiredCompactionError(message: AssistantMessage): boolean {
@@ -12735,7 +12735,7 @@ export class AgentSession {
 			!isCursorZeroTokenResourceExhausted(message) &&
 			!isClassifierRefusal(message) &&
 			!message.content.some((content) => content.type === "toolCall") &&
-			this._retryFallback.canTryFallback(isRequestLevelRefusal(message) ? message.provider : undefined)
+			this._retryFallback.canTryFallback(isRequestLevelRefusal(message) ? message.provider : undefined, message)
 		);
 	}
 
