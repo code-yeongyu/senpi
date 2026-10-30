@@ -1,4 +1,5 @@
 import type { Credential } from "@earendil-works/pi-ai";
+import { stampLogin } from "@earendil-works/pi-ai/auth/pool/login-id";
 import type { CredentialSlot, PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
 import {
@@ -122,10 +123,15 @@ function copyGrants(
 	const recorded = [
 		...new Set([...importedDigests(entry), ...source.grants.map((grant) => authGrantDigest(grant.refresh))]),
 	];
+	// Copying an unrecorded grant adds a signed-in account to the subscription lane, so it carries a
+	// login id like any sign-in (senpi#4099): the `anthropic` login's own id when it has one, else a
+	// fresh one. Recorded grants never reach here, so a re-parse never mints again.
+	const copied = { ...subscription, accounts, ...(pinned === undefined ? {} : { pinned }) };
+	const loginId = typeof entry.loginId === "string" && entry.loginId ? entry.loginId : undefined;
 	return {
 		...data,
 		anthropic: Object.assign({}, data.anthropic, { [IMPORTED_GRANTS_FIELD]: recorded }),
-		[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]: { ...subscription, accounts, ...(pinned === undefined ? {} : { pinned }) },
+		[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID]: loginId ? { ...copied, loginId } : stampLogin(copied),
 	};
 }
 

@@ -21,6 +21,7 @@ import { refusalError } from "./refusal.ts";
 import { getSdkBoundary, loadClaudeAgentSdk, type SdkQueryHandle } from "./sdk-boundary.ts";
 import { type ContinuityObservation, emitContinuityObservation } from "./session-observability.ts";
 import { forgetBinding } from "./session-reattach.ts";
+import { anthropicSubscriptionDiagnostic } from "./provider-diagnostic.ts";
 import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
 import { residentSessionMessages } from "./session-stream.ts";
 import {
@@ -288,6 +289,8 @@ export function streamAnthropicSubscription(
 			const billed = sdkResultFailureUsage(error);
 			if (billed) updateUsage(model, output, billed, "query");
 			output.errorMessage = withAuthGuidance(error, errorMessage(error), claudeCodeRun);
+			const diagnostic = output.stopReason === "error" ? anthropicSubscriptionDiagnostic(error) : undefined;
+			if (diagnostic !== undefined) output.providerDiagnostic = diagnostic;
 			markColdSeedOverflow(output, model, coldSeedAttempt, coldSeedEstimate, options?.sessionId);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 		} finally {
