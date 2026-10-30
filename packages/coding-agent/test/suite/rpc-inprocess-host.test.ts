@@ -9,7 +9,7 @@ import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts"
 import { RpcSessionRegistry } from "../../src/modes/rpc/session-registry.ts";
 import { SESSION_WORKER_LIMITS } from "../../src/modes/rpc/session-worker-protocol.ts";
 import { listedSessions, MAX_THREADS_PER_SESSION, opened, threadCount } from "./rpc-inprocess-host-metrics.ts";
-import { createInProcessRig } from "./rpc-inprocess-host-support.ts";
+import { createInProcessRig, inProcessRuntimeFactory } from "./rpc-inprocess-host-support.ts";
 import { startInProcessHost, startWorkerHost } from "./rpc-worker-host-support.ts";
 
 /** Sessions opened on one host: more than double the worker runtime's 20-worker cap. */
@@ -209,6 +209,52 @@ it("reopens a closed path while the previous session is still tearing down", asy
 	expect(await rig.list()).toEqual([
 		expect.objectContaining({ sessionId: reopened.sessionId, status: "open", attachments: 1 }),
 	]);
+});
+
+it("reopens after close grace expires while the path claim is still being removed", async () => {
+	vi.useFakeTimers({ toFake: [...IDLE_CLOCK_FAKES] });
+	const dir = await rigDir();
+	const path = join(dir, "slow-release.jsonl");
+	const removing = Promise.withResolvers<void>();
+	const removed = Promise.withResolvers<void>();
+	const { createRuntime } = inProcessRuntimeFactory();
+	const registry = new RpcSessionRegistry({
+		agentDir: dir,
+		createRuntime,
+		closeGraceMs: 100,
+		pathReservations: {
+			claim: async () => undefined,
+			release: async () => {
+				removing.resolve();
+				await removed.promise;
+			},
+			setAttached: () => {},
+		},
+	});
+	const session = await registry.openSession({ cwd: dir, sessionPath: path });
+	const closing = registry.close(session.sessionId);
+	await removing.promise;
+	await vi.advanceTimersByTimeAsync(100);
+	await closing;
+	expect(registry.size).toBe(0);
+
+	// The close is bounded, but the removal is still live. Reopen must wait for
+	// that exact removal, not attach to the entry the close already deleted.
+	const reopening = registry.openSession({ cwd: dir, sessionPath: path });
+	const outcome = reopening.then(
+		(value) => value,
+		(cause: unknown) => cause,
+	);
+	removed.resolve();
+	try {
+		expect(await outcome).toMatchObject({
+			sessionPath: session.sessionPath,
+			sessionId: expect.not.stringMatching(`^${session.sessionId}$`),
+		});
+	} finally {
+		const entries = registry.list();
+		await Promise.all(entries.map((entry) => registry.close(entry.sessionId)));
+	}
 });
 
 it("names client_close on an explicit close_session", async () => {
