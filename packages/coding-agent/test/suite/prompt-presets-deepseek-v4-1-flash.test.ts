@@ -55,7 +55,7 @@ const V41_FLASH_MODEL_IDS: ReadonlyArray<readonly [id: string, provider: string]
 const SNAPSHOT_1017 = /v4[.p -]?1[- ]flash[- (]+1017/i;
 const SHIPPED_1017_ROWS: ReadonlyArray<readonly [provider: string, id: string, model: Model<Api>]> =
 	getProviders().flatMap((provider) =>
-		(getModels(provider) as Model<Api>[])
+		getModels(provider)
 			.filter((model) => SNAPSHOT_1017.test(`${model.id} ${model.name}`))
 			.map((model) => [provider, model.id, model] as const),
 	);
@@ -112,7 +112,7 @@ function hasV4FlashSignal(searchable: string): boolean {
 
 function getV41CatalogModels(): Model<Api>[] {
 	return getProviders().flatMap((provider) =>
-		(getModels(provider) as Model<Api>[]).filter((model) => {
+		getModels(provider).filter((model) => {
 			const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
 			return hasV41Signal(searchable) || (model.provider === "deepseek" && hasV4FlashSignal(searchable));
 		}),

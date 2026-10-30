@@ -1,5 +1,43 @@
 # changes
 
+## 2026-10-29 - Shared inherited duplex adoption (senpi#4771)
+
+### What changed
+
+- `packages/coding-agent/src/utils/inherited-duplex.ts` (new): the Node socket / Bun file-stream adoption of an inherited pipe or socket, extracted from `mcp-presenter-bootstrap.ts` so MCP enrollment and named private descriptors share one implementation.
+
+### Why
+
+- One owner for inherited-descriptor adoption instead of two copies (#4749).
+
+### Why an extension could not handle it
+
+- It is used by core startup code before extensions load.
+
+### Expected merge conflict zones
+
+- None expected; new file.
+
+## 2026-10-27 - Bundled bun shims are written per engine trust generation (omo#10762)
+
+### What changed
+
+- `packages/coding-agent/src/utils/bundled-bun.ts`: the shim directory key and the shim bytes come from `bundled-bun-shim.ts`; with no adopted generation both are exactly as before.
+- `packages/coding-agent/src/utils/bundled-bun-shim.ts` (new): POSIX and `.cmd` shim writers. Under an adopted generation a shim sets `NODE_EXTRA_CA_CERTS` and the owned `SSL_CERT_FILE`/`SSL_CERT_DIR` closure only for its own exec, a server launch clears `NODE_USE_SYSTEM_CA` and `BUN_OPTIONS`, a fallback generation prints one degraded-import notice per generation, and an unencodable `.cmd` value yields a shim that exits 78 with the `set-tmpdir` action.
+- `packages/coding-agent/src/engine-trust/actions.ts` (new): the engine trust action catalog (reason or refusal code to action id and text).
+
+### Why
+
+- omo#10762, design r13 5.6 and 6.6: an agent's `bun` must use the engine's trust generation, never Bun's unfiltered system store or the OpenSSL default inputs, and the agent shell itself must never hold the generation.
+
+### Why an extension could not handle it
+
+- The shim directory is appended to the agent shell's PATH by the shell environment builder in `utils/shell.ts`, below the extension surface.
+
+### Expected merge conflict zones
+
+- LOW: `shimFiles` and `materialize` in `bundled-bun.ts`.
+
 ## 2026-10-19 - Never signal a child whose spawn failed (senpi#3706)
 
 ### What changed

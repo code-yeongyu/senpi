@@ -68,6 +68,51 @@ it("T2/R93 a completion write failure never activates and releases exactly once"
 	}
 });
 
+it.each(["completion", "activation"] as const)(
+	"T2/R93 a %s failure followed by a failed failure-row write keeps storage_unavailable",
+	async (failure) => {
+		const ledger = new CompactAdmissions();
+		const release = vi.fn(async () => {});
+		const activate = vi.fn(() => {
+			if (failure === "activation") throw new Error("activation fixture cause");
+		});
+		const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+		let failures = 0;
+		vi.spyOn(fs, "writeFile").mockImplementation(async (...args) => {
+			if (
+				typeof args[1] === "string" &&
+				failures < (failure === "completion" ? 2 : 1) &&
+				(args[1].startsWith('{"state":"failed"') ||
+					(failure === "completion" && args[1].startsWith('{"state":"complete"')))
+			) {
+				failures++;
+				await actual.writeFile(args[0], "{", args[2]);
+				throw Object.assign(new Error("storage fixture cause"), { code: "EIO" });
+			}
+			return actual.writeFile(...args);
+		});
+		try {
+			const cause = await ledger
+				.run(identity, async () => ({ answer, activate, release }))
+				.catch((cause: unknown) => cause);
+			expect.soft(cause).toBeInstanceOf(CompactAdmissionError);
+			expect.soft(cause).toMatchObject({ reason: "storage_unavailable" });
+			expect(failures).toBeGreaterThanOrEqual(failure === "completion" ? 2 : 1);
+			vi.mocked(fs.writeFile).mockImplementation(actual.writeFile);
+			const produce = vi.fn(async () => ({ answer, activate, release }));
+			await expect(ledger.run(identity, produce)).rejects.toMatchObject({ reason: "storage_unavailable" });
+			expect(await ledger.pending(identity.socketEpoch, identity.admissionId)).toBe(false);
+			expect(await ledger.result(identity.socketEpoch, identity.admissionId)).toBeUndefined();
+			expect(await ledger.cancel(identity.socketEpoch, identity.admissionId)).toBe("already_complete");
+			expect(produce).not.toHaveBeenCalled();
+			expect(release).toHaveBeenCalledTimes(1);
+			expect(log).toHaveBeenCalledWith(expect.stringContaining("admission failure row write failed"));
+		} finally {
+			await ledger.dispose();
+		}
+	},
+);
+
 it("T2/R93 peer end during the completion write prevents activation and releases once", async () => {
 	const ledger = new CompactAdmissions();
 	const gate = terminalWrite();
