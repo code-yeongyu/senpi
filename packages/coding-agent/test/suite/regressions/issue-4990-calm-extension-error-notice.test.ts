@@ -140,6 +140,44 @@ describe("senpi#4990 calm extension error notices", () => {
 		expect(rendered).toContain(path.basename(getDebugLogPath()));
 	});
 
+	it("keeps the user-facing contract of a failure deferred through ctx.afterSessionStart", async () => {
+		fs.writeFileSync(
+			path.join(extensionsDir, "deferred.ts"),
+			`export default function (pi) {
+	pi.on("session_start", async (_event, ctx) => {
+		ctx.afterSessionStart(() => {
+			const error = new Error("raw");
+			error.userFacing = { code: "DEFERRED_SETUP", message: "Setup could not finish.", action: "Run /setup again." };
+			throw error;
+		});
+	});
+}
+`,
+		);
+		const loaded = await discoverAndLoadExtensions([], tempDir, tempDir);
+		const registry = await createInMemoryModelRegistry(AuthStorage.inMemory());
+		const runner = new ExtensionRunner(
+			loaded.extensions,
+			loaded.runtime,
+			tempDir,
+			SessionManager.inMemory(),
+			registry,
+		);
+		const errors: ExtensionError[] = [];
+		runner.onError((error) => errors.push(error));
+		await runner.emit({ type: "session_start", reason: "startup" });
+
+		expect(errors).toMatchObject([
+			{ userFacing: { code: "DEFERRED_SETUP", message: "Setup could not finish.", action: "Run /setup again." } },
+		]);
+		const [error] = errors;
+		if (error === undefined) throw new Error("missing extension error");
+		const rendered = renderExtensionError(error);
+		expect(rendered).toContain("Setup could not finish.");
+		expect(rendered).toContain("Run /setup again.");
+		expect(rendered).not.toContain("Something went wrong");
+	});
+
 	it("writes the stack to the debug log instead of the screen", async () => {
 		const statePath = path.join(tempDir, "state", "cache.json");
 		await captureContextError("flaky-ext.ts", uncodedExtension(statePath));

@@ -608,7 +608,7 @@ export class ExtensionRunner {
 		this.emitError({
 			extensionPath: RUNTIME_EXTENSION_PATH,
 			event: "session_start",
-			error: error instanceof Error ? error.message : String(error),
+			...extensionFailureFields(error),
 		}),
 	);
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
@@ -1169,7 +1169,7 @@ export class ExtensionRunner {
 			this.emitError({
 				extensionPath: RUNTIME_EXTENSION_PATH,
 				event: "session_start",
-				error: error instanceof Error ? error.message : String(error),
+				...extensionFailureFields(error),
 			});
 		};
 		try {
@@ -1683,7 +1683,7 @@ export class ExtensionRunner {
 						runner.emitError({
 							extensionPath: excludeBeforeProviderRequestExtensionPath ?? RUNTIME_EXTENSION_PATH,
 							event: "user_activity",
-							error: error instanceof Error ? error.message : String(error),
+							...extensionFailureFields(error),
 						});
 					}
 				});

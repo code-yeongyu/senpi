@@ -38,7 +38,28 @@ const MAX_REASON_CHARACTERS = 240;
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 const ANSI_SEQUENCES = /\u001b\][\s\S]*?(?:\u0007|\u001b\\|\u009c|$)|(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g;
 const EXTENSION_MODULE_URL = /senpi-extension:[^\s"'`)\]>]+/g;
-const FILESYSTEM_PATH = /(^|[\s"'`(<[=,])((?:file:\/\/)?(?:~|[A-Za-z]:)?(?:[\\/][^\s\\/"'`)\]>,]+){2,}[\\/]?)/g;
+const FILESYSTEM_PATH = /(^|[\s"'`(<[=,])((?:file:\/\/)?(?:~|[A-Za-z]:|\\)?(?:[\\/][^\s\\/"'`)\]>,]+){2,}[\\/]?)/g;
+const QUOTED_PATH = /(["'`])((?:file:\/\/)?(?:~|[A-Za-z]:|\\)?[\\/][^"'`\n]*[\\/][^"'`\n]*)\1/g;
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** The user's home directory, written with either separator, so a path under it never shows the account name. */
+function homePrefix(): RegExp | undefined {
+	const home = homedir();
+	if (home.length < 2) return undefined;
+	const pattern = home.split(/[\\/]/).map(escapeRegExp).join("[\\\\/]");
+	return new RegExp(`(?:file://)?${pattern}(?=[\\\\/]|$)`, "gi");
+}
+
+/** A path under the home directory (already `~`) that may contain spaces: it runs to the first file-like segment. */
+const HOME_FILE_PATH = /~[\\/][^"'`\n]*?[^\s"'`\\/]+\.[A-Za-z0-9]{1,8}(?=[\s:;,)"'`]|$)/g;
+
+function cutToLength(text: string, max: number): string {
+	const characters = Array.from(text);
+	return characters.length <= max ? text : `${characters.slice(0, max - 1).join("")}…`;
+}
 
 function lastSegment(value: string): string {
 	const segments = value.split(/[\\/]/).filter((segment) => segment.length > 0);
@@ -56,6 +77,13 @@ function decodedModuleName(moduleUrl: string): string {
 
 export function extensionSourceName(extensionPath: string): string {
 	if (extensionPath === RUNTIME_EXTENSION_PATH || extensionPath === "runtime") return "the session runtime";
+	if (extensionPath.startsWith("command:")) {
+		const command = extensionPath
+			.slice("command:".length)
+			.replace(ANSI_SEQUENCES, "")
+			.replace(CONTROL_CHARACTERS, "");
+		return command.length === 0 ? "a command" : `/${command}`;
+	}
 	const segments = extensionPath.split(/[\\/]/).filter((segment) => segment.length > 0);
 	const file = segments.at(-1) ?? extensionPath;
 	const stem = file.replace(/\.[cm]?[jt]sx?$/i, "");
@@ -71,19 +99,23 @@ export function extensionErrorReason(message: string): string {
 			.split(/\r?\n|\r/)
 			.map((line) => line.trim())
 			.find((line) => line.length > 0) ?? "";
-	const reason = firstLine
+	const home = homePrefix();
+	const reason = (home === undefined ? firstLine : firstLine.replace(home, "~"))
 		.replace(CONTROL_CHARACTERS, "")
 		.replace(EXTENSION_MODULE_URL, (moduleUrl) => decodedModuleName(moduleUrl))
+		.replace(HOME_FILE_PATH, (path) => lastSegment(path))
+		.replace(QUOTED_PATH, (_match, quote: string, path: string) => `${quote}${lastSegment(path)}${quote}`)
 		.replace(FILESYSTEM_PATH, (_match, lead: string, path: string) => `${lead}${lastSegment(path)}`)
 		.replace(/\s+/g, " ");
 	if (reason.length === 0) return "No reason was given.";
-	return reason.length <= MAX_REASON_CHARACTERS ? reason : `${reason.slice(0, MAX_REASON_CHARACTERS - 1)}…`;
+	return cutToLength(reason, MAX_REASON_CHARACTERS);
 }
 
 export function displayDebugLogPath(): string {
 	const logPath = getDebugLogPath();
 	const home = homedir();
-	return home.length > 0 && logPath.startsWith(`${home}/`) ? `~${logPath.slice(home.length)}` : logPath;
+	const under = home.length > 0 && logPath.startsWith(home) && /^[\\/]/.test(logPath.slice(home.length));
+	return under ? `~${logPath.slice(home.length)}` : logPath;
 }
 
 export function describeExtensionError(

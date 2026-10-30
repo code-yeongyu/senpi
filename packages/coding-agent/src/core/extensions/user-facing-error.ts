@@ -29,43 +29,76 @@ export class UserFacingError extends Error {
 
 const CODE_PATTERN = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
 const MAX_FIELD_CHARACTERS = 1000;
+const TERMINAL_SEQUENCES = /\u001b\][\s\S]*?(?:\u0007|\u001b\\|\u009c|$)|(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/g;
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/g;
 
+/**
+ * Read one property of a value an extension threw. The value is untrusted: a getter or a Proxy trap may throw,
+ * and that must never escape the runner's catch block, so any throw counts as "no such property".
+ */
+function readProperty(value: object, key: string): unknown {
+	try {
+		return Reflect.get(value, key);
+	} catch {
+		return undefined;
+	}
+}
+
+/** One display line: terminal sequences and control characters removed, whitespace collapsed, length capped. */
 function textField(record: object, key: string): string | undefined {
-	const value: unknown = key in record ? Reflect.get(record, key) : undefined;
+	const value = readProperty(record, key);
 	if (typeof value !== "string") return undefined;
-	const trimmed = value.trim();
-	return trimmed.length === 0 ? undefined : trimmed.slice(0, MAX_FIELD_CHARACTERS);
+	const line = value.replace(TERMINAL_SEQUENCES, "").replace(CONTROL_CHARACTERS, " ").replace(/\s+/g, " ").trim();
+	return line.length === 0 ? undefined : Array.from(line).slice(0, MAX_FIELD_CHARACTERS).join("");
 }
 
 /** Read the user-facing contract off a thrown value; anything malformed counts as an unexpected error. */
 export function userFacingErrorOf(value: unknown): UserFacingErrorInfo | undefined {
-	if (typeof value !== "object" || value === null || !("userFacing" in value)) return undefined;
-	const info = value.userFacing;
+	if (typeof value !== "object" || value === null) return undefined;
+	const info = readProperty(value, "userFacing");
 	if (typeof info !== "object" || info === null) return undefined;
 	const code = textField(info, "code");
 	const message = textField(info, "message");
 	if (code === undefined || message === undefined || !CODE_PATTERN.test(code)) return undefined;
-	if ("action" in info && info.action !== undefined && typeof info.action !== "string") return undefined;
+	const rawAction = readProperty(info, "action");
+	if (rawAction !== undefined && typeof rawAction !== "string") return undefined;
 	const action = textField(info, "action");
 	const docsUrl = textField(info, "docsUrl");
 	return {
 		code,
 		message,
 		...(action === undefined ? {} : { action }),
-		...(docsUrl !== undefined && /^https?:\/\//i.test(docsUrl) ? { docsUrl } : {}),
+		...(docsUrl !== undefined && /^https?:\/\/\S+$/i.test(docsUrl) ? { docsUrl } : {}),
 	};
 }
 
-/** The `ExtensionError` fields every capture site derives from a thrown value. */
+function errorText(thrown: unknown, key: "message" | "stack"): string | undefined {
+	if (!(thrown instanceof Error)) return undefined;
+	const value = readProperty(thrown, key);
+	return typeof value === "string" ? value : undefined;
+}
+
+function describeThrown(thrown: unknown): string {
+	const message = errorText(thrown, "message");
+	if (message !== undefined) return message;
+	try {
+		return String(thrown);
+	} catch {
+		return "an unprintable value was thrown";
+	}
+}
+
+/** The `ExtensionError` fields every capture site derives from a thrown value; never throws. */
 export function extensionFailureFields(thrown: unknown): {
 	readonly error: string;
 	readonly stack?: string;
 	readonly userFacing?: UserFacingErrorInfo;
 } {
 	const userFacing = userFacingErrorOf(thrown);
+	const stack = errorText(thrown, "stack");
 	return {
-		error: thrown instanceof Error ? thrown.message : String(thrown),
-		...(thrown instanceof Error && thrown.stack !== undefined ? { stack: thrown.stack } : {}),
+		error: describeThrown(thrown),
+		...(stack === undefined ? {} : { stack }),
 		...(userFacing === undefined ? {} : { userFacing }),
 	};
 }

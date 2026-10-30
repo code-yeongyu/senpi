@@ -1,10 +1,16 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	describeExtensionError,
 	extensionErrorNoticeLines,
 	extensionSourceName,
 } from "../src/core/extensions/error-notice.ts";
-import { UserFacingError, userFacingErrorOf } from "../src/core/extensions/user-facing-error.ts";
+import {
+	extensionFailureFields,
+	UserFacingError,
+	userFacingErrorOf,
+} from "../src/core/extensions/user-facing-error.ts";
 import { extensionErrorNoticeSpec } from "../src/modes/interactive/extension-error-format.ts";
 import { extensionErrorEvent } from "../src/modes/rpc/extension-error-event.ts";
 
@@ -152,5 +158,78 @@ describe("extensionErrorEvent", () => {
 			},
 		});
 		expect(JSON.stringify(event)).not.toContain("at x");
+	});
+});
+
+describe("untrusted thrown values (review of #4992)", () => {
+	const throwingGetter = Object.assign(new Error("raw"), {});
+	Object.defineProperty(throwingGetter, "userFacing", {
+		get() {
+			throw new Error("getter boom");
+		},
+	});
+	const throwingProxy = new Proxy(
+		{},
+		{
+			get() {
+				throw new Error("trap boom");
+			},
+			has() {
+				return true;
+			},
+		},
+	);
+	const throwingMessage = new Error("hidden");
+	Object.defineProperty(throwingMessage, "message", {
+		get() {
+			throw new Error("message boom");
+		},
+	});
+
+	it.each([
+		["a throwing userFacing getter", throwingGetter, "raw"],
+		["a throwing Proxy", throwingProxy, "an unprintable value was thrown"],
+		["an Error whose message getter throws", throwingMessage, "an unprintable value was thrown"],
+	])("never throws for %s and falls back to the unexpected path", (_name, thrown, error) => {
+		const fields = extensionFailureFields(thrown);
+		expect(fields.userFacing).toBeUndefined();
+		expect(fields.error).toContain(error);
+	});
+
+	it("reduces coded fields to one clean line", () => {
+		expect(
+			userFacingErrorOf({
+				userFacing: { code: "C", message: "line1\nline2 \u001b[31mred\u001b[0m", action: "do\r\nthis\u0007" },
+			}),
+		).toEqual({ code: "C", message: "line1 line2 red", action: "do this" });
+	});
+});
+
+describe("path and name scrubbing (review of #4992)", () => {
+	const reasonOf = (error: string) =>
+		extensionErrorNoticeLines(describeExtensionError({ extensionPath: "x.ts", error }, {}))[1];
+
+	it.each([
+		[
+			"a home path with spaces",
+			`open ${join(homedir(), "My Docs", "secret", "x.json")} failed`,
+			"open x.json failed",
+		],
+		["a quoted path with spaces", `open '/opt/My App/data/x.json' failed`, "open 'x.json' failed"],
+		["a UNC path", "open \\\\server\\share\\x.txt failed", "open x.txt failed"],
+		["a file URL under home", `load file://${join(homedir(), "a b", "c.ts")}:3:4`, "load c.ts:3:4"],
+	])("cuts %s to its file name", (_name, error, expected) => {
+		expect(reasonOf(error)).toBe(expected);
+		expect(reasonOf(error)).not.toContain(homedir());
+	});
+
+	it("names a slash command source by its command", () => {
+		expect(extensionSourceName("command:computer")).toBe("/computer");
+	});
+
+	it("never splits a surrogate pair when cutting a long reason", () => {
+		const reason = reasonOf("x".repeat(238) + "😀😀😀");
+		expect(Array.from(reason ?? "").at(-1)).toBe("…");
+		expect(reason).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
 	});
 });
