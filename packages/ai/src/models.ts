@@ -803,10 +803,15 @@ class ModelsImpl implements MutableModels {
 			async (current) => {
 				mutationStarted = true;
 				markMutationStarted?.();
-				return appendLoginSlot(current, credential, (name, origin) => {
-					committedName = name;
-					committedOrigin = origin;
-				});
+				return appendLoginSlot(
+					current,
+					credential,
+					(name, origin) => {
+						committedName = name;
+						committedOrigin = origin;
+					},
+					{ accountIdentity: provider.auth.oauth?.accountIdentity },
+				);
 			},
 			{ signal },
 		);
