@@ -806,7 +806,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 			if (isLocalPath(p)) {
 				const resolved = this.resolveResourcePath(p);
 				if (!existsSync(resolved) && !this.skillDiagnostics.some((d) => d.path === resolved)) {
-					this.skillDiagnostics.push({ type: "error", message: "Skill path does not exist", path: resolved });
+					this.skillDiagnostics.push({
+						type: "error",
+						kind: "read-error",
+						message: "Skill path does not exist",
+						path: resolved,
+					});
 				}
 			}
 		}

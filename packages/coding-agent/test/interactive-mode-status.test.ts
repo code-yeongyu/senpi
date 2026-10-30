@@ -13,10 +13,12 @@ import { TuiMainScreen } from "../../tui/src/tui-main-screen.ts";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import { APP_TITLE } from "../src/config.ts";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
+import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type { QuietStartup } from "../src/core/settings-manager.ts";
 import { warnIfLargeSkillCatalog } from "../src/core/skills-prompt.ts";
+import { loadSkills } from "../src/core/skills.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { InteractiveMode, showsStartupDetails, showsStartupHeader } from "../src/modes/interactive/interactive-mode.ts";
@@ -925,7 +927,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 		appendSystemPromptSources?: Array<{ path: string }>;
 		extensions?: ExtensionFixture[];
 		skills?: Array<{ filePath: string; name: string; sourceInfo?: SourceInfo }>;
-		skillDiagnostics?: Array<{ type: "warning" | "error" | "collision"; message: string }>;
+		skillDiagnostics?: ResourceDiagnostic[];
 		useRealScopeGroups?: boolean;
 	}) {
 		const fakeThis: any = {
@@ -1668,7 +1670,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 		const fakeThis = createShowLoadedResourcesThis({
 			quietStartup: true,
 			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
-			skillDiagnostics: [{ type: "warning", message: "duplicate skill name" }],
+			skillDiagnostics: [{ type: "collision", message: "duplicate skill name" }],
 		});
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
@@ -1680,6 +1682,84 @@ describe("InteractiveMode.showLoadedResources", () => {
 		expect(output).toContain("Skill conflicts");
 		expect(output).toContain(theme.getBgAnsi("customMessageBg"));
 		expect(output).not.toContain("[Skills]");
+	});
+
+	// senpi#4940: use real loader results and real formatting, including quiet startup.
+	test.each([false, true, "header"] as const)(
+		"separates invalid skill files from real collisions with quietStartup=%s",
+		(quietStartup) => {
+			const fixtureRoot = path.resolve(__dirname, "fixtures");
+			const brokenPath = path.join(fixtureRoot, "skills/invalid-scalar/SKILL.md");
+			const load = (skillPaths: string[]) =>
+				loadSkills({
+					cwd: fixtureRoot,
+					agentDir: path.join(fixtureRoot, "empty-agent"),
+					includeDefaults: false,
+					skillPaths,
+				});
+			const invalid = load([brokenPath]);
+			const duplicates = load([
+				path.join(fixtureRoot, "skills-collision/first"),
+				path.join(fixtureRoot, "skills-collision/second"),
+			]);
+			const fakeThis = createShowLoadedResourcesThis({
+				quietStartup,
+				skillDiagnostics: invalid.diagnostics,
+			});
+			for (const name of ["formatDiagnostics", "formatPathWithSource", "findSourceInfoForPath"]) {
+				fakeThis[name] = Reflect.get(InteractiveMode.prototype, name);
+			}
+			const show = () =>
+				Reflect.get(InteractiveMode.prototype, "showLoadedResources").call(fakeThis, {
+					force: false,
+					showDiagnosticsWhenQuiet: true,
+				});
+			show();
+			const invalidOutput = normalizeRenderedOutput(fakeThis.loadedResourcesContainer, 240);
+			expect(invalidOutput).toContain("Invalid skill files");
+			expect(invalidOutput).not.toContain("Skill conflicts");
+			expect(invalidOutput).toContain(brokenPath.replace(/\\/g, "/"));
+			expect(invalidOutput).toContain("Nested mappings are not allowed");
+			expect(invalidOutput).toMatch(/at line \d+, column \d+/);
+			expect(invalidOutput).toContain("quote");
+			expect(invalidOutput).toContain("description: >-");
+
+			fakeThis.session.resourceLoader.getSkills = () => ({
+				skills: [],
+				diagnostics: [...invalid.diagnostics, ...duplicates.diagnostics],
+			});
+			show();
+			const notices = fakeThis.loadedResourcesContainer.children.map((child: Component) =>
+				stripAnsi(child.render(240).join("\n")),
+			);
+			const conflictNotice = notices.find((text: string) => text.includes("Skill conflicts"));
+			expect(conflictNotice).toContain('"calendar" collision');
+			expect(conflictNotice).not.toContain("Nested mappings");
+			expect(normalizeRenderedOutput(fakeThis.loadedResourcesContainer, 240)).toContain("Invalid skill files");
+			if (quietStartup) expect(renderAll(fakeThis.loadedResourcesContainer)).not.toContain("[Skills]");
+			expect(invalid.diagnostics[0]).toMatchObject({ kind: "parse-error", path: brokenPath });
+			expect(duplicates.diagnostics[0]).toMatchObject({ kind: "collision", type: "collision" });
+		},
+	);
+
+	test("renders legacy read diagnostics with a home-relative path without calling them conflicts", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: true,
+			skillDiagnostics: [
+				{ type: "warning", path: path.join(homedir(), "skills/demo/SKILL.md"), message: "ENOENT: missing file" },
+			],
+		});
+		for (const name of ["formatDiagnostics", "formatPathWithSource", "findSourceInfoForPath"]) {
+			fakeThis[name] = Reflect.get(InteractiveMode.prototype, name);
+		}
+		Reflect.get(InteractiveMode.prototype, "showLoadedResources").call(fakeThis, {
+			showDiagnosticsWhenQuiet: true,
+		});
+		const output = normalizeRenderedOutput(fakeThis.loadedResourcesContainer);
+		expect(output).toContain("Invalid skill files");
+		expect(output).toContain("~/skills/demo/SKILL.md");
+		expect(output).toContain("ENOENT: missing file");
+		expect(output).not.toContain("Skill conflicts");
 	});
 
 	test("shows context size warnings in the resource notices on quiet startup", () => {

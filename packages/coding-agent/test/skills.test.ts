@@ -1,7 +1,8 @@
 import { homedir } from "os";
 import { join, resolve } from "path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
+import * as skillSourceCache from "../src/core/skill-source-cache.ts";
 import { formatSkillsForPrompt, loadSkills, loadSkillsFromDir, type Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 
@@ -136,6 +137,29 @@ describe("skills", () => {
 
 			expect(skills).toHaveLength(0);
 			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("at line"))).toBe(true);
+			expect(diagnostics[0]).toMatchObject({ kind: "parse-error" });
+		});
+
+		// senpi#4940: classify failures where they occur, not by their display message.
+		it("classifies a file read failure independently of a parse failure", () => {
+			const filePath = join(fixturesDir, "valid-skill", "SKILL.md");
+			const read = vi.spyOn(skillSourceCache, "readUserSkillSource").mockImplementationOnce(() => {
+				throw new Error("ENOENT: synthetic removed file");
+			});
+			try {
+				const result = loadSkillsFromDir({ dir: join(fixturesDir, "valid-skill"), source: "user" });
+				expect(result.skills).toHaveLength(0);
+				expect(result.diagnostics).toEqual([
+					{
+						type: "warning",
+						kind: "read-error",
+						path: filePath,
+						message: "ENOENT: synthetic removed file",
+					},
+				]);
+			} finally {
+				read.mockRestore();
+			}
 		});
 
 		it("should preserve multiline descriptions from YAML", () => {
@@ -353,6 +377,7 @@ describe("skills", () => {
 			});
 			expect(skills).toHaveLength(0);
 			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("does not exist"))).toBe(true);
+			expect(diagnostics[0]).toMatchObject({ kind: "read-error" });
 		});
 
 		it("should expand ~ in skillPaths", () => {

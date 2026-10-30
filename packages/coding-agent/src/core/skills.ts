@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { existsSync, readdirSync, realpathSync, type Stats, statSync } from "fs";
 import ignore from "ignore";
 import { basename, dirname, join, relative, resolve, sep } from "path";
+import { YAMLParseError } from "yaml";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { parseFrontmatter } from "../utils/frontmatter.ts";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
@@ -273,7 +274,10 @@ function loadSkillsFromDirInternal(
 			}
 			diagnostics.push(...result.diagnostics);
 		}
-	} catch {}
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "failed to read skill directory";
+		diagnostics.push({ type: "warning", kind: "read-error", message, path: dir });
+	}
 
 	return { skills, diagnostics };
 }
@@ -297,7 +301,7 @@ function loadSkillFromFile(
 	} catch (error) {
 		if (error instanceof BlockedSkillLinkError) return { skill: null, diagnostics: [error.diagnostic] };
 		const message = error instanceof Error ? error.message : "failed to read skill file";
-		diagnostics.push({ type: "warning", message, path: filePath });
+		diagnostics.push({ type: "warning", kind: "read-error", message, path: filePath });
 		return { skill: null, diagnostics };
 	}
 
@@ -307,7 +311,15 @@ function loadSkillFromFile(
 	} catch (error) {
 		if (isDeclaredSkill) {
 			const message = error instanceof Error ? error.message : "failed to parse skill file";
-			diagnostics.push({ type: "warning", message, path: filePath });
+			diagnostics.push({
+				type: "warning",
+				kind: "parse-error",
+				message,
+				path: filePath,
+				...(error instanceof YAMLParseError && {
+					hint: "Check YAML scalars: quote values containing ': ' or use a block scalar such as description: >-.",
+				}),
+			});
 		}
 		return { skill: null, diagnostics };
 	}
@@ -324,7 +336,7 @@ function loadSkillFromFile(
 	// Validate description
 	const descErrors = validateDescription(description);
 	for (const error of descErrors) {
-		diagnostics.push({ type: "warning", message: error, path: filePath });
+		diagnostics.push({ type: "warning", kind: "validation", message: error, path: filePath });
 	}
 
 	// Use name from frontmatter, or fall back to parent directory name
@@ -334,7 +346,7 @@ function loadSkillFromFile(
 	// Validate name
 	const nameErrors = validateName(name);
 	for (const error of nameErrors) {
-		diagnostics.push({ type: "warning", message: error, path: filePath });
+		diagnostics.push({ type: "warning", kind: "validation", message: error, path: filePath });
 	}
 
 	// Still load the skill even with warnings, unless description is missing or empty.
@@ -422,6 +434,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 			if (existing) {
 				collisionDiagnostics.push({
 					type: "collision",
+					kind: "collision",
 					message: `name "${skill.name}" collision`,
 					path: skill.filePath,
 					collision: {
@@ -490,7 +503,12 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 		try {
 			stats = statSync(resolvedPath);
 		} catch {
-			allDiagnostics.push({ type: "warning", message: "skill path does not exist", path: resolvedPath });
+			allDiagnostics.push({
+				type: "warning",
+				kind: "read-error",
+				message: "skill path does not exist",
+				path: resolvedPath,
+			});
 			continue;
 		}
 
@@ -513,11 +531,16 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 					allDiagnostics.push(...result.diagnostics);
 				}
 			} else {
-				allDiagnostics.push({ type: "warning", message: "skill path is not a markdown file", path: resolvedPath });
+				allDiagnostics.push({
+					type: "warning",
+					kind: "validation",
+					message: "skill path is not a markdown file",
+					path: resolvedPath,
+				});
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to read skill path";
-			allDiagnostics.push({ type: "warning", message, path: resolvedPath });
+			allDiagnostics.push({ type: "warning", kind: "read-error", message, path: resolvedPath });
 		}
 	}
 
