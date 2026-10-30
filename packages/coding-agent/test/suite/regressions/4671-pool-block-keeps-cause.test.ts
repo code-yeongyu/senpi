@@ -1,7 +1,7 @@
 /**
  * senpi#4671: when one account fails while every other account is already blocked, the failure that
  * blocked it must survive (the pool state rides along as context), and every block that is saved is
- * written to the log, from a turn's failover and from the usage poll alike.
+ * written to the log by a turn's failover.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
