@@ -260,9 +260,10 @@ export type ResponsesDeferredToolsMode = "additional-tools" | "tool-search";
 
 /** `additional_tools` items win over client tool search when a model supports both. */
 export function resolveResponsesDeferredToolsMode(
-	compat: { supportsAdditionalTools?: boolean; supportsToolSearch?: boolean } | undefined,
+	compat: { supportsAdditionalTools?: boolean; supportsToolSearch?: boolean; siwc?: boolean } | undefined,
 ): ResponsesDeferredToolsMode | undefined {
 	if (compat?.supportsAdditionalTools) return "additional-tools";
+	if (compat?.siwc) return undefined;
 	return compat?.supportsToolSearch ? "tool-search" : undefined;
 }
 
@@ -380,7 +381,11 @@ export function convertResponsesMessages<TApi extends Api>(
 	};
 	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
 	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
-	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
+	const instructionRole =
+		(model.compat as { siwc?: boolean } | undefined)?.siwc ||
+		(model.reasoning && compat?.supportsDeveloperRole !== false)
+			? "developer"
+			: "system";
 
 	let msgIndex = 0;
 	let sourceIndex = 0;

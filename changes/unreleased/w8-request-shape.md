@@ -1,0 +1,46 @@
+<!-- changes-log: packages/ai/src/api/changes.md -->
+## 2026-10-30 - Shape public Responses requests for SIWC plan usage (senpi#5003 W8)
+
+### What changed
+
+- `packages/ai/src/api/openai-responses.ts`: opt-in `model.compat.siwc` selects HTTP/SSE, enforces `store: false` and `stream: true` after payload hooks, removes unsupported fields and continuation IDs, rewrites system items as developer items, and permits only local tools and web search. Flat local tools are supplied eagerly through `additional_tools`; namespaces remain intact. Non-streaming cache prewarm is rejected before sending.
+- `packages/ai/src/api/openai-responses-shared.ts`: SIWC uses developer messages regardless of the model's reasoning flag and disables tool-search loading. Deferred tools use `additional_tools` when supported, otherwise they are supplied eagerly.
+
+### Why
+
+- `packages/ai/src/api/openai-responses.ts`: OpenAI's SIWC preview rejects these fields, hosted tools and HTTP continuation. The fork retained its request builder during the September sync instead of adopting upstream's token-prefix heuristic.
+- `packages/ai/src/api/openai-responses-shared.ts`: client-executed `tool_search` is also unsupported on SIWC, so removing its declaration alone would lose deferred tool definitions.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/api/openai-responses.ts`: transport selection and the final request after hooks are adapter internals.
+- `packages/ai/src/api/openai-responses-shared.ts`: transcript conversion owns developer roles and placement of deferred tool definitions.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/api/openai-responses.ts`: compatibility resolution, final request preparation, and cache prewarm.
+- `packages/ai/src/api/openai-responses-shared.ts`: deferred mode resolution and instruction role selection.
+
+<!-- changes-log: packages/ai/src/changes.md -->
+## 2026-10-30 - Add an explicit credential-route switch for SIWC (senpi#5003 W8)
+
+### What changed
+
+- `packages/ai/src/types.ts`: add optional `OpenAIResponsesCompat.siwc`. The provider integration sets it on the model for a selected SIWC credential route; it defaults to false.
+
+### Why
+
+- `packages/ai/src/types.ts`: SIWC placement is still separate work. Provider IDs and token prefixes cannot identify the selected route without guessing.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the exported compatibility contract must carry the route to the Responses adapter.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the fork's `OpenAIResponsesCompat` extension.
+
+<!-- changes-log: packages/ai/CHANGELOG.md -->
+### Added
+
+- Add opt-in SIWC request shaping to the public Responses adapter, including supported tool loading and HTTP history replay. Provider registration remains separate.
