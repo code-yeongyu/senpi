@@ -15,6 +15,7 @@ Model fallback chains and hint-aware 429 retry policy for `agent-session.ts`. Pu
 | `expansion.ts` | Bare-selector family expansion; OpenRouter denylist; OAuth-first auth tiers; `PROVIDER_PRECEDENCE` tie-break |
 | `hint-policy.ts` | Pure 429 hint tiers (`no-hint-fast-fallback` / `tier1-in-turn` / `tier2-fallback-probe-back` / `tier3-fallback-only`) + probe schedule math |
 | `probe-scheduler.ts` | ONE armed probe plan per session, max two probes (half-hint, then deadline), injected `setTimeout`/`clearTimeout` |
+| `limit-reset.ts` | `limitResetAt`: the wall-clock reset a failed request names (structured diagnostic, usage-limit reset, Retry-After); the session reports the soonest one on `agent_settled.fallbackExhausted` (senpi#3709) |
 | `cooldown.ts` | `SelectorCooldowns`: runtime-only selector suppression, injected `now`/`random`, honors `retryAfterMs` |
 | `billing.ts` | Billing-class failure detection — billing fallbacks are PINNED (never revert on cooldown expiry) when the billing hit the chain's original model or its account |
 | `pin.ts` | `pinAfterSwitch`: pin provenance after one switch (refusal pins; billing pins only when it hit the original or its account) |
