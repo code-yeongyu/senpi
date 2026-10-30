@@ -4,6 +4,7 @@ import {
 	toolRuntimeCapabilities,
 } from "../../cli/tool-runtime.ts";
 import { messagePathProjectRoot, resolveMessagePath } from "../../core/message-path-resolution.ts";
+import { apiKeyLoginCredential } from "./api-key-login-credential.ts";
 import { clientFacingIdentity } from "./client-admission-record.ts";
 import type { ExtensionRpcRequestContext } from "../../core/extensions/rpc-context.ts";
 import type { ExtensionOwner } from "./extension-owner.ts";
@@ -2122,10 +2123,12 @@ export function createRpcConnectionHandler(
 			}
 
 			case "login_api_key": {
-				const replacement = session.modelRegistry.authStorage.set(command.provider, {
-					type: "api_key",
-					key: command.key,
-				});
+				const credential = await apiKeyLoginCredential(
+					session.modelRuntime.getProvider(command.provider),
+					command.key,
+					command.region,
+				);
+				const replacement = session.modelRegistry.authStorage.set(command.provider, credential);
 				// The response carries what this key replaced (senpi#3448). Consume the record before the
 				// await below, so no record is pending across it and a concurrent OAuth login keeps its own (#3952).
 				session.modelRegistry.authStorage.takeReplacement(command.provider);
