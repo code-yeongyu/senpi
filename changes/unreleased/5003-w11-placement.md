@@ -23,7 +23,7 @@
 
 ### What changed
 
-- `packages/ai/src/providers/chatgpt-subscription.ts`: derive SIWC public Responses auth and dispatch with `compat.siwc`, preserving exact upstream model aliases and the unchanged legacy adapter.
+- `packages/ai/src/providers/chatgpt-subscription.ts`: derive SIWC public Responses auth and dispatch with `compat.siwc`, preserving exact upstream model aliases and the unchanged legacy adapter. Select the permitted `web_search` tool type so the default search extension does not inject the unsupported preview variant.
 
 ### Why
 
@@ -78,7 +78,7 @@
 <!-- changes-log: packages/ai/CHANGELOG.md -->
 ### Added
 
-- Route saved SIWC ChatGPT accounts through public Responses while keeping legacy account requests unchanged (part of #5003).
+- Route saved SIWC ChatGPT accounts through public Responses, retain native web search, and keep legacy account requests unchanged (part of #5003).
 
 <!-- changes-log: packages/coding-agent/CHANGELOG.md -->
 ### Added

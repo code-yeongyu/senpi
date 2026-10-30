@@ -22,7 +22,7 @@ export function chatgptSubscriptionProvider(): Provider<"openai-codex-responses"
 		...model,
 		api: "openai-responses",
 		id: model.upstreamModelId ?? model.id,
-		compat: { ...(model.compat as OpenAIResponsesCompat), siwc: true },
+		compat: { ...(model.compat as OpenAIResponsesCompat), siwc: true, webSearchToolType: "web_search" },
 	});
 	return createProvider({
 		id: "chatgpt-subscription",
@@ -41,7 +41,7 @@ export function chatgptSubscriptionProvider(): Provider<"openai-codex-responses"
 								...(await siwc.toAuth(credential)),
 								api: "openai-responses",
 								baseUrl: "https://api.openai.com/v1",
-								compat: { siwc: true },
+								compat: { siwc: true, webSearchToolType: "web_search" },
 							}
 						: legacy.toAuth(credential),
 			},
