@@ -472,9 +472,12 @@ export function appendLoginSlot(
 			};
 			const next = slotMirrorsFlat(current, matched) ? projectFlatFields(current, replacement) : current;
 			onAllocated?.(matched.name, "generated");
-			return storedAccounts
-				? { ...next, accounts: existing.map((slot) => (slot === matched ? replacement : slot)) }
-				: next;
+			if (!storedAccounts) return next;
+			const pooled: PooledCredential = {
+				...next,
+				accounts: existing.map((slot) => (slot === matched ? replacement : slot)),
+			};
+			return pooled;
 		}
 	}
 	const name = nextLoginSlotName(current);
