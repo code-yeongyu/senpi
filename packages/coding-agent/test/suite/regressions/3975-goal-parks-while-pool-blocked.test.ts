@@ -9,8 +9,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { COOLDOWN_BASE_MS } from "../../../src/core/credential-pool/classify.ts";
 import { streamWithCredentialRotation } from "../../../src/core/credential-pool/rotation-stream.ts";
 import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
-import { AllAccountsBlockedError } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
-import { allAccountsBlockedDiagnostic } from "../../../src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts";
 import type { ExtensionToolContext } from "../../../src/core/extensions/types.ts";
 import { terminalProviderAuthFailure } from "../../../src/core/extensions/builtin/goal/terminal-provider-error.ts";
 import { providerFailureOf } from "../../../src/core/provider-failure.ts";
@@ -181,7 +179,11 @@ describe("goal parks while every pool slot is blocked (#3975)", () => {
 			const message = await blockedPoolTurn(rateLimitedUntil(NOW + 2 * HOUR), answer);
 
 			expect(message.stopReason).toBe("error");
-			expect(message.providerDiagnostic).toMatchObject({ category: "rate_limit", resetsAt: until });
+			expect(message.providerDiagnostic).toMatchObject({
+				category: "rate_limit",
+				code: "account_pool_blocked",
+				resetsAt: until,
+			});
 			expect(providerFailureOf([message])).toMatchObject({ category: "rate_limit", resetsAt: until });
 		},
 	);
@@ -213,17 +215,6 @@ describe("goal parks while every pool slot is blocked (#3975)", () => {
 		const message = await blockedPoolTurn([{ name: "only", reason: "auth_error", until: NOW + HOUR }]);
 
 		expect(message.providerDiagnostic?.category).not.toBe("rate_limit");
-	});
-
-	it("classifies the Anthropic Subscription lane's own all-accounts refusal the same way", () => {
-		const until = NOW + 2 * HOUR;
-
-		expect(allAccountsBlockedDiagnostic(new AllAccountsBlockedError(until))).toMatchObject({
-			category: "rate_limit",
-			resetsAt: until,
-		});
-		expect(allAccountsBlockedDiagnostic(new AllAccountsBlockedError(until, "auth_error"))).toBeUndefined();
-		expect(allAccountsBlockedDiagnostic(new AllAccountsBlockedError(undefined))).toBeUndefined();
 	});
 
 	it("sends nothing before the unblock time, one notice naming it, and one resume after it", async () => {

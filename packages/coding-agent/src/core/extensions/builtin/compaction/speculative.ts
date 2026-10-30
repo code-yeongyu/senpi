@@ -281,14 +281,15 @@ export async function runExtensionCompaction(
 	// has none of these and is rejected before a request.
 	const authenticated = (resolved: ResolvedRequestAuth | undefined): boolean =>
 		resolved?.ok === true && Boolean(resolved.apiKey || hasCredentialHeaders(resolved.headers) || resolved.ambient);
+	const session = { sessionId: context.sessionManager.getSessionId() };
 	let selectedModel = context.getCompactionModel?.() ?? snapshot.model;
-	let auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
+	let auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel, session);
 	if (signal?.aborted) return undefined;
 	// A configured summary model whose credentials could not be confirmed earlier (#830) must not
 	// disable compaction: without credentials at request time, summarize on the session model.
 	if (selectedModel !== snapshot.model && !authenticated(auth)) {
 		selectedModel = snapshot.model;
-		auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel);
+		auth = await context.modelRegistry?.getApiKeyAndHeaders(selectedModel, session);
 		if (signal?.aborted) return undefined;
 	}
 	const selectedSnapshot =

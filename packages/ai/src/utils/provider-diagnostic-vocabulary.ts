@@ -7,13 +7,11 @@ import type {
 /** Serialized UTF-8 budget for one emitted diagnostic. */
 export const PROVIDER_DIAGNOSTIC_MAX_BYTES = 512;
 
-export const CREDENTIAL_POOL_BLOCKED_CODE = "credential_pool_blocked";
-
-/** A credential pool whose every account is limited until `resetsAt`, the soonest one is due back. */
-export function credentialPoolBlockedDiagnostic(resetsAt: number): ProviderDiagnostic | undefined {
+/** A credential pool whose every account is limited until `resetsAt`, the soonest one is due back (senpi#3975). */
+export function accountPoolBlockedDiagnostic(resetsAt: number): ProviderDiagnostic | undefined {
 	return buildProviderDiagnostic({
 		category: "rate_limit",
-		code: CREDENTIAL_POOL_BLOCKED_CODE,
+		code: "account_pool_blocked",
 		evidence: "structured_code",
 		resetsAt,
 	});
@@ -25,17 +23,18 @@ export function credentialPoolBlockedDiagnostic(resetsAt: number): ProviderDiagn
  * `error.code` values, and the precise OpenAI-compatible `error.type` values
  * that stand in for a missing code (`exceeded_current_quota_error`, senpi#4950).
  * `billing_error` proves a billing failure, not quota exhaustion, so it stays `unknown`.
- * `credential_pool_blocked` is senpi's own token for a credential pool whose every account waits on a
- * rate or usage limit (senpi#3975).
  */
 export function categoryForProviderCode(code: string): ProviderDiagnosticCategory | undefined {
 	switch (code) {
+		// `account_pool_auth_blocked`: a subscription account pool that refused the request locally because every account needs a new login.
 		case "authentication_error":
 		case "invalid_api_key":
+		case "account_pool_auth_blocked":
 			return "auth";
+		// `account_pool_blocked`: a subscription account pool that refused the request locally until its soonest reset (senpi#4672).
 		case "rate_limit_error":
 		case "rate_limit_exceeded":
-		case CREDENTIAL_POOL_BLOCKED_CODE:
+		case "account_pool_blocked":
 			return "rate_limit";
 		case "insufficient_quota":
 		case "exceeded_current_quota_error":
@@ -93,7 +92,6 @@ export function isProviderCodeStatusCompatible(code: string, status: number): bo
 			return status === 401;
 		case "rate_limit_error":
 		case "rate_limit_exceeded":
-		case CREDENTIAL_POOL_BLOCKED_CODE:
 		case "insufficient_quota":
 		case "exceeded_current_quota_error":
 		case "usage_limit_reached":

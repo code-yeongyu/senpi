@@ -1,6 +1,6 @@
 import { TURN_RETRY_SUPPRESSION_PREFIX } from "@earendil-works/pi-ai/auth/pool/failover";
 import { attachProviderDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-carrier";
-import { credentialPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
+import { accountPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
 import { type CredentialAction, type CredentialBlock, classifyCredentialFailure } from "./classify.ts";
 
 /**
@@ -116,6 +116,30 @@ function coolingProbe<TSlot extends RunSlot>(slots: readonly TSlot[], attempted:
 }
 
 /**
+ * The slots a request's next attempt may pick from: the untried, unblocked ones, else the cooling
+ * probe. Empty means the request is refused. Shared by the stream and by auxiliary callers that
+ * resolve the session's account outside it (senpi#3924), so both treat an all-blocked pool alike.
+ */
+export function attemptCandidates<TSlot extends RunSlot>(
+	slots: readonly TSlot[],
+	attempted: ReadonlySet<string>,
+	now: number,
+): TSlot[] {
+	const available = slots.filter((slot) => !attempted.has(slot.name) && isAvailable(slot, now));
+	return available.length > 0 ? available : coolingProbe(slots, attempted);
+}
+
+/** The refusal a request gets when {@link attemptCandidates} is empty before any attempt ran. */
+export function noSlotsError(slots: readonly RunSlot[], now: number): CredentialFailoverError {
+	const retryAt = soonestRetryAt(slots, now);
+	return new CredentialFailoverError(
+		{ kind: "fail_request" },
+		new Error(noSlotsMessage(slots, now)),
+		retryAt === undefined ? {} : { retryAt },
+	);
+}
+
+/**
  * A slot's due-back time as the reader's local clock shows it, followed by the ISO instant that the goal
  * provider-retry scan (`providerRetryAt`) and turn-end liveness read from this text (senpi#4329).
  */
@@ -220,8 +244,7 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 
 	while (true) {
 		const slots = await options.listSlots();
-		const available = slots.filter((slot) => !attempted.has(slot.name) && isAvailable(slot, now()));
-		const candidates = available.length > 0 ? available : coolingProbe(slots, attempted);
+		const candidates = attemptCandidates(slots, attempted, now());
 		if (candidates.length === 0) {
 			// Only a refusal that is itself a limit is the pool's rate limit: a probe refused for auth, billing
 			// or a missing model keeps its own classification, which the goal's auth block reads (senpi#3975).
@@ -235,16 +258,12 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 			}
 			const retryAt = soonestRetryAt(slots, now());
 			const refusal =
-				lastError !== undefined && lastOriginal !== undefined
-					? new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt })
-					: new CredentialFailoverError(
-							{ kind: "fail_request" },
-							new Error(noSlotsMessage(slots, now())),
-							retryAt === undefined ? {} : { retryAt },
-						);
+				lastError === undefined || lastOriginal === undefined
+					? noSlotsError(slots, now())
+					: new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt });
 			throw limitedRetryAt === undefined
 				? refusal
-				: attachProviderDiagnostic(refusal, credentialPoolBlockedDiagnostic(limitedRetryAt));
+				: attachProviderDiagnostic(refusal, accountPoolBlockedDiagnostic(limitedRetryAt));
 		}
 		const slot = options.select(candidates);
 		let committedOutput = false;

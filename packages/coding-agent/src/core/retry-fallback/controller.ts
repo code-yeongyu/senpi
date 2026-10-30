@@ -18,6 +18,7 @@ import type {
 	FallbackReason,
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
+import { releaseOnCredentialChange } from "./credential-recovery.ts";
 import { pinAfterSwitch } from "./pin.ts";
 import { isPureNetworkTransient } from "./transient-network.ts";
 import { UnusableEntries } from "./unusable.ts";
@@ -119,7 +120,9 @@ export class RetryFallbackController {
 	 * suppressed and is still usable; pinned state and the "never" policy hold the
 	 * fallback model. One exception outranks both the cooldown and the policy: a
 	 * fallback that is itself known unusable (billing or an account limit) while the
-	 * original is not is never where the session rests (senpi#2376).
+	 * original is not is never where the session rests (senpi#2376). At a turn boundary, a
+	 * changed credential on the original's provider first releases its billing pin and parks
+	 * (senpi#4099).
 	 */
 	async maybeRestorePrimary(
 		revertPolicy: "cooldown-expiry" | "never",
@@ -129,11 +132,12 @@ export class RetryFallbackController {
 		if (boundary === "turn") this.heldForNetworkBlip = false;
 		const state = this.state;
 		const current = this.deps.getCurrentSelector();
-		if (!state || state.pinned || !current) return false;
+		if (!state || !current) return false;
 		const selector = parseFallbackSelector(state.originalSelector, this.deps.registry);
-		if (!selector || !this.deps.isAuthAvailable(selector.provider)) return false;
-		const model = this.deps.registry.find(selector.provider, selector.id);
+		const model = selector && this.deps.registry.find(selector.provider, selector.id);
 		if (!model) return false;
+		if (boundary === "turn") await releaseOnCredentialChange(state, model, this.deps, this.unusable);
+		if (state.pinned || !this.deps.isAuthAvailable(model.provider)) return false;
 		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
 		if (!stranded && (heldForNetworkBlip || !this.originalRecovered(state, revertPolicy))) return false;
 		// User override wins: only restore the original thinking level when the
@@ -354,7 +358,11 @@ export class RetryFallbackController {
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
 		const prior = this.state;
+		const recoveryRevision = prior
+			? prior.recoveryRevision
+			: await this.deps.recoveryRevision?.(current.model.provider);
 		this.state = {
+			...(recoveryRevision === undefined ? {} : { recoveryRevision }),
 			chainKey: candidate.chainKey,
 			originalThinkingLevel: prior?.originalThinkingLevel ?? current.thinkingLevel,
 			lastAppliedThinkingLevel: thinking,

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { type AssistantMessageEvent, sanitizeProviderDiagnostic } from "@earendil-works/pi-ai";
-import { credentialPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
-import { applyAccountOrder, rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
+import { accountPoolBlockedDiagnostic } from "@earendil-works/pi-ai/utils/provider-diagnostic-vocabulary";
+import type { SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { emitProviderAccountsChanged } from "../extensions/builtin/anthropic-subscription/account-events.ts";
 import { AUTH_BLOCK_REPROBE_MS } from "./auth-reprobe.ts";
@@ -11,6 +11,7 @@ import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { modelBlockKey, pruneModelBlocks, withModelBlock } from "./model-scope.ts";
 import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
 import { listRotationSlots, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
+import { pickRotationSlot } from "./session-slot.ts";
 import type { CredentialSlotState } from "./state-store.ts";
 
 export { listRotationSlots, type RotationLane, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
@@ -96,7 +97,7 @@ export function withPoolRetryAt(event: AssistantMessageEvent, retryAt: number): 
 	const providerDiagnostic =
 		own !== undefined && limit
 			? (sanitizeProviderDiagnostic({ ...own, resetsAt: own.resetsAt ?? retryAt }) ?? own)
-			: credentialPoolBlockedDiagnostic(retryAt);
+			: accountPoolBlockedDiagnostic(retryAt);
 	return providerDiagnostic === undefined ? event : { ...event, error: { ...event.error, providerDiagnostic } };
 }
 
@@ -136,12 +137,7 @@ export function streamWithCredentialRotation(
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
 		listSlots: () => listRotationSlots(sources, options.modelId === undefined ? {} : { modelId: options.modelId }),
 		select: (candidates) => {
-			const pinned = candidates.find((candidate) => candidate.pinned === true);
-			if (pinned) return pinned;
-			const ranked = useAffinity ? rendezvousOrder(affinityKey, candidates, hasher) : candidates;
-			const ordered = applyAccountOrder(pooled?.order, ranked);
-
-			const winner = ordered[0];
+			const winner = pickRotationSlot(candidates, { affinityKey, useAffinity, hasher, order: pooled?.order });
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
 			return winner;
 		},

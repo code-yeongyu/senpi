@@ -15,6 +15,7 @@ import type { RpcSlashCommand } from "./rpc-command-surface.ts";
 import type { RpcEvalCell, RpcEvalCellSnapshot } from "./rpc-result-types.ts";
 import type {
 	RpcAuthProvider,
+	RpcAuthStoreError,
 	RpcLoadedExtension,
 	RpcLoadedMcpServer,
 	RpcProviderAccount,
@@ -150,7 +151,7 @@ export type RpcReadResponse =
 			type: "response";
 			command: "get_auth_providers";
 			success: true;
-			data: { providers: RpcAuthProvider[] };
+			data: { providers: RpcAuthProvider[]; storeError?: RpcAuthStoreError };
 	  }
 	| {
 			id?: string;
