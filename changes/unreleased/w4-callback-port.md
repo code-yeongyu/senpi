@@ -1,0 +1,22 @@
+<!-- changes-log: packages/ai/src/auth/oauth/changes.md -->
+## 2026-10-30 - SIWC uses an available IPv4 loopback callback port (senpi#5003 W4)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/openai-chatgpt.ts`: bind `127.0.0.1:1455` first, then an OS-assigned port on `EADDRINUSE`. Carry the bound redirect URI through authorization, token exchange and pasted-URL validation, preserving `closeAllConnections()` cleanup.
+
+### Why
+
+OpenAI permits the loopback port to vary but requires the authorization and code exchange redirect URIs to match exactly. A busy preferred port must not send a new login to another process's callback listener.
+
+### Why an extension could not handle it
+
+The bundled OAuth flow owns the listener, authorization URL, token exchange and manual callback parser before an extension can intervene.
+
+### Expected merge conflict zones
+
+- MEDIUM: callback binding, redirect URI validation and authorization-code exchange in `packages/ai/src/auth/oauth/openai-chatgpt.ts`.
+
+<!-- changes-log: packages/ai/CHANGELOG.md -->
+### Fixed
+- Sign in with ChatGPT uses a free IPv4 loopback callback port when port 1455 is occupied, keeping the same redirect URI for authorization, code exchange and manual paste.

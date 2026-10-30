@@ -1,3 +1,4 @@
+import { createServer, get } from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openaiChatGPTOAuth } from "../src/auth/oauth/openai-chatgpt.ts";
 import type { OAuthCredential, ProviderAuthInteraction } from "../src/auth/types.ts";
@@ -34,6 +35,7 @@ function stubTokenEndpoint(response: unknown, inspect?: (body: URLSearchParams) 
 function loginInteraction(options?: {
 	callbackClientId?: string;
 	onAuthorize?: (url: URL) => void;
+	onCallback?: (url: URL) => void;
 }): ProviderAuthInteraction {
 	let authorizeUrl: URL | undefined;
 	return {
@@ -50,6 +52,7 @@ function loginInteraction(options?: {
 			callback.searchParams.set("code", "authorization-code");
 			callback.searchParams.set("state", authorizeUrl.searchParams.get("state") ?? "");
 			if (options?.callbackClientId) callback.searchParams.set("client_id", options.callbackClientId);
+			options?.onCallback?.(callback);
 			return callback.toString();
 		},
 	};
@@ -116,6 +119,105 @@ describe("OpenAI ChatGPT OAuth", () => {
 		);
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
+
+	// senpi#5003 W4: exercise real binding, not a mocked listener choosing its own port.
+	it("receives the browser callback on a free port when 1455 is occupied", async () => {
+		const occupied = createServer();
+		await new Promise<void>((resolve, reject) => {
+			occupied.once("error", reject);
+			occupied.listen(1455, "127.0.0.1", resolve);
+		});
+		let redirectUri = "";
+		let exchangeBody: URLSearchParams | undefined;
+		stubTokenEndpoint(tokenResponse(), (body) => {
+			exchangeBody = body;
+		});
+		let resolveResponse!: (status: number | undefined) => void;
+		const responseStatus = new Promise<number | undefined>((resolve) => {
+			resolveResponse = resolve;
+		});
+		let authorizeUrl: URL | undefined;
+		try {
+			await openaiChatGPTOAuth.login(
+				{
+					signal: neverAbortedSignal,
+					notify: (event) => {
+						if (event.type !== "auth_url") return;
+						authorizeUrl = new URL(event.url);
+						redirectUri = authorizeUrl.searchParams.get("redirect_uri") ?? "";
+						const redirect = new URL(redirectUri);
+						expect(redirect.hostname).toBe("127.0.0.1");
+						expect(redirect.pathname).toBe("/auth/callback");
+						expect(redirect.port).not.toBe("1455");
+						expect(Number(redirect.port)).toBeGreaterThan(0);
+					},
+					prompt: (prompt) =>
+						new Promise<string>((_resolve, reject) => {
+							prompt.signal?.addEventListener("abort", () => reject(new Error("Prompt cancelled")), {
+								once: true,
+							});
+							const callback = new URL(redirectUri);
+							callback.search = new URLSearchParams({
+								code: "browser-code",
+								state: authorizeUrl?.searchParams.get("state") ?? "",
+								client_id: "oaiapp_browser",
+							}).toString();
+							get(callback, (response) => {
+								response.resume();
+								resolveResponse(response.statusCode);
+							}).on("error", reject);
+						}),
+				},
+				{ getDeviceId: () => DEVICE_ID },
+			);
+			expect(await responseStatus).toBe(200);
+			expect(exchangeBody?.get("redirect_uri")).toBe(redirectUri);
+			expect(exchangeBody?.get("code")).toBe("browser-code");
+			expect(exchangeBody?.get("client_id")).toBe("oaiapp_browser");
+		} finally {
+			await new Promise<void>((resolve) => occupied.close(() => resolve()));
+		}
+	});
+
+	it.each(["/auth/callback", "/callback"])(
+		"validates the pasted fallback URI with path %s when 1455 is occupied",
+		async (path) => {
+			const occupied = createServer();
+			await new Promise<void>((resolve, reject) => {
+				occupied.once("error", reject);
+				occupied.listen(1455, "127.0.0.1", resolve);
+			});
+			let redirectUri = "";
+			let exchangeBody: URLSearchParams | undefined;
+			const fetchMock = stubTokenEndpoint(tokenResponse(), (body) => {
+				exchangeBody = body;
+			});
+			try {
+				const login = openaiChatGPTOAuth.login(
+					loginInteraction({
+						callbackClientId: "oaiapp_issued",
+						onAuthorize: (url) => {
+							redirectUri = url.searchParams.get("redirect_uri") ?? "";
+							expect(new URL(redirectUri).port).not.toBe("1455");
+						},
+						onCallback: (url) => {
+							url.pathname = path;
+						},
+					}),
+					{ getDeviceId: () => DEVICE_ID },
+				);
+				if (path === "/auth/callback") {
+					await expect(login).resolves.toMatchObject({ clientId: "oaiapp_issued" });
+					expect(exchangeBody?.get("redirect_uri")).toBe(redirectUri);
+				} else {
+					await expect(login).rejects.toThrow("The pasted callback URL must start with");
+					expect(fetchMock).not.toHaveBeenCalled();
+				}
+			} finally {
+				await new Promise<void>((resolve) => occupied.close(() => resolve()));
+			}
+		},
+	);
 
 	it("rejects a token response that did not grant direct token use", async () => {
 		stubTokenEndpoint(tokenResponse("openid profile email offline_access resource.invoke"));
