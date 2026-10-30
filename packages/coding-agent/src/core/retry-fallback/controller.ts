@@ -11,6 +11,7 @@ import {
 	resolveChainKey,
 	rungSelector,
 } from "./chains.ts";
+import { subscribeProviderAccountEvents } from "../extensions/builtin/anthropic-subscription/account-events.ts";
 import { CircuitProbes } from "./circuit-probes.ts";
 import type {
 	ActiveFallbackState,
@@ -222,6 +223,14 @@ export class RetryFallbackController {
 		this.unusable.clear(model);
 		this.probes.release();
 		this.deps.circuits?.close(formatSelector(model));
+	}
+
+	/**
+	 * A login or an account change on `provider` (the remedy a usage-limit refusal names) makes the account and
+	 * model holds it earned stale, so the restore guard stops waiting out a reset that may no longer apply.
+	 */
+	noteProviderAccountsChanged(provider: string): void {
+		this.unusable.clearProvider(provider, this.deps.registry.getAll());
 	}
 
 	/** A response this session got from `selector` succeeded: the entry serves it again (senpi#3467). */
@@ -441,4 +450,13 @@ export class RetryFallbackController {
 	private skip(candidate: string, skipReason: string): void {
 		this.deps.logger.debug("candidate_skipped", { candidate, skipReason });
 	}
+}
+
+/** Feeds every provider `accounts_changed` event to the controller; returns the unsubscribe. */
+export function followProviderAccountChanges(
+	controller: Pick<RetryFallbackController, "noteProviderAccountsChanged">,
+): () => void {
+	return subscribeProviderAccountEvents((event) => {
+		if (event.type === "accounts_changed") controller.noteProviderAccountsChanged(event.provider);
+	});
 }
