@@ -2,7 +2,10 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { RetryFallbackController, type RetryFallbackControllerDeps } from "../../../src/core/retry-fallback/controller.ts";
+import {
+	RetryFallbackController,
+	type RetryFallbackControllerDeps,
+} from "../../../src/core/retry-fallback/controller.ts";
 import { SelectorCooldowns } from "../../../src/core/retry-fallback/cooldown.ts";
 import type { FallbackReason } from "../../../src/core/retry-fallback/controller-types.ts";
 
@@ -22,7 +25,11 @@ const sameOnB = model("route-b", "mid-model");
 const sameOnC = model("route-c", "global.vendor.mid-model");
 const otherModel = model("route-d", "other-model");
 
-function createController(chain: readonly string[], models: Model<Api>[]) {
+function createController(
+	chain: readonly string[],
+	models: Model<Api>[],
+	isAuthAvailable: (provider: string) => boolean = () => true,
+) {
 	const switches: string[] = [];
 	const skips: { candidate: string; skipReason: string }[] = [];
 	let current: { model: Model<Api>; thinkingLevel?: ThinkingLevel } = { model: primary, thinkingLevel: "high" };
@@ -46,7 +53,7 @@ function createController(chain: readonly string[], models: Model<Api>[]) {
 		},
 		emit: () => {},
 		getCurrentSelector: () => current,
-		isAuthAvailable: () => true,
+		isAuthAvailable,
 	};
 	return { controller: new RetryFallbackController(deps), switches, skips };
 }
@@ -162,13 +169,19 @@ describe("senpi#4083 same-model sibling of a bare chain entry", () => {
 	});
 
 	it("#given a blip skipped the sibling #when a later route-bound failure walks again #then the sibling is offered", async () => {
-		const harness = createController(["mid-model", "route-d/other-model"], models);
+		const harness = createController(
+			["mid-model", "route-d/other-model"],
+			models,
+			(provider) => provider !== "route-d",
+		);
 		await harness.controller.tryFallback("hard-error", { errorMessage: "400 invalid request" });
-		await harness.controller.tryFallback("transient", { errorMessage: "Connection error." });
-		expect(harness.switches).toEqual(["route-a/mid-model", "route-d/other-model"]);
+		expect(await harness.controller.tryFallback("transient", { errorMessage: "Connection error." })).toBe(false);
+		expect(harness.switches).toEqual(["route-a/mid-model"]);
 		harness.controller.resetTurn();
 		expect(
-			await harness.controller.tryFallback("transient", { errorMessage: "You've hit your session limit · resets 3pm" }),
+			await harness.controller.tryFallback("transient", {
+				errorMessage: "You've hit your session limit · resets 3pm",
+			}),
 		).toBe(true);
 		expect(harness.switches.at(-1)).toBe("route-b/mid-model");
 	});

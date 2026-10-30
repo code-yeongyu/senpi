@@ -18,7 +18,9 @@ import type {
 	FallbackReason,
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
+import { withoutNamespace } from "./expansion.ts";
 import { pinAfterSwitch } from "./pin.ts";
+import { isModelSharedFailure } from "./shared-failure.ts";
 import { isPureNetworkTransient } from "./transient-network.ts";
 import { UnusableEntries } from "./unusable.ts";
 import { type UsageLimitScope, usageLimitScope } from "./usage-limit.ts";
@@ -34,6 +36,8 @@ export class RetryFallbackController {
 	private heldForNetworkBlip = false;
 	// The model a network blip just failed on: none of its rungs is tried in that walk (senpi#3344).
 	private blipModel: string | undefined;
+	// The model a model-shared failure just hit: its same-model siblings on other providers sit out that walk (senpi#4083).
+	private sharedFailure: { provider: string; model: string } | undefined;
 	// Entries this session itself saw fail out of a chain: only these (or an entry spent for everyone)
 	// may move the session off its model at a turn boundary (senpi#3467).
 	private readonly ownFailures = new Set<string>();
@@ -271,10 +275,15 @@ export class RetryFallbackController {
 		const current = this.deps.getCurrentSelector();
 		const blip = reason === "transient" && isPureNetworkTransient(failure.errorMessage);
 		this.blipModel = blip && current ? formatSelector(current.model) : undefined;
+		this.sharedFailure =
+			current && isModelSharedFailure(reason, failure.errorMessage)
+				? { provider: current.model.provider, model: modelIdentity(current.model.id) }
+				: undefined;
 		try {
 			return await this.walkFallback(reason, failure, failureObserved);
 		} finally {
 			this.blipModel = undefined;
+			this.sharedFailure = undefined;
 		}
 	}
 
@@ -396,6 +405,10 @@ export class RetryFallbackController {
 			isProviderSpent: (provider) => this.unusable.isProviderSpent(provider),
 			isProviderRefused: (provider) => provider === refusedProvider || this.refusedProviders.has(provider),
 			isModelSkipped: (base) => base === this.blipModel,
+			isSameModelSkipped: (selector) =>
+				this.sharedFailure !== undefined &&
+				selector.provider !== this.sharedFailure.provider &&
+				modelIdentity(selector.id) === this.sharedFailure.model,
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
 		if (candidate) {
@@ -435,4 +448,9 @@ export class RetryFallbackController {
 	private skip(candidate: string, skipReason: string): void {
 		this.deps.logger.debug("candidate_skipped", { candidate, skipReason });
 	}
+}
+
+/** One model across providers: Bedrock's `global.anthropic.claude-opus-5` and `claude-opus-5` are the same. */
+function modelIdentity(id: string): string {
+	return withoutNamespace(id.toLowerCase());
 }
