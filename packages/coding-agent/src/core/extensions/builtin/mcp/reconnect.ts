@@ -99,15 +99,17 @@ export function disposeMcpReconnect(
 	state.abort.abort();
 	if (state.inflight.size === 0) return Promise.resolve();
 	return settledWithin(
+		state,
 		Promise.all(state.inflight).then(() => undefined),
 		waitMs,
 	);
 }
 
-function settledWithin(work: Promise<void>, waitMs: number): Promise<void> {
+function settledWithin(state: McpReconnectState, work: Promise<void>, waitMs: number): Promise<void> {
 	return new Promise((resolve) => {
-		const timer = setTimeout(resolve, waitMs);
-		timer.unref?.();
+		const timer = safeTimer(`mcp.${state.connection.serverName}.reconnect.dispose`, waitMs, () => resolve(), {
+			logger: state.logger,
+		});
 		void work.then(() => {
 			clearTimeout(timer);
 			resolve();
