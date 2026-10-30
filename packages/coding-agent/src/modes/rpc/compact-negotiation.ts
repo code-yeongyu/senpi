@@ -40,9 +40,9 @@ export class CompactSelection {
 			if (compact && !this.selected && !this.admitted) this.refused = true;
 			return "connection_role_fixed";
 		}
-		this.capabilities = compactUpdatesEnabled()
-			? [...caps]
-			: caps.filter((cap) => cap !== COMPACT_UPDATES_CAPABILITY && cap !== COMPACT_EVENTS_CAPABILITY);
+		this.capabilities = caps.filter(
+			(cap) => cap !== COMPACT_EVENTS_CAPABILITY && (compactUpdatesEnabled() || cap !== COMPACT_UPDATES_CAPABILITY),
+		);
 		this.selected = pair;
 		return undefined;
 	}

@@ -3,6 +3,7 @@ import { subscriptionLimits } from "../../core/subscription-limits/limit-store.t
 import { ConnectionRoles } from "./connection-roles.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { CompactAdmissions } from "./compact-admissions.ts";
+import { advertisedCompactCapabilities } from "./compact-negotiation.ts";
 import { latestSessionEffect } from "./effect-ledger.ts";
 
 import type { RpcHostKernelMemory } from "./rpc-types.ts";
@@ -127,7 +128,11 @@ export class RouterContext {
 		this.writer = writer;
 		this.defaults = defaults;
 		this.createBinding = createBinding;
-		this.connectionOptions = connectionOptions;
+		this.connectionOptions = {
+			...connectionOptions,
+			capabilities:
+				connectionOptions.capabilities && advertisedCompactCapabilities(connectionOptions.capabilities, false),
+		};
 		this.idleNow = idle?.now ?? Date.now;
 		this.idleEvictionMs = idle?.idleEvictionMs ?? Number.POSITIVE_INFINITY;
 		this.emptyExitMs = idle?.emptyExitMs ?? Number.POSITIVE_INFINITY;

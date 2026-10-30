@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
+import { catalogDigest } from "../../../src/modes/rpc/compact-catalog-codec.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
 import { negotiationSockets } from "./4272-negotiation-socket-support.ts";
 import { builtFauxPath, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
@@ -46,8 +47,22 @@ it("T7/T2: reject before selection or a hold; freeze legacy only at content admi
 		success: true,
 		data: { capabilities: PAIR },
 	});
+	const manifest = peer.waitFor((record) => record.type === "recovery_manifest" && record.admissionId === "selected");
 	const opened = await peer.request({ type: "open_session", cwd: host.cwd, admissionId: "selected" });
 	expect(opened.success).toBe(true);
+	const baseline = await manifest;
+	// RULING-70(2): publish the manifest and page it through the existing route, never a second command.
+	const page = await peer.request({
+		type: "get_recovery_page",
+		sessionId: opened.sessionId,
+		admissionId: "selected",
+		token: baseline.token,
+		componentRef: "manifest",
+		requestId: "manifest-page",
+	});
+	expect(page).toMatchObject({ success: true, sessionId: opened.sessionId, admissionId: "selected" });
+	const bytes = dataOf(page);
+	expect(bytes.digest).toBe(catalogDigest("fragment", Buffer.from(bytes.bytes as string, "base64")));
 	for (const capabilities of [[], [PAIR[0]], [PAIR[1]]]) {
 		expect(await peer.request({ type: "set_client_info", sessionId: opened.sessionId, capabilities })).toMatchObject({
 			success: false,

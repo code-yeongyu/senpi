@@ -2,14 +2,14 @@
 
 ## Scope and binding decisions
 
-RULING-98 digest correction: b3bf76cea0bb0afc5adde3e968117ae45496ed7d. Separate index-description fold: aa30b6902fe74751e4b2ea62ef6b4dc052eaccdb. Base merged from origin/feat/4272-s16-consumer at 629c344bb2b82fe53299ef265e365b140ca4bb1f (merge a8e0aaf516362f2c51923b22b21072e920568ec6). Desktop agreement is a merge prerequisite owned separately, not a local execution wait. Nothing pushed.
+RULING-98 digest correction: b3bf76cea0bb0afc5adde3e968117ae45496ed7d. Separate index-description fold: aa30b6902fe74751e4b2ea62ef6b4dc052eaccdb. Latest base merged from origin/feat/4272-s16-consumer at 23839c09be69e186e9dfea73997e3566bb0ed3bf (merge d0cfdf97567b9593ad3d66665945d76075daca3f). This preserves the restored SessionWorkerClient.request() delegate and relocated SessionWorkerCallbacks. Desktop agreement is a merge prerequisite owned separately, not a local execution wait. Nothing pushed.
 
 ## Contract evidence
 
 | Contract | RED | GREEN evidence |
 | --- | --- | --- |
 | RULING-98 / R4.B3 / T1 | Raw SHA-256 goldens disagreed with all 21 producer fragments; production-codec verifier failed 12 tests. | Fragment fixture verifier 18/18; production producePage compared exact offsets, lengths, next/complete, pinned data and codec digests in all 8 valid cases. The independent receiver verifier also covers digest-mismatch, stale-ref and out-of-order-offset (all 11 shared cases). |
-| T7 / RULING-66 / RULING-73 | Actual socket lacked advertisement and ACK pair, accepted pre-selection admission and downgrade. | Actual TCP declarations and admissions, plus ten exact compact-acks goldens, verify OFF/no-data ACK, ON paired selection, repeated and omitted declarations, session ownership, independent flags, rejected downgrade/incomplete pair, no-ID heartbeat and reconnect. |
+| T7 / RULING-66 / RULING-73 | Actual socket lacked advertisement and ACK pair, accepted pre-selection admission and downgrade. | Actual TCP declarations and admissions, plus 16 shared client-info-ack cases (exact ACK records plus discovery pair projections), verify OFF/no-data ACK, ON paired selection, repeated and omitted declarations, session ownership, independent flags, rejected downgrade/incomplete pair, no-ID heartbeat and reconnect. |
 | T2 / X06 | Compact attach was rejected by the old unknown-admission guard. Worker session ACK was received privately but discarded because request ALS did not cross the isolate. | Attach/reset/required mirror test passes through S15 admission, and worker ACK reaches its actual socket after bounded identity scope crosses private frames. No retained request lookup index. |
 | OFF / old RpcClient | Discovery-only capability delta made the old ON-versus-OFF equality stale. | Exact OFF h-legacy golden remains unchanged; the existing real RpcClient test separately asserts the ON discovery pair and then compares every other request/frame byte. Internal capture and worker transport are unconditional. |
 
@@ -25,7 +25,7 @@ The OFF private-capture test also went RED because AgentSession still gated its 
 
 ## Validation commands
 
-All commands use Node 24, CI=1, nice -n 10, task TMPDIR and the five brief-listed session variables removed. Tests run one file per invocation with --no-file-parallelism; no wide suite. Root build/check, changes-md --staged and changelog gate are required final checks. See final report for exact outputs and per-file LOC. The numeric fragment changes/unreleased/4272.md is used because the gate rejects the requested nonnumeric s17.md name.
+All commands use Node 24, CI=1, nice -n 10, task TMPDIR and the five brief-listed session variables removed. Tests run one file per invocation with --no-file-parallelism; no wide suite. Root build/check and the PR changelog gate are the available final checks. The requested staged checker is absent, as recorded below; see the final report for exact outputs. The numeric fragment changes/unreleased/4272.md is used because the gate rejects the requested nonnumeric s17.md name.
 
 ## Test files
 
@@ -40,7 +40,7 @@ All commands use Node 24, CI=1, nice -n 10, task TMPDIR and the five brief-liste
 
 ## Measured pure production LOC
 
-Compared with merged S16 base 629c344bb2b82fe53299ef265e365b140ca4bb1f; comments and blank lines excluded using parsed comment ranges. S17 adds 352 pure production lines in the git diff, counting every new-module line and every added existing-file line, including all moved code. Positive per-file deltas total 288. No moved-line deduction is needed to satisfy 550. All already-oversized owners have nonpositive deltas, and every other file remains below 250.
+Base: 23839c09be69e186e9dfea73997e3566bb0ed3bf. Parsed comment ranges and blank lines excluded. S17 adds 361 pure production lines in the git diff, INCLUDING every moved line and every new-module line; no moved-line deduction is needed to satisfy 550. Every already-oversized owner has a nonpositive delta; all other production files remain <=250.
 
 | File (packages/coding-agent/) | Before | After | Delta |
 | --- | ---: | ---: | ---: |
@@ -63,10 +63,10 @@ Compared with merged S16 base 629c344bb2b82fe53299ef265e365b140ca4bb1f; comments
 | `src/modes/rpc/session-event-writer-destinations.ts` | 106 | 118 | 12 |
 | `src/modes/rpc/session-event-writer.ts` | 229 | 234 | 5 |
 | `src/modes/rpc/session-registry.ts` | 164 | 166 | 2 |
-| `src/modes/rpc/session-router-context.ts` | 116 | 116 | 0 |
+| `src/modes/rpc/session-router-context.ts` | 116 | 121 | 5 |
 | `src/modes/rpc/session-router-host-reads.ts` | 64 | 68 | 4 |
-| `src/modes/rpc/session-router-routing.ts` | 239 | 227 | -12 |
-| `src/modes/rpc/session-worker-client.ts` | 506 | 500 | -6 |
+| `src/modes/rpc/session-router-routing.ts` | 239 | 230 | -9 |
+| `src/modes/rpc/session-worker-client.ts` | 497 | 491 | -6 |
 | `src/modes/rpc/session-worker-protocol.ts` | 160 | 163 | 3 |
 | `src/modes/rpc/session-worker.ts` | 364 | 362 | -2 |
 | `src/modes/rpc/structured-session-records.ts` | 111 | 109 | -2 |
@@ -77,4 +77,34 @@ Compared with merged S16 base 629c344bb2b82fe53299ef265e365b140ca4bb1f; comments
 | `src/modes/rpc/worker-admission-command.ts` | 0 | 19 | 19 |
 | `src/modes/rpc/worker-client-capabilities.ts` | 0 | 30 | 30 |
 
-The brief-listed `node scripts/changes-md-check.mjs --staged` was attempted and exited 1 with MODULE_NOT_FOUND: that script is absent in the merged S16 base. `audit-changes-md.mjs` is the pin audit and has no staged mode. The actual PR changelog gate includes the per-runtime-path tracker audit; its result is reported separately. The complete staged root check (lint/ratchet, format, lock/pin/import/entry-graph checks and both typecheck graphs) passed.
+The requested `node scripts/check-changes-md.mjs --staged` was attempted and exited 1 with MODULE_NOT_FOUND: the script is absent from the merged S16 base. The earlier changes-md-check.mjs spelling is also absent. The repository implements tracker policy in check-pr-changelog.mjs; its actual PASS is quoted in the final report. Root check covers lint/ratchet, format, locks/pins/imports/entry graphs and both typecheck graphs.
+
+## Ruling traceability
+
+| Ruling / claim | Implementation | Observable test |
+| --- | --- | --- |
+| RULING-44/98: one shared fragment byte contract | `scripts/fragment-record-fixtures.ts`, `src/modes/rpc/compact-catalog-codec.ts:47`, unchanged `fixtures/fragment-records/` from aa30b6902f | fragment-record-fixtures (18 cases) and negotiated-fragments (8 producer cases) |
+| RULING-66 Q1=A: truthful flag-gated public support, unconditional private capture/transport | `src/modes/rpc/compact-negotiation.ts:62`, `session-router-host-reads.ts`, `structured-session-records.ts`, `core/agent-session.ts` | socket OFF/ON discovery and actual private worker capture/transport |
+| RULING-66 Q2=A: complete owner only, mixed profiles refused before holds | `src/modes/rpc/compact-socket-commands.ts:37`, `session-registry.ts`, `compact-runtime-factory.ts` | admission mixed-profile spy proves zero physical opens; unsupported-factory discovery and pair refusal |
+| RULING-70(2): manifest on selected wire, same page route | `src/modes/rpc/compact-open-admission.ts:94`, `session-router-routing.ts` get_recovery_page route, existing `src/modes/rpc/recovery-page-command.ts:53` | socket T7/T2 subscribes to recovery_manifest before open, then pages manifest via get_recovery_page and verifies its production fragment digest; existing admission-open golden c |
+| RULING-73: accepted pair at data.capabilities, no id means no reply | `src/modes/rpc/compact-negotiation.ts:67`, writer control encoder | fixtures/client-info-ack/index.json and all 16 runtime cases |
+
+The final T7 fold went RED with inherited compact_events surviving on an unselected actual socket, then GREEN after stripping launch/private opt-ins and forwarding only host-validated declarations. The session route is covered too. Graceful TCP teardown subscribes to close before ending clients, avoiding the owned test failure-path reset. The role-refusal latch also prevents a failed first compact selection from reverting to implicit legacy admission.
+
+## Shared fixture cases
+
+| Fragment case | Required observed result |
+| --- | --- |
+| empty-field | exact producer fragments and independent receiver acceptance |
+| single-small | exact producer fragments and independent receiver acceptance |
+| exact-D | exact producer fragments and independent receiver acceptance |
+| D-plus-1 | exact producer fragments and independent receiver acceptance |
+| multi-fragment-over-S | exact producer fragments and independent receiver acceptance |
+| utf8-split | exact producer fragments and independent receiver acceptance |
+| nul-bytes | exact producer fragments and independent receiver acceptance |
+| json-escape-split | exact producer fragments and independent receiver acceptance |
+| digest-mismatch | independent receiver rejection |
+| stale-ref | independent receiver rejection |
+| out-of-order-offset | independent receiver rejection |
+
+D02 shared ACK fixtures use the AGREED `docs/engine-socket/fixtures/client-info-ack/<case-id>.json` path and `{contractIds,request,flag,expectedAck}` fields. The index names all 16 cases; the engine never sends a partial accepted pair, so partial-pair is a typed refusal, explicitly documented in the index. Relocation edits preserve the pair. No fragment-record bytes were changed for this fold. No open local contract decisions remain; the separately owned desktop agreement is still a merge prerequisite, not a wait for this local task.

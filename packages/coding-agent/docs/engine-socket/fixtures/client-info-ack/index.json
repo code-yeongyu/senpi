@@ -1,0 +1,74 @@
+{
+	"contractIds": [
+		"T7",
+		"RULING-66",
+		"RULING-73"
+	],
+	"partialPairRule": "The engine never sends a partial accepted pair; an incomplete request receives compact_pair_required without data.",
+	"cases": [
+		{
+			"id": "compact-accepted",
+			"file": "compact-accepted.json"
+		},
+		{
+			"id": "partial-pair",
+			"file": "partial-pair.json"
+		},
+		{
+			"id": "no-data-legacy",
+			"file": "no-data-legacy.json"
+		},
+		{
+			"id": "refused",
+			"file": "refused.json"
+		},
+		{
+			"id": "flag-off",
+			"file": "flag-off.json"
+		},
+		{
+			"id": "heartbeat-selected",
+			"file": "heartbeat-selected.json"
+		},
+		{
+			"id": "heartbeat-legacy",
+			"file": "heartbeat-legacy.json"
+		},
+		{
+			"id": "heartbeat-refused",
+			"file": "heartbeat-refused.json"
+		},
+		{
+			"id": "relocation-edit",
+			"file": "relocation-edit.json"
+		},
+		{
+			"id": "advertisement-on",
+			"file": "advertisement-on.json"
+		},
+		{
+			"id": "advertisement-off",
+			"file": "advertisement-off.json"
+		},
+		{
+			"id": "repeated-declaration",
+			"file": "repeated-declaration.json"
+		},
+		{
+			"id": "session-owned",
+			"file": "session-owned.json"
+		},
+		{
+			"id": "independent-capability-edit",
+			"file": "independent-capability-edit.json"
+		},
+		{
+			"id": "selected-heartbeat-no-id",
+			"file": "selected-heartbeat-no-id.json"
+		},
+		{
+			"id": "flag-off-compact-request",
+			"file": "flag-off-compact-request.json"
+		}
+	]
+}

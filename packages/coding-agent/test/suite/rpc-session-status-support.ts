@@ -28,7 +28,9 @@ export interface RawClient {
 
 const DEADLINE_MS = 30_000;
 
-export async function statusHost(options: { supportsCompact?: (profile?: { cwd: string }) => boolean } = {}) {
+export async function statusHost(
+	options: { supportsCompact?: (profile?: { cwd: string }) => boolean; capabilities?: string[] } = {},
+) {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-status-"));
 	const cwd = join(scratch, "cwd");
 	const agentDir = join(scratch, "agent");
@@ -76,7 +78,7 @@ export async function statusHost(options: { supportsCompact?: (profile?: { cwd: 
 	const clock = { now: 1_000_000 };
 	if (options.supportsCompact) Object.assign(createRuntime, { supportsCompact: options.supportsCompact });
 	const writer = new SessionEventWriter(() => {});
-	const core = createHostCore({ agentDir, createRuntime, cwd }, writer, [], {
+	const core = createHostCore({ agentDir, createRuntime, cwd }, writer, options.capabilities ?? [], {
 		now: () => clock.now,
 		idleEvictionMs: 1e12,
 		emptyExitMs: 1e12,

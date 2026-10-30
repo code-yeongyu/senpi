@@ -1,7 +1,0 @@
-{
-	"id": "h",
-	"type": "response",
-	"command": "set_client_info",
-	"success": false,
-	"error": "compact_pair_required"
-}

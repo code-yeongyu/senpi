@@ -93,3 +93,26 @@ it("T7: role refusal cannot turn a failed compact selection into implicit legacy
 	expect(open).not.toHaveBeenCalled();
 	await peer.close();
 }, 120000);
+
+it("T7: private or inherited compact tokens cannot select socket transport", async () => {
+	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+	await using host = await statusHost({ capabilities: ["compact_events", PAIR[0]] });
+	await using net = await negotiationSockets(host.writer, host.core.router);
+	const peer = await net.connect();
+	const opened = await peer.request({ type: "open_session", cwd: host.cwd });
+	expect(opened.success).toBe(true);
+	expect(host.writer.getConnectionCapabilities("socket-1")).not.toContain("compact_events");
+	expect(host.writer.getConnectionCapabilities("socket-1")).not.toContain(PAIR[0]);
+	const declared = await peer.request({ type: "set_client_info", capabilities: ["compact_events"] });
+	expect(declared.success).toBe(true);
+	expect(declared).not.toHaveProperty("data");
+	const session = await peer.request({
+		type: "set_client_info",
+		sessionId: opened.sessionId,
+		capabilities: ["compact_events"],
+	});
+	expect(session.success).toBe(true);
+	expect(session).not.toHaveProperty("data");
+	expect(host.writer.getConnectionCapabilities("socket-1")).not.toContain("compact_events");
+	await peer.close();
+}, 120000);

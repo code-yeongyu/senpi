@@ -53,6 +53,9 @@ function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse
 	if (command.type === "set_client_info") {
 		const reply = declareSocketClient(host, command);
 		if (!reply.success) return Promise.resolve(reply);
+		const peer = host.writer.currentConnection();
+		if (command.capabilities !== undefined && peer !== undefined)
+			command = { ...command, capabilities: [...(host.pendingCapabilities.get(peer) ?? [])] };
 		if (command.id === undefined && command.capabilities === undefined) return Promise.resolve(undefined);
 	}
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;

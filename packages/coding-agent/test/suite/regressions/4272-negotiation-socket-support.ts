@@ -9,6 +9,7 @@ import { within, type WireRecord } from "./4272-worker-acceptance-support.ts";
 /** Production router/writer over real TCP sockets; readiness and records are event-controlled. */
 export async function negotiationSockets(writer: SessionEventWriter, router: SessionCommandRouter) {
 	const sockets = new Set<Socket>();
+	const clients = new Set<Socket>();
 	const handlers = new Set<Promise<void>>();
 	const failures: unknown[] = [];
 	let serial = 0;
@@ -38,6 +39,8 @@ export async function negotiationSockets(writer: SessionEventWriter, router: Ses
 			if (!address || typeof address === "string") throw new Error("missing TCP listener");
 			const socket = createConnection(address.port, "127.0.0.1");
 			await once(socket, "connect");
+			clients.add(socket);
+			socket.once("close", () => clients.delete(socket));
 			const records: WireRecord[] = [];
 			const listeners = new Set<(record: WireRecord) => void>();
 			attachJsonlLineReader(socket, (line) => {
@@ -85,13 +88,20 @@ export async function negotiationSockets(writer: SessionEventWriter, router: Ses
 					return reply;
 				},
 				async close() {
+					if (socket.destroyed) return;
 					const closed = once(socket, "close");
-					socket.destroy();
-					await closed;
+					socket.end();
+					await within("client socket close", closed);
 				},
 			};
 		},
 		async [Symbol.asyncDispose]() {
+			for (const socket of clients) {
+				if (socket.destroyed) continue;
+				const closed = once(socket, "close");
+				socket.end();
+				await within("client socket teardown", closed);
+			}
 			for (const socket of sockets) socket.destroy();
 			await new Promise<void>((resolve) => server.close(() => resolve()));
 			await Promise.allSettled([...handlers]);
