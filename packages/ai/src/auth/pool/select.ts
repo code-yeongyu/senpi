@@ -12,10 +12,18 @@ export class AllSlotsBlockedError extends Error {
 	readonly soonestUnblockAt: number | undefined;
 
 	constructor(soonestUnblockAt: number | undefined) {
+		// Local time for the reader, the ISO instant for prose scanners, and one step (senpi#4329).
 		super(
 			soonestUnblockAt === undefined
-				? "All credential slots are blocked until re-login."
-				: `All credential slots are blocked until ${new Date(soonestUnblockAt).toISOString()}.`,
+				? "All credential slots are blocked until re-login. Sign in again or add a new API key for this provider, or choose another model."
+				: `All credential slots are blocked until ${new Date(soonestUnblockAt).toLocaleString("en-US", {
+						year: "numeric",
+						month: "short",
+						day: "numeric",
+						hour: "numeric",
+						minute: "2-digit",
+						timeZoneName: "short",
+					})} (${new Date(soonestUnblockAt).toISOString()}). Wait until then, or choose another model.`,
 		);
 		this.name = "AllSlotsBlockedError";
 		this.soonestUnblockAt = soonestUnblockAt;
