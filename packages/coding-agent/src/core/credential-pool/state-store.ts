@@ -31,7 +31,30 @@ const slotStateSchema = z.looseObject({
 	modelBlocks: z.record(z.string().min(1), z.looseObject({ blockedUntil: z.number().int().positive() })).optional(),
 });
 
-export type CredentialSlotState = Readonly<z.infer<typeof slotStateSchema>>;
+/**
+ * The slot fields this engine reads and writes. Declared, not inferred from the loose schema: an inferred
+ * type carries the schema's `[k: string]: unknown` index signature, which turned every writer's
+ * `Omit<CredentialSlotState, "stateVersion">` into an unchecked bag, so a wrong-typed field would be
+ * written and then reset the whole file on the next read. Parsing stays loose; writing stays typed.
+ */
+export type CredentialSlotState = Readonly<{
+	stateVersion: number;
+	blockedUntil?: number;
+	blockReason?: "auth_error" | "rate_limit" | "account_disabled";
+	failureCount?: number;
+	lastSuccessAt?: number;
+	credentialRevision?: string;
+	lease?: { id: string; expiresAt: number };
+	modelBlocks?: Record<string, { blockedUntil: number }>;
+}>;
+
+// Both directions are compile-time checks that the declared type and the parsing schema agree on
+// every known field.
+type ParsedSlotState = z.infer<typeof slotStateSchema>;
+const parsedSlotsAreDeclaredSlots = (slot: ParsedSlotState): CredentialSlotState => slot;
+const declaredSlotsAreParsedSlots = (slot: CredentialSlotState): ParsedSlotState => slot;
+void parsedSlotsAreDeclaredSlots;
+void declaredSlotsAreParsedSlots;
 
 const documentSchema = z.looseObject({
 	schemaVersion: z.literal(1),
@@ -229,7 +252,8 @@ export class CredentialSlotRepository {
 				...document,
 				providers: {
 					...document.providers,
-					[providerId]: { lanes: { ...provider.lanes, [laneId]: { slots } } },
+					// Spread, not rebuilt: fields another engine wrote on this provider or lane are kept.
+					[providerId]: { ...provider, lanes: { ...provider.lanes, [laneId]: { ...lane, slots } } },
 				},
 			};
 			return { result, next };

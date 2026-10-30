@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import { CredentialSlotRepository } from "../../../src/core/credential-pool/state-store.ts";
 
 // senpi#4090: `credential-pool-state.json` is shared by every engine version installed on a
@@ -35,8 +35,10 @@ function writeNewerEngineDocument(): void {
 			writtenBy: "a newer engine",
 			providers: {
 				"chatgpt-subscription": {
+					providerNote: "provider field",
 					lanes: {
 						stored: {
+							laneNote: "lane field",
 							slots: {
 								alpha: {
 									stateVersion: 3,
@@ -79,5 +81,28 @@ describe("senpi#4090: the pool health file reads past fields a newer engine wrot
 		expect(stored.writtenBy).toBe("a newer engine");
 		expect(stored.providers["chatgpt-subscription"].lanes.stored.slots.alpha.blockedAt).toBe(BLOCKED_UNTIL - 60_000);
 		expect(stored.providers["chatgpt-subscription"].lanes.stored.slots.alpha.blockedUntil).toBe(BLOCKED_UNTIL);
+	});
+
+	it("#given that document #when a slot in that lane is written #then the provider's and the lane's unknown fields survive", async () => {
+		writeNewerEngineDocument();
+		const repository = new CredentialSlotRepository(path);
+
+		await repository.mutateSlotState("chatgpt-subscription", "stored", "bravo", () => ({ failureCount: 1 }));
+
+		const provider = JSON.parse(readFileSync(path, "utf8")).providers["chatgpt-subscription"];
+		expect(provider.providerNote).toBe("provider field");
+		expect(provider.lanes.stored.laneNote).toBe("lane field");
+		expect(provider.lanes.stored.slots.bravo.failureCount).toBe(1);
+	});
+
+	// Reading past unknown fields must not loosen what this engine writes: a wrong-typed known field
+	// would be written, fail the schema on the next read, and reset the whole file. `tsc` checks this.
+	it("#given the loose schema #when a slot write is typed #then its known fields keep their types", () => {
+		type SlotWrite = NonNullable<ReturnType<Parameters<CredentialSlotRepository["mutateSlotState"]>[3]>>;
+
+		expectTypeOf<SlotWrite["blockedUntil"]>().toEqualTypeOf<number | undefined>();
+		expectTypeOf<SlotWrite["blockReason"]>().toEqualTypeOf<
+			"auth_error" | "rate_limit" | "account_disabled" | undefined
+		>();
 	});
 });
