@@ -190,11 +190,13 @@ describe("oh-my-openagent#10304: one failing turn seeds at most one cold seat", 
 		await store.modify(PROVIDER, async (credential) => ({
 			...emptyCredential(),
 			...credential,
-			accounts: seats.slice(0, 3).map((seat) =>
-				seat.name === "warm" || (blockedC && seat.name === "seat-c")
-					? { ...seat, blockedUntil: NOW + 4 * HOUR_MS, blockReason: "rate_limit" as const }
-					: seat,
-			),
+			accounts: seats
+				.slice(0, 3)
+				.map((seat) =>
+					seat.name === "warm" || (blockedC && seat.name === "seat-c")
+						? { ...seat, blockedUntil: NOW + 4 * HOUR_MS, blockReason: "rate_limit" as const }
+						: seat,
+				),
 		}));
 		const fake = new FakeSeats((seat) => (seat === "seat-b" ? "long_limit" : "ok"));
 		const input = { store, fake, session: `s-goal-${blockedC}`, warm: "warm", pinned: "seat-b" };

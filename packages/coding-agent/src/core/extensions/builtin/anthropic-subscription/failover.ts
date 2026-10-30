@@ -408,7 +408,14 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 		return slot !== undefined && usable(slot, now(), options.model);
 	};
 	const coldSeedLimit = (cold: string) =>
-		new ColdSeedLimitError(warm ?? cold, cold, dueBackAt(accounts, [warm ?? cold, cold], now(), options.model));
+		new ColdSeedLimitError(
+			warm ?? cold,
+			cold,
+			// Goal recovery starts a new turn, which may use an untried seat immediately.
+			accounts.some((slot) => usable(slot, now(), options.model))
+				? undefined
+				: dueBackAt(accounts, [warm ?? cold, cold], now(), options.model),
+		);
 
 	for (let attempt = 0; attempt < attemptLimit; attempt++) {
 		// Each attempt gets its own copy: prepareSlot refreshes the slot in place, and a concurrent

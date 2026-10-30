@@ -48,7 +48,7 @@ export function forgetColdSeat(sessionKey?: string): void {
 export class ColdSeedLimitError extends Error {
 	readonly warmAccount: string;
 	readonly coldAccount: string;
-	/** When the warm or the tried cold seat is due back for this session, if either names a time. */
+	/** When the warm or tried cold seat is due back, only if no account can serve the next turn now. */
 	readonly soonestUnblockAt: number | undefined;
 
 	constructor(warmAccount: string, coldAccount: string, soonestUnblockAt: number | undefined) {
