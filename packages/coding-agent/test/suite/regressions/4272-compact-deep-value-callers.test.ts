@@ -7,15 +7,9 @@ import { CompactValues } from "../../../src/modes/rpc/compact-values.ts";
 import { memoryIo, spoolRoot } from "../compact-storage-support.ts";
 import { callsRig } from "./4272-calls-support.ts";
 
-// senpi#4272 RULING-59, review LOWs on #4557: callers of the uncapped owner. A value deeper than the engine's
-// JSON.stringify limit (`own` accepts any depth) must not leave owned pages behind when a caller serializes it,
-// and every whole-value read under a cut lease rechecks the lease between page reads.
-
-function deep(): unknown {
-	let nested: unknown = 1;
-	for (let level = 0; level < 100_000; level++) nested = [nested];
-	return nested;
-}
+// senpi#4272 RULING-59, review LOWs on #4557: callers of the uncapped owner. A value the engine cannot serialize
+// must not leave owned pages behind, and every whole-value read under a cut lease rechecks it between page reads.
+// senpi#4956: BigInt fails JSON.stringify deterministically, unlike nesting beyond a runtime-dependent stack limit.
 
 async function withTable(run: (table: CompactCallTable) => void) {
 	const root = await spoolRoot();
@@ -33,7 +27,7 @@ async function withTable(run: (table: CompactCallTable) => void) {
 
 it("a call slot the engine cannot serialize throws before anything is owned", async () => {
 	await withTable((table) => {
-		expect(() => table.own(deep())).toThrowError(RangeError);
+		expect(() => table.own(1n)).toThrowError(TypeError);
 	});
 });
 
@@ -52,7 +46,7 @@ it("a call header the engine cannot serialize leaves the table and the store unc
 			startedAtMs: null,
 			requestedName: "bash",
 			resolvedName: "bash",
-			seed: deep(),
+			seed: 1n,
 			raw: null,
 			input: { announced: null, started: null, prepared: null },
 			correlation: null,
@@ -61,7 +55,7 @@ it("a call header the engine cannot serialize leaves the table and the store unc
 			result: null,
 			outcome: null,
 		};
-		expect(() => table.put(call, creationOf(call))).toThrowError(RangeError);
+		expect(() => table.put(call, creationOf(call))).toThrowError(TypeError);
 		expect(table.root.header === undefined && table.root.ref === undefined, "the root is unchanged").toBe(true);
 		expect(table.snapshot().live).toBe(0);
 	});
