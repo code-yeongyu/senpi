@@ -1260,6 +1260,15 @@ export class RpcClient {
 		return this.getData<{ accounts: RpcProviderAccount[] }>(response).accounts;
 	}
 
+	/**
+	 * Re-run the sign-in connection test on one Claude subscription account and return the stored `check`. Hosts
+	 * advertising `provider_account_test` answer it; other providers fail with `unsupported_provider`.
+	 */
+	async testProviderAccount(provider: string, name: string): Promise<NonNullable<RpcProviderAccount["check"]>> {
+		const response = await this.send({ type: "test_provider_account", provider, name });
+		return this.getData<{ check: NonNullable<RpcProviderAccount["check"]> }>(response).check;
+	}
+
 	/** Pin a provider account for future session-affine requests, or clear the pin. */
 	async pinProviderAccount(provider: string, name: string | null): Promise<void> {
 		await this.send({ type: "account_pin", provider, name });
@@ -1270,9 +1279,15 @@ export class RpcClient {
 		await this.send({ type: "account_order", provider, names });
 	}
 
-	/** Remove a persisted provider account slot. Environment slots are read-only. */
-	async removeProviderAccount(provider: string, name: string): Promise<void> {
-		await this.send({ type: "account_remove", provider, name });
+	/**
+	 * Remove a persisted provider account slot. Environment slots are read-only. `notice` is set when the account was
+	 * removed but something could not be cleaned up (a Claude CLI sign-out that could not run, a malformed slot).
+	 */
+	async removeProviderAccount(provider: string, name: string): Promise<{ notice?: string }> {
+		const data = this.getData<{ notice: string } | undefined>(
+			await this.send({ type: "account_remove", provider, name }),
+		);
+		return data === undefined ? {} : { notice: data.notice };
 	}
 
 	// =========================================================================
