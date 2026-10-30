@@ -1,6 +1,7 @@
 import { lazyStream } from "./api/lazy.ts";
 import { defaultProviderAuthContext as defaultAuthContext } from "./auth/context.ts";
 import { InMemoryCredentialStore } from "./auth/credential-store.ts";
+import { stampLogin } from "./auth/pool/login-id.ts";
 import { appendLoginSlot, assertLoginKeyPresent, removeSlot, withoutBlankKey } from "./auth/pool/slots.ts";
 import { resolveRefreshCredential } from "./auth/refresh-credential.ts";
 import {
@@ -803,10 +804,12 @@ class ModelsImpl implements MutableModels {
 			async (current) => {
 				mutationStarted = true;
 				markMutationStarted?.();
-				return appendLoginSlot(current, credential, (name, origin) => {
-					committedName = name;
-					committedOrigin = origin;
-				});
+				return stampLogin(
+					appendLoginSlot(current, credential, (name, origin) => {
+						committedName = name;
+						committedOrigin = origin;
+					}),
+				);
 			},
 			{ signal },
 		);

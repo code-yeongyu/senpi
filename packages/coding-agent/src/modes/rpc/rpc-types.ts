@@ -131,6 +131,7 @@ export type {
 export type {
 	RpcAuthProvider,
 	RpcAuthStatus,
+	RpcAuthStoreError,
 	RpcLoadedExtension,
 	RpcLoadedMcpServer,
 	RpcMcpServerStatus,
