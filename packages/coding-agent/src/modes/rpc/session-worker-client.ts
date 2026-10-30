@@ -27,6 +27,7 @@ import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import { recoveryAgentDir } from "./compact-storage-health.ts";
 import type { SessionWorkerCallbacks } from "./session-worker-callbacks.ts";
 import { startSessionWorker } from "./session-worker-start.ts";
+import { reconcileWorkerReplacement } from "./session-worker-replacement.ts";
 
 export class SessionWorkerClient {
 	private privateBinding?: McpFormBinding;
@@ -435,9 +436,7 @@ export class SessionWorkerClient {
 						}
 						return writer.waitForSessionBackpressure(sessionId);
 					});
-				const consumed = Promise.resolve(
-					message.snapshot ? this.callbacks.reconcile(message.snapshot.liveSessionPaths) : undefined,
-				).then(() => {
+				const consumed = reconcileWorkerReplacement(message, lane, this.callbacks).then(() => {
 					// Resolved after reconciliation: a retired or replaced destination consumes the frame normally.
 					if (outputConnection === undefined) return enqueue();
 					return message.owner === undefined || outputConnection !== message.connection

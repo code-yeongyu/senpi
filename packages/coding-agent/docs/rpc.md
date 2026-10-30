@@ -626,6 +626,9 @@ cut issuance; no token, manifest or event can name an unreserved generation. Exh
 refuses a new cut as `storage_unavailable`, never by resetting the counter. A concurrent owner cannot reserve
 the same session while its kernel ownership lock is held. Materializers continue to refuse lower generations
 as `stale_generation`.
+On new-session, switch and fork replacements, the owner rebinds before publishing the replacement's first cut.
+Its new range starts above both the lane's previous reservation ceiling and the target session's persisted floor;
+synchronous cut requests refuse while that asynchronous reservation is pending.
 
 ```json
 {"type": "get_recovery_page", "sessionId": "rpc-1", "token": "socket-3:7", "admissionId": "attach-9",

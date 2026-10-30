@@ -27,6 +27,7 @@ export class SessionGenerations {
 	private ceiling = Number.MAX_SAFE_INTEGER;
 	private failed = false;
 	private closed = false;
+	private binding = 0;
 	private path: string | undefined;
 	private release: (() => Promise<void>) | undefined;
 	private pending: Promise<void> = Promise.resolve();
@@ -38,12 +39,26 @@ export class SessionGenerations {
 		this.dir = join(agentDir, `.senpi-recovery-generations-${process.getuid?.() ?? "user"}`);
 	}
 
-	/** Binding is once per routing-session owner; replacing its accepted epoch never resets this counter. */
+	/** Replacement burns the old range and reserves above both the lane ceiling and the target's durable floor. */
 	bind(sessionId: string): Promise<void> {
-		if (this.path) throw new Error("generation owner already bound");
-		this.ceiling = 0;
-		this.path = join(this.dir, createHash("sha256").update(sessionId).digest("hex"));
-		this.pending = this.initialize(this.path).catch((cause: unknown) => this.unavailable(cause));
+		const path = join(this.dir, createHash("sha256").update(sessionId).digest("hex"));
+		if (this.closed || path === this.path) return this.pending;
+		const previous = this.path;
+		this.path = path;
+		this.binding++;
+		// Drain an old refill before releasing its lock or letting it change the new owner's ceiling.
+		this.pending = this.pending
+			.then(async () => {
+				await this.release?.();
+				this.release = undefined;
+				this.failed = false;
+				this.issued = this.ceiling = previous ? Math.max(this.issued, this.ceiling) : this.issued;
+				await this.initialize(path);
+			})
+			.catch((cause: unknown) => this.unavailable(cause))
+			.finally(() => {
+				this.binding--;
+			});
 		return this.pending;
 	}
 
@@ -63,7 +78,7 @@ export class SessionGenerations {
 				const text = await file.readFile("utf8");
 				const floor = Number(text);
 				if (!/^(0|[1-9]\d*)$/.test(text) || !Number.isSafeInteger(floor)) throw new CompactReadError("integrity");
-				this.issued = this.ceiling = floor;
+				this.issued = this.ceiling = Math.max(this.issued, floor);
 			} finally {
 				await file.close();
 			}
@@ -75,7 +90,7 @@ export class SessionGenerations {
 
 	/** Exhaustion while refill is pending, corruption, contention and failed persistence all refuse issuance. */
 	next(): number | undefined {
-		if (this.closed || this.failed || this.issued >= this.ceiling) return undefined;
+		if (this.closed || this.failed || this.binding > 0 || this.issued >= this.ceiling) return undefined;
 		const generation = ++this.issued;
 		if (this.path && this.ceiling - generation === RANGE / 2)
 			this.pending = this.reserve(this.path).catch((cause: unknown) => this.unavailable(cause));

@@ -4,6 +4,7 @@
 ### What changed
 
 - `packages/coding-agent/src/modes/rpc/compact-session-generations.ts`: one session counter reserves 1,024 values under a lifetime kernel ownership lock. File fsync, atomic rename and directory fsync finish before values become issuable; refill starts with 512 remaining. Exhaustion, corrupt metadata, competing ownership and storage failure fail closed. Restart starts at the persisted ceiling plus one, burning unused reservations.
+- `packages/coding-agent/src/modes/rpc/session-binding.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts` and `packages/coding-agent/src/modes/rpc/session-worker-replacement.ts`: await generation-owner rebinding before publishing a replacement bootstrap. New sessions, switches and forks reserve above both the lane's previous ceiling and the target's persisted floor. The counter drains old refills before releasing the old lock; synchronous cuts refuse while the new identity's range is being persisted.
 - `packages/coding-agent/src/modes/rpc/session-acceptance-lane.ts`: owns the counter across socket disconnects and accepted-state replacements and releases its lock on retirement.
 - `packages/coding-agent/src/modes/rpc/session-registry-open.ts` and `packages/coding-agent/src/modes/rpc/worker-session-open.ts`: bind the manager's durable session identity before admission, only behind the existing compact flag.
 - `packages/coding-agent/src/modes/rpc/compact-recovery-state.ts` and `packages/coding-agent/src/modes/rpc/compact-recovery-streams.ts`: synchronous freezes draw from the session counter; per-peer stream records no longer restart numbering.
@@ -12,6 +13,7 @@
 ### Why
 
 - RULING-99 A requires reconnect/restart generations to exceed previously observed values without changing the RULING-95 adapter.
+- Gap 1b: binding only at open left replacement generations persisted under the old durable identity, so reopening the replacement restarted below the generation it had already published.
 - Option 2 preserves synchronous freeze and cut/suffix ordering. `CompactRequiredStreams.prepare()` freezes before accepted mutations, while `materializerLine()` and `AdmissionRoutingActor.route()` immediately serialize the generation. Cancellation replies also carry it. An open-token-only asynchronous publication barrier would not cover those paths; durable ranges make every path safe before it sees a number.
 - The storage-health revision and fresh session epoch are independent clocks, and accepted roots are ephemeral scratch. None can serve as this session's durable generation source.
 
@@ -44,7 +46,7 @@
 
 <!-- changes-log: packages/coding-agent/CHANGELOG.md -->
 ### Fixed
-- Keep opt-in compact stream generations increasing across session reconnects and host restarts, refusing unpublished generations when durable storage is unavailable (RULING-99, part of #4272).
+- Keep opt-in compact stream generations increasing across reconnects, host restarts, new sessions, switches and forks, refusing unpublished generations when durable storage is unavailable (RULING-99, part of #4272).
 
 <!-- changes-log: packages/client/CHANGELOG.md -->
 ### Added
