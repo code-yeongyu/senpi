@@ -1,4 +1,5 @@
 import type { AdmissionProducerLifetime } from "./compact-admission-producer.ts";
+import type { AdmissionRow } from "./compact-admission-storage.ts";
 
 export type Answer = Readonly<Record<string, unknown>>;
 export type AdmissionIdentity = {
@@ -18,6 +19,7 @@ export type Epoch = {
 	readonly peer: string;
 	readonly directory: Promise<string>;
 	readonly hot: Map<string, ReturnType<typeof Promise.withResolvers<Answer>>>;
+	readonly failures: Map<string, AdmissionRow>;
 	tail: Promise<void>;
 	entries: number;
 	ended: boolean;

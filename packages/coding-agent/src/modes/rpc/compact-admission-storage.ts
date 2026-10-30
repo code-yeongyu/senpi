@@ -12,9 +12,11 @@ const rowSchema = z.object({
 	answer: z.string().max(65_536).optional(),
 });
 export type AdmissionRow = z.infer<typeof rowSchema>;
-type Directory = { readonly directory: Promise<string> };
+type Directory = { readonly directory: Promise<string>; readonly failures?: ReadonlyMap<string, AdmissionRow> };
 
 export async function readAdmissionRow(epoch: Directory, key: string): Promise<AdmissionRow | undefined> {
+	const failure = epoch.failures?.get(key);
+	if (failure) return failure;
 	try {
 		const text = await readFile(join(await epoch.directory, key), "utf8");
 		if (Buffer.byteLength(text) > ADMISSION_LIMITS.row) throw new CompactAdmissionError("storage_unavailable");
