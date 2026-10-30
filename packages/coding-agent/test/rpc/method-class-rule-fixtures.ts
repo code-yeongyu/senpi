@@ -21,6 +21,15 @@ const APPEND_ENTRY_CASES: ReadonlyArray<readonly [string, unknown, RpcMethodClas
 	["no entry", undefined, "device_admin"],
 ];
 
+const IDLE_START_CASES: ReadonlyArray<RuleCase> = [
+	["command that starts a turn", { message: "/mcp enable x", whenIdle: "start" }, "device_admin"],
+	["command on the queue path", { message: "/mcp enable x" }, "drive"],
+	["command explicitly queued", { message: "/mcp enable x", whenIdle: "queue" }, "drive"],
+	["text that starts a turn", { message: "hi", whenIdle: "start" }, "drive"],
+	["leading space is not a command", { message: " /mcp", whenIdle: "start" }, "drive"],
+	["non-string message that starts a turn", { message: 7, whenIdle: "start" }, "device_admin"],
+];
+
 /**
  * Each dynamic rule's OUTPUTS, keyed `<type>@<version>`. A classify change without a version bump fails the output
  * comparison; a bump fails the key match until the fixture is re-recorded under the new version on purpose.
@@ -66,4 +75,6 @@ export const RULE_FIXTURES: Readonly<Record<string, ReadonlyArray<RuleCase>>> = 
 		["non-string message", { message: 7 }, "device_admin"],
 		["missing message", {}, "device_admin"],
 	],
+	"steer@1": IDLE_START_CASES,
+	"follow_up@1": IDLE_START_CASES,
 };

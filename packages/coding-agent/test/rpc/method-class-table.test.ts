@@ -182,6 +182,20 @@ describe("RPC method classes (senpi#4319)", () => {
 		expect(reviewed).toEqual(versions);
 	});
 
+	it("classes steer and follow_up that start a turn with a slash command as device_admin (rules @1)", () => {
+		for (const type of ["steer", "follow_up"]) {
+			const command = { type, message: "/mcp enable x", whenIdle: "start" };
+			expect([type, rpcMethodPermitted(command, new Set<RpcMethodClass>(["drive", "answer", "thread"]))]).toEqual([
+				type,
+				false,
+			]);
+			expect([
+				type,
+				rpcMethodPermitted({ type, message: "/mcp enable x" }, new Set<RpcMethodClass>(["drive"])),
+			]).toEqual([type, true]);
+		}
+	});
+
 	it("classes a prompt that can run a slash command as device_admin (rule prompt@1)", () => {
 		const command = { type: "prompt", message: "/mcp enable x" };
 		expect(rpcMethodPermitted(command, new Set<RpcMethodClass>(["drive", "answer", "thread"]))).toBe(false);

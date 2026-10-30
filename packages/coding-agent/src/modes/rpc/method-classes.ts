@@ -135,6 +135,17 @@ function promptClass(record: object): RpcMethodClass {
 	return message.startsWith("/") ? "device_admin" : "drive";
 }
 
+/**
+ * `steer`/`follow_up` with `whenIdle: "start"` take the prompt path, which expands commands (with no template option);
+ * the queue path refuses registered commands. So a turn-starting message that is not a string or starts with `/` is
+ * `device_admin`, like `prompt`; anything else is `drive`.
+ */
+function idleStartClass(record: object): RpcMethodClass {
+	if (Reflect.get(record, "whenIdle") !== "start") return "drive";
+	const message: unknown = Reflect.get(record, "message");
+	return typeof message !== "string" || message.startsWith("/") ? "device_admin" : "drive";
+}
+
 /** A new session is a thread operation; naming a parent session file reads a host path. */
 function newSessionClass(record: object): RpcMethodClass {
 	return namesAny(record, ["parentSession"]) ? "device_admin" : "thread";
@@ -171,8 +182,9 @@ export const RPC_METHOD_CLASS = {
 	// drive
 	// drive for text; device_admin when the text can run a slash command (rule prompt@1)
 	prompt: { classify: promptClass, version: 1 },
-	steer: "drive",
-	follow_up: "drive",
+	// drive, except a turn-starting slash command (rules steer@1 / follow_up@1)
+	steer: { classify: idleStartClass, version: 1 },
+	follow_up: { classify: idleStartClass, version: 1 },
 	abort: "drive",
 	interrupt: "drive",
 	abort_retry: "drive",

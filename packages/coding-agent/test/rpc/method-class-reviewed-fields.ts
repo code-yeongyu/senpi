@@ -51,6 +51,7 @@ export const REVIEWED_FIELDS = {
 		],
 	},
 	steer: {
+		version: 1,
 		fields: [
 			"clientMessageId",
 			"clientTurnId",
@@ -64,6 +65,7 @@ export const REVIEWED_FIELDS = {
 		],
 	},
 	follow_up: {
+		version: 1,
 		fields: [
 			"clientMessageId",
 			"clientTurnId",

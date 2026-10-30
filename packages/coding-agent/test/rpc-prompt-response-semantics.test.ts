@@ -379,6 +379,36 @@ describe("RPC prompt response semantics", () => {
 		}
 	});
 
+	it("runs an extension command sent as steer or follow_up that starts a turn", async () => {
+		// whenIdle "start" takes the prompt path, which dispatches commands: the premise of rules steer@1/follow_up@1.
+		const commandArgs: string[] = [];
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: false,
+			responseDelayMs: 0,
+			extensionsResult: await createTestExtensionsResult([
+				(pi) => {
+					pi.registerCommand("handled", {
+						handler: async (args) => {
+							commandArgs.push(args);
+						},
+					});
+				},
+			]),
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "s1", type: "steer", message: "/handled steer-arg", whenIdle: "start" }));
+			await vi.waitFor(() => expect(commandArgs).toEqual(["steer-arg"]));
+			lineHandler(
+				JSON.stringify({ id: "f1", type: "follow_up", message: "/handled follow-arg", whenIdle: "start" }),
+			);
+			await vi.waitFor(() => expect(commandArgs).toEqual(["steer-arg", "follow-arg"]));
+			expect(parseOutputLines(rpcIo.outputLines).filter((line) => line.type === "agent_start")).toHaveLength(0);
+		} finally {
+			await cleanup();
+		}
+	});
+
 	it("emits one success response when prompt is queued during streaming", async () => {
 		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true, holdResponse: true });
 
