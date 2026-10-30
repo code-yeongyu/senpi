@@ -1,4 +1,3 @@
-import type { webcrypto } from "node:crypto";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { appendLoginSlot, listSlots, projectSlot, type PooledCredential } from "../src/auth/pool/slots.ts";
@@ -8,8 +7,8 @@ import { chatgptSubscriptionProvider } from "../src/providers/chatgpt-subscripti
 
 const ISSUER = "https://auth.openai.com";
 const DEVICE = "e61bbe28-07ef-466d-8e5d-a344f94ab305";
-let signingKey: webcrypto.CryptoKey;
-let publicKey: webcrypto.JsonWebKey;
+let signingKey: CryptoKey;
+let publicKey: JsonWebKey;
 
 beforeAll(async () => {
 	const pair = await crypto.subtle.generateKey(
