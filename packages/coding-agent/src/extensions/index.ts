@@ -7,6 +7,6 @@ export const builtInExtensions: InlineExtension[] = [
 		name: "html-render",
 		host: true,
 		hidden: true,
-		factory: (api) => attachHostTools(api, [showHtmlPageTool], { fallback: true }),
+		factory: (api) => attachHostTools(api, [showHtmlPageTool]),
 	},
 ];

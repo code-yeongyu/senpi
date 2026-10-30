@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionToolContext } from "../../src/core/extensions/types.ts";
+import { createEventBus } from "../../src/core/event-bus.ts";
 import { DefaultResourceLoader } from "../../src/core/resource-loader.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import {
@@ -13,7 +14,11 @@ import {
 import { inlineLocalImages } from "../../src/extensions/html-render/images.ts";
 import { showHtmlPageTool, writeHtmlPage } from "../../src/extensions/html-render/tool.ts";
 import { builtInExtensions } from "../../src/extensions/index.ts";
-import { HOST_TOOL_NAMES_CONTEXT_KEY } from "../../src/host-tools.ts";
+import {
+	HOST_TOOL_NAMES_CONTEXT_KEY,
+	HOST_TOOL_ROUTE_CHANNEL,
+	HOST_TOOL_ROUTE_UNAVAILABLE,
+} from "../../src/host-tools.ts";
 import { createHarness } from "./harness.ts";
 
 const PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 0)]);
@@ -83,15 +88,15 @@ describe("host HTML attachment", () => {
 		);
 	});
 
-	it.each([
-		{ supplied: "show_html_page", registered: false },
-		{ supplied: "another_host_tool", registered: true },
-	])("yields standalone defaults only to the opening host's $supplied attachment", async (row) => {
+	// #5005: one show_html_page in every session; a host route serves only while it is confirmed.
+	it("keeps exactly one show_html_page and routes calls only while a host route is set", async () => {
+		const bus = createEventBus();
 		const loader = new DefaultResourceLoader({
 			cwd: tempDir,
 			agentDir: tempDir,
+			eventBus: bus,
 			settingsManager: SettingsManager.inMemory({ disabledBuiltinExtensions: ["codemode"] }),
-			sessionContext: { [HOST_TOOL_NAMES_CONTEXT_KEY]: row.supplied },
+			sessionContext: { [HOST_TOOL_NAMES_CONTEXT_KEY]: "show_html_page" },
 			extensionFactories: builtInExtensions,
 			noExtensions: true,
 			noSkills: true,
@@ -100,10 +105,41 @@ describe("host HTML attachment", () => {
 			noContextFiles: true,
 		});
 		await loader.reload();
-		const loaded = loader.getExtensions();
-		expect(loaded.errors).toEqual([]);
-		const names = loaded.extensions.flatMap((extension) => [...extension.tools.keys()]);
-		expect(names.includes("show_html_page")).toBe(row.registered);
+		const registrations = loader
+			.getExtensions()
+			.extensions.flatMap((extension) => [...extension.tools.values()])
+			.filter((tool) => tool.definition.name === "show_html_page");
+		expect(registrations).toHaveLength(1);
+		const tool = registrations[0]?.definition;
+		if (tool === undefined) throw new Error("show_html_page is not registered");
+		const pages = () => readdirSync(join(tempDir, ".senpi/html-pages")).length;
+		const args = { html: "<p>routed</p>", title: "Routed" };
+		const call = () => tool.execute("call", args, undefined, undefined, ctxFor(tempDir));
+
+		await call();
+		expect(pages()).toBe(1);
+
+		const hostResult = { content: [{ type: "text" as const, text: "host" }], details: {} };
+		const route = vi.fn(async () => hostResult);
+		bus.emit(HOST_TOOL_ROUTE_CHANNEL, { name: "show_html_page", execute: route });
+		expect(await call()).toBe(hostResult);
+		expect(pages()).toBe(1);
+
+		route.mockRejectedValueOnce(Object.assign(new Error("grant lost"), { name: HOST_TOOL_ROUTE_UNAVAILABLE }));
+		expect((await call()).details).toMatchObject({ html: args.html, prepared: true });
+		expect(pages()).toBe(2);
+		await call();
+		expect(route).toHaveBeenCalledTimes(2);
+		expect(pages()).toBe(3);
+
+		bus.emit(HOST_TOOL_ROUTE_CHANNEL, {
+			name: "show_html_page",
+			execute: () => Promise.reject(new Error("tool failure")),
+		});
+		await expect(call()).rejects.toThrow("tool failure");
+		bus.emit(HOST_TOOL_ROUTE_CHANNEL, { name: "show_html_page" });
+		await call();
+		expect(pages()).toBe(4);
 	});
 
 	it.each([{ enabledBuiltinExtensions: ["goal"] }, { disabledBuiltinExtensions: ["html-render", "codemode"] }])(
