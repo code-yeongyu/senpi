@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { CellDecision } from "../src/kernels/js/permission-slots.mjs";
 import {
 	createPermissionSlots,
 	createPermissionRequester,
@@ -11,6 +12,39 @@ const request = { token: "one", call: { tool: "write" as const, input: { path: "
 const pass = { action: "pass" as const };
 
 describe("permission slot ownership (#4309)", () => {
+	it.each(["before-wait", "during-wait"] as const)(
+		"bounds a held decision when the host claims %s (#4709)",
+		async (order) => {
+			const slots = createPermissionSlots();
+			const answer = Promise.withResolvers<typeof pass>();
+			let serving: Promise<void> | undefined;
+			let claim = () => {};
+			let claimed = false;
+			const client = createPermissionRequester(slots, {
+				wake: (slot, generation) => {
+					claim = () => {
+						claimed = true;
+						serving = servePermissionSlot(slots, slot, generation, () => answer.promise);
+					};
+					if (order === "before-wait") claim();
+				},
+				wait: (...args) => {
+					if (!claimed) claim();
+					return Reflect.apply(Atomics.wait, Atomics, args);
+				},
+			});
+			try {
+				const started = performance.now();
+				expect(() => client.check(request)).toThrow("Permission check interrupted or timed out");
+				expect(performance.now() - started).toBeGreaterThanOrEqual(1_900);
+				expect(claimed).toBe(true);
+			} finally {
+				answer.resolve(pass);
+				await serving;
+			}
+		},
+	);
+
 	it.each(["interrupt", "timeout"] as const)("reclaims repeated %s requests beyond the pool size", async (kind) => {
 		const slots = createPermissionSlots();
 		let interrupted = true;
@@ -68,6 +102,54 @@ describe("permission slot ownership (#4309)", () => {
 			await serving;
 		}
 		expect(seen).toEqual([request]);
+	});
+
+	it("keeps waiting when a park ends on something other than the answer", async () => {
+		const slots = createPermissionSlots();
+		let serving: Promise<void> | undefined;
+		let parks = 0;
+		let pending: { slot: number; generation: number } | undefined;
+		const client = createPermissionRequester(slots, {
+			wake: (slot, generation) => {
+				pending = { slot, generation };
+			},
+			// The host claims the slot before it answers and that claim does not notify, so the first park
+			// can end with no answer written. Giving up there is what loses an allowed operation.
+			wait: () => {
+				parks++;
+				if (parks === 1) return "not-equal";
+				if (pending) serving = servePermissionSlot(slots, pending.slot, pending.generation, () => pass);
+				return "ok";
+			},
+		});
+		expect(client.check(request)).toEqual(pass);
+		expect(parks).toBe(2);
+		await serving;
+	});
+
+	it("parks again on the slot the host claimed before answering", () => {
+		const slots = createPermissionSlots();
+		const waited: number[] = [];
+		let claimedWord = -1;
+		let requestedWord = -1;
+		const client = createPermissionRequester(slots, {
+			wake: (slot, generation) => {
+				// The host owns the slot before it decides, and takes its time: this is the state the
+				// requester must park on again, and the one a mock parking on REQUESTED never reaches.
+				void servePermissionSlot(slots, slot, generation, () => new Promise<CellDecision>(() => {}));
+				requestedWord = (generation << 3) | 1;
+				claimedWord = permissionControl(slots, slot);
+			},
+			wait: (_control, _index, value) => {
+				waited.push(Number(value));
+				return waited.length === 1 ? "not-equal" : "timed-out";
+			},
+		});
+		expect(() => client.check(request)).toThrow("Permission check interrupted or timed out");
+		expect(claimedWord).not.toBe(requestedWord);
+		// Both parks are on the claimed word: the host already owned the slot when the requester looked.
+		// Without that state in the wait loop the requester never parks at all.
+		expect(waited).toEqual([claimedWord, claimedWord]);
 	});
 
 	it("does not reuse WRITING while a late host answer completes", async () => {

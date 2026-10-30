@@ -135,6 +135,7 @@ export type {
 	ExtensionFlag,
 	ExtensionHandler,
 	ExtensionRpcRequestHandler,
+	ExtensionRpcRequestContext,
 	ExtensionRuntime,
 	ExtensionShortcut,
 	ExtensionToolContext,
