@@ -123,8 +123,8 @@
       "packages/agent/src/harness/utils/output-capture.ts": ["OUTPUT_MIN_EMIT_INTERVAL_MS", "OUTPUT_TARGET_BYTES_PER_SECOND"],
       // pre-existing at origin main aceb1cc1d9: unused exports hierarchy
       "packages/agent/src/harness/utils/read-folders/compose.ts": ["hierarchy"],
-      // pre-existing at origin main aceb1cc1d9: unused exports TREE_SITTER_PARSE_BUDGET_MS, resetTreeSitterGrammars
-      "packages/agent/src/harness/utils/read-folders/tree-sitter/engine.ts": ["TREE_SITTER_PARSE_BUDGET_MS", "resetTreeSitterGrammars"],
+      // pre-existing at origin main aceb1cc1d9: unused exports TREE_SITTER_PARSE_BUDGET_MS
+      "packages/agent/src/harness/utils/read-folders/tree-sitter/engine.ts": ["TREE_SITTER_PARSE_BUDGET_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports TREE_SITTER_RUNTIME_FILE
       "packages/agent/src/harness/utils/read-folders/tree-sitter/grammar-assets.ts": ["TREE_SITTER_RUNTIME_FILE"],
       // pre-existing at origin main aceb1cc1d9: unused exports toolNameCorrectionNotice

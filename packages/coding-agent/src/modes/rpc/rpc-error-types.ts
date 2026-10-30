@@ -39,6 +39,9 @@ export const RPC_ERROR_MEDIA_NOT_FOUND = "media_not_found";
 /** `open_session.context` broke a documented cap (key count, key syntax, value or total bytes). */
 export const RPC_ERROR_INVALID_SESSION_CONTEXT = "invalid_session_context";
 
+/** `open_session.env` is malformed or names a variable that is not caller-passable on this host (senpi#4381). */
+export const RPC_ERROR_INVALID_SESSION_ENV = "invalid_session_env";
+
 /** `subscribe_sessions` named a malformed selector, mirror or flag; `errorData { reason, action }` says what to send. */
 export const RPC_ERROR_INVALID_SUBSCRIPTION = "invalid_subscription";
 

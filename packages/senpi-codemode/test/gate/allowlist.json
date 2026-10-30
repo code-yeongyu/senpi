@@ -1,6 +1,31 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#4906": {
+			"additions": [
+				"legacyContracts/test/characterization/detached-nested.test.ts/G4 characterization: detached nested completion() and agent() dispatches completion() and agent() after eval returned, on the submitting call's context",
+				"legacyContracts/test/characterization/detached-nested.test.ts/G4 characterization: detached nested completion() and agent() fails the detached cell and aborts its nested agent() when the submitting call's signal aborts after detach",
+				"legacyContracts/test/characterization/detached-nested.test.ts/G4 characterization: detached nested completion() and agent() aborts an in-flight nested agent() when the detached cell is stopped, and delivers no reply for it",
+				"legacyContracts/test/characterization/detached-nested.test.ts/G4 characterization: detached nested completion() and agent() drops a nested call the kernel sends after the detached cell completed",
+				"legacyContracts/test/py-kernel-permission-path-identity.test.ts/Python path identity: active=true decides reads and writes by file identity across spellings",
+				"legacyContracts/test/py-kernel-permission-path-identity.test.ts/Python path identity: active=true decides directory listings by identity, through a path and through a directory descriptor",
+				"legacyContracts/test/py-kernel-permission-path-identity.test.ts/Python path identity: active=true sends the written and executed spellings with the native canonical identity",
+				"legacyContracts/test/py-kernel-permission-path-identity.test.ts/Python path identity: active=true anchors the executed spelling to the interpreter's current directory",
+				"legacyContracts/test/py-kernel-permission-path-identity.test.ts/Python path identity: active=true refuses a spelling that is not valid UTF-8 as uncheckable instead of sending a lossy string",
+				"legacyContracts/test/py-kernel-permission-path-identity.test.ts/Python path identity: active=false decides reads and writes by file identity across spellings",
+				"legacyContracts/test/py-kernel-permission-path-identity.test.ts/Python path identity: active=false decides directory listings by identity, through a path and through a directory descriptor",
+				"legacyContracts/test/py-kernel-permission-path-identity.test.ts/Python path identity: active=false sends the written and executed spellings with the native canonical identity",
+				"legacyContracts/test/py-kernel-permission-path-identity.test.ts/Python path identity: active=false anchors the executed spelling to the interpreter's current directory",
+				"legacyContracts/test/py-kernel-permission-path-identity.test.ts/Python path identity: active=false refuses a spelling that is not valid UTF-8 as uncheckable instead of sending a lossy string",
+				"legacyContracts/test/py-canonical-parity.test.ts/Python canonical identity equals the JS native canonicalizer matches every canonical field and error under node",
+				"legacyContracts/test/py-canonical-parity.test.ts/Python canonical identity equals the JS native canonicalizer matches every canonical field and error under bun",
+				"legacyContracts/test/py-canonical-parity.test.ts/Python canonical identity equals the JS native canonicalizer omits a native result that has no lossless UTF-8 wire form",
+				"legacyContracts/test/py-canonical-parity.test.ts/Python canonical identity equals the JS native canonicalizer leaves drive-relative and device namespace paths to the host",
+				"legacyContracts/test/py-canonical-parity.test.ts/Python canonical identity equals the JS native canonicalizer sends no canonical, and still loads, when the interpreter has no ctypes",
+				"legacyContracts/test/py-canonical-parity.test.ts/Python canonical identity equals the JS native canonicalizer matches Win32 lexical joining without dropping earlier path components"
+			],
+			"reason": "senpi#4906 (duplicate senpi#4920): these contracts reached main without allowlist entries, so codemode-gate failed on main. Reviewed: test/characterization/detached-nested.test.ts (senpi#4639) pins today's detached nested completion()/agent() behaviour (dispatch on the submitting call's context after eval returns, caller abort and stop abort the nested agent() with no reply, late calls after completion are dropped); test/py-kernel-permission-path-identity.test.ts (senpi#4392) proves Python cells send the written, executed and native canonical path spellings and that an active deny refuses reads, writes and listings by file identity while an inactive kernel passes them; test/py-canonical-parity.test.ts (senpi#4392, senpi#4895) proves the Python canonical identity equals the JS native canonicalizer under node and bun, omits lossy non-UTF-8 results, loads without ctypes, and matches Win32 lexical joining. Skipped outcomes are the tests' own platform and active runIf gates. The frozen baseline is unchanged."
+		},
 		"senpi#4797": {
 			"additions": [
 				"legacyContracts/test/js-kernel-webview.test.ts/Bun.WebView from an eval cell serves the default backend from the main-thread service on every platform",
