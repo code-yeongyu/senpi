@@ -1,4 +1,5 @@
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
+import { captureOAuthRefreshes } from "./oauth-refresh.ts";
 import { listSlots, projectSlot, type PooledCredential } from "./pool/slots.ts";
 import type {
 	AuthOperationOptions,
@@ -7,6 +8,7 @@ import type {
 	CredentialStore,
 	LogoutOptions,
 	OAuthAuth,
+	OAuthCredential,
 	OAuthRevocationResult,
 } from "./types.ts";
 
@@ -17,56 +19,74 @@ function clearTokens<T extends object>(credential: T) {
 	return cleared;
 }
 
-/** Network work stays outside the store lock; a concurrent new login is never cleared. */
+/** Capture and clear atomically before network work, so later logins are not cleared. */
 export async function revokeStoredOAuth(
 	credentials: CredentialStore,
 	providerId: string,
 	oauth: OAuthAuth,
 	options?: LogoutOptions,
 ): Promise<OAuthRevocationResult | undefined> {
-	const stored: PooledCredential | undefined = await credentials.read(providerId);
-	if (stored?.type !== "oauth" || !oauth.revoke) return undefined;
-	const slots = listSlots(stored).filter((slot) => options?.slotId === undefined || slot.name === options.slotId);
-	let result: OAuthRevocationResult = { status: "revoked" };
-	for (const slot of slots) {
-		const projected = projectSlot(stored, slot.name);
-		if (projected?.type !== "oauth" || !projected.refresh) {
+	const revoke = oauth.revoke;
+	if (!revoke) return undefined;
+	let handled = false;
+	const targets: OAuthCredential[] = [];
+	let refreshes = Promise.resolve(true);
+	const settleRefreshes = captureOAuthRefreshes(credentials, providerId);
+	// Deliberately not cancellable: even an interrupted remote revoke must clear locally.
+	// Slot selection and its token snapshot share the same lock as refresh writes.
+	await credentials
+		.modify(providerId, async (current: PooledCredential | undefined) => {
+			if (current?.type !== "oauth") return undefined;
+			handled = true;
+			const slots = listSlots(current).filter(
+				(slot) => options?.slotId === undefined || slot.name === options.slotId,
+			);
+			if (!slots.length) return undefined;
+			for (const slot of slots) {
+				const projected = projectSlot(current, slot.name);
+				if (projected?.type === "oauth") targets.push({ ...projected, ...slot });
+			}
+			const names = new Set(slots.map((slot) => slot.name));
+			const accounts = Array.isArray(current.accounts)
+				? current.accounts.map((slot) => (names.has(slot.name) ? clearTokens(slot) : slot))
+				: undefined;
+			let next =
+				options?.slotId === undefined ||
+				slots.some((slot) => slot.refresh === current.refresh && slot.access === current.access)
+					? clearTokens(current)
+					: { ...current };
+			if (accounts) {
+				next = { ...next, accounts };
+				// Keep the legacy flat projection on a surviving signed-in sibling, if one exists.
+				const active = accounts.find((slot) => slot.access && slot.refresh);
+				if (next.signedOut === true && active) {
+					next = { ...next, ...active, signedOut: false };
+				}
+			}
+			return next;
+		})
+		.finally(() => {
+			// Include exchanges admitted until the store publishes the cleared slot.
+			// Later exchanges re-read the clear; earlier ones lose their CAS.
+			refreshes = settleRefreshes();
+		});
+	if (!handled) return undefined;
+	let result: OAuthRevocationResult = {
+		status: targets.length ? "revoked" : "remote_revocation_unconfirmed",
+	};
+	for (const target of targets) {
+		if (!target.refresh) {
 			result = { status: "remote_revocation_unconfirmed" };
 			continue;
 		}
 		try {
-			// Provider-owned slot metadata takes precedence over the legacy flat projection.
-			const revoked = await oauth.revoke({ ...projected, ...slot }, options);
+			const revoked = await revoke(target, options);
 			if (revoked.status !== "revoked") result = revoked;
 		} catch {
 			result = { status: "remote_revocation_unconfirmed" };
 		}
 	}
-	// Deliberately not cancellable: even an interrupted remote revoke must clear locally.
-	await credentials.modify(providerId, async (current: PooledCredential | undefined) => {
-		if (current?.type !== "oauth") return undefined;
-		const targets = slots.filter((slot) => {
-			const latest = listSlots(current).find((candidate) => candidate.name === slot.name);
-			return latest?.refresh === slot.refresh && latest?.access === slot.access;
-		});
-		if (!targets.length) return undefined;
-		const names = new Set(targets.map((slot) => slot.name));
-		const accounts = Array.isArray(current.accounts)
-			? current.accounts.map((slot) => (names.has(slot.name) ? clearTokens(slot) : slot))
-			: undefined;
-		let next = targets.some((slot) => slot.refresh === current.refresh && slot.access === current.access)
-			? clearTokens(current)
-			: { ...current };
-		if (accounts) {
-			next = { ...next, accounts };
-			// Keep the legacy flat projection on a surviving signed-in sibling, if one exists.
-			const active = accounts.find((slot) => slot.access && slot.refresh);
-			if (next.signedOut === true && active) {
-				next = { ...next, ...active, signedOut: false };
-			}
-		}
-		return next;
-	});
+	if (!(await refreshes)) result = { status: "remote_revocation_unconfirmed" };
 	return result;
 }
 

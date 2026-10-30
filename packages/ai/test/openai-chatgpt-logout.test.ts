@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryCredentialStore } from "../src/auth/credential-store.ts";
 import { openaiChatGPTOAuth } from "../src/auth/oauth/openai-chatgpt.ts";
-import type { OAuthCredential } from "../src/auth/types.ts";
+import type { OAuthAuth, OAuthCredential } from "../src/auth/types.ts";
 import { createModels, createProvider } from "../src/models.ts";
 import type { Api, Model } from "../src/types.ts";
 import { AssistantMessageEventStream } from "../src/utils/event-stream.ts";
@@ -10,7 +10,7 @@ const DISCOVERY = "https://auth.openai.com/.well-known/openid-configuration";
 const REVOCATION = "https://auth.openai.com/oauth/revoke";
 const PROVIDER = "siwc-test";
 
-async function connected() {
+async function connected(oauth: OAuthAuth = openaiChatGPTOAuth) {
 	const credentials = new InMemoryCredentialStore();
 	const credential: OAuthCredential = {
 		type: "oauth",
@@ -26,7 +26,7 @@ async function connected() {
 	models.setProvider(
 		createProvider({
 			id: PROVIDER,
-			auth: { oauth: openaiChatGPTOAuth },
+			auth: { oauth },
 			models: [],
 			api: {
 				stream: () => {
@@ -54,6 +54,167 @@ function endpoint(revoke: (init?: RequestInit) => Response | Promise<Response>) 
 
 describe("SIWC storage logout (#5003 W7)", () => {
 	afterEach(() => vi.unstubAllGlobals());
+
+	it.each([200, 400])("does not resurrect a refresh racing logout (rotated revoke HTTP %i)", async (status) => {
+		const refreshing = Promise.withResolvers<void>();
+		const rotated = Promise.withResolvers<OAuthCredential>();
+		const originalRevoked = Promise.withResolvers<void>();
+		const { models, credentials, credential } = await connected({
+			...openaiChatGPTOAuth,
+			revoke: async (target, options) => {
+				const result = await openaiChatGPTOAuth.revoke?.(target, options);
+				if (!result) throw new Error("Missing test revocation hook");
+				if (target.refresh === "synthetic-refresh") originalRevoked.resolve();
+				return result;
+			},
+			refresh: async () => {
+				refreshing.resolve();
+				return rotated.promise;
+			},
+		});
+		await credentials.modify(PROVIDER, async () => ({ ...credential, expires: 0 }));
+		const revoking = Promise.withResolvers<void>();
+		const response = Promise.withResolvers<Response>();
+		const posted: string[] = [];
+		endpoint((init) => {
+			const token = new URLSearchParams(String(init?.body)).get("token") ?? "";
+			posted.push(token);
+			if (token === credential.refresh) {
+				revoking.resolve();
+				return response.promise;
+			}
+			return new Response(null, { status });
+		});
+
+		// Reviewer's sequence: exchange starts, logout starts, rotation finishes,
+		// then the original token's revocation completes. No network or sleeps.
+		const auth = models.getAuth(PROVIDER);
+		await refreshing.promise;
+		const logout = models.logout(PROVIDER);
+		await revoking.promise;
+		if (status === 400) {
+			// Also prove logout includes a rotation that arrives after the original revoke.
+			response.resolve(new Response(null, { status: 200 }));
+			await originalRevoked.promise;
+		}
+		rotated.resolve({
+			...credential,
+			access: "rotated-access",
+			refresh: "rotated-refresh",
+			idToken: "rotated-id",
+			expires: Date.now() + 3_600_000,
+		});
+		await auth.catch(() => undefined);
+		response.resolve(new Response(null, { status: 200 }));
+		expect.soft(await logout).toEqual({
+			status: status === 200 ? "revoked" : "remote_revocation_unconfirmed",
+		});
+		expect.soft(await credentials.read(PROVIDER)).toMatchObject({ access: "", refresh: "", expires: 0 });
+		expect.soft(await credentials.read(PROVIDER)).not.toHaveProperty("idToken");
+		expect.soft(await models.getAuth(PROVIDER)).toBeUndefined();
+		expect.soft(posted).toEqual([credential.refresh, "rotated-refresh"]);
+	});
+
+	it("includes refresh admitted while a shared store is publishing the clear", async () => {
+		const refreshing = Promise.withResolvers<void>();
+		const rotated = Promise.withResolvers<OAuthCredential>();
+		const { models, credentials, credential } = await connected({
+			...openaiChatGPTOAuth,
+			refresh: async () => {
+				refreshing.resolve();
+				return rotated.promise;
+			},
+		});
+		await credentials.modify(PROVIDER, async () => ({ ...credential, expires: 0 }));
+		const peer = createModels({ credentials });
+		const provider = models.getProvider(PROVIDER);
+		if (!provider) throw new Error("Missing test provider");
+		peer.setProvider(provider);
+		const prepared = Promise.withResolvers<void>();
+		const publish = Promise.withResolvers<void>();
+		const modify = credentials.modify.bind(credentials);
+		vi.spyOn(credentials, "modify").mockImplementationOnce((id, fn, options) =>
+			modify(
+				id,
+				async (current) => {
+					const next = await fn(current);
+					prepared.resolve();
+					await publish.promise;
+					return next;
+				},
+				options,
+			),
+		);
+		const revoking = Promise.withResolvers<void>();
+		const response = Promise.withResolvers<Response>();
+		const posted: string[] = [];
+		endpoint((init) => {
+			const token = new URLSearchParams(String(init?.body)).get("token") ?? "";
+			posted.push(token);
+			if (token === credential.refresh) {
+				revoking.resolve();
+				return response.promise;
+			}
+			return new Response(null, { status: 400 });
+		});
+		const logout = models.logout(PROVIDER);
+		await prepared.promise;
+		const auth = peer.getAuth(PROVIDER).catch(() => undefined);
+		await refreshing.promise;
+		publish.resolve();
+		await revoking.promise;
+		rotated.resolve({ ...credential, access: "rotated-access", refresh: "rotated-refresh" });
+		await auth;
+		response.resolve(new Response(null, { status: 200 }));
+		expect(await logout).toEqual({ status: "remote_revocation_unconfirmed" });
+		expect(posted).toEqual([credential.refresh, "rotated-refresh"]);
+		expect(await credentials.read(PROVIDER)).toMatchObject({ access: "", refresh: "" });
+		expect(await models.getAuth(PROVIDER)).toBeUndefined();
+	});
+
+	it("keeps auth blocked until both overlapping slot logouts finish", async () => {
+		const { models, credentials, credential } = await connected();
+		await credentials.modify(PROVIDER, async () => ({
+			...credential,
+			accounts: ["first", "second", "survivor"].map((name) => ({
+				...credential,
+				name,
+				access: `${name}-access`,
+				refresh: `${name}-refresh`,
+			})),
+		}));
+		const started = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+		const responses = [Promise.withResolvers<Response>(), Promise.withResolvers<Response>()];
+		endpoint((init) => {
+			const token = new URLSearchParams(String(init?.body)).get("token");
+			const index = token === "first-refresh" ? 0 : 1;
+			started[index].resolve();
+			return responses[index].promise;
+		});
+		const first = models.logout(PROVIDER, { slotId: "first" });
+		await started[0].promise;
+		const second = models.logout(PROVIDER, { slotId: "second" });
+		await started[1].promise;
+		responses[0].resolve(new Response(null, { status: 200 }));
+		await first;
+		const during = await models.getAuth(PROVIDER, { slotName: "survivor" });
+		responses[1].resolve(new Response(null, { status: 200 }));
+		await second;
+		expect(during).toBeUndefined();
+		expect(await models.getAuth(PROVIDER, { slotName: "survivor" })).toMatchObject({
+			auth: { apiKey: "survivor-access" },
+		});
+	});
+
+	it("does not confirm revocation for an unknown slot", async () => {
+		const { models, credentials, credential } = await connected();
+		const fetchMock = endpoint(() => new Response(null, { status: 200 }));
+		expect(await models.logout(PROVIDER, { slotId: "missing" })).toEqual({
+			status: "remote_revocation_unconfirmed",
+		});
+		expect(await credentials.read(PROVIDER)).toEqual(credential);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
 
 	it("revokes once with the issued client ID then clears tokens but retains registration", async () => {
 		const { models, credentials, credential } = await connected();

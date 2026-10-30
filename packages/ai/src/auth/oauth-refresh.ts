@@ -60,6 +60,37 @@ type InflightRefresh = {
 };
 
 const inflightByStore = new WeakMap<CredentialStore, Map<string, InflightRefresh>>();
+type RefreshObserver = (providerId: string, promise: InflightRefresh["promise"]) => void;
+const refreshObserversByStore = new WeakMap<CredentialStore, Set<RefreshObserver>>();
+
+/** Collect exchanges through the clear's publication, then wait for discarded-token revocation too. */
+export function captureOAuthRefreshes(credentials: CredentialStore, providerId: string): () => Promise<boolean> {
+	const pending: Promise<boolean>[] = [];
+	let observers = refreshObserversByStore.get(credentials);
+	if (!observers) {
+		observers = new Set();
+		refreshObserversByStore.set(credentials, observers);
+	}
+	const observe: RefreshObserver = (id, promise) => {
+		if (id === providerId)
+			pending.push(
+				promise.then(
+					() => true,
+					() => false,
+				),
+			);
+	};
+	observers.add(observe);
+	const prefix = `${providerId}\u0000`;
+	for (const [key, refresh] of inflightByStore.get(credentials) ?? []) {
+		if (key.startsWith(prefix)) observe(providerId, refresh.promise);
+	}
+	return async () => {
+		observers.delete(observe);
+		const results = await Promise.all(pending);
+		return results.every(Boolean);
+	};
+}
 
 export function projectOAuthSlot(credential: OAuthCredential, name: string): OAuthCredential | undefined {
 	const projected = projectSlot(credential, name);
@@ -86,6 +117,9 @@ export function refreshOAuthCredential(request: OAuthRefreshRequest): Promise<Cr
 			if (registry.get(key) === created) registry.delete(key);
 		});
 		registry.set(key, created);
+		for (const observe of refreshObserversByStore.get(request.credentials) ?? []) {
+			observe(request.providerId, created.promise);
+		}
 		inflight = created;
 	}
 	join(inflight, request.signal, request.owning);
@@ -127,7 +161,7 @@ async function exchangeAndStore(request: OAuthRefreshRequest, signal: AbortSigna
 		const exchangeSignal = AbortSignal.any([signal, AbortSignal.timeout(DEFAULT_OAUTH_REFRESH_TIMEOUT_MS)]);
 		refreshed = await oauth.refresh(current, exchangeSignal);
 		// A result that arrives after every owning waiter left is not persisted.
-		signal.throwIfAborted();
+		if (!oauth.revoke) signal.throwIfAborted();
 	} catch (error) {
 		signal.throwIfAborted();
 		const causeClass = oauthRefreshFailureCause(error);
@@ -144,13 +178,22 @@ async function exchangeAndStore(request: OAuthRefreshRequest, signal: AbortSigna
 		throw new OAuthRefreshExchangeError(error);
 	}
 
+	let discarded = false;
+	let post: Credential | undefined;
 	try {
 		// The write is not cancellable: the exchange consumed `current.refresh`, so
 		// dropping the rotated token here would strand the account.
-		return await credentials.modify(providerId, async (stored) => {
-			if (stored?.type !== "oauth") return undefined; // logged out meanwhile
+		post = await credentials.modify(providerId, async (stored) => {
 			const slot = view(stored);
-			if (!slot || slot.refresh !== current.refresh) return undefined; // rotated meanwhile: adopt the stored value
+			if (
+				stored?.type !== "oauth" ||
+				!slot ||
+				slot.refresh !== current.refresh ||
+				(oauth.revoke && signal.aborted)
+			) {
+				discarded = true;
+				return undefined; // logged out, rotated, or cancelled meanwhile
+			}
 			return slotName === undefined
 				? mergeRefreshed(stored, refreshed)
 				: mergeRefreshedSlot(stored, slotName, refreshed);
@@ -158,4 +201,13 @@ async function exchangeAndStore(request: OAuthRefreshRequest, signal: AbortSigna
 	} catch (error) {
 		throw new OAuthRefreshStoreError(error);
 	}
+	// A refresh that lost ownership must not leave a renewable remote session.
+	// Do not revoke material another writer already stored as the current token.
+	if (discarded && oauth.revoke && refreshed.type === "oauth" && view(post)?.refresh !== refreshed.refresh) {
+		const result = await oauth.revoke({ ...current, ...refreshed });
+		if (result.status !== "revoked") {
+			throw new OAuthRefreshExchangeError(new Error("Discarded refresh revocation was not confirmed"));
+		}
+	}
+	return view(post) ? post : undefined;
 }

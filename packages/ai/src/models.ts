@@ -418,7 +418,7 @@ class ModelsImpl implements MutableModels {
 	private refreshControllers = new Map<string, AbortController>();
 	private publicationChains = new Map<string, Promise<unknown>>();
 	private logoutControllers = new Map<string, AbortController>();
-	private signingOut = new Set<string>();
+	private signingOut = new Map<string, number>();
 
 	constructor(options?: CreateModelsOptions) {
 		this.credentials = options?.credentials ?? new InMemoryCredentialStore();
@@ -852,7 +852,7 @@ class ModelsImpl implements MutableModels {
 		const oauth = this.providers.get(providerId)?.auth.oauth;
 		try {
 			if (oauth?.revoke) {
-				this.signingOut.add(providerId);
+				this.signingOut.set(providerId, (this.signingOut.get(providerId) ?? 0) + 1);
 				this.logoutControllers.get(providerId)?.abort(new Error("Account signed out"));
 				const result = await revokeStoredOAuth(this.credentials, providerId, oauth, options);
 				if (result) return result;
@@ -872,8 +872,14 @@ class ModelsImpl implements MutableModels {
 			signal.throwIfAborted();
 			throw new ModelsError("auth", `Credential store delete failed for ${providerId}`, { cause: error });
 		} finally {
-			this.signingOut.delete(providerId);
-			this.logoutControllers.delete(providerId);
+			if (oauth?.revoke) {
+				const remaining = (this.signingOut.get(providerId) ?? 1) - 1;
+				if (remaining > 0) this.signingOut.set(providerId, remaining);
+				else {
+					this.signingOut.delete(providerId);
+					this.logoutControllers.delete(providerId);
+				}
+			}
 		}
 	}
 
