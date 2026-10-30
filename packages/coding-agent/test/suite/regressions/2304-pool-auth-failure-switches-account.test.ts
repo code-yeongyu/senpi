@@ -38,12 +38,22 @@ function withDiagnostic(error: Error, diagnostic: ProviderDiagnostic): Error {
 	return attachProviderDiagnostic(error, diagnostic);
 }
 
-// One table for the whole refresh-failure class: only a token endpoint that names a refused grant
-// is a verdict on the account; every other failure to refresh says nothing about the login.
+// One table for the whole refresh-failure class: a token endpoint's 401 is an account verdict;
+// other statuses need a refused-grant body before the account can be blocked.
 describe("a failed OAuth refresh blocks the account only when the grant itself was refused", () => {
 	const FAILOVER = { kind: "failover", block: { reason: "auth_error" } };
 	const FAIL_REQUEST = { kind: "fail_request" };
 	test.each([
+		["401 plain", () => refreshRejected(401, "Unauthorized"), FAILOVER],
+		[
+			"401 Copilot Bad credentials",
+			() =>
+				refreshFailed(
+					new OAuthTokenEndpointError('401 Unauthorized: {"message":"Bad credentials"}', 401),
+				),
+			FAILOVER,
+		],
+		["401 RFC 6749 invalid_grant", () => refreshRejected(401, '{"error":"invalid_grant"}'), FAILOVER],
 		[
 			"400 invalid_grant",
 			() => refreshRejected(400, '{"error":"invalid_grant","error_description":"Refresh token expired"}'),
@@ -67,6 +77,12 @@ describe("a failed OAuth refresh blocks the account only when the grant itself w
 			FAILOVER,
 		],
 		["403 with an OAuth invalid_grant body", () => refreshRejected(403, '{"error":"invalid_grant"}'), FAILOVER],
+		["404 with an OAuth invalid_grant body", () => refreshRejected(404, '{"error":"invalid_grant"}'), FAILOVER],
+		["403 non-refusal OAuth body", () => refreshRejected(403, '{"error":"invalid_request"}'), FAIL_REQUEST],
+		["404 non-refusal OAuth body", () => refreshRejected(404, '{"error":"invalid_request"}'), FAIL_REQUEST],
+		["403 refusal code outside OAuth JSON", () => refreshRejected(403, "error=invalid_grant"), FAIL_REQUEST],
+		["404 refusal code outside OAuth JSON", () => refreshRejected(404, "error=invalid_grant"), FAIL_REQUEST],
+		["statusless refusal wording", () => refreshFailed(new Error('{"error":"invalid_grant"}')), FAIL_REQUEST],
 		[
 			"TLS interception (UNABLE_TO_GET_ISSUER_CERT_LOCALLY)",
 			() =>
@@ -157,6 +173,43 @@ describe("auth-class classification of one pooled account (senpi#2304, senpi#303
 		],
 	] as const)("%s never blocks the account: it retries the same account", (_label, error) => {
 		expect(classifyCredentialFailure(error(), { nowMs: NOW })).toEqual({ kind: "retry_same", maxAttempts: 2 });
+	});
+
+	test.each([
+		["websocket session was invalidated, reconnect", "fail_request"],
+		["websocket session has been revoked, reconnect", "fail_request"],
+		["WebSocket error: session was invalidated", "retry_same"],
+		["WebSocket closed 1006: session has been revoked", "retry_same"],
+	] as const)("%s is not evidence of a revoked credential", (text, kind) => {
+		expect(classifyCredentialFailure(new Error(text), { nowMs: NOW })).toEqual(
+			kind === "retry_same" ? { kind, maxAttempts: 2 } : { kind },
+		);
+	});
+
+	test.each([
+		["unknown", "token_revoked"],
+		["unknown", "token_invalidated"],
+		["auth", "authentication_error"],
+	] as const)("%s / %s diagnostic does not override a statusless transport failure", (category, code) => {
+		for (const text of ["fetch failed: ECONNRESET", "request timed out", "network error"]) {
+			const error = withDiagnostic(new Error(text), { category, code, evidence: "structured_code" });
+			expect(classifyCredentialFailure(error, { nowMs: NOW }), text).toEqual({
+				kind: "retry_same",
+				maxAttempts: 2,
+			});
+		}
+	});
+
+	test("an explicit 401 still refuses the account even when its message mentions a network error", () => {
+		const error = withDiagnostic(Object.assign(new Error("network error: unauthorized"), { status: 401 }), {
+			category: "auth",
+			code: "authentication_error",
+			evidence: "structured_code",
+		});
+		expect(classifyCredentialFailure(error, { nowMs: NOW })).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
 	});
 
 	test("a 429 that names a revoked token stays a rate limit", () => {
