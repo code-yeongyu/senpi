@@ -26,6 +26,10 @@ function refreshRejected(status: number, body: string): ModelsError {
 	});
 }
 
+function refreshFailed(cause: unknown): ModelsError {
+	return new ModelsError("oauth", `OAuth refresh failed for ${PROVIDER}`, { cause });
+}
+
 function refreshUnavailable(cause: unknown): OAuthRefreshUnavailableError {
 	return new OAuthRefreshUnavailableError(PROVIDER, cause);
 }
@@ -34,12 +38,72 @@ function withDiagnostic(error: Error, diagnostic: ProviderDiagnostic): Error {
 	return attachProviderDiagnostic(error, diagnostic);
 }
 
+// One table for the whole refresh-failure class: only a token endpoint that names a refused grant
+// is a verdict on the account; every other failure to refresh says nothing about the login.
+describe("a failed OAuth refresh blocks the account only when the grant itself was refused", () => {
+	const FAILOVER = { kind: "failover", block: { reason: "auth_error" } };
+	const FAIL_REQUEST = { kind: "fail_request" };
+	test.each([
+		[
+			"400 invalid_grant",
+			() => refreshRejected(400, '{"error":"invalid_grant","error_description":"Refresh token expired"}'),
+			FAILOVER,
+		],
+		["401 refresh_token_expired", () => refreshRejected(401, '{"error":{"code":"refresh_token_expired"}}'), FAILOVER],
+		["401 refresh_token_reused", () => refreshRejected(401, '{"error":{"code":"refresh_token_reused"}}'), FAILOVER],
+		[
+			"401 refresh_token_invalidated",
+			() => refreshRejected(401, '{"error":{"code":"refresh_token_invalidated"}}'),
+			FAILOVER,
+		],
+		[
+			"401 token_revoked",
+			() => refreshRejected(401, '{"error":{"message":"revoked","code":"token_revoked"}}'),
+			FAILOVER,
+		],
+		[
+			"400 form-encoded invalid_grant",
+			() => refreshRejected(400, "error=invalid_grant&error_description=expired"),
+			FAILOVER,
+		],
+		["403 with an OAuth invalid_grant body", () => refreshRejected(403, '{"error":"invalid_grant"}'), FAILOVER],
+		[
+			"TLS interception (UNABLE_TO_GET_ISSUER_CERT_LOCALLY)",
+			() =>
+				refreshFailed(
+					Object.assign(new TypeError("fetch failed"), {
+						cause: Object.assign(new Error("unable to get local issuer certificate"), {
+							code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+						}),
+					}),
+				),
+			FAIL_REQUEST,
+		],
+		[
+			"captive portal HTML 200 (SyntaxError from response.json())",
+			() => refreshFailed(new SyntaxError("Unexpected token '<', \"<html>\" is not valid JSON")),
+			FAIL_REQUEST,
+		],
+		[
+			"403 WAF challenge page",
+			() => refreshRejected(403, "<html><title>Unauthorized</title>Access denied by firewall</html>"),
+			FAIL_REQUEST,
+		],
+		["404 token endpoint moved", () => refreshRejected(404, "Not Found"), FAIL_REQUEST],
+		["403 plain forbidden", () => refreshRejected(403, "forbidden"), FAIL_REQUEST],
+		["400 that names no grant error", () => refreshRejected(400, '{"error":"invalid_request"}'), FAIL_REQUEST],
+		[
+			"a token that expires too soon after refresh",
+			() => new ModelsError("oauth", `OAuth refresh returned a token that expires too soon for ${PROVIDER}`),
+			FAIL_REQUEST,
+		],
+	] as const)("%s", (_label, error, expected) => {
+		expect(classifyCredentialFailure(error(), { nowMs: NOW })).toEqual(expected);
+	});
+});
+
 describe("auth-class classification of one pooled account (senpi#2304, senpi#3037)", () => {
 	test.each([
-		["refresh grant rejected (400 invalid_grant)", () => refreshRejected(400, '{"error":"invalid_grant"}')],
-		["refresh token expired (401)", () => refreshRejected(401, '{"error":{"code":"refresh_token_expired"}}')],
-		["refresh token reused (401)", () => refreshRejected(401, '{"error":{"code":"refresh_token_reused"}}')],
-		["refresh refused (403)", () => refreshRejected(403, "forbidden")],
 		["statusless invalidated token prose", () => new Error(INVALIDATED)],
 		["statusless revoked token prose", () => new Error("Your token has been revoked. Please sign in again.")],
 		[
@@ -84,6 +148,13 @@ describe("auth-class classification of one pooled account (senpi#2304, senpi#303
 			() => refreshUnavailable(Object.assign(new TypeError("fetch failed"), { code: "ECONNREFUSED" })),
 		],
 		["provider 503 echoing invalidated token text", () => Object.assign(new Error(INVALIDATED), { status: 503 })],
+		[
+			"refresh 503 whose body names invalid_grant",
+			() =>
+				refreshUnavailable(
+					new OAuthTokenEndpointError('token refresh failed (503): {"error":"invalid_grant"}', 503),
+				),
+		],
 	] as const)("%s never blocks the account: it retries the same account", (_label, error) => {
 		expect(classifyCredentialFailure(error(), { nowMs: NOW })).toEqual({ kind: "retry_same", maxAttempts: 2 });
 	});
@@ -94,6 +165,15 @@ describe("auth-class classification of one pooled account (senpi#2304, senpi#303
 			{ nowMs: NOW },
 		);
 		expect(action).toMatchObject({ kind: "failover", block: { reason: "rate_limit" } });
+	});
+
+	test("a statusless token_expired code does not block: an expired but refreshable token must refresh", () => {
+		const error = withDiagnostic(new Error("Codex error: request failed"), {
+			category: "unknown",
+			code: "token_expired",
+			evidence: "structured_code",
+		});
+		expect(classifyCredentialFailure(error, { nowMs: NOW })).toEqual({ kind: "fail_request" });
 	});
 
 	test("an unrelated statusless request error still fails the request", () => {
