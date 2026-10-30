@@ -181,7 +181,9 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 		child.stderr?.on("data", (data) => {
 			stderr += String(data);
 		});
-		const firstStderr = once(child.stderr!, "data");
+		const childStderr = child.stderr;
+		if (childStderr === null) throw new Error("bootstrap child has no stderr pipe");
+		const firstStderr = once(childStderr, "data");
 		let closed = false;
 		const close = once(child, "close").then(() => {
 			closed = true;
@@ -217,8 +219,8 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 		it.each(["timed-out", "ok"])(
 			`${runtime} rejects unready Worker after %s wait before closing stdin`,
 			async (result) => {
-				const { child } = start(runtime, [`readiness-unready-${result}`]);
-				const report = message(child);
+				const { child, stderr } = start(runtime, [`readiness-unready-${result}`]);
+				const report = message(child, stderr);
 				const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
 				child.stdin?.end(Buffer.alloc(32, 7));
 				expect(await report).toMatchObject({
@@ -235,8 +237,8 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 		);
 
 		it.each(["timed-out", "ok"])(`${runtime} accepts actual Worker readiness after %s wait`, async (result) => {
-			const { child } = start(runtime, [`readiness-ready-${result}`]);
-			const report = message(child);
+			const { child, stderr } = start(runtime, [`readiness-ready-${result}`]);
+			const report = message(child, stderr);
 			const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
 			child.stdin?.write(Buffer.alloc(32, 7));
 			expect(await report).toMatchObject({
@@ -252,8 +254,8 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 		});
 
 		it.each([0, 7])(`${runtime} restores stdin and releases ready Worker after a %i-byte key`, async (length) => {
-			const { child } = start(runtime, ["readiness-ready-ok"]);
-			const report = message(child);
+			const { child, stderr } = start(runtime, ["readiness-ready-ok"]);
+			const report = message(child, stderr);
 			const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
 			child.stdin?.end(Buffer.alloc(length, 7));
 			expect(await report).toMatchObject({
@@ -269,8 +271,8 @@ describe.skipIf(process.platform === "win32")("internal stdin bootstrap", () => 
 		});
 
 		it(`${runtime} refuses a null restore failure before application startup`, async () => {
-			const { child } = start(runtime, ["readiness-restore-error"]);
-			const report = message(child);
+			const { child, stderr } = start(runtime, ["readiness-restore-error"]);
+			const report = message(child, stderr);
 			const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
 			child.stdin?.end(Buffer.alloc(32, 7));
 			expect(await report).toMatchObject({
