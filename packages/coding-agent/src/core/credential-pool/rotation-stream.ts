@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
-import { applyAccountOrder, rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
+import { rendezvousOrder, type SlotHasher } from "@earendil-works/pi-ai/auth/pool/select";
 import type { PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { emitProviderAccountsChanged } from "../extensions/builtin/anthropic-subscription/account-events.ts";
 import { subscriptionLimits } from "../subscription-limits/limit-store.ts";
@@ -11,7 +11,8 @@ import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { modelBlockKey, pruneModelBlocks, withModelBlock } from "./model-scope.ts";
 import { isCommittedRotationOutput, isRotationStreamStart, rotationErrorFromEvent } from "./rotation-events.ts";
 import { listRotationSlots, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
-import { preferHeadroom } from "./selection-order.ts";
+import { roundRobinState } from "./round-robin-state.ts";
+import { orderAccounts, preferHeadroom } from "./selection-order.ts";
 import type { CredentialSlotState } from "./state-store.ts";
 
 export { listRotationSlots, type RotationLane, type RotationSlot, type RotationSources } from "./rotation-slots.ts";
@@ -99,7 +100,7 @@ export type CredentialRotationOptions = {
 
 /**
  * In-lane credential rotation for one provider request. Selection follows the
- * HRW order for the affinity key. Rotation and same-slot retry stay transparent
+ * configured strategy for the affinity key. Rotation and same-slot retry stay transparent
  * while only announcement frames have reached the caller; the first delta bars
  * them, and a failure after it is forwarded as the provider's own terminal
  * event for the session layer to recover from.
@@ -114,10 +115,14 @@ export function streamWithCredentialRotation(
 	const { sources, runAttempt } = options;
 	const hasher = options.hasher ?? sha256SlotHasher;
 	const affinityKey = options.affinityKey ?? randomUUID();
-	const useAffinity = sources.policy?.affinity !== false;
+	const useAffinity = sources.policy?.accountStrategy !== undefined || sources.policy?.affinity !== false;
 	const pooled: PooledCredential | undefined = sources.credential;
 	const now = sources.now ?? Date.now;
 	const rememberAffinity = useAffinity && options.affinityKey !== undefined;
+	const roundRobin =
+		sources.policy?.accountStrategy === "round-robin"
+			? roundRobinState.session(sources.providerId, options.affinityKey)
+			: undefined;
 
 	return runCredentialFailover<AssistantMessageEvent, RotationSlot>({
 		listSlots: () => listRotationSlots(sources, options.modelId === undefined ? {} : { modelId: options.modelId }),
@@ -125,10 +130,18 @@ export function streamWithCredentialRotation(
 			const pinned = candidates.find((candidate) => candidate.pinned === true);
 			if (pinned) return pinned;
 			const ranked = useAffinity ? rendezvousOrder(affinityKey, candidates, hasher) : candidates;
-			const ordered = applyAccountOrder(pooled?.order, ranked);
+			const ordered = orderAccounts(
+				candidates,
+				ranked,
+				pooled?.order,
+				sources.policy?.accountStrategy,
+				roundRobin?.offset,
+			);
 
 			const sessionKey = `${sources.providerId}\0${affinityKey}`;
-			const remembered = rememberAffinity ? headroomAffinities.get(sources.repository)?.get(sessionKey) : undefined;
+			const remembered =
+				roundRobin?.account ??
+				(rememberAffinity ? headroomAffinities.get(sources.repository)?.get(sessionKey) : undefined);
 			const winner = preferHeadroom(
 				ordered,
 				sources.providerId,
@@ -137,7 +150,8 @@ export function streamWithCredentialRotation(
 				remembered,
 			)[0];
 			if (!winner) throw new Error("credential rotation selected from an empty candidate set");
-			if (rememberAffinity && (remembered !== undefined || winner !== ordered[0])) {
+			if (roundRobin !== undefined) roundRobin.account = winner.name;
+			if (roundRobin === undefined && rememberAffinity && (remembered !== undefined || winner !== ordered[0])) {
 				const sessions = headroomAffinities.get(sources.repository) ?? new Map<string, string>();
 				sessions.set(sessionKey, winner.name);
 				headroomAffinities.set(sources.repository, sessions);

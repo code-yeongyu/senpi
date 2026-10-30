@@ -7,6 +7,7 @@ import { discoverEnvSlots } from "./env-slots.ts";
 import type { RunSlot } from "./failover.ts";
 import { STORE_BUSY, writeHealthUnlessStoreBusy } from "./health-write.ts";
 import { activeModelBlockUntil } from "./model-scope.ts";
+import type { AccountStrategy } from "./selection-order.ts";
 import {
 	acquireHalfOpenLease,
 	type CredentialSlotRepository,
@@ -72,6 +73,7 @@ export type RotationSources = {
 	repository: CredentialSlotRepository;
 	policy?: {
 		affinity?: boolean;
+		accountStrategy?: AccountStrategy;
 		cooldownBaseMs?: number;
 		cooldownCapMs?: number;
 		slots?: Record<string, { env?: string; value?: ConfigValue }>;
