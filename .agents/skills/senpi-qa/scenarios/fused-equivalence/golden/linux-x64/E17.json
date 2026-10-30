@@ -4016,13 +4016,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:14>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:4>",
        "parentId": "<id:2>",
@@ -4055,6 +4055,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:1>"
       },
       "sessionId": "<id:1>"
@@ -4068,6 +4069,7 @@
      },
      {
       "type": "agent_start",
+      "runId": "<uuid:17>",
       "sessionId": "<id:1>"
      },
      {
@@ -4200,6 +4202,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:1>"
@@ -4534,6 +4537,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:3>"
       },
       "sessionId": "<id:1>"
@@ -4563,6 +4567,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_write",
@@ -4807,13 +4812,13 @@
          ]
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:14>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:11>",
        "parentId": "<id:9>",
@@ -4854,6 +4859,7 @@
         ]
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:5>"
       },
       "sessionId": "<id:1>"
@@ -4904,13 +4910,13 @@
          ]
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:14>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:12>",
        "parentId": "<id:11>",
@@ -4951,6 +4957,7 @@
         ]
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:6>"
       },
       "sessionId": "<id:1>"
@@ -4979,13 +4986,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:14>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:13>",
        "parentId": "<id:12>",
@@ -5018,6 +5025,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_write",
@@ -5328,6 +5336,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:8>"
       },
       "sessionId": "<id:1>"
@@ -5500,6 +5509,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:4>"
@@ -5821,6 +5831,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:10>"
       },
       "sessionId": "<id:1>"
@@ -5850,6 +5861,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_write",
@@ -6094,13 +6106,13 @@
          ]
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:14>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:17>",
        "parentId": "<id:16>",
@@ -6141,6 +6153,7 @@
         ]
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:12>"
       },
       "sessionId": "<id:1>"
@@ -6191,13 +6204,13 @@
          ]
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:14>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:18>",
        "parentId": "<id:17>",
@@ -6238,6 +6251,7 @@
         ]
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:13>"
       },
       "sessionId": "<id:1>"
@@ -6266,13 +6280,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:14>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:19>",
        "parentId": "<id:18>",
@@ -6305,6 +6319,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_write",
@@ -6615,6 +6630,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:15>"
       },
       "sessionId": "<id:1>"
@@ -6787,6 +6803,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:7>"
@@ -7053,6 +7070,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:17>"
       },
       "sessionId": "<id:1>"
@@ -7428,6 +7446,7 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "completionId": "<uuid:14>:1",
         "completion": {
          "kind": "reply",
@@ -7443,8 +7462,7 @@
          "endedBy": "clean",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:17>"
+        }
        },
        "id": "<id:23>",
        "parentId": "<id:22>",
@@ -7477,6 +7495,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "completionId": "<uuid:14>:1",
        "completion": {
         "kind": "reply",
@@ -7530,6 +7549,7 @@
         ]
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:19>"
       },
       "sessionId": "<id:1>"
@@ -7566,13 +7586,13 @@
          ]
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:14>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:18>",
        "parentId": "<id:17>",
@@ -7613,6 +7633,7 @@
         ]
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:20>"
       },
       "sessionId": "<id:1>"
@@ -7641,13 +7662,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:14>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:19>",
        "parentId": "<id:18>",
@@ -7680,6 +7701,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_write",
@@ -7990,6 +8012,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:22>"
       },
       "sessionId": "<id:1>"
@@ -8162,6 +8185,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:9>"
@@ -8428,6 +8452,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:24>"
       },
       "sessionId": "<id:1>"
@@ -8803,6 +8828,7 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "completionId": "<uuid:14>:1",
         "completion": {
          "kind": "reply",
@@ -8818,8 +8844,7 @@
          "endedBy": "clean",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:17>"
+        }
        },
        "id": "<id:23>",
        "parentId": "<id:22>",
@@ -8852,6 +8877,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "completionId": "<uuid:14>:1",
        "completion": {
         "kind": "reply",
@@ -8978,6 +9004,7 @@
         "restoring": false,
         "persisted": true,
         "completionId": "<uuid:14>:1",
+        "runId": "<uuid:17>",
         "waitingOn": {
          "children": 0,
          "background": [],
@@ -8998,8 +9025,7 @@
          "endedBy": "clean",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:17>"
+        }
        },
        "id": "<id:25>",
        "parentId": "<id:24>",
@@ -9133,13 +9159,13 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:4>",
      "parentId": "<id:3>",
@@ -9263,13 +9289,13 @@
        ]
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:11>",
      "parentId": "<id:8>",
@@ -9305,13 +9331,13 @@
        ]
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:12>",
      "parentId": "<id:11>",
@@ -9339,13 +9365,13 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:13>",
      "parentId": "<id:12>",
@@ -9450,13 +9476,13 @@
        ]
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:17>",
      "parentId": "<id:15>",
@@ -9492,13 +9518,13 @@
        ]
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:18>",
      "parentId": "<id:17>",
@@ -9526,13 +9552,13 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:19>",
      "parentId": "<id:18>",
@@ -9635,6 +9661,7 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "completionId": "<uuid:1>:1",
       "completion": {
        "kind": "reply",
@@ -9650,8 +9677,7 @@
        "endedBy": "clean",
        "budgetSpent": false,
        "deadlineStop": false
-      },
-      "runId": "<uuid:2>"
+      }
      },
      "id": "<id:23>",
      "parentId": "<id:22>",
@@ -9686,6 +9712,7 @@
       "restoring": false,
       "persisted": true,
       "completionId": "<uuid:1>:1",
+      "runId": "<uuid:2>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -9706,8 +9733,7 @@
        "endedBy": "clean",
        "budgetSpent": false,
        "deadlineStop": false
-      },
-      "runId": "<uuid:2>"
+      }
      },
      "id": "<id:25>",
      "parentId": "<id:24>",
@@ -9736,6 +9762,7 @@
       "restoring": false,
       "persisted": true,
       "completionId": "<uuid:1>:1",
+      "runId": "<uuid:2>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -9747,7 +9774,7 @@
        "at": "<ts:completion.at:1>"
       },
       "activityRevision": {
-       "instanceId": "<uuid:2>",
+       "instanceId": "<uuid:3>",
        "revision": 0
       },
       "observedAt": "<ts:lifecycle.observedAt:1>"
