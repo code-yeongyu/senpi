@@ -87,7 +87,7 @@ function sendHtml(response: ServerResponse, status: number, body: string): void 
 	response.end(body);
 }
 
-function startCallbackServer(expectedState: string): Promise<CallbackServer> {
+function startCallbackServer(expectedState: string, preferredPort: number): Promise<CallbackServer> {
 	return new Promise((resolve, reject) => {
 		let redirectUri = REDIRECT_URI;
 		let resolveResult!: (result: AuthorizationResult) => void;
@@ -151,7 +151,7 @@ function startCallbackServer(expectedState: string): Promise<CallbackServer> {
 			server.listen(0, CALLBACK_HOST, onListening);
 		};
 		server.once("error", onBindError);
-		server.listen(CALLBACK_PORT, CALLBACK_HOST, onListening);
+		server.listen(preferredPort, CALLBACK_HOST, onListening);
 	});
 }
 
@@ -260,7 +260,7 @@ function agentHostId(deviceId: string | undefined): string {
 
 async function loginOpenAIChatGPT(
 	interaction: ProviderAuthInteraction,
-	options?: LoginOptions,
+	options?: LoginOptions & { readonly preferredCallbackPort?: number },
 ): Promise<OAuthCredential> {
 	const hostId = agentHostId(options?.getDeviceId?.());
 	const { verifier, challenge } = await generatePKCE();
@@ -268,7 +268,7 @@ async function loginOpenAIChatGPT(
 	const nonce = randomValue();
 	let callback: CallbackServer | undefined;
 	try {
-		callback = await startCallbackServer(state);
+		callback = await startCallbackServer(state, options?.preferredCallbackPort ?? CALLBACK_PORT);
 	} catch (error) {
 		interaction.notify({
 			type: "info",
@@ -327,7 +327,7 @@ async function loginOpenAIChatGPT(
 	}
 }
 
-export const openaiChatGPTOAuth: OAuthAuth = {
+export const openaiChatGPTOAuth = {
 	name: "OpenAI (ChatGPT subscription)",
 	isSubscription: true,
 	loginLabel: "Sign in with ChatGPT",
@@ -336,4 +336,4 @@ export const openaiChatGPTOAuth: OAuthAuth = {
 	async toAuth(credential) {
 		return { apiKey: credential.access };
 	},
-};
+} satisfies OAuthAuth;

@@ -1,5 +1,5 @@
-import { createServer, get } from "node:http";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { createServer, get, type Server } from "node:http";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openaiChatGPTOAuth } from "../src/auth/oauth/openai-chatgpt.ts";
 import type { OAuthCredential, ProviderAuthInteraction } from "../src/auth/types.ts";
 
@@ -7,6 +7,20 @@ const TOKEN_URL = "https://auth.openai.com/api/accounts/oauth/token";
 const REQUIRED_SCOPE = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 const neverAbortedSignal = new AbortController().signal;
 const DEVICE_ID = "e61bbe28-07ef-466d-8e5d-a344f94ab305";
+
+async function listenOnAssignedPort(server: Server): Promise<number> {
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", resolve);
+	});
+	const address = server.address();
+	if (!address || typeof address === "string") throw new Error("Expected a TCP listener");
+	return address.port;
+}
+
+async function closeServer(server: Server): Promise<void> {
+	await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -70,6 +84,14 @@ function connectedCredential(): OAuthCredential {
 }
 
 describe("OpenAI ChatGPT OAuth", () => {
+	let preferredCallbackPort: number;
+
+	beforeEach(async () => {
+		const reservation = createServer();
+		preferredCallbackPort = await listenOnAssignedPort(reservation);
+		await closeServer(reservation);
+	});
+
 	afterEach(() => {
 		vi.unstubAllGlobals();
 	});
@@ -88,14 +110,16 @@ describe("OpenAI ChatGPT OAuth", () => {
 					authorizeUrl = url;
 				},
 			}),
-			{ getDeviceId: () => DEVICE_ID },
+			{ getDeviceId: () => DEVICE_ID, preferredCallbackPort },
 		);
 
 		expect(authorizeUrl?.searchParams.get("client_id")).toBe("dynamic_agent_client");
 		expect(authorizeUrl?.searchParams.get("agent_name_hint")).toBe("Pi");
 		expect(authorizeUrl?.searchParams.get("ext_agent_host_id")).toBe(`urn:uuid:${DEVICE_ID}`);
 		expect(authorizeUrl?.searchParams.get("scope")).toBe(REQUIRED_SCOPE);
-		expect(authorizeUrl?.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:1455/auth/callback");
+		const redirectUri = `http://127.0.0.1:${preferredCallbackPort}/auth/callback`;
+		expect(authorizeUrl?.searchParams.get("redirect_uri")).toBe(redirectUri);
+		expect(exchangeBody?.get("redirect_uri")).toBe(redirectUri);
 		expect(authorizeUrl?.searchParams.get("resource")).toBe("https://api.openai.com/v1");
 		expect(authorizeUrl?.searchParams.get("code_challenge_method")).toBe("S256");
 		expect(exchangeBody?.get("client_id")).toBe("oaiapp_issued");
@@ -114,19 +138,16 @@ describe("OpenAI ChatGPT OAuth", () => {
 	it("rejects registration without an issued client ID", async () => {
 		const fetchMock = stubTokenEndpoint(tokenResponse());
 
-		await expect(openaiChatGPTOAuth.login(loginInteraction(), { getDeviceId: () => DEVICE_ID })).rejects.toThrow(
-			"registration callback did not contain an issued client ID",
-		);
+		await expect(
+			openaiChatGPTOAuth.login(loginInteraction(), { getDeviceId: () => DEVICE_ID, preferredCallbackPort }),
+		).rejects.toThrow("registration callback did not contain an issued client ID");
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	// senpi#5003 W4: exercise real binding, not a mocked listener choosing its own port.
-	it("receives the browser callback on a free port when 1455 is occupied", async () => {
+	it("receives the browser callback on a free port when the preferred port is occupied", async () => {
 		const occupied = createServer();
-		await new Promise<void>((resolve, reject) => {
-			occupied.once("error", reject);
-			occupied.listen(1455, "127.0.0.1", resolve);
-		});
+		const occupiedPort = await listenOnAssignedPort(occupied);
 		let redirectUri = "";
 		let exchangeBody: URLSearchParams | undefined;
 		stubTokenEndpoint(tokenResponse(), (body) => {
@@ -148,7 +169,7 @@ describe("OpenAI ChatGPT OAuth", () => {
 						const redirect = new URL(redirectUri);
 						expect(redirect.hostname).toBe("127.0.0.1");
 						expect(redirect.pathname).toBe("/auth/callback");
-						expect(redirect.port).not.toBe("1455");
+						expect(redirect.port).not.toBe(String(occupiedPort));
 						expect(Number(redirect.port)).toBeGreaterThan(0);
 					},
 					prompt: (prompt) =>
@@ -168,25 +189,22 @@ describe("OpenAI ChatGPT OAuth", () => {
 							}).on("error", reject);
 						}),
 				},
-				{ getDeviceId: () => DEVICE_ID },
+				{ getDeviceId: () => DEVICE_ID, preferredCallbackPort: occupiedPort },
 			);
 			expect(await responseStatus).toBe(200);
 			expect(exchangeBody?.get("redirect_uri")).toBe(redirectUri);
 			expect(exchangeBody?.get("code")).toBe("browser-code");
 			expect(exchangeBody?.get("client_id")).toBe("oaiapp_browser");
 		} finally {
-			await new Promise<void>((resolve) => occupied.close(() => resolve()));
+			await closeServer(occupied);
 		}
 	});
 
 	it.each(["/auth/callback", "/callback"])(
-		"validates the pasted fallback URI with path %s when 1455 is occupied",
+		"validates the pasted fallback URI with path %s when the preferred port is occupied",
 		async (path) => {
 			const occupied = createServer();
-			await new Promise<void>((resolve, reject) => {
-				occupied.once("error", reject);
-				occupied.listen(1455, "127.0.0.1", resolve);
-			});
+			const occupiedPort = await listenOnAssignedPort(occupied);
 			let redirectUri = "";
 			let exchangeBody: URLSearchParams | undefined;
 			const fetchMock = stubTokenEndpoint(tokenResponse(), (body) => {
@@ -198,13 +216,13 @@ describe("OpenAI ChatGPT OAuth", () => {
 						callbackClientId: "oaiapp_issued",
 						onAuthorize: (url) => {
 							redirectUri = url.searchParams.get("redirect_uri") ?? "";
-							expect(new URL(redirectUri).port).not.toBe("1455");
+							expect(new URL(redirectUri).port).not.toBe(String(occupiedPort));
 						},
 						onCallback: (url) => {
 							url.pathname = path;
 						},
 					}),
-					{ getDeviceId: () => DEVICE_ID },
+					{ getDeviceId: () => DEVICE_ID, preferredCallbackPort: occupiedPort },
 				);
 				if (path === "/auth/callback") {
 					await expect(login).resolves.toMatchObject({ clientId: "oaiapp_issued" });
@@ -214,7 +232,7 @@ describe("OpenAI ChatGPT OAuth", () => {
 					expect(fetchMock).not.toHaveBeenCalled();
 				}
 			} finally {
-				await new Promise<void>((resolve) => occupied.close(() => resolve()));
+				await closeServer(occupied);
 			}
 		},
 	);
@@ -225,6 +243,7 @@ describe("OpenAI ChatGPT OAuth", () => {
 		await expect(
 			openaiChatGPTOAuth.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), {
 				getDeviceId: () => DEVICE_ID,
+				preferredCallbackPort,
 			}),
 		).rejects.toThrow("grant did not include chatgpt.tokens.use.direct");
 	});
