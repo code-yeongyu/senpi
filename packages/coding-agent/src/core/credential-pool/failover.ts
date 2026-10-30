@@ -57,6 +57,13 @@ export type RunCredentialFailoverOptions<TEvent, TSlot extends RunSlot> = {
 	persistBlock: (slot: TSlot, block: CredentialBlock) => void | Promise<void>;
 	onRotate?: (event: CredentialFailoverEvent<TSlot>) => void | Promise<void>;
 	onSuccess?: (slot: TSlot) => void | Promise<void>;
+	/**
+	 * Called once when the request leaves a selected slot without a verdict on it: neither a success
+	 * nor a persisted block (an abort, a request-scoped failure, exhausted same-slot retries, or the
+	 * caller stopping the stream). A lane hands back what it reserved for the attempt, such as a
+	 * half-open probe lease, so the slot is not stranded until that reservation expires (senpi#4094).
+	 */
+	releaseSlot?: (slot: TSlot) => void | Promise<void>;
 	now?: () => number;
 };
 
@@ -197,90 +204,99 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 	let lastOriginal: unknown;
 	let lastTerminalEvent: TEvent | undefined;
 	let startAnnounced = false;
+	// The slot this request selected and has not yet settled with a success or a persisted block.
+	let unsettled: TSlot | undefined;
 
-	while (true) {
-		const slots = await options.listSlots();
-		const available = slots.filter((slot) => !attempted.has(slot.name) && isAvailable(slot, now()));
-		const candidates = available.length > 0 ? available : coolingProbe(slots, attempted);
-		if (candidates.length === 0) {
-			if (lastTerminalEvent !== undefined) {
-				yield lastTerminalEvent;
-				return;
+	try {
+		while (true) {
+			const slots = await options.listSlots();
+			const available = slots.filter((slot) => !attempted.has(slot.name) && isAvailable(slot, now()));
+			const candidates = available.length > 0 ? available : coolingProbe(slots, attempted);
+			if (candidates.length === 0) {
+				if (lastTerminalEvent !== undefined) {
+					yield lastTerminalEvent;
+					return;
+				}
+				const retryAt = soonestRetryAt(slots, now());
+				throw lastError !== undefined && lastOriginal !== undefined
+					? new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt })
+					: new CredentialFailoverError(
+							{ kind: "fail_request" },
+							new Error(noSlotsMessage(slots, now())),
+							retryAt === undefined ? {} : { retryAt },
+						);
 			}
-			const retryAt = soonestRetryAt(slots, now());
-			throw lastError !== undefined && lastOriginal !== undefined
-				? new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt })
-				: new CredentialFailoverError(
-						{ kind: "fail_request" },
-						new Error(noSlotsMessage(slots, now())),
-						retryAt === undefined ? {} : { retryAt },
-					);
-		}
-		const slot = options.select(candidates);
-		let committedOutput = false;
-		let terminalEvent: TEvent | undefined;
-		let attemptStream: AsyncIterable<TEvent> | undefined;
-		try {
-			attemptStream = await options.runAttempt(slot);
-			for await (const event of attemptStream) {
-				const failure = options.errorFromEvent?.(event);
-				if (failure !== undefined) {
-					terminalEvent = event;
+			const slot = options.select(candidates);
+			unsettled = slot;
+			let committedOutput = false;
+			let terminalEvent: TEvent | undefined;
+			let attemptStream: AsyncIterable<TEvent> | undefined;
+			try {
+				attemptStream = await options.runAttempt(slot);
+				for await (const event of attemptStream) {
+					const failure = options.errorFromEvent?.(event);
+					if (failure !== undefined) {
+						terminalEvent = event;
+						throw failure;
+					}
+					if (options.isStreamStart?.(event)) {
+						if (startAnnounced) continue;
+						startAnnounced = true;
+					}
+					committedOutput ||= options.isCommittedOutput(event);
+					yield event;
+				}
+				unsettled = undefined;
+				await options.onSuccess?.(slot);
+				return;
+			} catch (error) {
+				if (attemptStream) await settle(attemptStream);
+				const failureCount = (slot.failureCount ?? 0) + (retriesBySlot.get(slot.name) ?? 0);
+				const action = classify(error, {
+					failureCount,
+				});
+				lastOriginal = error;
+				lastTerminalEvent = terminalEvent;
+
+				if (action.kind === "retry_same" && !committedOutput) {
+					const used = (retriesBySlot.get(slot.name) ?? 0) + 1;
+					retriesBySlot.set(slot.name, used);
+					if (used < action.maxAttempts) continue;
+					if (terminalEvent !== undefined) {
+						yield terminalEvent;
+						return;
+					}
+					throw new CredentialFailoverError(action, error);
+				}
+				if (action.kind !== "failover") {
+					if (terminalEvent !== undefined) {
+						yield terminalEvent;
+						return;
+					}
+					throw new CredentialFailoverError(action, error);
+				}
+
+				unsettled = undefined;
+				await options.persistBlock(slot, action.block);
+				attempted.add(slot.name);
+				const failure = new CredentialFailoverError(action, error);
+				lastError = failure;
+				await options.onRotate?.({
+					slot,
+					block: action.block,
+					attempt: attempted.size,
+					committedOutput,
+				});
+				if (committedOutput) {
+					if (terminalEvent !== undefined) {
+						yield terminalEvent;
+						return;
+					}
 					throw failure;
 				}
-				if (options.isStreamStart?.(event)) {
-					if (startAnnounced) continue;
-					startAnnounced = true;
-				}
-				committedOutput ||= options.isCommittedOutput(event);
-				yield event;
-			}
-			await options.onSuccess?.(slot);
-			return;
-		} catch (error) {
-			if (attemptStream) await settle(attemptStream);
-			const failureCount = (slot.failureCount ?? 0) + (retriesBySlot.get(slot.name) ?? 0);
-			const action = classify(error, {
-				failureCount,
-			});
-			lastOriginal = error;
-			lastTerminalEvent = terminalEvent;
-
-			if (action.kind === "retry_same" && !committedOutput) {
-				const used = (retriesBySlot.get(slot.name) ?? 0) + 1;
-				retriesBySlot.set(slot.name, used);
-				if (used < action.maxAttempts) continue;
-				if (terminalEvent !== undefined) {
-					yield terminalEvent;
-					return;
-				}
-				throw new CredentialFailoverError(action, error);
-			}
-			if (action.kind !== "failover") {
-				if (terminalEvent !== undefined) {
-					yield terminalEvent;
-					return;
-				}
-				throw new CredentialFailoverError(action, error);
-			}
-
-			await options.persistBlock(slot, action.block);
-			attempted.add(slot.name);
-			const failure = new CredentialFailoverError(action, error);
-			lastError = failure;
-			await options.onRotate?.({
-				slot,
-				block: action.block,
-				attempt: attempted.size,
-				committedOutput,
-			});
-			if (committedOutput) {
-				if (terminalEvent !== undefined) {
-					yield terminalEvent;
-					return;
-				}
-				throw failure;
 			}
 		}
+	} finally {
+		if (unsettled !== undefined) await options.releaseSlot?.(unsettled);
 	}
 }
