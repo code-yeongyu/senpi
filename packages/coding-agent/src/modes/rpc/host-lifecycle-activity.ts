@@ -234,7 +234,14 @@ export class SupervisorOwner {
 		if (!this.watcher) await this.reload();
 		const owner = this.owner;
 		const revision = this.revision;
-		if (owner != null && !this.pipe && !this.gone && performance.now() >= this.nextProbeAt) {
+		// Bun can leave the inherited pipe silent after its writer dies (#4845). Reparenting
+		// re-enables the OS-identity check; it never bypasses ownership or the quiet-state gate.
+		if (
+			owner != null &&
+			(!this.pipe || process.ppid !== owner.pid) &&
+			!this.gone &&
+			performance.now() >= this.nextProbeAt
+		) {
 			const gone = await hostOwnerGone(owner);
 			if (this.stopped || revision !== this.revision) return false;
 			this.gone = gone;

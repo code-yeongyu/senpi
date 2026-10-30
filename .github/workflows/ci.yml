@@ -3,18 +3,17 @@ name: CI
 on:
   push:
     branches: [main]
-  # Every pull request runs CI, whatever its base: a PR stacked on another feature branch must not reach main untested
-  # (senpi#2759).
-  pull_request:
-  # ci-full-label.yml calls this workflow when a PR gets the run-full-ci label (senpi#3957).
+  # No pull_request trigger: merges are decided on a local whole-suite receipt, so hosted PR CI runs only for a PR
+  # labelled run-full-ci, through ci-full-label.yml, which calls this workflow on the label and on every later push of
+  # the labelled PR, whatever its base (senpi#2759, senpi#3957, senpi#4968).
   workflow_call:
 
 # A pull request has one run group (its ref is refs/pull/<n>/merge): a push or restack cancels the run it
 # supersedes. A main push gets its own group per commit, so its run never waits behind another main run and is
 # never cancelled or replaced by a later merge: every main commit ends with its own "Check and test" result, which
 # the release reuses as its test evidence (senpi#2960). After the fixed per-file prefix comes the workflow name, which is
-# the caller's when ci-full-label.yml calls this workflow, so a label-forced full run never cancels the PR's own run, and
-# the label run's other called workflows (their own prefixes) never cancel this one (senpi#3957).
+# the caller's when ci-full-label.yml calls this workflow, so the label run's other called workflows (their own
+# prefixes) never cancel this one (senpi#3957), and a newer push of the labelled PR cancels its superseded run.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -1456,6 +1455,11 @@ jobs:
         run: |
           command -v cc >/dev/null || { echo "::error::Missing C compiler 'cc' on PATH for POSIX process-exit tests"; exit 1; }
           cc --version
+      # 3044's bun-owner case spawns `bun` as the RPC owner (#4845), so this job needs the pinned bun on PATH.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
       - name: Install dependencies
         run: npm ci --ignore-scripts
       - name: Build workspace package entries
