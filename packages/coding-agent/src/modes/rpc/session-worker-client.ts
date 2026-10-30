@@ -16,30 +16,17 @@ import { frameUnit } from "./compact-canonical-pairing.ts";
 import { canonicalLoss } from "./compact-protocol-depth.ts";
 import type { SessionEventWriter } from "./session-event-writer.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
-import type {
-	HostToSessionWorker,
-	SessionWorkerToHost,
-	SessionWriteGrant,
-	WorkerSnapshot,
-} from "./session-worker-protocol.ts";
+import type { HostToSessionWorker, SessionWorkerToHost, WorkerSnapshot } from "./session-worker-protocol.ts";
 import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
-import { SessionWorkerRequests } from "./session-worker-requests.ts";
+import { SessionWorkerRequests, type WorkerRequestInput } from "./session-worker-requests.ts";
 import { WorkerIntake } from "./session-worker-intake.ts";
 import { acknowledge, acknowledgeGrant } from "./session-worker-signals.ts";
 import { WorkerOwnerGates } from "./session-worker-owners.ts";
 import { randomUUID } from "node:crypto";
 import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import { recoveryAgentDir } from "./compact-storage-health.ts";
+import type { SessionWorkerCallbacks } from "./session-worker-callbacks.ts";
 import { startSessionWorker } from "./session-worker-start.ts";
-
-/** Lifecycle hooks the owning registry installs on every worker it allocates. */
-export interface SessionWorkerCallbacks {
-	reserve: (path: string) => SessionWriteGrant | Promise<SessionWriteGrant>;
-	/** Every snapshot republishes which paths this worker still writes. */
-	reconcile: (livePaths: readonly string[]) => void | Promise<void>;
-	exit: () => void | Promise<void>;
-	failure: (error: string) => void;
-}
 
 export class SessionWorkerClient {
 	private privateBinding?: McpFormBinding;
@@ -56,6 +43,7 @@ export class SessionWorkerClient {
 	snapshot?: WorkerSnapshot;
 	/** Main marks this only after installing the unique routing binding. */
 	bindingReady = false;
+	private readonly request = (message: WorkerRequestInput) => this.requests.request(message);
 	private readonly requests = new SessionWorkerRequests(
 		(message) => this.worker.postMessage(message),
 		() => this.fail("session_worker_request_timeout"),
@@ -125,7 +113,7 @@ export class SessionWorkerClient {
 		this.stopLimitMirror = subscriptionLimits.subscribeMirror((limits) =>
 			this.post({ type: "subscription_limits", accounts: [limits] }),
 		);
-		const result = await this.requests.request({
+		const result = await this.request({
 			type: "prepare",
 			configuration,
 			profile,
@@ -137,25 +125,25 @@ export class SessionWorkerClient {
 
 	/** Moves the worker's live session to another prompt surface (a later `open_session.promptSurface`). */
 	async setPromptSurface(surface: PromptSurface): Promise<void> {
-		const result = await this.requests.request({ type: "prompt_surface", surface });
+		const result = await this.request({ type: "prompt_surface", surface });
 		if (result.type !== "result") throw new Error("Invalid worker prompt_surface response");
 	}
 
 	/** Moves the worker's live session to another browser engine (a later `open_session.browserEngine`). */
 	async setBrowserEngine(engine: BrowserEngine): Promise<void> {
-		const result = await this.requests.request({ type: "browser_engine", engine });
+		const result = await this.request({ type: "browser_engine", engine });
 		if (result.type !== "result") throw new Error("Invalid worker browser_engine response");
 	}
 
 	/** Moves the worker's live session to another permission preset (a later `open_session.permissionPreset`). */
 	async setPermissionPreset(preset: string): Promise<void> {
-		const result = await this.requests.request({ type: "permission_preset", preset });
+		const result = await this.request({ type: "permission_preset", preset });
 		if (result.type !== "result") throw new Error("Invalid worker permission_preset response");
 	}
 
 	async commit(): Promise<WorkerSnapshot> {
 		const nonce = randomUUID();
-		const result = await this.requests.request({
+		const result = await this.request({
 			type: "commit",
 			...(this.intake ? { acceptance: true, recoveryEpoch: nonce, permits: this.intake.permits.block } : {}),
 		});
@@ -180,7 +168,7 @@ export class SessionWorkerClient {
 		if (this.acceptance) writer.registerAcceptance(sessionId, this.acceptance);
 		this.requestClose = requestClose;
 		this.options = options;
-		await this.requests.request({
+		await this.request({
 			type: "bind",
 			sessionId,
 			capabilities: options.capabilities ?? [],
@@ -201,7 +189,7 @@ export class SessionWorkerClient {
 						: undefined;
 				if (answered !== undefined && writer.acceptWorkerGrantResponse(sessionId, answered, connection) === false)
 					return;
-				await this.requests.request({
+				await this.request({
 					type: "command",
 					admissionReply: captureAdmissionReply(),
 					command,
