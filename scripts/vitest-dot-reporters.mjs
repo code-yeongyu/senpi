@@ -9,7 +9,7 @@ import { DotReporter } from "vitest/node";
  */
 export const RESULTS_PER_LINE = 100;
 
-export class LineBoundedDotReporter extends DotReporter {
+class LineBoundedDotReporter extends DotReporter {
 	#results = 0;
 
 	onTestRunStart(specifications) {
