@@ -140,7 +140,15 @@ it.each(["0", "1"])(
 			expect(
 				await peer.request({ type: "set_client_info", sessionId: opened.sessionId, capabilities: [] }),
 			).toMatchObject({ success: flag !== "1" });
-
+			// RULING-73/G1: success and refusal are silent without an id, on both routes and with either flag.
+			for (const sessionId of [undefined, opened.sessionId]) {
+				for (const capabilities of [undefined, PAIR, [...PAIR, "session_relocation"], [PAIR[0]], []]) {
+					const before = peer.records.length;
+					peer.send({ type: "set_client_info", sessionId, capabilities });
+					await peer.request({ type: "get_state", sessionId: opened.sessionId });
+					expect(peer.records.slice(before).filter((record) => record.command === "set_client_info")).toEqual([]);
+				}
+			}
 			await peer.close();
 		} finally {
 			await host.dispose();

@@ -67,6 +67,10 @@
 			"file": "selected-heartbeat-no-id.json"
 		},
 		{
+			"id": "session-identical-pair-no-id",
+			"file": "session-identical-pair-no-id.json"
+		},
+		{
 			"id": "flag-off-compact-request",
 			"file": "flag-off-compact-request.json"
 		}
