@@ -1,5 +1,5 @@
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
 	overrideSdkBoundary,
 	resetSdkBoundary,
@@ -20,6 +20,15 @@ import {
 import { streamAnthropicSubscription } from "../src/core/extensions/builtin/anthropic-subscription/stream.ts";
 import { ContinuityNoticeTracker } from "../src/modes/interactive/components/continuity-notice.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+
+// These cases assert continuity decisions on the flat replay; a native-frame seed would also write its transcript
+// under the real HOME, which these scripted lanes inherit (senpi#1977).
+beforeEach(() => {
+	process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY = "flat";
+});
+afterEach(() => {
+	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
+});
 
 const model: Model<Api> = {
 	id: "claude-test",

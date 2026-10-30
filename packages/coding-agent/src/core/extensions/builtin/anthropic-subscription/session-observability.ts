@@ -52,6 +52,7 @@ export type ContinuityReason =
 	| "extensions_removed"
 	| "session_shutdown"
 	| "timeout_retry"
+	| "frames_seed_rejected"
 	| "other";
 
 export type ContinuityObservation = {
@@ -71,6 +72,8 @@ export type ContinuityObservation = {
 	seatChanged?: boolean;
 	/** senpi#1975: first diverged field path behind an assistant_rewritten decision. Paths only, never values. */
 	divergedPath?: string;
+	/** senpi#1977: how a `flatten`/`bootstrap` re-sent the history, as native frames or one flat message. */
+	replayMode?: "frames" | "flat";
 };
 
 export type ContinuityObservabilityBoundary = {
@@ -115,6 +118,7 @@ const SANITIZED_REASONS = new Set<string>([
 	"extensions_removed",
 	"session_shutdown",
 	"timeout_retry",
+	"frames_seed_rejected",
 	"other",
 ]);
 
@@ -227,6 +231,7 @@ export function observeSessionSyncDecision(input: {
 	payloadBytes?: number;
 	collapsedDirectives?: number;
 	divergedPath?: string;
+	replayMode?: "frames" | "flat";
 }): ContinuityObservation {
 	const diverged = input.divergedPath === undefined ? {} : { divergedPath: input.divergedPath };
 	if (input.kind === "incremental") {
@@ -253,6 +258,7 @@ export function observeSessionSyncDecision(input: {
 		deltaMessages: input.deltaMessages,
 		...(input.payloadBytes !== undefined ? { payloadBytes: input.payloadBytes } : {}),
 		...(input.collapsedDirectives !== undefined ? { collapsedDirectives: input.collapsedDirectives } : {}),
+		...(input.replayMode !== undefined ? { replayMode: input.replayMode } : {}),
 		...diverged,
 	};
 }
@@ -296,6 +302,7 @@ export function emitContinuityObservation(
 		...(observation.seat === undefined ? {} : { seat: observation.seat }),
 		...(observation.seatChanged === undefined ? {} : { seatChanged: observation.seatChanged }),
 		...(observation.divergedPath === undefined ? {} : { divergedPath: observation.divergedPath }),
+		...(observation.replayMode === undefined ? {} : { replayMode: observation.replayMode }),
 		...(sessionId === undefined ? {} : { sessionId }),
 	});
 }

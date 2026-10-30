@@ -1,5 +1,5 @@
 import type { Api, AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	type Options,
 	overrideSdkBoundary,
@@ -25,6 +25,15 @@ import {
 	resetSessionRegistryBoundary,
 } from "../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
 import { streamAnthropicSubscription } from "../src/core/extensions/builtin/anthropic-subscription/stream.ts";
+
+// These cases assert continuity decisions on the flat replay; a native-frame seed would also write its transcript
+// under the real HOME, which these scripted lanes inherit (senpi#1977).
+beforeEach(() => {
+	process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY = "flat";
+});
+afterEach(() => {
+	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
+});
 
 const model: Model<Api> = {
 	id: "claude-test",
@@ -353,6 +362,7 @@ describe("Claude SDK OAuth continuity observations", () => {
 					kind: "bootstrap",
 					reason: "registry_miss",
 					count: 1,
+					replayMode: "flat",
 					// The serving seat as a digest; a first turn has no earlier seat to compare (oh-my-openagent#10304).
 					seat: expect.stringMatching(/^[0-9a-f]{8}$/),
 					sessionId,

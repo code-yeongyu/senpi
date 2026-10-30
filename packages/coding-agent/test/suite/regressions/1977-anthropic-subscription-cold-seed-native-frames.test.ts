@@ -49,14 +49,20 @@ const model: Model<Api> = {
 	maxTokens: 8_192,
 };
 
-function assistant(content: AssistantMessage["content"], timestamp: number): AssistantMessage {
+function assistant(
+	content: AssistantMessage["content"],
+	timestamp: number,
+	from: Pick<AssistantMessage, "api" | "provider" | "model"> = {
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+	},
+): AssistantMessage {
 	const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
 	return {
 		role: "assistant",
 		content,
-		api: model.api,
-		provider: model.provider,
-		model: model.id,
+		...from,
 		usage: { ...zero, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
 		stopReason: content.some((block) => block.type === "toolCall") ? "toolUse" : "stop",
 		timestamp,
@@ -72,6 +78,8 @@ function screenshotHistory(finalUser: boolean): Context {
 				{ type: "toolCall", id: "call_x|fc_y", name: "screenshot", arguments: {} },
 			],
 			2,
+			// The session switched from another provider, whose tool call ids the Anthropic API does not accept.
+			{ api: "openai-responses", provider: "openai", model: "gpt-5" },
 		),
 		{
 			role: "toolResult",
@@ -270,9 +278,12 @@ describe.runIf(executable !== undefined)("senpi#1977: a cold seed replays the hi
 
 		const result = await turn(screenshotHistory(true), cwd, "frames-rejected");
 
+		// Claude Code retries the rejected request once itself; then senpi re-sends flat, which is answered.
+		const framesRequests = api.requests.map((messages) => messages.length > 1);
 		expect(result.errorMessage).toBeUndefined();
-		expect(api.requests.map((messages) => messages.length > 1)).toEqual([true, false]);
-		expect(texts(api.requests[1] ?? [])).toContain("<conversation_history>");
+		expect(framesRequests.indexOf(false)).toBeGreaterThan(0);
+		expect(framesRequests.slice(framesRequests.indexOf(false))).toEqual([false]);
+		expect(texts(api.requests[framesRequests.indexOf(false)] ?? [])).toContain("<conversation_history>");
 		expect(continuityDetails(result)).toEqual([
 			expect.objectContaining({ kind: "flatten", reason: "frames_seed_rejected", replayMode: "flat" }),
 		]);

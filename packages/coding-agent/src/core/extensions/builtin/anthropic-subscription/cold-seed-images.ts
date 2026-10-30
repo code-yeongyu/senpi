@@ -134,6 +134,104 @@ function isAnsweredToolImage(occurrence: ImageOccurrence): boolean {
 	return occurrence.answered && occurrence.origin.kind === "tool";
 }
 
+/** Decoded bytes of history images one native-frame replay re-sends at most, well under the API request limit. */
+export const MAX_REPLAYED_HISTORY_IMAGE_BYTES = 20 * 1024 * 1024;
+
+/**
+ * How many of `distinct` images (first-occurrence order) a frame replay cuts: none until the count reaches twice the
+ * target, then a multiple of the target, so the newest `MAX_REPLAYED_HISTORY_IMAGES` to `2x - 1` stay. The cut is a
+ * function of the append-only count alone, so appending history moves it once per `MAX_REPLAYED_HISTORY_IMAGES` new
+ * images, never per image, and every rebuild in between sends the same prefix bytes (senpi#1977).
+ */
+function frameCutCount(distinct: number): number {
+	if (distinct < 2 * MAX_REPLAYED_HISTORY_IMAGES) return 0;
+	return (
+		MAX_REPLAYED_HISTORY_IMAGES * Math.floor((distinct - MAX_REPLAYED_HISTORY_IMAGES) / MAX_REPLAYED_HISTORY_IMAGES)
+	);
+}
+
+/**
+ * Images that start before the byte cut: when the kept images exceed the byte cap, whole half-cap chunks of the
+ * cumulative byte range are cut, oldest first. Chunk edges are fixed points of the append-only sequence, so the cut
+ * moves once per half cap of new image bytes, not on every image.
+ */
+function byteCut(sizes: readonly number[]): number {
+	const total = sizes.reduce((sum, size) => sum + size, 0);
+	if (total <= MAX_REPLAYED_HISTORY_IMAGE_BYTES) return 0;
+	const chunk = MAX_REPLAYED_HISTORY_IMAGE_BYTES / 2;
+	const cutBytes = Math.ceil((total - MAX_REPLAYED_HISTORY_IMAGE_BYTES) / chunk) * chunk;
+	let start = 0;
+	let cut = 0;
+	for (const size of sizes) {
+		if (start >= cutBytes) break;
+		start += size;
+		cut += 1;
+	}
+	return cut;
+}
+
+/**
+ * The image policy of a native-frame cold seed (senpi#1977). Images stay where they were returned, inside their own
+ * turn, so no history label is needed and none is answered-dropped. Every decision depends only on earlier history:
+ * the first copy of identical bytes is sent and later copies become the `duplicate` note; past twice the image target
+ * the oldest images (tool images before the user's own) become the `capped` note in steps of the target; a byte cap
+ * cuts the oldest in half-cap steps; undecodable data becomes the `unreadable` note. The final user message is not
+ * history and is never passed here. Returns the replacement content for each history index that holds an image.
+ */
+export function frameHistoryImages(
+	history: Context["messages"],
+	sdkToolName: (piToolName: string) => string,
+): ReadonlyMap<number, readonly unknown[]> {
+	const contents = imageBearingContent(history, sdkToolName);
+	const occurrences = collectOccurrences(contents, 0);
+	if (occurrences.length === 0) return new Map();
+	const firstByHash = new Map<string, ImageOccurrence>();
+	for (const occurrence of occurrences) {
+		const hash = occurrence.decoded?.sha256;
+		if (hash !== undefined && !firstByHash.has(hash)) firstByHash.set(hash, occurrence);
+	}
+	const distinct = [...firstByHash.values()];
+	const cut = new Set<ImageOccurrence>();
+	const cutCount = frameCutCount(distinct.length);
+	for (const occurrence of [
+		...distinct.filter((candidate) => candidate.origin.kind === "tool"),
+		...distinct.filter((candidate) => candidate.origin.kind === "user"),
+	].slice(0, cutCount)) {
+		cut.add(occurrence);
+	}
+	const kept = distinct.filter((occurrence) => !cut.has(occurrence));
+	const sizes = kept.map((occurrence) => Buffer.byteLength(occurrence.decoded?.compactBase64 ?? "", "base64"));
+	for (const occurrence of kept.slice(0, byteCut(sizes))) cut.add(occurrence);
+
+	const replacements = new Map<number, Map<number, readonly unknown[]>>();
+	for (const occurrence of occurrences) {
+		const { origin, entry, decoded } = occurrence;
+		const first = decoded === undefined ? undefined : firstByHash.get(decoded.sha256);
+		let replacement: readonly unknown[];
+		if (decoded === undefined || first === undefined) {
+			replacement = [{ type: "text", text: coldSeedImageText.unreadable(origin) }];
+		} else if (first !== occurrence) {
+			replacement = [{ type: "text", text: coldSeedImageText.duplicate(origin, first.origin) }];
+		} else if (cut.has(occurrence)) {
+			replacement = [{ type: "text", text: coldSeedImageText.capped(origin) }];
+		} else {
+			replacement = [{ ...entry, data: Buffer.from(decoded.compactBase64, "base64").toString("base64") }];
+		}
+		const perMessage = replacements.get(occurrence.messageIndex) ?? new Map<number, readonly unknown[]>();
+		perMessage.set(occurrence.entryIndex, replacement);
+		replacements.set(occurrence.messageIndex, perMessage);
+	}
+	const rewritten = new Map<number, readonly unknown[]>();
+	for (const [messageIndex, perMessage] of replacements) {
+		const content = contents.get(messageIndex)?.content ?? [];
+		rewritten.set(
+			messageIndex,
+			content.flatMap((entry, entryIndex) => perMessage.get(entryIndex) ?? [entry]),
+		);
+	}
+	return rewritten;
+}
+
 /**
  * Rewrites the image entries of a cold-seed history (#2490): a tool-result image
  * is labeled as tool output, identical bytes are sent once and referenced in text
