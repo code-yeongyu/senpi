@@ -145,6 +145,15 @@ The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
 - `seq`, `epoch`, `epochOrigin` (`human` or `automatic`), `humanInputRevision`,
   `selfSettleEligible`, `restoring`, `persisted`, `runPaused`, and `since` (ISO time).
 - `role` (`root` or `child`), `rootSessionId`, and optional `parentSessionId` and `taskId`.
+- Optional `runId` identifies the current or most recent engine run, matching that run's
+  `agent_start.runId` and lifecycle readback (`get_state.lifecycle`, including the shared
+  `open_session` state projection). Every new run gets a new ID even within the same epoch.
+  Snapshots published while idle retain the preceding run's ID; before the first run it is
+  absent. Restore preserves the recorded ID. Compare IDs for equality, never sort them.
+  A snapshot may arrive before its own `agent_start`; associate it only with the turn whose
+  start carries the same ID, not the next observed start. This field is additive and optional:
+  older clients ignore it, and clients talking to older engines without it keep their existing
+  association behavior.
 - Optional `waitingOn`: `{ children, background, human, childSources?, childReports?, childReportsOmitted? }`.
   `children` and each source's `activeCount` are the authoritative counts; every named list below is
   supplemental and may be incomplete, so never derive a count from a list's length. `children` is the
@@ -384,7 +393,7 @@ model context or history.
 
 `get_provider_accounts` returns secret-free descriptors containing `name`, `source`, `blocked`, `pinned`, and optional `displayName`. Render a named account as `displayName (name)`; keep using the immutable `name` for `account_pin`, `account_remove`, and comparisons. Legacy accounts omit `displayName`.
 
-A blocked account also says why: `blockedReason` is `auth_error` (the provider rejected the key; it is skipped until one request re-probes it at `blockedUntil`), `rate_limit` (a cooldown that ends at `blockedUntil`) or `disabled` (no end time; replace the credential). Both fields appear only while `blocked` is true, and `blockedReason` is absent when the stored block names no reason. A client choosing an account for a new request should skip `auth_error` accounts rather than send a request that will fail with 401.
+A blocked account also says why: `blockedReason` is `auth_error` (the provider rejected the key; it is skipped until one request re-probes it at `blockedUntil`, or until a re-login when `blockedUntil` is absent), `rate_limit` (a cooldown that ends at `blockedUntil`) or `disabled` (no end time; replace the credential). Both fields appear only while `blocked` is true, and `blockedReason` is absent when the stored block names no reason. A client choosing an account for a new request should skip `auth_error` accounts rather than send a request that will fail with 401.
 
 Use `/account <provider> rename <id> <display name...>` or the corresponding `/gpt-account` and `/claude-account` commands to name saved accounts; `clear-name <id>` removes only the label. `/gpt-account add` offers optional naming after login is saved, and only when Senpi generated the account ID itself; the Claude lane names accounts through its own login prompt and never asks twice. Blank input or cancellation keeps that login usable. Environment accounts cannot be renamed.
 
@@ -943,10 +952,13 @@ bounded wait. No peer is drained and no active turn is interrupted by owner deat
 Reusing a running supervisor cannot inherit another fd. A generation successor launched
 by a process other than the owner also cannot inherit the owner's fd. These paths, and
 launches where opening the inherited pipe fails, compare the recorded PID and OS process
-start identity through the existing process reader (`ps lstart` on POSIX, CIM creation
-FILETIME on Windows). Both capture and probe pin `TZ=UTC` and `LC_ALL=C`; POSIX identities
+start identity through the existing process reader. The supervisor also uses this check
+when its current parent differs from the recorded owner, even if the inherited pipe
+remains open without reporting EOF. Parent change alone never authorizes shutdown.
+The reader uses `ps lstart` on POSIX and CIM creation
+FILETIME on Windows. Both capture and probe pin `TZ=UTC` and `LC_ALL=C`; POSIX identities
 carry an explicit UTC suffix. Parsed milliseconds are compared with the existing process-start
-tolerance, never by raw timestamp spelling. Pipe-less probes back off from one second to a
+tolerance, never by raw timestamp spelling. Identity probes back off from one second to a
 five-second maximum interval, with a one-second query budget. This adds at most that polling
 interval before owner death can be observed; failed or unreadable observations never authorize shutdown.
 Windows handoff remains unsupported, as before. A successor launched by the owner inherits
@@ -1620,8 +1632,9 @@ exactly the failure they exist to catch.
 `senpi host session` is a thin client over the wire commands this document already describes: it attaches to a
 session (or starts the shared host, for `open` only) and relays one request, so an orchestrating agent or script
 can drive a session without writing its own RPC client. It adds no new wire command; it relies on the typed
-`errorCode` the host sets on `prompt` (`streaming`), `set_model` (`model_not_found`) and `get_entries` (`not_found`)
-refusals.
+`errorCode` the host sets on `prompt` (`streaming`, and `provider_credentials_missing`, `provider_credentials_expired`
+or `no_model_selected` when the session cannot start a turn), `set_model` (`model_not_found`) and `get_entries`
+(`not_found`) refusals.
 
 ```
 senpi host session open   --cwd <dir> [--model <provider/id>] [--name <text>] [--prompt <text|@file>]
@@ -3258,6 +3271,19 @@ With images:
 
 If the agent is streaming and no `streamingBehavior` is specified, the command returns an error.
 Queued prompts cannot include `thinkingLevel`; wait for the current turn to complete before changing it.
+
+**Model not ready**: A prompt that would start a turn is refused before the model is called when the session
+cannot run one. The `error` text is the same guidance the TUI shows; the `errorCode` says why:
+
+| `errorCode` | Meaning | `errorData` |
+|---|---|---|
+| `provider_credentials_missing` | The selected model's provider has no credentials | `{ provider }` |
+| `provider_credentials_expired` | The provider signs in with OAuth and its credentials could not be refreshed | `{ provider }` |
+| `no_model_selected` | No model is selected | none |
+
+```json
+{"type": "response", "command": "prompt", "success": false, "error": "No API key found for openai. ...", "errorCode": "provider_credentials_missing", "errorData": {"provider": "openai"}}
+```
 
 **Extension commands**: If the message is an extension command (e.g., `/mycommand`), it executes immediately even during streaming. Extension commands manage their own LLM interaction via `pi.sendMessage()`.
 
@@ -5135,6 +5161,12 @@ Emitted when an extension calls `pi.rpc.emit(name, data)` and the client adverti
 the specific event name before applying it. In multi-session mode the record also includes the
 routing `sessionId`; delivery preserves the owning session and per-session event order.
 
+Events are not replayed: a client receives those emitted after it starts receiving extension events
+(by its handshake capabilities or a `set_client_info` that declares `extension_events`). At that
+moment Senpi emits `senpi:extension-rpc-subscribed` (no data) on the in-process `pi.events` bus, so an
+extension that keeps a state snapshot can send it once instead of waiting for its next change; other
+subscribed clients may then receive the same snapshot again.
+
 The terminal builtin emits `terminal_monitor_state` on this path whenever the active monitor set
 changes. `data` is `{ activeCount, monitors }`, where each monitor entry has `id`, `description`,
 `paused`, and `startedAtMs`. The matching in-process `pi.events` channel is unchanged and is not
@@ -5165,7 +5197,9 @@ The `job-widgets` builtin emits `job_widget_state` on the same path: live, displ
 session's long background jobs (bash sessions started with `run_in_background` or auto-detached, and jobs a
 host registers, such as background tasks). Clients receive it only when they advertise `extension_events`;
 the in-process `pi.events` channel carries the same payload. It is sent at most once per second per session
-and only when what a client draws changed, so a timestamp moving alone sends nothing. `jobWidgets.enabled:
+and only when what a client draws changed, so a timestamp moving alone sends nothing. A client that starts
+receiving extension events gets the session's current state once (within a second) when some job is shown,
+so a frozen `done` widget reaches a late client too. `jobWidgets.enabled:
 false` ([settings](settings.md#job-widgets)) turns it off.
 
 `data` is `{ v: 1, sessionId, jobs }`. Each job has `id` (`bash_N` or a task id), `kind` (`bash` or `task`),
@@ -5211,8 +5245,12 @@ routes spec writing to a host-chosen model (behind an explicit `jobWidgets.model
 Emitted when the agent begins processing a prompt.
 
 ```json
-{"type": "agent_start"}
+{"type": "agent_start", "runId": "run-id"}
 ```
+
+`runId` is the same optional engine-run identifier carried by lifecycle snapshots and
+state readback. It is captured at run start, before asynchronous delivery; a later run
+cannot replace the ID on a queued start event. Older engines omit this additive field.
 
 ### agent_end
 
@@ -5261,6 +5299,8 @@ When the run ended with a provider error (the last assistant message has `stopRe
 | `unknown` | send the message again; if it repeats, choose another model |
 
 `unknown` is used when the error carries no diagnostic or its metadata matches no row; its `reason` is the generic `the provider returned an unexpected error`, and the provider's code or status, when it sent one, is only in `httpStatus` and `code`. No `reason` or `action` text carries a code or status. When `resetsAt` is set, `reason` ends with that time in the host's local time zone. A bare 429 stays `unknown` because status alone cannot tell a rate limit from exhausted quota. An `unknown` failure the provider answered with HTTP 404 is `model_unavailable` instead: a model endpoint returns 404 for a model id this account cannot use, as the ChatGPT subscription backend does for a model not yet rolled out to the plan. Retry and fallback decisions do not read `failure`.
+
+A turn that never reached the provider because no API key or sign-in is saved for it (the message carries auth resolution's `Provider is not configured: <id>` sentinel) reports `auth`, with a `reason` naming the provider and an `action` to connect it or choose another model; it carries no `httpStatus` or `code`.
 
 `request_refused` is an `auth` failure whose credential (same provider, endpoint and key) served a response within the last 10 minutes: the provider refused this one request, and the key may still be valid. If failures persist, re-authenticate the named provider: a recently working key may have been revoked. The failed assistant message carries `credentialServedRecently: true` and keeps the provider's own `errorMessage`. The in-memory record drops expired entries on each record/check and retains at most 1,024 credentials, evicting the least recently served first. Header-based, ADC and SigV4 authentication do not supply an `apiKey`, so their fingerprint reduces to provider + baseUrl; different credentials on that endpoint share the record.
 
