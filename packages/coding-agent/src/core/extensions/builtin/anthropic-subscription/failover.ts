@@ -53,6 +53,13 @@ export type FailoverOptions<TEvent> = {
 	onLongContextRefused?: () => void;
 	/** The session this turn belongs to: blocks that bind only this session are remembered under it. */
 	sessionKey?: string;
+	/**
+	 * The account that holds this session's prompt cache. Every other account is cold: an attempt there
+	 * re-sends the whole conversation uncached, so a turn may try at most one of them (oh-my-openagent#10304).
+	 */
+	warmAccount?: string;
+	/** Identifies the turn across the session's own retries of it, so they share its one cold attempt. */
+	turnKey?: string;
 };
 
 type BlockFields = Pick<AccountSlot, "blockedUntil" | "blockReason" | "blockedAt" | "modelBlocks">;
