@@ -23,6 +23,8 @@ export interface JobWidgetRequestLimits {
 	readonly driftLines: number;
 	/** Age of the newest matched data past which drift re-authors. */
 	readonly driftStaleMs: number;
+	/** Wait after the author found no model before the session asks again (a model may be selected meanwhile). */
+	readonly noModelRetryMs: number;
 }
 
 export const JOB_WIDGET_REQUEST_LIMITS: JobWidgetRequestLimits = {
@@ -33,6 +35,7 @@ export const JOB_WIDGET_REQUEST_LIMITS: JobWidgetRequestLimits = {
 	maxPerHour: 30,
 	driftLines: 200,
 	driftStaleMs: 90_000,
+	noModelRetryMs: 30_000,
 };
 
 export const REQUEST_WINDOW_MS = 60 * 60 * 1000;
@@ -56,7 +59,7 @@ export interface JobWidgetRequestJob {
 export interface JobWidgetAuthoringState {
 	requests: number;
 	inFlight: boolean;
-	/** No model can write specs, or no valid spec came of a full request: stop asking. */
+	/** No valid spec came of a full request: stop asking. */
 	stopped: boolean;
 	/**
 	 * Set once the author declined: the task's `watch` hint at the time, `""` without one. A bash
