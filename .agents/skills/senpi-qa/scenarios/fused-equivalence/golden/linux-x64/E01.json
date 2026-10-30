@@ -2750,13 +2750,13 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "sessionId": "<uuid:16>",
         "attentionSeq": 0,
         "synthetic": [],
         "epochSealed": false,
         "runActive": true,
-        "interrupted": false,
-        "runId": "<uuid:17>"
+        "interrupted": false
        },
        "id": "<id:3>",
        "parentId": "<id:1>",
@@ -2788,6 +2788,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:1>"
       }
      },
@@ -2798,7 +2799,8 @@
       "statusKey": "todo-waiting"
      },
      {
-      "type": "agent_start"
+      "type": "agent_start",
+      "runId": "<uuid:17>"
      },
      {
       "type": "turn_start"
@@ -2922,6 +2924,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:1>"
@@ -3243,6 +3246,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:3>"
       }
      },
@@ -3271,6 +3275,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_read",
@@ -3639,6 +3644,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_read",
@@ -3875,6 +3881,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_read",
@@ -4255,6 +4262,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_read",
@@ -4449,6 +4457,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "tool",
         "toolName": "eq_read",
@@ -4643,6 +4652,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:9>"
       }
      },
@@ -4967,6 +4977,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "activity": {
         "kind": "model",
         "since": "<ts:activity.since:7>"
@@ -5092,6 +5103,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "observedAt": "<ts:lifecycle.observedAt:11>"
       }
      },
@@ -5446,6 +5458,7 @@
          "human": []
         },
         "holds": [],
+        "runId": "<uuid:17>",
         "completionId": "<uuid:16>:1",
         "completion": {
          "kind": "reply",
@@ -5461,8 +5474,7 @@
          "endedBy": "clean",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:17>"
+        }
        },
        "id": "<id:17>",
        "parentId": "<id:16>",
@@ -5494,6 +5506,7 @@
         "human": []
        },
        "holds": [],
+       "runId": "<uuid:17>",
        "completionId": "<uuid:16>:1",
        "completion": {
         "kind": "reply",
@@ -5679,6 +5692,7 @@
         "restoring": false,
         "persisted": true,
         "completionId": "<uuid:16>:1",
+        "runId": "<uuid:17>",
         "waitingOn": {
          "children": 0,
          "background": [],
@@ -5699,8 +5713,7 @@
          "endedBy": "clean",
          "budgetSpent": false,
          "deadlineStop": false
-        },
-        "runId": "<uuid:17>"
+        }
        },
        "id": "<id:19>",
        "parentId": "<id:18>",
@@ -5834,13 +5847,13 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "sessionId": "<uuid:1>",
       "attentionSeq": 0,
       "synthetic": [],
       "epochSealed": false,
       "runActive": true,
-      "interrupted": false,
-      "runId": "<uuid:2>"
+      "interrupted": false
      },
      "id": "<id:4>",
      "parentId": "<id:3>",
@@ -6088,6 +6101,7 @@
        "human": []
       },
       "holds": [],
+      "runId": "<uuid:2>",
       "completionId": "<uuid:1>:1",
       "completion": {
        "kind": "reply",
@@ -6103,8 +6117,7 @@
        "endedBy": "clean",
        "budgetSpent": false,
        "deadlineStop": false
-      },
-      "runId": "<uuid:2>"
+      }
      },
      "id": "<id:18>",
      "parentId": "<id:17>",
@@ -6139,6 +6152,7 @@
       "restoring": false,
       "persisted": true,
       "completionId": "<uuid:1>:1",
+      "runId": "<uuid:2>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -6159,8 +6173,7 @@
        "endedBy": "clean",
        "budgetSpent": false,
        "deadlineStop": false
-      },
-      "runId": "<uuid:2>"
+      }
      },
      "id": "<id:20>",
      "parentId": "<id:19>",
@@ -6189,6 +6202,7 @@
       "restoring": false,
       "persisted": true,
       "completionId": "<uuid:1>:1",
+      "runId": "<uuid:2>",
       "waitingOn": {
        "children": 0,
        "background": [],
@@ -6200,7 +6214,7 @@
        "at": "<ts:completion.at:1>"
       },
       "activityRevision": {
-       "instanceId": "<uuid:2>",
+       "instanceId": "<uuid:3>",
        "revision": 0
       },
       "observedAt": "<ts:lifecycle.observedAt:1>"

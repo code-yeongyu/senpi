@@ -9,7 +9,6 @@ import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { getAgentDir } from "../../../src/config.ts";
 import { AUTH_BLOCK_REPROBE_MS } from "../../../src/core/credential-pool/auth-reprobe.ts";
-import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import {
 	type AccountSlot,
 	type AnthropicSubscriptionCredential,
@@ -31,24 +30,21 @@ import {
 } from "../../../src/core/extensions/builtin/anthropic-subscription/session-observability.ts";
 import { seatDigest } from "../../../src/core/extensions/builtin/anthropic-subscription/seat-digest.ts";
 import { withAuthGuidance } from "../../../src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts";
-import { listPollAccounts, SIGN_IN_NEEDED } from "../../../src/core/subscription-limits/usage-accounts.ts";
 
 const NOW = Date.parse("2026-10-28T12:53:51Z");
 const BRAVO_FREE_AT = NOW + 2 * 60 * 60 * 1_000;
 
 const alpha: AccountSlot = {
 	name: "alpha",
-	refresh: "r-alpha",
-	access: "a-alpha",
-	expires: NOW + 3_600_000,
 	source: "login",
+	store: "claude-cli",
+	dirId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 };
 const bravo: AccountSlot = {
 	name: "bravo",
-	refresh: "r-bravo",
-	access: "a-bravo",
-	expires: NOW + 3_600_000,
 	source: "login",
+	store: "claude-cli",
+	dirId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	blockedUntil: BRAVO_FREE_AT,
 	blockReason: "rate_limit",
 	blockedAt: NOW - 60_000,
@@ -213,40 +209,5 @@ describe("an account block keeps the failure that caused it (senpi#4671)", () =>
 			`  alpha: auth_error until ${new Date(NOW + AUTH_BLOCK_REPROBE_MS).toISOString()} - run /login anthropic-subscription for this account`,
 		);
 		expect(shown).toContain(`  bravo: rate_limit until ${new Date(BRAVO_FREE_AT).toISOString()}`);
-	});
-
-	it("logs the block the usage poll saves when the token endpoint rejects a login", async () => {
-		const logged = captureLog();
-		const store = AuthStorage.inMemory({
-			"anthropic-subscription": {
-				type: "oauth",
-				access: "claude-sdk-oauth-managed",
-				refresh: "claude-sdk-oauth-managed",
-				expires: 4102444800000,
-				accounts: [{ name: "work", access: "a-work", refresh: "r-work", expires: NOW - 1, source: "login" }],
-			},
-		} as never);
-		const accounts = await listPollAccounts({
-			store,
-			env: () => undefined,
-			refresher: async () => {
-				throw Object.assign(new Error("HTTP request failed. status=401; body=unauthorized"), { status: 401 });
-			},
-			now: () => NOW,
-		});
-
-		expect(await accounts[0]?.access(new AbortController().signal)).toEqual({ error: SIGN_IN_NEEDED });
-		expect(logged.filter((entry) => entry.event === "account_blocked")).toEqual([
-			{
-				event: "account_blocked",
-				data: {
-					seat: seatDigest("work"),
-					reason: "auth_error",
-					until: new Date(NOW + AUTH_BLOCK_REPROBE_MS).toISOString(),
-					shared: true,
-					error: "usage_poll_token_rejected",
-				},
-			},
-		]);
 	});
 });

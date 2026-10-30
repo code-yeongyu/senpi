@@ -29,13 +29,17 @@ import { providerRetryAt } from "../../../src/core/extensions/builtin/goal/provi
 
 const NOW = Date.parse("2026-10-28T12:53:51Z");
 
-const alpha: AccountSlot = { name: "alpha", refresh: "r-a", access: "a-a", expires: NOW + 3_600_000, source: "login" };
+const alpha: AccountSlot = {
+	name: "alpha",
+	source: "login",
+	store: "claude-cli",
+	dirId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+};
 const bravo: AccountSlot = {
 	name: "bravo",
-	refresh: "r-b",
-	access: "a-b",
-	expires: NOW + 3_600_000,
 	source: "login",
+	store: "claude-cli",
+	dirId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	blockedUntil: NOW + 2 * 60 * 60 * 1_000,
 	blockReason: "rate_limit",
 	blockedAt: NOW - 60_000,
