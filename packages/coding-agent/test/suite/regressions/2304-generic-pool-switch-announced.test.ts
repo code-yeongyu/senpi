@@ -10,6 +10,7 @@ import {
 	type ProviderAccountFailoverEvent,
 	subscribeProviderAccountEvents,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/account-events.ts";
+import { formatAccountFailoverNotice } from "../../../src/modes/interactive/account-failover-notice.ts";
 
 // senpi#2304: every automatic switch of the generic credential pool is announced exactly once as
 // "from -> to" with its reason (the bus feeds RPC `account_failover` and the TUI status line);
@@ -150,6 +151,14 @@ describe("generic credential pool announces every automatic account switch (senp
 		await request(accounts("alpha", "bravo"), outcomes);
 
 		expect(announced).toEqual([]);
+	});
+
+	test("the TUI status line names the provider, both accounts and the reason", async () => {
+		await request(accounts("alpha", "bravo"), { alpha: ["unauthorized"] });
+
+		expect(announced.map(formatAccountFailoverNotice)).toEqual([
+			`Switched ${PROVIDER} account alpha -> bravo: its login expired or was refused.`,
+		]);
 	});
 
 	test("the last account failing has nowhere to switch to: nothing is announced", async () => {
