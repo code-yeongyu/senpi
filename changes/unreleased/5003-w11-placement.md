@@ -1,0 +1,86 @@
+<!-- changes-log: packages/ai/src/auth/changes.md -->
+## 2026-10-30 - Preserve per-account ChatGPT routes and identity (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: credentials may select a chat API and record their ChatGPT route. Absent routes remain legacy.
+- `packages/ai/src/auth/pool/slots.ts`: keep route, identity, issued client ID, scopes, retained ID token and permission state through slot promotion, projection and refresh.
+
+### Why
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/pool/slots.ts`: mixed SIWC and legacy accounts need account-specific transport and metadata without inheriting a sibling's registration.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/auth/types.ts` and `packages/ai/src/auth/pool/slots.ts`: the shared auth and storage contracts precede provider dispatch.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/auth/types.ts`: auth contracts. `packages/ai/src/auth/pool/slots.ts`: projection and refresh merge helpers.
+
+<!-- changes-log: packages/ai/src/providers/changes.md -->
+## 2026-10-30 - Dispatch ChatGPT slots by their saved route (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: derive SIWC public Responses auth and dispatch with `compat.siwc`, preserving exact upstream model aliases and the unchanged legacy adapter.
+
+### Why
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: one provider must serve both existing Codex sessions and new public-API sessions.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: the builtin provider owns OAuth derivation and adapter selection.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: OAuth registration and API map.
+
+<!-- changes-log: packages/ai/src/changes.md -->
+## 2026-10-30 - Carry credential-selected chat transport into dispatch (part of senpi#5003)
+
+### What changed
+
+- `packages/ai/src/models.ts`: apply an optional credential-selected chat API alongside its base URL.
+
+### Why
+
+- `packages/ai/src/models.ts`: a model's catalog API cannot choose the route of the selected account.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/models.ts`: auth resolution and provider dispatch are shared core operations.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/models.ts`: `applyAuth`.
+
+<!-- changes-log: packages/coding-agent/src/core/changes.md -->
+## 2026-10-30 - Preserve account transport after pool selection (part of senpi#5003)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: apply the selected slot's optional chat API when preparing each attempt.
+
+### Why
+
+- `packages/coding-agent/src/core/model-runtime.ts`: mixed-route pools otherwise send SIWC tokens to the legacy backend.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/model-runtime.ts`: slot selection and auth preparation happen below extension hooks.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `prepareRequest`.
+
+<!-- changes-log: packages/ai/CHANGELOG.md -->
+### Added
+
+- Route saved SIWC ChatGPT accounts through public Responses while keeping legacy account requests unchanged (part of #5003).
+
+<!-- changes-log: packages/coding-agent/CHANGELOG.md -->
+### Added
+
+- Support SIWC and legacy ChatGPT accounts in the same credential pool without changing rotation policy or health storage (part of #5003).
