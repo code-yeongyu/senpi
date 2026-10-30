@@ -1787,6 +1787,12 @@ export interface AgentBeforeSettleEvent extends BoundaryState {
 /** Fired after an agent run has fully settled and no automatic retry, compaction, or queued continuation will run. */
 export interface AgentSettledEvent {
 	type: "agent_settled";
+	/**
+	 * Present when the run ended because every rung of the model fallback ladder failed. `resumeAt`
+	 * (epoch ms) is the soonest future reset any failed request of the run named; absent when none
+	 * named one, in which case nothing is known to recover on its own.
+	 */
+	fallbackExhausted?: { resumeAt?: number };
 }
 
 export type UIPromptKind = "select" | "confirm" | "input" | "editor" | "custom" | "question";

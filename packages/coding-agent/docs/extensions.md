@@ -851,8 +851,10 @@ pi.on("agent_end", async (event, ctx) => {
   // event.messages - messages from this low-level run
 });
 
-pi.on("agent_settled", async (_event, ctx) => {
+pi.on("agent_settled", async (event, ctx) => {
   // ctx.isIdle() is true here unless another extension started a new run.
+  // event.fallbackExhausted - present when every rung of the model fallback ladder failed;
+  //   its resumeAt (epoch ms) is the soonest reset the run's failed requests named, if any
 });
 ```
 

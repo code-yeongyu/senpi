@@ -382,6 +382,7 @@ import {
 	describeUsageLimitMessage,
 	usageLimitScope,
 } from "./retry-fallback/usage-limit.ts";
+import { limitResetAt } from "./retry-fallback/limit-reset.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
 import { startRunResumeTurn } from "./run-resume-turn.ts";
@@ -1402,6 +1403,9 @@ export class AgentSession {
 	/** Settles once the queued message_end processing (persistence included) of that exact message has run. */
 	private readonly _messageEndPersistence = new WeakMap<AgentMessage, Promise<void>>();
 	private _isAgentRunActive = false;
+	/** senpi#3709: reset moments the failed requests of this run named, and whether its fallback ladder ran out. */
+	private _runLimitResets: number[] = [];
+	private _runFallbackExhausted = false;
 	private _promptsInFlight = 0;
 	/** senpi#3650: the core may continue a run after agent_end; the settle must not wait on that continuation. */
 	private readonly _runContinuations = new AgentRunContinuations();
@@ -1723,6 +1727,7 @@ export class AgentSession {
 	private _circuitProbeWatchdog: ReturnType<typeof setTimeout> | undefined;
 	private readonly _probeBackScheduler: ProbeBackScheduler;
 	private readonly _fallbackNow: () => number;
+	private readonly _fallbackWallNow: () => number;
 	private readonly _retryRandom: () => number;
 	private readonly _environmentContextEnabled: boolean;
 
@@ -1909,11 +1914,8 @@ export class AgentSession {
 		// Cooldowns, probe schedules, and circuits measure elapsed time, so they all
 		// run on the monotonic clock; a wall-clock jump never parks or releases an entry.
 		this._fallbackNow = config.fallbackNow ?? monotonicNow;
-		this._selectorCooldowns = new SelectorCooldowns(
-			this._fallbackNow,
-			undefined,
-			config.fallbackWallNow ?? config.fallbackNow ?? Date.now,
-		);
+		this._fallbackWallNow = config.fallbackWallNow ?? config.fallbackNow ?? Date.now;
+		this._selectorCooldowns = new SelectorCooldowns(this._fallbackNow, undefined, this._fallbackWallNow);
 		const lease = () => this._fallbackCircuitsLease;
 		this._fallbackCircuits = createFallbackCircuitAccess({
 			// Read on every use: the hold is taken as construction's last step.
@@ -1922,7 +1924,7 @@ export class AgentSession {
 			},
 			owner: () => this.sessionId,
 			now: this._fallbackNow,
-			wallNow: config.fallbackWallNow ?? config.fallbackNow ?? Date.now,
+			wallNow: this._fallbackWallNow,
 			settings: () => this.settingsManager.getFallbackCircuitSettings(),
 			logger: fallbackLogger,
 		});
@@ -2937,6 +2939,7 @@ export class AgentSession {
 		)
 			this.refreshLifecycle();
 		this._logSessionEvent(event);
+		if (event.type === "retry_fallback_exhausted") this._runFallbackExhausted = true;
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
 		}
@@ -3268,6 +3271,20 @@ export class AgentSession {
 		resolve();
 	}
 
+	/**
+	 * senpi#3709: a run whose fallback ladder ran out reports the soonest reset its failed requests
+	 * named, so a resumer can wait for it; `resumeAt` is absent when none named one. Consumed once per settle.
+	 */
+	private _takeRunFallbackExhaustion(): { resumeAt?: number } | undefined {
+		const exhausted = this._runFallbackExhausted;
+		const now = this._fallbackWallNow();
+		const upcoming = this._runLimitResets.filter((resetAt) => resetAt > now);
+		this._runFallbackExhausted = false;
+		this._runLimitResets = [];
+		if (!exhausted) return undefined;
+		return upcoming.length === 0 ? {} : { resumeAt: Math.min(...upcoming) };
+	}
+
 	private async _emitAgentSettled(agentEnd?: AgentEvent): Promise<void> {
 		if (
 			this.agent.state.isStreaming &&
@@ -3293,8 +3310,12 @@ export class AgentSession {
 		let deferredTurnClaims: DeferredTurnClaim[] = [];
 		this._agentSettledDelivery.begin(this._userAbortGeneration);
 		const settlementEpoch = ++this._settlementEpoch;
+		const fallbackExhausted = this._takeRunFallbackExhaustion();
 		try {
-			await this._extensionRunner.emit({ type: "agent_settled" });
+			await this._extensionRunner.emit({
+				type: "agent_settled",
+				...(fallbackExhausted === undefined ? {} : { fallbackExhausted }),
+			});
 			this._emit({ type: "agent_settled" });
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 			({ actions: deferredActions, turnClaims: deferredTurnClaims } = this._agentSettledDelivery.finish(
@@ -4121,6 +4142,10 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
+			if (msg.stopReason === "error") {
+				const resetAt = limitResetAt(msg, this._fallbackWallNow());
+				if (resetAt !== undefined) this._runLimitResets.push(resetAt);
+			}
 			this._skipNextPostRetryCompactionCheck = false;
 			this._clearCircuitProbeWatchdog();
 			// Billing and quota exhaustion make the entry unusable for every session,
