@@ -37,6 +37,8 @@ import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { signOutLegacyClaudeLogins } from "./anthropic-legacy-sign-out.ts";
+import { writeHealthUnlessStoreBusy } from "./credential-pool/health-write.ts";
+import { CredentialSlotRepository, credentialPoolStatePath } from "./credential-pool/state-store.ts";
 import {
 	resolveReadOnlyCredential,
 	resolveStoredCredential,
@@ -1037,8 +1039,35 @@ export class AuthStorage implements CredentialStore {
 			prompt: (prompt) => this.handleLegacyPrompt(prompt, callbacks),
 			notify: (event) => this.handleLegacyEvent(event, callbacks),
 		};
+		const before = listSlots(this.get(providerId) as PooledCredential | undefined);
 		const credential = await oauth.login(interaction);
 		this.set(providerId, credential);
+		await this.retireReloggedSlotHealth(providerId, before);
+	}
+
+	/**
+	 * A login that replaced an existing slot's material starts that slot's pool health clean. Pool health
+	 * is keyed to the account, so a token refresh keeps a block (senpi#4093); a login is the user's own
+	 * step to repair the account (a top-up, a plan change, another account under the same name), and must
+	 * not inherit the verdicts recorded before it. A newly added slot has no health to retire.
+	 */
+	private async retireReloggedSlotHealth(providerId: string, before: readonly CredentialSlot[]): Promise<void> {
+		if (this.authPath === undefined) return;
+		const after = listSlots(this.get(providerId) as PooledCredential | undefined);
+		const replaced = after.filter((slot) => {
+			const previous = before.find((candidate) => candidate.name === slot.name);
+			return (
+				previous !== undefined &&
+				(previous.access !== slot.access || previous.refresh !== slot.refresh || previous.key !== slot.key)
+			);
+		});
+		if (replaced.length === 0) return;
+		const repository = new CredentialSlotRepository(credentialPoolStatePath(dirname(this.authPath)));
+		for (const slot of replaced) {
+			await writeHealthUnlessStoreBusy(`re-login of ${slot.name}`, () =>
+				repository.mutateSlotState(providerId, "stored", slot.name, () => undefined),
+			);
+		}
 	}
 
 	logout(provider: string): void {

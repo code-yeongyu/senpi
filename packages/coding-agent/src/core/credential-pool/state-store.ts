@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { extractChatGptSubscriptionAccountId } from "@earendil-works/pi-ai/utils/chatgpt-subscription-auth";
 import { z } from "zod";
 import { getAgentDir } from "../../config.ts";
 import { CredentialStoreBusyError, FILE_STORAGE_LOCK_RETRY_BUDGET_MS } from "../lockfile-policy.ts";
@@ -69,6 +70,55 @@ function parseDocument(content: string | undefined): CredentialPoolStateDocument
 	} catch (error) {
 		if (error instanceof SyntaxError) return undefined;
 		throw error;
+	}
+}
+
+/** The two keys a stored slot's health can be recorded under (senpi#4093). */
+export type StoredSlotRevisions = {
+	/** The account: survives a token refresh. Every verdict on the account is recorded under it. */
+	readonly account: string;
+	/** The exact token material: a rejected-token verdict is recorded under it, so new material retires it. */
+	readonly material: string;
+};
+
+/**
+ * The stored health that applies to a slot's current material. A rejected token is a verdict on that
+ * token only, so an `auth_error` entry applies while the material is unchanged. Every other verdict
+ * (a limit, a billing refusal, a failure run) is on the account and survives a refresh. An entry written
+ * before account keys existed is keyed by material and keeps applying until its next write.
+ */
+export function applicableStoredState(
+	persisted: CredentialSlotState | undefined,
+	revisions: StoredSlotRevisions,
+): CredentialSlotState | undefined {
+	if (persisted === undefined) return undefined;
+	if (persisted.credentialRevision === revisions.material) return persisted;
+	if (persisted.blockReason === "auth_error") return undefined;
+	return persisted.credentialRevision === revisions.account ? persisted : undefined;
+}
+
+/**
+ * The account an OAuth access token belongs to, when the token says so: a ChatGPT token carries the
+ * account id and the user (`sub`); two members of one workspace share the account id but not their
+ * quota. Opaque tokens carry nothing, and the slot name alone names the account.
+ */
+function oauthAccountIdentity(access: string | undefined): string {
+	if (access === undefined) return "";
+	const accountId = extractChatGptSubscriptionAccountId(access);
+	if (accountId === undefined) return "";
+	return `${accountId}\0${jwtSubject(access) ?? ""}`;
+}
+
+function jwtSubject(token: string): string | undefined {
+	try {
+		const encoded = token.split(".")[1];
+		if (encoded === undefined) return undefined;
+		const base64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
+		const payload: unknown = JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")));
+		const subject = payload !== null && typeof payload === "object" ? Reflect.get(payload, "sub") : undefined;
+		return typeof subject === "string" && subject.length > 0 ? subject : undefined;
+	} catch {
+		return undefined;
 	}
 }
 
@@ -176,6 +226,25 @@ export class CredentialSlotRepository {
 				`${providerId}\0${slotName}\0${material.key ?? ""}\0${material.access ?? ""}\0${material.refresh ?? ""}`,
 			)
 			.digest("hex");
+	}
+
+	/**
+	 * Both keys for a stored slot. The account key binds health to the account (provider, slot, the
+	 * identity the token names, or the API key), so a token refresh keeps it; the material key is
+	 * {@link storedCredentialRevision}. HMAC over the installation key, never raw material.
+	 */
+	async storedSlotRevisions(
+		providerId: string,
+		slotName: string,
+		material: { key?: string; access?: string; refresh?: string },
+	): Promise<StoredSlotRevisions> {
+		const key = await this.installationKey();
+		const account = createHmac("sha256", key)
+			.update(
+				`account\0${providerId}\0${slotName}\0${material.key ?? ""}\0${material.key === undefined ? oauthAccountIdentity(material.access) : ""}`,
+			)
+			.digest("hex");
+		return { account, material: await this.storedCredentialRevision(providerId, slotName, material) };
 	}
 
 	async listSlots(providerId: string, laneId: string): Promise<Record<string, CredentialSlotState>> {

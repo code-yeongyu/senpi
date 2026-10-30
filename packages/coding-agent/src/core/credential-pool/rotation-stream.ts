@@ -150,6 +150,8 @@ export function streamWithCredentialRotation(
 						Object.keys(modelBlocks ?? {}).length !== Object.keys(current.modelBlocks ?? {}).length;
 					return {
 						...current,
+						// Health a success leaves behind belongs to the account, not to this token (senpi#4093).
+						...(slot.storedRevision === undefined ? {} : { credentialRevision: slot.storedRevision }),
 						lastSuccessAt: now(),
 						lease: undefined,
 						blockedUntil: undefined,
@@ -167,7 +169,10 @@ export function streamWithCredentialRotation(
 			const revision =
 				slot.lane === "env" && slot.envVarName !== undefined && slot.envKey !== undefined
 					? await sources.repository.envCredentialRevision(slot.envVarName, slot.envKey)
-					: slot.storedRevision;
+					: // A rejected token is a verdict on that token; every other block is a verdict on the account (senpi#4093).
+						block.reason === "auth_error"
+						? slot.materialRevision
+						: slot.storedRevision;
 			const written = await writeHealthUnlessStoreBusy(`${block.reason} block on ${slot.name}`, () =>
 				sources.repository.mutateSlotState(sources.providerId, slot.lane, slot.name, (current) =>
 					blockPatch(block, current, now(), revision, sources.policy, options.modelId),
