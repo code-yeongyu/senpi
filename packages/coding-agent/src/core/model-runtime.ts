@@ -78,6 +78,7 @@ import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
 import { envValue } from "./brand.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
+import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
 import { retryOnceOnRejectedToken } from "./credential-pool/rejected-token-retry.ts";
 import type { RotationSources } from "./credential-pool/rotation-stream.ts";
 import { ModelConfig } from "./model-config.ts";
@@ -1374,6 +1375,8 @@ export class ModelRuntime implements Models {
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
 			const credential = await this.models.login(providerId, type, { ...interaction, signal }, options);
 			await this.synchronizeCredentialState(providerId, "login", credential, signal);
+			// A fresh login is the remedy a usage-limit refusal names: holds sessions keep on this provider are stale.
+			emitProviderAccountsChanged(providerId);
 			return credential;
 		});
 	}
