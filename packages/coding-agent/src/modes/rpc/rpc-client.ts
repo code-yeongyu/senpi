@@ -1298,6 +1298,11 @@ export class RpcClient {
 		await this.send({ type: "account_remove", provider, name });
 	}
 
+	/** Reset one account's local health; rejects with RpcCommandError on failure. */
+	async resetProviderAccount(provider: string, name: string): Promise<void> {
+		this.getData(await this.send({ type: "account_reset", provider, name }));
+	}
+
 	// =========================================================================
 	// Helpers
 	// =========================================================================
