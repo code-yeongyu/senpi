@@ -113,12 +113,15 @@ it("T2/X04 a cancelled pending open releases its late hold and RULING-94 hides u
 		release.resolve();
 	}
 	const cancelled = await pending;
+	// RULING-99: another peer's attachment may already have drawn from this session's counter. The cancelled open keeps
+	// the generation it was assigned, and every replay of the retired attempt repeats that exact value.
 	expect(cancelled).toMatchObject({
 		success: false,
 		code: "attempt_cancelled",
 		admissionId: "pending-1",
-		generation: 1,
 	});
+	const cancelledGeneration = cancelled.generation;
+	expect(Number.isSafeInteger(cancelledGeneration) && Number(cancelledGeneration) > 0).toBe(true);
 	expect(cancelled).not.toHaveProperty("sessionId");
 	expect(await peer.request({ type: "cancel_attempt", admissionId: "pending-1" })).toMatchObject({
 		success: false,
@@ -138,7 +141,7 @@ it("T2/X04 a cancelled pending open releases its late hold and RULING-94 hides u
 		success: false,
 		code: "attempt_cancelled",
 		admissionId: "pending-1",
-		generation: 1,
+		generation: cancelledGeneration,
 	});
 	expect(retired).not.toHaveProperty("sessionId");
 }, 120_000);
