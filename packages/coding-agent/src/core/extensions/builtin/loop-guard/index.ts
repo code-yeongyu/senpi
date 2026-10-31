@@ -1,15 +1,21 @@
-import type { ExtensionAPI } from "../../types.ts";
+import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
 import { CONTINUATION_HOLD_STATE_EVENT, WAKE_SOURCE_STATE_EVENT } from "../monitor-state-event.ts";
 import { detectLoop, NoticeGate } from "./detectors.ts";
 import { IdenticalLoopEscalation } from "./escalation.ts";
+import { FailedRepeatTracker } from "./failure-repeats.ts";
 import {
 	buildLoopGuardBlockReason,
+	buildLoopGuardFailedRepeatReminder,
+	buildLoopGuardFailedRepeatSteer,
+	buildLoopGuardFailedRepeatWarning,
 	buildLoopGuardHardStopSteer,
 	buildLoopGuardHardStopWarning,
 	buildLoopGuardReminder,
 	LOOP_GUARD_ESCALATION_CUSTOM_TYPE,
 	LOOP_GUARD_NOTICE_CUSTOM_TYPE,
 	LOOP_GUARD_RECOVERY_CUSTOM_TYPE,
+	type LoopGuardEscalationDetails,
+	type LoopGuardStopReason,
 } from "./notice.ts";
 import { renderLoopGuardEscalation, renderLoopGuardNotice } from "./renderer.ts";
 import { ToolCallTracker } from "./tracker.ts";
@@ -20,7 +26,8 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 	const tracker = new ToolCallTracker();
 	const gate = new NoticeGate();
 	const escalation = new IdenticalLoopEscalation();
-	let pendingRecoveryToolName: string | undefined;
+	const failedRepeats = new FailedRepeatTracker();
+	let pendingRecovery: { readonly reason: LoopGuardStopReason; readonly toolName: string } | undefined;
 	let recoveryWakeSourceActive = false;
 	let continuationHoldActive = false;
 
@@ -46,9 +53,29 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 		tracker.reset();
 		gate.reset();
 		escalation.reset();
-		pendingRecoveryToolName = undefined;
+		failedRepeats.reset();
+		pendingRecovery = undefined;
 		setRecoveryWakeSourceActive(false);
 		setContinuationHoldActive(false);
+	};
+
+	const interruptTurn = (
+		ctx: ExtensionContext,
+		details: LoopGuardEscalationDetails,
+		warning: string,
+		announce: boolean,
+	): void => {
+		setRecoveryWakeSourceActive(true);
+		if (!announce) setContinuationHoldActive(true);
+		if (announce) {
+			pi.sendMessage(
+				{ customType: LOOP_GUARD_ESCALATION_CUSTOM_TYPE, content: warning, display: true, details },
+				{ triggerTurn: false, deliverAs: "steer" },
+			);
+			if (ctx.hasUI) ctx.ui.notify(warning, "warning");
+			pendingRecovery = { reason: details.reason, toolName: details.toolName };
+		}
+		ctx.abort("system");
 	};
 
 	pi.registerMessageRenderer(LOOP_GUARD_NOTICE_CUSTOM_TYPE, renderLoopGuardNotice);
@@ -63,9 +90,10 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 
 	pi.on("tool_execution_start", (event) => {
 		const record = tracker.record(event.toolName, event.args);
+		failedRepeats.observeStart(event.toolCallId, record);
 		const patternChanged = escalation.observeAttempt(event.toolCallId, record);
 		if (patternChanged) {
-			pendingRecoveryToolName = undefined;
+			pendingRecovery = undefined;
 			setRecoveryWakeSourceActive(false);
 			setContinuationHoldActive(false);
 		}
@@ -85,6 +113,35 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 
 	pi.on("turn_end", () => {
 		escalation.finishTurn();
+		failedRepeats.finishTurn();
+	});
+
+	// A call that fails argument validation ends before the tool_call hook, so repeated failures are counted here.
+	pi.on("tool_execution_end", (event, ctx) => {
+		const decision = failedRepeats.observeEnd(event.toolCallId, event.isError);
+		switch (decision.kind) {
+			case "none":
+				return;
+			case "warn":
+				pi.sendMessage(
+					{
+						customType: LOOP_GUARD_NOTICE_CUSTOM_TYPE,
+						content: buildLoopGuardFailedRepeatReminder(decision.detection),
+						display: true,
+						details: decision.detection,
+					},
+					{ triggerTurn: false, deliverAs: "steer" },
+				);
+				return;
+			case "stop":
+				interruptTurn(
+					ctx,
+					{ reason: "failed-repeats", toolName: decision.toolName, failedCallCount: decision.failedCallCount },
+					buildLoopGuardFailedRepeatWarning(decision.toolName, decision.failedCallCount),
+					decision.announce,
+				);
+				return;
+		}
 	});
 
 	pi.on("tool_call", (event, ctx) => {
@@ -99,26 +156,12 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 					terminate: false,
 				};
 			case "hardStop": {
-				const warning = buildLoopGuardHardStopWarning(decision.toolName, decision.blockedCallCount);
-				setRecoveryWakeSourceActive(true);
-				if (!decision.announce) setContinuationHoldActive(true);
-				if (decision.announce) {
-					pi.sendMessage(
-						{
-							customType: LOOP_GUARD_ESCALATION_CUSTOM_TYPE,
-							content: warning,
-							display: true,
-							details: {
-								toolName: decision.toolName,
-								blockedCallCount: decision.blockedCallCount,
-							},
-						},
-						{ triggerTurn: false, deliverAs: "steer" },
-					);
-					if (ctx.hasUI) ctx.ui.notify(warning, "warning");
-					pendingRecoveryToolName = decision.toolName;
-				}
-				ctx.abort("system");
+				interruptTurn(
+					ctx,
+					{ reason: "blocked-repeats", toolName: decision.toolName, blockedCallCount: decision.blockedCallCount },
+					buildLoopGuardHardStopWarning(decision.toolName, decision.blockedCallCount),
+					decision.announce,
+				);
 				return {
 					block: true,
 					reason: buildLoopGuardBlockReason(decision.toolName, decision.blockedCallCount),
@@ -134,13 +177,16 @@ export default function loopGuardExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_settled", () => {
-		const toolName = pendingRecoveryToolName;
-		if (toolName === undefined) return;
-		pendingRecoveryToolName = undefined;
+		const recovery = pendingRecovery;
+		if (recovery === undefined) return;
+		pendingRecovery = undefined;
 		pi.sendMessage(
 			{
 				customType: LOOP_GUARD_RECOVERY_CUSTOM_TYPE,
-				content: buildLoopGuardHardStopSteer(toolName),
+				content:
+					recovery.reason === "failed-repeats"
+						? buildLoopGuardFailedRepeatSteer(recovery.toolName)
+						: buildLoopGuardHardStopSteer(recovery.toolName),
 				display: false,
 			},
 			{ triggerTurn: true },

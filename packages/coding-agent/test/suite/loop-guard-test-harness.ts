@@ -9,6 +9,7 @@ export interface LoopGuardHarness {
 	customMessages: Array<{
 		customType: string;
 		display: boolean;
+		details?: unknown;
 		triggerTurn: boolean | undefined;
 		deliverAs: string | undefined;
 	}>;
@@ -33,12 +34,13 @@ export function createLoopGuardHarness(): LoopGuardHarness {
 			handlers.set(event, eventHandlers);
 		},
 		sendMessage: (
-			message: { customType: string; display: boolean },
+			message: { customType: string; display: boolean; details?: unknown },
 			options: { triggerTurn?: boolean; deliverAs?: string } | undefined,
 		) => {
 			customMessages.push({
 				customType: message.customType,
 				display: message.display,
+				details: message.details,
 				triggerTurn: options?.triggerTurn,
 				deliverAs: options?.deliverAs,
 			});

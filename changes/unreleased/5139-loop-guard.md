@@ -1,0 +1,25 @@
+<!-- changes-log: packages/coding-agent/src/core/extensions/builtin/loop-guard/changes.md -->
+## 2026-10-31 - loop-guard: stop identical calls that keep failing (senpi#5139)
+
+### What changed
+
+- `failure-repeats.ts` (new): `FailedRepeatTracker` counts consecutive identical calls (same tool + canonical
+  args) whose `tool_execution_end` reports `isError`; a success or a failure of a different call ends the run.
+- `index.ts`: a `tool_execution_end` handler sends the loop-guard notice at 3 identical failures and interrupts
+  the turn at 6 through the same escalation path the blocked-repeat hard stop uses; the recovery steer names
+  the failure.
+- `notice.ts` / `renderer.ts`: escalation details carry a typed `reason` (`blocked-repeats` | `failed-repeats`).
+- `policy.ts`: `FAILED_REPEAT_WARNING_THRESHOLD = 3`, `FAILED_REPEAT_STOP_THRESHOLD = 6`.
+
+### Why
+
+- Argument validation throws before `beforeToolCall`, where the guard's blocking hook lives, so a call that kept
+  failing validation was only ever noticed and repeated without end.
+
+### Why an extension could not handle it
+
+- It is handled in the loop-guard extension; agent-loop validation order is unchanged.
+
+### Expected merge conflict zones
+
+- LOW: `loop-guard/index.ts`, `loop-guard/notice.ts`.

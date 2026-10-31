@@ -25,6 +25,15 @@ export const IDENTICAL_BLOCK_NOTICE_THRESHOLD = 2;
 /** Loop-guard-owned blocked calls before the active turn is interrupted. */
 export const IDENTICAL_HARD_STOP_BLOCK_THRESHOLD = 3;
 
+/**
+ * Consecutive identical calls that each failed (tool_execution_end isError) before the failure reminder fires.
+ * Counted from results because a call that fails argument validation never reaches the tool_call block hook.
+ */
+export const FAILED_REPEAT_WARNING_THRESHOLD = 3;
+
+/** Consecutive identical failed calls before the active turn is interrupted. */
+export const FAILED_REPEAT_STOP_THRESHOLD = 6;
+
 /** Consecutive same-tool calls with near-identical args before the caution fires. */
 export const SIMILAR_RUN_THRESHOLD = 5;
 

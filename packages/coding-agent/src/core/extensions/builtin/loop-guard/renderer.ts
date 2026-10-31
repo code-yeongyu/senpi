@@ -1,9 +1,8 @@
 import { noticeMessageRenderer } from "../../notice/index.ts";
 import type { MessageRenderer } from "../../types.ts";
-import type { LoopGuardDetection } from "./detectors.ts";
-import type { LoopGuardEscalationDetails } from "./notice.ts";
+import type { LoopGuardEscalationDetails, LoopGuardNoticeDetails } from "./notice.ts";
 
-export const renderLoopGuardNotice: MessageRenderer<LoopGuardDetection> = noticeMessageRenderer((message) => {
+export const renderLoopGuardNotice: MessageRenderer<LoopGuardNoticeDetails> = noticeMessageRenderer((message) => {
 	const details = message.details;
 	if (details === undefined) return undefined;
 	return { title: titleLine(details), why: whyLine(details), expandedLine: expandedLine(details) };
@@ -16,14 +15,25 @@ export const renderLoopGuardEscalation: MessageRenderer<LoopGuardEscalationDetai
 		return {
 			title: `! Loop guard · turn interrupted (${details.toolName})`,
 			tone: "error",
-			why: `The agent ignored two warnings and repeated ${details.blockedCallCount} calls after blocking began.`,
+			why: escalationWhyLine(details),
 			expandedLine: "A user-role recovery message was queued and the active turn was stopped by a system abort.",
 		};
 	},
 );
 
-function titleLine(detection: LoopGuardDetection): string {
+function escalationWhyLine(details: LoopGuardEscalationDetails): string {
+	switch (details.reason) {
+		case "blocked-repeats":
+			return `The agent ignored two warnings and repeated ${details.blockedCallCount} calls after blocking began.`;
+		case "failed-repeats":
+			return `The same call failed ${details.failedCallCount} times in a row with identical arguments.`;
+	}
+}
+
+function titleLine(detection: LoopGuardNoticeDetails): string {
 	switch (detection.kind) {
+		case "failed":
+			return `⚠ Loop guard · identical failed calls ×${detection.count} (${detection.toolName})`;
 		case "identical":
 			return `⚠ Loop guard · identical calls ×${detection.count} (${detection.toolName})`;
 		case "similar":
@@ -33,8 +43,10 @@ function titleLine(detection: LoopGuardDetection): string {
 	}
 }
 
-function whyLine(detection: LoopGuardDetection): string {
+function whyLine(detection: LoopGuardNoticeDetails): string {
 	switch (detection.kind) {
+		case "failed":
+			return "Same tool, same arguments, same failure. The agent was told to fix the arguments from the error.";
 		case "identical":
 			return "Same tool, same arguments, again. The agent was told to reuse the result or change the call.";
 		case "similar": {
@@ -48,8 +60,10 @@ function whyLine(detection: LoopGuardDetection): string {
 	}
 }
 
-function expandedLine(detection: LoopGuardDetection): string {
+function expandedLine(detection: LoopGuardNoticeDetails): string {
 	switch (detection.kind) {
+		case "failed":
+			return `tool ${detection.toolName} · ${detection.count} consecutive identical calls that failed`;
 		case "identical":
 			return `tool ${detection.toolName} · ${detection.count} consecutive identical calls when the reminder fired`;
 		case "similar":
