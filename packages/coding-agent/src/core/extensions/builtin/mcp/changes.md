@@ -1,3 +1,61 @@
+## 2026-10-29 - An unanchored discovery record never steers OAuth traffic (senpi#4924)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/auth/oauth-provider.ts`: `discoveryState()` returns nothing for a stored record that does not show where its authorization server came from: it has neither that server's metadata, nor protected-resource metadata naming it, nor the MCP server's own origin (`discoveryNamesItsServer`). The SDK's `auth()` (transport 401, modern HTTP fetch, sign-in start and code exchange) and senpi's own `discover()` (sign-in preflight, client_credentials) then discover from the MCP server, and `saveDiscoveryState` applies the senpi#2940 binding before any request to an authorization server.
+- `packages/coding-agent/test/mcp/2940-oauth-issuer-binding.test.ts`: every case fails on any fetch or name resolution outside its fixture, and a table runs each OAuth entry point against a grant that belongs to another authorization server.
+
+### Why
+
+- Given only a stored URL, the SDK fetched that server's metadata and posted the saved refresh token (or an authorization code, or a client_credentials request) to it, before anything checked that the MCP server still names it. The 2940 test passed only because the `.invalid` lookup failed fast, and it timed out on a slow resolver.
+
+### Why an extension could not handle it
+
+- The record is handed to the SDK by the builtin MCP OAuth provider; no hook runs between `discoveryState()` and the SDK's first request.
+
+### Expected merge conflict zones
+
+- LOW: the top of `McpOAuthProvider.discoveryState()` in `oauth-provider.ts`.
+
+## 2026-10-29 - One startup inventory announcement per RPC MCP attach (senpi#4850, fixes #4828)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-window.ts`: new `McpStartupWindows`, a per-session window that holds inventory notifications from an RPC attach until every connect that attach backgrounded has settled, then releases them once.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `attachSession` opens the window for RPC sessions and collects the attach's deferred connects (`#syncFromConfig` `startupConnects`); `#captureWireStatus` holds changed snapshots while the window is open and announces the release with `startupSettled`; `dispose` clears the windows.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts` and `control-inventory.ts`: forward `startupSettled: true` on `senpi.rpc.mcp_inventory.changed`.
+
+### Why
+
+- With parallel eager servers, every connection state change, tool registration and inventory read could announce an intermediate inventory, so the startup event count depended on connect timing and client polling (#4828).
+
+### Why an extension could not handle it
+
+- The capture points and the attach's connect set are private to the builtin MCP service.
+
+### Expected merge conflict zones
+
+- LOW: `attachSession`, the `onDeferred` callback in `#syncFromConfig`, and `#captureWireStatus` in `service.ts`.
+
+## 2026-10-28 - Registered-server ownership handoff to extensions that handle mcp_servers_change (senpi#4604, fixes #4597)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: on attach, extension-registered servers are merged into the config only when `ctx.extensionConnectsMcpServers?.()` is not `true`; `mcp.json` servers are merged as before.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-types.ts`: `McpSessionContext` gains the optional `extensionConnectsMcpServers` getter.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, `service-types.ts`: upstream's rule is that the extension handling `mcp_servers_change` connects registered servers; if the built-in gateway also connected them, every registered server would get two connections.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, `service-types.ts`: the built-in gateway decides what it connects; another extension cannot stop it from merging registered servers.
+
+### Expected merge conflict zones
+
+- LOW: the `mergeExtensionMcpServers` call in `attachSession` and the `McpSessionContext` type.
+
 ## 2026-10-27 - Negotiate advertised legacy MCP versions (senpi#4402)
 
 ### What changed

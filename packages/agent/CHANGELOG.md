@@ -12,6 +12,40 @@
 
 ### Removed
 
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Compaction relies on declared message and tool-call argument types instead of redundant assertions; runtime behavior is unchanged ([#4979](https://github.com/code-yeongyu/senpi/pull/4979)).
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-1] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+- `@earendil-works/pi-agent-core/testing/win32-sim`: a win32 simulation profile for code-level Windows tests ([#4510](https://github.com/code-yeongyu/senpi/pull/4510))
+- `@earendil-works/pi-agent-core/conformance`: the durable-core conformance case registry, a suite hash over case IDs and implementation hashes, a manifest export, and a suite runner that reports pass or fail per case and never skips ([#4727](https://github.com/code-yeongyu/senpi/pull/4727), fixes [#4726](https://github.com/code-yeongyu/senpi/issues/4726)).
+- Durable core: the DurableStore contract (atomic commit with adopt-on-durable, owner-epoch claim that raises the epoch by exactly one, ID minting, record and document scans, claim + import between hosts), an in-memory backend, the single admission line above the store, and the STORE-01..07 and KILL-STORE-01..06 conformance cases, registered in the `@earendil-works/pi-agent-core/conformance` registry and exported from it with the store contract and the host adapter interface, so other packages' host adapters run the same cases ([#4730](https://github.com/code-yeongyu/senpi/pull/4730), fixes [#4729](https://github.com/code-yeongyu/senpi/issues/4729)).
+- Durable core: the WakeHost contract (a recovery alarm armed before admitted work and kept armed while any admission is in flight, so a concurrent update or fire cannot clear it before the work commits, updated from the loop's wake after each commit, re-armed before resume on fire, and a fallback on every new instance), a Bun timer host serving many sessions with alarms persisted in each session's DurableStore under the owner epoch and re-checked across machine sleep, and the WAKE-01..03, WAKE-RET-01, KILL-WAKE-01..08 and MULTI-HOST-01 conformance cases, registered in the `@earendil-works/pi-agent-core/conformance` registry and exported from it together with the WakeHost contract, the Bun timer host, the store-backed alarm persistence, the wake conformance adapter types and manual timers, so other hosts run the same cases ([#4735](https://github.com/code-yeongyu/senpi/pull/4735), fixes [#4733](https://github.com/code-yeongyu/senpi/issues/4733)).
+- Durable core: the Transport contract (opaque frames on named lanes with per-lane order, exactly-once delivery, resume from each lane's last ACK after the carrier re-attaches, per-lane backpressure, and a per-lane retransmit deadline, so ACK progress on one lane never postpones a lost frame's resend on another) with a carrier seam, a reference transport over an in-process carrier addressed by local endpoints (owner-only Unix sockets on POSIX, named pipes on Windows), and the TRANSPORT-01..03, MULTI-LANE-01, MULTI-FAIR-01..02 and FAULT-TRANSPORT-01..05 conformance cases with five deterministic fault profiles, exported with the adapter types from `@earendil-works/pi-agent-core/conformance` ([#4741](https://github.com/code-yeongyu/senpi/pull/4741), fixes [#4738](https://github.com/code-yeongyu/senpi/issues/4738)).
+
+### Changed
+
+### Fixed
+
+- Share tree-sitter runtime initialization across concurrent grammar loads, including uncached parsers, and serialize different runtime paths through pending grammar loads. Retain missing-grammar cache entries and allow later loads after failures without evicting newer cache entries ([#4752](https://github.com/code-yeongyu/senpi/pull/4752)).
+
+### Removed
+
 ## [2026.10.27-2] - 2026-10-27
 
 ### Breaking Changes
