@@ -127,7 +127,7 @@ export class CompactCurrentComponents {
 
 	/** The cut's components; dialogs in the order they opened. Called under the cut's operation lease. */
 	async read(frozen: FrozenComponents, valid: () => void) {
-		const lifecycle = frozen.lifecycle ? await this.values.read(frozen.lifecycle) : null;
+		const lifecycle = frozen.lifecycle ? await this.values.read(frozen.lifecycle, valid) : null;
 		valid();
 		const dialogs: CompactDialog[] = [];
 		for await (const [, dialog] of this.dialogRoots.entries(frozen.dialogs, valid)) dialogs.push(dialog);

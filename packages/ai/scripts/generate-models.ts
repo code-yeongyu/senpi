@@ -1054,6 +1054,7 @@ const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	zaiToolStream: false,
 	supportsStrictMode: false,
 	supportsOpenAIGrammarTools: false,
+	mixedStrictTools: true,
 	supportsMidConvoSystemMessages: false,
 	supportsMidConvoToolAdditions: false,
 	sendSessionAffinityHeaders: false,
@@ -1163,6 +1164,7 @@ function detectOpenAICompletionsCompat(model: Model<"openai-completions">): Open
 		zaiToolStream: false,
 		// Preserve built-in behavior as explicit metadata against the conservative runtime default.
 		supportsStrictMode: !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isCerebras,
+		mixedStrictTools: true,
 		supportsOpenAIGrammarTools: false,
 		supportsMidConvoSystemMessages: false,
 		supportsMidConvoToolAdditions: false,
