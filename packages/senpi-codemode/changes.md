@@ -1,3 +1,30 @@
+## 2026-10-31 - A mistyped detached cell id names the one close known id (senpi#5153)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/detached-cell-manager.ts`: `EvalCellNotFoundError` takes an optional suggestion; the unknown-id lookup behind `peek`, `stop` and `waitForTerminal` compares the requested id with every live, interrupting and retained settled id and appends `did you mean "<id>"?` when exactly one is within a quarter of the id's length in edit distance (at least one edit). No close id or a tie leaves the message byte-identical; `errorCode` stays `eval_cell_not_found`.
+- `packages/senpi-codemode/test/eval-cell-id-suggestion.test.ts`: match on a settled cell (peek), match on a live cell (stop), no match, and an ambiguous tie.
+
+### Why
+
+- Cell ids are long opaque strings; a weaker tool-calling model often drops or swaps a character when copying one and then repeats the same wrong id.
+
+## 2026-10-31 - eval validates a run call's missing fields first (senpi#5138)
+
+### What changed
+
+- `packages/senpi-codemode/src/tool/eval-argument-validator.ts` (new): `registerEvalArgumentValidator` registers the eval schema's argument validator. A run call (`action` omitted or `"run"`) missing `language`, `code` or `summary` (absent, null, or a blank summary) fails with one `required` error per missing field, in that order, carrying the eval teaching text (`language` names the enabled languages). Every other call goes through the generic `validateToolArguments` path and its coercion unchanged; when that fails, the generic path's own error is rethrown, so the message (including its `Received arguments` block) is exactly what the schema gets without a registered validator.
+- `packages/senpi-codemode/src/tool/eval-request.ts`: `evalRunFieldRequiredMessage` is the single source of the three run-field teaching errors, shared by validation and `parseEvalRequest`.
+- `packages/senpi-codemode/src/tool/eval-tool.ts`: `createEvalTool` registers the validator for its schema.
+
+### Why
+
+- senpi#5138: a run call missing `language` got the generic anyOf dump (every branch's failure), and the eval-specific error in `parseEvalRequest` was never reached because validation failed first.
+
+### Expected merge conflict zones
+
+- LOW: one import and one call in `createEvalTool`.
+
 ## 2026-10-29 - Preserve executable group-signal detection while ignoring inert shell text (senpi#3019)
 
 ### What changed

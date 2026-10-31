@@ -166,7 +166,7 @@ function buildModel(
 		provider: "opengateway",
 		baseUrl: OPENGATEWAY_BASE_URL,
 		// The gateway rejects the OpenAI "developer" role with a 400 (verified 2026-08-12); always send "system".
-		compat: { supportsDeveloperRole: false },
+		compat: { supportsDeveloperRole: false, mixedStrictTools: false },
 		reasoning: override?.reasoning ?? source?.reasoning === true,
 		input: item.inputModalities.includes("image") ? ["text", "image"] : ["text"],
 		cost: withGatewayPrice(sourceCost(source, override), openGatewayPrice(item, prices)),
