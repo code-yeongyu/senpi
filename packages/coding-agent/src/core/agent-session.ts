@@ -16,7 +16,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { bindPipelineWitness } from "./execution/pipeline-witness.ts";
 import type {
@@ -91,11 +91,11 @@ import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oaut
 import { retryTransientCall } from "@earendil-works/pi-ai/utils/retry";
 import { extract429RetryAfterMs, parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { retryBackoffDelayMs } from "@earendil-works/pi-ai/utils/retry-profile/backoff";
-import { type ToolRuntimeKind, ToolRuntimeUnsupportedHostError, toolRuntimeHostRefusal } from "../cli/tool-runtime.ts";
+import type { ToolRuntimeKind } from "../cli/tool-runtime.ts";
 import { getAgentDir } from "../config.ts";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import {
-	SessionToolChild,
+	type SessionToolChild,
 	type SessionToolChildRow,
 	toolChildModuleRoots,
 } from "../modes/rpc/tool-child/session-child.ts";
@@ -449,14 +449,11 @@ import {
 import { resetTimings, time } from "./timings.ts";
 import { ToolBarrier, type ToolBarrierSpec, toolBarrierSpecError } from "./tool-barrier.ts";
 import { type SessionMessageUpdateEvent, withResolvedToolName } from "./tool-call-display-name.ts";
-import {
-	createSessionHostCallHandler,
-	type HostCallTarget,
-	type RegisteredHostCallKind,
-} from "./tool-child-host-calls.ts";
+import type { HostCallTarget, RegisteredHostCallKind } from "./tool-child-host-calls.ts";
 import type { StuckModuleNotice } from "./tool-dispatch/in-process-module.ts";
 import { childModuleRoots, offload } from "./tool-dispatch/offload.ts";
-import { createToolDispatcher, type ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
+import { createToolChildRuntime } from "./tool-dispatch/tool-child-runtime.ts";
+import type { ToolDispatcher } from "./tool-dispatch/tool-dispatcher.ts";
 import type { BashOperations } from "./tools/bash.ts";
 import { TranscriptWriteFailures } from "./transcript-write-failures.ts";
 import {
@@ -1836,43 +1833,32 @@ export class AgentSession {
 				model: this.model?.id,
 			}),
 		});
-		const toolRuntime = config.toolRuntime ?? "in-process";
-		const hostRefusal = toolRuntimeHostRefusal(toolRuntime);
-		if (hostRefusal !== undefined) throw new ToolRuntimeUnsupportedHostError(hostRefusal);
-		// One host-call handler for both runtimes: the child's reverse bridge and an in-process ctx.offload module.
-		const hostCalls = createSessionHostCallHandler({
+		const toolChildRuntime = createToolChildRuntime({
+			toolRuntime: config.toolRuntime ?? "in-process",
+			agentDir: this._agentDir,
+			scopeId: this.sessionManager.getSessionId(),
 			cwd: this._cwd,
-			executeNested: (parentToolCallId, name, args, signal) =>
-				this._executeNestedToolCall(parentToolCallId, name, args, { signal }),
-			callableToolNames: () => this._callableToolNames(),
-			target: (kind) => this._toolChildHostTargets.get(kind),
-			filesystemPolicy: () => this._filesystemPolicy,
-		});
-		this._toolChild =
-			toolRuntime === "child"
-				? new SessionToolChild({
-						dir: join(this._agentDir, "tool-children", this.sessionManager.getSessionId()),
-						cwd: this._cwd,
-						moduleRoots: () => [
-							...toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
-							...childModuleRoots(this._extensionRunner.getAllChildModules()),
-						],
-						onRecord: (record) => {
-							this._emit({ type: "session_tool_child", ...record });
-							if (record.state === "exited")
-								for (const job of this._childJobs()) job.childExited?.(record.generation);
-						},
-						onHostCall: hostCalls,
-						onWake: (wake) => {
-							for (const job of this._childJobs())
-								if (job.kind === wake.source) job.wake?.(wake.value, wake.generation);
-						},
-					})
-				: undefined;
-		this._toolDispatcher = createToolDispatcher({
-			runtime: toolRuntime,
+			moduleRoots: () => [
+				...toolChildModuleRoots(this._extensionRunner.getAllRegisteredTools()),
+				...childModuleRoots(this._extensionRunner.getAllChildModules()),
+			],
+			hostCallDeps: {
+				cwd: this._cwd,
+				executeNested: (parentToolCallId, name, args, signal) =>
+					this._executeNestedToolCall(parentToolCallId, name, args, { signal }),
+				callableToolNames: () => this._callableToolNames(),
+				target: (kind) => this._toolChildHostTargets.get(kind),
+				filesystemPolicy: () => this._filesystemPolicy,
+			},
+			onRecord: (record) => {
+				this._emit({ type: "session_tool_child", ...record });
+				if (record.state === "exited")
+					for (const job of this._childJobs()) job.childExited?.(record.generation);
+			},
+			onWake: (wake) => {
+				for (const job of this._childJobs()) if (job.kind === wake.source) job.wake?.(wake.value, wake.generation);
+			},
 			notify: (event, data) => this._sessionLogger.info(event, data),
-			hostCalls,
 			onModuleStuck: (notice) => {
 				this._sessionLogger.warn("offload_module_stuck", {
 					modulePath: notice.modulePath,
@@ -1882,10 +1868,9 @@ export class AgentSession {
 				});
 				this._emit({ type: "offload_module_stuck", ...notice });
 			},
-			...(this._toolChild === undefined
-				? {}
-				: { childRunner: this._toolChild.runner, childKindRunner: this._toolChild.kindRunner }),
 		});
+		this._toolChild = toolChildRuntime.toolChild;
+		this._toolDispatcher = toolChildRuntime.dispatcher;
 		this._fallbackValidationWarnings = validateFallbackChains(
 			this.settingsManager.getRawFallbackChains(),
 			this._modelRegistry,
