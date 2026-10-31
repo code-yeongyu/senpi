@@ -1,3 +1,21 @@
+## 2026-10-28 - The coding-agent test run owns a shared source compile cache (senpi#4614)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: adds `globalSetup: ["./test/helpers/source-compile-cache-global-setup.ts"]`, which creates one run-scoped directory, exports it as `SENPI_SOURCE_COMPILE_CACHE` to the workers and the source processes they launch, and removes it at teardown. `NODE_DISABLE_COMPILE_CACHE=1` turns the cache off for a run.
+
+### Why
+
+- senpi#4614: gives the source-loader children of one test run a cache directory that belongs to that run only, so two checkouts running the suite at once never share entries.
+
+### Why an extension could not handle it
+
+- Test-runner configuration; no extension surface exists for it.
+
+### Expected merge conflict zones
+
+- LOW: the `test` block of `packages/coding-agent/vitest.config.ts`.
+
 ## 2026-10-29 - Public session-worker-data subpath (senpi#4728, #4775)
 
 ### What changed
