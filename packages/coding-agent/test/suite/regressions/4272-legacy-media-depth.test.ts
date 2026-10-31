@@ -145,23 +145,61 @@ it("in process: a media-placeholder client receives a 4,000-deep tool result unc
 	expect(records.filter((record) => record.type === "agent_end")).toHaveLength(2);
 }, 90_000);
 
-it("in process: past the engine limit with placeholders on, the record is a typed counted refusal; the session runs on", async () => {
+/** One real placeholder-writer delivery, with exact refusal/reporting and two-turn survival assertions. */
+async function writerDelivers(depth: number): Promise<boolean> {
 	let accepted: boolean | undefined;
 	const { records, refusals, stderr } = await inProcess((host, sessionId) => {
-		accepted = enqueueLegacyRecord(host.writer, sessionId, deepToolEnd(OVER_ENGINE, new Date(0)));
+		accepted = enqueueLegacyRecord(host.writer, sessionId, deepToolEnd(depth, new Date(0)));
 	});
 	expect(accepted, "consumed, not an overflow or a closed session").toBe(true);
-	expect(records.filter(isDeepEnd)).toEqual([]);
-	expect(refusals, "counted once").toBe(1);
+	const ends = records.filter(isDeepEnd);
+	const delivered = ends.length === 1;
+	expect(ends).toHaveLength(delivered ? 1 : 0);
+	if (delivered) {
+		expect(blockOf(ends[0])).toMatchObject({ type: "image_ref", ref: { toolCallId: "call_deep", contentIndex: 1 } });
+		let details = detailsOf(ends[0]);
+		let levels = 0;
+		while (Array.isArray(details)) {
+			expect(details).toHaveLength(1);
+			details = details[0];
+			levels++;
+		}
+		expect(levels).toBe(depth);
+		expect(details).toBe(new Date(0).toISOString());
+		expect(ends[0]).toMatchObject({ isError: false });
+	}
+	expect(refusals, "refusals counted exactly").toBe(delivered ? 0 : 1);
 	expect(
 		stderr.filter((line) => REFUSED.test(line)),
-		"reported once",
-	).toHaveLength(1);
+		"refusals reported exactly",
+	).toHaveLength(delivered ? 0 : 1);
 	expect(
 		records.filter((record) => record.type === "agent_end"),
 		"later records, both turns",
 	).toHaveLength(2);
-}, 90_000);
+	return delivered;
+}
+
+it("RULING-105 writer-bisected depth floor, three far-depth deliveries and a typed over-engine refusal", async () => {
+	// Node 26 measurements: 5888/5889 split; 4990-vs-5246 disagreed across call sites; Lw-256 refused.
+	// Near-boundary replays are deliberately absent: the Node 26 delivery-path stack budget shifts by >=257
+	// levels with call context. Bisection measures Lw once; P is the independent native-only probe LIMIT.
+	let low = 0;
+	let high = OVER_ENGINE;
+	expect(await writerDelivers(high), "calibration did not find a native depth limit at the 65,536 cap").toBe(false);
+	while (high - low > 1) {
+		const middle = (low + high) >> 1;
+		if (await writerDelivers(middle)) low = middle;
+		else high = middle;
+	}
+	expect(low, `writer depth Lw=${low}, native probe P=${LIMIT}: early refusal below P - 512`).toBeGreaterThanOrEqual(
+		LIMIT - 512,
+	);
+	const depth = Math.floor(Math.min(LIMIT, low) / 2);
+	console.log(`RULING-105 media Lw=${low} P=${LIMIT} far=${depth}`);
+	for (let repeat = 0; repeat < 3; repeat++) expect(await writerDelivers(depth), "far depth delivered").toBe(true);
+	expect(await writerDelivers(OVER_ENGINE), "over-engine refused").toBe(false);
+}, 300_000);
 
 const isolatePrelude = `
 const nest = (depth) => { let value = "leaf"; for (let level = 0; level < depth; level++) value = [value]; return value; };`;
@@ -179,7 +217,7 @@ const deepResultTool = (depth: number) => `(() => {
 	return [fauxAssistantMessage([fauxToolCall("deep_result", {})], { stopReason: "toolUse", timestamp: 1 }), answer(), answer()];
 })()`;
 
-it.each([DEEP, LIMIT - 256])(
+it.each([DEEP])(
 	"worker: a media-placeholder client receives a %i-deep tool result unchanged and the worker lives",
 	async (depth) => {
 		const host = await workerAcceptanceHost(builtFauxPath, isolatePrelude, deepResultTool(depth));

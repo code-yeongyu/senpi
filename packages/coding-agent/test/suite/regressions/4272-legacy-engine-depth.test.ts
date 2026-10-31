@@ -106,23 +106,59 @@ it("RULING-68 a record over the protocol depth limit but under the engine limit 
 	expect(stderr.filter((line) => REFUSED.test(line))).toEqual([]);
 }, 60_000);
 
-it("RULING-68 in process: a record past the recursive engine limit is refused typed, counted and reported; the session runs on", async () => {
-	const { records, refusals, stderr } = await inProcess(OVER_ENGINE, new Date(0));
-	expect(records.filter(isUpdate), "the record past the engine limit is not delivered").toEqual([]);
+/** One real delivery per probe, including the refusal/reporting and two-turn survival contract. */
+async function writerDelivers(depth: number): Promise<boolean> {
+	const { records, refusals, stderr } = await inProcess(depth, new Date(0));
+	const updates = records.filter(isUpdate);
+	const delivered = updates.length === 1;
+	expect(updates).toHaveLength(delivered ? 1 : 0);
+	if (delivered) {
+		let details = (updates[0]?.partialResult as { details?: unknown } | undefined)?.details;
+		let levels = 0;
+		while (Array.isArray(details)) {
+			expect(details).toHaveLength(1);
+			details = details[0];
+			levels++;
+		}
+		expect(levels).toBe(depth);
+		expect(details).toBe(new Date(0).toISOString());
+	}
 	expect(endOf(records), "the tool that produced it was not broken by the legacy writer").toMatchObject({
 		isError: false,
 		result: { content: [{ type: "text", text: "returned" }] },
 	});
-	expect(refusals, "counted once").toBe(1);
+	expect(refusals ?? 0, "refusals counted exactly").toBe(delivered ? 0 : 1);
 	expect(
 		stderr.filter((line) => REFUSED.test(line)),
-		"reported once",
-	).toHaveLength(1);
+		"refusals reported exactly",
+	).toHaveLength(delivered ? 0 : 1);
 	expect(
 		records.filter((record) => record.type === "agent_end"),
 		"later records, both turns",
 	).toHaveLength(2);
-}, 60_000);
+	return delivered;
+}
+
+it("RULING-105 writer-bisected depth floor, three far-depth deliveries and a typed over-engine refusal", async () => {
+	// Node 26 measurements: 5888/5889 split; 4990-vs-5246 disagreed across call sites; Lw-256 refused.
+	// Near-boundary replays are deliberately absent: the Node 26 delivery-path stack budget shifts by >=257
+	// levels with call context. Bisection measures Lw once; P is the independent native-only probe LIMIT.
+	let low = 0;
+	let high = OVER_ENGINE;
+	expect(await writerDelivers(high), "calibration did not find a native depth limit at the 65,536 cap").toBe(false);
+	while (high - low > 1) {
+		const middle = (low + high) >> 1;
+		if (await writerDelivers(middle)) low = middle;
+		else high = middle;
+	}
+	expect(low, `writer depth Lw=${low}, native probe P=${LIMIT}: early refusal below P - 512`).toBeGreaterThanOrEqual(
+		LIMIT - 512,
+	);
+	const depth = Math.floor(Math.min(LIMIT, low) / 2);
+	console.log(`RULING-105 engine Lw=${low} P=${LIMIT} far=${depth}`);
+	for (let repeat = 0; repeat < 3; repeat++) expect(await writerDelivers(depth), "far depth delivered").toBe(true);
+	expect(await writerDelivers(OVER_ENGINE), "over-engine refused").toBe(false);
+}, 300_000);
 
 const isolatePrelude = `
 const nest = (depth, leaf = "leaf") => { let value = leaf; for (let level = 0; level < depth; level++) value = [value]; return value; };`;
