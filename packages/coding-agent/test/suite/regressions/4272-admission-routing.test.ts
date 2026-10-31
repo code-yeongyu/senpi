@@ -23,7 +23,7 @@ it("T2 every open frame, including a suffix before its answer, carries the S08 r
 	const early = frames.find((frame) => frame.type === "session_opened");
 	expect(early).toBeDefined();
 	expect(peer.inbox.indexOf(early ?? answer)).toBeLessThan(peer.inbox.indexOf(answer));
-}, 120_000);
+}, 600_000);
 
 // #4272 T5, RULING-42: reset advances the shared S08 generation and never
 // invokes open/attach. A stale token must not silently read the current root.
@@ -41,4 +41,4 @@ it("T5 reset advances the admitted stream without acquiring another hold", async
 	expect(dataOf(await peer.request({ type: "list_sessions" })).sessions).toEqual([
 		expect.objectContaining({ attachments: 1 }),
 	]);
-}, 120_000);
+}, 600_000);

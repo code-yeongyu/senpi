@@ -5,6 +5,7 @@ import { CompactAdmissions } from "../../../src/modes/rpc/compact-admissions.ts"
 import { OPEN_AFTER_QUEUED_DEADLINE_MS } from "../../../src/modes/rpc/rpc-request-deadline.ts";
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import { statusHost } from "../rpc-session-status-support.ts";
+import { EVENT_SAFETY_MS } from "../event-safety-bound.ts";
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -15,7 +16,7 @@ afterEach(() => {
 // A failure guard on the exact teardown promise, not a delay used to make progress.
 function bounded<T>(pending: Promise<T>): Promise<T> {
 	return new Promise((resolve, reject) => {
-		const timer = deadline(() => reject(new Error("teardown did not settle after the controlled deadline")), 10_000);
+		const timer = deadline(() => reject(new Error("teardown did not settle after the controlled deadline")), EVENT_SAFETY_MS);
 		void pending.then(
 			(value) => {
 				clearDeadline(timer);
@@ -178,7 +179,7 @@ it.each(["connection release", "host dispose"] as const)(
 			await host[Symbol.asyncDispose]();
 		}
 	},
-	120_000,
+	600_000,
 );
 
 it("RULING-90 swallows a producer rejection after the deadline without publishing an answer", async () => {

@@ -1,5 +1,23 @@
 # changes.md — dynamic-prompt
 
+## 2026-10-28 - Test-only host pin for the workstation facts (senpi#4662, fixes #4660)
+
+### What changed
+
+- `packages/coding-agent/src/core/dynamic-prompt/workstation.ts`: the uncached `readWorkstationFacts(env = process.env)` (new export) reads the facts; `collectWorkstationFacts()` caches its result as before. With `SENPI_TEST_WORKSTATION={"cpuModel":string,"cores":int,"kernel":string}` (exactly those keys, non-empty strings, a positive integer) the CPU model, core count and kernel identity come from the pin, and the Apple-Silicon GPU line follows the pinned CPU model; any other non-empty value throws an error naming the variable. Unset or empty, every fact is computed exactly as before. `terminalName` reads the given `env` (the default is `process.env`).
+
+### Why
+
+- `packages/coding-agent/src/core/dynamic-prompt/workstation.ts`: the `<workstation>` block renders the host's CPU model, core count and kernel release into the system prompt, so a harness driving the real CLI (#4639) gets different prompt bytes and different Cursor root-prompt blob ids on every host; it can only pass inputs through the child's environment.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/dynamic-prompt/workstation.ts`: the facts are collected inside the system-prompt assembler; presets choose the dialect, not the facts.
+
+### Expected merge conflict zones
+
+- LOW: the block between `terminalName` and `collectWorkstationFacts` in `workstation.ts`.
+
 ## 2026-10-27 - Instruction files outrank the default asking style (senpi#4453)
 
 ### What changed
