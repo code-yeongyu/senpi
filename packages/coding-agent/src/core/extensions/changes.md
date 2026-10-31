@@ -1,3 +1,64 @@
+## 2026-10-27 - before_agent_start results say whether their prompt change is stable or volatile (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `BeforeAgentStartEventResult.systemPromptCache` (`"stable" | "volatile"`; builtins default to stable, other extensions to volatile) and `ExtensionContext.getSystemPromptStablePrefix()` / `ExtensionContextActions.getSystemPromptStablePrefix`, so an extension that builds its own request from `getSystemPrompt()` splits it like the turn.
+- `packages/coding-agent/src/core/extensions/builtin/hooks/index.ts`: per-prompt UserPromptSubmit system messages are `systemPromptCache: "volatile"`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBeforeAgentStart` tracks the stable prefix (the prompt up to the first volatile change, shrunk when a later handler rewrites it) and returns it as `systemPromptStablePrefix`; the extension context exposes the session's current prefix through `getSystemPromptStablePrefix`.
+
+### Why
+
+- Only the extension knows whether its addition changes between sessions; the runner is where the composed prompt is known.
+
+### Why an extension could not handle it
+
+- The composition loop lives in `packages/coding-agent/src/core/extensions/runner.ts`.
+
+### Expected merge conflict zones
+
+- LOW: `BeforeAgentStartEventResult` in `packages/coding-agent/src/core/extensions/types.ts` and the `systemPrompt` branch of the `dispatch:` loop in `packages/coding-agent/src/core/extensions/runner.ts`.
+
+## 2026-10-27 - before_agent_start handlers can run last; MCP instructions close the system prompt (senpi#4448)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/types.ts`: `BeforeAgentStartHandlerOptions.runLast` and `Extension.runLastHandlers`.
+- `packages/coding-agent/src/core/extensions/loader.ts`: `pi.on("before_agent_start", handler, { runLast: true })` records the handler in `runLastHandlers`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `emitBeforeAgentStart` dispatches every handler registered without `runLast` in load order, then other extensions' run-last handlers, then builtin run-last handlers, each in load order (`beforeAgentStartDispatchOrder`), on real turns and previews.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/index.ts`: the MCP `before_agent_start` handler registers with `runLast`.
+- `packages/coding-agent/test/mcp/instructions-last.test.ts`: require deferred fixture attachment to settle before composing real turns or previews; a cold SDK import must not turn an ignored readiness timeout into a prompt-ordering failure.
+
+### Why
+
+- MCP instructions were appended when the MCP builtin's handler ran, so additions from extensions that load after the builtins (a memory block) landed behind them. MCP instructions change with the connected server set and must be the last system-prompt block so everything before them stays a stable cache prefix.
+
+### Why an extension could not handle it
+
+- Dispatch order is owned by `packages/coding-agent/src/core/extensions/runner.ts`; an extension cannot run after extensions that load after it.
+
+### Expected merge conflict zones
+
+- LOW: `BeforeAgentStartHandlerOptions` in `packages/coding-agent/src/core/extensions/types.ts`, the `on()` registration in `packages/coding-agent/src/core/extensions/loader.ts`, and the `dispatch:` loop in `packages/coding-agent/src/core/extensions/runner.ts`.
+
+## 2026-10-27 - A yielded settle handler is released quietly (senpi#4420, oh-my-openagent#11419)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/handler-budget.ts`: `HandlerStopVerdict` gains `yielded`; `HeldHandlerWaits.release(scope, verdict)` passes the verdict to the held wait, which logs it as stage `released`.
+- `packages/coding-agent/src/core/extensions/runner.ts`: `releaseHeldHandlers(turn, verdict)` forwards the verdict; a `yielded` stop emits no extension error, and the deadline/Esc release text is now "handler released when the turn was stopped" (it said "turn deadline" for Esc and for any release).
+
+### Why
+
+- A person moving on from a settled run is not a failure: it must not reach the TUI as a red error line or RPC clients as `extension_error`, and "turn deadline" must not appear when no deadline fired.
+
+### Why an extension could not handle it
+
+- The host's handler budget and its error reporting are core.
+
+### Expected merge conflict zones
+
+- LOW: `HeldHandlerWaits` and `HandlerStopVerdict` in `handler-budget.ts`; `reportStoppedHandler` and `releaseHeldHandlers` in `runner.ts`.
+
 ## 2026-10-29 - ctx.afterSessionStart publishes recovered work after startup (senpi#4827)
 
 ### What changed

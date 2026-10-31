@@ -4,6 +4,8 @@
  */
 
 import * as fs from "node:fs";
+import { resolveSecretInputTimeout } from "../../core/extensions/secret-input.ts";
+import type { ExtensionUIInputOptions } from "../../core/extensions/types.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -1136,6 +1138,7 @@ export class InteractiveMode {
 	// Extension UI state
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
+	private secretInputCleanup: (() => void) | undefined;
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
 	private askUserQuestion: AskUserQuestionComponent | undefined = undefined;
 	private pendingQuestions = new Map<string, AsyncQuestionState>();
@@ -3704,7 +3707,7 @@ export class InteractiveMode {
 	): () => void {
 		const subscription = {
 			handler,
-			unsubscribe: this.ui.addInputListener(handler),
+			unsubscribe: this.ui.addInputListener((data) => (this.extensionInput?.secret ? undefined : handler(data))),
 		};
 		this.extensionTerminalInputSubscriptions.add(subscription);
 		return () => {
@@ -3716,7 +3719,9 @@ export class InteractiveMode {
 	private rebindExtensionTerminalInputListeners(): void {
 		for (const subscription of this.extensionTerminalInputSubscriptions) {
 			subscription.unsubscribe();
-			subscription.unsubscribe = this.ui.addInputListener(subscription.handler);
+			subscription.unsubscribe = this.ui.addInputListener((data) =>
+				this.extensionInput?.secret ? undefined : subscription.handler(data),
+			);
 		}
 	}
 
@@ -3747,6 +3752,7 @@ export class InteractiveMode {
 		this.mcpMrtrPresentationLifetime ??= new AbortController();
 		if (this.isShuttingDown) this.mcpMrtrPresentationLifetime.abort();
 		const context: ExtensionUIContext = {
+			capabilities: { secretInput: true },
 			select: (title, options, opts) =>
 				this.withBlockedHostDialog(
 					crypto.randomUUID(),
@@ -3766,7 +3772,7 @@ export class InteractiveMode {
 					crypto.randomUUID(),
 					title,
 					() => this.showExtensionInput(title, placeholder, opts),
-					opts,
+					opts?.secret ? { ...opts, ephemeral: true } : opts,
 				),
 			// Async answers are delivered by the ask-user extension, not here: the
 			// widget only resolves the question, so the model sees exactly one
@@ -3936,8 +3942,10 @@ export class InteractiveMode {
 	private showExtensionInput(
 		title: string,
 		placeholder?: string,
-		opts?: ExtensionUIDialogOptions,
+		opts?: ExtensionUIInputOptions,
 	): Promise<string | undefined> {
+		const timeout = opts?.secret && !opts.signal?.aborted ? resolveSecretInputTimeout(opts) : opts?.timeout;
+		if (this.extensionInput?.secret) this.hideExtensionInput();
 		return new Promise((resolve) => {
 			if (opts?.signal?.aborted) {
 				resolve(undefined);
@@ -3945,6 +3953,7 @@ export class InteractiveMode {
 			}
 
 			const onAbort = () => {
+				this.secretInputCleanup = undefined;
 				this.hideExtensionInput();
 				resolve(undefined);
 			};
@@ -3956,18 +3965,25 @@ export class InteractiveMode {
 				(value) => {
 					if (!opts?.ephemeral || !this.options?.mcpPresenterEnforcement) this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
+					this.secretInputCleanup = undefined;
 					this.hideExtensionInput();
 					resolve(value);
 				},
 				() => {
 					opts?.signal?.removeEventListener("abort", onAbort);
+					this.secretInputCleanup = undefined;
 					this.hideExtensionInput();
 					resolve(undefined);
 				},
-				{ tui: this.ui, timeout: opts?.timeout },
+				{ tui: this.ui, timeout, secret: opts?.secret },
 			);
 
 			this.disposeActiveSelector();
+			if (opts?.secret)
+				this.secretInputCleanup = () => {
+					opts.signal?.removeEventListener("abort", onAbort);
+					resolve(undefined);
+				};
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.extensionInput);
 			this.ui.setFocus(this.extensionInput);
@@ -3979,7 +3995,10 @@ export class InteractiveMode {
 	 * Hide the extension input.
 	 */
 	private hideExtensionInput(): void {
+		const cleanup = this.secretInputCleanup;
+		this.secretInputCleanup = undefined;
 		this.extensionInput?.dispose();
+		cleanup?.();
 		this.editorContainer.clear();
 		this.editorContainer.addChild(this.editor);
 		this.extensionInput = undefined;
@@ -7817,6 +7836,7 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private disposeActiveSelector(): void {
+		if (this.secretInputCleanup) this.hideExtensionInput();
 		const dispose = this.activeSelectorDispose;
 		this.activeSelectorToken = undefined;
 		this.activeSelectorDispose = undefined;
@@ -9502,6 +9522,21 @@ export class InteractiveMode {
 	}
 
 	private async showAuthPrompt(dialog: LoginDialogComponent, prompt: AuthPrompt): Promise<string> {
+		if (prompt.type === "secret") {
+			try {
+				const value = await this.showExtensionInput(prompt.message, prompt.placeholder, {
+					secret: true,
+					signal: prompt.signal,
+				});
+				if (value === undefined) throw new Error("Login cancelled");
+				return value;
+			} finally {
+				this.editorContainer.clear();
+				this.editorContainer.addChild(dialog);
+				this.ui.setFocus(dialog);
+				this.ui.requestRender();
+			}
+		}
 		let response: Promise<string>;
 		if (prompt.type === "select") {
 			response = this.showAuthSelect(dialog, prompt);

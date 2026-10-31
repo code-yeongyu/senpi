@@ -9,7 +9,7 @@ import {
 } from "../../../credential-pool/model-scope.ts";
 import { usageLimitResetMs } from "../../../credential-pool/reset-time.ts";
 import type { AccountSlot, AnthropicSubscriptionCredential } from "./accounts.ts";
-import { clearExpiredBlocks } from "./affinity.ts";
+import { AllAccountsBlockedError, clearExpiredBlocks } from "./affinity.ts";
 import { ColdSeedLimitError, forgetColdSeat, recordColdSeat, spentColdSeat } from "./cold-seat-budget.ts";
 import type { SdkErrorClassification } from "./errors.ts";
 import { isConfirmedAccountUsageLimit, usageLimitBlockMs } from "./usage-limit-block.ts";
@@ -539,6 +539,15 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 				},
 			);
 			return;
+		}
+	}
+	// The last account's own text speaks for that account only: when another account is out for this
+	// model alone, the pool's refusal (a model-scoped limit) is what the fallback chain must read (senpi#5007).
+	if (lastError !== undefined && lastError.classification.modelFamily === undefined && options.model !== undefined) {
+		try {
+			options.selectFn(accounts);
+		} catch (refusal) {
+			if (refusal instanceof AllAccountsBlockedError && refusal.limitedModel !== undefined) throw refusal;
 		}
 	}
 	throw lastError ?? new Error("Anthropic Subscription failover exhausted without an attempt");
