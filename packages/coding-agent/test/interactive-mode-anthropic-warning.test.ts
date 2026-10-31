@@ -15,7 +15,7 @@ function createModelRuntime(credential: { type: "oauth" } | undefined, apiKey?: 
 }
 
 describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
-	test("warns once when Anthropic subscription auth is detected", async () => {
+	test("does not read the API key: an sk-ant-oat key is refused by the provider, not warned about (senpi#5131)", async () => {
 		const modelRuntime = createModelRuntime(undefined, "sk-ant-oat01-test");
 		const fakeThis: any = {
 			anthropicSubscriptionWarningShown: false,
@@ -27,15 +27,12 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 		await (InteractiveMode as any).prototype.maybeWarnAboutAnthropicSubscriptionAuth.call(fakeThis, {
 			provider: "anthropic",
 		});
-		await (InteractiveMode as any).prototype.maybeWarnAboutAnthropicSubscriptionAuth.call(fakeThis, {
-			provider: "anthropic",
-		});
 
-		expect(fakeThis.showWarning).toHaveBeenCalledTimes(1);
-		expect(modelRuntime.getAuth).toHaveBeenCalledTimes(1);
+		expect(fakeThis.showWarning).not.toHaveBeenCalled();
+		expect(modelRuntime.getAuth).not.toHaveBeenCalled();
 	});
 
-	test("warns when Anthropic OAuth is stored even if token refresh lookup would fail", async () => {
+	test("warns once when Anthropic OAuth is stored even if token refresh lookup would fail", async () => {
 		const modelRuntime = createModelRuntime({ type: "oauth" });
 		const fakeThis: any = {
 			anthropicSubscriptionWarningShown: false,
