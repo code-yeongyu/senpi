@@ -1,3 +1,21 @@
+## 2026-10-29 - Run the compiled Windows pair and old-parser controls (#4859)
+
+### What changed
+
+- `.github/workflows/ci.yml`: runs `host-private-fds-pair.test.ts` and `host-private-fd-inherit.test.ts` in the existing Windows RPC job, including the compiled Bun round-trip, native failure guards and frozen old-parser compatibility control on the workflow's pinned runtime.
+
+### Why
+
+- A Bun bump invalidates the release proof and must re-run both controls before the proof can be re-enabled.
+
+### Why an extension could not handle it
+
+- CI test selection is repository configuration.
+
+### Expected merge conflict zones
+
+- The Windows RPC job's test steps.
+
 ## 2026-10-30 - Pull-request CI runs only for PRs labelled run-full-ci (senpi#4968)
 
 ### What changed
