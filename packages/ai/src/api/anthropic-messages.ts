@@ -2594,8 +2594,6 @@ function transformAnthropicMessages(
 export interface AnthropicMessageParamsOptions {
 	/** Replay same-model signed thinking as `thinking` blocks; the request path sets this when thinking is enabled. */
 	preserveThinking?: boolean;
-	/** Rename tool calls to Claude Code's tool names, as an OAuth request does. */
-	isOAuthToken?: boolean;
 	/** How same-model thinking without a signature is replayed; `text` unless the endpoint accepts empty signatures. */
 	unsignedThinkingReplay?: UnsignedThinkingReplay;
 }
@@ -2621,7 +2619,6 @@ export function toAnthropicMessageParams(
 	const converted = convertMessages(
 		transformAnthropicMessages(messages, anthropicModel, options.preserveThinking ?? true),
 		anthropicModel,
-		options.isOAuthToken ?? false,
 		undefined,
 		options.unsignedThinkingReplay ?? "text",
 	);
