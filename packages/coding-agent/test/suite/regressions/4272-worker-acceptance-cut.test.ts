@@ -127,12 +127,17 @@ it("T5/X03 holds worker acceptance while its fork is on disk: the cut keeps the 
 	}
 }, 120_000);
 
-it("flag off: the worker client owns no lane and frames carry no ordinal", async () => {
+it("RULING-66 flag off: worker capture remains ordered while the public socket stays legacy", async () => {
+	vi.stubEnv(FLAG, "0");
 	const host = await workerAcceptanceHost();
 	try {
 		const { worker } = await host.open();
-		expect(worker.acceptance).toBeUndefined();
-		expect(host.frames.every(({ frame }) => frame.ordinal === undefined && frame.recovery === undefined)).toBe(true);
+		expect(worker.acceptance).toBeDefined();
+		expect(host.frames.length).toBeGreaterThan(0);
+		expect(host.frames.every(({ frame }) => Number.isSafeInteger(frame.ordinal))).toBe(true);
+		expect(host.records.every((record) => record.materializer === undefined && record.eventLease === undefined)).toBe(
+			true,
+		);
 	} finally {
 		await host.dispose();
 	}
