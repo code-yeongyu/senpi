@@ -76,7 +76,8 @@ describe("SIWC account model catalog", () => {
 	});
 
 	it("merges matching static capabilities without inventing metadata for unknown slugs", async () => {
-		const known = Object.values(CHATGPT_SUBSCRIPTION_MODELS)[0]!;
+		const [known] = Object.values(CHATGPT_SUBSCRIPTION_MODELS);
+		if (!known) throw new Error("static ChatGPT subscription catalog is empty");
 		vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
 			response([listed(known.id), listed("unknown-future-model")]),
 		);
