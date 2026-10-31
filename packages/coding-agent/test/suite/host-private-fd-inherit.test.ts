@@ -130,7 +130,14 @@ describe("private descriptor inherit clearing", () => {
 		});
 		try {
 			expect((await closed)[0], errors).toBe(0);
-			expect(JSON.parse(report)).toEqual({ imported: true, declared: true, entry: null, dlopenCalls: 1 });
+			// #4864 review: a handle that stays inheritable is closed at capture so no child inherits it.
+			expect(JSON.parse(report)).toEqual({
+				imported: true,
+				declared: true,
+				entry: null,
+				dlopenCalls: 1,
+				discarded: true,
+			});
 		} finally {
 			if (child.exitCode === null && child.signalCode === null) child.kill();
 		}
