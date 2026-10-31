@@ -14,7 +14,7 @@ export interface FallbackSelector {
 }
 
 /** Entry suffix that makes a rung a last resort. */
-export const LAST_RESORT_FLAG = "!last-resort";
+const LAST_RESORT_FLAG = "!last-resort";
 
 /** Splits the `!last-resort` suffix off a chain entry. */
 export function splitLastResort(raw: string): { entry: string; lastResort: boolean } {
