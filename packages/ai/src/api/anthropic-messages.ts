@@ -1383,7 +1383,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					options?.env,
 					"short",
 				);
-				const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
+				const affinityKey =
+					cacheRetention === "none" ? undefined : (options?.sessionAffinityKey ?? options?.sessionId);
 
 				openClient = () => {
 					const created = createClient(
@@ -1397,7 +1398,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							? withGzipRequestBodies(options?.fetch)
 							: options?.fetch,
 						copilotDynamicHeaders,
-						cacheSessionId,
+						affinityKey,
 						options?.env,
 						federation,
 					);
@@ -2106,7 +2107,7 @@ function createClient(
 	optionsHeaders?: Record<string, string>,
 	fetch?: typeof globalThis.fetch,
 	dynamicHeaders?: Record<string, string>,
-	sessionId?: string,
+	affinityKey?: string,
 	env?: ProviderEnv,
 	federation?: AnthropicFederationConfig,
 ): { client: Anthropic; isOAuthToken: boolean; claudeCodeVersion?: string } {
@@ -2209,11 +2210,11 @@ function createClient(
 	// API key, header-owned auth, or workload identity federation.
 	const affinityCompat = getAnthropicCompat(model);
 	const sessionAffinityHeaders: Record<string, string | null> = {};
-	if (sessionId && affinityCompat.sendSessionAffinityHeaders) {
+	if (affinityKey && affinityCompat.sendSessionAffinityHeaders) {
 		// OpenRouter routes prompt-cache affinity through its own header name and
 		// rejects x-session-affinity (earendil-works/pi#9102).
 		const header = affinityCompat.sessionAffinityFormat === "openrouter" ? "x-session-id" : "x-session-affinity";
-		sessionAffinityHeaders[header] = sessionId;
+		sessionAffinityHeaders[header] = affinityKey;
 	}
 	const defaultHeaders = sanitizeAdaptiveThinkingHeaders(
 		model,

@@ -150,6 +150,7 @@ export function buildBaseOptions(
 		transport: options?.transport,
 		cacheRetention: options?.cacheRetention ?? model.cacheRetention,
 		sessionId: options?.sessionId,
+		sessionAffinityKey: options?.sessionAffinityKey,
 		headers: options?.headers,
 		extraBody: options?.extraBody,
 		onPayload: options?.onPayload,
