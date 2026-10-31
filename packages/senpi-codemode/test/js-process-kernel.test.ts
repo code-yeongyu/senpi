@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { JavaScriptKernel } from "../src/kernels/js/context-manager.ts";
 import type { JavaScriptKernelOptions } from "../src/kernels/js/local-module-loader.ts";
 import { resolveJavaScriptProcessCommand, runtimeNameOf } from "../src/kernels/js/process-worker.ts";
+import { PROCESS_STARTUP_DEADLINE_MS } from "../src/kernels/js/worker-startup.ts";
 import { NO_CELL_DEADLINE, parseJavaScriptResult, runJavaScriptCell } from "./eval/js-kernel-harness.ts";
 import { kernels, trackedTempRoot } from "./js-process-fixtures.ts";
 
@@ -489,14 +490,28 @@ return "done";`,
 			const pids = join(dir, "pids");
 			const firstStart = join(dir, "first-start");
 			// Named bun so the kernel treats it as the runtime it wraps. The first start never reports ready (as a child
-			// a starved host never schedules); every later start is the real runtime.
+			// a starved host never schedules); every later start is the real runtime, held past the first start's deadline.
 			const wrapper = join(dir, "bun");
 			writeFileSync(
 				wrapper,
-				`#!/bin/sh\necho $$ >> "${pids}"\nif [ ! -e "${firstStart}" ]; then : > "${firstStart}"; exec sleep 600; fi\nexec "${productChild()}" "$@"\n`,
+				`#!/bin/sh\necho $$ >> "${pids}"\nif [ ! -e "${firstStart}" ]; then : > "${firstStart}"; exec sleep 600; fi\nsleep 1.5\nexec "${productChild()}" "$@"\n`,
 				{ mode: 0o755 },
 			);
-			const kernel = processKernel({ processExecPath: wrapper, processStartupDeadlineMs: 1_000 });
+			// Only the first start's deadline is under test: the kernel reads the deadline once per start, so the
+			// replacement start gets the product default instead of the 1 s a loaded host cannot always meet.
+			let starts = 0;
+			const kernel = new JavaScriptKernel({
+				sessionId: `process-${crypto.randomUUID()}`,
+				cwd: process.cwd(),
+				parallelPoolWidth: 2,
+				isolation: "process",
+				processExecPath: wrapper,
+				get processStartupDeadlineMs() {
+					starts += 1;
+					return starts === 1 ? 1_000 : PROCESS_STARTUP_DEADLINE_MS;
+				},
+			});
+			kernels.add(kernel);
 			const started = Date.now();
 			const stuck = await runJavaScriptCell(kernel, "return 1");
 			expect(stuck.result).toMatchObject({ ok: false });
