@@ -14,6 +14,12 @@ export default {
 	id: "E29",
 	title: "example extension gondolin, unmodified",
 	observables: WITHOUT_O8,
+	// Hosted GitHub runners have neither QEMU nor a gondolin image store, so there E29 is reported SKIPPED with this reason
+	// (senpi#4964). Everywhere else a missing store stays a failure: the local receipt must run E29.
+	skip: () =>
+		!process.env.EQ_GONDOLIN_IMAGE_STORE && process.env.GITHUB_ACTIONS === "true"
+			? "no gondolin image store (EQ_GONDOLIN_IMAGE_STORE is unset on this hosted runner, senpi#4964)"
+			: undefined,
 	spec: () => {
 		const store = process.env.EQ_GONDOLIN_IMAGE_STORE;
 		if (!store)
