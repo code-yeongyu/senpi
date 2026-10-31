@@ -53,6 +53,7 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 	}
 
 	unregisterConnection(id: string): void {
+		this.secretPresentations.detach(id);
 		const sender = this.presenterConnections.get(id);
 		if (sender) this.presenterAuthority?.detach(sender);
 		this.presenterConnections.delete(id);
@@ -75,6 +76,7 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 		const binding = this.presenterBindings.get(sessionId);
 		if (sender && binding) this.presenterAuthority?.detach(sender, binding);
 		this.fanout.detachConnectionFromSession(id, sessionId);
+		this.secretPresentations.recheck();
 		this.securityPresentations.detach(id, sessionId);
 	}
 
@@ -84,6 +86,7 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
 		this.fanout.setConnectionCapabilities(id, capabilities);
+		this.secretPresentations.recheck();
 		this.securityPresentations.capabilitiesChanged(id);
 		if (!capabilities.includes("interactive_user") || !capabilities.includes("mcp_form_presenter_v1")) {
 			const sender = this.presenterConnections.get(id);
@@ -95,6 +98,7 @@ export abstract class SessionEventWriterConnections extends SessionEventWriterLa
 		const sender = this.presenterConnections.get(id);
 		if (sender) this.presenterAuthority?.withdraw(sender);
 		this.fanout.clearConnectionCapabilities(id);
+		this.secretPresentations.recheck();
 		this.securityPresentations.capabilitiesChanged(id);
 	}
 	bindSecurityPresentations(
