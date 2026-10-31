@@ -2,10 +2,16 @@ import { ModelsError } from "./models-error.ts";
 
 export class OAuthTokenEndpointError extends Error {
 	readonly status: number;
+	/** The OAuth `error` code of the response body (RFC 6749 section 5.2), when the adapter read one. */
+	readonly oauthError?: string;
+	/** The adapter itself decided that the endpoint refused this credential, so it needs a new login. */
+	readonly credentialRefused: boolean;
 
-	constructor(message: string, status: number) {
+	constructor(message: string, status: number, facts: { oauthError?: string; credentialRefused?: boolean } = {}) {
 		super(message);
 		this.status = status;
+		this.oauthError = facts.oauthError;
+		this.credentialRefused = facts.credentialRefused ?? false;
 	}
 }
 
