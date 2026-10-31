@@ -7,6 +7,7 @@ import {
 } from "../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import { createOAuthConfig } from "../src/core/extensions/builtin/anthropic-subscription/oauth-login.ts";
 import { authContext, composedProvider, credentialStore } from "./support/anthropic-subscription-provider.ts";
+import { cliSlot } from "./support/claude-cli-test-slots.ts";
 
 describe("claude-sdk-oauth ambient auth resolution", () => {
 	it("resolves request auth from an authenticated ambient Claude CLI with nothing stored", async () => {
@@ -61,13 +62,7 @@ describe("claude-sdk-oauth ambient auth resolution", () => {
 			{ headers: { "User-Agent": "must-survive" }, authHeader: true },
 			{ enabled: true },
 		);
-		const stored = addAccount(emptyCredential(), {
-			name: "stored",
-			access: "stored-token",
-			refresh: "stored-refresh",
-			expires: Date.now() + 60 * 60_000,
-			source: "login",
-		});
+		const stored = addAccount(emptyCredential(), cliSlot("stored"));
 
 		const ambient = await resolveProviderAuth(provider, credentialStore(), authContext());
 		const managed = await resolveProviderAuth(provider, credentialStore(stored), authContext());
@@ -91,13 +86,7 @@ describe("claude-sdk-oauth ambient auth resolution", () => {
 
 	it("replays the synthetic marker through a valid stored OAuth account", async () => {
 		const provider = composedProvider(async () => false);
-		const stored = addAccount(emptyCredential(), {
-			name: "managed",
-			access: "stored-access",
-			refresh: "stored-refresh",
-			expires: Date.now() + 60_000,
-			source: "login",
-		});
+		const stored = addAccount(emptyCredential(), cliSlot("managed"));
 		const first = await resolveProviderAuth(provider, credentialStore(stored), authContext());
 		if (!first?.auth.apiKey) throw new Error("expected stored OAuth auth");
 

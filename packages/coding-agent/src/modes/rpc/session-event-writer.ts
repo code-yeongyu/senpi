@@ -474,7 +474,7 @@ export class SessionEventWriter {
 			);
 			return false;
 		}
-		this.openTurns.note(sessionId, record.type);
+		this.openTurns.note(sessionId, record.type, (record as { reason?: unknown }).reason);
 		const attached = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
 		// Mirroring is an explicit per-subscription opt-in; it adds destinations, never an attachment.
 		const mirrors = isTargeted ? [] : this.status.mirrorTargets(sessionId, String(record.type));

@@ -1,3 +1,21 @@
+## 2026-10-29 - Committed pool health publishes an account change
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `persistBlock` publishes `emitProviderAccountsChanged(providerId)` once its block write has committed, including when no other account can take over. `onSuccess` publishes once its write has committed only when that write lifted a block (an account block, a block reason, or a model block on the model that served); a healthy account answering again publishes nothing. A write `writeHealthUnlessStoreBusy` skipped because the state file stayed locked publishes nothing, and a write that throws never reaches the publish.
+
+### Why
+
+- RPC clients reread `get_provider_accounts` on `auth_accounts_changed`. The generic pool persisted blocks and releases to the health sidecar without ever publishing, so an account row kept showing an account as available after the pool blocked it (most visibly a single account that exhausted with nothing to rotate to), and kept showing it blocked after a success released it. Only the Anthropic subscription lane published, and only from its failover callback.
+
+### Why an extension could not handle it
+
+- The health writes happen inside the credential rotation that wraps the provider request; no extension hook sees when a sidecar write commits or is skipped.
+
+### Expected merge conflict zones
+
+- LOW: the `onSuccess` and `persistBlock` callbacks passed to `runCredentialFailover` in `streamWithCredentialRotation`.
+
 ## 2026-10-21 - Resolve typed policy-slot references (senpi#3858)
 
 ### What changed

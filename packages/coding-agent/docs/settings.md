@@ -294,7 +294,8 @@ See [compaction.md](compaction.md) for trigger and summarization behavior.
 | `fallback.circuitMaxCooldownMs` | number | `1800000` | Ceiling for the doubled circuit-breaker cooldown (30 minutes) |
 | `retry.maxAgentDelayMs` | number | `60000` | Hard ceiling on agent-level retry delay (60s), applied after the retry profile and jitter |
 | `retry.provider.timeoutMs` | number | `300000` | Provider/SDK request timeout and stream idle timeout in milliseconds |
-| `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables |
+| `retry.provider.streamStartTimeoutMs` | number | `300000` | Maximum wait for the first provider stream event; `0` disables. Keep-alive bytes (SSE pings, comment keep-alives) received within the bound extend it |
+| `retry.provider.keepAliveTimeoutMs` | number | `900000` | Maximum time keep-alive bytes alone may hold a request without any response content; `0` disables the cap. Checked when the start or idle bound fires, so it has no effect when both are disabled |
 | `retry.provider.streamRetryTimeoutMs` | number | `30000` | First-request liveness cap after a known provider stream/transport timeout; `0` disables the cap |
 | `retry.provider.maxRetries` | number | `0` | Provider/SDK retry attempts |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Max server-requested delay honored on the same model before the fallback chain engages (60s) |
@@ -319,6 +320,7 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
     "provider": {
       "timeoutMs": 3600000,
       "streamStartTimeoutMs": 300000,
+      "keepAliveTimeoutMs": 900000,
       "streamRetryTimeoutMs": 30000,
       "maxRetries": 0,
       "maxRetryDelayMs": 60000

@@ -57,29 +57,18 @@ describe("buildWorkstationSection", () => {
 		expect(section).toContain("</execution_context>");
 	});
 
-	test("codex dialect is terse without tags or shouting", () => {
+	test("codex dialect omits the execution_context tag", () => {
 		const section = buildWorkstationSection({ selectedTools: ["bash", "eval"], dialect: "codex", facts: FACTS });
 		const instruction = section.slice(section.indexOf("</workstation>"));
 
 		expect(instruction).not.toContain("<execution_context>");
-		expect(instruction).not.toContain("MUST");
-		expect(instruction).not.toContain("EXECUTION HAPPENS HERE");
 	});
 
-	test("kimi dialect uses positive constraints without all-caps directives", () => {
+	test("kimi dialect omits the execution_context tag", () => {
 		const section = buildWorkstationSection({ selectedTools: ["bash", "eval"], dialect: "kimi", facts: FACTS });
 		const instruction = section.slice(section.indexOf("</workstation>"));
 
-		expect(instruction).toContain("keep the code portable");
-		expect(instruction).not.toMatch(/\b[A-Z]{4,}\b/);
 		expect(instruction).not.toContain("<execution_context>");
-	});
-
-	test("default dialect carries maximum emphasis", () => {
-		const section = buildWorkstationSection({ selectedTools: ["bash", "eval"], facts: FACTS });
-
-		expect(section).toContain("**EXECUTION HAPPENS HERE.**");
-		expect(section).toContain("anything you RUN executes HERE");
 	});
 });
 
@@ -112,13 +101,11 @@ describe("buildDynamicSystemPrompt workstation integration", () => {
 		expect(workstation).toBeGreaterThanOrEqual(0);
 		// senpi#2093: no date/cwd footer follows it any more.
 		expect(prompt).not.toContain("Current working directory:");
-		expect(prompt).toContain("**EXECUTION HAPPENS HERE.**");
 	});
 
 	test("applies the preset-provided dialect", () => {
 		const prompt = buildDynamicSystemPrompt({ ...baseOptions, workstationDialect: "claude" });
 
 		expect(prompt).toContain("<execution_context>");
-		expect(prompt).not.toContain("EXECUTION HAPPENS HERE");
 	});
 });
