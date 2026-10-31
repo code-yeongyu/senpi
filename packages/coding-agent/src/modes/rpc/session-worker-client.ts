@@ -10,7 +10,8 @@ import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
 import type { RpcConnectionOptions } from "./connection-handler.ts";
 import { roleConnection } from "./connection-roles.ts";
-import { answeredUiRequestId } from "./extension-ui-response.ts";
+import { answeredUiRequestId, refusedExtensionUiResponse } from "./extension-ui-response.ts";
+import type { SecretInputRoute } from "./secret-input-requests.ts";
 import type { RpcSessionBinding } from "./session-binding.ts";
 import type { RpcExtensionUIResponse } from "./rpc-types.ts";
 import { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
@@ -71,6 +72,8 @@ function spawnSessionWorker(webviewBroker: ReturnType<typeof createWebViewBroker
 }
 
 export class SessionWorkerClient {
+	private secretRoute?: SecretInputRoute;
+	private readonly secretIds = new Set<string>();
 	private privateBinding?: McpFormBinding;
 	private stopPrivateBinding?: () => void;
 	private readonly privateOperations = new Map<
@@ -113,6 +116,8 @@ export class SessionWorkerClient {
 		this.worker = this.spawned.result;
 		this.exited = new Promise((resolve, reject) => {
 			this.worker.once("exit", () => {
+				for (const id of this.secretIds) this.secretRoute?.forget(id);
+				this.secretIds.clear();
 				this.stopPrivateBinding?.();
 				this.privateBinding?.dispose();
 				this.owners.retireAll();
@@ -202,6 +207,7 @@ export class SessionWorkerClient {
 	): Promise<RpcSessionBinding> {
 		this.sessionId = sessionId;
 		this.writer = writer;
+		this.secretRoute = writer.secretInputRoute(sessionId);
 		if (this.acceptance) writer.registerAcceptance(sessionId, this.acceptance);
 		this.requestClose = requestClose;
 		this.options = options;
@@ -226,6 +232,11 @@ export class SessionWorkerClient {
 						: undefined;
 				if (answered !== undefined && writer.acceptWorkerGrantResponse(sessionId, answered, connection) === false)
 					return;
+				if (answered !== undefined && this.secretIds.has(answered) && !this.secretRoute?.accepts(answered)) {
+					const response = command as RpcExtensionUIResponse;
+					writer.enqueue(sessionId, refusedExtensionUiResponse(response.id, "secret_answer_refused"));
+					return;
+				}
 				await this.request({
 					type: "command",
 					command,
@@ -293,6 +304,42 @@ export class SessionWorkerClient {
 			return;
 		}
 		switch (message.type) {
+			case "secret_select": {
+				const select = () => {
+					const reason =
+						this.secretRoute?.select(message.id, () => this.post({ type: "cancel_secret", id: message.id })) ??
+						(this.secretRoute ? undefined : "no_presenter");
+					if (reason === undefined) this.secretIds.add(message.id);
+					const result =
+						reason === undefined
+							? { accepted: true, connection: this.secretRoute?.presenter(message.id) }
+							: { accepted: false, reason };
+					const encoded = new TextEncoder().encode(JSON.stringify(result));
+					new Uint8Array(message.decision, 4).set(encoded);
+					Atomics.store(new Int32Array(message.decision, 0, 1), 0, encoded.length);
+					acknowledge(message.signal, true);
+				};
+				if (message.connection !== undefined && this.writer) this.writer.withConnection(message.connection, select);
+				else select();
+				return;
+			}
+			case "secret_frame":
+				this.secretRoute?.send(message.id, message.record);
+				acknowledge(message.signal, true);
+				return;
+			case "secret_settled":
+				this.secretRoute?.settled(message.id);
+				acknowledge(message.signal, true);
+				return;
+			case "secret_forget":
+				this.secretIds.delete(message.id);
+				this.secretRoute?.forget(message.id);
+				acknowledge(message.signal, true);
+				return;
+			case "secret_handshake":
+				this.writer?.setSoleSecretCapabilities(message.capabilities);
+				acknowledge(message.signal, true);
+				return;
 			case "mcp_form_bind": {
 				this.stopPrivateBinding?.();
 				this.privateBinding?.dispose();
