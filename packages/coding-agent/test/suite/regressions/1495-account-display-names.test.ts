@@ -156,8 +156,8 @@ it("chatgpt-subscription exposes only safe descriptors and keeps labels through 
 	);
 	const summaries = await getCredentialAccounts(storage, provider, {});
 	expect(summaries).toEqual([
-		{ name: "default", displayName: "Personal", source: "login", blocked: false, pinned: true },
-		{ name: "second", source: "import", blocked: true, blockedUntil: 4102444800000, pinned: false },
+		{ name: "default", displayName: "Personal", source: "login", blocked: false, pinned: true, route: "legacy" },
+		{ name: "second", source: "import", blocked: true, blockedUntil: 4102444800000, pinned: false, route: "legacy" },
 	]);
 	expect(JSON.stringify(summaries)).not.toMatch(/fake-|access|refresh|expires|headers/);
 });
