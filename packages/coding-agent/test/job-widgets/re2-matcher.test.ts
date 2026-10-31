@@ -74,10 +74,20 @@ describe("re2 line matcher", () => {
 		// Both sizes sit above re2js's BitState cutoff (29,127 chars for this 9-instruction pattern), so both run on
 		// the same NFA/DFA engine and the ratio measures scaling, not an engine switch.
 		timeFor(50_000);
-		const short = timeFor(50_000);
-		const long = timeFor(250_000);
+		// Measure short and long back to back in each pair, so a load burst on the host slows both sides of the pair
+		// instead of only the long block (senpi#5207: two separate 7-run blocks gave 10.27 under load on a linear
+		// matcher). The median pair ratio ignores the few pairs a burst still splits.
+		const ratios: number[] = [];
+		let long = Number.POSITIVE_INFINITY;
+		for (let pair = 0; pair < 7; pair++) {
+			const shortMs = timeFor(50_000);
+			const longMs = timeFor(250_000);
+			long = Math.min(long, longMs);
+			ratios.push(longMs / Math.max(shortMs, 0.05));
+		}
+		ratios.sort((a, b) => a - b);
 		// 5x the input: linear is about 5x; quadratic would be 25x and backtracking never ends.
-		expect(long / Math.max(short, 0.05)).toBeLessThan(10);
+		expect(ratios[3]).toBeLessThan(10);
 		expect(long).toBeLessThan(5_000);
 	});
 });
