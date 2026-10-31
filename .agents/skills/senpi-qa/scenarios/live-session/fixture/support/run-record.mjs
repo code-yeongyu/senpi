@@ -1,12 +1,11 @@
 // Assemble one SC-LIVE run record from what the run left behind: the RPC events and transcript (session-driver), the
 // hook trace, the recording proxy's first tool-bearing provider request (O3 tool declarations, O4 sanitized headers,
 // normalized with the EQ normalizer so run-scoped roots compare equal), and the fixture checker's verdict on the work dir.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { childRuntime, readJsonl, repoRoot } from "../../../../scripts/lib/common.mjs";
 import { createNormalizer } from "../../../../scripts/lib/equivalence-normalize.mjs";
 import { checkTask, LICENSE_ANSWER } from "../check.mjs";
-
-const lines = (path) => (existsSync(path) ? readJsonl(readFileSync(path, "utf8")) : []);
 
 /** The O3/O4 observation of a run: its first provider request's declarations and sanitized headers, normalized. */
 export const firstToolRequest = (proxy) => proxy.records.find((record) => Array.isArray(record.tools));
@@ -38,12 +37,32 @@ export function buildRunRecord({
 	otherPlacements = [],
 	reference,
 }) {
+	// Capture before sandbox cleanup, including sessions stored by the task plugin under the work dir.
+	// Only session-header JSONL files qualify; usage logs and the shared hook trace are not transcripts.
+	session.hookTrace = existsSync(setup.hookTrace) ? readFileSync(setup.hookTrace, "utf8") : "";
+	session.sessionTranscripts = [];
+	const parentId = session.entries.find((entry) => entry.type === "session")?.id;
+	const pending = [setup.box.dir];
+	while (pending.length) {
+		const dir = pending.pop();
+		for (const file of readdirSync(dir, { withFileTypes: true })) {
+			const path = join(dir, file.name);
+			if (file.isDirectory()) pending.push(path);
+			else if (file.isFile() && file.name.endsWith(".jsonl")) {
+				const text = readFileSync(path, "utf8");
+				const header = JSON.parse(text.split("\n", 1)[0] || "null");
+				if (header?.type !== "session" || header.id === parentId) continue;
+				session.sessionTranscripts.push({ path: relative(setup.box.dir, path), entries: readJsonl(text), text });
+			}
+		}
+	}
 	return {
 		placement,
 		events: session.events,
 		entries: session.entries,
 		entriesAfterReopen: session.entriesAfterReopen,
-		hookTrace: lines(setup.hookTrace),
+		hookTrace: readJsonl(session.hookTrace),
+		sessionTranscripts: session.sessionTranscripts,
 		turns: session.turns,
 		meter: session.meter,
 		questions: session.questions,
