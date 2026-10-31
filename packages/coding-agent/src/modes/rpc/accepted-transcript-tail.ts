@@ -8,7 +8,7 @@ import { type StagedContent, type TransferStaging, TransferStagingError } from "
  * superseded tail a live cut still holds (carry 65a). It bounds the spool those can grow, not RAM: sixteen times the
  * 16 MiB in-memory tail it replaces.
  */
-export const DEFAULT_TRANSCRIPT_TAIL_BYTES = 256 * 1024 * 1024;
+const DEFAULT_TRANSCRIPT_TAIL_BYTES = 256 * 1024 * 1024;
 /**
  * Tail bytes the staging store may hold in RAM, unspilled, when an entry is staged: what bounds memory when the spool
  * lags or failed. Never below the 16 MiB of UTF-8 the old tail allowed, as UTF-16 stores at most two bytes per byte.
