@@ -4,12 +4,14 @@ import { lazyOAuth } from "../auth/helpers.ts";
 import { loadChatGptSubscriptionOAuth, loadOpenAIChatGPTOAuth } from "../auth/oauth/load.ts";
 import { createProvider, type Provider } from "../models.ts";
 import type { Api, Model, OpenAIResponsesCompat } from "../types.ts";
+import { extractChatGptSubscriptionIdentity } from "../utils/chatgpt-subscription-auth.ts";
 import { CHATGPT_SUBSCRIPTION_MODELS } from "./chatgpt-subscription.models.ts";
 
 export function chatgptSubscriptionProvider(): Provider<"openai-codex-responses" | "openai-responses"> {
 	const legacy = lazyOAuth({
 		name: "ChatGPT Subscription (Plus/Pro)",
 		isSubscription: true,
+		accountIdentity: (credential) => extractChatGptSubscriptionIdentity(credential.access),
 		load: loadChatGptSubscriptionOAuth,
 	});
 	const siwc = lazyOAuth({

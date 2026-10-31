@@ -59,6 +59,8 @@ export interface EvalToolInput {
 	readonly reset?: boolean;
 	/** Run in a fresh sandbox VM instead of the persistent kernel; accepted only while `sandbox.enabled` is on. */
 	readonly isolate?: boolean;
+	/** Set when the call omitted language and it was filled (senpi#5154); the result then says so. */
+	readonly language_inferred?: "only-enabled-language" | "code-markers";
 }
 
 export interface EvalListInput {

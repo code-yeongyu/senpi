@@ -424,11 +424,16 @@ export function assertLoginKeyPresent(credential: Credential): void {
  *
  * `onAllocated` reports the account this login committed, so a caller can name
  * it in a receipt without re-reading storage.
+ *
+ * With `accountIdentity`, a flat OAuth login whose identity matches saved
+ * accounts is a re-login of that account, not a new one (omo#9633): see
+ * `replaceSameAccount`.
  */
 export function appendLoginSlot(
 	stored: PooledCredential | undefined,
 	flat: Credential,
 	onAllocated?: (name: string, origin: "generated" | "provider") => void,
+	options?: AppendLoginSlotOptions,
 ): Credential {
 	assertLoginKeyPresent(flat);
 	// A pool holds one kind: a login of the other kind replaces the credential instead of joining it
@@ -480,9 +485,76 @@ export function appendLoginSlot(
 			return pooled;
 		}
 	}
+	const replaced = replaceSameAccount(current, flat, options?.accountIdentity, onAllocated);
+	if (replaced) return replaced;
 	const name = nextLoginSlotName(current);
 	const next = upsertSlot(current, slotFromFlatCredentialNamed(flat, name));
 	onAllocated?.(name, "generated");
+	return next;
+}
+
+export type AppendLoginSlotOptions = {
+	/** The provider's `OAuthAuth.accountIdentity`. */
+	accountIdentity?: (credential: { access: string }) => string | undefined;
+};
+
+/**
+ * A login of an account that is already saved rewrites that account instead of
+ * appending another `login-N` copy of it. Appending kept the old copy, and once the
+ * provider invalidated its token, session affinity kept choosing it (omo#9633).
+ *
+ * The first saved account with the login's identity keeps its name, label, source
+ * and place and takes the fresh material; block fields stored on it are dropped,
+ * since they described the old token. Later saved copies of the same account are
+ * removed, and a pin or user order naming one moves to the kept name: their tokens
+ * are older grants for the same account, which a re-login supersedes. The flat
+ * projection is re-pointed only when it carried one of those copies. A lone flat
+ * credential of the same account is simply overwritten, keeping today's shape.
+ *
+ * Returns `undefined` (append as before) when the provider reports no identity, the
+ * login has none, or no saved account matches. Environment accounts never match.
+ */
+function replaceSameAccount(
+	current: PooledCredential,
+	flat: Credential,
+	accountIdentity: AppendLoginSlotOptions["accountIdentity"],
+	onAllocated: ((name: string, origin: "generated" | "provider") => void) | undefined,
+): Credential | undefined {
+	if (!accountIdentity || flat.type !== "oauth") return undefined;
+	const identity = accountIdentity(flat);
+	if (identity === undefined) return undefined;
+	const slots = listSlots(current);
+	const matches = slots.filter(
+		(slot) =>
+			slot.source !== "env" && slot.access !== undefined && accountIdentity({ access: slot.access }) === identity,
+	);
+	const kept = matches[0];
+	if (!kept) return undefined;
+	if (!Array.isArray(current.accounts) || current.accounts.length === 0) {
+		onAllocated?.(kept.name, "generated");
+		return flat;
+	}
+	const fresh: CredentialSlot = {
+		name: kept.name,
+		...(kept.displayName === undefined ? {} : { displayName: kept.displayName }),
+		...(kept.source === undefined ? {} : { source: kept.source }),
+		access: flat.access,
+		refresh: flat.refresh,
+		expires: flat.expires,
+		...credentialSlotEnv(flat),
+	};
+	const dropped = new Set(matches.slice(1).map((slot) => slot.name));
+	const accounts = slots.flatMap((slot) => (slot === kept ? [fresh] : dropped.has(slot.name) ? [] : [slot]));
+	const projected = matches.some((slot) => slotMirrorsFlat(current, slot))
+		? projectFlatFields(current, fresh)
+		: current;
+	const next: PooledCredential = { ...projected, accounts };
+	if (next.pinned !== undefined && dropped.has(next.pinned)) next.pinned = kept.name;
+	if (next.order !== undefined) {
+		const order = next.order.map((name) => (dropped.has(name) ? kept.name : name));
+		next.order = order.filter((name, index) => order.indexOf(name) === index);
+	}
+	onAllocated?.(kept.name, "generated");
 	return next;
 }
 

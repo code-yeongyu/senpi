@@ -12,6 +12,83 @@
 
 ### Removed
 
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- Test-only `SENPI_TEST_CURRENT_DATE` and `SENPI_TEST_WORKSTATION` environment inputs pin the environment-context date and the workstation CPU model, core count and kernel, so a harness driving the CLI gets the same prompt bytes on every day and host; unset, nothing changes ([#4660](https://github.com/code-yeongyu/senpi/issues/4660), [#4662](https://github.com/code-yeongyu/senpi/pull/4662))
+- The test-only `SENPI_TEST_WORKSTATION` pin takes an optional `repoRoot: {from, to}` field: a skill root inside the checkout `from` is shown under the synthetic root `to` in the prompt's `<skill_roots>` table, so a harness driving the CLI gets the same prompt bytes from any checkout path; unset, the prompt is unchanged (#5067) ([#4837](https://github.com/code-yeongyu/senpi/pull/4837))
+- Add guarded private secret input for extensions, masked TUI presentation and owner-bound RPC collection; refuse unsupported clients without a plaintext fallback. ([#5120](https://github.com/code-yeongyu/senpi/pull/5120))
+
+### Changed
+
+- DeepSeek V4.1 Flash gets its own tuned system prompt: a compressed core with the hard limits in one block, the V4 Flash repair rules carried over, and a rule to end the turn instead of polling when only background results remain; the rendered prompt is 8-16% shorter ([#5195](https://github.com/code-yeongyu/senpi/pull/5195))
+
+### Fixed
+
+- On macOS and Linux, concurrent starts no longer overwrite each other's RPC socket secret: the first complete secret is published without replacing anything, and later creators reuse it ([#4369](https://github.com/code-yeongyu/senpi/pull/4369))
+- A new linked git worktree of a trusted repository (for example one Orca creates in `~/orca/workspaces/<repo>/<name>`) is trusted without asking "Trust project folder?", and a main checkout saved as "do not trust" keeps its worktrees untrusted, also under Full access; a decision saved for the worktree still wins, and a folder that only claims to be a worktree inherits nothing ([#4388](https://github.com/code-yeongyu/senpi/pull/4388))
+- Made the RPC supersession announcement tests wait for a host protocol reply before requesting a drain, so a newly connected observer cannot miss the announcement while the supervisor is still establishing its private connection ([#4824](https://github.com/code-yeongyu/senpi/pull/4824)).
+- When every Anthropic Subscription account is out for one model only, model fallback now moves just that model and keeps the same accounts' other models available, and the notice says the model hit its usage limit ([#5019](https://github.com/code-yeongyu/senpi/pull/5019))
+- An aborted or failed credential probe no longer holds its account for 30 seconds, and a refusal while another request probes the account says when to retry ([#5027](https://github.com/code-yeongyu/senpi/pull/5027)).
+- A session that fell back after its primary hit a usage limit stays on the fallback until the reset the limit named, instead of returning after the 30-minute circuit and falling back again; a successful login (including adding an account) or explicit block reset for that provider lifts the wait, but another session's pool health updates do not ([#5041](https://github.com/code-yeongyu/senpi/pull/5041))
+- Two installed versions sharing the credential-pool health file no longer wipe each other's account blocks when one of them writes a field the other does not know ([#5057](https://github.com/code-yeongyu/senpi/pull/5057)).
+- In eval-only sessions the bash timeout policy names `tool.bash(...)` from an eval cell instead of a direct `bash` call, and it is omitted when no `bash` tool exists ([#5140](https://github.com/code-yeongyu/senpi/issues/5140))
+- The todo tool accepts an init `list` wrapped one level too deep (`[[...]]` or `{list: [...]}`) by unwrapping it to the canonical shape ([#5148](https://github.com/code-yeongyu/senpi/issues/5148))
+- Composing more than five skills no longer skips the rest or shows `Extension "skill:expansion" error` in the TUI; skills past a 128K-character inline budget load as a reference to their `SKILL.md` ([#5156](https://github.com/code-yeongyu/senpi/pull/5156))
+- Durable core: the inert JSONL session importer now accepts every session file SessionManager opens: pre-v2 files are migrated the same way (with stable ids, so a reopen keeps them), and lines that are not objects with an `id` are kept in file order instead of failing the import ([#5190](https://github.com/code-yeongyu/senpi/pull/5190), fixes [#5070](https://github.com/code-yeongyu/senpi/issues/5070)).
+
+### Removed
+
+- `PI_CLAUDE_CODE_VERSION` and the `claude-code-version.json` cache; the plain `anthropic` provider takes API keys only, and a Claude OAuth token given to it is refused with a pointer at `/login anthropic-subscription` ([#5136](https://github.com/code-yeongyu/senpi/pull/5136))
+- The `custom-provider-anthropic` example no longer ships a Claude OAuth login or Claude Code identity headers; it is an API-key custom provider ([#5136](https://github.com/code-yeongyu/senpi/pull/5136))
+- `maxSkillExpansionsPerPrompt` setting and the per-prompt skill cap: every skill a prompt invokes now loads, and an existing `maxSkillExpansionsPerPrompt` value is ignored ([#5156](https://github.com/code-yeongyu/senpi/pull/5156))
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- Claude subscription accounts can live in the bundled Claude CLI's own credential store, with one config dir per account; removing such an account signs it out of the CLI first, and `get_provider_accounts` reports its email, plan and sign-in state ([#4451](https://github.com/code-yeongyu/senpi/pull/4451))
+- `before_agent_start` results accept `systemPromptCache: "stable" | "volatile"`; the prompt up to the first volatile change is cached separately where the provider supports it ([#4455](https://github.com/code-yeongyu/senpi/pull/4455))
+- Claude subscription accounts signed in through the Claude CLI now run turns on their own config dir with no inherited token, keep session continuity across accounts and restarts, recover an auth block through `claude auth status`, and refuse a turn the CLI initialized on an inherited environment credential ([#4458](https://github.com/code-yeongyu/senpi/pull/4458))
+- RPC `test_provider_account` re-runs the connection test on one Claude subscription account and returns its `check` (capability `provider_account_test`) ([#4497](https://github.com/code-yeongyu/senpi/pull/4497))
+- `/gpt-account unblock <id>` clears a live usage-limit or rate-limit block on a ChatGPT Subscription account, so a limit the user reset on the provider side is usable again without removing and re-adding the account. It clears only that block and the failure counter behind it, in both health sources; a rejected credential, a disabled account, per-model limits, an in-flight lease and the account's success history are left alone, and when a block it cannot lift is still standing the command says the account remains blocked and why. Reported by CodeRiever ([#4603](https://github.com/code-yeongyu/senpi/pull/4603))
+- Add the version-proven Windows private pipe-pair contract. It remains disabled until the pinned compiled-runtime proof passes; POSIX sockets and null declarations retain their existing behavior ([#4859](https://github.com/code-yeongyu/senpi/issues/4859)).
+- Added a JSONL import boundary for the future durable session store, preserving appended history and separating developer-hatch divergence from ordinary file edits. The current default session path is unchanged ([#5020](https://github.com/code-yeongyu/senpi/pull/5020)).
+- Startup warns when a skills root's `.gitignore`, `.ignore` or `.fdignore` hides a skill folder, naming the folder and how to keep git ignoring it without hiding the skill ([#5060](https://github.com/code-yeongyu/senpi/issues/5060))
+
+### Changed
+
+- Claude subscription sign-in (`/login anthropic-subscription`, `/claude-account add`, RPC `login_start`) now runs Claude Code's own `claude auth login`, keeps each account in its own Claude config dir, and tests the account with one turn right after sign-in; a failed test keeps the account with its reason ([#4461](https://github.com/code-yeongyu/senpi/pull/4461))
+- Claude subscription accounts signed in through the old senpi sign-in are signed out at startup and ask once per start to sign in again with Claude (`/login anthropic-subscription`); their name, pin and order are kept, and no old token is copied ([#4503](https://github.com/code-yeongyu/senpi/pull/4503))
+
+### Fixed
+
+- A finished turn no longer stays "Starting session..." or "Working" while an extension's `agent_settled` handler is slow: the settle reaches clients at once, a person's next prompt no longer waits for that handler, and nothing about it is shown as an error ([#4420](https://github.com/code-yeongyu/senpi/pull/4420))
+- TUI shutdown, host idle exit, session release and moves wait for `agent_idle`, so they never cut off a settle-time extension handler ([#4420](https://github.com/code-yeongyu/senpi/pull/4420))
+- MCP server instructions are now always the last block of the system prompt, after additions from extensions that load later, including their run-last handlers; `pi.on("before_agent_start", handler, { runLast: true })` runs a handler after every handler registered without it ([#4450](https://github.com/code-yeongyu/senpi/pull/4450))
+- A second Claude sign-in with a blank name no longer reuses an existing account named `account-N` ([#4497](https://github.com/code-yeongyu/senpi/pull/4497))
+- After the "Sign in again with Claude" error, a turn no longer retries or tries another Claude model that fails the same way ([#4522](https://github.com/code-yeongyu/senpi/pull/4522))
+- Signing a Claude account in again keeps a rename or model block made while the sign-in ran, and a cancelled sign-in no longer leaves the discarded login's profile or test result on the account ([#4522](https://github.com/code-yeongyu/senpi/pull/4522))
+- A Claude credential left only as a flat token by an old build no longer makes the Claude subscription look signed in when it has no account to use ([#4522](https://github.com/code-yeongyu/senpi/pull/4522))
+- RPC `test_provider_account` answers `needs_sign_in` for an account that must sign in again instead of running a test ([#4522](https://github.com/code-yeongyu/senpi/pull/4522))
+- Terminal guidance includes the required RPC monitor description and uses available tools for long jobs in both PTY and native-bash sessions ([#4838](https://github.com/code-yeongyu/senpi/pull/4838)).
+- Protect refused Windows private descriptors before adoption checks, fail closed on unopened descriptors and native-loader failures, and preserve POSIX channels when invalid-name entries reuse their descriptor ([#4859](https://github.com/code-yeongyu/senpi/issues/4859)).
+- Reject invalid native handle sentinels without calling `SetHandleInformation`, including signed and pointer-width all-ones values and null pointers ([#4859](https://github.com/code-yeongyu/senpi/issues/4859)).
+- A turn-ending notice shows once: a turn stopped at the output-token limit no longer repeats the notice on every text row, and a replayed turn shows its error or length notice exactly once, whatever its tool-call shape ([#4958](https://github.com/code-yeongyu/senpi/issues/4958))
+- A skill file symlinked into a skills root now loads even when that root's `.gitignore`, `.ignore` or `.fdignore` lists the link ([#5069](https://github.com/code-yeongyu/senpi/issues/5069))
+- A busy multi-session host no longer grows without bound while config-reload watches directories that change often: the watch worker holds one batch per subscription until the main thread takes it ([#5095](https://github.com/code-yeongyu/senpi/pull/5095))
+- Tool calls that never ran because the turn failed now read "Not run: the request failed." instead of repeating the raw provider error, live and on replay ([#5064](https://github.com/code-yeongyu/senpi/issues/5064))
+
+### Removed
+
+- The "Move it here" import of an `anthropic` OAuth login into Anthropic Subscription ([#4503](https://github.com/code-yeongyu/senpi/pull/4503))
+- senpi no longer refreshes Claude subscription tokens or serves an account that holds one: stored Claude accounts sign in through the Claude Code CLI, which keeps and renews its own login; `CLAUDE_CODE_OAUTH_TOKEN` env accounts are unchanged ([#4515](https://github.com/code-yeongyu/senpi/pull/4515))
+
 ## [2026.10.30-2] - 2026-10-30
 
 ### Breaking Changes

@@ -12,6 +12,32 @@
 
 ### Removed
 
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- Add masked single-line input with instance-local editing buffers and explicit disposal. ([#5120](https://github.com/code-yeongyu/senpi/pull/5120))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.30-2] - 2026-10-30
 
 ### Breaking Changes
