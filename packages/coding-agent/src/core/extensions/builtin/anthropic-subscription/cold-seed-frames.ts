@@ -142,7 +142,7 @@ export function seedSessionStore(frames: ColdSeedFrames): SessionStore {
 }
 
 /** The API refused the seeded turns (their tool or thinking structure), or Claude Code could not find the seed. */
-export function isFramesSeedRejection(error: unknown): boolean {
+function isFramesSeedRejection(error: unknown): boolean {
 	const text = error instanceof Error ? error.message : String(error);
 	if (/no conversation found/i.test(text)) return true;
 	return /invalid_request|\b400\b/i.test(text) && /tool_use|tool_result|thinking|signature/i.test(text);
