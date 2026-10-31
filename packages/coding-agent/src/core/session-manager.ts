@@ -24,7 +24,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { appendFile, type FileHandle, open, readdir, rm } from "fs/promises";
+import { appendFile, type FileHandle, open, readdir, rm, truncate } from "fs/promises";
 import { basename, join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -85,6 +85,7 @@ import {
 	reserveSessionWrite,
 	unregisterSessionWriter,
 } from "./session-write-reservation.ts";
+import type { HeaderWriteState, SessionWriteState } from "./session-write-state.ts";
 import { isVirtualModel } from "./virtual-models.ts";
 
 export type { SessionListProgress } from "./session-discovery.ts";
@@ -1183,14 +1184,8 @@ export class SessionManager {
 	private persist: boolean;
 	private readonly writeGuard = new SessionWriteGuard();
 	private readonly writeFence = new SessionWriteFence();
-	private flushed: boolean = false;
+	private writeState: SessionWriteState = { kind: "buffered" };
 	private headerWrite: Promise<void> | undefined;
-	// The file persistHeaderNow() created in this process; only it may be discarded on close (senpi#3263).
-	private ownedHeaderFile: string | undefined;
-	// Set when an append to the flushed file failed and may have left a partial last line.
-	private tailMayBeTorn = false;
-	/** Why the tail may be torn, for the notice the person gets when it is set aside. */
-	private tornTailCause: SessionRecoveryCause = "unknown";
 	private readonly pendingRecoveries: SessionRecovery[] = [];
 	private recoveryListener: ((recovery: SessionRecovery) => void) | undefined;
 	private fileEntries: FileEntry[] = [];
@@ -1390,10 +1385,13 @@ export class SessionManager {
 			reserveSessionWrite(resolvedFile);
 			this.writeFence.opened(resolvedFile);
 		}
-		const recoveryCause = this.sessionFile === resolvedFile && this.tailMayBeTorn ? this.tornTailCause : "unknown";
-		this.tailMayBeTorn = false;
-		this.tornTailCause = "unknown";
+		const previous = this.writeState;
+		const recoveryCause =
+			this.sessionFile === resolvedFile && previous.kind === "flushed" && previous.tailFailure
+				? previous.tailFailure.cause
+				: "unknown";
 		this.sessionFile = resolvedFile;
+		this.writeState = { kind: "buffered" };
 		this.transcriptFile.reset();
 		this.mirrorTrimmed = false;
 		this.trimmedIds.clear();
@@ -1416,7 +1414,6 @@ export class SessionManager {
 		// different identity and the caller's record would point at nothing (#2010).
 		if (created?.id !== undefined) {
 			this._rewriteFile();
-			this.flushed = true;
 		}
 		return undefined;
 	}
@@ -1438,7 +1435,6 @@ export class SessionManager {
 			// An empty file carries no identity yet, so a caller-supplied id still applies.
 			this._resetToNewSession(withFileNameId(sessionFile, newSessionOptions));
 			this._rewriteFile();
-			this.flushed = true;
 			return false;
 		}
 
@@ -1470,13 +1466,15 @@ export class SessionManager {
 			this.historyView = { source: this.fileEntries, length: this.fileEntries.length, entries: loadedHistory };
 		}
 		this.mutationCount++;
-		this.flushed = true;
-		this.ownedHeaderFile = undefined;
+		const opened = this.writeState;
+		this.writeState = {
+			kind: "flushed",
+			tailFailure: opened.kind === "buffered" && opened.deferredTail ? { cause: opened.deferredTail } : undefined,
+		};
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
 		const timestamp = this._resetToNewSession(options);
-		this.ownedHeaderFile = undefined;
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 			const path = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
@@ -1535,7 +1533,7 @@ export class SessionManager {
 			latestCacheHitRate: undefined,
 		};
 		this.mutationCount++;
-		this.flushed = false;
+		this.writeState = { kind: "buffered" };
 		return timestamp;
 	}
 
@@ -1632,6 +1630,7 @@ export class SessionManager {
 			this._serializedFileEntries(),
 			this.capturesTranscriptBase ? (identity) => this._captureTranscriptBase(identity, this.fileEntries) : undefined,
 		);
+		this.writeState = { kind: "flushed" };
 	}
 
 	/** Wire the owning reader/writer's capture; until it lands snapshots use the bounded accepted tail. */
@@ -1680,8 +1679,13 @@ export class SessionManager {
 		});
 	}
 
+	/** The file holds every committed entry: flushed, with no entries a failed header catch-up still owes it. */
+	private _fileHoldsMemory(): boolean {
+		return this.writeState.kind === "flushed" && this.writeState.pending === undefined;
+	}
+
 	private _transcriptPersistence(): TranscriptPersistence | undefined {
-		if (!this.flushed || !this.transcriptFile.identity) return undefined;
+		if (!this._fileHoldsMemory() || !this.transcriptFile.identity) return undefined;
 		return {
 			fileIdentity: this.transcriptFile.identity,
 			count: this.fullEntryCount + 1,
@@ -1697,7 +1701,7 @@ export class SessionManager {
 			this.persist &&
 			this.capturesTranscriptBase &&
 			!this.transcriptFile.unavailable &&
-			(!this.flushed || !this.transcriptFile.identity)
+			(!this._fileHoldsMemory() || !this.transcriptFile.identity)
 		)
 			this.transcriptBytes.set(entry, bytes);
 		return bytes;
@@ -1755,16 +1759,18 @@ export class SessionManager {
 	 * persisted while it runs are appended by it before the transcript counts as flushed.
 	 */
 	persistHeaderNow(): Promise<void> {
-		if (!this.persist || !this.sessionFile || this.flushed) return this.headerWrite ?? this.transcriptFile.ready;
-		const sessionFile = this.sessionFile;
-		this.headerWrite ??= this._writeHeaderAsync(sessionFile).finally(() => {
+		if (!this.persist || !this.sessionFile || this.writeState.kind !== "buffered")
+			return this.headerWrite ?? this.transcriptFile.ready;
+		const state: HeaderWriteState = { kind: "writing", file: this.sessionFile, entries: [...this.fileEntries] };
+		this.writeState = state;
+		this.headerWrite = this._writeHeaderAsync(state).finally(() => {
 			this.headerWrite = undefined;
 		});
 		return this.headerWrite;
 	}
 
 	isTranscriptFlushed(): boolean {
-		return this.flushed;
+		return this.writeState.kind === "flushed";
 	}
 
 	/**
@@ -1779,56 +1785,93 @@ export class SessionManager {
 	 */
 	async discardHeaderOnlyFile(): Promise<boolean> {
 		await this.headerWrite;
-		if (!this.persist || !this.sessionFile || !this.flushed) return false;
-		if (this.ownedHeaderFile !== this.sessionFile) return false;
+		if (!this.persist || !this.sessionFile || this.writeState.kind !== "flushed") return false;
+		if (this.writeState.ownedHeaderFile !== this.sessionFile) return false;
 		if (!this.fileEntries.every(isDisposableEntry)) return false;
+		const state = this.writeState;
 		await rm(this.sessionFile, { force: true });
-		this.ownedHeaderFile = undefined;
-		this.flushed = false;
-		this.transcriptFile.reset();
+		if (this.writeState === state) {
+			this.writeState = { kind: "buffered" };
+			this.transcriptFile.reset();
+		}
 		return true;
 	}
 
-	private async _writeHeaderAsync(sessionFile: string): Promise<void> {
+	private async _writeHeaderAsync(state: HeaderWriteState): Promise<void> {
+		const { file: sessionFile, entries } = state;
 		this.writeFence.assertOwned(sessionFile);
 		reserveSessionWrite(sessionFile);
-		const entries = this.fileEntries;
 		const serialize = (batch: readonly FileEntry[]): string =>
 			batch.map((e) => `${this._transcriptEntryBytes(e)}\n`).join("");
 		let written = 0;
-		let handle: FileHandle | undefined = await open(sessionFile, "wx");
+		let durable = { entries: 0, bytes: 0 };
+		let handle: FileHandle | undefined;
 		try {
+			handle = await open(sessionFile, "wx");
 			while (written < entries.length) {
 				const batch = entries.slice(written);
 				written += batch.length;
-				await handle.writeFile(serialize(batch));
+				const text = serialize(batch);
+				await handle.writeFile(text);
+				durable = { entries: written, bytes: durable.bytes + Buffer.byteLength(text) };
 			}
 			const closing = handle;
-			if (this.capturesTranscriptBase && this.sessionFile === sessionFile && this.fileEntries === entries) {
+			if (this.capturesTranscriptBase && this.writeState === state) {
 				this._captureTranscriptBase(captureFileIdentity(closing.fd, sessionFile));
 				await this.transcriptFile.ready;
 			}
 			handle = undefined;
 			await closing.close();
 			// Entries persisted while the handle closed: append until a pass finds nothing new.
-			while (written < entries.length && this.sessionFile === sessionFile && this.fileEntries === entries) {
+			while (written < entries.length && this.writeState === state) {
 				const batch = entries.slice(written);
 				written += batch.length;
-				await appendFile(sessionFile, serialize(batch));
+				const text = serialize(batch);
+				await appendFile(sessionFile, text);
+				durable = { entries: written, bytes: durable.bytes + Buffer.byteLength(text) };
 			}
 		} catch (error) {
-			// This write created the file: a part-written one would fail every later first flush with
-			// EEXIST while the entries it was carrying stayed in memory only. Nothing counts as flushed yet.
-			return discardFailedFirstFlushAsync(sessionFile, handle, error);
+			// While the exclusive handle is open nothing is whole yet: a part-written file would fail every later first
+			// flush with EEXIST, so it is removed and nothing counts as flushed.
+			if (handle !== undefined || durable.entries === 0) {
+				if (this.writeState === state) this.writeState = { kind: "buffered" };
+				if (handle !== undefined) return discardFailedFirstFlushAsync(sessionFile, handle, error);
+				throw error;
+			}
+			// The header and the first entries are on disk and closed: keep them (senpi#4295). Cut what the failed
+			// append landed, and write the entries it carried before this session's next append.
+			await this._keepCaughtUpPrefix(state, durable, error);
+			throw error;
 		}
 		// Synchronous with the last check above: no entry can land between it and the flag.
-		if (this.sessionFile === sessionFile && this.fileEntries === entries && written === entries.length) {
-			this.flushed = true;
-			this.ownedHeaderFile = sessionFile;
+		if (this.writeState === state) {
+			this.writeState = { kind: "flushed", ownedHeaderFile: sessionFile };
 			this.transcriptBytes = new WeakMap();
 			const persistence = this.transcriptJournal && this._transcriptPersistence();
 			if (persistence) this.transcriptJournal?.record({ kind: "persisted", persistence });
 		}
+	}
+
+	private async _keepCaughtUpPrefix(
+		state: HeaderWriteState,
+		durable: { readonly entries: number; readonly bytes: number },
+		cause: unknown,
+	): Promise<void> {
+		if (this.writeState !== state) return;
+		const { file: sessionFile, entries } = state;
+		let tailFailure: { cause: SessionRecoveryCause; completeBytes: number } | undefined;
+		try {
+			await truncate(sessionFile, durable.bytes);
+		} catch {
+			tailFailure = { cause: sessionRecoveryCause(cause), completeBytes: durable.bytes };
+		}
+		if (this.writeState !== state) return;
+		this.writeState = {
+			kind: "flushed",
+			ownedHeaderFile: sessionFile,
+			pending: { entries, from: durable.entries },
+			tailFailure,
+		};
 	}
 
 	/**
@@ -1863,10 +1906,8 @@ export class SessionManager {
 	private _settleFinalLine(sessionFile: string, cause: SessionRecoveryCause): void {
 		const repair = terminateFinalSessionLine(sessionFile, cause);
 		if (repair?.kind === "set_aside") this._reportRecovery(repair.recovery);
-		if (repair?.kind === "deferred") {
-			this.tailMayBeTorn = true;
-			this.tornTailCause = cause;
-		}
+		// The writer sets a deferred tail aside before its first append, once the load makes the file its authority.
+		if (repair?.kind === "deferred") this.writeState = { kind: "buffered", deferredTail: cause };
 	}
 
 	/**
@@ -1879,33 +1920,41 @@ export class SessionManager {
 		this.writeFence.assertOwned(this.sessionFile);
 		reserveSessionWrite(this.sessionFile);
 
-		if (this.flushed) {
-			if (this.tailMayBeTorn) {
-				const recovery = truncateToLastCompleteLine(this.sessionFile, this.tornTailCause);
-				this.tailMayBeTorn = false;
+		const state = this.writeState;
+		if (state.kind === "flushed") {
+			if (state.tailFailure) {
+				const { cause, completeBytes } = state.tailFailure;
+				const recovery = truncateToLastCompleteLine(this.sessionFile, cause, completeBytes);
+				state.tailFailure = undefined;
 				if (recovery !== undefined) this._reportRecovery(recovery);
 			}
 			const bytes = this._transcriptEntryBytes(entry);
 			try {
+				// Entries a failed header catch-up left off disk go first, one line each, so a later failure resumes there.
+				const unwritten = state.pending;
+				for (const pending of unwritten?.entries.slice(unwritten.from) ?? []) {
+					appendFileSync(this.sessionFile, `${this._transcriptEntryBytes(pending)}\n`);
+					if (unwritten) unwritten.from++;
+				}
+				state.pending = undefined;
 				appendFileSync(this.sessionFile, `${bytes}\n`);
 			} catch (error) {
-				this.tailMayBeTorn = true;
-				this.tornTailCause = sessionRecoveryCause(error);
+				state.tailFailure = { cause: sessionRecoveryCause(error) };
 				throw error;
 			}
 			return bytes;
 		}
 
-		// Entries stay in memory only until the branch holds a user or assistant message; then all are
-		// written (#10000: the prompt reaches disk even if the first turn never completes).
 		const durableLifecycle = entry.type === "custom" && LIFECYCLE_ENTRY_TYPES.has(entry.customType);
-		if (!isConversationEntry(entry) && !durableLifecycle && !this._hasConversation()) return;
-
 		// An asynchronous header write owns the file until it finishes, and appends this entry.
-		if (this.headerWrite) {
+		if (state.kind === "writing") {
 			if (durableLifecycle) throw new Error("Lifecycle append requires the pending session header write to finish");
+			state.entries.push(entry);
 			return;
 		}
+		// Entries stay in memory only until the branch holds a user or assistant message; then all are
+		// written (#10000: the prompt reaches disk even if the first turn never completes).
+		if (!isConversationEntry(entry) && !durableLifecycle && !this._hasConversation()) return;
 		const fd = openSync(this.sessionFile, "wx");
 		let bytes: string | undefined;
 		try {
@@ -1919,10 +1968,12 @@ export class SessionManager {
 		}
 		if (this.capturesTranscriptBase) this._captureTranscriptBase(captureAndCloseFileIdentity(fd, this.sessionFile));
 		else closeSync(fd);
-		this.flushed = true;
 		if (!this.capturesTranscriptBase) this.transcriptBytes = new WeakMap();
 		// Lifecycle bookkeeping created this file before any conversation, so an empty session can still discard it.
-		if (!isConversationEntry(entry) && !this._hasConversation()) this.ownedHeaderFile = this.sessionFile;
+		this.writeState = {
+			kind: "flushed",
+			ownedHeaderFile: !isConversationEntry(entry) && !this._hasConversation() ? this.sessionFile : undefined,
+		};
 		return bytes;
 	}
 
@@ -1938,7 +1989,7 @@ export class SessionManager {
 		this._commitEntry(committed);
 		if (this.transcriptJournal) {
 			const serialized = bytes ?? this._transcriptEntryBytes(residentEntry);
-			if (this.persist && !this.transcriptFile.unavailable && (!this.flushed || !this.transcriptFile.identity))
+			if (this.persist && !this.transcriptFile.unavailable && (!this._fileHoldsMemory() || !this.transcriptFile.identity))
 				this.transcriptBytes.set(committed, serialized);
 			const change = flow?.();
 			this.transcriptJournal.record({
@@ -3114,6 +3165,7 @@ export class SessionManager {
 			this.trimmedIds.clear();
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
+			this.writeState = { kind: "buffered" };
 			this.fileEntries = [header, ...branchedEntries.map((entry) => this.residentStore.externalize(entry))];
 			this._buildIndex();
 			this.historyGeneration++;
@@ -3123,9 +3175,6 @@ export class SessionManager {
 			// has a conversation, otherwise let _persist() create the file later.
 			if (this._hasConversation()) {
 				this._rewriteFile();
-				this.flushed = true;
-			} else {
-				this.flushed = false;
 			}
 			this._journalReplace();
 
@@ -3290,14 +3339,11 @@ export class SessionManager {
 			parentSession: resolvedSourcePath,
 		};
 		reserveSessionWrite(newSessionFile);
-		writeFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`, { flag: "wx" });
-
-		// Copy all non-header entries from source
-		for (const entry of sourceEntries) {
-			if (entry.type !== "session") {
-				appendFileSync(newSessionFile, `${JSON.stringify(entry)}\n`);
-			}
-		}
+		// Built in a temp file and renamed into place: a full disk part-way leaves no partial fork in the session list.
+		const forkLines = [newHeader, ...sourceEntries.filter((entry) => entry.type !== "session")].map(
+			(entry) => `${JSON.stringify(entry)}\n`,
+		);
+		replaceFileAtomically(newSessionFile, forkLines);
 
 		return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true);
 	}
