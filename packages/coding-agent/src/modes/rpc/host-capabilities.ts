@@ -67,6 +67,7 @@ export function multiSessionHostCapabilities(options: {
 			"multi_session",
 			"snapshot_cursor",
 			"ui_answer_ledger",
+			"secret_input_v1",
 			"dialog_observer",
 			...(options.mcpPresenters ? ["mcp_form_presenter_v1"] : []),
 			"session_lifecycle",

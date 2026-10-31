@@ -60,6 +60,7 @@ async function closeFixture() {
 			case "close":
 			case "cancel_ui":
 			case "cancel_grant":
+			case "cancel_secret":
 			case "subscription_limits":
 			case "owners_retired":
 				break;
