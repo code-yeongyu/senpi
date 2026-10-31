@@ -1,1 +1,1 @@
-export { siwcErrorForCode, siwcRecoveryFromDiagnostic } from "./provider-diagnostic-carrier.ts";
+export { siwcRecoveryFromDiagnostic } from "./provider-diagnostic-carrier.ts";
