@@ -1,3 +1,5 @@
+# A cache path built from an unset environment variable can create this directory.
+undefined/
 # A file or a directory: worktrees often symlink node_modules, and a directory-only pattern lets the link be committed.
 node_modules
 packages/senpi-codemode/gate-report.json
