@@ -13,7 +13,7 @@ import {
 	uuidv7,
 } from "@earendil-works/pi-ai";
 import type { AgentMessage, ThinkingLevel } from "../../types.ts";
-import { type Context, getTelemetryContext } from "../context.ts";
+import { type Context, getSessionCwd, getTelemetryContext } from "../context.ts";
 import { convertToLlm, createBranchSummaryMessage, createCompactionSummaryMessage } from "../messages.ts";
 import { buildContextEntries, sessionEntryToContextMessages } from "../session/context.ts";
 import type { CompactionEntry, Entry, JsonValue } from "../session/types.ts";
@@ -116,8 +116,11 @@ export type SummaryRequest = (
 ) => Promise<AssistantMessage>;
 
 export function createSummaryRequestOptions(options: SimpleStreamOptions, context: Context): SimpleStreamOptions {
+	// Providers such as anthropic-subscription reject a request without the absolute session cwd (#5256).
+	const cwd = options.cwd ?? getSessionCwd(context);
 	return {
 		...options,
+		...(cwd === undefined ? {} : { cwd }),
 		signal: context.abortSignal,
 		telemetryContext: getTelemetryContext(context),
 		cacheRetention: "none",
