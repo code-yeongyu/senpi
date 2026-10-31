@@ -161,6 +161,24 @@
 
 - LOW: `packages/coding-agent/package.json` dependency declarations and generated lock metadata.
 
+## 2026-10-25 - Nested tool-call ids stay unique after the caller's record is taken (senpi#4278)
+
+### What changed
+
+- `packages/coding-agent/src/core/nested-tool-calls.ts`: `NestedToolCallRunner` hands out `<callerId>/<n>` ids from a per-caller `lastIds` map that outlives the caller's scope, instead of a `nextId` counter stored on the scope; `CallScope` drops its `nextId` field. Only `clear()` resets the numbering. `packages/coding-agent/test/nested-tool-calls.test.ts`: two regression tests pin ids after `takeRecord()` and after a nested caller ends, plus the `clear()` reset.
+
+### Why
+
+- senpi#4278: `takeRecord()` deletes the caller's scope when the tool result message is assembled, and the nested caller's scope is deleted when it ends. Work that outlives those moments recreates the scope with `nextId: 1`, so two different nested calls under one caller can share an id, and consumers that key state by tool-call id (call tracking, recovery, UI rows) can merge or overwrite them. The first nested call of a caller still gets `/1`; the id format is unchanged.
+
+### Why an extension could not handle it
+
+- The ids are minted inside `NestedToolCallRunner` before any hook, event or extension sees the call; extensions receive `tool_execution_*` events that already carry the id.
+
+### Expected merge conflict zones
+
+- LOW: the `CallScope` shape and the id assignment in `execute()` in `packages/coding-agent/src/core/nested-tool-calls.ts`, plus the two new tests, if upstream changes nested-call scoping.
+
 ## 2026-10-22 - The package manifest declares reference-object support (senpi#3858)
 
 ### What changed
