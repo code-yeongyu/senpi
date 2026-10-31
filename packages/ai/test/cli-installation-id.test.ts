@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import type { LoginOptions } from "../src/auth/types.ts";
 
+const cliEntry = "../src/cli.ts";
+
 const fixture = vi.hoisted(() => ({
 	home: "",
 	deviceIds: [] as string[],
@@ -68,7 +70,8 @@ it("reuses its persisted installation ID after the CLI restarts", async () => {
 				fixture.onSaved = resolve;
 			});
 			vi.resetModules();
-			await import("../src/cli.ts");
+			// A specifier variable keeps knip from treating this side-effect import as a use of every cli.ts export (scripts/knip-entry-exports.test.mjs).
+			await import(cliEntry);
 			await finished;
 		}
 		expect(fixture.deviceIds[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
