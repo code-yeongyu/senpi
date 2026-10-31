@@ -390,7 +390,21 @@ describe("alias detector: mount table parser (design 5.5, R7-M1)", () => {
 	});
 
 	it("the allowlist is exactly the measured set (R7-L1)", () => {
-		expect([...REAL_FS].sort()).toEqual(["apfs", "btrfs", "nfs", "overlay", "tmpfs", "virtiofs"]);
+		expect([...REAL_FS].sort()).toEqual([
+			"apfs",
+			"btrfs",
+			"exfat",
+			"ext4",
+			"hfs",
+			"nfs",
+			"nfs4",
+			"ntfs",
+			"overlay",
+			"tmpfs",
+			"virtiofs",
+			"xfs",
+			"zfs",
+		]);
 	});
 
 	it.each(["alias-detector.ts", "mount-table.ts"])(

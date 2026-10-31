@@ -29,7 +29,7 @@ function hasGlm52CatalogSignal(model: Model<Api>): boolean {
 }
 
 function getGlm52CatalogModels(): Model<Api>[] {
-	return getProviders().flatMap((provider) => (getModels(provider) as Model<Api>[]).filter(hasGlm52CatalogSignal));
+	return getProviders().flatMap((provider) => getModels(provider).filter(hasGlm52CatalogSignal));
 }
 
 describe("GLM 5.2 prompt preset", () => {
