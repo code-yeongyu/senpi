@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GOAL_IDLE_REPLY_STREAK } from "../../../src/core/extensions/builtin/goal/continuation.ts";
 import { GOAL_MONITOR_BACKSTOP_DEFAULT_DELAY_MS } from "../../../src/core/extensions/builtin/goal/monitor-continuation.ts";
 import { readGoal, updateGoal } from "../../../src/core/extensions/builtin/goal/store.ts";
 import type { ExtensionContext, ExtensionToolContext } from "../../../src/core/extensions/types.ts";
@@ -15,11 +16,9 @@ import {
 
 const GOAL_CONTINUATION_MESSAGE_TYPE = "goal-continuation";
 
-// omo#10280 replaced the fixed 150 budget with the no-progress guard: the #1139 stall
-// (varied toolless narration) must still stop, now after 60 continuations without progress.
+// omo#10280 replaced the fixed 150 budget with the no-progress guard (60); #5160 stops the #1139 stall
+// (varied toolless narration) sooner, at the idle-reply streak.
 const NO_PROGRESS_LIMIT = 60;
-const NO_PROGRESS_BLOCKED_REASON =
-	"no progress across repeated automatic continuations (no new tool result, todo change, or new message)";
 const UNATTENDED_BLOCKED_REASON = "unattended continuation limit reached";
 
 afterEach(async () => {
@@ -79,7 +78,7 @@ async function runAcceptedDirectInput(
 }
 
 describe("issue #1139: unattended continuation backstop", () => {
-	it("blocks an active goal at the no-progress guard despite varied toolless narration", {
+	it("stops varied toolless narration at the idle-reply guard, well before the no-progress guard (#5160)", {
 		timeout: 60_000,
 	}, async () => {
 		const notices: string[] = [];
@@ -96,18 +95,12 @@ describe("issue #1139: unattended continuation backstop", () => {
 			expect(harness.sent.length - promptsBeforeTurn).toBeLessThanOrEqual(1);
 		}
 
-		expect(harness.sent).toHaveLength(NO_PROGRESS_LIMIT);
-		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({
-			status: "blocked",
-			blockedReason: NO_PROGRESS_BLOCKED_REASON,
-		});
-		expect(notices).toContainEqual(
-			`Goal continuation blocked: ${NO_PROGRESS_BLOCKED_REASON}. Send any message to resume.`,
-		);
+		expect(harness.sent).toHaveLength(GOAL_IDLE_REPLY_STREAK - 1);
+		expect(await readGoal(goalStoreRef(ctx))).toMatchObject({ status: "active", continuationStoppedAt: expect.any(Number) });
 		expect(harness.events.emitted).toContainEqual(
 			expect.objectContaining({
 				channel: "goal_continuation_guard_tripped",
-				data: expect.objectContaining({ reason: "no-progress" }),
+				data: expect.objectContaining({ reason: "idle" }),
 			}),
 		);
 	});

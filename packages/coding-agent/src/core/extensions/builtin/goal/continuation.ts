@@ -7,6 +7,12 @@ type ToolResultAgentMessage = Extract<AgentMessage, { role: "toolResult" }>;
 export const GOAL_CONTINUATION_CAP = 8;
 export const GOAL_STALL_TOOLLESS_THRESHOLD = 3;
 export const GOAL_REPETITION_HASH_STREAK = 3;
+/**
+ * Unattended replies in a row that change nothing, whatever their wording, before the goal stops (#5160). Measured
+ * tool-less stretches that later recovered into tool use were p99 7 (omo#10280), so 8 sits just above them and still
+ * leaves the stall check (at 3) several answers.
+ */
+export const GOAL_IDLE_REPLY_STREAK = 8;
 export const GOAL_LENGTH_RECOVERY_LIMIT = 1;
 /**
  * Consecutive automatic continuations without progress before the goal blocks (omo#10280).
@@ -39,6 +45,8 @@ export type GoalContinuationInput = {
 	readonly consecutiveLengthRecoveries: number;
 	readonly recentNormalizedOutputHashes: readonly string[];
 	readonly toollessContinuationStreak: number;
+	/** Unattended replies in a row that made no progress (#5160); see `isIdleReplyLoop`. */
+	readonly idleReplyStreak: number;
 	readonly continuationPending: boolean;
 	/** The last turn was rejected (or silently starved) by context size and recovery did not shrink it. */
 	readonly lastTurnStuckOnContextOverflow: boolean;
@@ -54,6 +62,7 @@ export type GoalContinuationVerdict =
 				| "cap"
 				| "stale"
 				| "repetition"
+				| "idle"
 				| "length-exhausted"
 				| "no-progress"
 				| "context-overflow";
@@ -114,6 +123,7 @@ export function evaluateGoalContinuation(input: GoalContinuationInput): GoalCont
 	if (input.continuationPending) return { kind: "deny", reason: "single-flight" };
 	if (hasRepeatedNormalizedOutputHash(input.recentNormalizedOutputHashes))
 		return { kind: "deny", reason: "repetition" };
+	if (isIdleReplyLoop(input)) return { kind: "deny", reason: "idle" };
 	if (isNoProgressBudgetExhausted(input)) return { kind: "deny", reason: "no-progress" };
 	if (input.consecutiveContinuations >= GOAL_CONTINUATION_CAP) {
 		return { kind: "deny", reason: "cap" };
@@ -268,6 +278,17 @@ function hasRepeatedNormalizedOutputHash(hashes: readonly string[]): boolean {
 		streak += 1;
 	}
 	return streak >= GOAL_REPETITION_HASH_STREAK;
+}
+
+/**
+ * Reworded "still waiting" replies hash differently, so the exact-hash streak never forms; a run of replies that make
+ * no progress is the same loop. Progress is the no-progress guard's definition (a new `toolEffectFingerprint`, a
+ * todo change, human input), so a re-check that repeats an earlier effect does not break the run. Only unattended
+ * paths: monitor-delayed waits are paced by their backstop timer.
+ */
+function isIdleReplyLoop(input: GoalContinuationInput): boolean {
+	if (input.path !== "immediate" && input.path !== "userGrace") return false;
+	return input.idleReplyStreak >= GOAL_IDLE_REPLY_STREAK;
 }
 
 function shouldShowStallNotice(input: GoalContinuationInput): boolean {
