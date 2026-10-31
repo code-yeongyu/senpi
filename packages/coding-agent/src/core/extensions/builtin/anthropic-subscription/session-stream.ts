@@ -46,6 +46,9 @@ export type ResidentSessionStreamInput = {
 	customToolNameToSdk: ReadonlyMap<string, string>;
 	toolWatchNote?: string;
 	onResumeFallback: (error: unknown) => void;
+	onLongContextFallback?: () => void;
+	contextTokens?: () => number;
+	outputReserveTokens?: number;
 	onContinuityDecision?: (observation: ContinuityObservation) => void;
 	/** Called once per attempt, before dispatch, with whether it re-sends the whole history and that re-send's bytes/4 estimate. */
 	onDispatchShape?: (coldSeed: boolean, estimatedTokens?: number) => void;
@@ -281,6 +284,9 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		pinnedAccount: input.pinnedAccount,
 		...(preferredAccount === undefined ? {} : { preferredAccount }),
 		buildOptions: input.buildOptions,
+		contextTokens: input.contextTokens,
+		outputReserveTokens: input.outputReserveTokens,
+		...(input.onLongContextFallback === undefined ? {} : { onLongContextFallback: input.onLongContextFallback }),
 		createAttempt: (auth) => createResidentAttempt(input, auth),
 	});
 }

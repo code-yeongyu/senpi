@@ -5416,6 +5416,13 @@ A turn consists of one assistant response plus any resulting tool calls and resu
 
 Emitted when a message begins and completes. The `message` field contains an `AgentMessage`.
 
+An assistant message's `diagnostics` also carries recovery notices. For
+`claude_sdk_oauth_long_context_fallback`, `details.contextWindow` is `200000`
+and `details.message` is displayable notice text. Render it as a muted notice
+for that turn, alongside any session-continuity notice, rather than as an error.
+The fallback applies only to that request; it does not change the selected
+model or its default 1M window. Saved assistant messages retain the diagnostic.
+
 ```json
 {"type": "message_start", "message": {...}}
 {"type": "message_end", "message": {...}}

@@ -50,7 +50,7 @@ export type FailoverOptions<TEvent> = {
 	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 	signal?: AbortSignal;
 	/** Records a refused 1M window so the retry, built by `runAttempt`, requests the standard one. */
-	onLongContextRefused?: () => void;
+	onLongContextRefused?: (error: unknown) => void;
 	/** The session this turn belongs to: blocks that bind only this session are remembered under it. */
 	sessionKey?: string;
 	/**
@@ -408,7 +408,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			if (classification.kind === "long_context_unavailable") {
 				if (visibleDeltaEmitted || longContextRetried) throw classified;
 				longContextRetried = true;
-				options.onLongContextRefused?.();
+				options.onLongContextRefused?.(error);
 				retryAccountName = account.name;
 				attempt--;
 				continue;

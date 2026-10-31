@@ -21,7 +21,8 @@ import { accountDirFor, claudeCliSharedRoot, ensureAccountDir } from "./claude-c
 import { buildClaudeCliEnvironment } from "./claude-cli-environment.ts";
 import { profileChanged, verifyClaudeCliInitialization } from "./claude-cli-token-source.ts";
 import { writeConfigDirCredential } from "./config-dir-credentials.ts";
-import { asksLegacyLongContext } from "./context-window.ts";
+import { asksLegacyLongContext, CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW } from "./context-window.ts";
+import { isExtraUsageExhausted } from "./errors.ts";
 import { runFailover } from "./failover.ts";
 import { logContinuityEvent } from "./session-observability.ts";
 import { markLongContextRefused } from "./long-context.ts";
@@ -34,6 +35,9 @@ import { ClaudeSignInRequiredError, signInRequiredNames } from "./sign-in-again.
 
 export { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 export { overrideAuthLaneBoundary, resetAuthLaneBoundary } from "./auth-lane-boundary.ts";
+
+const DEFAULT_FALLBACK_OUTPUT_TOKENS = 32_000;
+const MIN_FALLBACK_OUTPUT_TOKENS = 8_192;
 
 /** A managed lane with an empty pool must refuse rather than spawn the SDK against ambient host credentials. */
 const NO_MANAGED_ACCOUNTS_ERROR =
@@ -63,6 +67,12 @@ export type AuthenticatedQueryInput = {
 	/** The account this session's SDK transcript lives under; preferred while it can serve (senpi#2891). */
 	preferredAccount?: string;
 	onQuery?: (query: ReturnType<SdkQuery>) => void;
+	/** Called once when a refused [1m] request is retried at the 200k window, so the turn can say so. */
+	onLongContextFallback?: () => void;
+	/** Full request context estimate, including a resident session's already billed prefix. */
+	contextTokens?: () => number;
+	/** Explicit response cap for the 200k retry; otherwise it uses the fallback default. */
+	outputReserveTokens?: number;
 	createAttempt?: (
 		input: AuthenticatedAttemptInput,
 	) => RetainableAttempt<SDKMessage> | Promise<RetainableAttempt<SDKMessage>>;
@@ -204,6 +214,45 @@ function prepareEnvSlot(
 export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncGenerator<SDKMessage> {
 	const signal = input.signal ?? new AbortController().signal;
 	const pool = await managedPool(input.providerSettings, input.env);
+	let standardWindow = false;
+	let retryAccountName: string | undefined;
+	let outputReserveTokens = input.outputReserveTokens ?? DEFAULT_FALLBACK_OUTPUT_TOKENS;
+	const buildOptions = (lane: AnthropicSubscriptionAuthLane): Options => {
+		const options = input.buildOptions(lane);
+		if (standardWindow) {
+			options.model = options.model?.replace(/\[1m\]$/, "");
+			options.env = {
+				...options.env,
+				CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW),
+				// Reserve and request the same output budget, not the model catalog's ceiling.
+				CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(outputReserveTokens),
+			};
+		}
+		return options;
+	};
+	const onLongContextRefused = (error: unknown): void => {
+		if (isExtraUsageExhausted(error)) {
+			// The full estimate already includes the preamble margin when no billed prefix exists.
+			const contextTokens = input.contextTokens?.() ?? 0;
+			outputReserveTokens =
+				input.outputReserveTokens ??
+				Math.max(
+					MIN_FALLBACK_OUTPUT_TOKENS,
+					Math.min(DEFAULT_FALLBACK_OUTPUT_TOKENS, CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW - contextTokens),
+				);
+			if (contextTokens > CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW - outputReserveTokens) {
+				const reason = error instanceof Error ? error.message : String(error);
+				throw new Error(
+					`${reason} The prompt plus ${outputReserveTokens} output tokens cannot fit the 200k retry. Top up extra usage to keep the 1M window, or start a new session or compact this session before retrying.`,
+				);
+			}
+			// Exhausted balance is not an entitlement verdict: only this request uses 200k.
+			standardWindow = true;
+		} else {
+			markLongContextRefused();
+		}
+		input.onLongContextFallback?.();
+	};
 	if (!pool) {
 		const parentEnvironment = mergeRequestAuthEnvironment(activeBoundary.env(), input.env);
 		const ambientEnvironment: Record<string, string | undefined> = { ...parentEnvironment };
@@ -213,12 +262,12 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		// Lane-owned variables from buildOptions (the compaction-owner overlay) win over the host.
 		let askedLegacyLongContext = false;
 		const ambientAttempt = async () => {
-			const options = input.buildOptions("ambient");
+			const options = buildOptions("ambient");
 			askedLegacyLongContext = asksLegacyLongContext(options.model);
 			options.env = { ...ambientEnvironment, ...options.env };
 			return createAttemptMessages(input, { accountName: "ambient", accounts: [], authLane: "ambient", options });
 		};
-		yield* retryAtStandardWindowOnce(ambientAttempt, () => askedLegacyLongContext);
+		yield* retryAtStandardWindowOnce(ambientAttempt, () => askedLegacyLongContext, onLongContextRefused);
 		return;
 	}
 	if (input.probe === true) {
@@ -267,8 +316,10 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 				...(input.model === undefined ? {} : { model: input.model }),
 			}),
 		runAttempt: async (slot) => {
+			if (retryAccountName !== slot.name) standardWindow = false;
+			retryAccountName = slot.name;
 			const authLane = laneFor(pool, slot);
-			const options = input.buildOptions(authLane);
+			const options = buildOptions(authLane);
 			askedLegacyLongContext = asksLegacyLongContext(options.model);
 			const accounts = pool.accounts.map((account) => ({ ...account }));
 			const prepared = slot.store === "claude-cli" ? prepareClaudeCliSlot(pool, slot) : prepareEnvSlot(pool, slot);
@@ -285,7 +336,7 @@ export async function* queryWithAuthLane(input: AuthenticatedQueryInput): AsyncG
 		},
 		classify: (error) => classifyForRequest(error, askedLegacyLongContext),
 		...(input.sessionId === undefined ? {} : { sessionKey: input.sessionId }),
-		onLongContextRefused: () => markLongContextRefused(),
+		onLongContextRefused,
 		store: pool.store,
 		providerId: ANTHROPIC_SUBSCRIPTION_PROVIDER_ID,
 		...(input.model === undefined ? {} : { model: input.model }),

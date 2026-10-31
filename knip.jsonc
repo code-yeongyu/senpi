@@ -571,8 +571,6 @@
       "packages/coding-agent/src/core/event-loop-slicer.ts": ["DEFAULT_SLICE_BUDGET_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports ansiToHtml
       "packages/coding-agent/src/core/export-html/ansi-to-html.ts": ["ansiToHtml"],
-      // pre-existing at origin main aceb1cc1d9: unused exports CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW
-      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/context-window.ts": ["CLAUDE_CODE_DEFAULT_CONTEXT_WINDOW"],
       // pre-existing at origin main aceb1cc1d9: unused exports objectToShape
       "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/custom-tools-schema.ts": ["objectToShape"],
       // pre-existing at origin main aceb1cc1d9: unused exports TRANSIENT_RETRIES_PER_TURN, TRANSIENT_RETRY_DELAY_MS
