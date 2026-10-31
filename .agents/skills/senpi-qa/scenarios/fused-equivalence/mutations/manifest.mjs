@@ -12,9 +12,23 @@ export const mutations = Object.freeze([
 		observation: "O1",
 		surface: "rpc",
 		patch: "o1-dropped-prompt-segment.patch",
-		cases: ["E01"],
+		// VER-E19-RAW: E19 sees the prompt through the raw-hash blobs (the system prompt blob's content).
+		cases: ["E01", "E19"],
 		expect: {
 			E01: /^\$\.O1\[0\]\.body\.messages\[0\]\.content: golden=".*- Judgment asks \(what do you think, review\).*" actual="(?![\s\S]*Judgment asks \(what do you think)/,
+			E19: /^\$\.O1\[0\]\.body\.blobs\[\d+\]\.content\.content: golden=".*- Judgment asks \(what do you think, review\).*" actual="(?![\s\S]*Judgment asks \(what do you think)/,
+		},
+	},
+	{
+		id: "o1-one-byte-prompt-change",
+		row: "one-byte change in a fixed prompt sentence",
+		observation: "O1",
+		surface: "rpc",
+		patch: "o1-one-byte-prompt-change.patch",
+		// VER-E19-RAW: body.blobs normalization replaces only run-scoped roots, so one flipped letter outside them fails E19.
+		cases: ["E19"],
+		expect: {
+			E19: /^\$\.O1\[0\]\.body\.blobs\[\d+\]\.content\.content: golden=".*Route by true intent, not surface form:.*" actual="(?![\s\S]*not surface form:).*Route by true intent, not surfaxe form:/,
 		},
 	},
 	{

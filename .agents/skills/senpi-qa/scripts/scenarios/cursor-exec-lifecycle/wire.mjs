@@ -64,6 +64,19 @@ export async function loadCursorWire() {
 		},
 		execReadFrame: ({ id, path, toolCallId }) =>
 			exec(id, { case: "readArgs", value: create(pb.ReadArgsSchema, { path, toolCallId }) }),
+		/** Ask the client for one blob it named (Cursor's KV channel); the client answers with a getBlobResult. */
+		kvGetBlobFrame: ({ id, blobId }) =>
+			frame(
+				create(pb.AgentServerMessageSchema, {
+					message: {
+						case: "kvServerMessage",
+						value: create(pb.KvServerMessageSchema, {
+							id,
+							message: { case: "getBlobArgs", value: create(pb.GetBlobArgsSchema, { blobId }) },
+						}),
+					},
+				}),
+			),
 		execShellStreamFrame: ({ id, command, workingDirectory, toolCallId }) =>
 			exec(id, {
 				case: "shellStreamArgs",
