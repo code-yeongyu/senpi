@@ -322,8 +322,6 @@
       "packages/ai/src/utils/assistant-capture.ts": ["freezeCapture", "publicBlock"],
       // pre-existing at origin main aceb1cc1d9: unused exports CHATGPT_SUBSCRIPTION_AUTH_CLAIM_PATH
       "packages/ai/src/utils/chatgpt-subscription-auth.ts": ["CHATGPT_SUBSCRIPTION_AUTH_CLAIM_PATH"],
-      // pre-existing at origin main aceb1cc1d9: unused exports resolveClaudeCodeVersionCachePath, createClaudeCodeVersionFileStore
-      "packages/ai/src/utils/claude-code-version-cache.ts": ["createClaudeCodeVersionFileStore", "resolveClaudeCodeVersionCachePath"],
       // pre-existing at origin main aceb1cc1d9: unused exports ConfigReferenceSchema
       "packages/ai/src/utils/config-reference.ts": ["ConfigReferenceSchema"],
       // pre-existing at origin main aceb1cc1d9: unused exports truncateErrorText, safeJsonStringify
@@ -1141,8 +1139,8 @@
       "packages/coding-agent/src/modes/rpc/host-session-detach.ts": ["DETACH_ACK_TIMEOUT_MS"],
       // pre-existing at origin main aceb1cc1d9: unused exports STALE_ENGINE_GRACE_MS
       "packages/coding-agent/src/modes/rpc/host-stale-engine.ts": ["STALE_ENGINE_GRACE_MS"],
-      // pre-existing at origin main aceb1cc1d9: unused exports STALL_REFUSAL_WINDOW_MS_ENV, DEFAULT_STALL_REFUSAL_WINDOW_MS, DEFAULT_CHILD_STALLED_STOP_MAX_MS, readStallEvidence
-      "packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts": ["DEFAULT_CHILD_STALLED_STOP_MAX_MS", "DEFAULT_STALL_REFUSAL_WINDOW_MS", "STALL_REFUSAL_WINDOW_MS_ENV", "readStallEvidence"],
+      // pre-existing at origin main aceb1cc1d9: unused exports STALL_REFUSAL_WINDOW_MS_ENV, DEFAULT_STALL_REFUSAL_WINDOW_MS, readStallEvidence (DEFAULT_CHILD_STALLED_STOP_MAX_MS gained its first consumer in senpi#5168)
+      "packages/coding-agent/src/modes/rpc/host-stalled-evidence.ts": ["DEFAULT_STALL_REFUSAL_WINDOW_MS", "STALL_REFUSAL_WINDOW_MS_ENV", "readStallEvidence"],
       // pre-existing at origin main aceb1cc1d9: unused exports STOP_INTENT_MAX_AGE_MS, clearStopIntent, DRAIN_REQUEST_WATCHED_POLL_MS, readDrainRequest
       "packages/coding-agent/src/modes/rpc/host-stop-intent.ts": ["DRAIN_REQUEST_WATCHED_POLL_MS", "STOP_INTENT_MAX_AGE_MS", "clearStopIntent", "readDrainRequest"],
       // pre-existing at origin main aceb1cc1d9: unused exports readLiveStartTime

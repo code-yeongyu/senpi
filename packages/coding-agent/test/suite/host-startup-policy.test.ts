@@ -76,7 +76,9 @@ describe("startup controller (senpi#4602)", () => {
 		const controller = startStartupController({ launchKind: "initial", clock });
 		const completions = [8_000, 14_000, 30_000, 70_000, 75_000, 78_000, 80_000, 80_000, 82_000];
 		INITIAL_PATH.forEach((phase, index) => {
-			clock.advanceTo(completions[index]!);
+			const at = completions[index];
+			if (at === undefined) throw new Error(`no completion time for phase ${index}`);
+			clock.advanceTo(at);
 			expect(controller.complete(phase)).toBe("accepted");
 		});
 		expect(controller.terminal).toEqual({ kind: "ready", elapsedMs: 82_000 });
