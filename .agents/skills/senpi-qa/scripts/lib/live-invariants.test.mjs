@@ -3,7 +3,6 @@ import test from "node:test";
 import {
 	checkBudget,
 	checkDeclarationsAcrossPlacements,
-	checkHooksOncePerCall,
 	checkNoDanglingCall,
 	checkNoEngineError,
 	checkNoMarkers,
@@ -13,35 +12,11 @@ import {
 	checkTaskShape,
 	evaluateLiveRun,
 	MAX_BUDGET,
-	nestedCalls,
 } from "./live-invariants.mjs";
+import { assistant, hooks, result, started } from "./live-test-fixtures.mjs";
+import { nestedCalls } from "./live-transcript.mjs";
 
-const assistant = (id, calls, extra = {}) => ({
-	type: "message",
-	id,
-	message: {
-		role: "assistant",
-		content: calls.map(([callId, name]) => ({ type: "toolCall", id: callId, name, arguments: {} })),
-		stopReason: "toolUse",
-		...extra,
-	},
-});
-const result = (id, toolCallId, isError = false) => ({
-	type: "message",
-	id,
-	message: { role: "toolResult", toolCallId, isError },
-});
 const custom = (id) => ({ type: "custom", id, customType: "pi-rules.scan" });
-const hooks = (...ids) =>
-	ids.flatMap((toolCallId) => [
-		{ event: "PreToolUse", toolCallId, session_id: "s1" },
-		{ event: "PostToolUse", toolCallId, session_id: "s1" },
-	]);
-const started = (...ids) =>
-	ids.flatMap((toolCallId) => [
-		{ type: "tool_execution_start", toolCallId },
-		{ type: "tool_execution_end", toolCallId },
-	]);
 
 /** A transcript that meets the task shape: 32 calls over 8 turns, every component used. */
 function goodRun() {
@@ -143,94 +118,6 @@ test("an end without a matching start is a violation and does not close another 
 	];
 	assert.deepEqual(checkNoDanglingCall(events).detail, ["call ghost ended without a start"]);
 	assert.deepEqual(nestedCalls(events), [{ id: "cm-1", name: "bash", parentId: "ev1" }]);
-});
-
-// senpi#5128: a shared hook trace must be joined by session AND call, never by call alone.
-const parentEntries = [{ type: "session", id: "s1" }, assistant("a", [["c1", "read"]]), result("r1", "c1")];
-const childEntries = [{ type: "session", id: "child" }, assistant("b", [["c1", "read"]]), result("r2", "c1")];
-const childHooks = hooks("c1").map((line) => ({ ...line, session_id: "child" }));
-for (const { name, trace, children = [], events = [], pass, failure } of [
-	{ name: "parent-only calls", trace: hooks("c1"), pass: true },
-	{ name: "sub-agent calls in their own session, even with the same call id", trace: [...hooks("c1"), ...childHooks],
-		children: [{ entries: childEntries }], pass: true },
-	{ name: "phantom id", trace: [...hooks("c1"), ...hooks("ghost")], pass: false, failure: /unknown call ghost/ },
-	{ name: "duplicate Pre", trace: [...hooks("c1"), hooks("c1")[0]], pass: false, failure: /PreToolUse fired 2 times/ },
-	{ name: "missing Post", trace: [hooks("c1")[0]], pass: false, failure: /PostToolUse fired 0 times/ },
-	{ name: "unknown session", trace: [...hooks("c1"), ...childHooks], pass: false, failure: /unknown session child/ },
-	{ name: "missing session attribution", trace: hooks("c1").map(({ session_id, ...line }) => line),
-		pass: false, failure: /unknown session/ },
-	{ name: "call in the wrong session", trace: [...hooks("c1"), ...hooks("ghost").map((line) => ({ ...line, session_id: "child" }))],
-		children: [{ entries: childEntries }], pass: false, failure: /unknown call ghost in session child/ },
-	{ name: "child with missing Post", trace: [...hooks("c1"), childHooks[0]], children: [{ entries: childEntries }],
-		pass: false, failure: /PostToolUse fired 0 times for c1 in session child/ },
-	{ name: "execution start cannot legitimize a phantom transcript call", trace: [...hooks("c1"), ...hooks("ghost")],
-		events: started("ghost"), pass: false, failure: /unknown call ghost/ },
-]) {
-	test(`G1 per session: ${name}`, () => {
-		const verdict = checkHooksOncePerCall(trace, parentEntries, events, children);
-		assert.equal(verdict.pass, pass);
-		if (failure) assert.match(verdict.detail.join("; "), failure);
-	});
-}
-
-test("non-eval nested ids require an owning session and its once-per-call hooks", () => {
-	const entries = [{ type: "session", id: "s1" }, assistant("a", [["task1", "task"]])];
-	const events = [
-		{ type: "tool_execution_start", toolCallId: "task1" },
-		{ type: "tool_hook_status", toolCallId: "c1", toolName: "read" },
-		{ type: "tool_execution_end", toolCallId: "task1" },
-	];
-	const missing = checkHooksOncePerCall(hooks("task1"), entries, events);
-	assert.equal(missing.pass, false);
-	assert.match(missing.detail.join("; "), /nested call c1 has no owning session/);
-	assert.equal(checkHooksOncePerCall([...hooks("task1"), ...childHooks], entries, events,
-		[{ entries: childEntries }]).pass, true);
-	assert.equal(checkHooksOncePerCall([...hooks("task1"), childHooks[0]], entries, events,
-		[{ entries: childEntries }]).pass, false);
-	assert.equal(checkHooksOncePerCall([...hooks("task1"), ...childHooks, childHooks[0]], entries, events,
-		[{ entries: childEntries }]).pass, false);
-});
-
-test("child eval calls use only that session's independent engine evidence", () => {
-	const entries = [
-		{ type: "session", id: "child" },
-		assistant("a", [["ev-child", "eval"]]),
-		{ ...result("r", "ev-child"), message: {
-			...result("r", "ev-child").message,
-			details: { toolCalls: [{ callId: "kernel-local", name: "read", ok: true }] },
-		} },
-		{ type: "custom", customType: "live-tool-call", data: { id: "cm-child", name: "read" } },
-	];
-	const trace = hooks("ev-child", "cm-child").map((line) => ({ ...line, session_id: "child" }));
-	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace], parentEntries, [], [{ entries }]).pass, true);
-	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace.slice(0, -1)], parentEntries, [],
-		[{ entries }]).pass, false);
-	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace, trace[2]], parentEntries, [],
-		[{ entries }]).pass, false);
-	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace, ...hooks("cm-child")], parentEntries, [],
-		[{ entries }]).pass, false);
-	const forged = entries.filter((entry) => entry.customType !== "live-tool-call");
-	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace], parentEntries, [],
-		[{ entries: forged }]).pass, false);
-	const unknown = hooks("ghost").map((line) => ({ ...line, session_id: "child" }));
-	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace, ...unknown], parentEntries, [],
-		[{ entries }]).pass, false);
-	const kernel = hooks("kernel-local").map((line) => ({ ...line, session_id: "child" }));
-	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace, ...kernel], parentEntries, [],
-		[{ entries }]).pass, false);
-});
-
-test("calls run inside an eval cell are attributed to the running call and need their own hooks", () => {
-	const events = [
-		{ type: "tool_execution_start", toolCallId: "ev1" },
-		{ type: "tool_hook_status", toolCallId: "ev1", toolName: "eval" },
-		{ type: "tool_hook_status", toolCallId: "cm-1", toolName: "bash" },
-		{ type: "tool_execution_end", toolCallId: "ev1" },
-	];
-	assert.deepEqual(nestedCalls(events), [{ id: "cm-1", name: "bash", parentId: "ev1" }]);
-	const entries = [{ type: "session", id: "s1" }, assistant("a", [["ev1", "eval"]]), result("r1", "ev1")];
-	assert.equal(checkHooksOncePerCall(hooks("ev1"), entries, events).pass, false);
-	assert.equal(checkHooksOncePerCall(hooks("ev1", "cm-1"), entries, events).pass, true);
 });
 
 test("bash inside eval cells of two different calls counts as sequential bash; one cell does not", () => {

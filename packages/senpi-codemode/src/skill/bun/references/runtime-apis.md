@@ -1,6 +1,6 @@
-# Bun 1.4 Runtime Builtins
+# Bun 1.4.x Runtime Builtins
 
-Every API here ships inside the Bun binary: no install step, no native build, no lockfile entry. Version tags mark the minimum Bun version.
+Every API here ships inside the Bun binary: no install step, no native build, no lockfile entry. Version tags mark the minimum Bun version. Shell, spawn, secrets, files and the measurement helpers live in [session-recipes](session-recipes.md).
 
 ## Bun.Image — image processing (replaces sharp) [v1.3.14]
 
@@ -35,6 +35,8 @@ await Bun.write("page.png", await view.screenshot());
 
 - macOS: system WebKit, nothing to install. macOS/Linux/Windows: can drive installed Chrome/Chromium/Edge.
 - In the eval js kernel, Chrome-backed views (the default off macOS, or `backend: "chrome"`) are served by the process main thread; the API is the same, a constructor error surfaces on the first awaited call, and `Bun.WebView.closeAll()` closes only this kernel's views. A kernel reset closes every view the kernel left open.
+- **One JS thread per process.** The WebKit backend is a process-wide client bound to the first thread that creates a view; a second thread (a Worker, a kernel worker) using it corrupts the JSC heap (omo SIGSEGV, 2026-10-29). The first Chrome-backed navigation (CDP target attach) is what blows a cell deadline, not Chrome startup — size test and cell timeouts so the inner one fires first (2026-09-28).
+- Prefer `view.screenshot()` over `chrome --headless --screenshot`, which hung as an orphan on macOS (2026-10-19). Backend choice changes `Secure` cookie behaviour on loopback (2026-10-07). 1.4.1 fixed the hang after 64 WebKit views in one process.
 - Clicks/scrolls are trusted user input (`event.isTrusted === true`).
 - Extends `EventTarget`; screenshots are `Blob`s; `.cdp(method, params?)` escape hatch for raw Chrome DevTools Protocol.
 
@@ -45,16 +47,12 @@ Docs: <https://bun.com/docs/runtime/markdown> · Blog: [#bun-markdown](https://b
 ```ts
 const html = Bun.markdown.html("# Hello **world**");   // HTML string
 const el = Bun.markdown.react(readme);                  // React elements; swap components per tag
-const ansi = Bun.markdown.render("# Hi\n\n**bold**", {  // callback per element (terminal output etc.)
-  heading: (children) => `\x1b[1;4m${children}\x1b[0m\n`,
-  paragraph: (children) => children + "\n",
-  strong: (children) => `\x1b[1m${children}\x1b[22m`,
-});
+const ansi = Bun.markdown.ansi("# Hi\n\n**bold**");     // terminal-ready ANSI (what `bun ./README.md` prints)
+Bun.markdown.render(src, { heading: (children, { level }) => … });   // callback per element for any other target
 ```
 
-- GFM tables, strikethrough, task lists, autolinks. `.md` is a bundler loader. Linear time on adversarial input.
+- GFM tables, strikethrough, task lists, autolinks. `.md` is a bundler loader. Linear time on adversarial input (1.4.3 fixed quadratic `render()` on deep nesting).
 - **HTML output is NOT sanitized** — raw HTML, event handlers, `javascript:` hrefs pass through. Sanitize before serving user content.
-- Bonus: `bun ./README.md` renders Markdown to the terminal (replaces glow).
 
 ## Bun.cron() — scheduled jobs (replaces node-cron) [v1.3.11, improved v1.4.0]
 
@@ -89,7 +87,7 @@ const proc = Bun.spawn(["bash"], {
 proc.terminal.write("echo Hello from PTY!\n");
 ```
 
-- Drive bash/vim/htop with colored output; resize; works on Linux, macOS, Windows.
+- Drive bash/vim/htop with colored output; resize; works on Linux, macOS, Windows. Replaces node-pty and the `script -q /dev/null` wrapper our PTY test harnesses used.
 - `write()` returns full input length (whole input buffered); `drain` fires on POSIX.
 
 ## bun run --parallel — concurrent scripts (replaces concurrently, npm-run-all) [v1.3.9, improved v1.4.0]
@@ -132,8 +130,10 @@ Blog: [#also-built-in](https://bun.com/blog/bun-v1.4#also-built-in)
 | `Bun.JSONC.parse()` | jsonc-parser | comments + trailing commas (the tsconfig parser); throws `SyntaxError` on invalid input |
 | `Bun.XML.parse()/stringify()` | fast-xml-parser, xml2js | SIMD; `.xml` files importable (v1.4: import returns parsed doc, not path) |
 | `Bun.TOML.parse()/stringify()` | @iarna/toml | TOML v1.1.0, 708/708 toml-test; v1.4 is strict — unquoted strings throw `SyntaxError` |
-| `Bun.YAML.parse()` | — | YAML 1.2: `yes/no/on/off` are strings, not booleans |
-| `Bun.Archive` | tar | create/extract tarballs off the main thread — docs <https://bun.com/docs/runtime/archive> |
+| `Bun.YAML.parse()` | js-yaml | YAML 1.2: `yes/no/on/off` are strings, not booleans |
+| `Bun.Archive` | tar | create/extract tarballs off the main thread; `extract()`/`files()` reject on a truncated archive [v1.4.4] — docs <https://bun.com/docs/runtime/archive> |
+| `new HTMLRewriter().on("a[href]", { element(el) { el.getAttribute("href") } }).transform(html \| response)` | cheerio, jsdom (scraping) | streaming CSS-selector handlers: `element`, `text`, `comments`, `onDocument`; rewrites `Response` bodies in flight — docs <https://bun.com/docs/runtime/html-rewriter> |
+| `new Bun.Glob("**/!(*.test).ts").scan({ cwd })` | fast-glob, minimatch | async iterator of matches; `.match(path)`; extglob and `{1..3}` since 1.4.4 |
 
 ## Terminal text utilities (replaces string-width, slice-ansi, cli-truncate, wrap-ansi)
 
@@ -145,10 +145,35 @@ Bun.sliceAnsi(str, 0, 20);        // slice by columns, preserving ANSI codes
 Bun.wrapAnsi(str, 80);            // wrap by columns
 ```
 
+## Databases and object storage
+
+Docs: <https://bun.com/docs/runtime/sql>, <https://bun.com/docs/runtime/sqlite>, <https://bun.com/docs/runtime/redis>, <https://bun.com/docs/runtime/s3>
+
+```ts
+import { SQL } from "bun";
+const sql = new SQL({ transform: SQL.camel });                 // first_name <-> firstName both ways [v1.4.4]
+const rows = await sql`SELECT * FROM users WHERE id = ANY(${[1, 2, 3]})`;   // JS arrays bind to PG arrays [v1.4.4]
+await Bun.file("users.csv").stream().pipeTo(sql`COPY users FROM STDIN (FORMAT csv)`.writable());   // 255 MiB/s, flat RSS [v1.4.4]
+const q = sql`SELECT pg_sleep(30)`.execute(); setTimeout(() => q.cancel(), 100);                  // real server-side cancel [v1.4.4]
+
+import { Database } from "bun:sqlite";
+const db = new Database(":memory:");
+db.function("add2", (a, b) => a + b);  db.aggregate("sum_all", { start: 0, step: (t, v) => t + v });   // UDFs [v1.4.4]
+db.onInsert = (db, table, rowid) => {};   // update hooks [v1.4.4]
+db.query("SELECT title FROM movies").as(Movie).all();   // rows as class instances; .serialize()/Database.deserialize() for in-memory copies
+```
+
+- `Bun.SQL` speaks PostgreSQL, MySQL/MariaDB and SQLite with one API; 1.4.4 cut client CPU per query 21-48%, added `result.columns`/`result.statement`, `sql.json(value)`, `channelBinding`, libpq URL params, TCP keepalive, and `bun --hot` reuses the pool.
+- **Session traps:** `sql.unsafe()` and plain `` sql`` `` queries are lazy — `expect(query).rejects` never starts them and the test hangs (2026-10-13); `await` or `.execute()` first. A Postgres behind a TLS-terminating proxy lies in `pg_stat_ssl`; demand TLS on the client (see [security](security.md)). Bun 1.4.0 `node:sqlite` leaked the file handle after `close()` when `prepare()` was called (Windows EBUSY) — fixed in 1.4.4.
+- `Bun.RedisClient` (`redis://`, `rediss://` with hostname verification): strings, hashes, sets, pub/sub, pipelining, auto-reconnect; replaces ioredis for the common path.
+- `Bun.S3Client` / `Bun.s3` / `fetch("s3://bucket/key")` / `Bun.file("s3://…")`: AWS S3, Cloudflare R2, GCS, MinIO, Spaces; presigned URLs, streaming multipart writes, static `S3Client.list/stat/delete`. **Measured on our R2 mirror:** `writer().end(error)` COMPLETED a truncated multipart upload on 1.4.2 (oven-sh/bun#43134), a failed GET can end as an empty successful stream, and single-object PUT/DELETE returned `InternalError` where a hand-signed request succeeded (2026-10-08, 10-26) — verify size and hash after every S3 write, and abort on a zero-byte read of a non-empty object. Byte-equal copies can still lose HTTP metadata; copy headers explicitly.
+
 ## Everything else new in the runtime
 
+- **`Bun.ModuleGraph`** (experimental) [v1.4.3]: run many instances of one app in one process, each with fresh module state, `require.cache`, timers and I/O; `graph.import()`, `graph.run(fn)`, `graph.dispose()` (closes its servers/sockets/children; not a security sandbox). Bytecode is shared between graphs.
+- **`crypto.argon2()` / `argon2Sync()`** [v1.4.1]: argon2d/i/id byte-identical to Node; `Bun.password.hash()` for the high-level API.
 - **`URLPattern`**: the Web API, 408 WPT passing. Replaces path-to-regexp.
-- **`CompressionStream` / `DecompressionStream`**: gzip, deflate, deflate-raw + brotli and zstd.
+- **`CompressionStream` / `DecompressionStream`**: gzip, deflate, deflate-raw + brotli and zstd; `new CompressionStream("brotli", { level: 4 })` trades ratio for speed (brotli defaults to 11, which is slow on large dynamic bodies) [v1.4.3].
 - **`Response.textStream()`**: `ReadableStream<string>` of the body decoded as UTF-8.
 - **`process.on("memoryPressure")`**: OS low-memory notification on macOS/Linux/Windows.
 - **ML-DSA and ML-KEM**: NIST post-quantum signatures/KEM in `crypto.subtle` and `node:crypto`.
