@@ -1,10 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [2026.10.31-2] - 2026-10-31
 
 ### Breaking Changes
 
 ### Added
+
+- Added an execution ledger with durable endpoint transitions, lease and restart recovery, and portable ledger conformance cases ([#5004](https://github.com/code-yeongyu/senpi/pull/5004)).
 
 ### Changed
 

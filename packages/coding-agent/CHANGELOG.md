@@ -1,16 +1,38 @@
 # Changelog
 
-## [Unreleased]
+## [2026.10.31-2] - 2026-10-31
 
 ### Breaking Changes
 
 ### Added
 
+- Test-only `SENPI_TEST_CURRENT_DATE` and `SENPI_TEST_WORKSTATION` environment inputs pin the environment-context date and the workstation CPU model, core count and kernel, so a harness driving the CLI gets the same prompt bytes on every day and host; unset, nothing changes ([#4660](https://github.com/code-yeongyu/senpi/issues/4660), [#4662](https://github.com/code-yeongyu/senpi/pull/4662))
+- The test-only `SENPI_TEST_WORKSTATION` pin takes an optional `repoRoot: {from, to}` field: a skill root inside the checkout `from` is shown under the synthetic root `to` in the prompt's `<skill_roots>` table, so a harness driving the CLI gets the same prompt bytes from any checkout path; unset, the prompt is unchanged (#5067) ([#4837](https://github.com/code-yeongyu/senpi/pull/4837))
+- Add guarded private secret input for extensions, masked TUI presentation and owner-bound RPC collection; refuse unsupported clients without a plaintext fallback. ([#5120](https://github.com/code-yeongyu/senpi/pull/5120))
+
 ### Changed
+
+- DeepSeek V4.1 Flash gets its own tuned system prompt: a compressed core with the hard limits in one block, the V4 Flash repair rules carried over, and a rule to end the turn instead of polling when only background results remain; the rendered prompt is 8-16% shorter ([#5195](https://github.com/code-yeongyu/senpi/pull/5195))
 
 ### Fixed
 
+- On macOS and Linux, concurrent starts no longer overwrite each other's RPC socket secret: the first complete secret is published without replacing anything, and later creators reuse it ([#4369](https://github.com/code-yeongyu/senpi/pull/4369))
+- A new linked git worktree of a trusted repository (for example one Orca creates in `~/orca/workspaces/<repo>/<name>`) is trusted without asking "Trust project folder?", and a main checkout saved as "do not trust" keeps its worktrees untrusted, also under Full access; a decision saved for the worktree still wins, and a folder that only claims to be a worktree inherits nothing ([#4388](https://github.com/code-yeongyu/senpi/pull/4388))
+- Made the RPC supersession announcement tests wait for a host protocol reply before requesting a drain, so a newly connected observer cannot miss the announcement while the supervisor is still establishing its private connection ([#4824](https://github.com/code-yeongyu/senpi/pull/4824)).
+- When every Anthropic Subscription account is out for one model only, model fallback now moves just that model and keeps the same accounts' other models available, and the notice says the model hit its usage limit ([#5019](https://github.com/code-yeongyu/senpi/pull/5019))
+- An aborted or failed credential probe no longer holds its account for 30 seconds, and a refusal while another request probes the account says when to retry ([#5027](https://github.com/code-yeongyu/senpi/pull/5027)).
+- A session that fell back after its primary hit a usage limit stays on the fallback until the reset the limit named, instead of returning after the 30-minute circuit and falling back again; a successful login (including adding an account) or explicit block reset for that provider lifts the wait, but another session's pool health updates do not ([#5041](https://github.com/code-yeongyu/senpi/pull/5041))
+- Two installed versions sharing the credential-pool health file no longer wipe each other's account blocks when one of them writes a field the other does not know ([#5057](https://github.com/code-yeongyu/senpi/pull/5057)).
+- In eval-only sessions the bash timeout policy names `tool.bash(...)` from an eval cell instead of a direct `bash` call, and it is omitted when no `bash` tool exists ([#5140](https://github.com/code-yeongyu/senpi/issues/5140))
+- The todo tool accepts an init `list` wrapped one level too deep (`[[...]]` or `{list: [...]}`) by unwrapping it to the canonical shape ([#5148](https://github.com/code-yeongyu/senpi/issues/5148))
+- Composing more than five skills no longer skips the rest or shows `Extension "skill:expansion" error` in the TUI; skills past a 128K-character inline budget load as a reference to their `SKILL.md` ([#5156](https://github.com/code-yeongyu/senpi/pull/5156))
+- Durable core: the inert JSONL session importer now accepts every session file SessionManager opens: pre-v2 files are migrated the same way (with stable ids, so a reopen keeps them), and lines that are not objects with an `id` are kept in file order instead of failing the import ([#5190](https://github.com/code-yeongyu/senpi/pull/5190), fixes [#5070](https://github.com/code-yeongyu/senpi/issues/5070)).
+
 ### Removed
+
+- `PI_CLAUDE_CODE_VERSION` and the `claude-code-version.json` cache; the plain `anthropic` provider takes API keys only, and a Claude OAuth token given to it is refused with a pointer at `/login anthropic-subscription` ([#5136](https://github.com/code-yeongyu/senpi/pull/5136))
+- The `custom-provider-anthropic` example no longer ships a Claude OAuth login or Claude Code identity headers; it is an API-key custom provider ([#5136](https://github.com/code-yeongyu/senpi/pull/5136))
+- `maxSkillExpansionsPerPrompt` setting and the per-prompt skill cap: every skill a prompt invokes now loads, and an existing `maxSkillExpansionsPerPrompt` value is ignored ([#5156](https://github.com/code-yeongyu/senpi/pull/5156))
 
 ## [2026.10.31-1] - 2026-10-31
 

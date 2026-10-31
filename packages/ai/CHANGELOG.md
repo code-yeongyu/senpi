@@ -1,16 +1,27 @@
 # Changelog
 
-## [Unreleased]
+## [2026.10.31-2] - 2026-10-31
 
 ### Breaking Changes
 
 ### Added
 
+- Preserve typed-secret OAuth prompt metadata through the compatibility adapter. ([#5120](https://github.com/code-yeongyu/senpi/pull/5120))
+
 ### Changed
+
+- A Claude OAuth token given to the `anthropic` provider is refused before any request with `ClaudeOAuthTokenRefusedError`, which points at `/login anthropic-subscription`; Anthropic API keys, `ANTHROPIC_AUTH_TOKEN` headers and workload identity federation are unchanged ([#5136](https://github.com/code-yeongyu/senpi/pull/5136))
 
 ### Fixed
 
+- Signing in to ChatGPT Subscription again as an already-saved account replaces that account instead of adding a duplicate, so sessions stop picking its invalidated old token ([#5009](https://github.com/code-yeongyu/senpi/pull/5009))
+- Avoid mixing strict and non-strict function tools on OpenGateway routes; reject conflicting required-strict tools before sending ([#4821](https://github.com/code-yeongyu/senpi/issues/4821)).
+- Tool argument validation for a discriminated `anyOf`/`oneOf` schema reports only the branch the arguments address, as one actionable line ([#5147](https://github.com/code-yeongyu/senpi/pull/5147)).
+- On OpenAI-compatible routes, tools whose parameters are a union of object shapes now tell the model which fields each shape requires ([#5150](https://github.com/code-yeongyu/senpi/pull/5150))
+
 ### Removed
+
+- The Anthropic Messages API no longer takes Claude OAuth tokens (`sk-ant-oat...`) as API keys: the request path that presented senpi as Claude Code (identity betas, `claude-cli/<version>` user agent, Claude Code system block, tool-name mapping) and the `PI_CLAUDE_CODE_VERSION` fingerprint resolver are removed ([#5136](https://github.com/code-yeongyu/senpi/pull/5136))
 
 ## [2026.10.31-1] - 2026-10-31
 
