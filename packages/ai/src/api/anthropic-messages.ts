@@ -77,6 +77,7 @@ import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
 import { normalizeAnthropicRetryFailure } from "../utils/retry-profile/failure.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { anthropicSystemTextBlocks } from "./anthropic-system-blocks.ts";
 import {
 	applyServerFallbackAbort,
 	applyServerFallbackContinuation,
@@ -1213,6 +1214,7 @@ function consumeLine(text: string): { line: string; rest: string } | null {
 async function* iterateSseMessages(
 	body: ReadableStream<Uint8Array>,
 	signal?: AbortSignal,
+	onBytes?: () => void,
 ): AsyncGenerator<ServerSentEvent> {
 	const reader = body.getReader();
 	const decoder = new TextDecoder();
@@ -1229,6 +1231,7 @@ async function* iterateSseMessages(
 			if (done) {
 				break;
 			}
+			if (value.byteLength > 0) onBytes?.();
 
 			buffer += decoder.decode(value, { stream: true });
 			let consumed = consumeLine(buffer);
@@ -1272,6 +1275,7 @@ async function* iterateSseMessages(
 async function* iterateAnthropicEvents(
 	response: Response,
 	signal?: AbortSignal,
+	onTransportActivity?: () => void,
 ): AsyncGenerator<RawMessageStreamEvent> {
 	if (!response.body) {
 		throw new Error("Attempted to iterate over an Anthropic response with no body");
@@ -1280,7 +1284,7 @@ async function* iterateAnthropicEvents(
 	let sawMessageStart = false;
 	let sawMessageEnd = false;
 
-	for await (const sse of iterateSseMessages(response.body, signal)) {
+	for await (const sse of iterateSseMessages(response.body, signal, onTransportActivity)) {
 		if (sse.event === "error") {
 			let errorText = sse.data;
 			const hintMs = extract429RetryAfterMs({ bodyText: sse.data });
@@ -1573,7 +1577,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				| (ProviderNativeContent & { partialJson?: string; index?: number });
 			const blocks = output.content as Block[];
 
-			for await (const event of iterateAnthropicEvents(response, requestSignal)) {
+			for await (const event of iterateAnthropicEvents(response, requestSignal, options?.onTransportActivity)) {
 				await options?.onProviderStreamEvent?.(event, model);
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
@@ -2482,21 +2486,13 @@ function buildParams(
 			},
 		];
 		if (initialSystemText) {
-			params.system.push({
-				type: "text",
-				text: sanitizeSurrogates(initialSystemText),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			});
+			params.system.push(
+				...anthropicSystemTextBlocks(initialSystemText, initialSystemMessage?.stablePrefix, cacheControl),
+			);
 		}
 	} else if (initialSystemText) {
 		// Add cache control to system prompt for non-OAuth tokens
-		params.system = [
-			{
-				type: "text",
-				text: sanitizeSurrogates(initialSystemText),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			},
-		];
+		params.system = anthropicSystemTextBlocks(initialSystemText, initialSystemMessage?.stablePrefix, cacheControl);
 	}
 
 	// Temperature is incompatible with extended thinking and unsupported on Claude Opus 4.7+.

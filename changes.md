@@ -1,5 +1,46 @@
 # changes — senpi-monorepo root
 
+## 2026-10-29 - Use Bun for no-emit type checking (senpi#4770)
+
+### What changed
+
+- The root `check` script runs `bun check --no-script --all -p` for `tsconfig.json` and `scripts/tsconfig.json`.
+
+### Why
+
+- Use the pinned Bun checker while preserving the checked projects and type-error failures. `--no-script` prevents dispatching the root `check` script recursively.
+
+### Why an extension could not handle it
+
+- Repository validation runs outside the extension runtime.
+
+### Expected merge conflict zones
+
+- LOW: the two type-check commands in the root `package.json` `check` script.
+
+## 2026-10-27 - knip dead-code check (senpi#4421)
+
+### What changed
+
+- `package.json`: a new `knip:check` script runs `knip`, and `knip` is pinned exactly at 6.43.0 in `devDependencies`. `package-lock.json` and `bun.lock` were refreshed through `bun run refresh-lock`.
+- `knip.jsonc`: new config. The `types`/`nsTypes` rules are off. Run-by-path scripts get an explicit `entry`, including every `.agents/skills/senpi-qa/scripts/**` driver, and each workspace has its own config. Findings already on main are scoped ignores, each with a `pre-existing at origin main aceb1cc1d9` reason.
+- `knip.jsonc` with `scripts/knip-preexisting-exports.ts`: no unused export is ignored file-wide on our own files. The 1262 pre-existing unused exports in 717 files are listed by (file, export) under `preprocessorOptions.preExistingExports`, each with its reason, and the `preprocessor` drops only those pairs, so a new unused export in the same file still fails `knip:check`. File-wide `"exports"` remains only for the generated protobuf-es files, with a comment saying so; the vendored pi-codemode `runtime/prelude-source.ts` carries senpi changes and no byte pin, so its two exports are named like any other file's. The preprocessor is a byte-identical copy of sisyphuslabs/omo-relay-daemon's (daemon main 757e46e0b6, from daemon#123); `scripts/knip-preexisting-exports.test.mjs` pins its sha256, unit-tests it, and fails when a listed export is no longer reported.
+- `knip.jsonc`: knip export-checks an entry only when it comes from a workspace's `entry` list in a workspace with `includeEntryExports`; a file it resolves only from a package.json script, a CI workflow `run:` line or a tool config stays unchecked. All 11 workspaces with an `entry` list now set `includeEntryExports`, the files knip resolves that no `entry` glob covered (vitest setup and reporter files, the tui `--import` setup) are listed by name, and named lines a glob in the same list already matched are gone (knip's resolved entry set is identical without them). Existing exports this surfaces are listed by name like every other pre-existing unused export (below);
+- `scripts/knip-entry-exports.test.mjs` with `scripts/knip-entry-table.test-support.mjs` and `scripts/knip-probe.test-support.mjs`: the probe table is knip's own resolved entry list (one programmatic knip run that records every file knip adds as an entry and how), not a parser of our own. A coarse scan of package.json scripts and workflow lines can only add: a file it sees run by path that knip does not list as an entry fails the test by name. The test then appends one unused export to every table file in a temp copy (used only through its real path, since macOS `tmpdir()` is a symlink), runs knip once with the exact `knip.jsonc` CI runs, and fails when any probe goes unreported outside the files knip's own ignore matcher covers.
+- `scripts/check-knip-export-coverage.mjs`: knip export coverage never shrinks. It probes every source file in a temp copy, runs knip with this tree's `knip.jsonc` and with the base branch's (or the branch's first `knip.jsonc` when the base has none), and fails naming every file the base export-checked that this config does not.
+
+### Why
+
+- oxlint catches unused variables inside a file. It cannot see a file nothing imports, an export nobody consumes, or a dependency nothing uses (senpi#4419).
+
+### Why an extension could not handle it
+
+- Repository tooling that runs before any agent code exists.
+
+### Expected merge conflict zones
+
+- LOW: the root `scripts` and `devDependencies` blocks in `package.json`. Upstream pi-mono has no knip, so on a sync keep `knip:check` and the pin.
+
 ## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
 
 ### What changed
