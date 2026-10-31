@@ -105,6 +105,52 @@ describe("a failed OAuth refresh blocks the account only when the grant itself w
 		["404 token endpoint moved", () => refreshRejected(404, "Not Found"), FAIL_REQUEST],
 		["403 plain forbidden", () => refreshRejected(403, "forbidden"), FAIL_REQUEST],
 		["400 that names no grant error", () => refreshRejected(400, '{"error":"invalid_request"}'), FAIL_REQUEST],
+		// A 401 naming a fault of the client application or the request (RFC 6749 section 5.2) is the same
+		// for every account, so it never blocks one; a 401 naming no OAuth code still does.
+		...["invalid_client", "unauthorized_client", "invalid_request", "unsupported_grant_type", "invalid_scope"].map(
+			(code) => [`401 ${code}`, () => refreshRejected(401, JSON.stringify({ error: code })), FAIL_REQUEST] as const,
+		),
+		[
+			"401 invalid_client carried as the error's OAuth code",
+			() =>
+				refreshFailed(new OAuthTokenEndpointError("token refresh failed", 401, { oauthError: "invalid_client" })),
+			FAIL_REQUEST,
+		],
+		// Kimi's refresh decides the refusal itself and throws prose with no OAuth JSON
+		// ("Kimi Code token refresh unauthorized (status N): <description>"), carrying the facts on the error.
+		[
+			"Kimi 403 refusal",
+			() =>
+				refreshFailed(
+					new OAuthTokenEndpointError("Kimi Code token refresh unauthorized (status 403): token revoked", 403, {
+						credentialRefused: true,
+					}),
+				),
+			FAILOVER,
+		],
+		[
+			"Kimi 400 invalid_grant refusal",
+			() =>
+				refreshFailed(
+					new OAuthTokenEndpointError(
+						"Kimi Code token refresh unauthorized (status 400): The refresh token is invalid",
+						400,
+						{ oauthError: "invalid_grant", credentialRefused: true },
+					),
+				),
+			FAILOVER,
+		],
+		[
+			"Kimi 401 invalid_client is a client fault, not a refusal",
+			() =>
+				refreshFailed(
+					new OAuthTokenEndpointError("Kimi Code token refresh unauthorized (status 401): bad client", 401, {
+						oauthError: "invalid_client",
+						credentialRefused: true,
+					}),
+				),
+			FAIL_REQUEST,
+		],
 		[
 			"a token that expires too soon after refresh",
 			() => new ModelsError("oauth", `OAuth refresh returned a token that expires too soon for ${PROVIDER}`),
@@ -115,10 +161,81 @@ describe("a failed OAuth refresh blocks the account only when the grant itself w
 	});
 });
 
+// A refresh that never reached the token endpoint says nothing about the account: it retries the same
+// account like any model request with the same transport fault, whichever network code reports it.
+describe("a refresh that failed in the network retries the same account", () => {
+	const RETRY_SAME = { kind: "retry_same", maxAttempts: 2 };
+	const NETWORK_CODES = [
+		"ECONNRESET",
+		"ECONNREFUSED",
+		"ECONNABORTED",
+		"ETIMEDOUT",
+		"EHOSTUNREACH",
+		"EHOSTDOWN",
+		"ENETUNREACH",
+		"ENETDOWN",
+		"ENETRESET",
+		"ENOTFOUND",
+		"EAI_AGAIN",
+		"EPIPE",
+		"EADDRNOTAVAIL",
+		"ERR_SOCKET_CONNECTION_TIMEOUT",
+		"UND_ERR_CONNECT_TIMEOUT",
+		"UND_ERR_HEADERS_TIMEOUT",
+		"UND_ERR_BODY_TIMEOUT",
+		"UND_ERR_SOCKET",
+		"UND_ERR_CLOSED",
+		"ConnectionRefused",
+		"ConnectionClosed",
+		"FailedToOpenSocket",
+	];
+	test.each(NETWORK_CODES)("undici fetch failed caused by %s", (code) => {
+		const cause = Object.assign(new TypeError("fetch failed"), {
+			cause: Object.assign(new Error(`connect ${code} 192.0.2.1:443`), { code }),
+		});
+		expect(classifyCredentialFailure(refreshFailed(cause), { nowMs: NOW })).toEqual(RETRY_SAME);
+	});
+	test.each(NETWORK_CODES)("runtime socket error with code %s", (code) => {
+		const cause = Object.assign(new Error("Unable to connect"), { code });
+		expect(classifyCredentialFailure(refreshFailed(cause), { nowMs: NOW })).toEqual(RETRY_SAME);
+	});
+	test.each(["fetch failed", "socket hang up", "network error", "request timed out", "read ECONNRESET"])(
+		"statusless network wording: %s",
+		(text) => {
+			expect(classifyCredentialFailure(refreshFailed(new Error(text)), { nowMs: NOW })).toEqual(RETRY_SAME);
+		},
+	);
+	test("a refresh that hit a local certificate fault still fails the request", () => {
+		const cause = Object.assign(new TypeError("fetch failed"), {
+			cause: Object.assign(new Error("self-signed certificate in certificate chain"), {
+				code: "SELF_SIGNED_CERT_IN_CHAIN",
+			}),
+		});
+		expect(classifyCredentialFailure(refreshFailed(cause), { nowMs: NOW })).toEqual({ kind: "fail_request" });
+	});
+	test("a token endpoint that answered is not a network fault, whatever its page says", () => {
+		const error = refreshRejected(403, "<html>network error: request blocked by firewall</html>");
+		expect(classifyCredentialFailure(error, { nowMs: NOW })).toEqual({ kind: "fail_request" });
+	});
+	test("network wording in a refused grant still blocks the account", () => {
+		const error = refreshRejected(401, '{"error":"invalid_grant","error_description":"network error"}');
+		expect(classifyCredentialFailure(error, { nowMs: NOW })).toEqual({
+			kind: "failover",
+			block: { reason: "auth_error" },
+		});
+	});
+	test("auth wording in a failed refresh that was not refused never blocks the account", () => {
+		const error = refreshFailed(new Error("unauthorized: invalid api key, token revoked"));
+		expect(classifyCredentialFailure(error, { nowMs: NOW })).toEqual({ kind: "fail_request" });
+	});
+});
+
 describe("auth-class classification of one pooled account (senpi#2304, senpi#3037)", () => {
 	test.each([
 		["statusless invalidated token prose", () => new Error(INVALIDATED)],
 		["statusless revoked token prose", () => new Error("Your token has been revoked. Please sign in again.")],
+		["statusless revoked access token prose", () => new Error("access token revoked")],
+		["statusless token_invalidated prose", () => new Error("error: token_invalidated")],
 		[
 			"statusless structured token_revoked code",
 			() =>
@@ -177,6 +294,14 @@ describe("auth-class classification of one pooled account (senpi#2304, senpi#303
 		["websocket session has been revoked, reconnect", "fail_request"],
 		["WebSocket error: session was invalidated", "retry_same"],
 		["WebSocket closed 1006: session has been revoked", "retry_same"],
+		["session token invalidated", "fail_request"],
+		["session_token_revoked", "fail_request"],
+		["session token has been revoked", "fail_request"],
+		["csrf token invalidated", "fail_request"],
+		["pagination token was invalidated", "fail_request"],
+		["continuation token revoked", "fail_request"],
+		["cursor token invalidated", "fail_request"],
+		["idempotency token revoked", "fail_request"],
 	] as const)("%s is not evidence of a revoked credential", (text, kind) => {
 		expect(classifyCredentialFailure(new Error(text), { nowMs: NOW })).toEqual(
 			kind === "retry_same" ? { kind, maxAttempts: 2 } : { kind },
