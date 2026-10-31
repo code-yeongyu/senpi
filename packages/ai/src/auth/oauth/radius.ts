@@ -59,16 +59,13 @@ async function loadRadiusOAuthDiscovery(gateway: string, signal: AbortSignal): P
 }
 
 class OAuthResponseError extends OAuthTokenEndpointError {
-	readonly oauthError?: string;
-
 	constructor(status: number, oauthError: string | undefined, description: string | undefined, message: string) {
 		const detail = oauthError
 			? description
 				? `${oauthError}: ${description}`
 				: oauthError
 			: description || String(status);
-		super(`${message}: ${detail}`, status);
-		this.oauthError = oauthError;
+		super(`${message}: ${detail}`, status, { oauthError });
 	}
 }
 

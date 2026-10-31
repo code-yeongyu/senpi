@@ -162,6 +162,11 @@ export interface ExtensionUIDialogOptions {
 	parentToolCallId?: string;
 }
 
+/** A guarded private single-line input; callers on older hosts must check capabilities first. */
+export interface ExtensionUIInputOptions extends ExtensionUIDialogOptions {
+	secret?: boolean;
+}
+
 /** Placement for extension widgets. */
 export type WidgetPlacement = "aboveEditor" | "belowEditor";
 
@@ -238,6 +243,8 @@ export interface QuestionResponse {
  * Each mode (interactive, RPC, print) provides its own implementation.
  */
 export interface ExtensionUIContext {
+	/** Implements private collection and typed refusal; a presenter is checked at call time. */
+	readonly capabilities?: { readonly secretInput?: true };
 	/** Show a selector and return the user's choice. */
 	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
 
@@ -245,7 +252,7 @@ export interface ExtensionUIContext {
 	confirm(title: string, message: string, opts?: ExtensionUIDialogOptions): Promise<boolean>;
 
 	/** Show a text input dialog. */
-	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;
+	input(title: string, placeholder?: string, opts?: ExtensionUIInputOptions): Promise<string | undefined>;
 
 	/**
 	 * Show a multi-question prompt and resolve with the user's answers, comment, cancel, or timeout.
@@ -697,6 +704,13 @@ export interface ExtensionContext {
 	applyCompaction(precomputed: CompactionResult, options: ApplyCompactionOptions): Promise<ApplyCompactionResult>;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/**
+	 * The leading part of `getSystemPrompt()` the session's own requests cache separately (senpi#4447).
+	 * A request built from `getSystemPrompt()` passes it as `Context.systemPromptStablePrefix` so its system
+	 * blocks and cache breakpoint match the turn's. Undefined when every addition was stable. Optional on the
+	 * base context for compatibility with hand-built contexts; the senpi runner always binds it.
+	 */
+	getSystemPromptStablePrefix?(): string | undefined;
 	/**
 	 * Get the current base system-prompt construction options, including any
 	 * user overrides (`customPrompt` from --system-prompt, `appendSystemPrompt`
@@ -1683,6 +1697,13 @@ export interface BeforeAgentStartHandlerOptions {
 	 * the host skips previews (and with them the session-start prompt-cache prewarm).
 	 */
 	previewSafe?: boolean;
+	/**
+	 * Runs the handler after every handler registered without it, on real turns and previews alike;
+	 * run-last handlers keep their registration order among themselves, except that builtin run-last
+	 * handlers run after every other extension's, so MCP server instructions always close the system
+	 * prompt (senpi#4448).
+	 */
+	runLast?: boolean;
 }
 
 /** Registration options for `pi.on("context", handler, options)` and `pi.on("context_with_system", handler, options)`. */
@@ -2322,6 +2343,14 @@ export interface BeforeAgentStartEventResult {
 	};
 	/** Replace the complete system prompt for this turn. Later handlers observe this exact override. */
 	systemPrompt?: string;
+	/**
+	 * Whether this handler's change to `systemPrompt` is the same in every session in the same working
+	 * directory (`"stable"`; the base prompt names the cwd) or differs between sessions, turns or commits
+	 * (`"volatile"`: memory, per-prompt hook output, per-session state). Defaults to `"stable"` for
+	 * builtin extensions and `"volatile"` for every other extension. The prompt up to the first volatile
+	 * change is sent as a separately cached prefix where the provider supports it (senpi#4447).
+	 */
+	systemPromptCache?: "stable" | "volatile";
 	/** Exact render parts of a complete replacement, used only by preview accounting. */
 	readonly systemPromptParts?: readonly DynamicSystemPromptPart[];
 }
@@ -3537,6 +3566,7 @@ export interface ExtensionContextActions {
 	getMessageRevision: () => number;
 	applyCompaction: (precomputed: CompactionResult, options: ApplyCompactionOptions) => Promise<ApplyCompactionResult>;
 	getSystemPrompt: () => string;
+	getSystemPromptStablePrefix?: () => string | undefined;
 	getLoadedHookSources: () => LoadedHookSources;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
 	getPromptCachePrefixRequest?: (options?: PromptCachePrefixRequestOptions) => Promise<PromptCachePrefixResult>;
@@ -3622,6 +3652,8 @@ export interface Extension {
 	handlers: Map<string, HandlerFn[]>;
 	/** `before_agent_start` handlers registered with `{ previewSafe: true }`. */
 	previewSafeHandlers?: WeakSet<HandlerFn>;
+	/** `before_agent_start` handlers registered with `{ runLast: true }`. */
+	runLastHandlers?: WeakSet<HandlerFn>;
 	/** `context`/`context_with_system` handlers registered with `{ mutatesMessages: false }`. */
 	nonMutatingContextHandlers?: WeakSet<HandlerFn>;
 	tools: Map<string, RegisteredTool>;

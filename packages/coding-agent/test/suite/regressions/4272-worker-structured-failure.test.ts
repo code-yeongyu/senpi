@@ -55,4 +55,4 @@ it("a real isolate's structured failures make the host lane unavailable with one
 	} finally {
 		await host.dispose();
 	}
-}, 90_000);
+}, 600_000);

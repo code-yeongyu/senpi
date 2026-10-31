@@ -99,7 +99,6 @@ import {
 	readSettingsState,
 	STATE_KEYS,
 } from "./settings-state.ts";
-import { MAX_SKILL_EXPANSIONS_PER_PROMPT } from "./skill-invocation.ts";
 import {
 	type BranchSummarySettings,
 	isTerminalMouseMode,
@@ -119,7 +118,7 @@ export const DEFAULT_PROVIDER_STREAM_RETRY_TIMEOUT_MS = 30_000;
  * first-token latency observed through relays (a few minutes) and than Anthropic's 10-minute ceiling for a
  * non-streaming request, well short of the 60-minute turn inactivity lease.
  */
-export const DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS = 900_000;
+const DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS = 900_000;
 
 /** Warn threshold for a single `session_shutdown` extension handler. */
 export const DEFAULT_SESSION_SHUTDOWN_HANDLER_WARN_MS = 2_000;
@@ -252,7 +251,6 @@ export interface Settings {
 	themes?: string[]; // Array of local theme file paths or directories
 	hooks?: string[];
 	enableSkillCommands?: boolean; // default: true - register skills as /skill:name commands
-	maxSkillExpansionsPerPrompt?: number; // default: 5 - distinct skills one prompt may expand
 	terminal?: TerminalSettings;
 	promptCache?: PromptCacheSettings;
 	handoffHint?: HandoffHintSettings;
@@ -2399,13 +2397,6 @@ export class SettingsManager {
 
 	getEnableSkillCommands(): boolean {
 		return this.settings.enableSkillCommands ?? true;
-	}
-
-	getMaxSkillExpansionsPerPrompt(): number {
-		const value = this.settings.maxSkillExpansionsPerPrompt;
-		return typeof value === "number" && Number.isInteger(value) && value > 0
-			? value
-			: MAX_SKILL_EXPANSIONS_PER_PROMPT;
 	}
 
 	setEnableSkillCommands(enabled: boolean): void {
