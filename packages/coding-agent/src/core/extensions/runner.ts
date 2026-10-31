@@ -1235,8 +1235,8 @@ export class ExtensionRunner {
 	}
 
 	/** Stops waiting on the given turn's handlers that are still running (the turn deadline's release). */
-	releaseHeldHandlers(turn: number): number {
-		return this.heldHandlerWaits.release(turn);
+	releaseHeldHandlers(turn: number, verdict: HandlerStopVerdict = "released"): number {
+		return this.heldHandlerWaits.release(turn, verdict);
 	}
 
 	/**
@@ -1274,10 +1274,12 @@ export class ExtensionRunner {
 		verdict: HandlerStopVerdict,
 		budget: ExtensionHandlerBudget,
 	): void {
+		// A person moving on from a settled run is not a failure: session.log records it (stage "released"), nothing else.
+		if (verdict === "yielded") return;
 		const error =
 			verdict === "timed_out"
 				? `handler timed out after ${budget.timeoutMs}ms`
-				: "handler released by the turn deadline";
+				: "handler released when the turn was stopped";
 		this.emitError({ extensionPath, event, error });
 	}
 

@@ -213,9 +213,8 @@ function subscribeSession(): void {
 	unsubscribeWake = entry?.runtime?.session.extensionRunner.onBusEvent(WAKE_SOURCE_STATE_EVENT, () =>
 		publishSnapshot(),
 	);
-	unsubscribe = entry?.runtime?.session.subscribe((event) =>
-		publishSnapshot(event.type === "agent_settled" || event.type === "agent_idle"),
-	);
+	// Settled for the host's drain only at agent_idle: agent_settled can precede its extension handlers (omo#11419).
+	unsubscribe = entry?.runtime?.session.subscribe((event) => publishSnapshot(event.type === "agent_idle"));
 }
 
 function snapshot(): WorkerSnapshot {

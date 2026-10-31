@@ -1642,6 +1642,8 @@ export class AgentSession {
 	private readonly _abortProvenance = new AgentAbortProvenance();
 	private _deadlineTracker!: AgentDeadlineTracker;
 	private readonly _agentSettledDelivery = new AgentSettledDelivery();
+	/** Resolved when a person's input moves on while this settle's agent_settled handlers still run (omo#11419). */
+	private _settledHandlersYield: PromiseWithResolvers<void> | undefined;
 	private _suppressQueuedContinuationAfterUserAbort = false;
 	private _userAbortGeneration = 0;
 	/** Set when clearQueue({ abortWillFollow: true }) drains queues immediately before abort(). */
@@ -3299,14 +3301,32 @@ export class AgentSession {
 		this._agentSettledDelivery.begin(this._userAbortGeneration);
 		const settlementEpoch = ++this._settlementEpoch;
 		try {
-			await this._extensionRunner.emit({ type: "agent_settled" });
+			// agent_settled is notification-only: the run has settled, so subscribers (RPC clients, the TUI) hear it now.
+			// Waiting on extension handlers first let one slow handler hold every client's settle edge (omo#11419);
+			// the handlers still run inside the deferral window, under the host budget that reports their stalls.
+			const settleYield = Promise.withResolvers<void>();
+			this._settledHandlersYield = settleYield;
 			this._emit({ type: "agent_settled" });
+			const handlers = this._extensionRunner.emit({ type: "agent_settled" });
+			// A subscriber above may already have sent a person's prompt, before any handler was held.
+			let yielded = false;
+			if (this._settledHandlersYield === undefined) this._yieldHeldSettledHandlers();
+			await Promise.race([handlers, settleYield.promise.then(() => (yielded = true))]);
+			if (yielded) {
+				// The walk goes on detached (each later handler still runs, logged by its budget); its failure is logged.
+				handlers.catch((error: unknown) =>
+					this._sessionLogger.warn("agent_settled_handlers_failed", {
+						error: error instanceof Error ? error.message : String(error),
+					}),
+				);
+			}
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 			({ actions: deferredActions, turnClaims: deferredTurnClaims } = this._agentSettledDelivery.finish(
 				this._userAbortGeneration,
 			));
 		} finally {
 			this._agentSettledDelivery.cancel();
+			this._settledHandlersYield = undefined;
 			this._abortProvenance.closeAgentEndBoundary();
 			this._resolveIdleWaitIfIdle();
 		}
@@ -5078,6 +5098,23 @@ export class AgentSession {
 		await idle;
 	}
 
+	/**
+	 * A person's input arrived while the settled run's notification-only agent_settled handlers still run: stop waiting on
+	 * every one of them (omo#11419). The held one is released quietly (session.log stage "released", no extension error);
+	 * the rest of the walk runs detached. A prompt sent from inside an agent_settled subscriber, before any handler is
+	 * held, marks the yield so the settle releases the first handler as soon as it starts.
+	 */
+	private _yieldSettledHandlers(): void {
+		const settleYield = this._settledHandlersYield;
+		this._settledHandlersYield = undefined;
+		settleYield?.resolve();
+		this._yieldHeldSettledHandlers();
+	}
+
+	private _yieldHeldSettledHandlers(): void {
+		this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope, "yielded");
+	}
+
 	/** Adapter for the deadline owner interface: stop waiting on extension handlers that hold the turn (senpi#3650). */
 	releaseHeldExtensionHandlers(): number {
 		return this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
@@ -5776,6 +5813,9 @@ export class AgentSession {
 				return;
 			}
 			if (origin === "person") {
+				// The last run already settled; its notification-only agent_settled handlers must not hold a person's next
+				// input. Stop waiting on them (they keep running, logged as released) so this turn starts now (omo#11419).
+				if (this._agentSettledDelivery.active) this._yieldSettledHandlers();
 				this._beginPersonInput();
 				// The held commands this input released run first, in the order typed, so its turn starts after them.
 				const heldCommands = this._takeHeldCommandRun();

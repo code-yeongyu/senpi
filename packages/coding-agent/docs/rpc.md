@@ -2659,7 +2659,7 @@ Every `host_response` is acknowledged under its `id`: `{"type":"response","comma
 
 The agent's tool results are typed in `details`: `{ status: "listed", targets }`, `{ status: "scheduled", target, moveId }`, `{ status: "unavailable", reason, detail }`, or `{ status: "refused", reason, detail }` (the host's own `reason` and `detail` when it declined). Every outcome except `scheduled` leaves the session open and writable here.
 
-**When the move happens.** An accepted request is scheduled; it never interrupts the run that asked for it. The tool result tells the agent the work continues on the target when this turn ends, and the run goes on to its natural end (further tool calls, its closing reply, queued follow-ups). When that run settles (`agent_settled`) and every `prompt` call behind it has returned, the session sends one event:
+**When the move happens.** An accepted request is scheduled; it never interrupts the run that asked for it. The tool result tells the agent the work continues on the target when this turn ends, and the run goes on to its natural end (further tool calls, its closing reply, queued follow-ups). When that run settles and goes idle (`agent_idle`, after its settle-time extension handlers) and every `prompt` call behind it has returned, the session sends one event:
 
 ```json
 {"type":"relocation_due","moveId":"mv-a1","target":"Studio","reason":"heavy build","sessionId":"rpc-1"}
@@ -5021,7 +5021,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 |-------|-------------|
 | `agent_start` | Agent begins processing |
 | `agent_end` | One low-level agent run completes (may still be followed by retry, compaction, or queued continuations) |
-| `agent_settled` | Agent run is fully settled; no automatic retry, compaction retry, or queued continuation remains |
+| `agent_settled` | Agent run is fully settled; no automatic retry, compaction retry, or queued continuation remains. Extension `agent_settled` handlers may still be running: wait for `agent_idle` before tearing a session down |
 | `turn_start` | New turn begins |
 | `turn_end` | Turn completes (includes assistant message and tool results) |
 | `message_start` | Message begins |
