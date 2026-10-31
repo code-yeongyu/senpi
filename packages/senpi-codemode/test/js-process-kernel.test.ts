@@ -434,6 +434,9 @@ return "done";`,
 					'const child = Bun.spawnSync(["head", "-c", "4000000", "/dev/zero"], { stdout: "inherit" });',
 					"return child.exitCode",
 				].join("\n"),
+				// No cell deadline: the cell's result is the event, bounded by the test's own timeout. A 2 s cell deadline
+				// failed the cell whenever a loaded host held the kernel off the CPU that long (#5179).
+				0,
 			);
 			expect(cell.result).toMatchObject({ ok: true, valueRepr: "0" });
 			const text = cell.messages.flatMap((message) => (message.type === "text" ? [message.data] : [])).join("");
@@ -1063,7 +1066,8 @@ return "done";`,
 			const pending = kernel.run({
 				cellId: "burst",
 				code: `(await import("node:child_process")).execSync("head -c ${size} /dev/zero | tr '\\\\0' b", { stdio: "inherit" }); return "settled"`,
-				timeoutMs: 60_000,
+				// No cell deadline: the result is the event, bounded by the test's own timeout (#5179).
+				timeoutMs: 0,
 				onMessage: (message) => {
 					if (message.type === "text") bytes += message.data.length;
 				},
