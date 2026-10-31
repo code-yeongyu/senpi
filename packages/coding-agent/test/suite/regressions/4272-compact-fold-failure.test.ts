@@ -2,6 +2,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import { CanonicalPairing } from "../../../src/modes/rpc/compact-canonical-pairing.ts";
 import type { CanonicalRecord } from "../../../src/modes/rpc/compact-lane-transitions.ts";
+import { COMPACT_PROTOCOL_MAX_DEPTH } from "../../../src/modes/rpc/compact-protocol-depth.ts";
 import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { SessionWorkerClient } from "../../../src/modes/rpc/session-worker-client.ts";
 import { type SessionWorkerToHost, WORKER_CREDIT_CODES } from "../../../src/modes/rpc/session-worker-protocol.ts";
@@ -116,6 +117,104 @@ it("worker: a canonical_unavailable frame takes its ordinal and makes the epoch'
 		const root = lane.freeze();
 		expect(root.current).toBeUndefined();
 		lane.release(root);
+	} finally {
+		await host.dispose();
+	}
+}, 60_000);
+
+// senpi#4272 RULING-59 C, worker half: a canonical record the isolate refused at the protocol depth limit is counted
+// on the host lane, whose compact state stays available.
+it("worker: a canonical_unavailable frame carrying the depth limit keeps the epoch's compact state", async () => {
+	const { host, lane, ordinal, deliver } = await workerLane();
+	const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+	try {
+		const signal = new SharedArrayBuffer(4);
+		const reason = `compact write refused (unsupported_value: depth above ${COMPACT_PROTOCOL_MAX_DEPTH})`;
+		const frame: SessionWorkerToHost = {
+			type: "canonical_unavailable",
+			ordinal: ordinal(),
+			reason,
+			limit: COMPACT_PROTOCOL_MAX_DEPTH,
+			signal,
+		};
+		expect(await deliver(frame)).toBe(WORKER_CREDIT_CODES.granted);
+		expect(host.failures).toEqual([]);
+		const root = lane.freeze();
+		expect(root.current).toBeDefined();
+		lane.release(root);
+		expect(lane.storageStatus().refusedRecords).toBe(1);
+		expect(write.mock.calls.map(([chunk]) => String(chunk))).toContain(
+			`senpi rpc acceptance: compact record refused: unsupported_value (depth above ${COMPACT_PROTOCOL_MAX_DEPTH})\n`,
+		);
+	} finally {
+		await host.dispose();
+	}
+}, 60_000);
+
+// senpi#4557 review round 2, LOW-2, worker half: a depth refusal framed after a real loss is still counted by the host.
+it("worker: a depth-limit frame after a real loss is counted and the state stays ended", async () => {
+	const { host, lane, ordinal, deliver } = await workerLane();
+	vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+	try {
+		const limit = COMPACT_PROTOCOL_MAX_DEPTH;
+		const loss = (frame: { reason: string; limit?: number }): Extract<SessionWorkerToHost, { signal: unknown }> => ({
+			type: "canonical_unavailable",
+			ordinal: ordinal(),
+			...frame,
+			signal: new SharedArrayBuffer(4),
+		});
+		expect(await deliver(loss({ reason: "a real loss" }))).toBe(WORKER_CREDIT_CODES.granted);
+		const reason = `compact write refused (unsupported_value: depth above ${limit})`;
+		expect(await deliver(loss({ reason, limit }))).toBe(WORKER_CREDIT_CODES.granted);
+		expect(host.failures).toEqual([]);
+		expect(lane.storageStatus().refusedRecords).toBe(1);
+		const root = lane.freeze();
+		expect(root.current).toBeUndefined();
+		lane.release(root);
+	} finally {
+		await host.dispose();
+	}
+}, 60_000);
+
+// senpi#4557 review LOW-2, worker half: the output frame of an event whose canonical record the isolate refused says
+// so, and its legacy record (a terminal too deep for the settled store) folds nothing and is not counted again.
+it("worker: an event refused on both projections is counted once and its terminal is not settled", async () => {
+	const { host, lane, ordinal, deliver } = await workerLane();
+	vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+	try {
+		let content: unknown = "leaf";
+		for (let level = 0; level < 2_000; level++) content = [content];
+		const limit = COMPACT_PROTOCOL_MAX_DEPTH;
+		const refusal: SessionWorkerToHost = {
+			type: "canonical_unavailable",
+			ordinal: ordinal(),
+			reason: `compact write refused (unsupported_value: depth above ${limit})`,
+			limit,
+			signal: new SharedArrayBuffer(4),
+		};
+		expect(await deliver(refusal)).toBe(WORKER_CREDIT_CODES.granted);
+		const at = ordinal();
+		const frame: OutputFrame = {
+			type: "output",
+			ordinal: at,
+			record: { type: "message_end", message: { role: "toolResult", toolCallId: "c1", content, timestamp: 1 } },
+			recovery: { messageId: "m-deep", epoch: lane.recoveryEpoch },
+			canonicalRefused: true,
+			signal: new SharedArrayBuffer(4),
+			activity: { busy: false, streaming: false },
+		};
+		expect(await deliver(frame)).toBe(WORKER_CREDIT_CODES.granted);
+		await host.writer.flush();
+		expect(host.failures).toEqual([]);
+		expect(lane.storageStatus().refusedRecords).toBe(1);
+		const root = lane.freeze();
+		try {
+			expect(root.current).toBeDefined();
+			const { settledMessages } = await lane.readSettled(root);
+			expect(settledMessages.map((message) => message.messageId)).not.toContain("m-deep");
+		} finally {
+			lane.release(root);
+		}
 	} finally {
 		await host.dispose();
 	}
