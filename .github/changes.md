@@ -1,3 +1,39 @@
+## 2026-10-30 - Pull-request CI runs only for PRs labelled run-full-ci (senpi#4968)
+
+### What changed
+
+- `.github/workflows/ci.yml`: no `pull_request` trigger. `push` (main) and `workflow_call` are unchanged. On a pull request the workflow runs only when `ci-full-label.yml` calls it.
+
+### Why
+
+- senpi#4968: merges are decided on a local whole-suite receipt at the exact head plus a review, so a hosted run on every PR push only held the account's shared runners, and a release job waited over an hour for one. Without a job-level gate, the required `Check and test` context stays expected on an unlabelled PR instead of passing as skipped.
+
+### Why an extension could not handle it
+
+- CI workflows run outside the agent runtime.
+
+### Expected merge conflict zones
+
+- LOW: the `on:` block and the comment above `concurrency` in `ci.yml`.
+
+## 2026-10-30 - Install Bun for the RPC supervisor exit job (senpi#4852, part of #4845)
+
+### What changed
+
+- `.github/workflows/ci.yml`: the `rpc-owner-lifetime` job installs the repository's pinned Bun (1.4.4) before running the owner-lifetime regressions.
+
+### Why
+
+- The owner-lifetime regression now covers a Bun owner killed with SIGKILL; it spawns `bun`, which the Node-only job did not provide.
+
+### Why an extension could not handle it
+
+- GitHub Actions provisions the runner before the agent runtime starts.
+
+### Expected merge conflict zones
+
+- LOW: the setup steps of the `rpc-owner-lifetime` job in `ci.yml`.
+
 ## 2026-10-29 - Exercise all four Bun-certified suites in CI (senpi#4763)
 
 ### What changed

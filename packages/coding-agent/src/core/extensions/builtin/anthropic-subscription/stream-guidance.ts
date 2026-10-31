@@ -12,6 +12,7 @@ import {
 	singleAccountUnavailableGuidance,
 	switchAccountLine,
 } from "./guidance.ts";
+import { ClaudeSignInRequiredError } from "./sign-in-again.ts";
 
 /**
  * Every account waits on a limit with a known due-back time: a rate limit with that reset, so the goal parks
@@ -24,6 +25,8 @@ export function allAccountsBlockedDiagnostic(error: unknown): ProviderDiagnostic
 }
 
 export function withAuthGuidance(error: unknown, message: string, ran?: ClaudeCodeRun): string {
+	// The sign-in-again prompt is the remedy; the generic auth_error hint ("token was rejected... refresh") contradicts it.
+	if (error instanceof ClaudeSignInRequiredError) return message;
 	if (error instanceof AllAccountsBlockedError)
 		return error.unavailableAccount === undefined
 			? allAccountsBlockedGuidance(error.soonestUnblockAt, error.blockReason)
