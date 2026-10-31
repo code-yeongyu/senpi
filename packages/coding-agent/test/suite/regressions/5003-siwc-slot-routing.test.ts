@@ -57,10 +57,10 @@ it.each(["stream", "streamSimple"] as const)(
 			agentDir: directory,
 			allowModelNetwork: false,
 		});
-		const model = runtime
-			.getProvider("chatgpt-subscription")!
-			.getModels()
-			.find((candidate) => candidate.id === "gpt-6.1-sol")!;
+		const chatgptProvider = runtime.getProvider("chatgpt-subscription");
+		if (!chatgptProvider) throw new Error("chatgpt-subscription provider is not registered");
+		const model = chatgptProvider.getModels().find((candidate) => candidate.id === "gpt-6.1-sol");
+		if (!model) throw new Error("fixture model gpt-6.1-sol not found");
 		// Prewarm and other prepared-request callers must see the same route restrictions.
 		const prepared = await runtime.prepareSimpleRequest(model);
 		expect(prepared.model).toMatchObject({
@@ -86,7 +86,10 @@ it.each(["stream", "streamSimple"] as const)(
 		};
 		vi.stubGlobal("fetch", fetchStub);
 		for (const name of ["default", "login-2", "login-3"]) {
-			await credentials.modify(model.provider, async (current) => ({ ...current!, pinned: name }));
+			await credentials.modify(model.provider, async (current) => {
+				if (!current) throw new Error("credential not found");
+				return { ...current, pinned: name };
+			});
 			await finish(
 				runtime[method](
 					model,
@@ -120,11 +123,14 @@ it.each(["stream", "streamSimple"] as const)(
 		expect(reread).toEqual(raw.providers[model.provider].lanes.stored.slots);
 		requests.length = 0;
 		rejectFirst = true;
-		await credentials.modify(model.provider, async (current) => ({
-			...current!,
-			pinned: "default",
-			order: ["login-2", "login-3"],
-		}));
+		await credentials.modify(model.provider, async (current) => {
+			if (!current) throw new Error("credential not found");
+			return {
+				...current,
+				pinned: "default",
+				order: ["login-2", "login-3"],
+			};
+		});
 		await finish(
 			runtime[method](
 				model,
