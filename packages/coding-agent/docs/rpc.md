@@ -1560,8 +1560,14 @@ which prints the bare socket path).
   cannot rename answer alike: exit 3 `{ reason: "upgrade_unsupported", detail }`. The handoff runs inside the
   endpoint's ensure lock (the one `ensure` and `gc` take), so an `ensure` arriving while the successor comes up
   waits and then attaches to the successor, and `gc` reports the endpoint `locked` rather than judging it
-  halfway. An `ensure` waits for the lock as long as the longest holder can keep it: a probe plus either a
-  stop-and-restart or a handoff (probe, successor start, 30 s readiness). A REFUSED handoff leaves the endpoint
+  halfway. An `ensure`, a `handoff` and a `stop --expected-generation` wait for the lock as long as one
+  compliant holder can keep it (senpi#4602): W = H + 10 s, where H = 90 s of discovery + S + 284 s from spawn to
+  a settled startup result, and S = max(5 s, M) + 37 s is the stop allowance for the child-stall setting M
+  (`SENPI_RPC_CHILD_STALLED_STOP_MAX_MS`, default 60 s). At the default that is S = 97 s, H = 471 s and
+  W = 481 s; every value is recomputed from the resolved M on each operation. A waiter that exhausts W exits 1
+  `host_error` with `detail` `RPC host ensure lock wait exceeded <W>ms; startup not started by this caller`: it
+  started nothing and signalled nothing. An idle handover request waits up to 2 x H + 20 s (962 s at the default)
+  for its reply. `gc` keeps its own 2 s lock attempt and reports `locked`. A REFUSED handoff leaves the endpoint
   as it found it: the successor it started is killed and, once it has exited (up to 5 s), its generation record
   and directory are released, so `status --all` never lists it; the boot `settings.json` it rewrote before
   spawning is restored byte for byte. A cleanup that fails is reported in the refusal's `detail`.

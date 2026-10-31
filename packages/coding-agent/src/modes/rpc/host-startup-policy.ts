@@ -179,6 +179,11 @@ export function startupEnvelope(stallMs = DEFAULT_CHILD_STALLED_STOP_MAX_MS) {
 	} as const;
 }
 
+/** The ensure lock was not acquired within W: no startup was attempted by this caller, and nothing was signalled. */
+export function ensureLockWaitDetail(lockWaitMs: number): string {
+	return `RPC host ensure lock wait exceeded ${lockWaitMs}ms; startup not started by this caller`;
+}
+
 export function startupTimeoutDetail(outcome: StartupTimeout, cleanup: "completed" | "incomplete"): string {
 	return [
 		`RPC host startup timed out: phase=${outcome.phase}`,
