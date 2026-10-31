@@ -1,5 +1,5 @@
 import type { Api, AssistantMessage, Context, Message, Model } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { coldSeedImageText } from "../../../src/core/extensions/builtin/anthropic-subscription/cold-seed-images.ts";
 import { mapPiToolNameToSdk } from "../../../src/core/extensions/builtin/anthropic-subscription/prompt-bridge.ts";
 import type { SDKUserMessage } from "../../../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
@@ -92,7 +92,13 @@ function readReferences(submitted: SDKUserMessage | undefined): number {
 	return frameBlocks(submitted).filter((block) => block.type === "text" && block.text === reference).length;
 }
 
+// These cases assert the flat replay's prompt content; the native-frame replay has its own tests (senpi#1977).
+beforeEach(() => {
+	process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY = "flat";
+});
+
 afterEach(() => {
+	delete process.env.SENPI_CLAUDE_SDK_OAUTH_REPLAY;
 	for (const id of sessionIds.splice(0)) {
 		closeSession(id, "test_cleanup");
 		forgetBinding(id);
