@@ -7,7 +7,9 @@ import { AuthStorage } from "./auth-storage.ts";
 import type { HostMcpRegistry } from "./extensions/builtin/mcp/host-registry.ts";
 import type { ServiceTier } from "./extensions/builtin/service-tier.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
+import { reportExtensionFailureLine } from "./extensions/error-notice.ts";
 import { drainPendingProviderRegistrations } from "./extensions/loader.ts";
+import { extensionFailureFields } from "./extensions/user-facing-error.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { ModelRuntime } from "./model-runtime.ts";
 import {
@@ -218,10 +220,13 @@ export async function createAgentSessionServices(
 				registeredProviders.add(registration.provider.id);
 			}
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
 			diagnostics.push({
 				type: "error",
-				message: `Extension "${registration.extensionPath}" error: ${message}`,
+				message: reportExtensionFailureLine({
+					extensionPath: registration.extensionPath,
+					event: "register_provider",
+					...extensionFailureFields(error),
+				}),
 			});
 		}
 	}
@@ -239,10 +244,13 @@ export async function createAgentSessionServices(
 		try {
 			modelRuntime.registerVirtualModel(definition);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
 			diagnostics.push({
 				type: "error",
-				message: `Extension "${extensionPath}" error: ${message}`,
+				message: reportExtensionFailureLine({
+					extensionPath,
+					event: "register_virtual_model",
+					...extensionFailureFields(error),
+				}),
 			});
 		}
 	}

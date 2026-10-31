@@ -12,6 +12,11 @@ import {
 	stripTurnRetrySuppressionPrefix,
 } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
+import {
+	describeExtensionError,
+	displayDebugLogPath,
+	extensionErrorNoticeLines,
+} from "../core/extensions/error-notice.ts";
 import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
 import { usageLimitCause, usageLimitScope } from "../core/retry-fallback/usage-limit.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
@@ -123,7 +128,9 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 				},
 			},
 			onError: (err) => {
-				console.error(`Extension error (${err.extensionPath}): ${err.error}`);
+				console.error(
+					extensionErrorNoticeLines(describeExtensionError(err, { logPath: displayDebugLogPath() })).join("\n"),
+				);
 			},
 		});
 
