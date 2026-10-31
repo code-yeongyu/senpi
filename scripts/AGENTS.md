@@ -38,6 +38,9 @@ cell grid. Prefixes encode role:
 - `release.mjs`: CalVer release composing `calver.mjs` and
   `release-{packages,artifacts,changelog,git,test-gate}.mjs`. Preflight: on `main`, clean tree
   (dry-run warns), valid CalVer; `--dry-run` previews every command and file write.
+  Read a release job's log from the run's log archive (`gh api repos/code-yeongyu/senpi/actions/runs/<id>/logs > logs.zip`),
+  not `gh run view --log`: that command stops at the first line over 64 KiB and drops the rest of the step without saying
+  so (senpi#2291). Workspace Vitest configs use `vitest-dot-reporters.mjs` so dot output stays under that size.
 - `publish.mjs`: publishes seven fork-owned packages (`senpi-ai`, `senpi-agent-core`, `senpi-tui`,
   `senpi-pty`, `senpi-telemetry`, `senpi-codemode`, `senpi`); sources stay `private`, copied to
   temporary public manifests under the fork scope (`@code-yeongyu/senpi-server` stays excluded).
