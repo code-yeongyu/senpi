@@ -106,17 +106,7 @@ describe("bundledBunSkillPath in a compiled-binary layout", () => {
 			const notice = String(errorSpy.mock.calls[0]?.[0] ?? "");
 			expect(notice).toContain(join(tempDir, "embedded", "skill", "bun", "SKILL.md"));
 			expect(notice).toContain(
-				join(
-					tempDir,
-					"bin",
-					"node_modules",
-					"@code-yeongyu",
-					"senpi-codemode",
-					"src",
-					"skill",
-					"bun",
-					"SKILL.md",
-				),
+				join(tempDir, "bin", "node_modules", "@code-yeongyu", "senpi-codemode", "src", "skill", "bun", "SKILL.md"),
 			);
 		} finally {
 			debugSpy.mockRestore();
