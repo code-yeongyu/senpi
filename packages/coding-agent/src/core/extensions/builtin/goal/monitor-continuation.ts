@@ -54,7 +54,12 @@ import type {
 } from "./monitor-continuation-types.ts";
 import { findParkedGoalWait, type ParkedGoalWait } from "./parked-wait.ts";
 import { buildContinuationPrompt, buildGoalStallNotice, buildTruncationRecoveryPrompt } from "./prompt.ts";
-import { PROVIDER_RETRY_BASE_MS, providerRetryAt, providerRetryDelayMs } from "./provider-retry.ts";
+import {
+	exhaustedLadderResumeDelayMs,
+	PROVIDER_RETRY_BASE_MS,
+	providerRetryAt,
+	providerRetryDelayMs,
+} from "./provider-retry.ts";
 import { isStaleExtensionContextError } from "./stale-context.ts";
 import { resetContinuationStreak } from "./store.ts";
 import { goalStoreRef } from "./store-ref.ts";
@@ -239,11 +244,12 @@ export class MonitorAwareGoalContinuation {
 		return options.goal;
 	}
 
-	async afterAgentSettled(): Promise<Goal | null | undefined> {
+	async afterAgentSettled(fallbackExhausted?: { resumeAt?: number }): Promise<Goal | null | undefined> {
 		const pendingSystem = this.#pendingSystemRecovery;
 		const pendingProvider = this.#pendingProviderRecovery;
 		this.#pendingSystemRecovery = undefined;
 		this.#pendingProviderRecovery = undefined;
+		if (fallbackExhausted !== undefined) return this.#parkUntilLadderReset(fallbackExhausted.resumeAt);
 		if (pendingSystem !== undefined && pendingSystem.goal !== null && pendingSystem.event.abortSource !== "user") {
 			return (
 				await this.#admitAndQueue(pendingSystem.ctx, pendingSystem.goal, "systemRecovery", pendingSystem.messages)
@@ -277,6 +283,20 @@ export class MonitorAwareGoalContinuation {
 				pendingProvider.messages,
 			)
 		).goal;
+	}
+
+	/**
+	 * senpi#3709: every fallback rung failed, so a continuation now would hit the same limits. Park on
+	 * the soonest reset the run named and resume once; with no known reset, stay parked until input.
+	 */
+	#parkUntilLadderReset(resumeAt: number | undefined): Goal | undefined {
+		const goal = this.#goal;
+		if (goal?.status !== "active") return undefined;
+		this.#cancelTimer();
+		if (resumeAt === undefined) return goal;
+		this.#providerRetryDelayMs = exhaustedLadderResumeDelayMs(resumeAt, Date.now());
+		this.#schedule(goal, "providerRetry");
+		return goal;
 	}
 
 	syncGoal(goal: Goal | null): void {

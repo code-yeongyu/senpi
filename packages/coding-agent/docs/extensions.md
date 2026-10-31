@@ -855,8 +855,11 @@ pi.on("agent_end", async (event, ctx) => {
   // event.messages - messages from this low-level run
 });
 
-pi.on("agent_settled", async (_event, ctx) => {
+pi.on("agent_settled", async (event, ctx) => {
   // ctx.isIdle() is true here unless another extension started a new run.
+  // event.fallbackExhausted - present when every fallback rung failed and a failure was limit-shaped;
+  //   resumeAt (epoch ms) is the soonest future reset, or latest past reset if all collected resets passed
+  //   no resumeAt means no reset was collected; outage-only exhaustion keeps ordinary provider recovery
 });
 ```
 

@@ -383,6 +383,7 @@ import {
 	describeUsageLimitMessage,
 	usageLimitScope,
 } from "./retry-fallback/usage-limit.ts";
+import { limitResetAt } from "./retry-fallback/limit-reset.ts";
 import { validateFallbackChains } from "./retry-fallback/validate.ts";
 import { type InheritResult, type ReleaseInheritedResult, RunHolds, type RunRef } from "./run-holds.ts";
 import { startRunResumeTurn } from "./run-resume-turn.ts";
@@ -1408,6 +1409,10 @@ export class AgentSession {
 	/** Settles once the queued message_end processing (persistence included) of that exact message has run. */
 	private readonly _messageEndPersistence = new WeakMap<AgentMessage, Promise<void>>();
 	private _isAgentRunActive = false;
+	/** senpi#3709: reset moments the failed requests of this run named, and whether its fallback ladder ran out. */
+	private _runLimitResets: number[] = [];
+	private _runLimitFailure = false;
+	private _runFallbackExhausted = false;
 	private _promptsInFlight = 0;
 	/** senpi#3650: the core may continue a run after agent_end; the settle must not wait on that continuation. */
 	private readonly _runContinuations = new AgentRunContinuations();
@@ -1731,6 +1736,7 @@ export class AgentSession {
 	private _circuitProbeWatchdog: ReturnType<typeof setTimeout> | undefined;
 	private readonly _probeBackScheduler: ProbeBackScheduler;
 	private readonly _fallbackNow: () => number;
+	private readonly _fallbackWallNow: () => number;
 	private readonly _retryRandom: () => number;
 	private readonly _environmentContextEnabled: boolean;
 
@@ -1917,11 +1923,8 @@ export class AgentSession {
 		// Cooldowns, probe schedules, and circuits measure elapsed time, so they all
 		// run on the monotonic clock; a wall-clock jump never parks or releases an entry.
 		this._fallbackNow = config.fallbackNow ?? monotonicNow;
-		this._selectorCooldowns = new SelectorCooldowns(
-			this._fallbackNow,
-			undefined,
-			config.fallbackWallNow ?? config.fallbackNow ?? Date.now,
-		);
+		this._fallbackWallNow = config.fallbackWallNow ?? config.fallbackNow ?? Date.now;
+		this._selectorCooldowns = new SelectorCooldowns(this._fallbackNow, undefined, this._fallbackWallNow);
 		const lease = () => this._fallbackCircuitsLease;
 		this._fallbackCircuits = createFallbackCircuitAccess({
 			// Read on every use: the hold is taken as construction's last step.
@@ -1930,7 +1933,7 @@ export class AgentSession {
 			},
 			owner: () => this.sessionId,
 			now: this._fallbackNow,
-			wallNow: config.fallbackWallNow ?? config.fallbackNow ?? Date.now,
+			wallNow: this._fallbackWallNow,
 			settings: () => this.settingsManager.getFallbackCircuitSettings(),
 			logger: fallbackLogger,
 		});
@@ -2946,6 +2949,7 @@ export class AgentSession {
 		)
 			this.refreshLifecycle();
 		this._logSessionEvent(event);
+		if (event.type === "retry_fallback_exhausted") this._runFallbackExhausted = true;
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
 		}
@@ -3277,6 +3281,25 @@ export class AgentSession {
 		resolve();
 	}
 
+	/**
+	 * senpi#3709: a run whose fallback ladder ran out reports the soonest reset its failed requests
+	 * named after a limit failure. Outages retain ordinary provider recovery; a known reset that
+	 * passed during later rungs remains known so a resumer can retry now. Consumed once per settle.
+	 */
+	private _takeRunFallbackExhaustion(): { resumeAt?: number } | undefined {
+		const exhausted = this._runFallbackExhausted;
+		const limited = this._runLimitFailure;
+		const now = this._fallbackWallNow();
+		const resets = this._runLimitResets;
+		const upcoming = resets.filter((resetAt) => resetAt > now);
+		this._runFallbackExhausted = false;
+		this._runLimitFailure = false;
+		this._runLimitResets = [];
+		if (!exhausted || !limited) return undefined;
+		if (upcoming.length > 0) return { resumeAt: Math.min(...upcoming) };
+		return resets.length === 0 ? {} : { resumeAt: Math.max(...resets) };
+	}
+
 	private async _emitAgentSettled(agentEnd?: AgentEvent): Promise<void> {
 		if (
 			this.agent.state.isStreaming &&
@@ -3302,6 +3325,7 @@ export class AgentSession {
 		let deferredTurnClaims: DeferredTurnClaim[] = [];
 		this._agentSettledDelivery.begin(this._userAbortGeneration);
 		const settlementEpoch = ++this._settlementEpoch;
+		const fallbackExhausted = this._takeRunFallbackExhaustion();
 		try {
 			// agent_settled is notification-only: the run has settled, so subscribers (RPC clients, the TUI) hear it now.
 			// Waiting on extension handlers first let one slow handler hold every client's settle edge (omo#11419);
@@ -3309,7 +3333,10 @@ export class AgentSession {
 			const settleYield = Promise.withResolvers<void>();
 			this._settledHandlersYield = settleYield;
 			this._emit({ type: "agent_settled" });
-			const handlers = this._extensionRunner.emit({ type: "agent_settled" });
+			const handlers = this._extensionRunner.emit({
+				type: "agent_settled",
+				...(fallbackExhausted === undefined ? {} : { fallbackExhausted }),
+			});
 			// A subscriber above may already have sent a person's prompt, before any handler was held.
 			let yielded = false;
 			if (this._settledHandlersYield === undefined) this._yieldHeldSettledHandlers();
@@ -4148,6 +4175,15 @@ export class AgentSession {
 		if (event.type === "agent_end" && this._lastAssistantMessage) {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
+			if (msg.stopReason === "error") {
+				const resetAt = limitResetAt(msg, this._fallbackWallNow());
+				if (resetAt !== undefined) this._runLimitResets.push(resetAt);
+				this._runLimitFailure ||=
+					resetAt !== undefined ||
+					usageLimitScope(msg) !== undefined ||
+					msg.providerDiagnostic?.category === "quota" ||
+					msg.providerDiagnostic?.category === "rate_limit";
+			}
 			this._skipNextPostRetryCompactionCheck = false;
 			this._clearCircuitProbeWatchdog();
 			// Billing and quota exhaustion make the entry unusable for every session,
@@ -13147,6 +13183,7 @@ export class AgentSession {
 				/rate.?limit|(?:^429(?=\s+\{)|(?:\bHTTP\/1\.[01]\s+|\bHTTP\s+|\bstatus(?:\s+code)?\s+|\berror\s+|\bcode\s+)429\b)|too many requests|resource.?exhausted/i.test(
 					errorMessage,
 				);
+			if (is429Class) this._runLimitFailure = true;
 			// Profile-driven routing: "after-turn-budget" (Kimi) keeps 429s on the
 			// ordinary same-model budget; "tiered" (senpi default) uses hint tiers.
 			if (is429Class && retryProfile.fallback.rateLimited === "after-turn-budget") {

@@ -48,7 +48,10 @@ A terminal (`willRetry` false, not system-owned) provider error keeps the Goal a
 queues one guarded `providerRecovery` continuation after `agent_settled`, except a terminal
 401/403 (`terminalProviderAuthFailure`, #2293) or policy rejection (#1520): those block on the
 first hit. The auth block is mechanical (a new user message resumes after the user fixes the
-login); the policy block is not. A terminal
+login); the policy block is not. `fallbackExhausted` replaces recovery only after limit-shaped
+ladder exhaustion (senpi#3709): one `providerRetry` at the soonest future reset, plus 1 s
+(no 6 h cap), or after 1 s if all collected resets passed. Without a collected reset it parks
+until input. Outage-only exhaustion retains immediate recovery and provider backoff. A terminal
 *system* error preserves the active Goal: schedule the live monitor wait, or queue a guarded
 hidden `systemRecovery` continuation after `agent_settled` (staging preserves late user
 cancellation; canceling releases the single-flight latch for `/goal resume`). Intentional
