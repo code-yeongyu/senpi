@@ -10,8 +10,11 @@ import {
 	singleAccountUnavailableGuidance,
 	switchAccountLine,
 } from "./guidance.ts";
+import { ClaudeSignInRequiredError } from "./sign-in-again.ts";
 
 export function withAuthGuidance(error: unknown, message: string, ran?: ClaudeCodeRun, now = Date.now()): string {
+	// The sign-in-again prompt is the remedy; the generic auth_error hint ("token was rejected... refresh") contradicts it.
+	if (error instanceof ClaudeSignInRequiredError) return message;
 	if (error instanceof AllAccountsBlockedError) {
 		const guidance =
 			error.unavailableAccount === undefined

@@ -103,8 +103,8 @@ describe("account pool blocked for one model reaches the fallback chain as a mod
 describe("the turn in which the last account goes out keeps the pool's limit scope (#5007)", () => {
 	const NOW = Date.UTC(2026, 9, 30, 10);
 	const pool: AccountSlot[] = [
-		{ name: "alpha", refresh: "r-alpha", access: "a-alpha", expires: NOW + 86_400_000, source: "login" },
-		{ name: "bravo", refresh: "r-bravo", access: "a-bravo", expires: NOW + 86_400_000, source: "login" },
+		{ name: "alpha", source: "login", store: "claude-cli", dirId: "a".repeat(32) },
+		{ name: "bravo", source: "login", store: "claude-cli", dirId: "b".repeat(32) },
 	];
 
 	it("#given one account is out for Fable only and the last one hits an account-wide limit #when the turn fails #then the pool reports a model-scoped limit", async () => {
