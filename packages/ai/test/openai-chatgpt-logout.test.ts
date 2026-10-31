@@ -240,6 +240,51 @@ describe("SIWC storage logout (#5003 W7)", () => {
 		expect(revoke).toHaveBeenCalledTimes(1);
 	});
 
+	it("signs back in after logout: the new login replaces the signed-out registration", async () => {
+		const { models, credentials, credential } = await connected({
+			...openaiChatGPTOAuth,
+			login: async () => ({
+				...credential,
+				access: "again-access",
+				refresh: "again-refresh",
+				expires: Date.now() + 3_600_000,
+			}),
+		});
+		endpoint(() => new Response(null, { status: 200 }));
+
+		expect(await models.logout(PROVIDER)).toEqual({ status: "revoked" });
+		await models.login(PROVIDER, "oauth", {} as Parameters<typeof models.login>[2]);
+		const stored = await credentials.read(PROVIDER);
+		expect(stored).toMatchObject({ access: "again-access", refresh: "again-refresh", clientId: credential.clientId });
+		expect(stored).not.toHaveProperty("signedOut");
+		expect(stored).not.toHaveProperty("accounts");
+		expect(await models.getAuth(PROVIDER)).toBeDefined();
+	});
+
+	it("signs back in after a pooled logout: the new login becomes the resolved account", async () => {
+		const { models, credentials, credential } = await connected({
+			...openaiChatGPTOAuth,
+			login: async () => ({ ...credential, access: "again-access", refresh: "again-refresh" }),
+		});
+		await credentials.modify(PROVIDER, async () => ({
+			...credential,
+			accounts: [{ ...credential, name: "first" }],
+		}));
+		endpoint(() => new Response(null, { status: 200 }));
+
+		expect(await models.logout(PROVIDER)).toEqual({ status: "revoked" });
+		await models.login(PROVIDER, "oauth", {} as Parameters<typeof models.login>[2]);
+		const stored = await credentials.read(PROVIDER);
+		expect(stored).toMatchObject({ access: "again-access", refresh: "again-refresh" });
+		expect(stored).not.toHaveProperty("signedOut");
+		if (stored?.type !== "oauth" || !Array.isArray(stored.accounts)) throw new Error("Missing pool");
+		expect(stored.accounts).toMatchObject([
+			{ name: "first", access: "", refresh: "" },
+			{ access: "again-access", refresh: "again-refresh" },
+		]);
+		expect(await models.getAuth(PROVIDER)).toBeDefined();
+	});
+
 	it("retries 503 then accepts an empty 200, including an already-invalid refresh token", async () => {
 		const { models, credentials } = await connected();
 		const sleep = vi.fn(async (_milliseconds: number) => {});
