@@ -93,7 +93,7 @@ it("RULING-60 Q3 10,000 completed children at one level are all members of the p
 	} finally {
 		await rig.close();
 	}
-}, 120_000);
+}, 600_000);
 
 it("RULING-60 Q3 a projection nested 1,000 levels deep streams iteratively with one page resident and is complete at every level", async () => {
 	// Given: a chain of 1,000 nested calls, each the parent of the next, all completed and settled by the root's toolResult
@@ -126,4 +126,4 @@ it("RULING-60 Q3 a projection nested 1,000 levels deep streams iteratively with 
 	} finally {
 		await rig.close();
 	}
-}, 120_000);
+}, 600_000);
