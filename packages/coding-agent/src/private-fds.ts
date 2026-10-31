@@ -87,7 +87,8 @@ function isSocket(fd: number): boolean {
 
 function isPipe(fd: number): boolean {
 	try {
-		return fstatSync(fd).isFIFO();
+		// Windows can report FIFO mode bits while Stats.isFIFO() returns false.
+		return (fstatSync(fd).mode & 0o170000) === 0o010000;
 	} catch {
 		return false;
 	}
