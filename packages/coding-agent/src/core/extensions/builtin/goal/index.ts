@@ -427,6 +427,7 @@ export default function goalExtension(pi: ExtensionAPI): void {
 	): Promise<void> {
 		const continuedGoal = await queueGoalContinuation(extensionApi, ctx, goal, {
 			continuationPending,
+			idleReplyStreak: monitorContinuation.idleReplyStreak(),
 			markContinuationPending: () => {
 				continuationPending = true;
 			},

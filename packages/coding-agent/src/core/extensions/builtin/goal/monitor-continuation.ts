@@ -1,7 +1,11 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { deadlineStopPendingSinceLastTurn } from "../../../turn-deadline.ts";
 import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
-import { isHumanInputMonitorNotification, type WakeSourceStateItem } from "../monitor-state-event.ts";
+import {
+	isHumanInputMonitorNotification,
+	isMonitorNotification,
+	type WakeSourceStateItem,
+} from "../monitor-state-event.ts";
 import {
 	createGoalCacheWarmScheduleData,
 	estimateCacheWarmMetrics,
@@ -91,6 +95,8 @@ export class MonitorAwareGoalContinuation {
 	#toollessContinuationStreak = 0;
 	#recentToolEffects: string[] = [];
 	#idleReplyStreak = 0;
+	/** The next turn answers an admitted monitor-delayed continuation (a backstop or drain fire). */
+	#awaitingMonitorWakeReply = false;
 	#toollessStreakGoalId: string | null = null;
 	#endedTurnWasUserInitiated = false;
 	#lastTurnUsage: TokenUsageSnapshot | undefined;
@@ -135,6 +141,9 @@ export class MonitorAwareGoalContinuation {
 	}
 
 	async afterAgentEnd(options: AgentEndOptions): Promise<Goal | null> {
+		const answeredMonitorWake =
+			this.#awaitingMonitorWakeReply || options.messages.some((message) => isMonitorNotification(message));
+		this.#awaitingMonitorWakeReply = false;
 		if (options.goal?.id !== this.#goal?.id) this.#resetContinuationState();
 		this.#providerRetryAttempts = 0;
 		this.#ctx = options.ctx;
@@ -164,7 +173,11 @@ export class MonitorAwareGoalContinuation {
 					})) ?? options.goal)
 				: options.goal;
 		this.#goal = goal;
-		this.#recordIdleReply(options.messages, turnUsedTools, toolEffect.newEffect || otherProgress);
+		this.#recordIdleReply(options.messages, {
+			turnUsedTools,
+			progressed: toolEffect.newEffect || otherProgress,
+			answeredMonitorWake,
+		});
 		const immediateVerdict = evaluateGoalContinuation({
 			goal,
 			...this.#buildVerdictInput(options.ctx, goal, "immediate", options.messages),
@@ -285,11 +298,20 @@ export class MonitorAwareGoalContinuation {
 
 	syncGoal(goal: Goal | null): void {
 		if (goal?.id !== this.#goal?.id) this.#resetContinuationState();
+		// Only a resume (`/goal resume`, an accepted message) clears a stop, so the resumed goal starts a fresh idle count.
+		if (this.#goal?.continuationStoppedAt !== undefined && goal?.continuationStoppedAt === undefined) {
+			this.#idleReplyStreak = 0;
+		}
 		this.#goal = goal;
 		if (goal?.status !== "active") {
 			this.#cancelTimer();
 			this.#resetContinuationState();
 		}
+	}
+
+	/** Unattended replies in a row that made no progress, the count the idle guard reads (#5160). */
+	idleReplyStreak(): number {
+		return this.#idleReplyStreak;
 	}
 
 	/** The continuation timer armed right now, if any (monitor backstop, user grace, provider retry). */
@@ -546,6 +568,7 @@ export class MonitorAwareGoalContinuation {
 			kind === "monitor" ? "monitorDelayed" : kind === "providerRetry" ? "providerRecovery" : "userGrace",
 			this.#lastAgentEndMessages,
 		);
+		if (kind === "monitor" && admission.admitted) this.#awaitingMonitorWakeReply = true;
 		if (kind !== "monitor" || !admission.admitted || iteration === undefined) return;
 		const wakeSources = this.#wakeSourceSnapshot();
 		this.#publish(GOAL_CONTINUATION_RESUMED_EVENT, {
@@ -685,15 +708,19 @@ export class MonitorAwareGoalContinuation {
 
 	/**
 	 * Counts unattended replies that made no progress (#5160): a tool-less reply adds one; a new tool effect (the
-	 * first one included), human input or todo progress resets; a tool turn repeating a recent effect or a truncated
-	 * reply holds the count.
+	 * first one included), human input or todo progress resets; a tool turn repeating a recent effect, a truncated
+	 * reply, or a reply to a monitor wake (backstop, drain fire, or monitor event) holds the count.
 	 */
-	#recordIdleReply(messages: readonly AgentMessage[], turnUsedTools: boolean, progressed: boolean): void {
-		if (this.#endedTurnWasUserInitiated || progressed) {
+	#recordIdleReply(
+		messages: readonly AgentMessage[],
+		turn: { turnUsedTools: boolean; progressed: boolean; answeredMonitorWake: boolean },
+	): void {
+		if (this.#endedTurnWasUserInitiated || turn.progressed) {
 			this.#idleReplyStreak = 0;
 			return;
 		}
-		if (turnUsedTools || lastAssistantMessage(messages)?.stopReason === "length") return;
+		if (turn.turnUsedTools || turn.answeredMonitorWake) return;
+		if (lastAssistantMessage(messages)?.stopReason === "length") return;
 		this.#idleReplyStreak += 1;
 	}
 
@@ -790,6 +817,7 @@ export class MonitorAwareGoalContinuation {
 			if (this.#scheduledContinuationKind === "monitor") this.#armDrainFire();
 			else this.#resetCacheWarmIteration();
 			this.#resetToollessContinuationStreak();
+			this.#idleReplyStreak = 0;
 			return;
 		}
 		if (this.#scheduledContinuationKind === "monitor") {
@@ -845,6 +873,7 @@ export class MonitorAwareGoalContinuation {
 		this.#recentNormalizedOutputHashes = [];
 		this.#recentToolEffects = [];
 		this.#idleReplyStreak = 0;
+		this.#awaitingMonitorWakeReply = false;
 		this.#resetToollessContinuationStreak();
 		this.#resetCacheWarmIteration();
 	}

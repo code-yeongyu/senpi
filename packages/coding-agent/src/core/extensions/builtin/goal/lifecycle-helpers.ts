@@ -44,6 +44,8 @@ type GoalContinuationDeliveryOptions = {
 export type SessionStartContinuationOptions = {
 	readonly continuationPending: boolean;
 	readonly markContinuationPending: () => void;
+	/** The monitor's live idle-reply count (#5160), so every admission path reads the same value. */
+	readonly idleReplyStreak: number;
 };
 
 /**
@@ -127,7 +129,7 @@ export async function queueGoalContinuation(
 			consecutiveLengthRecoveries: 0,
 			recentNormalizedOutputHashes: [],
 			toollessContinuationStreak: 0,
-			idleReplyStreak: 0,
+			idleReplyStreak: options.idleReplyStreak,
 			continuationPending: options.continuationPending,
 			lastTurnStuckOnContextOverflow: isLastTurnStuckOnContextOverflow(
 				ctx,
