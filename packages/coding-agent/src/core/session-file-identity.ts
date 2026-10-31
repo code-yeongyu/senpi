@@ -21,7 +21,7 @@ export async function captureAndCloseFileIdentity(fd: number, path: string): Pro
 export const loadedFileIdentities = new WeakMap<object, Promise<FileIdentity | undefined>>();
 
 /** The content fingerprint's own domain (RULING-72 (1)): never a catalog domain (RULING-57 (1)). */
-export const BASE_CONTENT_DOMAIN = "senpi-recovery-base/1/sha256";
+const BASE_CONTENT_DOMAIN = "senpi-recovery-base/1/sha256";
 
 /**
  * A base's content fingerprint (RULING-72): SHA-256 over the domain tag, NUL, then each counted entry line (UTF-8, as
