@@ -50,7 +50,7 @@ describe("classifyEvalCode", () => {
 		["print(await read('a.txt'))", "js"],
 		["print(JSON.stringify(data))", "js"],
 		["print(Object.keys(x))", "js"],
-		["print(`a ${b}`)", "js"],
+		[`print(\`a \${b}\`)`, "js"],
 		["print(await tool.grep({ pattern: 'x' }))", "js"],
 		["const x = 1\nprint(x)", "js"],
 		["import fs from 'node:fs'\nprint(fs)", "js"],
