@@ -78,12 +78,18 @@ function stubTokenEndpoint(
 
 function loginInteraction(options?: {
 	callbackClientId?: string;
+	callbackError?: string;
+	callbackState?: string;
+	callbackTransport?: "loopback";
 	onAuthorize?: (url: URL) => void;
 }): ProviderAuthInteraction {
 	let authorizeUrl: URL | undefined;
 	return {
 		signal: neverAbortedSignal,
 		notify: (event) => {
+			if (event.type === "info" && options?.callbackTransport === "loopback") {
+				throw new Error(`Loopback test listener unavailable: ${event.message}`);
+			}
 			if (event.type !== "auth_url") return;
 			authorizeUrl = new URL(event.url);
 			pendingNonce = authorizeUrl.searchParams.get("nonce") ?? "";
@@ -94,8 +100,26 @@ function loginInteraction(options?: {
 			if (!authorizeUrl) throw new Error("Authorization URL was not emitted before the callback prompt");
 			const callback = new URL(authorizeUrl.searchParams.get("redirect_uri") ?? "");
 			callback.searchParams.set("code", "authorization-code");
-			callback.searchParams.set("state", authorizeUrl.searchParams.get("state") ?? "");
+			callback.searchParams.set("state", options?.callbackState ?? authorizeUrl.searchParams.get("state") ?? "");
+			if (options?.callbackError) {
+				callback.searchParams.delete("code");
+				callback.searchParams.set("error", options.callbackError);
+			}
 			if (options?.callbackClientId) callback.searchParams.set("client_id", options.callbackClientId);
+			if (options?.callbackTransport === "loopback") {
+				const expectedState = authorizeUrl.searchParams.get("state") ?? "";
+				return new Promise<string>((_resolve, reject) => {
+					prompt.signal?.addEventListener("abort", () => reject(new Error("Prompt cancelled")), { once: true });
+					void (async () => {
+						if (options.callbackState) {
+							const invalid = await fetch(callback);
+							expect(invalid.status).toBe(400);
+							callback.searchParams.set("state", expectedState);
+						}
+						await fetch(callback);
+					})().catch(reject);
+				});
+			}
 			return callback.toString();
 		},
 	};
@@ -138,6 +162,8 @@ describe("OpenAI ChatGPT OAuth", () => {
 		expect(authorizeUrl?.searchParams.get("agent_name_hint")).toBe("Pi");
 		expect(authorizeUrl?.searchParams.get("ext_agent_host_id")).toBe(`urn:uuid:${DEVICE_ID}`);
 		expect(authorizeUrl?.searchParams.get("scope")).toBe(REQUIRED_SCOPE);
+		expect(authorizeUrl?.searchParams.has("prompt")).toBe(false);
+		expect(authorizeUrl?.searchParams.has("force_reconsent")).toBe(false);
 		expect(authorizeUrl?.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:1455/auth/callback");
 		expect(authorizeUrl?.searchParams.get("resource")).toBe("https://api.openai.com/v1");
 		expect(authorizeUrl?.searchParams.get("code_challenge_method")).toBe("S256");
@@ -275,14 +301,133 @@ describe("OpenAI ChatGPT OAuth", () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
-	it("rejects a token response that did not grant direct token use", async () => {
+	it("keeps a verified sign-in without direct scope but refuses request auth", async () => {
 		stubTokenEndpoint(tokenResponse("openid profile email offline_access resource.invoke"));
 
+		const credential = await openaiChatGPTOAuth.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), {
+			getDeviceId: () => DEVICE_ID,
+		});
+		expect(credential).toMatchObject({
+			subject: "test-subject",
+			clientId: "oaiapp_issued",
+			access: "access-token",
+			refresh: "refresh-token",
+			planUsageEnabled: false,
+		});
+		expect(credential.idToken).toBeTruthy();
+		await expect(openaiChatGPTOAuth.toAuth(credential)).rejects.toMatchObject({
+			name: "OpenAIPlanUsageNotEnabledError",
+			code: "plan_usage_not_enabled",
+			recovery: ["enable_plan_usage", "use_api_key"],
+		});
+	});
+
+	it.each(["manual", "loopback"] as const)(
+		"stops a state-validated consent decline on the %s callback without exchanging",
+		async (transport) => {
+			const fetchToken = vi.fn();
+			const flow = createOpenAIChatGPTOAuth({ fetch: fetchToken });
+			await expect(
+				flow.login(
+					loginInteraction({
+						callbackError: "access_denied",
+						callbackTransport: transport === "loopback" ? transport : undefined,
+					}),
+					{ getDeviceId: () => DEVICE_ID },
+				),
+			).rejects.toMatchObject({ name: "OpenAIConsentDeclinedError", code: "consent_declined" });
+			expect(fetchToken).not.toHaveBeenCalled();
+		},
+	);
+
+	it("validates state before classifying a pasted consent decline", async () => {
+		const fetchToken = vi.fn();
+		const flow = createOpenAIChatGPTOAuth({ fetch: fetchToken });
 		await expect(
-			openaiChatGPTOAuth.login(loginInteraction({ callbackClientId: "oaiapp_issued" }), {
+			flow.login(loginInteraction({ callbackError: "access_denied", callbackState: "wrong-state" }), {
 				getDeviceId: () => DEVICE_ID,
 			}),
-		).rejects.toThrow("grant did not include chatgpt.tokens.use.direct");
+		).rejects.toThrow("OAuth state mismatch");
+		expect(fetchToken).not.toHaveBeenCalled();
+	});
+
+	it("ignores an unrelated loopback decline until a state-matching callback arrives", async () => {
+		const fetchToken = vi.fn();
+		const flow = createOpenAIChatGPTOAuth({ fetch: fetchToken });
+		await expect(
+			flow.login(
+				loginInteraction({
+					callbackError: "access_denied",
+					callbackState: "wrong-state",
+					callbackTransport: "loopback",
+				}),
+				{ getDeviceId: () => DEVICE_ID },
+			),
+		).rejects.toMatchObject({ code: "consent_declined" });
+		expect(fetchToken).not.toHaveBeenCalled();
+	});
+
+	it("requests explicit plan consent with the saved client ID and complete scopes", async () => {
+		let authorizeUrl: URL | undefined;
+		stubTokenEndpoint(tokenResponse(), (body) => expect(body.get("client_id")).toBe("oaiapp_issued"));
+		const credential = await openaiChatGPTOAuth.login(
+			loginInteraction({ onAuthorize: (url) => (authorizeUrl = url) }),
+			{ getDeviceId: () => DEVICE_ID, planUsageConsent: { clientId: "oaiapp_issued" } },
+		);
+		expect(authorizeUrl?.searchParams.get("client_id")).toBe("oaiapp_issued");
+		expect(authorizeUrl?.searchParams.get("scope")).toBe(REQUIRED_SCOPE);
+		expect(authorizeUrl?.searchParams.get("prompt")).toBe("consent");
+		expect(authorizeUrl?.searchParams.has("force_reconsent")).toBe(false);
+		expect(credential.planUsageEnabled).toBe(true);
+		expect(await openaiChatGPTOAuth.toAuth(credential)).toEqual({ apiKey: "access-token" });
+	});
+
+	it("rejects a different issued client ID during explicit consent", async () => {
+		const fetchToken = vi.fn();
+		const flow = createOpenAIChatGPTOAuth({ fetch: fetchToken });
+		await expect(
+			flow.login(loginInteraction({ callbackClientId: "oaiapp_other" }), {
+				getDeviceId: () => DEVICE_ID,
+				planUsageConsent: { clientId: "oaiapp_issued" },
+			}),
+		).rejects.toThrow("client ID mismatch");
+		expect(fetchToken).not.toHaveBeenCalled();
+	});
+
+	it.each(["", "dynamic_agent_client"])("rejects consent without an issued client ID (%s)", async (clientId) => {
+		await expect(
+			openaiChatGPTOAuth.login(loginInteraction(), {
+				getDeviceId: () => DEVICE_ID,
+				planUsageConsent: { clientId },
+			}),
+		).rejects.toThrow("requires the saved issued client ID");
+	});
+
+	it("accepts an older direct-scope credential without the optional plan flag", async () => {
+		expect(await openaiChatGPTOAuth.toAuth(connectedCredential())).toEqual({ apiKey: "old-access" });
+	});
+
+	it("refuses a credential explicitly marked disabled despite retained scopes", async () => {
+		await expect(
+			openaiChatGPTOAuth.toAuth({ ...connectedCredential(), planUsageEnabled: false }),
+		).rejects.toMatchObject({ code: "plan_usage_not_enabled" });
+	});
+
+	it.each([false, undefined])("refuses missing direct scope even with plan flag %s", async (planUsageEnabled) => {
+		await expect(
+			openaiChatGPTOAuth.toAuth({ ...connectedCredential(), scopes: ["openid"], planUsageEnabled }),
+		).rejects.toMatchObject({ code: "plan_usage_not_enabled" });
+	});
+
+	it("rechecks plan permission on refresh in both directions", async () => {
+		stubTokenEndpoint(tokenResponse("openid profile email"));
+		const disabled = await openaiChatGPTOAuth.refresh(connectedCredential(), neverAbortedSignal);
+		expect(disabled.planUsageEnabled).toBe(false);
+		await expect(openaiChatGPTOAuth.toAuth(disabled)).rejects.toMatchObject({ code: "plan_usage_not_enabled" });
+		stubTokenEndpoint(tokenResponse());
+		const enabled = await openaiChatGPTOAuth.refresh(disabled, neverAbortedSignal);
+		expect(enabled.planUsageEnabled).toBe(true);
+		expect(await openaiChatGPTOAuth.toAuth(enabled)).toEqual({ apiKey: "access-token" });
 	});
 
 	it("requires a device ID before starting authorization", async () => {

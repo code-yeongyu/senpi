@@ -48,22 +48,56 @@ type TokenResponse = {
 	scope?: unknown;
 };
 
+class OpenAIConsentDeclinedError extends Error {
+	readonly code = "consent_declined";
+
+	constructor() {
+		super("ChatGPT consent declined");
+		this.name = "OpenAIConsentDeclinedError";
+	}
+}
+
+class OpenAIPlanUsageNotEnabledError extends Error {
+	readonly code = "plan_usage_not_enabled";
+	readonly recovery = ["enable_plan_usage", "use_api_key"] as const;
+
+	constructor() {
+		super("ChatGPT plan usage is not enabled. Enable ChatGPT plan usage or use an API key.");
+		this.name = "OpenAIPlanUsageNotEnabledError";
+	}
+}
+
 function randomValue(): string {
 	return randomBytes(32).toString("base64url");
 }
 
-function authorizationResultFromCallback(url: URL, expectedState: string): AuthorizationResult {
-	const code = url.searchParams.get("code");
-	if (!code) throw new Error("Missing authorization code");
+function authorizationResultFromCallback(
+	url: URL,
+	expectedState: string,
+	consentClientId?: string,
+): AuthorizationResult {
 	const state = url.searchParams.get("state");
 	if (!state) throw new Error("Missing OAuth state");
 	if (state !== expectedState) throw new Error("OAuth state mismatch");
-	const clientId = url.searchParams.get("client_id")?.trim();
+	const error = url.searchParams.get("error");
+	if (error === "access_denied") throw new OpenAIConsentDeclinedError();
+	if (error) throw new Error(`ChatGPT authorization failed: ${error}`);
+	const code = url.searchParams.get("code");
+	if (!code) throw new Error("Missing authorization code");
+	const callbackClientId = url.searchParams.get("client_id")?.trim();
+	if (consentClientId && callbackClientId && callbackClientId !== consentClientId) {
+		throw new Error("ChatGPT consent callback client ID mismatch");
+	}
+	const clientId = consentClientId ?? callbackClientId;
 	if (!clientId) throw new Error("OpenAI OAuth registration callback did not contain an issued client ID");
 	return { code, clientId };
 }
 
-function authorizationResultFromManualInput(input: string, expectedState: string): AuthorizationResult {
+function authorizationResultFromManualInput(
+	input: string,
+	expectedState: string,
+	consentClientId?: string,
+): AuthorizationResult {
 	let url: URL;
 	try {
 		url = new URL(input.trim());
@@ -74,9 +108,7 @@ function authorizationResultFromManualInput(input: string, expectedState: string
 	if (url.origin !== expected.origin || url.pathname !== expected.pathname) {
 		throw new Error(`The pasted callback URL must start with ${REDIRECT_URI}`);
 	}
-	const error = url.searchParams.get("error");
-	if (error) throw new Error(`ChatGPT authorization failed: ${error}`);
-	return authorizationResultFromCallback(url, expectedState);
+	return authorizationResultFromCallback(url, expectedState, consentClientId);
 }
 
 function sendHtml(response: ServerResponse, status: number, body: string): void {
@@ -84,7 +116,7 @@ function sendHtml(response: ServerResponse, status: number, body: string): void 
 	response.end(body);
 }
 
-function startCallbackServer(expectedState: string): Promise<CallbackServer> {
+function startCallbackServer(expectedState: string, consentClientId?: string): Promise<CallbackServer> {
 	return new Promise((resolve, reject) => {
 		let resolveResult!: (result: AuthorizationResult) => void;
 		let rejectResult!: (error: Error) => void;
@@ -101,19 +133,16 @@ function startCallbackServer(expectedState: string): Promise<CallbackServer> {
 					return;
 				}
 
-				const error = url.searchParams.get("error");
-				if (error) {
-					sendHtml(response, 400, oauthErrorHtml("ChatGPT was not connected.", `Error: ${error}`));
-					rejectResult(new Error(`ChatGPT authorization failed: ${error}`));
-					return;
-				}
-
 				let authorizationResult: AuthorizationResult;
 				try {
-					authorizationResult = authorizationResultFromCallback(url, expectedState);
+					authorizationResult = authorizationResultFromCallback(url, expectedState, consentClientId);
 				} catch (error) {
 					const message = error instanceof Error ? error.message : "Invalid callback";
 					sendHtml(response, 400, oauthErrorHtml(message));
+					// Unrelated callbacks must not stop the pending login attempt.
+					if (url.searchParams.get("state") === expectedState && url.searchParams.has("error")) {
+						rejectResult(error instanceof Error ? error : new Error(message));
+					}
 					return;
 				}
 
@@ -176,9 +205,6 @@ function credentialFromTokenResponse(token: TokenResponse, clientId: string, now
 		throw new Error("OpenAI OAuth token response has invalid expires_in");
 	}
 	const scopes = scope.trim().split(/\s+/).filter(Boolean);
-	if (!scopes.includes(DIRECT_TOKEN_SCOPE)) {
-		throw new Error(`OpenAI OAuth grant did not include ${DIRECT_TOKEN_SCOPE}`);
-	}
 	return {
 		type: "oauth",
 		access,
@@ -186,6 +212,7 @@ function credentialFromTokenResponse(token: TokenResponse, clientId: string, now
 		expires: now() + token.expires_in * 1000 - EXPIRY_MARGIN_MS,
 		clientId,
 		scopes,
+		planUsageEnabled: scopes.includes(DIRECT_TOKEN_SCOPE),
 	};
 }
 
@@ -251,12 +278,16 @@ async function loginOpenAIChatGPT(
 	verifyIdToken: ReturnType<typeof createOpenAIIdTokenVerifier>,
 ): Promise<OAuthCredential> {
 	const hostId = agentHostId(options?.getDeviceId?.());
+	const consentClientId = options?.planUsageConsent?.clientId;
+	if (options?.planUsageConsent && (!consentClientId?.trim() || consentClientId === DYNAMIC_CLIENT_ID)) {
+		throw new Error("Enabling ChatGPT plan usage requires the saved issued client ID");
+	}
 	const { verifier, challenge } = await generatePKCE();
 	const state = randomValue();
 	const nonce = randomValue();
 	let callback: CallbackServer | undefined;
 	try {
-		callback = await startCallbackServer(state);
+		callback = await startCallbackServer(state, consentClientId);
 	} catch (error) {
 		interaction.notify({
 			type: "info",
@@ -278,6 +309,10 @@ async function loginOpenAIChatGPT(
 		code_challenge_method: "S256",
 		nonce,
 	}).toString();
+	if (consentClientId) {
+		authorizationUrl.searchParams.set("client_id", consentClientId);
+		authorizationUrl.searchParams.set("prompt", "consent");
+	}
 	interaction.notify({
 		type: "auth_url",
 		url: authorizationUrl.toString(),
@@ -293,7 +328,7 @@ async function loginOpenAIChatGPT(
 			placeholder: REDIRECT_URI,
 			signal: AbortSignal.any([manualAbort.signal, interaction.signal]),
 		})
-		.then((input) => authorizationResultFromManualInput(input, state));
+		.then((input) => authorizationResultFromManualInput(input, state, consentClientId));
 
 	try {
 		const result = await (callback ? Promise.race([callback.result, manualCode]) : manualCode);
@@ -335,6 +370,9 @@ export function createOpenAIChatGPTOAuth(dependencies: Partial<OpenAIIdTokenDepe
 		login: (interaction, options) => loginOpenAIChatGPT(interaction, options, deps, verifyIdToken),
 		refresh: (credential, signal) => refreshAccessToken(credential, signal, deps),
 		async toAuth(credential) {
+			if (credential.planUsageEnabled === false || !credential.scopes?.includes(DIRECT_TOKEN_SCOPE)) {
+				throw new OpenAIPlanUsageNotEnabledError();
+			}
 			return { apiKey: credential.access };
 		},
 	};
