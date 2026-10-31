@@ -13,18 +13,13 @@ import { loadAnthropicSubscriptionProviderSettings } from "../../../src/core/ext
 import { ModelConfig } from "../../../src/core/model-config.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../../../src/core/settings-manager.ts";
 import { subscriptionLimits } from "../../../src/core/subscription-limits/limit-store.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 // omo#10146: account strategy changes new-session distribution, not a session's cache locality.
 type Strategy = "cache-affine" | "fill-first" | "round-robin";
 const NOW = Date.parse("2026-10-30T00:00:00Z");
 const names = ["alpha", "beta", "gamma"];
-const accounts: AccountSlot[] = names.map((name) => ({
-	name,
-	access: `synthetic-${name}`,
-	refresh: "synthetic",
-	expires: NOW + 60_000,
-	source: "login",
-}));
+const accounts: AccountSlot[] = names.map((name) => cliSlot(name));
 let directory: string;
 let repository: CredentialSlotRepository;
 
