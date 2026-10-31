@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildEvalPrompt, evalEmphasisStyle } from "../src/prompt/eval-prompt.ts";
 
 type PromptOptions = {
@@ -257,5 +257,44 @@ describe("buildEvalPrompt", () => {
 
 	it("throws when no kernels are enabled", () => {
 		expect(() => buildEvalPrompt({ py: false, js: false, rb: false, jl: false })).toThrow(/no kernels enabled/i);
+	});
+});
+
+// senpi#5067: SENPI_TEST_WORKSTATION's repoRoot pin shows the bun-1-4 skill path under a synthetic checkout root.
+describe("buildEvalPrompt bun-1-4 pointer under the test-only repoRoot pin", () => {
+	const PIN = { cpuModel: "Synthetic CPU", cores: 997, kernel: "Synthetic 0.0.0" };
+	const enabled = { py: false, js: true, rb: false, jl: false };
+	const bunSkillPath = "/work/checkout/packages/senpi-codemode/src/skill/bun-1-4/SKILL.md";
+	const render = () =>
+		buildEvalPrompt(enabled, {
+			spawns: false,
+			jsRuntime: { name: "bun", version: "1.4.0", path: "/usr/local/bin/bun" },
+			bunSkillPath,
+		}).description;
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it("production (unset) shows the real path, byte-identical to a pin whose checkout does not hold it", () => {
+		vi.stubEnv("SENPI_TEST_WORKSTATION", "");
+		const production = render();
+		vi.stubEnv("SENPI_TEST_WORKSTATION", JSON.stringify({ ...PIN, repoRoot: { from: "/elsewhere", to: "/eq" } }));
+
+		expect(render()).toBe(production);
+		expect(production).toContain(`read the bun-1-4 skill at ${bunSkillPath}`);
+	});
+
+	it("a path inside the pinned checkout is shown under the pinned root", () => {
+		vi.stubEnv("SENPI_TEST_WORKSTATION", "");
+		const production = render();
+		vi.stubEnv(
+			"SENPI_TEST_WORKSTATION",
+			JSON.stringify({ ...PIN, repoRoot: { from: "/work/checkout", to: "/eq-synthetic/checkout" } }),
+		);
+
+		expect(render()).toBe(
+			production.replace(bunSkillPath, "/eq-synthetic/checkout/packages/senpi-codemode/src/skill/bun-1-4/SKILL.md"),
+		);
 	});
 });

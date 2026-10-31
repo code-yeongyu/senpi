@@ -7,6 +7,7 @@ import type { AgentSessionRuntime } from "../../src/core/agent-session-runtime.t
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import { createRpcConnectionHandler } from "../../src/modes/rpc/connection-handler.ts";
 import { createHarness } from "./harness.ts";
+import { cliSlot } from "../support/claude-cli-test-slots.ts";
 import { makeHarness, makeSink } from "./rpc-connection-harness.ts";
 
 describe("RPC auth and connection handler contracts", () => {
@@ -268,18 +269,11 @@ describe("RPC auth and connection handler contracts", () => {
 					access: "claude-sdk-oauth-managed",
 					refresh: "claude-sdk-oauth-managed",
 					expires: 4_102_444_800_000,
-					accounts: [
-						{
-							name: "default",
-							source: "login",
-							access: "sk-ant-scripted-access",
-							refresh: "scripted-refresh",
-							expires: 4_102_444_800_000,
-							// senpi#1495 review finding 7: the wire projection must carry
-							// displayName for named accounts, with `)`/`:` in the label.
-							displayName: "Work: main (client)",
-						},
-					],
+					// A Claude sign-in stores a Claude CLI account (senpi#4436); a token slot would only be listed
+					// after the load-time sign-out rewrote it, which a busy store skips.
+					// senpi#1495 review finding 7: the wire projection must carry
+					// displayName for named accounts, with `)`/`:` in the label.
+					accounts: [cliSlot("default", { displayName: "Work: main (client)" })],
 				};
 			},
 			async refresh(credentials) {
