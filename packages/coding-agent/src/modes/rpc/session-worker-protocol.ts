@@ -5,6 +5,8 @@ import type { TranscriptTransition } from "../../core/session-transcript-journal
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import type { MirroredLimits } from "../../core/subscription-limits/limit-store.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
+import type { CanonicalRecord } from "./compact-lane-transitions.ts";
+import type { ExtensionOwnerIdentity, ExtensionOwnerWire } from "./extension-owner.ts";
 import type { RpcSessionState } from "./rpc-types.ts";
 import type { SessionBootstrap } from "./session-acceptance-lane.ts";
 import type { RpcSessionLaunchProfile } from "./session-registry.ts";
@@ -22,13 +24,19 @@ export const SESSION_WORKER_LIMITS = {
 	controlMs: 5_000,
 } as const;
 
+/** The bytes a transition carries: its entry, plus the owned message copies of the flow it journals (senpi#4460). */
+function transitionBytes(transition: TranscriptTransition): number {
+	const entry = transition.kind === "append" ? Buffer.byteLength(transition.entry ?? "") : 0;
+	const flow = transition.kind === "append" || transition.kind === "leaf" ? transition.flow : undefined;
+	return entry + (flow ? Buffer.byteLength(JSON.stringify(flow)) : 0);
+}
+
 /** A transition over the frame limit leaves its epoch's transcript unavailable; S12 transfers it in fragments. */
 export function withinFrameLimit(transitions: readonly TranscriptTransition[]): TranscriptTransition[] {
 	// Reserve fixed metadata space; content is charged in the same raw UTF-8 bytes as the accepted tail.
 	const entryOverhead = 1024;
 	return transitions.map((transition) =>
-		(transition.kind === "append" ? Buffer.byteLength(transition.entry ?? "") : 0) + entryOverhead >
-		SESSION_WORKER_LIMITS.outputBytes
+		transitionBytes(transition) + entryOverhead > SESSION_WORKER_LIMITS.outputBytes
 			? { kind: "unavailable", reason: "transition_over_worker_frame_limit" }
 			: transition,
 	);
@@ -76,7 +84,17 @@ export type HostToSessionWorker =
 	| { type: "mcp_form_bound"; id: string; epoch: string; version?: string }
 	| { type: "mcp_form_availability"; epoch: string; version?: string; id?: string }
 	| { type: "mcp_form_settlement"; id: string; epoch: string; settlementId: string; outcome: McpFormOutcome }
-	| { type: "command"; request: number; command: object; connection?: string; roles?: readonly string[] }
+	| {
+			type: "command";
+			request: number;
+			command: object;
+			connection?: string;
+			roles?: readonly string[];
+			/** The gate the host captured at ingress, before its first await (#4728). */
+			owner?: ExtensionOwnerWire;
+	  }
+	/** Gates the host already retired atomically; the isolate only wakes their waiters. */
+	| { type: "owners_retired"; owners: readonly ExtensionOwnerIdentity[] }
 	| { type: "prompt_surface"; request: number; surface: PromptSurface }
 	| { type: "browser_engine"; request: number; engine: BrowserEngine }
 	| { type: "permission_preset"; request: number; preset: string }
@@ -115,10 +133,37 @@ export type SessionWorkerToHost =
 			transitions?: readonly TranscriptTransition[];
 			/** The next incarnation's baseline, on the `session_replaced` record that starts it. */
 			bootstrap?: SessionBootstrap;
+			/** The record's canonical projection, folded in the same unit; `firstOrdinal` is the producer's binding. */
+			canonical?: CanonicalRecord;
+			/** The isolate refused this event's canonical record at the protocol depth limit and already sent that refusal. */
+			canonicalRefused?: true;
+			firstOrdinal?: number;
 			connection?: string;
+			/** The command's captured incarnation; targeted output never downgrades to the routing string. */
+			owner?: ExtensionOwnerIdentity;
 			signal: SharedArrayBuffer;
 			activity: Pick<WorkerSnapshot, "busy" | "handoffBusy" | "streaming">;
 			snapshot?: WorkerSnapshot;
+	  }
+	/** A block control: a canonical-only unit taking the next frame ordinal, never delivered to a legacy destination. */
+	| {
+			type: "canonical";
+			ordinal: number;
+			firstOrdinal: number;
+			recovery: RecoveryCarrier;
+			record: CanonicalRecord;
+			signal: SharedArrayBuffer;
+	  }
+	/**
+	 * The isolate lost a canonical record before framing it; the host lane's compact state for the epoch ends, unless
+	 * `limit` says the record was refused at that protocol depth limit (RULING-59 C), which the host counts instead.
+	 */
+	| {
+			type: "canonical_unavailable";
+			ordinal: number;
+			reason: string;
+			limit?: number | undefined;
+			signal: SharedArrayBuffer;
 	  }
 	| { type: "capabilities"; connection?: string; capabilities: readonly string[]; signal: SharedArrayBuffer }
 	| { type: "loaded_surfaces"; previous?: string; digest: string; signal: SharedArrayBuffer }

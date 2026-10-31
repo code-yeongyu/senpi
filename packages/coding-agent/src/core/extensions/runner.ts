@@ -3,6 +3,8 @@
  */
 
 import { basename } from "node:path";
+import type { ExtensionRpcRequestContext } from "./rpc-context.ts";
+import { requestExtensionRpc } from "./rpc-request.ts";
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, ImageContent, Model, Provider, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
@@ -12,8 +14,14 @@ import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
 import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
-import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
-import type { InputOrigin } from "../input-origin.ts";
+import {
+	createEventBus,
+	type EventBus,
+	EXTENSION_RPC_EVENT_CHANNEL,
+	EXTENSION_RPC_SUBSCRIBED_CHANNEL,
+	type ExtensionRpcEvent,
+} from "../event-bus.ts";
+import { type InputOrigin, inputAttributionOf, inputOriginOf } from "../input-origin.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
 import { inheritMcpMrtrPresentation } from "../mcp-mrtr-presentations.ts";
 import type { NamedMemoryReporter } from "../memory-report/memory-report-registry.ts";
@@ -45,7 +53,7 @@ import {
 	runBudgetedHandler,
 	runBudgetedSequence,
 } from "./handler-budget.ts";
-import { kernelToolsStorage } from "./kernel-tools-context.ts";
+import { type ExtensionKernelTools, kernelToolInvokerStorage, kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
@@ -80,6 +88,7 @@ import type {
 	ExtensionShortcut,
 	ExtensionToolContext,
 	ExtensionUIContext,
+	InputAttribution,
 	InputEvent,
 	InputEventResult,
 	InputSource,
@@ -126,12 +135,7 @@ import type {
 } from "./types.ts";
 import { RUNTIME_EXTENSION_PATH } from "./types.ts";
 
-export class ExtensionRpcRequestNotFoundError extends Error {
-	constructor(name: string) {
-		super(`Unknown extension RPC request: ${name}`);
-		this.name = "ExtensionRpcRequestNotFoundError";
-	}
-}
+export { ExtensionRpcRequestNotFoundError } from "./rpc-request.ts";
 
 // Extension shortcuts compete with canonical keybinding ids from keybindings.json.
 // Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
@@ -209,6 +213,17 @@ function isUserBashEventResult(value: unknown): value is UserBashEventResult {
 interface BeforeAgentStartCombinedResult {
 	messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
 	systemPrompt?: string;
+	/** Leading part of `systemPrompt` no volatile handler changed; absent when every change was stable (senpi#4447). */
+	systemPromptStablePrefix?: string;
+}
+
+/** Characters at the start of `before` that `after` keeps. */
+function sharedPrefixLength(before: string, after: string): number {
+	if (after.startsWith(before)) return before.length;
+	const limit = Math.min(before.length, after.length);
+	let index = 0;
+	while (index < limit && before.charCodeAt(index) === after.charCodeAt(index)) index++;
+	return index;
 }
 
 /**
@@ -396,6 +411,22 @@ function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["t
 	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
 }
 
+/** `before_agent_start` dispatch order: every handler in load order, then the `runLast` ones (senpi#4448). */
+function beforeAgentStartDispatchOrder(extensions: Extension[]) {
+	const snapshot = snapshotEventHandlers(extensions, "before_agent_start");
+	const runsLast = (ext: Extension, handler: EventHandlerFn) => ext.runLastHandlers?.has(handler) === true;
+	const isBuiltin = (ext: Extension) => ext.path.startsWith("<builtin:");
+	const phase = (keep: (ext: Extension, handler: EventHandlerFn) => boolean) =>
+		snapshot.map(({ ext, handlers }) => ({ ext, handlers: handlers.filter((handler) => keep(ext, handler)) }));
+	// Builtin run-last handlers close the phase order, so MCP instructions stay last even after another
+	// extension's run-last handler (senpi#4448).
+	return [
+		...phase((ext, handler) => !runsLast(ext, handler)),
+		...phase((ext, handler) => runsLast(ext, handler) && !isBuiltin(ext)),
+		...phase((ext, handler) => runsLast(ext, handler) && isBuiltin(ext)),
+	];
+}
+
 type EventHandlerFn = NonNullable<ReturnType<Extension["handlers"]["get"]>>[number];
 interface HandlerEntry {
 	readonly path: string;
@@ -557,6 +588,7 @@ export class ExtensionRunner {
 		timeoutMinutes: 30,
 	});
 	private getBrowserEngineFn: NonNullable<ExtensionContextActions["getBrowserEngine"]> = () => undefined;
+	private getSessionEnvFn: NonNullable<ExtensionContextActions["getSessionEnv"]> = () => undefined;
 	private getImageSettingsFn: ExtensionContextActions["getImageSettings"] = () => ({
 		autoResize: true,
 		blockImages: false,
@@ -572,6 +604,7 @@ export class ExtensionRunner {
 		reason: "rejected",
 	});
 	private getSystemPromptFn: () => string = () => "";
+	private getSystemPromptStablePrefixFn: () => string | undefined = () => undefined;
 	private getLoadedHookSourcesFn: ExtensionContextActions["getLoadedHookSources"] = () => ({
 		agentDir: "",
 		cwd: this.cwd,
@@ -625,6 +658,7 @@ export class ExtensionRunner {
 		this.extensions = extensions;
 		registerRunnerExtensions(this, extensions);
 		this.runtime = runtime;
+		runtime.mcpServers.bind(extensions);
 		runtime.emitProviderLoginStart = (event) => this.emitProviderLoginStart(event);
 		this.uiContext = noOpUIContext;
 		this.cwd = cwd;
@@ -729,6 +763,7 @@ export class ExtensionRunner {
 		this.getLookAtSettingsFn = contextActions.getLookAtSettings;
 		if (contextActions.getAskUserSettings) this.getAskUserSettingsFn = contextActions.getAskUserSettings;
 		if (contextActions.getBrowserEngine) this.getBrowserEngineFn = contextActions.getBrowserEngine;
+		if (contextActions.getSessionEnv) this.getSessionEnvFn = contextActions.getSessionEnv;
 		this.getImageSettingsFn = contextActions.getImageSettings;
 		this.sessionSettingsFn = contextActions.sessionSettings;
 		this.compactFn = contextActions.compact;
@@ -738,6 +773,7 @@ export class ExtensionRunner {
 		this.getMessageRevisionFn = contextActions.getMessageRevision;
 		this.applyCompactionFn = contextActions.applyCompaction;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
+		this.getSystemPromptStablePrefixFn = contextActions.getSystemPromptStablePrefix ?? (() => undefined);
 		this.getLoadedHookSourcesFn = contextActions.getLoadedHookSources;
 		if (contextActions.getAgentDir) this.getAgentDirFn = contextActions.getAgentDir;
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
@@ -745,6 +781,11 @@ export class ExtensionRunner {
 		this.onUserActivityFn = contextActions.onUserActivity;
 		this.executeToolFn = contextActions.executeTool;
 		this.getCallableToolsFn = contextActions.getCallableTools ?? (() => []);
+		// Servers registered from now on reach the extension that connects them right away. Servers
+		// registered during loading are read on session_start.
+		this.runtime.mcpServers.setChangeListener(() => {
+			void this.emit({ type: "mcp_servers_change", servers: this.runtime.mcpServers.list() });
+		});
 
 		for (const extension of this.extensions) {
 			for (const [name, hint] of extension.removedToolHints ?? []) {
@@ -1020,10 +1061,13 @@ export class ExtensionRunner {
 		);
 	}
 
+	/** Subscribes an RPC client to extension events, then tells extensions a client just subscribed. */
 	onRpcEvent(handler: (event: ExtensionRpcEvent) => void): () => void {
-		return this.eventBus.on(EXTENSION_RPC_EVENT_CHANNEL, (data) => {
+		const off = this.eventBus.on(EXTENSION_RPC_EVENT_CHANNEL, (data) => {
 			handler(data as ExtensionRpcEvent);
 		});
+		this.eventBus.emit(EXTENSION_RPC_SUBSCRIBED_CHANNEL, undefined);
+		return off;
 	}
 
 	/**
@@ -1041,20 +1085,12 @@ export class ExtensionRunner {
 
 	/** Get extension-declared MCP servers (first declaration per name wins). */
 	getRegisteredMcpServers(): readonly RegisteredMcpServerDeclaration[] {
-		const serversByName = new Map<string, RegisteredMcpServerDeclaration>();
-		for (const ext of this.extensions) {
-			for (const decl of ext.mcpServers.values()) {
-				const existing = serversByName.get(decl.name);
-				if (existing === undefined) {
-					serversByName.set(decl.name, decl);
-				} else {
-					console.warn(
-						`MCP server '${decl.name}' declared by both ${existing.extensionPath} and ${ext.path}; keeping first declaration from ${existing.extensionPath}.`,
-					);
-				}
-			}
-		}
-		return Array.from(serversByName.values());
+		return this.runtime.mcpServers.declarations();
+	}
+
+	/** Whether a loaded extension handles `mcp_servers_change`, which makes it the one connecting registered servers. */
+	extensionConnectsMcpServers(): boolean {
+		return this.hasHandlers("mcp_servers_change");
 	}
 
 	/** Get a tool definition by name. Returns undefined if not found. */
@@ -1150,6 +1186,29 @@ export class ExtensionRunner {
 		return this.staleMessage === undefined;
 	}
 
+	/**
+	 * Deferred `ctx.afterSessionStart` work runs only while this generation still owns its session: a switch,
+	 * new session, reload or dispose during the `session_start` dispatch retires it, and its ctx would throw
+	 * `StaleExtensionContextError` on first use. A returned promise is observed here so its rejection is
+	 * reported, never unhandled; a stale error raised by a retirement mid-publish is dropped the same way.
+	 */
+	private runAfterSessionStart(publish: () => void | Promise<void>): void {
+		if (this.staleMessage) return;
+		const report = (error: unknown) => {
+			if (error instanceof StaleExtensionContextError) return;
+			this.emitError({
+				extensionPath: RUNTIME_EXTENSION_PATH,
+				event: "session_start",
+				error: error instanceof Error ? error.message : String(error),
+			});
+		};
+		try {
+			void Promise.resolve(publish()).catch(report);
+		} catch (error) {
+			report(error);
+		}
+	}
+
 	private assertActive(): void {
 		if (this.staleMessage) {
 			throw new StaleExtensionContextError(this.staleMessage);
@@ -1176,8 +1235,8 @@ export class ExtensionRunner {
 	}
 
 	/** Stops waiting on the given turn's handlers that are still running (the turn deadline's release). */
-	releaseHeldHandlers(turn: number): number {
-		return this.heldHandlerWaits.release(turn);
+	releaseHeldHandlers(turn: number, verdict: HandlerStopVerdict = "released"): number {
+		return this.heldHandlerWaits.release(turn, verdict);
 	}
 
 	/**
@@ -1215,10 +1274,12 @@ export class ExtensionRunner {
 		verdict: HandlerStopVerdict,
 		budget: ExtensionHandlerBudget,
 	): void {
+		// A person moving on from a settled run is not a failure: session.log records it (stage "released"), nothing else.
+		if (verdict === "yielded") return;
 		const error =
 			verdict === "timed_out"
 				? `handler timed out after ${budget.timeoutMs}ms`
-				: "handler released by the turn deadline";
+				: "handler released when the turn was stopped";
 		this.emitError({ extensionPath, event, error });
 	}
 
@@ -1434,25 +1495,8 @@ export class ExtensionRunner {
 		return this.resolveRegisteredCommands().find((command) => command.invocationName === name);
 	}
 
-	async requestRpc(name: string, data: unknown): Promise<unknown> {
-		this.assertActive();
-		const normalizedName = name.trim();
-		if (normalizedName.length === 0) {
-			throw new Error("Extension RPC request name must not be empty");
-		}
-		const matches = this.extensions.flatMap((extension) => {
-			const handler = extension.rpcHandlers?.get(normalizedName);
-			return handler === undefined ? [] : [handler];
-		});
-		if (matches.length === 0) {
-			throw new ExtensionRpcRequestNotFoundError(normalizedName);
-		}
-		if (matches.length > 1) {
-			throw new Error(`Multiple extension RPC request handlers registered: ${normalizedName}`);
-		}
-		const result = await matches[0]?.(data);
-		this.assertActive();
-		return result;
+	async requestRpc(name: string, data: unknown, context?: ExtensionRpcRequestContext): Promise<unknown> {
+		return requestExtensionRpc(this.extensions, name, data, context, () => this.assertActive());
 	}
 
 	/**
@@ -1522,6 +1566,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getBrowserEngineFn();
 			},
+			get sessionEnv() {
+				runner.assertActive();
+				return runner.getSessionEnvFn();
+			},
 			get modelRegistry() {
 				runner.assertActive();
 				return runner.modelRegistry;
@@ -1580,7 +1628,21 @@ export class ExtensionRunner {
 			},
 			get kernelTools() {
 				runner.assertActive();
-				return kernelToolsStorage.getStore();
+				const tools = kernelToolsStorage.getStore();
+				if (!tools) return undefined;
+				return {
+					capabilities: tools.capabilities,
+					describe: (names) => tools.describe(names),
+					invoke: (request, options) => {
+						runner.assertActive();
+						return tools.invoke(request, {
+							...(options && ("aborted" in options ? { signal: options } : options)),
+							invoker: kernelToolInvokerStorage.getStore() ?? {
+								sessionId: runner.sessionManager.getSessionId(),
+							},
+						});
+					},
+				} satisfies ExtensionKernelTools;
 			},
 			get evalHandleHost() {
 				runner.assertActive();
@@ -1667,6 +1729,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getAskUserSettingsFn();
 			},
+			afterSessionStart: (publish) => {
+				runner.assertActive();
+				runner.sessionStartTurns.admit(() => runner.runAfterSessionStart(publish));
+			},
 			getImageSettings: () => {
 				runner.assertActive();
 				return runner.getImageSettingsFn();
@@ -1714,6 +1780,10 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
 			},
+			getSystemPromptStablePrefix: () => {
+				runner.assertActive();
+				return runner.getSystemPromptStablePrefixFn();
+			},
 			getSystemPromptOptions: () => {
 				runner.assertActive();
 				return runner.getSystemPromptOptionsFn();
@@ -1725,6 +1795,10 @@ export class ExtensionRunner {
 			getRegisteredMcpServers: () => {
 				runner.assertActive();
 				return runner.getRegisteredMcpServers();
+			},
+			extensionConnectsMcpServers: () => {
+				runner.assertActive();
+				return runner.extensionConnectsMcpServers();
 			},
 		};
 		if (this.questionInput) {
@@ -2438,8 +2512,9 @@ export class ExtensionRunner {
 		let currentSystemPrompt = systemPrompt;
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 		let systemPromptModified = false;
+		let stableLength = systemPrompt.length;
 
-		dispatch: for (const { ext, handlers } of snapshotEventHandlers(this.extensions, "before_agent_start")) {
+		dispatch: for (const { ext, handlers } of beforeAgentStartDispatchOrder(this.extensions)) {
 			for (const handler of handlers) {
 				if (options.signal?.aborted === true) break dispatch;
 				// A preview reaches only handlers that declared themselves side-effect free (senpi#2115).
@@ -2474,6 +2549,12 @@ export class ExtensionRunner {
 							messages.push(result.message);
 						}
 						if (result.systemPrompt !== undefined) {
+							const cache =
+								result.systemPromptCache ?? (ext.path.startsWith("<builtin:") ? "stable" : "volatile");
+							stableLength =
+								cache === "stable" && stableLength === currentSystemPrompt.length
+									? result.systemPrompt.length
+									: Math.min(stableLength, sharedPrefixLength(currentSystemPrompt, result.systemPrompt));
 							currentSystemPrompt = result.systemPrompt;
 							systemPromptModified = true;
 							parts = result.systemPromptParts;
@@ -2504,6 +2585,9 @@ export class ExtensionRunner {
 			return {
 				messages: messages.length > 0 ? messages : undefined,
 				systemPrompt: systemPromptModified ? currentSystemPrompt : undefined,
+				...(systemPromptModified && stableLength < currentSystemPrompt.length
+					? { systemPromptStablePrefix: currentSystemPrompt.slice(0, stableLength) }
+					: {}),
 			};
 		}
 
@@ -2576,13 +2660,17 @@ export class ExtensionRunner {
 		}
 	}
 
-	/** Emit input event. Transforms chain, "handled" short-circuits. */
+	/**
+	 * Emit input event. Transforms chain, "handled" short-circuits. `attribution` defaults to what `source` alone
+	 * implies (RPC input from a connection whose role is unknown is an agent's); the session passes the one it decides.
+	 */
 	async emitInput(
 		text: string,
 		images: ImageContent[] | undefined,
 		source: InputSource,
 		streamingBehavior?: "steer" | "followUp",
 		inputId = "input",
+		attribution: InputAttribution = inputAttributionOf({ origin: inputOriginOf(source), source }),
 	): Promise<InputEventResult> {
 		let currentText = text;
 		let currentImages = images;
@@ -2596,6 +2684,7 @@ export class ExtensionRunner {
 						text: currentText,
 						images: currentImages,
 						source,
+						attribution,
 						streamingBehavior,
 					};
 					const result = (await handler(event, this.createContext(ext.path))) as InputEventResult | undefined;

@@ -25,6 +25,9 @@ import { canonicalSessionPath } from "./session-path-key.ts";
 import type { RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
 import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
+import { type CanonicalControl, carriedCanonical, carriedRefusal } from "./compact-canonical-pairing.ts";
+import { protocolDepthLimitOf } from "./compact-protocol-depth.ts";
+import { CompactProducerStamp } from "./compact-producer-stamp.ts";
 import {
 	type HostToSessionWorker,
 	SESSION_WORKER_LIMITS,
@@ -33,6 +36,7 @@ import {
 	withinFrameLimit,
 } from "./session-worker-protocol.ts";
 import { createSessionWorkerRegistry } from "./session-worker-registry.ts";
+import { IssuedWorkerOwners } from "./session-worker-owners.ts";
 import { McpFormWorker } from "./mcp-form-worker.ts";
 
 if (isBunBinary) {
@@ -115,13 +119,23 @@ class WorkerEventWriter extends SessionEventWriter {
 		if (replacement && Buffer.byteLength(JSON.stringify(replacement)) > SESSION_WORKER_LIMITS.outputBytes)
 			failWorker("session_worker_snapshot_limit");
 		const replaced = "type" in record && record.type === "session_replaced";
-		if (ordered && replaced) journaled = session.sessionManager;
+		const issued = this.connectionContext.owner?.wire;
+		const owner = issued && { ownerId: issued.ownerId, bindingGeneration: issued.bindingGeneration };
+		if (ordered && replaced) {
+			journaled = session.sessionManager;
+			stamp.forget();
+			canonicalLost = false;
+		}
 		const transitions = ordered && !replaced ? (journaled?.drainTranscript() ?? []) : [];
 		const epochSignal = ordered && replaced ? new SharedArrayBuffer(36) : undefined;
+		const recovery = recoveryCarrier(record);
+		const canonical = carriedCanonical(record);
 		const order = ordered
 			? {
-					ordinal: outputOrdinal++,
-					recovery: recoveryCarrier(record),
+					...stamp.stamp(recovery, canonical, record),
+					recovery,
+					...(canonical ? { canonical } : {}),
+					...(carriedRefusal(record) ? { canonicalRefused: true as const } : {}),
 					...(replaced
 						? {
 								bootstrap: {
@@ -140,6 +154,7 @@ class WorkerEventWriter extends SessionEventWriter {
 			// S12 replaces this whole-record serialization with compact records and permits.
 			record: JSON.parse(line) as object,
 			connection: this.currentConnection(),
+			...(owner === undefined ? {} : { owner }),
 			signal,
 			activity,
 			snapshot: replacement,
@@ -147,9 +162,26 @@ class WorkerEventWriter extends SessionEventWriter {
 		if (epochSignal) setSessionRecoveryEpoch(session, Buffer.from(epochSignal).toString("ascii"));
 		return true;
 	}
+	override enqueueCanonical(_sessionId: string, control: CanonicalControl): void {
+		if (!ordered) return;
+		const { ordinal, firstOrdinal = ordinal } = stamp.stamp(control.carrier, control.record);
+		const { record, carrier: recovery } = control;
+		exchange((signal) => ({ type: "canonical", ordinal, firstOrdinal, recovery, record, signal }));
+	}
+	override canonicalUnavailable(_sessionId: string, cause: unknown): void {
+		// The host's compact state for this epoch is already gone after the first real loss; later losses would only cost
+		// exchanges. A depth refusal is never that loss and is always sent: the host counts it, live state or not (RULING-59 C).
+		const limit = protocolDepthLimitOf(cause);
+		if (!ordered || (canonicalLost && limit === undefined)) return;
+		canonicalLost ||= limit === undefined;
+		const { ordinal } = stamp.stamp(undefined, undefined);
+		const reason = cause instanceof Error ? cause.message : String(cause);
+		exchange((signal) => ({ type: "canonical_unavailable", ordinal, reason, limit, signal }));
+	}
 }
 
 const writer = new WorkerEventWriter();
+const issuedOwners = new IssuedWorkerOwners();
 // One session per isolate: the roles of the connections it serves, adopted from the host before each command.
 const connectionRoles = new ConnectionRoles();
 let prepared: Extract<HostToSessionWorker, { type: "prepare" }> | undefined;
@@ -159,7 +191,10 @@ let binding: RpcSessionBinding | undefined;
 let closing = false;
 /** Set by `commit` when the host owns an acceptance lane; each output frame then carries the next ordinal. */
 let ordered = false;
-let outputOrdinal = 0;
+/** The output-frame ordinal (S04a) is the compact producer ordinal: one numbering (RULING-36). */
+const stamp = new CompactProducerStamp();
+/** One `canonical_unavailable` frame per epoch: set by the first, cleared with `stamp.forget()` at a replacement. */
+let canonicalLost = false;
 /** The manager whose committed transcript changes ride the next output frame; replaced with the session. */
 let journaled: SessionManager | undefined;
 let unsubscribe: (() => void) | undefined;
@@ -178,9 +213,8 @@ function subscribeSession(): void {
 	unsubscribeWake = entry?.runtime?.session.extensionRunner.onBusEvent(WAKE_SOURCE_STATE_EVENT, () =>
 		publishSnapshot(),
 	);
-	unsubscribe = entry?.runtime?.session.subscribe((event) =>
-		publishSnapshot(event.type === "agent_settled" || event.type === "agent_idle"),
-	);
+	// Settled for the host's drain only at agent_idle: agent_settled can precede its extension handlers (omo#11419).
+	unsubscribe = entry?.runtime?.session.subscribe((event) => publishSnapshot(event.type === "agent_idle"));
 }
 
 function snapshot(): WorkerSnapshot {
@@ -288,9 +322,13 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			if (!binding || (closing && !privileged)) throw new Error("session_closing");
 			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
 			const activeBinding = binding;
-			await (message.connection === undefined
-				? activeBinding.handle(message.command)
-				: writer.withConnection(message.connection, () => activeBinding.handle(message.command)));
+			const run = () => activeBinding.handle(message.command);
+			const connection = message.connection;
+			await (connection === undefined
+				? run()
+				: message.owner === undefined
+					? writer.withConnection(connection, run)
+					: writer.connectionContext.runIssued(connection, issuedOwners.adopt(message.owner), run));
 			publishSnapshot();
 			send({ type: "result", request: message.request });
 			return;
@@ -312,6 +350,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			return;
 		case "subscription_limits":
 			for (const limits of message.accounts) subscriptionLimits.adopt(limits);
+			return;
+		case "owners_retired":
+			issuedOwners.retire(message.owners);
 			return;
 		case "cancel_ui":
 			binding?.cancelPendingExtensionUiRequests?.();

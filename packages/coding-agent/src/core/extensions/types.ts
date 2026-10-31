@@ -13,6 +13,7 @@ import type { InputOrigin } from "../input-origin.ts";
 import type { LifecycleApi } from "../session-lifecycle-types.ts";
 import type { UploadRedaction, UploadRedactionOptions } from "../share/upload-redaction.ts";
 import type { ContextEvent } from "./context-event.ts";
+import type { ExtensionRpcRequestHandler } from "./rpc-context.ts";
 
 export type { ContextEvent } from "./context-event.ts";
 
@@ -119,6 +120,7 @@ import type {
 import type { ReadClassifier } from "../tools/read-classifiers.ts";
 import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type { McpServerDeclaration } from "./builtin/mcp/config-schema.ts";
+import type { McpServerRegistry } from "./mcp-server-registry.ts";
 import type { PermissionPresetName } from "./builtin/permission-system/types.ts";
 import type { EvalHandleHost } from "./eval-handle-host.ts";
 import type { ExtensionKernelTools } from "./kernel-tools-context.ts";
@@ -545,6 +547,8 @@ export interface ExtensionContext {
 	readonly goalStoreFile?: string;
 	/** Browser engine the opener chose for THIS session (`open_session.browserEngine`); absent when it chose none. */
 	readonly browserEngine?: BrowserEngine;
+	/** Caller env the opener gave THIS session (`open_session.env`, senpi#4381); absent when it gave none. */
+	readonly sessionEnv?: Readonly<Record<string, string>>;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
 	/** Current model (may be undefined) */
@@ -647,6 +651,13 @@ export interface ExtensionContext {
 	getLookAtSettings(): { enabled: boolean; models: string[] | undefined };
 	/** Get resolved ask-user settings from global/project overrides and --no-ask-user. */
 	getAskUserSettings?(): { enabled: boolean; timeoutMinutes: number };
+	/**
+	 * Run `publish` once every `session_start` handler of the current dispatch has returned, in admission order;
+	 * outside a `session_start` dispatch it runs now. Recovered work published here cannot be answered while a
+	 * later startup handler is still preparing the session. Skipped when the session was replaced, reloaded or
+	 * disposed before dispatch ended; a returned promise's rejection is reported as an extension error.
+	 */
+	afterSessionStart?(publish: () => void | Promise<void>): void;
 	/** Get resolved image settings from global/project/user overrides. */
 	getImageSettings(): { autoResize: boolean; blockImages: boolean };
 	/** Manage retry fallback through the SettingsManager owned by this session. */
@@ -687,6 +698,13 @@ export interface ExtensionContext {
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
 	/**
+	 * The leading part of `getSystemPrompt()` the session's own requests cache separately (senpi#4447).
+	 * A request built from `getSystemPrompt()` passes it as `Context.systemPromptStablePrefix` so its system
+	 * blocks and cache breakpoint match the turn's. Undefined when every addition was stable. Optional on the
+	 * base context for compatibility with hand-built contexts; the senpi runner always binds it.
+	 */
+	getSystemPromptStablePrefix?(): string | undefined;
+	/**
 	 * Get the current base system-prompt construction options, including any
 	 * user overrides (`customPrompt` from --system-prompt, `appendSystemPrompt`
 	 * from --append-system-prompt). Optional on the base context for
@@ -698,6 +716,11 @@ export interface ExtensionContext {
 	getLoadedHookSources?(): LoadedHookSources;
 	/** Get extension-declared MCP servers aggregated across all extensions (first-wins). */
 	getRegisteredMcpServers?(): readonly RegisteredMcpServerDeclaration[];
+	/**
+	 * Whether a loaded extension handles `mcp_servers_change` and therefore connects the registered
+	 * servers itself. The built-in MCP gateway then leaves them alone, so no server is connected twice.
+	 */
+	extensionConnectsMcpServers?(): boolean;
 	/**
 	 * Report what the currently running tool_call/tool_result handler is doing.
 	 * Updates the live "Running PreToolUse/PostToolUse hook" status row in the TUI.
@@ -1294,6 +1317,18 @@ export interface ResourcesDiscoverResult {
 	hookPaths?: ResourceDiscoverEntry[];
 }
 
+/**
+ * Fired when an extension registers or unregisters an MCP server after the extensions are bound
+ * (see {@link ExtensionAPI.registerMcpServer}). Servers registered while extensions load are read
+ * with `pi.getMcpServers()` on `session_start`. Handling this event marks an extension as the one
+ * that connects registered servers.
+ */
+export interface McpServersChangeEvent {
+	type: "mcp_servers_change";
+	/** Every registered server after the change. */
+	servers: RegisteredMcpServer[];
+}
+
 // ============================================================================
 // Session Events
 // ============================================================================
@@ -1655,6 +1690,13 @@ export interface BeforeAgentStartHandlerOptions {
 	 * the host skips previews (and with them the session-start prompt-cache prewarm).
 	 */
 	previewSafe?: boolean;
+	/**
+	 * Runs the handler after every handler registered without it, on real turns and previews alike;
+	 * run-last handlers keep their registration order among themselves, except that builtin run-last
+	 * handlers run after every other extension's, so MCP server instructions always close the system
+	 * prompt (senpi#4448).
+	 */
+	runLast?: boolean;
 }
 
 /** Registration options for `pi.on("context", handler, options)` and `pi.on("context_with_system", handler, options)`. */
@@ -1938,6 +1980,12 @@ export interface UserBashEvent {
 /** Source of user input */
 export type InputSource = "interactive" | "rpc" | "extension";
 
+/**
+ * Who the input came from: `"user"` for a person (typed in the TUI, sent by an RPC client, or a person's answer
+ * delivered through the extension API); `"agent"` for input an extension, tool, subagent or the session itself sends.
+ */
+export type InputAttribution = "user" | "agent";
+
 /** Fired when user input is received, before agent processing */
 export interface InputEvent {
 	type: "input";
@@ -1949,6 +1997,8 @@ export interface InputEvent {
 	images?: ImageContent[];
 	/** Where the input came from */
 	source: InputSource;
+	/** Whether a person or an agent sent the input; `source` says only which channel it arrived on. */
+	attribution: InputAttribution;
 	/** How the input will be delivered during streaming, or undefined when idle */
 	streamingBehavior?: "steer" | "followUp";
 }
@@ -2189,6 +2239,7 @@ export function isToolCallEventType(toolName: string, event: ToolCallEvent): boo
 export type ExtensionEvent =
 	| ProjectTrustEvent
 	| ResourcesDiscoverEvent
+	| McpServersChangeEvent
 	| SessionEvent
 	| ContextEvent
 	| ContextWithSystemEvent
@@ -2285,6 +2336,14 @@ export interface BeforeAgentStartEventResult {
 	};
 	/** Replace the complete system prompt for this turn. Later handlers observe this exact override. */
 	systemPrompt?: string;
+	/**
+	 * Whether this handler's change to `systemPrompt` is the same in every session in the same working
+	 * directory (`"stable"`; the base prompt names the cwd) or differs between sessions, turns or commits
+	 * (`"volatile"`: memory, per-prompt hook output, per-session state). Defaults to `"stable"` for
+	 * builtin extensions and `"volatile"` for every other extension. The prompt up to the first volatile
+	 * change is sent as a separately cached prefix where the provider supports it (senpi#4447).
+	 */
+	systemPromptCache?: "stable" | "volatile";
 	/** Exact render parts of a complete replacement, used only by preview accounting. */
 	readonly systemPromptParts?: readonly DynamicSystemPromptPart[];
 }
@@ -2523,6 +2582,7 @@ export interface ExtensionAPI {
 	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): () => void;
 	on(event: "session_compact_failed", handler: ExtensionHandler<SessionCompactFailedEvent>): () => void;
 	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): () => void;
+	on(event: "mcp_servers_change", handler: ExtensionHandler<McpServersChangeEvent>): () => void;
 	on(event: "session_abort", handler: ExtensionHandler<SessionAbortEvent>): () => void;
 	on(event: "session_extensions_removed", handler: ExtensionHandler<SessionExtensionsRemovedEvent>): () => void;
 	on(event: "session_move_export", handler: ExtensionHandler<SessionMoveExportEvent>): () => void;
@@ -2620,8 +2680,21 @@ export interface ExtensionAPI {
 	/** Registers a file-backed module `ctx.offload(id, ...)` can run (see {@link ChildModuleRegistration}). */
 	registerChildModule(registration: ChildModuleRegistration): void;
 
-	/** Register an MCP server that the agent can use. Factory-time only. */
+	/**
+	 * Register an MCP server for this session, with the same config as an `mcpServers` entry in
+	 * `mcp.json`. Servers registered while the extension loads connect on `session_start`; the
+	 * extension that handles `mcp_servers_change` connects later registrations right away.
+	 * Registering a name again replaces this extension's earlier registration. When several extensions
+	 * register the same name, the declaration from the extension earliest in the session's extension
+	 * order is kept, regardless of which registered first (see `getMcpServers` in docs/extensions.md
+	 * for that order). The registration is not saved: register again on every load.
+	 * Throws for invalid configs.
+	 */
 	registerMcpServer(name: string, config: McpServerDeclaration): void;
+	/** Remove an MCP server this extension registered. */
+	unregisterMcpServer(name: string): void;
+	/** Every MCP server registered by extensions. For extensions that connect MCP servers. */
+	getMcpServers(): RegisteredMcpServer[];
 
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
@@ -2846,9 +2919,12 @@ export interface ExtensionAPI {
 	 * Register or override a model provider.
 	 *
 	 * If `models` is provided: replaces all existing models for this provider.
-	 * If only `baseUrl` is provided: overrides the URL for existing models.
+	 * If only `baseUrl` is provided: overrides the URL for existing models, unless the user's
+	 * models.json sets a `baseUrl` for this provider or model, which always wins.
 	 * If `oauth` is provided: registers OAuth provider for /login support.
-	 * If `streamSimple` is provided: registers a custom API stream handler.
+	 * If `streamSimple` is provided: registers a custom API stream handler. It must send each
+	 * request to `model.baseUrl`: when models.json sets a `baseUrl`, every model of the provider
+	 * carries it.
 	 *
 	 * During initial extension load this call is queued and applied once the
 	 * runner has bound its context. After that it takes effect immediately, so
@@ -2875,7 +2951,7 @@ export interface ExtensionAPI {
 	 * });
 	 *
 	 * @example
-	 * // Override baseUrl for an existing provider
+	 * // Override baseUrl for an existing provider (a models.json baseUrl still wins)
 	 * pi.registerProvider("anthropic", {
 	 *   baseUrl: "https://proxy.example.com"
 	 * });
@@ -2944,7 +3020,7 @@ export interface ExtensionAPI {
 	readonly session: SessionControlActions;
 }
 
-export type ExtensionRpcRequestHandler = (data: unknown) => unknown | Promise<unknown>;
+export type { ExtensionRpcRequestContext, ExtensionRpcRequestHandler } from "./rpc-context.ts";
 
 // ============================================================================
 // Provider Registration Types
@@ -2960,7 +3036,12 @@ export interface ExtensionVirtualModel<TState = unknown> extends Omit<VirtualMod
 export interface ProviderConfig {
 	/** Display name for the provider in UI. */
 	name?: string;
-	/** Base URL for the API endpoint. Required when defining models. */
+	/**
+	 * Base URL for the API endpoint. Required when defining models. A models.json `baseUrl` for this
+	 * provider (or a models.json `models[i].baseUrl`) takes precedence over it and over model-level
+	 * `baseUrl` values declared here, for every model of the provider. `streamSimple`, `images` and
+	 * `classifiers` must therefore send each request to `model.baseUrl`, not to this value.
+	 */
 	baseUrl?: string;
 	/** API key literal, env interpolation ($ENV_VAR or ${ENV_VAR}), or leading !command. Required when defining models (unless oauth provided). */
 	apiKey?: string;
@@ -3354,6 +3435,8 @@ export interface ExtensionRuntimeState {
 	pendingNativeProviderRegistrations: PendingNativeProviderRegistration[];
 	/** Virtual model registrations queued during extension loading, processed when runner binds. */
 	pendingVirtualModelRegistrations: Array<{ definition: VirtualModelDefinition; extensionPath: string }>;
+	/** Servers registered with `pi.registerMcpServer()`. */
+	mcpServers: McpServerRegistry;
 	/** Create an extension context. Throws before the runner binds. */
 	createContext: () => ExtensionContext;
 	/** Throws when this extension instance is stale after runtime replacement. */
@@ -3466,6 +3549,7 @@ export interface ExtensionContextActions {
 	getLookAtSettings: () => { enabled: boolean; models: string[] | undefined };
 	getAskUserSettings?: () => { enabled: boolean; timeoutMinutes: number };
 	getBrowserEngine?: () => BrowserEngine | undefined;
+	getSessionEnv?: () => Readonly<Record<string, string>> | undefined;
 	getImageSettings: () => { autoResize: boolean; blockImages: boolean };
 	sessionSettings: ExtensionSessionSettings;
 	compact: (options?: CompactOptions) => void;
@@ -3475,6 +3559,7 @@ export interface ExtensionContextActions {
 	getMessageRevision: () => number;
 	applyCompaction: (precomputed: CompactionResult, options: ApplyCompactionOptions) => Promise<ApplyCompactionResult>;
 	getSystemPrompt: () => string;
+	getSystemPromptStablePrefix?: () => string | undefined;
 	getLoadedHookSources: () => LoadedHookSources;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
 	getPromptCachePrefixRequest?: (options?: PromptCachePrefixRequestOptions) => Promise<PromptCachePrefixResult>;
@@ -3537,11 +3622,16 @@ export interface ExtensionCommandContextActions {
  */
 export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {}
 
-/** Loaded extension with all registered items. */
-export interface RegisteredMcpServerDeclaration {
+/** An MCP server registered with `pi.registerMcpServer()`, as `pi.getMcpServers()` lists it. */
+export interface RegisteredMcpServer {
 	name: string;
 	config: McpServerDeclaration;
+	/** Path of the extension that registered the server. */
 	extensionPath: string;
+}
+
+/** A registration as the built-in MCP gateway reads it: the public shape plus the registering extension's cwd. */
+export interface RegisteredMcpServerDeclaration extends RegisteredMcpServer {
 	registrationCwd: string;
 }
 
@@ -3555,6 +3645,8 @@ export interface Extension {
 	handlers: Map<string, HandlerFn[]>;
 	/** `before_agent_start` handlers registered with `{ previewSafe: true }`. */
 	previewSafeHandlers?: WeakSet<HandlerFn>;
+	/** `before_agent_start` handlers registered with `{ runLast: true }`. */
+	runLastHandlers?: WeakSet<HandlerFn>;
 	/** `context`/`context_with_system` handlers registered with `{ mutatesMessages: false }`. */
 	nonMutatingContextHandlers?: WeakSet<HandlerFn>;
 	tools: Map<string, RegisteredTool>;

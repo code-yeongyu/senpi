@@ -54,7 +54,7 @@ export function resolveCompactionSettings(
 	settings?: CompactionSettings,
 	forModel?: CompactionModelSelector,
 ): ResolvedCompactionSettings {
-	const raw = settings as Record<string, unknown> | undefined;
+	const raw = settings;
 	return {
 		enabled: typeof raw?.enabled === "boolean" ? raw.enabled : DEFAULTS.enabled,
 		// Token budgets resolve through the per-model override table and reject invalid

@@ -76,7 +76,7 @@ export function settleExtensionUiResponse(
 		response.answerId !== undefined &&
 		(typeof response.answerId !== "string" || response.answerId.length < 1 || response.answerId.length > 256)
 	)
-		return refused(response.id, "invalid_answer_id");
+		return refusedExtensionUiResponse(response.id, "invalid_answer_id");
 	const requestId = answeredUiRequestId(response) ?? response.id;
 	const receipt = response.answerId === undefined ? undefined : targets.ledger?.lookup(requestId, response.answerId);
 	if (receipt === "replay") return { ...reply(response.id), success: true, disposition: "replay" };
@@ -85,7 +85,7 @@ export function settleExtensionUiResponse(
 	const answer = requestId === response.id ? response : { ...response, id: requestId };
 	const question = targets.questions.respond(answer, targets.beforeAnswer);
 	if (typeof question === "string")
-		return refused(
+		return refusedExtensionUiResponse(
 			response.id,
 			response.answerId !== undefined && question === "question_already_resolved"
 				? "unknown_extension_ui_request"
@@ -98,7 +98,7 @@ export function settleExtensionUiResponse(
 	// A routed binding owns exactly one session's request map: an unmatched response is a protocol
 	// error for its sender, never a cross-session match.
 	return targets.routed || response.answerId !== undefined
-		? refused(response.id, "unknown_extension_ui_request")
+		? refusedExtensionUiResponse(response.id, "unknown_extension_ui_request")
 		: undefined;
 }
 
@@ -106,7 +106,7 @@ function reply(id: string) {
 	return { id, type: "response", command: "extension_ui_response" } as const;
 }
 
-function refused(id: string, error: string): ExtensionUiResponseReply {
+export function refusedExtensionUiResponse(id: string, error: string): ExtensionUiResponseReply {
 	const disposition =
 		error === "question_already_resolved"
 			? "already_answered"

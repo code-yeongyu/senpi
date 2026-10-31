@@ -55,7 +55,7 @@ const V41_FLASH_MODEL_IDS: ReadonlyArray<readonly [id: string, provider: string]
 const SNAPSHOT_1017 = /v4[.p -]?1[- ]flash[- (]+1017/i;
 const SHIPPED_1017_ROWS: ReadonlyArray<readonly [provider: string, id: string, model: Model<Api>]> =
 	getProviders().flatMap((provider) =>
-		(getModels(provider) as Model<Api>[])
+		getModels(provider)
 			.filter((model) => SNAPSHOT_1017.test(`${model.id} ${model.name}`))
 			.map((model) => [provider, model.id, model] as const),
 	);
@@ -112,11 +112,19 @@ function hasV4FlashSignal(searchable: string): boolean {
 
 function getV41CatalogModels(): Model<Api>[] {
 	return getProviders().flatMap((provider) =>
-		(getModels(provider) as Model<Api>[]).filter((model) => {
+		getModels(provider).filter((model) => {
 			const searchable = `${model.id} ${model.name}`.toLowerCase().replace(/\s+/g, "-");
 			return hasV41Signal(searchable) || (model.provider === "deepseek" && hasV4FlashSignal(searchable));
 		}),
 	);
+}
+
+// Image input and reasoning are per-provider serving choices, not snapshot facts: models.dev lists mistral's
+// deepseek-v4-1-flash-1017 as text-only (attachment false), so the release's catalog regeneration can add such a
+// row (senpi#4762). Every shipped row must reach the V4.1 preset; the curated KNOWN_1017_ROWS pin the multimodal set.
+function expectShipped1017Row(model: Model<Api>): void {
+	expect(model.input).toContain("text");
+	expect(resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
 }
 
 describe("DeepSeek V4.1 Flash prompt preset", () => {
@@ -186,16 +194,28 @@ describe("DeepSeek V4.1 Flash prompt preset", () => {
 	});
 
 	it.each(SHIPPED_1017_ROWS)("ships the 1017 snapshot row on %s (%s) on the V4.1 preset", (_provider, _id, model) => {
-		// then
-		expect(model.reasoning).toBe(true);
-		expect(model.input).toContain("image");
-		expect(resolvePresetName(model, AUTO)).toBe("deepseek-v4-1-flash");
+		expectShipped1017Row(model);
 	});
 
-	it.each(KNOWN_1017_ROWS)("still ships the 1017 snapshot row on %s (%s)", (provider, id) => {
+	it("accepts a text-only 1017 row as the release's catalog regeneration can add one", () => {
+		// given models.dev's mistral row, served text-only upstream
+		const model = { ...createModel("deepseek-v4-1-flash-1017", "mistral"), input: ["text"] } satisfies Model<Api>;
+
 		// then
-		expect(SHIPPED_1017_ROWS.some(([p, i]) => p === provider && i === id)).toBe(true);
+		expectShipped1017Row(model);
 	});
+
+	it.each(KNOWN_1017_ROWS)(
+		"still ships the 1017 snapshot row on %s (%s) as a multimodal reasoning row",
+		(provider, id) => {
+			// when
+			const model = SHIPPED_1017_ROWS.find(([p, i]) => p === provider && i === id)?.[2];
+
+			// then
+			expect(model?.reasoning).toBe(true);
+			expect(model?.input).toContain("image");
+		},
+	);
 });
 
 describe("DeepSeek V4.1 Flash prompt content", () => {

@@ -611,9 +611,6 @@
   "packages/chord/test/services.test.ts": {
     "typescript/no-non-null-assertion": 5
   },
-  "packages/chord/test/state-diff.test.ts": {
-    "typescript/no-non-null-assertion": 5
-  },
   "packages/chord/test/state-draft.test.ts": {
     "typescript/no-non-null-assertion": 1
   },
@@ -921,9 +918,6 @@
   "packages/coding-agent/src/modes/rpc/session-event-writer.ts": {
     "typescript/no-non-null-assertion": 1
   },
-  "packages/coding-agent/src/modes/rpc/socket-event-fanout.ts": {
-    "typescript/no-non-null-assertion": 1
-  },
   "packages/coding-agent/src/package-manager-cli.ts": {
     "typescript/no-non-null-assertion": 2
   },
@@ -983,9 +977,6 @@
   },
   "packages/coding-agent/test/anthropic-subscription-unconfirmed-binding.test.ts": {
     "typescript/no-non-null-assertion": 10
-  },
-  "packages/coding-agent/test/bash-execution-width.test.ts": {
-    "typescript/no-explicit-any": 1
   },
   "packages/coding-agent/test/builtin-tool-strict-mode.test.ts": {
     "typescript/no-non-null-assertion": 1
@@ -1184,7 +1175,7 @@
     "typescript/no-explicit-any": 10
   },
   "packages/coding-agent/test/package-manager.test.ts": {
-    "typescript/no-explicit-any": 86
+    "typescript/no-explicit-any": 85
   },
   "packages/coding-agent/test/prompt-templates.test.ts": {
     "typescript/no-non-null-assertion": 7
@@ -1454,9 +1445,6 @@
   },
   "packages/coding-agent/test/suite/regressions/3462-anthropic-subscription-usage-limit-block-guards.test.ts": {
     "typescript/no-non-null-assertion": 15
-  },
-  "packages/coding-agent/test/suite/regressions/3462-anthropic-subscription-usage-limit-reset-block.test.ts": {
-    "typescript/no-non-null-assertion": 1
   },
   "packages/coding-agent/test/suite/regressions/3534-get-entries-pages.test.ts": {
     "typescript/no-non-null-assertion": 2

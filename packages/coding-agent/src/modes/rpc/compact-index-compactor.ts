@@ -1,4 +1,11 @@
-import type { BaseRow, CompactContentIndex, IndexOverride, IndexPage, IndexRow } from "./compact-content-index.ts";
+import type {
+	BaseRow,
+	CompactContentIndex,
+	FrozenIndex,
+	IndexOverride,
+	IndexPage,
+	IndexRow,
+} from "./compact-content-index.ts";
 import type { LeafId } from "./compact-content-store.ts";
 import { packPages } from "./compact-index-pages.ts";
 import { CompactReadError } from "./compact-read-lease.ts";
@@ -13,6 +20,7 @@ type Index = Pick<
 	| "overrides"
 	| "pages"
 	| "pending"
+	| "ready"
 	| "residentPages"
 	| "peakResidentPages"
 	| "readPage"
@@ -53,6 +61,15 @@ export class CompactIndexCompactor {
 		});
 	}
 
+	/** Key-ordered ready keys preserve page locality without looking up the pending backlog (senpi#4575). */
+	private *readyEntries(cut: FrozenIndex): Generator<readonly [string, IndexOverride]> {
+		for (const key of [...this.index.ready].sort()) {
+			if (!this.index.ready.has(key)) continue;
+			const value = this.index.overlays.get(cut.overrides, key);
+			if (value) yield [key, value];
+		}
+	}
+
 	private async compact(): Promise<boolean> {
 		const i = this.index;
 		if (!i.store.spillAllowed) return false;
@@ -70,12 +87,16 @@ export class CompactIndexCompactor {
 		let draft = i.base;
 		i.bases.adjust(draft, 1, 0);
 		try {
-			const entries = i.overlays.entries(cut.overrides);
-			while (selected.size < 128) {
+			const entries = this.readyEntries(cut);
+			let exhausted = false;
+			while (selected.size < 128 && !exhausted) {
 				const batch: (readonly [string, IndexOverride])[] = [];
-				for (let n = 0; n < 128; n++) {
+				while (batch.length < 128) {
 					const next = entries.next();
-					if (next.done) break;
+					if (next.done) {
+						exhausted = true;
+						break;
+					}
 					batch.push(next.value);
 				}
 				if (!batch.length) break;
@@ -85,7 +106,7 @@ export class CompactIndexCompactor {
 				);
 				for (const [key, value] of batch) {
 					const page = locations.get(key)?.page;
-					if (!i.pending.has(key) && (!page || !touched || page.path === touched.path)) {
+					if (!page || !touched || page.path === touched.path) {
 						selected.set(key, value);
 						touched ??= page;
 					}
