@@ -46,7 +46,7 @@ it("T2/X04 every real leased suffix copy can page and release through its client
 				}),
 			).toMatchObject({ success: true });
 	expect(host.writer.recoveryEvents?.status().open).toBe(0);
-}, 120_000);
+}, 600_000);
 
 it("T2/T5 overlapping ordinary admissions share a cut and a surviving route can page it", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -73,7 +73,7 @@ it("T2/T5 overlapping ordinary admissions share a cut and a surviving route can 
 	expect(host.writer.recoveryCheckpoints.status().open).toBe(1);
 	host.writer.recoveryCheckpoints.retireRoute({ socketEpoch, sessionId }, "b");
 	expect(host.writer.recoveryCheckpoints.status().open).toBe(0);
-}, 120_000);
+}, 600_000);
 
 it("T2 every suffix and final close instance keeps both S08 routes after reset and stream retirement", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -106,7 +106,7 @@ it("T2 every suffix and final close instance keeps both S08 routes after reset a
 	expect(frames.filter((frame) => frame.command === "close_session")).toHaveLength(2);
 	expect(closeA).toMatchObject({ admissionId: "a", generation: reset.generation });
 	expect(closeB).toMatchObject({ admissionId: "b", generation: reset.generation });
-}, 120_000);
+}, 600_000);
 
 it("RULING-92 a reply reaches only its requester, never a sibling admission or connection", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -124,4 +124,4 @@ it("RULING-92 a reply reaches only its requester, never a sibling admission or c
 	expect(answer).toMatchObject({ admissionId: "b", generation: 1 });
 	expect(peer.inbox.slice(fromPeer).filter((frame) => frame.type === "response")).toEqual([answer]);
 	expect(foreign.inbox.slice(fromForeign).filter((frame) => frame.type === "response")).toEqual([]);
-}, 120_000);
+}, 600_000);

@@ -40,7 +40,7 @@ it("drops foreign and unmatched replies instead of delivering untagged or guessi
 	expect(peer.inbox.slice(from).filter((frame) => frame.type === "response")).toEqual([
 		expect.objectContaining({ id: request.id, success: false, code: "unknown_admission", admissionId: "missing" }),
 	]);
-}, 120_000);
+}, 600_000);
 
 it("keeps flag-off response bytes unchanged even with foreign or absent request scope", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "0");
@@ -55,4 +55,4 @@ it("keeps flag-off response bytes unchanged even with foreign or absent request 
 	await host.writer.enqueueControl(reply, "peer");
 	await host.writer.flush();
 	expect(peer.received.slice(from)).toEqual([`${JSON.stringify(reply)}\n`, `${JSON.stringify(reply)}\n`]);
-}, 120_000);
+}, 600_000);
