@@ -40,7 +40,7 @@ export interface AcceptedEntry {
  * The first `count` entries of an epoch's columns. The lane only appends to its columns (a `replace` starts new ones),
  * so this prefix never changes: a root freezes in O(1) without a copy and never sees an entry accepted after it.
  */
-export class AcceptedEntries implements Iterable<AcceptedEntry> {
+class AcceptedEntries implements Iterable<AcceptedEntry> {
 	private readonly ids: readonly string[];
 	private readonly kinds: readonly string[];
 	private readonly parents: readonly (string | null)[];
