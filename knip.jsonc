@@ -322,8 +322,6 @@
       "packages/ai/src/utils/assistant-capture.ts": ["freezeCapture", "publicBlock"],
       // pre-existing at origin main aceb1cc1d9: unused exports CHATGPT_SUBSCRIPTION_AUTH_CLAIM_PATH
       "packages/ai/src/utils/chatgpt-subscription-auth.ts": ["CHATGPT_SUBSCRIPTION_AUTH_CLAIM_PATH"],
-      // pre-existing at origin main aceb1cc1d9: unused exports resolveClaudeCodeVersionCachePath, createClaudeCodeVersionFileStore
-      "packages/ai/src/utils/claude-code-version-cache.ts": ["createClaudeCodeVersionFileStore", "resolveClaudeCodeVersionCachePath"],
       // pre-existing at origin main aceb1cc1d9: unused exports ConfigReferenceSchema
       "packages/ai/src/utils/config-reference.ts": ["ConfigReferenceSchema"],
       // pre-existing at origin main aceb1cc1d9: unused exports truncateErrorText, safeJsonStringify
