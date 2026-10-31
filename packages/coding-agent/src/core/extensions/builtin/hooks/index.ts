@@ -239,6 +239,8 @@ export default function hooksExtension(pi: ExtensionAPI): void {
 		}
 		if (systemPrompt !== event.systemPrompt) {
 			result.systemPrompt = systemPrompt;
+			// Per-prompt hook output differs between turns and sessions; keep it behind the cached prefix (senpi#4447).
+			result.systemPromptCache = "volatile";
 		}
 		return result;
 	};

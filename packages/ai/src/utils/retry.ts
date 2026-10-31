@@ -507,8 +507,8 @@ export function isRetryableAssistantError(message: AssistantMessage): boolean {
 
 /**
  * Matches the agent-loop stream watchdog failures ("Idle timeout waiting for
- * provider stream after <n>ms" and "Provider stream start timed out after
- * <n>ms"), the WebSocket liveness verdict ("WebSocket liveness timeout after
+ * provider stream after <n>ms", "Provider stream start timed out after
+ * <n>ms" and "Provider stream sent only keep-alives and timed out after <n>ms"), the WebSocket liveness verdict ("WebSocket liveness timeout after
  * <n>ms (<k> pings unanswered)"), and the Responses completion-phase verdict
  * ("Provider stream stalled after the last output item: response.completed
  * timed out after <n>ms"). These anchored shapes
@@ -516,7 +516,7 @@ export function isRetryableAssistantError(message: AssistantMessage): boolean {
  * timeout diagnostics.
  */
 const PROVIDER_STREAM_STALL_ERROR_PATTERN =
-	/^(?:Idle timeout waiting for provider stream after \d+ms|Provider stream start timed out after \d+ms(?: \([^)]*\))?|WebSocket liveness timeout after \d+ms \(\d+ pings unanswered\)|Provider stream stalled after the last output item: response\.completed timed out after \d+ms)$/i;
+	/^(?:Idle timeout waiting for provider stream after \d+ms|Provider stream start timed out after \d+ms(?: \([^)]*\))?|Provider stream sent only keep-alives and timed out after \d+ms(?: \([^)]*\))?|WebSocket liveness timeout after \d+ms \(\d+ pings unanswered\)|Provider stream stalled after the last output item: response\.completed timed out after \d+ms)$/i;
 const PROVIDER_TRANSPORT_TIMEOUT_ERROR_PATTERN = /^Request timed out\.?$/i;
 
 export function isProviderStreamStallError(message: AssistantMessage): boolean {
@@ -535,6 +535,11 @@ const PROVIDER_STALL_PHASES: ReadonlyArray<{
 		pattern: /^Provider stream start timed out after (\d+)ms/i,
 		symptom: "accepted the request but never started sending a response",
 		setting: "retry.provider.streamStartTimeoutMs",
+	},
+	{
+		pattern: /^Provider stream sent only keep-alives and timed out after (\d+)ms/i,
+		symptom: "kept the connection alive but sent no response",
+		setting: "retry.provider.keepAliveTimeoutMs",
 	},
 	{
 		pattern: /^Idle timeout waiting for provider stream after (\d+)ms/i,
