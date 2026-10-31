@@ -1,3 +1,23 @@
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/tui/src/components/input.ts`.
+- Add instance-owned masked Input rendering with faithful Unicode/whitespace, control rejection, and complete editing-state disposal.
+- Dispose editing state only for secret inputs; ordinary inputs retain their values and callbacks when reusable controls are removed and re-added during container rebuilds.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
 ## 2026-10-12 - Optional inline emphasis hooks in MarkdownTheme
 
 ### What changed
