@@ -15,6 +15,7 @@ import {
 import { selectAccount } from "../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import type { AnthropicSubscriptionProviderSettings } from "../../src/core/extensions/builtin/anthropic-subscription/settings.ts";
 import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "../../src/core/extensions/types.ts";
+import { cliSlot } from "../support/claude-cli-test-slots.ts";
 
 const PROVIDER_ID = "anthropic-subscription";
 
@@ -28,8 +29,8 @@ type CommandHarness = {
 	flags: Map<string, { type: "boolean" | "string"; description: string | undefined }>;
 };
 
-function slot(name: string, source: AccountSlot["source"] = "login"): AccountSlot {
-	return { name, source, access: `${name}-access`, refresh: `${name}-refresh`, expires: 9_999_999_999_999 };
+function slot(name: string): AccountSlot {
+	return cliSlot(name);
 }
 
 function credential(...accounts: AccountSlot[]): AnthropicSubscriptionCredential {
@@ -93,7 +94,7 @@ describe("/claude-account", () => {
 	it("lists account slots with source, blocked state, pin state, and the current affinity pick", async () => {
 		const storage = AuthStorage.inMemory({
 			[PROVIDER_ID]: credential(slot("alpha"), {
-				...slot("bravo", "import"),
+				...slot("bravo"),
 				blockedUntil: Date.now() + 60_000,
 				blockReason: "rate_limit",
 			}),
@@ -105,7 +106,7 @@ describe("/claude-account", () => {
 
 		const output = notices.at(-1)?.message ?? "";
 		expect(output).toContain("alpha | login | available | pinned | affinity pick");
-		expect(output).toContain("bravo | import | blocked until");
+		expect(output).toContain("bravo | login | blocked until");
 		expect(output).toContain("Pinned account: alpha (settings)");
 		expect(output).toContain("Affinity pick: alpha");
 	});
