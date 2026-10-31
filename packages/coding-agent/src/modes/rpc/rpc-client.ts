@@ -1321,7 +1321,7 @@ export class RpcClient {
 
 	/**
 	 * Wait for agent to become idle (no streaming).
-	 * Resolves when agent_settled event is received.
+	 * Resolves on agent_idle: agent_settled can arrive while extension agent_settled handlers still run (omo#11419).
 	 */
 	waitForIdle(timeout = 60000): Promise<void> {
 		return new Promise((resolve, reject) => {
@@ -1331,7 +1331,7 @@ export class RpcClient {
 			}, timeout);
 
 			const unsubscribe = this.onEvent((event) => {
-				if (event.type === "agent_settled") {
+				if (event.type === "agent_idle") {
 					clearTimeout(timer);
 					unsubscribe();
 					resolve();
@@ -1366,7 +1366,7 @@ export class RpcClient {
 				)
 					return;
 				events.push(event);
-				if (event.type === "agent_settled") {
+				if (event.type === "agent_idle") {
 					clearTimeout(timer);
 					unsubscribe();
 					resolve(events);

@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { fauxAssistantMessage, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, getCurrentSystemPrompt, getInitialSystemMessage } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../../src/config.ts";
 import mcpExtension from "../../src/core/extensions/builtin/mcp/index.ts";
@@ -45,6 +45,54 @@ const thirdPartyRunLastExtension: ExtensionFactory = (pi) => {
 		runLast: true,
 	});
 };
+
+const LATER_STABLE_BLOCK = "<later-stable-block>same in every session</later-stable-block>";
+
+/** Loads after the MCP builtin and declares its block stable, like a harness-rules extension. */
+const laterStableExtension: ExtensionFactory = (pi) => {
+	pi.on(
+		"before_agent_start",
+		(event) => ({ systemPrompt: `${event.systemPrompt}\n\n${LATER_STABLE_BLOCK}`, systemPromptCache: "stable" }),
+		{ previewSafe: true },
+	);
+};
+
+describe("MCP instructions are last and outside the cached stable prefix (senpi#4448 + senpi#4447)", () => {
+	it("ends the stable prefix right before <mcp_instructions>, after a stable block from a later extension", async () => {
+		// Given: the MCP builtin and a later-loading extension whose addition is stable.
+		const harness = await startHarness([laterStableExtension]);
+
+		// When: a turn goes out, and the host composes a preview.
+		let turn = { prompt: "", stablePrefix: undefined as string | undefined };
+		harness.setResponses([
+			(context) => {
+				turn = {
+					prompt: getCurrentSystemPrompt(context.messages),
+					stablePrefix: getInitialSystemMessage(context.messages)?.stablePrefix,
+				};
+				return fauxAssistantMessage("done");
+			},
+		]);
+		await harness.session.prompt("capture prompt");
+		const preview = await harness
+			.getExtensionRunner()
+			.emitBeforeAgentStart("", undefined, "BASE", { cwd: process.cwd() } as BuildSystemPromptOptions, {
+				preview: true,
+			});
+
+		// Then: in both, the stable prefix holds the later block and the volatile tail is exactly the MCP instructions.
+		for (const { prompt, stablePrefix } of [
+			turn,
+			{ prompt: preview?.systemPrompt ?? "", stablePrefix: preview?.systemPromptStablePrefix },
+		]) {
+			expect(stablePrefix?.endsWith(LATER_STABLE_BLOCK)).toBe(true);
+			expect(prompt.slice(0, stablePrefix?.length)).toBe(stablePrefix);
+			const tail = prompt.slice(stablePrefix?.length ?? 0);
+			expect(tail.trimStart().startsWith('<mcp_instructions server="fx">')).toBe(true);
+			expect(tail.endsWith("</mcp_instructions>")).toBe(true);
+		}
+	});
+});
 
 describe("MCP instructions are the last system-prompt block (senpi#4448)", () => {
 	it("keeps <mcp_instructions> last when a third-party extension also registers runLast, on a real turn and a preview", async () => {
