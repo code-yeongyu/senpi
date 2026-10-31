@@ -1,4 +1,6 @@
 import { SessionConnectionContext } from "./session-connection-context.ts";
+import { SecretInputPresentations } from "./secret-input-presentations.ts";
+import type { SecretInputRoute } from "./secret-input-requests.ts";
 import type { ExtensionUIContext, SessionKind } from "../../core/extensions/types.ts";
 import { bindPrivateMcpForms, type McpFormBinding } from "../../core/mcp-form-types.ts";
 import { McpPresenterAuthority, type McpPresenterConnection } from "./mcp-presenter-authority.ts";
@@ -92,6 +94,13 @@ function toolUpdateKey(value: RpcRecord): string | undefined {
  * scheduling boundary and violate D9.
  */
 export class SessionEventWriter {
+	private readonly secretPresentations: SecretInputPresentations;
+	secretInputRoute(sessionId: string): SecretInputRoute {
+		return this.secretPresentations.route(sessionId);
+	}
+	setSoleSecretCapabilities(capabilities: readonly string[]): void {
+		this.secretPresentations.handshake(capabilities);
+	}
 	readonly structuredLanes = new SessionStructuredLanes();
 	/** Records refused at the engine's JSON depth limit on the legacy wire (RULING-68). */
 	readonly legacyRefusals = new LegacyRecordRefusals();
@@ -246,7 +255,14 @@ export class SessionEventWriter {
 		waitOrSchedule?: BackpressureWaiter | FlushScheduler,
 		scheduleFlush?: FlushScheduler,
 	) {
+		this.secretPresentations = new SecretInputPresentations(
+			this.fanout,
+			() => this.currentConnection(),
+			(line) => this.writeRaw(line),
+			() => this.requestFlush(),
+		);
 		this.fanout.onConnectionClosed = (id) => {
+			this.secretPresentations.detach(id);
 			this.securityPresentations.dropConnection(id);
 			const sender = this.presenterConnections.get(id);
 			if (sender) this.presenterAuthority?.detach(sender);
@@ -319,6 +335,7 @@ export class SessionEventWriter {
 	}
 
 	unregisterConnection(id: string): void {
+		this.secretPresentations.detach(id);
 		const sender = this.presenterConnections.get(id);
 		if (sender) this.presenterAuthority?.detach(sender);
 		this.presenterConnections.delete(id);
@@ -341,6 +358,7 @@ export class SessionEventWriter {
 		const binding = this.presenterBindings.get(sessionId);
 		if (sender && binding) this.presenterAuthority?.detach(sender, binding);
 		this.fanout.detachConnectionFromSession(id, sessionId);
+		this.secretPresentations.recheck();
 		this.securityPresentations.detach(id, sessionId);
 	}
 
@@ -350,6 +368,7 @@ export class SessionEventWriter {
 
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
 		this.fanout.setConnectionCapabilities(id, capabilities);
+		this.secretPresentations.recheck();
 		this.securityPresentations.capabilitiesChanged(id);
 		if (!capabilities.includes("interactive_user") || !capabilities.includes("mcp_form_presenter_v1")) {
 			const sender = this.presenterConnections.get(id);
@@ -361,6 +380,7 @@ export class SessionEventWriter {
 		const sender = this.presenterConnections.get(id);
 		if (sender) this.presenterAuthority?.withdraw(sender);
 		this.fanout.clearConnectionCapabilities(id);
+		this.secretPresentations.recheck();
 		this.securityPresentations.capabilitiesChanged(id);
 	}
 	bindSecurityPresentations(
@@ -488,7 +508,7 @@ export class SessionEventWriter {
 			);
 			return false;
 		}
-		this.openTurns.note(sessionId, record.type);
+		this.openTurns.note(sessionId, record.type, (record as { reason?: unknown }).reason);
 		const attached = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
 		// Mirroring is an explicit per-subscription opt-in; it adds destinations, never an attachment.
 		const mirrors = isTargeted ? [] : this.status.mirrorTargets(sessionId, String(record.type));

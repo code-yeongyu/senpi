@@ -34,6 +34,8 @@ const fileContent = (bytes) => {
 	return bytes.length <= TEXT_LIMIT && Buffer.from(text, "utf8").equals(bytes) ? { text } : { sha: sha(bytes) };
 };
 const sha = (value) => `sha256:${createHash("sha256").update(value).digest("hex").slice(0, 16)}`;
+/** A credential header's value as its hash, marked redacted so it never reads as a key (O4 still compares it). */
+const redactedSha = (value) => `<redacted:${sha(value)}>`;
 /**
  * The MCP inventory announcement is emitted on the extension's own schedule: in E11 (darwin-arm64, today's code) it
  * landed before the startup `pi-websearch` status events in one run and after them in another, and with the servers
@@ -46,6 +48,8 @@ const isSurfacesEvent = (event) => event.type === "loaded_surfaces_changed";
  * whether one fires depends on how loaded the machine is, not on the session, so it is not part of O6.
  */
 const isHostHealthEvent = (event) => event.type === "host_stalled";
+
+const transcript = (file) => (file && existsSync(file) ? readJsonl(readFileSync(file, "utf8")) : []);
 
 /** Provider requests: the fake model server's, or those of the provider fixture a case serves itself (E19 Cursor). */
 const modelRequests = (run) =>
@@ -67,7 +71,7 @@ export const collectors = {
 				Object.entries(request.headers ?? {})
 					.filter(([name]) => !FRAMING_HEADERS.has(name))
 					.sort(([a], [b]) => a.localeCompare(b))
-					.map(([name, value]) => [name, CREDENTIAL_HEADERS.has(name) ? sha(String(value)) : value]),
+					.map(([name, value]) => [name, CREDENTIAL_HEADERS.has(name) ? redactedSha(String(value)) : value]),
 			),
 		),
 	O5: (run) => ({ calls: effectCalls(run), tree: sandboxTree(run.box.cwd), extra: run.effects }),
@@ -75,41 +79,23 @@ export const collectors = {
 	// position was measured to differ between runs of the same code: `loaded_surfaces_changed` (see isSurfacesEvent). It
 	// keeps its own ordered list, compared in full; only its position among the other events is not compared.
 	O6: (run) =>
-		run.clients.map((client, index) => ({
+		run.clients.map((client) => ({
 			events: client.events.filter((event) => !isHostHealthEvent(event) && !isSurfacesEvent(event)),
-			surfaces: surfacesChannel(client, run.surfacesSettled?.client === index ? run.surfacesSettled : undefined),
+			surfaces: client.events.filter(isSurfacesEvent),
 		})),
 	O7: (run) => {
-		const entries =
-			run.sessionFile && existsSync(run.sessionFile) ? readJsonl(readFileSync(run.sessionFile, "utf8")) : [];
+		const entries = transcript(run.sessionFile);
 		return {
 			nonEmpty: entries.length > 0,
 			count: entries.length,
 			durableIdStable: run.sessionIds.length > 0 && run.sessionIds.every((id) => id === run.sessionIds[0]),
 			entries,
+			// A case that runs more than one session at once (E30) lists the other sessions' transcripts here.
+			...(run.peerSessionFiles ? { peers: run.peerSessionFiles.map((file) => transcript(file)) } : {}),
 		};
 	},
 	O8: (run) => ({ headless: run.states }),
 };
-
-/**
- * O6 surfaces list. Without a settle barrier: every `loaded_surfaces_changed` in order. With one (E11, whose two eager
- * MCP servers connect in parallel): how many inventory snapshots the serialized wire-status captures happen to see while
- * the servers connect is a race in today's code (each connect state change, each tool registration and each
- * `get_loaded_surfaces` captures one, and an event fires only when the digest differs), so the events before the barrier
- * are not compared. What is compared exactly: the settled inventory the case read at the barrier, every surfaces event
- * after it, and the inventory read again after the last turn (a change after the barrier shows in `final` even if its
- * event shared a stdout chunk with the barrier's response).
- */
-function surfacesChannel(client, settled) {
-	const surfaces = client.events.filter(isSurfacesEvent);
-	if (!settled) return surfaces;
-	return {
-		settled: settled.mcpServers,
-		after: surfaces.filter((event) => client.events.indexOf(event) >= settled.at),
-		final: settled.final,
-	};
-}
 
 /**
  * O5 calls: every dispatched tool call in dispatch (start) order, with the target it named, the machine it ran on and
