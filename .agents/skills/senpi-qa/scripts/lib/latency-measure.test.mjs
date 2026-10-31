@@ -4,6 +4,7 @@ import {
 	bandOf,
 	barrierClock,
 	compareToBand,
+	frameIntervals,
 	iterationSamples,
 	machineClass,
 	minOfRuns,
@@ -50,11 +51,14 @@ const iteration = (start, tail) => ({
 	bodies: [{ id: "a", readyAt: 0, startAt: start, endAt: 10 }],
 });
 
-test("run metrics pool every workload and keep a per-workload copy of each metric", () => {
-	const metrics = runMetrics({
-		E01: [iteration(1, 5), iteration(3, 7)],
-		E02: [iteration(2, 6)],
-	});
+test("run metrics pool every workload, keep a per-workload copy of each metric, and carry the TUI frame time", () => {
+	const metrics = runMetrics(
+		{
+			E01: [iteration(1, 5), iteration(3, 7)],
+			E02: [iteration(2, 6)],
+		},
+		[16, 17, 33],
+	);
 	assert.deepEqual(Object.keys(metrics).sort(), [
 		"E01.body_to_next_request_ms",
 		"E01.dispatch_to_body_ms",
@@ -62,10 +66,25 @@ test("run metrics pool every workload and keep a per-workload copy of each metri
 		"E02.dispatch_to_body_ms",
 		"body_to_next_request_ms",
 		"dispatch_to_body_ms",
+		"tui_frame_ms",
 	]);
+	assert.deepEqual(metrics.tui_frame_ms, { p50: 17, p95: 33, n: 3 });
 	assert.deepEqual(metrics.dispatch_to_body_ms, { p50: 2, p95: 3, n: 3 });
 	assert.deepEqual(metrics["E01.dispatch_to_body_ms"], { p50: 1, p95: 3, n: 2 });
 	assert.deepEqual(metrics["E02.body_to_next_request_ms"], { p50: 6, p95: 6, n: 1 });
+});
+
+test("a run without TUI frame samples is an error, never a run without the metric", () => {
+	assert.throws(() => runMetrics({ E01: [iteration(1, 5)] }), /tui_frame_ms samples/);
+	assert.throws(() => runMetrics({ E01: [iteration(1, 5)] }, []), /tui_frame_ms samples/);
+});
+
+test("frame intervals are the gaps between frames, with the split pieces of one frame merged", () => {
+	const chunks = [100, 116.5, 116.9, 133, 150.25].map((at) => ({ at, bytes: 64 }));
+	assert.deepEqual(frameIntervals(chunks), [16.5, 16.5, 17.25]);
+	assert.throws(() => frameIntervals([{ at: 100 }, { at: 100.4 }]), /at least two frames, got 1/);
+	assert.throws(() => frameIntervals([]), /at least two frames, got 0/);
+	assert.throws(() => frameIntervals([{ at: 1 }, { bytes: 3 }]), /no arrival time/);
 });
 
 const run = (p50, p95) => ({ metrics: { dispatch_to_body_ms: { p50, p95, n: 9 } } });
