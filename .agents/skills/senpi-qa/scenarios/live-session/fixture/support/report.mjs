@@ -18,6 +18,16 @@ export function writeEvidence(slug, receipt, session) {
 	if (session) {
 		writeFileSync(join(out, "events.jsonl"), `${session.events.map((e) => JSON.stringify(e)).join("\n")}\n`);
 		writeFileSync(join(out, "transcript.jsonl"), `${session.entries.map((e) => JSON.stringify(e)).join("\n")}\n`);
+		writeFileSync(join(out, "hook-trace.jsonl"), session.hookTrace);
+		const manifest = (session.sessionTranscripts ?? []).map((transcript, index) => {
+			// Flat names also survive the live runner's non-recursive evidence copy.
+			const file = `session-${index}.jsonl`;
+			writeFileSync(join(out, file), transcript.text);
+			return { session_id: transcript.entries[0].id, path: transcript.path, file };
+		});
+		writeFileSync(join(out, "sessions.json"), `${JSON.stringify({
+			sessions: manifest, skippedPaths: session.skippedSessionPaths ?? [],
+		}, null, 1)}\n`);
 	}
 	return out;
 }

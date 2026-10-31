@@ -1,3 +1,21 @@
+## 2026-10-28 - GPT-6.1 Terra on the ChatGPT subscription (senpi#4578)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: the Codex list gains `gpt-6.1-terra` (500,000-token context like GPT-6.1 Sol, the OpenAI list price, effort ladder with `off: "none"` and no `minimal`). It joins `CHATGPT_SUBSCRIPTION_ADDITIONAL_TOOLS_MODEL_IDS`, and that set now also grants tool search and mid-conversation system messages on the subscription, so Terra carries the same tool flags as GPT-6.1 Sol; the API-key Terra row is unchanged. `CHATGPT_SUBSCRIPTION_GPT_61_SOL_CONTEXT_WINDOW` is renamed `CHATGPT_SUBSCRIPTION_GPT_61_CONTEXT_WINDOW`. `data/chatgpt-subscription.json` is regenerated with `--providers chatgpt-subscription`; the only data change is the new row.
+
+### Why
+
+- Subscription users could not select Terra at all, while the API-key catalog and upstream pi's Codex list already ship it.
+
+### Why an extension could not handle it
+
+- The builtin catalog is generated data; an extension can only add a custom model without the generated metadata.
+
+### Expected merge conflict zones
+
+- LOW: the `codexModels` array, the GPT-6.1 context-window constant, and the subscription checks in `applyOpenAIToolSearchMetadata` / `applyOpenAIResponsesTranscriptMetadata` in `generate-models.ts`.
+
 ## 2026-10-27 - Moonshot Kimi K3.1 Pro rows get the K3 request contract (senpi#4442)
 
 ### What changed

@@ -16,17 +16,12 @@ import type { SDKMessage, SdkQuery } from "../../../src/core/extensions/builtin/
 import { loadAnthropicSubscriptionProviderSettings } from "../../../src/core/extensions/builtin/anthropic-subscription/settings.ts";
 import { withAuthGuidance } from "../../../src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../../../src/core/settings-manager.ts";
+import { cliAccountOf, cliLaneEnv, cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const now = 1_800_000_000_000;
 const providerId = "anthropic-subscription";
-const primary: AccountSlot = {
-	name: "primary",
-	access: "primary",
-	refresh: "primary-refresh",
-	expires: now + 86_400_000,
-	source: "login",
-};
-const secondary: AccountSlot = { ...primary, name: "secondary", access: "secondary" };
+const primary: AccountSlot = cliSlot("primary");
+const secondary: AccountSlot = cliSlot("secondary");
 
 function settings(
 	global: Readonly<Record<string, unknown>> = {},
@@ -46,7 +41,7 @@ async function configure(accounts: AccountSlot[] = [primary, secondary]) {
 	await store.modify(providerId, async () => ({ ...emptyCredential(), accounts, pinned: "primary" }));
 	overrideAuthLaneBoundary({
 		createStore: () => store,
-		env: () => ({}),
+		env: () => cliLaneEnv(),
 		now: () => now,
 	});
 	return store;
@@ -59,7 +54,7 @@ function request(
 ) {
 	const attempts: string[] = [];
 	const query: SdkQuery = ({ options: sdkOptions }) => {
-		const account = sdkOptions?.env?.CLAUDE_CODE_OAUTH_TOKEN ?? "missing";
+		const account = cliAccountOf(sdkOptions?.env);
 		attempts.push(account);
 		return {
 			async *[Symbol.asyncIterator](): AsyncGenerator<SDKMessage> {
