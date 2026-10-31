@@ -1,3 +1,21 @@
+## 2026-10-30 - The coding-agent bundle no longer requires the removed Anthropic OAuth flow (senpi#4436, S7)
+
+### What changed
+
+- `scripts/build-coding-agent-bundle.mjs`: `packages/ai/dist/auth/oauth/anthropic.js` is gone from the required bundle inputs and from `lazyEntryPoints`.
+
+### Why
+
+- senpi#4436 (R7) deleted `packages/ai/src/auth/oauth/anthropic.ts`, so `npm run build` failed with `Bundle input is missing: packages/ai/dist/auth/oauth/anthropic.js` and emitted no `dist/bundle`. `load.ts` no longer lazily imports `./anthropic.ts`, so the load.ts cross-check needs no lazy entry for it.
+
+### Why an extension could not handle it
+
+- The release bundle's input list is build tooling, not runtime behavior.
+
+### Expected merge conflict zones
+
+- LOW: the required-inputs list in `buildBundle` and the `lazyEntryPoints` map; an upstream re-add of an `anthropic` lazy entry lands on deleted source and must stay removed.
+
 ## 2026-10-28 - Ship the path identity worker in the bundle, the binaries and the source archive (senpi#4391)
 
 ### What changed
