@@ -56,6 +56,7 @@ import {
 import { type ExtensionKernelTools, kernelToolInvokerStorage, kernelToolsStorage } from "./kernel-tools-context.ts";
 import { drainPendingProviderRegistrations } from "./loader.ts";
 import { runSessionMoveHandlers, type SessionMoveEmission, type SessionMoveFailure } from "./session-move-emit.ts";
+import type { RuntimeUiBroker } from "../runtime/ui-broker.ts";
 import { SessionStartTurnGate } from "./session-start-turn-gate.ts";
 import { QuitDeadline, type QuitHandlerBudget, type SessionShutdownBudget } from "./shutdown-quit-budget.ts";
 import { StaleExtensionContextError } from "./stale-context-error.ts";
@@ -518,7 +519,7 @@ function createNoOpSessionSettings(): ExtensionContextActions["sessionSettings"]
 	};
 }
 
-const noOpUIContext: ExtensionUIContext = {
+export const noOpUIContext: ExtensionUIContext = {
 	select: async () => undefined,
 	confirm: async () => false,
 	input: async () => undefined,
@@ -556,6 +557,8 @@ export class ExtensionRunner {
 	private extensions: Extension[];
 	private runtime: ExtensionRuntime;
 	private uiContext: ExtensionUIContext;
+	private uiBroker: RuntimeUiBroker | undefined;
+	private readonly brokerUIContexts = new WeakMap<ExtensionUIContext, ExtensionUIContext>();
 	private mode: ExtensionMode = "print";
 	private cwd: string;
 	private sessionManager: SessionManager | undefined;
@@ -923,6 +926,26 @@ export class ExtensionRunner {
 		this.mode = mode;
 	}
 
+	/**
+	 * Route this runner's UI through a runtime's UI broker (senpi#5228): its attached presenter answers, and with
+	 * none attached the UI is unbound. A session binds its UI with `setUIContext` and never sets a broker.
+	 */
+	setUiBroker(broker: RuntimeUiBroker | undefined): void {
+		this.uiBroker = broker;
+	}
+
+	private currentUIContext(): ExtensionUIContext {
+		if (this.uiBroker === undefined) return this.uiContext;
+		const presenter = this.uiBroker.presenter;
+		if (presenter === undefined) return noOpUIContext;
+		let wrapped = this.brokerUIContexts.get(presenter);
+		if (wrapped === undefined) {
+			wrapped = this.wrapUIPromptContext(presenter);
+			this.brokerUIContexts.set(presenter, wrapped);
+		}
+		return wrapped;
+	}
+
 	setToolHookLifecycleObserver(observer?: ExtensionToolHookLifecycleObserver): void {
 		this.toolHookLifecycleObserver = observer;
 	}
@@ -1006,7 +1029,7 @@ export class ExtensionRunner {
 	}
 
 	getUIContext(): ExtensionUIContext {
-		return this.uiContext;
+		return this.currentUIContext();
 	}
 
 	/** True while session_start handlers run and the turns they trigger are still held. */
@@ -1015,7 +1038,7 @@ export class ExtensionRunner {
 	}
 
 	hasUI(): boolean {
-		return this.uiContext !== noOpUIContext;
+		return this.currentUIContext() !== noOpUIContext;
 	}
 
 	getExtensionPaths(): string[] {
@@ -1553,7 +1576,7 @@ export class ExtensionRunner {
 			},
 			get ui() {
 				runner.assertActive();
-				return runner.uiContext;
+				return runner.currentUIContext();
 			},
 			get mode() {
 				runner.assertActive();
