@@ -61,6 +61,7 @@ async function fixture() {
 		consecutiveLengthRecoveries: 0,
 		recentNormalizedOutputHashes: [],
 		toollessContinuationStreak: 0,
+		idleReplyStreak: 0,
 		continuationPending: false,
 		lastTurnStuckOnContextOverflow: false,
 	};
