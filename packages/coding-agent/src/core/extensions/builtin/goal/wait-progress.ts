@@ -1,7 +1,7 @@
 import { formatWakeDuration } from "./cache-warm.ts";
 import type { ResumptionChannelCounts } from "./monitor-continuation-types.ts";
 
-export type GoalWaitKind = "monitor" | "userGrace";
+export type GoalWaitKind = "monitor" | "userGrace" | "providerRetry";
 
 export interface GoalWaitLabelInput {
 	readonly kind: GoalWaitKind;
@@ -63,8 +63,12 @@ export function channelsOnDuty(channelCounts: ResumptionChannelCounts): string {
 export function formatGoalWaitLabel(input: GoalWaitLabelInput): string {
 	const bar = renderGoalWaitBar(elapsedRatioOf(input.remainingMs, input.totalMs));
 	const remaining = formatWakeDuration(Math.max(0, input.remainingMs));
-	if (input.kind === "monitor") {
-		return `${bar} goal continues in ${remaining} \u00b7 ${channelsOnDuty(input.channelCounts)}`;
+	switch (input.kind) {
+		case "monitor":
+			return `${bar} goal continues in ${remaining} \u00b7 ${channelsOnDuty(input.channelCounts)}`;
+		case "providerRetry":
+			return `${bar} provider unavailable \u00b7 goal retries in ${remaining}`;
+		case "userGrace":
+			return `${bar} goal resumes in ${remaining}`;
 	}
-	return `${bar} goal resumes in ${remaining}`;
 }

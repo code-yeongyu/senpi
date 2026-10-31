@@ -65,6 +65,7 @@ describe("regressions #1717/#2113: agent session event settlement", () => {
 	});
 
 	it("runs tool_call handlers after the assistant tool-use message is settled in the session", async () => {
+		// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 		let harness: Harness;
 		const branchRolesAtToolCall: string[][] = [];
 		harness = await createHarness({

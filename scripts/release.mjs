@@ -13,8 +13,8 @@
  *      and continues so the preview is usable during development).
  *   2. Resolve version: `--version` override or `computeNextVersion()` from calver.mjs.
  *   3. Test evidence (senpi#2943): regenerate the AI model catalog and check the bundled
- *      provider defaults against it. If the catalog changed, commit it alone and push it to
- *      `main`, so CI tests exactly the tree the release ships. Then wait for that commit's
+ *      provider defaults against it. If the catalog changed, commit it on the release only and
+ *      require --force-tests, so this job tests that tree before anything reaches `main`. Then wait for that commit's
  *      green "Check and test" run, the fan-in of every CI shard and required job. A red run
  *      stops the release; a run superseded by a newer `main` push moves the release onto
  *      that commit. The suite is never re-run here unless `--force-tests` asks for it.
@@ -35,25 +35,31 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { computeNextVersion } from "./calver.mjs";
-import { syncRemoteMainBeforePush } from "./release-git.mjs";
 import {
 	runClaudeCodeModelSupportReport,
 	runGenerateModels,
-	runProviderDefaultsCheck,
 	runInstallLock,
 	runPackageLockRefresh,
+	runProviderDefaultsCheck,
 } from "./release-artifacts.mjs";
-import { reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
+import { captureOutput } from "./release-capture.mjs";
+import { CHANGELOGS, reAddUnreleasedSections, stampChangelogs } from "./release-changelog.mjs";
+import { syncRemoteMainBeforePush } from "./release-git.mjs";
+import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
+import { preparePinnedRelease, syncPinnedReleaseIntoMain } from "./release-pin.mjs";
 import {
 	awaitCiEvidence,
 	catalogChangedSinceHead,
 	discardTimestampOnlyCatalogChange,
+	FORCED_TEST_SUITE_TIMEOUT_MS,
 	planCiEvidence,
 	REGENERATED_CATALOG_PATHS,
 	REQUIRED_CHECK_NAME,
+	runForcedTestSuite,
 } from "./release-test-gate.mjs";
-import { applyWorkspaceVersions, runSyncVersions } from "./release-packages.mjs";
+import { compileFragments } from "./sync-changes-fragments.mjs";
 
 const VERSION_RE = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d+)?$/;
 
@@ -70,8 +76,10 @@ function printUsage() {
 		"  --dry-run       Preview every shell command and file write; modify nothing.",
 		"                  Read-only git/npm reads (status, branch, tag --list,",
 		"                  npm view) still execute so the plan is accurate.",
+		"  --sha <sha>     Release this exact commit (40 hex chars, must be on main)",
+		"                  instead of main's tip; later main merges stay out of the tag.",
 		"  --force-tests   Run the CI=1 npm test suite in this job instead of",
-		"                  reusing the release commit's green \"Check and test\" CI run.",
+		'                  reusing the release commit\'s green "Check and test" CI run.',
 		"  --help, -h      Show this help and exit.",
 		"",
 		"Default flow: compute next version via scripts/calver.mjs, then release.",
@@ -80,7 +88,7 @@ function printUsage() {
 }
 
 function parseArgs(argv) {
-	const args = { dryRun: false, version: null, help: false, forceTests: false };
+	const args = { dryRun: false, version: null, help: false, forceTests: false, sha: null };
 	for (let i = 0; i < argv.length; i++) {
 		const arg = argv[i];
 		if (arg === "--help" || arg === "-h") {
@@ -89,6 +97,13 @@ function parseArgs(argv) {
 			args.forceTests = true;
 		} else if (arg === "--dry-run") {
 			args.dryRun = true;
+		} else if (arg === "--sha") {
+			i += 1;
+			if (i >= argv.length) {
+				process.stderr.write("[release] error: --sha requires an argument\n");
+				process.exit(1);
+			}
+			args.sha = argv[i];
 		} else if (arg === "--version") {
 			i += 1;
 			if (i >= argv.length) {
@@ -114,10 +129,7 @@ function dryRunLog(message) {
 
 function captureCommand(bin, args) {
 	try {
-		return execFileSync(bin, args, {
-			encoding: "utf-8",
-			stdio: ["ignore", "pipe", "pipe"],
-		});
+		return captureOutput(bin, args);
 	} catch (err) {
 		const message = err && typeof err === "object" && "message" in err ? err.message : String(err);
 		process.stderr.write(`[release] error: ${bin} ${args.join(" ")} failed: ${message}\n`);
@@ -127,7 +139,11 @@ function captureCommand(bin, args) {
 
 function runCommand(bin, args, extraEnv) {
 	try {
-		execFileSync(bin, args, extraEnv ? { stdio: "inherit", env: { ...process.env, ...extraEnv } } : { stdio: "inherit" });
+		execFileSync(
+			bin,
+			args,
+			extraEnv ? { stdio: "inherit", env: { ...process.env, ...extraEnv } } : { stdio: "inherit" },
+		);
 	} catch (err) {
 		const message = err && typeof err === "object" && "message" in err ? err.message : String(err);
 		throw new Error(`${bin} ${args.join(" ")} failed: ${message}`, { cause: err });
@@ -137,9 +153,7 @@ function runCommand(bin, args, extraEnv) {
 function preflight(dryRun) {
 	const branch = captureCommand("git", ["branch", "--show-current"]).trim();
 	if (branch !== "main") {
-		process.stderr.write(
-			`[release] error: must be on main branch, currently on "${branch || "<detached>"}"\n`,
-		);
+		process.stderr.write(`[release] error: must be on main branch, currently on "${branch || "<detached>"}"\n`);
 		process.exit(1);
 	}
 	log("on branch main");
@@ -162,8 +176,7 @@ function resolveVersion(opts) {
 	if (opts.version !== null) {
 		if (!VERSION_RE.test(opts.version)) {
 			process.stderr.write(
-				`[release] error: invalid --version "${opts.version}" ` +
-					"(expected YYYY.M.D or YYYY.M.D-N)\n",
+				`[release] error: invalid --version "${opts.version}" ` + "(expected YYYY.M.D or YYYY.M.D-N)\n",
 			);
 			process.exit(1);
 		}
@@ -191,7 +204,14 @@ function stageChangedFiles(dryRun) {
 		return;
 	}
 	const output = captureCommand("git", ["ls-files", "-m", "-o", "-d", "--exclude-standard"]);
-	const paths = [...new Set(output.split("\n").map((line) => line.trim()).filter(Boolean))];
+	const paths = [
+		...new Set(
+			output
+				.split("\n")
+				.map((line) => line.trim())
+				.filter(Boolean),
+		),
+	];
 	if (paths.length === 0) {
 		log("no changed files to stage");
 		return;
@@ -257,11 +277,12 @@ function runBuild(dryRun) {
 
 function lookupCiCheckRuns(sha) {
 	try {
-		const raw = execFileSync(
-			"gh",
-			["api", `repos/{owner}/{repo}/commits/${sha}/check-runs`, "--paginate", "--slurp"],
-			{ encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
-		);
+		const raw = captureOutput("gh", [
+			"api",
+			`repos/{owner}/{repo}/commits/${sha}/check-runs`,
+			"--paginate",
+			"--slurp",
+		]);
 		const pages = JSON.parse(raw);
 		const runs = Array.isArray(pages)
 			? pages.flatMap((page) => (Array.isArray(page.check_runs) ? page.check_runs : []))
@@ -289,10 +310,14 @@ function lookupCiCheckRuns(sha) {
 }
 
 function lookupWorkflowRun(checkSuiteId) {
-	const raw = execFileSync("gh", ["api", `repos/{owner}/{repo}/actions/runs?check_suite_id=${checkSuiteId}&per_page=1`], {
-		encoding: "utf-8",
-		stdio: ["ignore", "pipe", "pipe"],
-	});
+	const raw = execFileSync(
+		"gh",
+		["api", `repos/{owner}/{repo}/actions/runs?check_suite_id=${checkSuiteId}&per_page=1`],
+		{
+			encoding: "utf-8",
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
 	const workflowRun = JSON.parse(raw).workflow_runs?.[0];
 	return workflowRun ? { workflowStatus: workflowRun.status, workflowConclusion: workflowRun.conclusion } : {};
 }
@@ -322,32 +347,48 @@ function remoteMain() {
 
 /**
  * The release's test evidence is CI's sharded run, never a second serial run of the suite here (senpi#2943).
- * A regenerated model catalog is committed and pushed to main on its own first, so CI tests exactly the tree the
+ * A regenerated model catalog is committed on the release only and requires --force-tests (never pushed untested); the
  * release ships (the gap behind senpi#2645); then the release waits for that commit's green "Check and test".
  */
-function secureCiEvidence(version, dryRun, forceTests) {
+function secureCiEvidence(version, dryRun, forceTests, pinnedSha) {
 	runGenerateModels(dryRun, runCommand, log, dryRunLog);
 	runProviderDefaultsCheck(dryRun, runCommand, log, dryRunLog);
 	if (dryRun) {
-		dryRunLog(`if the catalog changed: git commit ${REGENERATED_CATALOG_PATHS.join(" ")} and git push origin main`);
-		const sha = captureCommand("git", ["rev-parse", "HEAD"]).trim();
+		dryRunLog(
+			`if the catalog changed: git commit ${REGENERATED_CATALOG_PATHS.join(" ")} on the release only (requires --force-tests)`,
+		);
+		const sha = pinnedSha ?? captureCommand("git", ["rev-parse", "HEAD"]).trim();
 		const plan = planCiEvidence({ sha, checkRuns: lookupCiCheckRuns(sha) });
-		dryRunLog(`test gate (preview, HEAD): ${plan.reason}`);
-		dryRunLog(forceTests ? "CI=1 npm test (--force-tests)" : 'wait for the release commit\'s green "Check and test"');
+		dryRunLog(`test gate (preview, ${pinnedSha ? "pinned commit" : "HEAD"}): ${plan.reason}`);
+		dryRunLog(
+			forceTests
+				? "no CI wait (--force-tests runs the suite in this job)"
+				: 'wait for the release commit\'s green "Check and test"',
+		);
 		return;
 	}
 	if (discardTimestampOnlyCatalogChange(process.cwd())) {
 		log("the regeneration changed only the catalog manifest's generatedAt stamp; keeping HEAD's catalog");
 	}
 	if (catalogChangedSinceHead(process.cwd())) {
-		log("the regeneration changed the model catalog; committing it to main so CI tests the tree this release ships");
+		// A regenerated catalog is never pushed to main before this job has checked and tested it: v2026.10.19-1 pushed
+		// one that dropped a model a test pinned, and main failed typecheck for every PR. It is committed on the release
+		// only, and the forced suite plus `npm run check` run on it before anything is pushed.
+		if (!forceTests) {
+			throw new Error(
+				"the regeneration changed the model catalog; dispatch with force_tests so this job tests that tree before anything reaches main",
+			);
+		}
+		log(
+			"the regeneration changed the model catalog; committing it on the release only (the forced suite and checks run on it)",
+		);
 		runCommand("git", ["add", "--", ...REGENERATED_CATALOG_PATHS]);
 		gitCommit(`chore(ai): regenerate the model catalog for v${version}`, false);
-		syncRemoteMainBeforePush(false, runCommand, log, dryRunLog);
-		gitPush("main", false);
 	}
 	if (forceTests) {
-		log("test gate: --force-tests given; the suite runs in this job after the build");
+		log(
+			"test gate: --force-tests given; the suite runs in this job on the release code, before version and changelog stamping",
+		);
 		return;
 	}
 	awaitCiEvidence(
@@ -360,17 +401,30 @@ function secureCiEvidence(version, dryRun, forceTests) {
 			remoteMain,
 			fastForwardTo: (sha) => runCommand("git", ["merge", "--ff-only", sha]),
 			log,
+			pinned: pinnedSha !== null,
 		},
 	);
 }
 
+/**
+ * The forced suite runs right after the test-evidence step, on the release's code and catalog but before any
+ * version or changelog stamping: a test that reads a real CHANGELOG.md must see the tree CI would (v2026.10.16 release
+ * run 38824836070 failed when the suite ran on stamped changelogs). It cleans and builds first; the release cleans and
+ * builds again after stamping.
+ */
 function runForcedTests(dryRun, forceTests) {
-	if (!forceTests || dryRun) return;
+	if (!forceTests) return;
+	if (dryRun) {
+		dryRunLog("npm run clean, npm run build, then CI=1 npm test (--force-tests), before stamping");
+		return;
+	}
+	runClean(false);
+	runBuild(false);
 	// Run with CI=1 so packages reproduce their CI test behavior — notably the coding-agent vitest suite serializes
 	// its subprocess-heavy tests to a single fork (see packages/coding-agent/vitest.config.ts). App code never
 	// branches on CI.
-	log("CI=1 npm test");
-	runCommand("npm", ["test"], { CI: "1" });
+	log(`CI=1 npm test (budget ${FORCED_TEST_SUITE_TIMEOUT_MS / 60_000} min)`);
+	runForcedTestSuite();
 }
 
 function main() {
@@ -380,6 +434,20 @@ function main() {
 		process.exit(0);
 	}
 
+	const capture = (bin, cmdArgs) => captureCommand(bin, cmdArgs);
+	if (args.sha !== null) {
+		const driftPaths = ["packages/ai/src/models.generated.ts", "package-lock.json"];
+		preparePinnedRelease({
+			sha: args.sha,
+			dryRun: args.dryRun,
+			runCommand,
+			capture,
+			build: () => runBuild(false),
+			driftPaths,
+			log,
+			dryRunLog,
+		});
+	}
 	preflight(args.dryRun);
 
 	const version = resolveVersion(args);
@@ -390,17 +458,19 @@ function main() {
 		dryRunLog("preview mode; no files, commits, tags, or npm state will be modified");
 	}
 
-	secureCiEvidence(version, args.dryRun, args.forceTests);
+	secureCiEvidence(version, args.dryRun, args.forceTests, args.sha);
+	runForcedTests(args.dryRun, args.forceTests);
 	applyWorkspaceVersions(version, args.dryRun, log, dryRunLog);
 	runSyncVersions(args.dryRun, runCommand, log, dryRunLog);
 	runPackageLockRefresh(args.dryRun, runCommand, log, dryRunLog);
 	runClaudeCodeModelSupportReport(args.dryRun, runCommand, log, dryRunLog);
 	runInstallLock(args.dryRun, runCommand, log, dryRunLog);
+	// Compile only at the cut, on the pinned tree when --sha is set (senpi#3610).
+	compileFragments({ dryRun: args.dryRun, log });
 	stampChangelogs(version, date, args.dryRun, capturedChangelogSubsections, log, dryRunLog);
 	runCheck(args.dryRun);
 	runClean(args.dryRun);
 	runBuild(args.dryRun);
-	runForcedTests(args.dryRun, args.forceTests);
 
 	stageChangedFiles(args.dryRun);
 	gitCommit(`release: v${version}`, args.dryRun);
@@ -410,14 +480,32 @@ function main() {
 	stageChangedFiles(args.dryRun);
 	gitCommit("Add [Unreleased] section for next cycle", args.dryRun);
 
-	syncRemoteMainBeforePush(args.dryRun, runCommand, log, dryRunLog);
+	if (args.sha !== null) {
+		const files = {
+			readFile: (file) => readFileSync(file, "utf-8"),
+			writeFile: (file, text) => writeFileSync(file, text),
+		};
+		syncPinnedReleaseIntoMain({
+			pinnedSha: args.sha,
+			version,
+			changelogs: CHANGELOGS,
+			dryRun: args.dryRun,
+			runCommand,
+			capture,
+			log,
+			dryRunLog,
+			...files,
+		});
+	} else syncRemoteMainBeforePush(args.dryRun, runCommand, log, dryRunLog);
 	gitPush("main", args.dryRun);
 	gitPush(`v${version}`, args.dryRun);
 
 	if (args.dryRun) {
 		log(`dry-run complete; would have prepared v${version}`);
 	} else {
-		log(`prepared v${version}; publish with: gh workflow run publish-npm.yml -f version=${version} -f publish-only=true`);
+		log(
+			`prepared v${version}; publish with: gh workflow run publish-npm.yml -f version=${version} -f publish-only=true`,
+		);
 	}
 }
 

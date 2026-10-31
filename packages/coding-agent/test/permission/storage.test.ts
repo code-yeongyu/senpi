@@ -2,224 +2,177 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CONFIG_DIR_NAME } from "../../src/config.ts";
 import {
 	appendApproved,
+	approvedStorePath,
 	clearApproved,
 	compactApproved,
 	loadApproved,
 } from "../../src/core/extensions/builtin/permission-system/storage.ts";
 import type { Rule } from "../../src/core/extensions/builtin/permission-system/types.ts";
 
+const ALLOW_BASH: Rule = { permission: "bash", pattern: "git *", action: "allow" };
+const ALLOW_READ: Rule = { permission: "read", pattern: "*.md", action: "allow" };
+
 describe("permission storage", () => {
-	let tempDir: string;
+	let agentDir: string;
+	let projectDir: string;
 
 	beforeEach(() => {
-		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "permission-test-"));
+		agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "senpi-agent-"));
+		projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "senpi-project-"));
 	});
 
 	afterEach(() => {
-		fs.rmSync(tempDir, { recursive: true, force: true });
+		fs.rmSync(agentDir, { recursive: true, force: true });
+		fs.rmSync(projectDir, { recursive: true, force: true });
 	});
 
 	describe("loadApproved", () => {
-		it("returns empty array when file does not exist", () => {
+		it("returns empty array when the store does not exist", () => {
 			// when
-			const result = loadApproved(tempDir);
+			const result = loadApproved(agentDir, projectDir);
 
 			// then
 			expect(result).toEqual([]);
 		});
 
-		it("returns parsed rules from existing file", () => {
+		it("returns valid allow rules from the store, dropping anything else", () => {
 			// given
-			const rules: Rule[] = [
-				{ permission: "bash", pattern: "git *", action: "allow" },
-				{ permission: "write", pattern: "*.ts", action: "ask" },
-			];
-			appendApproved(tempDir, rules);
+			appendApproved(agentDir, projectDir, [ALLOW_BASH, ALLOW_READ]);
 
 			// when
-			const result = loadApproved(tempDir);
+			const result = loadApproved(agentDir, projectDir);
 
 			// then
-			expect(result).toEqual(rules);
+			expect(result).toEqual([ALLOW_BASH, ALLOW_READ]);
 		});
 
-		it("skips malformed lines and returns valid rules", () => {
-			// given
-			const piDir = path.join(tempDir, CONFIG_DIR_NAME);
-			fs.mkdirSync(piDir, { recursive: true });
-			const filePath = path.join(piDir, "permissions-approved.jsonl");
+		it("skips malformed lines and drops non-allow or unmarked rules", () => {
+			// given a store file whose lines mix valid user-answer rules with forged/invalid ones
+			const storePath = approvedStorePath(agentDir, projectDir);
+			fs.mkdirSync(path.dirname(storePath), { recursive: true });
 			fs.writeFileSync(
-				filePath,
-				'{"permission":"bash","pattern":"git *","action":"allow"}\ninvalid json\n{"permission":"write","pattern":"*.ts","action":"deny"}\n',
+				storePath,
+				[
+					'{"permission":"bash","pattern":"git *","action":"allow","source":"user-answer"}',
+					"invalid json",
+					'{"permission":"write","pattern":"*.ts","action":"deny","source":"user-answer"}',
+					'{"permission":"*","pattern":"*","action":"allow"}',
+					'{"permission":"bash","pattern":"ls *","action":"allow"}',
+				].join("\n") + "\n",
 			);
 
 			// when
-			const result = loadApproved(tempDir);
+			const result = loadApproved(agentDir, projectDir);
 
-			// then
-			expect(result).toEqual([
-				{ permission: "bash", pattern: "git *", action: "allow" },
-				{ permission: "write", pattern: "*.ts", action: "deny" },
-			]);
+			// then only the valid, user-marked allow survives
+			expect(result).toEqual([ALLOW_BASH]);
 		});
 	});
 
 	describe("appendApproved", () => {
-		it("creates .pi directory if missing", () => {
-			// given
-			const rules: Rule[] = [{ permission: "bash", pattern: "*", action: "allow" }];
-
+		it("creates the store directory if missing", () => {
 			// when
-			appendApproved(tempDir, rules);
+			appendApproved(agentDir, projectDir, [ALLOW_BASH]);
 
 			// then
-			const piDir = path.join(tempDir, CONFIG_DIR_NAME);
-			expect(fs.existsSync(piDir)).toBe(true);
+			expect(fs.existsSync(path.dirname(approvedStorePath(agentDir, projectDir)))).toBe(true);
 		});
 
-		it("appends rules as JSONL lines", () => {
-			// given
-			const rules: Rule[] = [
-				{ permission: "bash", pattern: "git *", action: "allow" },
-				{ permission: "read", pattern: "*.md", action: "allow" },
-			];
-
+		it("appends rules as JSONL lines stamped with the source marker", () => {
 			// when
-			appendApproved(tempDir, rules);
+			appendApproved(agentDir, projectDir, [ALLOW_BASH, ALLOW_READ]);
 
 			// then
-			const filePath = path.join(tempDir, CONFIG_DIR_NAME, "permissions-approved.jsonl");
-			const content = fs.readFileSync(filePath, "utf-8");
+			const content = fs.readFileSync(approvedStorePath(agentDir, projectDir), "utf-8");
 			const lines = content.trim().split("\n");
 			expect(lines).toHaveLength(2);
-			expect(JSON.parse(lines[0])).toEqual(rules[0]);
-			expect(JSON.parse(lines[1])).toEqual(rules[1]);
+			expect(JSON.parse(lines[0])).toEqual({ ...ALLOW_BASH, source: "user-answer" });
+			expect(JSON.parse(lines[1])).toEqual({ ...ALLOW_READ, source: "user-answer" });
 		});
 
 		it("handles multiple appends correctly", () => {
-			// given
-			const rules1: Rule[] = [{ permission: "bash", pattern: "git *", action: "allow" }];
-			const rules2: Rule[] = [{ permission: "write", pattern: "*.ts", action: "ask" }];
-
 			// when
-			appendApproved(tempDir, rules1);
-			appendApproved(tempDir, rules2);
+			appendApproved(agentDir, projectDir, [ALLOW_BASH]);
+			appendApproved(agentDir, projectDir, [ALLOW_READ]);
 
 			// then
-			const result = loadApproved(tempDir);
-			expect(result).toEqual([...rules1, ...rules2]);
+			expect(loadApproved(agentDir, projectDir)).toEqual([ALLOW_BASH, ALLOW_READ]);
 		});
 
 		it("does nothing when rules array is empty", () => {
 			// when
-			appendApproved(tempDir, []);
+			appendApproved(agentDir, projectDir, []);
 
 			// then
-			const filePath = path.join(tempDir, CONFIG_DIR_NAME, "permissions-approved.jsonl");
-			expect(fs.existsSync(filePath)).toBe(false);
+			expect(fs.existsSync(approvedStorePath(agentDir, projectDir))).toBe(false);
 		});
 	});
 
 	describe("clearApproved", () => {
-		it("deletes the permissions file", () => {
+		it("deletes the store file", () => {
 			// given
-			const rules: Rule[] = [{ permission: "bash", pattern: "*", action: "allow" }];
-			appendApproved(tempDir, rules);
-			const filePath = path.join(tempDir, CONFIG_DIR_NAME, "permissions-approved.jsonl");
-			expect(fs.existsSync(filePath)).toBe(true);
+			appendApproved(agentDir, projectDir, [ALLOW_BASH]);
+			const storePath = approvedStorePath(agentDir, projectDir);
+			expect(fs.existsSync(storePath)).toBe(true);
 
 			// when
-			clearApproved(tempDir);
+			clearApproved(agentDir, projectDir);
 
 			// then
-			expect(fs.existsSync(filePath)).toBe(false);
+			expect(fs.existsSync(storePath)).toBe(false);
 		});
 
-		it("does not throw when file does not exist", () => {
+		it("does not throw when the store does not exist", () => {
 			// when/then
-			expect(() => clearApproved(tempDir)).not.toThrow();
+			expect(() => clearApproved(agentDir, projectDir)).not.toThrow();
 		});
 	});
 
 	describe("compactApproved", () => {
-		it("removes duplicate rules keeping last occurrence", () => {
+		it("removes duplicate rules keeping the last occurrence", () => {
 			// given
-			const rules: Rule[] = [
+			appendApproved(agentDir, projectDir, [
+				ALLOW_BASH,
 				{ permission: "bash", pattern: "git *", action: "allow" },
-				{ permission: "bash", pattern: "git *", action: "deny" },
-				{ permission: "write", pattern: "*.ts", action: "ask" },
-			];
-			appendApproved(tempDir, rules);
-
-			// when
-			compactApproved(tempDir);
-
-			// then
-			const result = loadApproved(tempDir);
-			expect(result).toEqual([
-				{ permission: "bash", pattern: "git *", action: "deny" },
-				{ permission: "write", pattern: "*.ts", action: "ask" },
+				ALLOW_READ,
 			]);
-		});
-
-		it("handles rules with different permissions but same pattern", () => {
-			// given
-			const rules: Rule[] = [
-				{ permission: "bash", pattern: "*", action: "allow" },
-				{ permission: "read", pattern: "*", action: "deny" },
-			];
-			appendApproved(tempDir, rules);
 
 			// when
-			compactApproved(tempDir);
+			compactApproved(agentDir, projectDir);
 
 			// then
-			const result = loadApproved(tempDir);
-			expect(result).toHaveLength(2);
+			expect(loadApproved(agentDir, projectDir)).toEqual([ALLOW_BASH, ALLOW_READ]);
+		});
+
+		it("keeps rules with different permissions but the same pattern", () => {
+			// given
+			appendApproved(agentDir, projectDir, [{ permission: "bash", pattern: "*", action: "allow" }, ALLOW_READ]);
+
+			// when
+			compactApproved(agentDir, projectDir);
+
+			// then
+			const result = loadApproved(agentDir, projectDir);
 			expect(result).toContainEqual({ permission: "bash", pattern: "*", action: "allow" });
-			expect(result).toContainEqual({ permission: "read", pattern: "*", action: "deny" });
+			expect(result).toContainEqual(ALLOW_READ);
 		});
 
-		it("does nothing when file does not exist", () => {
+		it("does nothing when the store does not exist", () => {
 			// when/then
-			expect(() => compactApproved(tempDir)).not.toThrow();
-		});
-
-		it("writes empty file when all rules are duplicates", () => {
-			// given
-			const rules: Rule[] = [
-				{ permission: "bash", pattern: "git *", action: "allow" },
-				{ permission: "bash", pattern: "git *", action: "deny" },
-			];
-			appendApproved(tempDir, rules);
-
-			// when
-			compactApproved(tempDir);
-
-			// then
-			const result = loadApproved(tempDir);
-			expect(result).toEqual([{ permission: "bash", pattern: "git *", action: "deny" }]);
+			expect(() => compactApproved(agentDir, projectDir)).not.toThrow();
 		});
 	});
 
 	describe("round-trip", () => {
 		it("writes and reads back rules correctly", () => {
-			// given
-			const originalRules: Rule[] = [
-				{ permission: "bash", pattern: "git *", action: "allow" },
-				{ permission: "write", pattern: "*.ts", action: "ask" },
-				{ permission: "read", pattern: "*.md", action: "allow" },
-			];
-
 			// when
-			appendApproved(tempDir, originalRules);
-			const loadedRules = loadApproved(tempDir);
+			appendApproved(agentDir, projectDir, [ALLOW_BASH, ALLOW_READ]);
+			const loaded = loadApproved(agentDir, projectDir);
 
 			// then
-			expect(loadedRules).toEqual(originalRules);
+			expect(loaded).toEqual([ALLOW_BASH, ALLOW_READ]);
 		});
 	});
 });

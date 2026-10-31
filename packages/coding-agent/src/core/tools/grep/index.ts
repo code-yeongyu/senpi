@@ -83,7 +83,9 @@ export function createGrepToolDefinition(
 	if (options && "operations" in options)
 		throw new TypeError("GrepToolOptions.operations is deprecated and no longer supported; removed next release");
 	return {
+		...(options?.filesystemPolicy !== undefined ? { serverPinned: true } : {}),
 		name: "grep",
+		workspaceEffect: "read",
 		label: "grep",
 		exposure: "eval",
 		description:

@@ -131,7 +131,8 @@ describe("normalizeCursorCatalog (derived variant grouping, senpi#2038)", () => 
 		expect(grok.representativeVariantId).toBe("grok-4.7-medium");
 		expect(grok.legacyAliases).toEqual(["grok-4.7-high", "grok-4.7-low", "grok-4.7-medium", "grok-4.7-xhigh"]);
 		expect(grok.capabilityId).toBe("grok-4.7");
-		expect(grok.window).toBe(200000);
+		// Server-reported default context for the suffix variant (senpi#3620).
+		expect(grok.window).toBe(256000);
 		expect(grok.thinkingMode).toBeUndefined();
 		expect(grok.input).toEqual(["text"]);
 	});

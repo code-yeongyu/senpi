@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../../../src/config.ts";
 import { getMcpCatalogCachePath } from "../../../src/core/extensions/builtin/mcp/catalog-cache.ts";
 import mcpExtension from "../../../src/core/extensions/builtin/mcp/index.ts";
+import { getProjectMcpAuthority } from "../../../src/core/extensions/builtin/mcp/project-skill-policy.ts";
 import { getMcpService, resetMcpServiceForTests } from "../../../src/core/extensions/builtin/mcp/service.ts";
 import { parseSkillMcpDeclarations, type SkillLike } from "../../../src/core/extensions/builtin/mcp/skills.ts";
 import { MCP_STARTUP_TIMEOUT_ENV } from "../../../src/core/extensions/builtin/mcp/startup-race.ts";
@@ -229,6 +230,13 @@ describe("senpi#2514: each session binds its own view of the shared MCP service"
 
 			// When: a real builtin-only loader loads before SDK session creation, outside a provider scope.
 			let registered = Promise.withResolvers<void>();
+			// #3796: exercise the real loader with the ownership-relevant builtins.
+			// Cold-compiling unrelated bundled extensions can exhaust this test's
+			// deadline before the child ever attaches to MCP.
+			writeFileSync(
+				join(root.agentDir, "settings.json"),
+				JSON.stringify({ enabledBuiltinExtensions: ["tool-search", "mcp"] }),
+			);
 			const settingsManager = SettingsManager.create(root.cwd, root.agentDir);
 			const childLoader = new DefaultResourceLoader({
 				cwd: root.cwd,
@@ -499,6 +507,41 @@ async function twoHttpSessions(): Promise<{ alphaPi: CapturingPi; bravoPi: Captu
 }
 
 describe("senpi#2514: the shared service keeps sessions apart under concurrency and failure", () => {
+	// senpi#4210: default readiness checks must not read the released declarer's extension context.
+	it("keeps a peer's in-flight call and subsequent tools live after the original declarer quits", async () => {
+		const fixture = await httpServer();
+		const alpha = await openSession();
+		const bravo = await openSession();
+		const tool = "mcp_fx_echo";
+		await untilToolRegistered(bravo, tool);
+		const service = getMcpService();
+		const connection = service.getConnection("fx");
+		if (connection === undefined) throw new Error("Missing shared connection");
+		const generation = connection.generation;
+		const lifetime = connection.requestLifetimeSignal;
+		const entered = fixture.holdCalls(1);
+		const inFlight = bravo.session.executeTool(tool, { value: "in-flight" });
+		const completed = expect(inFlight).resolves.toMatchObject({
+			content: [{ type: "text", text: JSON.stringify({ value: "in-flight" }) }],
+		});
+		try {
+			await entered;
+			await shutDown(alpha, "quit");
+			expect(service.getConnection("fx")).toBe(connection);
+			expect(connection.generation).toBe(generation);
+			expect(lifetime.aborted).toBe(false);
+		} finally {
+			fixture.releaseCalls();
+			await completed;
+		}
+		expect(getMessageText(await bravo.session.executeTool(tool, { value: "after-release" }))).toBe(
+			JSON.stringify({ value: "after-release" }),
+		);
+		expect(connection.state).toBe("connected");
+		expect(connection.generation).toBe(generation);
+		expect(fixture.connects).toBe(1);
+	});
+
 	it("gives each session without its own tool-search service a separate fallback service", async () => {
 		// Given: two sessions whose extension loads own no tool-search service attach to the shared service.
 		configureServer();
@@ -703,7 +746,11 @@ describe("senpi#2986: a session's skill servers follow its own trust, env and ag
 		// session's env, and the servers' credentials resolve in its agent dir, never the trusted peer's.
 		const service = getMcpService();
 		expect(warnings).toEqual([expect.stringContaining("trust the project")]);
-		expect(service.getAuthTarget("fxp")?.config.env).toEqual({ SENPI_2986_SECRET: SECRET_EXPR });
+		// Project servers materialize their child env at spawn (senpi#3796); the declared value stays literal there.
+		const projectConfig = service.getAuthTarget("fxp")?.config;
+		const projectEnv = projectConfig === undefined ? undefined : getProjectMcpAuthority(projectConfig)?.initial.env;
+		expect(projectEnv).toMatchObject({ SENPI_2986_SECRET: SECRET_EXPR });
+		expect(Object.values(projectEnv ?? {})).not.toContain("alpha-secret");
 		expect(service.getAuthTarget("fxu")?.config.env).toEqual({ SENPI_2986_SECRET: "alpha-secret" });
 		expect(service.getAuthTarget("fxu")).toMatchObject({
 			agentDir: root.agentDir,
@@ -766,7 +813,7 @@ function configureExtraForRootProject(): TestRoot {
 	return makeRoot("2597-peer", cleanupTasks);
 }
 
-/** Attach an app-server session in `project` whose session id is `sessionId`, sharing the agent dir. */
+/** Attach an RPC session in `project` whose session id is `sessionId`, sharing the agent dir. */
 async function attachInProject(
 	pi: CapturingPi,
 	project: TestRoot,
@@ -778,7 +825,7 @@ async function attachInProject(
 		{
 			cwd: project.cwd,
 			isProjectTrusted: () => true,
-			mode: "app-server",
+			mode: "rpc",
 			sessionManager: { getEntries: () => [], getSessionId: () => sessionId },
 		},
 		pi,
@@ -990,7 +1037,7 @@ describe("senpi#2597: a session's MCP status and the service's teardown follow t
 				{
 					cwd: owner.cwd,
 					isProjectTrusted: () => true,
-					mode: "app-server",
+					mode: "rpc",
 					sessionManager: { getEntries: () => [], getSessionId: () => "alpha" },
 					// Read just before the attach binds; the rest of its turn runs to the cache read before this resolves.
 					getRegisteredMcpServers: () => {

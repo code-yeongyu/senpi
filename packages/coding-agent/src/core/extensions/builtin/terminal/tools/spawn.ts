@@ -1,7 +1,6 @@
 import { getShellConfig } from "../../../../../utils/shell.ts";
 import type { CreatedTerminalSession } from "../manager.ts";
-import type { TerminalRuntimeSession } from "../runtime-session.ts";
-import type { TerminalToolContext } from "./context.ts";
+import type { TerminalExitView, TerminalToolContext } from "./context.ts";
 
 export interface SpawnRequest {
 	readonly command: string;
@@ -28,16 +27,32 @@ export async function spawnCommandSession(
 	const useStdin = shell.commandTransport === "stdin";
 	const args = useStdin ? [...shell.args] : [...shell.args, request.command];
 
+	const launch = ctx.launchBarrier?.wrap(shell.shell, args) ?? { command: shell.shell, args };
 	const created = await ctx.manager.create(shell.shell, {
-		command: shell.shell,
-		args,
+		command: launch.command,
+		args: [...launch.args],
 		cwd: request.cwd ?? ctx.cwd,
 		env: { ...ctx.getEnv(), ...request.envOverrides } as Record<string, string | undefined>,
 		cols: request.cols,
 		rows: request.rows,
 		timeoutMs: request.timeoutMs,
+		redactSecretsInOutput: ctx.redactSecretsInOutput,
 	});
 
+	if (ctx.launchBarrier !== undefined) {
+		const session = created.runtime.session;
+		try {
+			await ctx.launchBarrier.release({
+				pid: session.pid,
+				write: (data) => session.write(data),
+				onExit: (listener) => session.onExit(() => listener(session.exitResult?.exitCode ?? null)),
+			});
+		} catch (error) {
+			// The command never ran: its gated shim and its registration go with the refusal.
+			await ctx.manager.stop(created.id);
+			throw error;
+		}
+	}
 	if (useStdin) {
 		created.runtime.session.write(`${request.command}\n`);
 	}
@@ -45,7 +60,7 @@ export async function spawnCommandSession(
 }
 
 /** Snapshot the human-facing exit status of a finished session. */
-export function describeExit(runtime: TerminalRuntimeSession): string | null {
+export function describeExit(runtime: Pick<TerminalExitView, "exitResult">): string | null {
 	const exit = runtime.exitResult;
 	if (!exit) return null;
 	if (exit.timedOut) return "timed_out";

@@ -78,7 +78,7 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
-		pi.appendEntry("pi-rules.scan", { cwd: ctx.cwd, reason: event.reason });
+		pi.appendEntry("pi-rules.scan", { cwd: ctx.cwd, reason: event.reason }, { startupBookkeeping: true });
 		return undefined;
 	});
 

@@ -174,7 +174,7 @@ describe("azure-openai-responses base URL normalization", () => {
 		expect(result.errorMessage).toContain("Invalid Azure OpenAI base URL");
 	});
 
-	it("clamps prompt_cache_key to OpenAI's 64-character limit", async () => {
+	it("keeps prefix prompt_cache_key within OpenAI's 64-character limit", async () => {
 		const model = getModel("azure-openai-responses", "gpt-4o-mini");
 		await streamAzureOpenAIResponses(model, normalizeContext(context), {
 			apiKey: "test-api-key",
@@ -182,7 +182,8 @@ describe("azure-openai-responses base URL normalization", () => {
 			sessionId: "x".repeat(67),
 		}).result();
 
-		expect(azureMock.lastParams?.prompt_cache_key).toBe("x".repeat(64));
+		expect(azureMock.lastParams?.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+		expect(azureMock.lastParams?.prompt_cache_key).not.toBe("x".repeat(64));
 	});
 
 	it("omits prompt_cache_key when caching is disabled", async () => {

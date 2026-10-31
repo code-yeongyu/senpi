@@ -173,13 +173,13 @@ export class SubprocessProcess {
 			else this.child.kill(signal);
 			return;
 		}
-		if (this.child.pid !== undefined) {
-			try {
-				globalThis.process.kill(-this.child.pid, signal);
-				return;
-			} catch (error) {
-				if (!(error instanceof Error)) throw error;
-			}
+		// A POSIX child that never started has no pid; on Node < 24.22 / 26.10 its kill() signals our own process group.
+		if (this.child.pid === undefined) return;
+		try {
+			globalThis.process.kill(-this.child.pid, signal);
+			return;
+		} catch (error) {
+			if (!(error instanceof Error)) throw error;
 		}
 		this.child.kill(signal);
 	}

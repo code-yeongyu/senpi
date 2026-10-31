@@ -139,7 +139,9 @@ With `auto` on (the default), the model you are chatting with still searches thr
 
 ## Native (hosted) search
 
-When `auto` is `true` (the default), senpi puts a native entry in front of your configured providers, or in front of the free chain when there is no config file. That entry calls the hosted web search of the session's own provider (Anthropic Messages or OpenAI Responses compatible endpoints, the ChatGPT subscription, xAI, DeepSeek, Perplexity, Z.AI, Kimi Code) with the session's own credential. Google Search grounding is never added this way; it is opt-in (see below). Sessions on the first-party Anthropic and OpenAI APIs instead get the provider's server-side search tool in the main request, and `web_search` stays out of the way there.
+When `auto` is `true` (the default), senpi puts a native entry in front of your configured providers, or in front of the free chain when there is no config file. That entry calls the hosted web search of the session's own provider with the session's own credential. Main-request server search takes precedence on enabled routes: direct Anthropic/Claude OAuth and OpenAI/Azure remain default-on, unchanged from main; the live-verified ChatGPT subscription is default-on (except Spark). Compatible gateways including ccapi and z.ai's GLM coding-plan Anthropic endpoint, plus xAI, Gemini 2/3, OpenRouter, Moonshot PAYG and Z.AI PAYG require explicit route compatibility opt-in. See [In-Turn Web Search](providers.md#in-turn-web-search) for exact flags and verification status. Standalone summaries, titles and default projections exclude only server tools. Cache-friendly compaction preserves the original main-turn hook and tools/include prefix.
+
+A search-specific failure is remembered for the session/model, so later prompts do not repeat a rejected native request. A new session clears that failure. On an enabled server-search route, a different `nativeModel` setting is ignored: both main-request search and its standalone fallback retain the session model. The cheaper auxiliary-model setting below applies only to routes without an enabled server tool.
 
 ### Choosing the model native search runs on
 

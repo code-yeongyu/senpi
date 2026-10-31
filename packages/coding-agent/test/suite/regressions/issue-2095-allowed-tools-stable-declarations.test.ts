@@ -54,12 +54,15 @@ function askLikeExtension(counter: { askLikeRuns: number }): ExtensionFactory {
 	};
 }
 
-async function runRemovalAndRestore(options: { supportsAllowedTools: boolean }) {
+async function runRemovalAndRestore(options: { supportsAllowedTools: boolean; baseUrl?: string }) {
 	const counter = { askLikeRuns: 0 };
 	const harness = await createHarness({ extensionFactories: [askLikeExtension(counter)] });
 	try {
 		if (options.supportsAllowedTools) {
-			Object.assign(harness.agent.state.model, { compat: { supportsAllowedTools: true } });
+			Object.assign(harness.agent.state.model, {
+				baseUrl: options.baseUrl ?? "https://api.openai.com/v1",
+				compat: { supportsAllowedTools: true },
+			});
 		}
 		harness.session.setActiveToolsByName(TOOL_ORDER);
 		const requests: ProviderRequest[] = [];
@@ -128,8 +131,13 @@ describe("allowed-tools stable tool declarations", () => {
 		expect(toolResults[1]?.text).toContain("Tool ask_like not found");
 	});
 
-	it("sends only the active tools and rebuilds the prompt on a model without the flag", async () => {
-		const { requests, toolResults, askLikeRuns } = await runRemovalAndRestore({ supportsAllowedTools: false });
+	it.each([
+		["a model without the flag", { supportsAllowedTools: false }],
+		// senpi#3080: Responses-compatible gateways reject allowed_tools, so a flagged model behind one
+		// gets only its active tools.
+		["a flagged model behind a gateway", { supportsAllowedTools: true, baseUrl: "https://gateway.example.com/v1" }],
+	])("sends only the active tools and rebuilds the prompt on %s", async (_label, options) => {
+		const { requests, toolResults, askLikeRuns } = await runRemovalAndRestore(options);
 
 		expect(requests).toHaveLength(4);
 		expect(requests.map((request) => request.tools)).toEqual([

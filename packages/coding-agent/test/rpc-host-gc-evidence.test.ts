@@ -19,6 +19,7 @@ import {
 	deadEndpoint,
 	exitedPid,
 	gate,
+	heldZombie,
 	listeningSocket,
 	refusingSocket,
 	siblingPath,
@@ -213,6 +214,52 @@ describe.skipIf(process.platform === "win32")("gc evidence read from disk and so
 		await expect(readFile(qa.legacy, "utf8")).resolves.toBe("not a socket\n");
 		await expect(stat(siblingPath(qa.legacy, ".shield-7"))).resolves.toBeDefined();
 		expect(await daemonTreeDigest(flatDir(qa.agentDir))).toEqual(before);
+	});
+
+	// senpi#4119: a SIGKILLed supervisor or host child stays a zombie until its parent (or init) reaps it.
+	// kill(pid, 0) and `ps -o lstart=` both still answer for it, so its pidfile must not read as live.
+	for (const pidFileName of ["host.pid", "host-child.pid"]) {
+		it(`removes an endpoint whose generation ${pidFileName} names an exited, unreaped process`, async () => {
+			const qa = endpointScratch("gcz");
+			const paths = await deadEndpoint(qa.legacy, qa.agentDir);
+			const zombie = await heldZombie();
+			try {
+				await writeJson(join(paths.generationsDir, "g-zombie", pidFileName), {
+					pid: zombie.pid,
+					processStartTime: zombie.processStartTime,
+				});
+
+				expect(await gcHostEndpoints(qa.agentDir)).toEqual({
+					removed: [{ socket: qa.legacy, dir: paths.dir, reason: "socket_absent" }],
+					kept: [],
+				});
+			} finally {
+				zombie.release();
+			}
+		});
+	}
+
+	it("removes an endpoint whose only session-path claim is held by an exited, unreaped owner", async () => {
+		const qa = endpointScratch("gcz3");
+		const paths = await deadEndpoint(qa.legacy, qa.agentDir);
+		const zombie = await heldZombie();
+		try {
+			const sessionPath = join(qa.sessionDir, "held-by-zombie.jsonl");
+			await writeJson(reservationFile(paths.reservationsDir, sessionPath), {
+				instanceId: "g-zombie",
+				pid: zombie.pid,
+				processStartTime: zombie.processStartTime,
+				sessionPath,
+				attached: true,
+			});
+
+			expect(await gcHostEndpoints(qa.agentDir)).toEqual({
+				removed: [{ socket: qa.legacy, dir: paths.dir, reason: "socket_absent" }],
+				kept: [],
+			});
+		} finally {
+			zombie.release();
+		}
 	});
 
 	it("keeps an endpoint whose public socket refuses while a successor bind beside it answers", async () => {

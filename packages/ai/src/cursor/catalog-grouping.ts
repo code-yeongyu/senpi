@@ -1,5 +1,6 @@
 import type { ModelThinkingLevel, ThinkingLevelMap } from "../types.ts";
 import aliasData from "./cursor-variant-aliases.json" with { type: "json" };
+import { cleanCursorGroupName, dropUnservedSizeToken, sanitizeCursorDisplayName } from "./display-name.ts";
 import {
 	CURSOR_MODEL_CAPABILITIES,
 	type CursorModelCapability,
@@ -48,30 +49,6 @@ interface GroupMember {
 	readonly level: string | undefined;
 	readonly thinking: boolean | undefined;
 	readonly fast: boolean;
-}
-
-function isClaude(baseId: string): boolean {
-	return baseId.startsWith("claude-");
-}
-
-function cleanName(members: readonly GroupMember[], baseId: string, thinkingMode: boolean | undefined): string {
-	const levelWords = /(Minimal|Low|Medium|High|Extra High|XHigh|Max|None)/g;
-	const representative =
-		members.find((member) => member.level === "high") ??
-		members.find((member) => member.level === "medium") ??
-		members.find((member) => member.level === "low") ??
-		members[0];
-	let name = representative.raw.name;
-	name = name.replace(/\s*\(NO ZDR\)\s*/g, " \u0001").trim();
-	name = name.replace(new RegExp(`\\s+${levelWords.source}\\b`, "g"), "");
-	name = name.replace(/\s+Fast\b/g, "");
-	if (thinkingMode !== true) name = name.replace(/\s+Thinking\b/g, "");
-	name = name
-		.replace(/\u0001/g, "(NO ZDR)")
-		.replace(/\s+/g, " ")
-		.trim();
-	if (name.length === 0) name = baseId;
-	return name;
 }
 
 function buildLevelMap(
@@ -262,10 +239,10 @@ export function normalizeCursorCatalog(rawEntries: readonly CursorCatalogRawEntr
 		const efforts = members.filter((member) => member.level !== undefined && member.level !== "none");
 
 		if (isGrouped && efforts.length > 0 && !first.fast) {
-			const thinkingMode = isClaude(baseId) ? first.thinking === true : undefined;
+			const thinkingMode = baseId.startsWith("claude-") ? first.thinking === true : undefined;
 			out.push({
 				id: first.alias.targetId,
-				name: cleanName(members, baseId, thinkingMode),
+				name: dropUnservedSizeToken(cleanCursorGroupName(members, baseId, thinkingMode), capability),
 				reasoning: true,
 				thinkingLevelMap: derivedGroup ? buildDerivedLevelMap(members) : buildLevelMap(members, capability),
 				window: capability?.window ?? FALLBACK_WINDOW,
@@ -286,7 +263,7 @@ export function normalizeCursorCatalog(rawEntries: readonly CursorCatalogRawEntr
 			const memberCapability = CURSOR_MODEL_CAPABILITIES[memberBase];
 			out.push({
 				id: member.raw.id,
-				name: member.raw.name,
+				name: dropUnservedSizeToken(sanitizeCursorDisplayName(member.raw.name), memberCapability),
 				reasoning: false,
 				window: memberCapability?.window ?? FALLBACK_WINDOW,
 				...(memberCapability?.maxWindow !== undefined ? { maxWindow: memberCapability.maxWindow } : {}),

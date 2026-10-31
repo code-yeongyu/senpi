@@ -1,4 +1,7 @@
 import type { ServerConnection } from "./connection.ts";
+import { legacyMcpFormEligible } from "./elicitation.ts";
+import { observe } from "./env-grants-store.ts";
+import { effectiveGrantNames, type ProjectMcpAuthority } from "./project-skill-policy.ts";
 import { SharedMcpConnection, type SharedMcpOptions } from "./shared-connection.ts";
 import { sharedMcpKey } from "./sharing-policy.ts";
 
@@ -25,15 +28,24 @@ export class HostMcpRegistryError extends Error {
 export class HostMcpRegistry {
 	readonly #entries = new Map<string, Set<RegistryEntry>>();
 	readonly #shared = new Map<string, SharedMcpConnection>();
+	readonly #grantObservers = new Map<string, Promise<() => void>>();
 
 	attachShared(key: string, owner: object, options: SharedMcpOptions): ServerConnection {
-		const identity = sharedMcpKey(options, options.agentDir);
+		const eligible = legacyMcpFormEligible(options.elicitationUiProvider, options.elicitationEnabled !== false);
+		// Enforced pools observe live readiness; it must not remain frozen in a creation-time key.
+		const formPolicy =
+			options.elicitationUiProvider?.enforced?.() === true
+				? `private:${options.elicitationEnabled !== false}`
+				: `${eligible}:false`;
+		const identity = `${sharedMcpKey(options, options.agentDir)}\0legacy-form:${formPolicy}`;
 		let shared = this.#shared.get(identity);
 		if (shared === undefined) {
 			shared = new SharedMcpConnection(options, () => this.#shared.delete(identity));
 			this.#shared.set(identity, shared);
 		}
-		return shared.attach(options, owner, key);
+		const lease = shared.attach(options, owner, key);
+		this.#watchProjectPolicy(options.projectPolicy);
+		return lease;
 	}
 
 	attach(key: string, owner: object, factory: () => ServerConnection, canShare = false): ServerConnection {
@@ -52,7 +64,53 @@ export class HostMcpRegistry {
 		const entry: RegistryEntry = { connection, shareable: canShare, owners: new Map([[owner, 1]]) };
 		if (entries) entries.add(entry);
 		else this.#entries.set(key, new Set([entry]));
+		this.#watchProjectPolicy(connection.projectPolicy);
 		return connection;
+	}
+	*#projectConnections(): IterableIterator<ServerConnection> {
+		for (const shared of this.#shared.values()) if (shared.connection.projectPolicy) yield shared.connection;
+		for (const entries of this.#entries.values())
+			for (const entry of entries) {
+				if (entry.connection.projectPolicy) yield entry.connection;
+			}
+	}
+	#watchProjectPolicy(policy: ProjectMcpAuthority | undefined): void {
+		if (policy === undefined || this.#grantObservers.has(policy.storePath)) return;
+		const stop = observe(policy.storePath, ({ snapshot, conservative }) => {
+			const identities = new Set<string>();
+			for (const connection of this.#projectConnections()) {
+				const authority = connection.projectPolicy;
+				if (authority === undefined || authority.storePath !== policy.storePath) continue;
+				if (
+					conservative ||
+					JSON.stringify(connection.startedGrantNames) !==
+						JSON.stringify(effectiveGrantNames(snapshot, authority.identity))
+				)
+					identities.add(authority.identity);
+			}
+			for (const identity of identities) {
+				void this.invalidateIdentity(identity).catch(() => {
+					for (const connection of this.#projectConnections()) {
+						if (connection.declarationIdentity === identity) {
+							connection.markDegraded(new Error("MCP grant invalidation failed; retry required"));
+						}
+					}
+				});
+			}
+		});
+		this.#grantObservers.set(policy.storePath, stop);
+	}
+	/** Closes the underlying transport now, not when its final lease goes idle. */
+	async invalidateIdentity(digest: string): Promise<void> {
+		const pending: Promise<void>[] = [];
+		for (const shared of this.#shared.values()) {
+			if (shared.connection.declarationIdentity === digest) pending.push(shared.invalidate());
+		}
+		for (const entries of this.#entries.values())
+			for (const entry of entries) {
+				if (entry.connection.declarationIdentity === digest) pending.push(entry.connection.bumpGeneration());
+			}
+		await Promise.all(pending);
 	}
 
 	async detach(key: string, owner: object): Promise<void> {
@@ -89,6 +147,9 @@ export class HostMcpRegistry {
 	}
 
 	async dispose(): Promise<void> {
+		const observers = [...this.#grantObservers.values()];
+		this.#grantObservers.clear();
+		await Promise.all(observers.map(async (stop) => (await stop)()));
 		const connections = [...this.#entries.values()].flatMap((entries) =>
 			[...entries].map((entry) => entry.connection),
 		);

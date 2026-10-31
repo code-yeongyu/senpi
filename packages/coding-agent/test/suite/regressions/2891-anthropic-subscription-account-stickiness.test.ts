@@ -16,15 +16,13 @@ import {
 	type ContinuityDecisionInput,
 	decideNativeContinuity,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 type AttemptEvent = { type: "done"; value: string };
 
 const PROVIDER = "anthropic-subscription";
 const SESSION = "senpi-2891-session";
-const pool: AccountSlot[] = [
-	{ name: "alpha", refresh: "r-alpha", access: "a-alpha", expires: 1, source: "login" },
-	{ name: "bravo", refresh: "r-bravo", access: "a-bravo", expires: 1, source: "login" },
-];
+const pool: AccountSlot[] = [cliSlot("alpha"), cliSlot("bravo")];
 const [home, other] = rendezvousOrder(SESSION, pool).map((account) => account.name) as [string, string];
 
 async function storeWithPool(): Promise<CredentialStore> {
@@ -129,32 +127,51 @@ describe("senpi#2891 a session stays on its account unless the account cannot se
 		expect((await storedPool(store)).every((account) => account.blockedUntil === undefined)).toBe(true);
 	});
 
-	it("rotates after the bounded same-account retries are spent", async () => {
+	it("fails the turn on the same account after the bounded retries instead of rotating (senpi#3466)", async () => {
 		// given the session's account keeps failing with a network error
 		const store = await storeWithPool();
 
 		// when the turn runs
 		const turn = await runTurn(store, 10_000, home, (account) =>
 			account === home ? "fetch failed: ECONNRESET" : undefined,
-		);
+		).catch(() => undefined);
 
-		// then it tries the account three times with a doubling delay, then moves on
-		expect(turn.attempts).toEqual([home, home, home, other]);
-		expect(turn.sleeps).toEqual([1_000, 2_000]);
-		expect(turn.served).toBe(other);
+		// then the account is tried three times with a doubling delay, no other account is tried, and nothing is blocked
+		expect(turn).toBeUndefined();
+		expect(attemptLog).toEqual([home, home, home]);
+		expect(sleepLog).toEqual([1_000, 2_000]);
+		expect((await storedPool(store)).every((account) => account.blockedUntil === undefined)).toBe(true);
 	});
 
-	it("spends the transient retry budget once per turn when every account fails", async () => {
+	it("spends the transient retry budget on the session's account only when every account fails", async () => {
 		// given an outage that overloads every account
 		const store = await storeWithPool();
 
 		// when the turn runs
 		const turn = await runTurn(store, 10_000, home, () => "HTTP 529 overloaded").catch(() => undefined);
 
-		// then the session's account is retried twice and the other account is tried once, not twice more
+		// then only the session's account is retried, and no other account is touched
 		expect(turn).toBeUndefined();
-		expect(attemptLog).toEqual([home, home, home, other]);
+		expect(attemptLog).toEqual([home, home, home]);
 		expect(sleepLog).toEqual([1_000, 2_000]);
+	});
+
+	it("never moves another session off an account one session saw fail transiently (senpi#3466)", async () => {
+		// given one session's turn failed with repeated overloads on its account
+		const store = await storeWithPool();
+		await runTurn(store, 10_000, home, (account) => (account === home ? "HTTP 529 overloaded" : undefined)).catch(
+			() => undefined,
+		);
+
+		// when a second session, pinned to that account, picks its account
+		const selected = selectAccount(await storedPool(store), {
+			sessionId: "senpi-3466-second-session",
+			pinnedAccount: home,
+			now: 10_001,
+		});
+
+		// then it stays on that account
+		expect(selected.name).toBe(home);
 	});
 
 	it.each([

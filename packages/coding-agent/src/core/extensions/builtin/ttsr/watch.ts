@@ -40,6 +40,8 @@ export class StreamWatcher {
 	): WatchOutcome {
 		const track = this.#trackFor(source, streamKey);
 		const detectorCtx: DetectorContext = { source, streamKey, generation };
+		// Tool arguments are watched too; the detector ignores angle-bracket markup there
+		// (`source: "tool"`, omo#10789) and still catches `<|...|>` and `[UPPER]` leaks.
 		const leakMatch = this.#disabledBuiltin.has(CONTROL_LEAK_RULE_NAME)
 			? null
 			: this.#leakDetector.checkDelta(track.leak, delta, detectorCtx);

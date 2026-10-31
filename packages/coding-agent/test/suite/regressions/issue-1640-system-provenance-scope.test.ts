@@ -15,7 +15,6 @@ import { DefaultResourceLoader } from "../../../src/core/resource-loader.ts";
 import { SessionManager } from "../../../src/core/session-manager.ts";
 import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import type { SourceInfo } from "../../../src/core/source-info.ts";
-import { mapSkillScope } from "../../../src/modes/app-server/server/skills.ts";
 import { createTestExtensionsResult } from "../../utilities.ts";
 
 const EXTENSION_SOURCE = "export default function () {}";
@@ -333,15 +332,6 @@ describe("system provenance scope (#1640)", () => {
 			expect(resources.promptPaths).toEqual([
 				{ path: "/tagged/prompts", extensionPath: "<test:discover>", scope: "project" },
 			]);
-		});
-	});
-
-	describe("app-server skill scope", () => {
-		it("maps the system scope to the app-server system scope", () => {
-			expect(mapSkillScope("system")).toBe("system");
-			expect(mapSkillScope("temporary")).toBe("system");
-			expect(mapSkillScope("user")).toBe("user");
-			expect(mapSkillScope("project")).toBe("repo");
 		});
 	});
 });

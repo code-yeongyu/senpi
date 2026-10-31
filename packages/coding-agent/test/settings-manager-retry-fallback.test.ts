@@ -95,9 +95,9 @@ describe("SettingsManager retry fallback settings", () => {
 	it("returns the shipped chains when fallback settings are unset or malformed", () => {
 		const { agentDir, projectDir } = createPaths();
 		const shipped = {
-			"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
-			"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
-			"claude-opus-5-5": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+			"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
+			"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
+			"claude-opus-5-5": ["claude-opus-5:max"],
 		};
 		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings()).toEqual({
 			modelFallback: true,
@@ -137,13 +137,8 @@ describe("SettingsManager retry fallback settings", () => {
 			modelFallback: false,
 			chains: {
 				"claude-fable-5": ["ccapi/kimi-k3:max"],
-				"claude-fable-5-1": [
-					"claude-opus-5-5:max",
-					"claude-opus-5:max",
-					"claude-opus-4-8:max",
-					"claude-opus-4-6:max",
-				],
-				"claude-opus-5-5": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+				"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
+				"claude-opus-5-5": ["claude-opus-5:max"],
 			},
 			revertPolicy: "never",
 		});
@@ -156,9 +151,9 @@ describe("SettingsManager retry fallback settings", () => {
 		reloaded.removeFallbackChain("claude-fable-5");
 		await reloaded.flush();
 		expect(SettingsManager.create(projectDir, agentDir).getRetryFallbackSettings().chains).toEqual({
-			"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
-			"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
-			"claude-opus-5-5": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+			"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
+			"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
+			"claude-opus-5-5": ["claude-opus-5:max"],
 		});
 	});
 
@@ -187,9 +182,9 @@ describe("SettingsManager retry fallback settings", () => {
 		expect(manager.getFallbackChainsScope()).toBe("global");
 		// Malformed input degrades to the shipped defaults, never to a half-read map.
 		expect(manager.getRetryFallbackSettings().chains).toEqual({
-			"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
-			"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
-			"claude-opus-5-5": ["claude-opus-5:max", "claude-opus-4-8:max", "claude-opus-4-6:max"],
+			"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max"],
+			"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
+			"claude-opus-5-5": ["claude-opus-5:max"],
 		});
 	});
 
@@ -210,12 +205,7 @@ describe("SettingsManager retry fallback settings", () => {
 
 		expect(chains["example-gateway/unrelated-model"]).toEqual(["example-gateway/unrelated-fallback:max"]);
 		// An unrelated key layers over the shipped defaults instead of replacing the map.
-		expect(chains["claude-fable-5"]).toEqual([
-			"claude-opus-5-5:max",
-			"claude-opus-5:max",
-			"claude-opus-4-8:max",
-			"claude-opus-4-6:max",
-		]);
+		expect(chains["claude-fable-5"]).toEqual(["claude-opus-5-5:max", "claude-opus-5:max"]);
 		expect(Object.keys(chains).sort()).toEqual([
 			"claude-fable-5",
 			"claude-fable-5-1",

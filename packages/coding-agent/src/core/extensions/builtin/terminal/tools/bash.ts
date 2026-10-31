@@ -34,7 +34,7 @@ export const ptyBashSchema = Type.Object({
 	run_in_background: Type.Optional(
 		Type.Boolean({
 			description:
-				"Run as a persistent background session. Returns a bash_id immediately; query it with bash_output, steer with bash_input, tear down with kill_bash.",
+				"Run as a persistent background session: returns a bash_id immediately (read with bash_output, steer with bash_input, stop with kill_bash). A plain & job dies with the call's PTY hangup (native backend), and nohup at best leaves an untracked orphan (no bash_id, no log) that the call's timeout still group-kills. This flag is the only reliable way a job outlives the call.",
 		}),
 	),
 	cols: Type.Optional(Type.Number({ description: "PTY width in columns (default 120)." })),
@@ -119,6 +119,7 @@ type SessionEnvSource = {
 	cwd?: string;
 	goalStoreFile?: string;
 	browserEngine?: string;
+	sessionEnv?: Readonly<Record<string, string>>;
 };
 
 function sessionSpawnContext(ctx: TerminalToolContext): TerminalToolContext {
@@ -134,10 +135,10 @@ function sessionSpawnContext(ctx: TerminalToolContext): TerminalToolContext {
 	};
 }
 
-function sessionEnvOverrides(ctx: TerminalToolContext, execCtx?: SessionEnvSource): Record<string, string> {
+export function sessionEnvOverrides(ctx: TerminalToolContext, execCtx?: SessionEnvSource): Record<string, string> {
 	const session = execCtx ?? ctx.getSessionContext?.();
 	if (!session?.sessionManager) return {};
-	const env: Record<string, string> = {};
+	const env: Record<string, string> = { ...session.sessionEnv };
 	env.PI_SESSION_ID = session.sessionManager.getSessionId();
 	if (session.cwd) env.PI_SESSION_CWD = session.cwd;
 	if (session.goalStoreFile) env.PI_GOAL_STORE_FILE = session.goalStoreFile;
@@ -330,7 +331,7 @@ async function runForeground(
 
 	if (outcome === "detached") {
 		scheduleDetachedSweep(ctx, id, runtime, timeoutMs, startedAt);
-		ctx.onBackgroundStart?.(id, input.description ?? input.command, startedAt);
+		ctx.onBackgroundStart?.(id, input.description ?? input.command, startedAt, input.command);
 		if (ctx.onBackgroundExit) runtime.session.onExit(() => ctx.onBackgroundExit?.(id, runtime));
 		const delta = runtime.readDelta();
 		const partialOutput = formatTerminalToolOutput(delta.text).text || "(no output yet)";
@@ -339,7 +340,7 @@ async function runForeground(
 				? `not killed; the original ${input.timeout}s timeout still applies`
 				: "not killed; it will run until exit or kill_bash";
 		const guidance = sleepWait
-			? `This command is a wait (${sleepWait.seconds}s sleep), so it detached immediately; the wait continues in the background. Do nothing and end your turn — completion will be reported automatically with exit status and output tail. Do NOT poll bash_output({ bash_id: "${id}" }) for it. When you are waiting for a pattern in a command's output, launch it with monitor({ command, filter }) instead so matching lines arrive as events. Use kill_bash({ bash_id: "${id}" }) to stop this session.`
+			? `This command is a wait (${sleepWait.seconds}s sleep), so it detached immediately; the wait continues in the background. Do nothing and end your turn: completion will be reported automatically with exit status and output tail. Do NOT poll bash_output({ bash_id: "${id}" }) for it. When you are waiting for a pattern in a command's output, launch it with monitor({ command, filter }) instead so matching lines arrive as events. Use kill_bash({ bash_id: "${id}" }) to stop this session.`
 			: `Continue other work; completion will be reported automatically with exit status and output tail. Use bash_output({ bash_id: "${id}" }) only to peek at new output. monitor cannot attach to this session; use it for future event-driven launches. Use kill_bash({ bash_id: "${id}" }) to stop this session.`;
 		return textResult(
 			`Command is still running; auto-detached to background with ID: ${id} (${timeoutNote}).\n\nPartial output:\n${partialOutput}\n\n${guidance}`,
@@ -402,7 +403,7 @@ async function runBackground(
 		cwd,
 		envOverrides: sessionEnvOverrides(ctx, execCtx),
 	});
-	ctx.onBackgroundStart?.(id, input.description ?? input.command, Date.now());
+	ctx.onBackgroundStart?.(id, input.description ?? input.command, Date.now(), input.command);
 	if (ctx.onBackgroundExit) runtime.session.onExit(() => ctx.onBackgroundExit?.(id, runtime));
 
 	// Capture any output the command emits within a short grace window (or its exit).
@@ -411,7 +412,7 @@ async function runBackground(
 	const header = `Command running in background with ID: ${id}`;
 	const backendNote =
 		runtime.backend === "pipe-fallback"
-			? "\n(native PTY unavailable — running via pipe fallback; bash_input/bash_resize are limited.)"
+			? "\n(native PTY unavailable: running via pipe fallback; bash_input/bash_resize are limited.)"
 			: "";
 	const earlyBlock = early ? `\n\n${early}` : "";
 	return textResult(`${header}${backendNote}${earlyBlock}`, { details: { bash_id: id, background: true } });
@@ -424,7 +425,7 @@ export function createPtyBashTool(ctx: TerminalToolContext) {
 		exposure: "eval" as const,
 		label: "bash",
 		description:
-			"Execute a shell command in a persistent PTY-backed session. Set run_in_background:true for long-lived or interactive sessions; steer them with bash_input, snapshot with bash_output, tear down with kill_bash. To wait on observable state (a build finishing, a server coming up, a log line), never run sleep or poll loops — subscribe with the monitor tool instead. Foreground blocking stops at the ~60s window and a still-running command auto-detaches to a live background session; `timeout` is the process kill deadline in seconds.",
+			"Execute a shell command in a persistent PTY-backed session. Set run_in_background:true for long-lived or interactive sessions; steer them with bash_input, snapshot with bash_output, tear down with kill_bash. To wait on observable state (a build finishing, a server coming up, a log line), never run sleep or poll loops: subscribe with the monitor tool instead. Foreground blocking stops at the ~60s window and a still-running command auto-detaches to a live background session; `timeout` is the process kill deadline in seconds.",
 		promptSnippet: "Run shell commands; run_in_background:true for long-lived/interactive PTY sessions",
 		promptGuidelines: ["You can inspect PI_* environment variables for current model and session details."],
 		parameters: ptyBashSchema,

@@ -16,6 +16,7 @@ import { type BridgeDispatchContext, dispatchBridgeCompletion } from "./bridge-d
 import { type BridgeToolCallRequest, routeBridgeToolCall } from "./bridge-tool-call.ts";
 import { CellKernelTools } from "./cell-kernel-tools.ts";
 import { parkWhenIdle } from "./idle-parking-kernel.ts";
+import { KernelGlobalsLedger } from "./kernel-globals-ledger.ts";
 import {
 	javaScriptKernelMemory,
 	SessionKernelRegistrations,
@@ -69,6 +70,8 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	readonly #registrations: SessionKernelRegistrations;
 	#kernelCreations = new Map<EvalLanguage, Promise<EvalKernel>>();
 	#onMessageRefs = new Map<EvalLanguage, (message: KernelToHostMessage) => void>();
+	/** One per language for the manager's life, so an idle-park restart never re-announces an earlier generation. */
+	readonly #ledgers = new Map<EvalLanguage, Promise<KernelGlobalsLedger>>();
 	readonly #cellKernelTools = new CellKernelTools();
 	#context: ExtensionContext | undefined;
 	#generation = 0;
@@ -231,11 +234,21 @@ class DefaultCodemodeSessionManager implements CodemodeSessionManager {
 	): Promise<{ readonly kernel: EvalKernel; readonly memory: RegisteredKernelSource | undefined }> {
 		if (language === "js") return await this.#createKernel(language, onMessage);
 		let memory: RegisteredKernelSource | undefined;
-		const kernel = await ReplaceableKernel.create(language, async (lifecycle) => {
-			const created = await this.#createKernel(language, onMessage, lifecycle);
-			memory ??= created.memory;
-			return created.kernel;
-		});
+		let ledger = this.#ledgers.get(language);
+		if (ledger === undefined) {
+			ledger = KernelGlobalsLedger.open(this.#options.artifactsDir, language);
+			this.#ledgers.set(language, ledger);
+		}
+		const options = { ledger: await ledger };
+		const kernel = await ReplaceableKernel.create(
+			language,
+			async (lifecycle) => {
+				const created = await this.#createKernel(language, onMessage, lifecycle);
+				memory ??= created.memory;
+				return created.kernel;
+			},
+			options,
+		);
 		return { kernel, memory };
 	}
 

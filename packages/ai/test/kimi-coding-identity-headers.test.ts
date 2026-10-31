@@ -1,7 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeTempDir as mkdtempSync } from "../../../scripts/vitest-temp.ts";
 import { kimiCodingOAuth } from "../src/auth/oauth/kimi-coding.ts";
 import { resetKimiDeviceIdForTests } from "../src/auth/oauth/kimi-identity.ts";
 import type { ProviderAuthInteraction } from "../src/auth/types.ts";

@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { stripAnsi } from "../utils/ansi.ts";
 import { sanitizeBinaryOutput } from "../utils/shell.ts";
 import type { BashOperations } from "./tools/bash.ts";
+import { SecretOutputRedactor } from "./tools/secret-output-redactor.ts";
 import { DEFAULT_MAX_BYTES, truncateTail } from "./tools/truncate.ts";
 
 const NORMAL_CALLBACK_SETTLEMENT_TIMEOUT_MS = 5_000;
@@ -27,6 +28,8 @@ export interface BashExecutorOptions {
 	onChunk?: (chunk: string) => void;
 	/** AbortSignal for cancellation */
 	signal?: AbortSignal;
+	/** Redact credentials before callbacks, retention and spill writes. Default off. */
+	redactSecretsInOutput?: boolean;
 }
 
 export interface BashResult {
@@ -198,13 +201,17 @@ export async function executeBashWithOperations(
 	};
 
 	const decoder = new TextDecoder();
+	const streams =
+		options?.redactSecretsInOutput === true
+			? new Map<string, { decoder: TextDecoder; redactor: SecretOutputRedactor }>()
+			: undefined;
 
-	const onData = (data: Buffer) => {
+	const appendText = (decoded: string, byteLength = Buffer.byteLength(decoded)) => {
 		if (callbackAbortController.signal.aborted) return;
-		totalBytes += data.length;
+		totalBytes += byteLength;
 
 		// Sanitize: strip ANSI, replace binary garbage, normalize newlines
-		const text = sanitizeBinaryOutput(stripAnsi(decoder.decode(data, { stream: true }))).replace(/\r/g, "");
+		const text = sanitizeBinaryOutput(stripAnsi(decoded)).replace(/\r/g, "");
 
 		// Start writing to temp file if exceeds threshold
 		if (totalBytes > DEFAULT_MAX_BYTES) {
@@ -264,10 +271,29 @@ export async function executeBashWithOperations(
 		}
 	};
 
+	const onData = (data: Buffer, stream = "stdout") => {
+		if (!streams) return appendText(decoder.decode(data, { stream: true }), data.length);
+		let state = streams.get(stream);
+		if (!state) {
+			state = { decoder: new TextDecoder(), redactor: new SecretOutputRedactor() };
+			streams.set(stream, state);
+		}
+		const text = state.redactor.push(state.decoder.decode(data, { stream: true }));
+		if (text) return appendText(text);
+	};
+
+	let outputFinished = false;
 	const finishDecoder = () => {
-		const finalText = sanitizeBinaryOutput(stripAnsi(decoder.decode())).replace(/\r/g, "");
-		if (finalText.length > 0) {
-			onData(Buffer.from(finalText, "utf-8"));
+		if (outputFinished) return;
+		outputFinished = true;
+		if (streams) {
+			for (const state of streams.values()) {
+				const text = state.redactor.push(state.decoder.decode()) + state.redactor.finish();
+				if (text) appendText(text);
+			}
+		} else {
+			const finalText = decoder.decode();
+			if (finalText.length > 0) appendText(finalText);
 		}
 	};
 
@@ -290,8 +316,16 @@ export async function executeBashWithOperations(
 		result = await operations.exec(command, cwd, {
 			onData,
 			signal: executionSignal,
+			redactSecretsInOutput: options?.redactSecretsInOutput === true,
 		});
 	} catch (err) {
+		if (options?.signal?.aborted && !hasCallbackError) {
+			try {
+				finishDecoder();
+			} catch (error) {
+				return await closeTempFileAndCleanup(error);
+			}
+		}
 		await waitForCallbacks(options?.signal?.aborted === true);
 		// Check if it was an abort
 		if (hasCallbackError) {
@@ -325,6 +359,11 @@ export async function executeBashWithOperations(
 	// settles, while still allowing legitimately slow callbacks to finish. A
 	// callback that exceeds the public bound is an execution failure, not silent
 	// abandonment, so its spill is cleaned before the caller is released.
+	try {
+		finishDecoder();
+	} catch (error) {
+		return await closeTempFileAndCleanup(error);
+	}
 	const callbacksSettled = await waitForCallbacks(false);
 	if (!callbacksSettled) {
 		callbacksAbandoned = true;

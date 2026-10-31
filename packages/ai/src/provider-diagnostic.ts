@@ -3,8 +3,11 @@ import {
 	buildProviderDiagnostic,
 	categoryForProviderCode,
 	categoryForProviderStatus,
+	categoryForTransportCode,
+	isOpaqueProviderCode,
 	isProviderCodeStatusCompatible,
 	isProviderDiagnosticCategory,
+	isProviderDiagnosticResetsAt,
 	isProviderDiagnosticStatus,
 	PROVIDER_DIAGNOSTIC_MAX_BYTES,
 } from "./utils/provider-diagnostic-vocabulary.ts";
@@ -17,10 +20,11 @@ export type ProviderDiagnosticCategory =
 	| "context_limit"
 	| "invalid_request"
 	| "provider_unavailable"
+	| "network"
 	| "unknown";
 
 /** Which structured provider field decided the category. */
-export type ProviderDiagnosticEvidence = "structured_status" | "structured_code";
+export type ProviderDiagnosticEvidence = "structured_status" | "structured_code" | "structured_transport";
 
 /**
  * Bounded, redaction-safe classification of a provider rejection, minted only by
@@ -35,11 +39,13 @@ export interface ProviderDiagnostic {
 	/** Provider token from the closed allowlist, never raw provider text. */
 	code?: string;
 	evidence: ProviderDiagnosticEvidence;
+	/** When a `quota` or `rate_limit` failure resets (epoch ms), when the provider named it. */
+	resetsAt?: number;
 }
 
 export { PROVIDER_DIAGNOSTIC_MAX_BYTES };
 
-function readField(value: object, key: "category" | "evidence" | "httpStatus" | "code"): unknown {
+function readField(value: object, key: "category" | "evidence" | "httpStatus" | "code" | "resetsAt"): unknown {
 	return Reflect.get(value, key);
 }
 
@@ -55,14 +61,26 @@ export function sanitizeProviderDiagnostic(value: unknown): ProviderDiagnostic |
 		const evidence = readField(value, "evidence");
 		const httpStatus = readField(value, "httpStatus");
 		const code = readField(value, "code");
+		const resetsAt = readField(value, "resetsAt");
 		if (!isProviderDiagnosticCategory(category)) return undefined;
 		if (httpStatus !== undefined && !isProviderDiagnosticStatus(httpStatus)) return undefined;
+		if (resetsAt !== undefined && !isProviderDiagnosticResetsAt(resetsAt)) return undefined;
+		const reset = resetsAt === undefined ? {} : { resetsAt };
 		if (evidence === "structured_status") {
 			if (code !== undefined || !isProviderDiagnosticStatus(httpStatus)) return undefined;
 			if (category !== categoryForProviderStatus(httpStatus)) return undefined;
-			return buildProviderDiagnostic({ category, httpStatus, evidence });
+			return buildProviderDiagnostic({ category, httpStatus, evidence, ...reset });
+		}
+		if (evidence === "structured_transport") {
+			if (httpStatus !== undefined || typeof code !== "string") return undefined;
+			if (categoryForTransportCode(code) !== category) return undefined;
+			return buildProviderDiagnostic({ category, code, evidence });
 		}
 		if (evidence !== "structured_code" || typeof code !== "string") return undefined;
+		if (isOpaqueProviderCode(code)) {
+			if (category !== "unknown" || httpStatus !== undefined) return undefined;
+			return buildProviderDiagnostic({ category, code, evidence });
+		}
 		if (categoryForProviderCode(code) !== category) return undefined;
 		if (httpStatus !== undefined && !isProviderCodeStatusCompatible(code, httpStatus)) return undefined;
 		return buildProviderDiagnostic({
@@ -70,6 +88,7 @@ export function sanitizeProviderDiagnostic(value: unknown): ProviderDiagnostic |
 			...(httpStatus === undefined ? {} : { httpStatus }),
 			code,
 			evidence,
+			...reset,
 		});
 	} catch {
 		return undefined;

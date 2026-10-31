@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { posix, win32 } from "node:path";
+import { dirname, posix, win32 } from "node:path";
 import { extractFromBunfs } from "@anthropic-ai/claude-agent-sdk/extract";
 import { findExecutableOnPath } from "./executable-path-lookup.ts";
 import { bundledClaudeCodeVersion, isNewerClaudeCodeVersion, probeClaudeCodeVersion } from "./executable-version.ts";
@@ -21,6 +21,11 @@ export type ExecutableDeps = {
 	bundledVersion?: () => string | undefined;
 	/** Reported version of a Claude Code binary. Without it the bundled binary is never compared against PATH. */
 	versionOf?: (executable: string) => string | undefined;
+	/**
+	 * The directory of a compiled build's executable. A compiled build bundles the SDK, so the SDK cannot
+	 * resolve its platform package; a distribution that ships one puts it in `node_modules` here (desktop#3145).
+	 */
+	executableDir?: () => string | undefined;
 };
 
 /** Where the spawned Claude Code came from; decides which remedy a version-floor error can offer. */
@@ -141,6 +146,15 @@ function acceptBundled(
 		const accepted = accept(resolved);
 		if (accepted !== undefined) return accepted;
 	}
+
+	const executableDir = deps.isCompiledBun?.() ? deps.executableDir?.() : undefined;
+	if (executableDir !== undefined) {
+		const path = deps.platform === "win32" ? win32 : posix;
+		for (const candidate of candidates) {
+			const accepted = accept(path.join(executableDir, "node_modules", ...candidate.split("/")));
+			if (accepted !== undefined) return accepted;
+		}
+	}
 	return undefined;
 }
 
@@ -220,6 +234,7 @@ const defaultDeps: ExecutableDeps = {
 	extractFromBunfs,
 	bundledVersion: bundledClaudeCodeVersion,
 	versionOf: probeClaudeCodeVersion,
+	executableDir: () => dirname(process.execPath),
 	// Rooted at the SDK instance this extension imports, so `require.resolve` walks the parents of
 	// THAT package and a sidecar hoisted above it (omo-ai/node_modules/...) is still found.
 	resolve: (spec) => {

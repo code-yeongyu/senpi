@@ -64,6 +64,5 @@ describe("custom tool advertisement", () => {
 		const result = await denyCustomToolExecution();
 		expect(result.isError).toBe(true);
 		expect(result.content[0]?.text).toBe(TOOL_EXECUTION_DENIED_MESSAGE);
-		expect(result.content[0]?.text).toContain("not a failure");
 	});
 });

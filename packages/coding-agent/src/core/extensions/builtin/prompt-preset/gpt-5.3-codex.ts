@@ -3,7 +3,7 @@ import { buildFileOperationsTuning } from "./file-operations.ts";
 import { buildGptEvalRoutingTuning } from "./gpt-eval-routing.ts";
 
 function buildGpt53CodexTuning(toolNames: readonly string[]): string {
-	return `Bias hard toward action. Implement directly with reasonable assumptions rather than stopping to ask. Do not produce upfront plans or preambles before acting — start working immediately.
+	return `Bias hard toward action. Implement directly with reasonable assumptions rather than stopping to ask. Do not produce upfront plans or preambles before acting: start working immediately.
 
 Do not re-state the goal between steps. When a milestone completes, move to the next without summarizing unless the user asked for a summary.
 

@@ -108,6 +108,42 @@ function compactionEvent(branchEntries: SessionEntry[]): SessionBeforeCompactEve
 }
 
 describe("OpenAI remote compaction", () => {
+	// oh-my-openagent#10775: compaction must not replace the provider's prefix affinity with a session id.
+	it("preserves the stable provider key in stream compaction", () => {
+		const request = createOpenAiRemoteCompactionRequest({
+			model: OPENAI_MODEL,
+			systemPrompt: "sys",
+			branchEntries: openAiBranch(),
+			tokensBefore: 1234,
+			sessionId: "session-one",
+		});
+		expect(request).toBeDefined();
+		if (request === undefined) throw new Error("Missing compaction request");
+		const payload = createOpenAiResponsesStreamCompactionPayload(
+			{
+				model: OPENAI_MODEL.id,
+				prompt_cache_key: "stable-provider-prefix",
+				input: [],
+			},
+			request,
+		);
+		expect(payload).toHaveProperty("prompt_cache_key", "stable-provider-prefix");
+	});
+
+	it("derives stable compact endpoint keys independently of sessions", () => {
+		const requests = ["session-one", "session-two"].map((sessionId) =>
+			createOpenAiRemoteCompactionRequest({
+				model: OPENAI_MODEL,
+				systemPrompt: "sys",
+				branchEntries: openAiBranch(),
+				tokensBefore: 1234,
+				sessionId,
+			}),
+		);
+		expect(requests[0]?.body.prompt_cache_key).toEqual(requests[1]?.body.prompt_cache_key);
+		expect(requests[0]?.body.prompt_cache_key).toEqual(expect.stringMatching(/^.{1,64}$/));
+	});
+
 	it("builds a compact request from a fully OpenAI-native branch", () => {
 		const request = createOpenAiRemoteCompactionRequest({
 			model: OPENAI_MODEL,
@@ -221,7 +257,7 @@ describe("OpenAI remote compaction", () => {
 			systemPrompt: "You are senpi.",
 			branchEntries: openAiBranch(),
 			tokensBefore: 1234,
-			promptCacheKey: "session-1",
+			sessionId: "session-1",
 			serviceTier: "priority",
 		});
 
@@ -232,6 +268,7 @@ describe("OpenAI remote compaction", () => {
 			{
 				model: "gpt-5.4",
 				input: [{ role: "developer", content: "current system prompt" }],
+				prompt_cache_key: "provider-prefix",
 				stream: true,
 			},
 			request,
@@ -239,7 +276,7 @@ describe("OpenAI remote compaction", () => {
 
 		expect(payload).toMatchObject({
 			model: "gpt-5.4",
-			prompt_cache_key: "session-1",
+			prompt_cache_key: "provider-prefix",
 			service_tier: "priority",
 			input: [
 				{ role: "developer", content: "current system prompt" },

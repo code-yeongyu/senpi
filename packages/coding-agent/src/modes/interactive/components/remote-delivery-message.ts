@@ -7,7 +7,7 @@ import {
 	type SessionControlSender,
 	sessionControlSenderOf,
 } from "../../../core/extensions/types.ts";
-import { getMarkdownTheme } from "../theme/theme.ts";
+import { sharedMarkdownTheme } from "../theme/theme.ts";
 
 /**
  * A message another session delivered renders as its own block - never as the user's own input, so
@@ -23,7 +23,7 @@ export const renderRemoteDelivery: MessageRenderer = (message, _options, theme) 
 		box.addChild(new Text(theme.fg("dim", senderLabel(sender)), 0, 0));
 		box.addChild(new Spacer(1));
 		box.addChild(
-			new Markdown(shown, 0, 0, getMarkdownTheme(), { color: (line) => theme.fg("customMessageText", line) }),
+			new Markdown(shown, 0, 0, sharedMarkdownTheme(), { color: (line) => theme.fg("customMessageText", line) }),
 		);
 		return box;
 	}
@@ -37,7 +37,9 @@ export const renderRemoteDelivery: MessageRenderer = (message, _options, theme) 
 					.filter((part): part is TextContent => part.type === "text")
 					.map((part) => part.text)
 					.join("\n");
-	box.addChild(new Markdown(text, 0, 0, getMarkdownTheme(), { color: (line) => theme.fg("customMessageText", line) }));
+	box.addChild(
+		new Markdown(text, 0, 0, sharedMarkdownTheme(), { color: (line) => theme.fg("customMessageText", line) }),
+	);
 	return box;
 };
 

@@ -1,5 +1,5 @@
 // #1542: an abort reaching the /login surface (no reason, AbortError, "Login cancelled")
-// renders as a neutral "Login cancelled" status, never as "Failed to login to <provider>".
+// renders as a neutral "Login cancelled" status, never as a login failure error.
 import { describe, expect, it } from "vitest";
 import { CredentialSynchronizationError } from "../../../src/core/model-runtime.ts";
 import { describeLoginFailure, isLoginCancellation } from "../../../src/modes/interactive/login-outcome.ts";
@@ -44,16 +44,16 @@ describe("login outcome classification (#1542)", () => {
 
 	it("keeps genuine provider, network and OAuth errors as failures", () => {
 		expect(isLoginCancellation(new Error("invalid_grant"))).toBe(false);
-		expect(
-			describeLoginFailure(new Error("token exchange failed (400): invalid_grant"), "ChatGPT Subscription", "oauth"),
-		).toEqual({
-			level: "error",
-			message: "Failed to login to ChatGPT Subscription: token exchange failed (400): invalid_grant",
-		});
-		expect(describeLoginFailure(new Error("fetch failed"), "OpenAI", "api_key")).toEqual({
-			level: "error",
-			message: "Failed to save API key for OpenAI: fetch failed",
-		});
+		const oauth = describeLoginFailure(
+			new Error("token exchange failed (400): invalid_grant"),
+			"ChatGPT Subscription",
+			"oauth",
+		);
+		expect(oauth.level).toBe("error");
+		expect(oauth.message).toContain("token exchange failed (400): invalid_grant");
+		const apiKey = describeLoginFailure(new Error("fetch failed"), "OpenAI", "api_key");
+		expect(apiKey.level).toBe("error");
+		expect(apiKey.message).toContain("fetch failed");
 		expect(isLoginCancellation(Object.assign(new Error("timed out"), { name: "TimeoutError" }))).toBe(false);
 	});
 

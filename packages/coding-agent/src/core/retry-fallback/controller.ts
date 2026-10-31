@@ -9,7 +9,9 @@ import {
 	formatSelector,
 	parseFallbackSelector,
 	resolveChainKey,
+	rungSelector,
 } from "./chains.ts";
+import { subscribeProviderAccountEvents } from "../extensions/builtin/anthropic-subscription/account-events.ts";
 import { CircuitProbes } from "./circuit-probes.ts";
 import type {
 	ActiveFallbackState,
@@ -18,6 +20,7 @@ import type {
 	RetryFallbackControllerDeps,
 } from "./controller-types.ts";
 import { pinAfterSwitch } from "./pin.ts";
+import { isPureNetworkTransient } from "./transient-network.ts";
 import { UnusableEntries } from "./unusable.ts";
 import { type UsageLimitScope, usageLimitScope } from "./usage-limit.ts";
 
@@ -28,6 +31,16 @@ export class RetryFallbackController {
 	private readonly triedSelectors = new Set<string>();
 	private state: ActiveFallbackState | undefined;
 	private lastExhaustedChainKey: string | undefined;
+	// A fallback forced by a network blip serves out its turn; only the next turn boundary reverts it.
+	private heldForNetworkBlip = false;
+	// The model a network blip just failed on: none of its rungs is tried in that walk (senpi#3344).
+	private blipModel: string | undefined;
+	// Entries this session itself saw fail out of a chain: only these (or an entry spent for everyone)
+	// may move the session off its model at a turn boundary (senpi#3467).
+	private readonly ownFailures = new Set<string>();
+	// Conservatively skip the refused provider for this turn: this synchronous scan cannot resolve
+	// asynchronously prepared request credentials, including per-model endpoints or keys (senpi#2491).
+	private readonly refusedProviders = new Set<string>();
 	private readonly unusable: UnusableEntries;
 	readonly probes: CircuitProbes;
 	// Content-keyed memo of canonicalizeFallbackChains. Provider-error handling calls
@@ -53,13 +66,23 @@ export class RetryFallbackController {
 		return this.lastExhaustedChainKey;
 	}
 
+	isProviderSpent(provider: string): boolean {
+		return this.unusable.isProviderSpent(provider);
+	}
+
+	accountError(provider: string): string | undefined {
+		return this.unusable.accountError(provider);
+	}
+
 	resetTurn(): void {
 		this.triedSelectors.clear();
+		this.refusedProviders.clear();
 		this.lastExhaustedChainKey = undefined;
 	}
 
 	clear(): void {
 		this.state = undefined;
+		this.heldForNetworkBlip = false;
 		this.canonicalCache = undefined;
 		this.resetTurn();
 	}
@@ -73,8 +96,9 @@ export class RetryFallbackController {
 		return canonical;
 	}
 
-	canTryFallback(): boolean {
-		return this.nextCandidate(false) !== undefined;
+	/** `refusedProvider`: the provider whose request-level refusal is being decided, before the walk records it. */
+	canTryFallback(refusedProvider?: string): boolean {
+		return this.nextCandidate(false, false, refusedProvider) !== undefined;
 	}
 
 	/**
@@ -96,9 +120,16 @@ export class RetryFallbackController {
 	 * suppressed and is still usable; pinned state and the "never" policy hold the
 	 * fallback model. One exception outranks both the cooldown and the policy: a
 	 * fallback that is itself known unusable (billing or an account limit) while the
-	 * original is not is never where the session rests (senpi#2376).
+	 * original is not is never where the session rests (senpi#2376). An original that is
+	 * itself still held (an account usage limit with the reset it named, which can outlast
+	 * the circuit's 30-minute ceiling) is not restored before that hold ends (senpi#3347).
 	 */
-	async maybeRestorePrimary(revertPolicy: "cooldown-expiry" | "never"): Promise<boolean> {
+	async maybeRestorePrimary(
+		revertPolicy: "cooldown-expiry" | "never",
+		boundary: "turn" | "continuation" = "turn",
+	): Promise<boolean> {
+		const heldForNetworkBlip = this.heldForNetworkBlip && boundary === "continuation";
+		if (boundary === "turn") this.heldForNetworkBlip = false;
 		const state = this.state;
 		const current = this.deps.getCurrentSelector();
 		if (!state || state.pinned || !current) return false;
@@ -107,7 +138,11 @@ export class RetryFallbackController {
 		const model = this.deps.registry.find(selector.provider, selector.id);
 		if (!model) return false;
 		const stranded = this.unusable.isUnusable(current.model) && !this.unusable.isUnusable(model);
-		if (!stranded && !this.originalRecovered(state.originalSelector, revertPolicy)) return false;
+		if (
+			!stranded &&
+			(heldForNetworkBlip || this.unusable.isUnusable(model) || !this.originalRecovered(state, revertPolicy))
+		)
+			return false;
 		// User override wins: only restore the original thinking level when the
 		// current level still equals the level the fallback switch applied. A manual
 		// setThinkingLevel clears lastAppliedThinkingLevel (see noteManualThinkingLevel).
@@ -125,8 +160,17 @@ export class RetryFallbackController {
 		return true;
 	}
 
-	private originalRecovered(originalSelector: string, revertPolicy: "cooldown-expiry" | "never"): boolean {
+	private originalRecovered(state: ActiveFallbackState, revertPolicy: "cooldown-expiry" | "never"): boolean {
 		if (revertPolicy !== "cooldown-expiry") return false;
+		const originalSelector = state.originalSelector;
+		// The original rung may be parked by its own hard error while the model as a whole is not.
+		const original = parseFallbackSelector(originalSelector, this.deps.registry);
+		if (
+			original &&
+			state.originalThinkingLevel !== undefined &&
+			this.deps.cooldowns.isSuppressed(rungSelector({ ...original, thinkingLevel: state.originalThinkingLevel }))
+		)
+			return false;
 		// An entry the breaker tracks recovers on the circuit's clock; the per-session
 		// cooldown only governs entries the breaker never opened (hard errors, breaker off).
 		const suppressed = this.probes.governs(originalSelector)
@@ -173,10 +217,26 @@ export class RetryFallbackController {
 			this.deps.logger.info("fallback_cleared_manual", { selector: formatSelector(model) });
 		}
 		this.state = undefined;
-		this.deps.cooldowns.clear(formatSelector(model));
+		this.heldForNetworkBlip = false;
+		this.ownFailures.delete(formatSelector(model));
+		this.deps.cooldowns.clearModel(formatSelector(model));
 		this.unusable.clear(model);
 		this.probes.release();
 		this.deps.circuits?.close(formatSelector(model));
+	}
+
+	/**
+	 * A login or an explicit block reset on `provider` makes the account and
+	 * model holds it earned stale, so the restore guard stops waiting out a reset that may no longer apply.
+	 */
+	noteProviderAccountsChanged(provider: string): void {
+		this.unusable.clearProvider(provider, this.deps.registry.getAll());
+	}
+
+	/** A response this session got from `selector` succeeded: the entry serves it again (senpi#3467). */
+	noteServed(selector: string): void {
+		this.ownFailures.delete(selector);
+		this.probes.accept(selector);
 	}
 
 	/**
@@ -185,22 +245,31 @@ export class RetryFallbackController {
 	 * half-open probe - independent of whether a fallback candidate remains.
 	 */
 	noteHealthFailure(model: Model<Api>, thinkingLevel: ThinkingLevel | undefined, failure: CircuitFailure): void {
-		if (!this.managedChainKey({ model, thinkingLevel })) return;
 		this.unusable.note(model, failure);
+		if (!this.managedChainKey({ model, thinkingLevel })) return;
+		// A pure network fault is the transport's, not the model's: it never opens the shared circuit (senpi#3306).
+		if (isPureNetworkTransient(failure.errorMessage)) return;
+		this.ownFailures.add(formatSelector(model));
 		this.probes.noteFailure(formatSelector(model), failure);
 	}
 
 	/**
-	 * Turn-boundary skip: when the current entry's circuit was opened by this or a
-	 * sibling session, move to the next closed entry without spending a request on
-	 * it. With no closed entry left the current one stays and probes, so the chain
-	 * never refuses a turn; a half-open current entry is claimed for this session.
+	 * Turn-boundary skip: when the current entry's circuit is open because this session
+	 * saw it fail (and has not been served by it since), or because its account is spent
+	 * for everyone, move to the next closed entry without spending a request on it. A
+	 * sibling's bare failure or Retry-After never moves this session (senpi#3467). With no
+	 * closed entry left the current one stays and probes, so the chain never refuses a
+	 * turn; a half-open current entry is claimed for this session.
 	 */
 	async rerouteAroundOpenCircuit(): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
 		if (!this.deps.circuits || !current) return false;
 		const currentBase = formatSelector(current.model);
+		// A half-open entry is still claimed as this session's single probe whoever opened it.
 		if (this.probes.admit(currentBase) !== "open") return false;
+		// Another session's bare failure says this entry was slow for that session, not that it is
+		// down for this one: a session that never failed on it keeps its model and finds out itself.
+		if (!this.ownFailures.has(currentBase) && !this.probes.isExhausted(currentBase)) return false;
 		const candidate = this.nextCandidate(false, true);
 		if (!candidate || candidate.circuitOpen) return false;
 		this.deps.logger.info("circuit_open_skip", { selector: currentBase });
@@ -210,30 +279,76 @@ export class RetryFallbackController {
 
 	async tryFallback(
 		reason: FallbackReason,
+		failure: { errorMessage?: string; retryAfterMs?: number; refusedProvider?: string },
+		failureObserved = true,
+	): Promise<boolean> {
+		if (failure.refusedProvider !== undefined) this.refusedProviders.add(failure.refusedProvider);
+		const current = this.deps.getCurrentSelector();
+		const blip = reason === "transient" && isPureNetworkTransient(failure.errorMessage);
+		this.blipModel = blip && current ? formatSelector(current.model) : undefined;
+		try {
+			return await this.walkFallback(reason, failure, failureObserved);
+		} finally {
+			this.blipModel = undefined;
+		}
+	}
+
+	private async walkFallback(
+		reason: FallbackReason,
 		failure: { errorMessage?: string; retryAfterMs?: number },
+		failureObserved: boolean,
 	): Promise<boolean> {
 		const current = this.deps.getCurrentSelector();
+		// A network blip that outlasted the same-model retries may fall back for this turn, but it
+		// leaves no cooldown or open circuit on the primary, so the next turn boundary reverts (senpi#3306).
+		const networkBlip = reason === "transient" && isPureNetworkTransient(failure.errorMessage);
 		// Only a transient failure that spent its budget opens the shared circuit
 		// here; billing/quota exhaustion is recorded at the failure itself (see
 		// noteHealthFailure) so the final chain entry opens too.
-		if (current && reason === "transient") this.noteHealthFailure(current.model, current.thinkingLevel, failure);
+		if (failureObserved && current && reason === "transient")
+			this.noteHealthFailure(current.model, current.thinkingLevel, failure);
 		const limit = usageLimitScope(failure.errorMessage);
-		if (current) this.unusable.note(current.model, failure);
-		let candidate = this.nextCandidate(false, true);
-		if (!current || !candidate) return false;
-		const currentBase = formatSelector(current.model);
-		if (reason === "transient" || reason === "hard-error" || reason === "billing") {
-			this.deps.cooldowns.note(currentBase, failure);
-			this.deps.logger.info("cooldown_noted", { selector: currentBase, errorMessage: failure.errorMessage });
+		if (failureObserved && current) this.unusable.note(current.model, failure);
+		// A model-wide park (transient, billing) can rule out the current model's other rungs, so the
+		// walk re-scans after noting it; the first scan logs only when no re-scan follows.
+		const modelWidePark = !networkBlip && failureObserved && (reason === "transient" || reason === "billing");
+		let candidate = this.nextCandidate(false, !modelWidePark);
+		if (!current || !candidate) {
+			if (modelWidePark) this.nextCandidate(false, true);
+			return false;
 		}
+		const currentBase = formatSelector(current.model);
+		if (
+			!networkBlip &&
+			failureObserved &&
+			(reason === "transient" || reason === "hard-error" || reason === "billing")
+		) {
+			// A hard error is charged to the rung that failed (a level the model rejects, or any
+			// non-retryable failure there), so it parks only that rung and a
+			// later rung of the same model stays reachable; a transient or billing failure parks the
+			// whole model, which is unhealthy at every level (senpi#3311). A network blip parks
+			// nothing (senpi#3306).
+			const parked =
+				reason === "hard-error"
+					? rungSelector({
+							provider: current.model.provider,
+							id: current.model.id,
+							thinkingLevel: current.thinkingLevel,
+						})
+					: currentBase;
+			this.deps.cooldowns.note(parked, failure);
+			this.deps.logger.info("cooldown_noted", { selector: parked, errorMessage: failure.errorMessage });
+		}
+		if (modelWidePark) candidate = this.nextCandidate(false, true);
 		// A rung the switch itself refuses does not end the walk: the next rung may fit (senpi#2894).
 		while (candidate) {
 			try {
 				await this.applyCandidate(current, candidate, reason, limit);
+				this.heldForNetworkBlip ||= networkBlip;
 				return true;
 			} catch (error) {
 				if (!this.deps.isCandidateRefusal?.(error)) throw error;
-				this.triedSelectors.add(baseSelector(candidate.selector));
+				this.triedSelectors.add(rungSelector(candidate.selector));
 				this.skip(formatSelector(candidate.model), "refused");
 			}
 			candidate = this.nextCandidate(false, true);
@@ -250,7 +365,7 @@ export class RetryFallbackController {
 		const thinking = this.selectThinking(candidate.selector, candidate.model, current.thinkingLevel);
 		this.probes.admit(baseSelector(candidate.selector));
 		await this.switchOrRelease(candidate.model, thinking, "fallback");
-		this.triedSelectors.add(baseSelector(candidate.selector));
+		this.triedSelectors.add(rungSelector(candidate.selector));
 		const from = formatSelector(current.model);
 		const to = formatSelector(candidate.model);
 		const prior = this.state;
@@ -273,7 +388,11 @@ export class RetryFallbackController {
 		return chainKey && chains[chainKey] ? chainKey : undefined;
 	}
 
-	private nextCandidate(reserve = true, logDecision = reserve): ({ chainKey: string } & UsableCandidate) | undefined {
+	private nextCandidate(
+		reserve = true,
+		logDecision = reserve,
+		refusedProvider?: string,
+	): ({ chainKey: string } & UsableCandidate) | undefined {
 		const current = this.deps.getCurrentSelector();
 		if (!this.deps.getSettings().modelFallback || !current) return undefined;
 		// Models without an explicitly configured chain do not enter an implicit fallback lane.
@@ -290,10 +409,12 @@ export class RetryFallbackController {
 			isAuthAvailable: (provider) => this.deps.isAuthAvailable(provider),
 			isCircuitOpen: (base) => this.deps.circuits?.isOpen(base) ?? false,
 			isProviderSpent: (provider) => this.unusable.isProviderSpent(provider),
+			isProviderRefused: (provider) => provider === refusedProvider || this.refusedProviders.has(provider),
+			isModelSkipped: (base) => base === this.blipModel,
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
 		if (candidate) {
-			if (reserve) this.triedSelectors.add(baseSelector(candidate.selector));
+			if (reserve) this.triedSelectors.add(rungSelector(candidate.selector));
 			return { chainKey, ...candidate };
 		}
 		this.lastExhaustedChainKey = chainKey;
@@ -329,4 +450,14 @@ export class RetryFallbackController {
 	private skip(candidate: string, skipReason: string): void {
 		this.deps.logger.debug("candidate_skipped", { candidate, skipReason });
 	}
+}
+
+/** Only explicit account remedies invalidate holds; health and listing notices do not. */
+export function followProviderAccountChanges(
+	controller: Pick<RetryFallbackController, "noteProviderAccountsChanged">,
+): () => void {
+	return subscribeProviderAccountEvents((event) => {
+		if (event.type === "accounts_changed" && event.remedy !== undefined)
+			controller.noteProviderAccountsChanged(event.provider);
+	});
 }

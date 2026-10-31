@@ -18,7 +18,7 @@ async function* ok(): AsyncGenerator<Event> {
 
 async function* fail(error: unknown): AsyncGenerator<Event> {
 	throw error;
-	// biome-ignore lint/correctness/noUnreachable: generator needs a yield type
+	// oxlint-disable-next-line eslint/no-unreachable -- generator needs a yield type
 	yield { type: "never" };
 }
 

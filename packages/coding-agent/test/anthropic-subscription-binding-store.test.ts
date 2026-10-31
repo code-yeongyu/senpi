@@ -1,7 +1,8 @@
-import { mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { makeTempDir as mkdtempSync } from "../../../scripts/vitest-temp.ts";
 import type { StoredBinding } from "../src/core/extensions/builtin/anthropic-subscription/session-binding-store.ts";
 import {
 	bindingSidecarPath,

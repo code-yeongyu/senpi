@@ -8,7 +8,8 @@ import { ASYNC_QUESTIONS, type AskUserDelivery, createAskUserDelivery } from "./
 const deliveries: AskUserDelivery[] = [];
 afterEach(() => {
 	for (const delivery of deliveries.splice(0)) {
-		for (const entry of getPendingQuestions(delivery.harness.session.sessionManager.getSessionId())) entry.cancel();
+		for (const entry of getPendingQuestions(delivery.harness.session.sessionManager.getSessionId()))
+			entry.cancel("session_closed");
 		delivery.harness.cleanup();
 	}
 	vi.useRealTimers();

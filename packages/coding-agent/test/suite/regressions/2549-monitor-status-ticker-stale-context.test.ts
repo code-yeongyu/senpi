@@ -189,8 +189,8 @@ describe("#2549 terminal extension footer across a retired session", () => {
 	}
 
 	// A reload shuts the old generation down and the new one claims its parked monitors.
-	// A replacement here is a session disposed without session_shutdown (as app-server
-	// thread unload does), so its ticker is still armed when the context retires.
+	// A replacement here is a session disposed without session_shutdown,
+	// so its ticker is still armed when the context retires.
 	it.each([
 		{ label: "reload", message: RELOAD_STALE_MESSAGE, reason: "reload", nextSession: "session-a" },
 		{ label: "new session", message: REPLACEMENT_STALE_MESSAGE, reason: "new", nextSession: "session-b" },

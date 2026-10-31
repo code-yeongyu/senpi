@@ -19,10 +19,11 @@
 
 import { StringDecoder } from "node:string_decoder";
 import { EventEmitter } from "events";
+import { isStaleEscape } from "./escape-window.ts";
 
 const ESC = "\x1b";
 const DEFAULT_SEQUENCE_TIMEOUT_MS = 50;
-const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
+const DEFAULT_ESCAPE_TIMEOUT_MS = 50;
 const DEFAULT_BURST_WINDOW_MS = 20;
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
@@ -375,12 +376,16 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			clearTimeout(this.burstTimer);
 			this.burstTimer = null;
 		}
-		this.buffer += str;
 		const chunkAt = str.length > 0 ? this.clock() : undefined;
 		const burstGap = chunkAt !== undefined && this.lastInputAt !== undefined ? chunkAt - this.lastInputAt : undefined;
 		if (chunkAt !== undefined) {
 			this.lastInputAt = chunkAt;
 		}
+		if (isStaleEscape(this.buffer, burstGap, this.escapeTimeoutMs)) {
+			this.buffer = "";
+			this.emitDataSequence(ESC);
+		}
+		this.buffer += str;
 		if (this.heldNewline.length > 0) {
 			// The clock decides, not timer delivery: a read outside the window means the held line
 			// break was an Enter, even when its release timer has not fired yet (a stalled loop).

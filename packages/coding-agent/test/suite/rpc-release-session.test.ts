@@ -4,11 +4,12 @@
  * opens standalone exactly as `senpi --session <path>` opens it; every refusal leaves the host owning
  * the session unchanged.
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
+import { SessionMovedAwayError } from "../../src/core/session-move/ownership.ts";
 import type { RpcCommand } from "../../src/modes/rpc/rpc-types.ts";
 import { SESSION_RELEASED_ENTRY_TYPE } from "../../src/modes/rpc/session-release.ts";
 import { opened } from "./rpc-inprocess-host-metrics.ts";
@@ -63,6 +64,84 @@ function standaloneEntries(sessionPath: string) {
 }
 
 describe("release_session", () => {
+	it("#given reason move with a move id #then the release records move_id and target and the file refuses further writes", async () => {
+		const dir = await rigDir();
+		await using rig = createInProcessRig(dir);
+		const { sessionId, sessionPath } = await openExchange(rig, dir, "moving");
+		await rig.drop("conn-a");
+
+		const reply = await release(rig, sessionId, { reason: "move", moveId: "move-7", target: "laptop" });
+
+		expect(reply).toMatchObject({ success: true, data: { released: true, session_path: sessionPath } });
+		const released = standaloneEntries(sessionPath).filter(
+			(entry) => entry.type === "custom" && entry.customType === SESSION_RELEASED_ENTRY_TYPE,
+		);
+		expect(released).toEqual([
+			expect.objectContaining({
+				data: expect.objectContaining({ reason: "move", move_id: "move-7", target: "laptop" }),
+			}),
+		]);
+		expect(() =>
+			SessionManager.open(sessionPath).appendMessage({ role: "user", content: "late", timestamp: 1 }),
+		).toThrow(SessionMovedAwayError);
+	});
+
+	it("#given reason move without a move id #then the release is refused and the session stays", async () => {
+		const dir = await rigDir();
+		await using rig = createInProcessRig(dir);
+		const { sessionId } = await openExchange(rig, dir, "no-id");
+		await rig.drop("conn-a");
+
+		const reply = await release(rig, sessionId, { reason: "move" });
+
+		expect(reply).toMatchObject({ success: false, error: "invalid_release_reason" });
+		expect((await rig.list()).map((row) => row.sessionId)).toContain(sessionId);
+	});
+	it("#given reason move with a move id that is not a plain id #then the release is refused and nothing seals the file (senpi#3662)", async () => {
+		const dir = await rigDir();
+		await using rig = createInProcessRig(dir);
+		const { sessionId, sessionPath } = await openExchange(rig, dir, "bad-move-id");
+		await rig.drop("conn-a");
+
+		for (const moveId of ["../x", "..", ".", "a/b", "a\\b", "x".repeat(200)]) {
+			const reply = await release(rig, sessionId, { reason: "move", moveId, target: "laptop" });
+			expect(reply).toMatchObject({ success: false, error: "invalid_release_reason" });
+		}
+
+		expect((await rig.list()).map((row) => row.sessionId)).toContain(sessionId);
+		expect(
+			standaloneEntries(sessionPath).some(
+				(entry) => entry.type === "custom" && entry.customType === SESSION_RELEASED_ENTRY_TYPE,
+			),
+		).toBe(false);
+	});
+
+	it("#given a session whose own id is not a plain id #when it is released for a move #then the release is refused and nothing seals the file (senpi#3662)", async () => {
+		const dir = await rigDir();
+		await using rig = createInProcessRig(dir);
+		const sessionPath = join(dir, "crafted.jsonl");
+		const header = {
+			type: "session",
+			version: 3,
+			id: "a".repeat(129),
+			timestamp: "2026-10-19T00:00:00.000Z",
+			cwd: dir,
+		};
+		await writeFile(sessionPath, `${JSON.stringify(header)}\n`);
+		const session = opened(await rig.open("conn-a", { cwd: dir, sessionPath, retain_on_disconnect: true }), 0);
+		await rig.drop("conn-a");
+
+		const reply = await release(rig, session.sessionId, { reason: "move", moveId: "move-8", target: "laptop" });
+
+		expect(reply).toMatchObject({ success: false, error: "release_unsupported" });
+		expect((await rig.list()).map((row) => row.sessionId)).toContain(session.sessionId);
+		expect(
+			standaloneEntries(sessionPath).some(
+				(entry) => entry.type === "custom" && entry.customType === SESSION_RELEASED_ENTRY_TYPE,
+			),
+		).toBe(false);
+	});
+
 	it("hands an idle, detached session over: the host drops it and its file opens standalone", async () => {
 		// Given: a retained session with one exchange, whose only client detached.
 		const dir = await rigDir();

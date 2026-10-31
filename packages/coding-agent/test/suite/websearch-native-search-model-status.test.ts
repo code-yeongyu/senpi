@@ -69,8 +69,12 @@ describe("websearch nativeModel config and status (senpi#2340)", () => {
 		let tool: RegisteredTool | undefined;
 		websearchExtension({
 			registerTool(definition: RegisteredTool) {
-				tool = definition;
+				if (definition.name === "web_search") tool = definition;
 			},
+			getActiveTools() {
+				return ["web_search"];
+			},
+			setActiveTools() {},
 			registerCommand(_name: string, definition: { handler: CommandHandler }) {
 				status = definition.handler;
 			},

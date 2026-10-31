@@ -13,9 +13,16 @@
 // registration (service.attachSkillMcpServers). There is no reliable unload
 // signal, so revealed tools stay active for the session.
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseFrontmatter } from "../../../../utils/frontmatter.ts";
+import {
+	authorizeSkillPath,
+	BlockedSkillLinkError,
+	readSkillFileCheckedSync,
+	type SkillAllowedSet,
+	type SkillProvenance,
+} from "../../../skill-access.ts";
 import type { SourceScope } from "../../../source-info.ts";
 import type { RawConfig } from "./config-schema.ts";
 
@@ -26,6 +33,8 @@ export interface SkillLike {
 	readonly filePath: string;
 	readonly baseDir: string;
 	readonly sourceInfo?: { readonly scope: SourceScope };
+	readonly provenance?: SkillProvenance;
+	readonly allowedSet?: SkillAllowedSet;
 }
 
 /** A declared server as registered: the first declaring skill's config and where that skill came from. */
@@ -34,6 +43,9 @@ export interface SkillServerRegistration {
 	sourcePath: string;
 	skillName: string;
 	scope: SourceScope | undefined;
+	provenance?: SkillProvenance;
+	allowedSet?: SkillAllowedSet;
+	skillPath?: string;
 }
 
 interface SkillServerDecl extends SkillServerRegistration {
@@ -62,6 +74,9 @@ export function parseSkillMcpDeclarations(skills: readonly SkillLike[]): SkillMc
 					scope: skill.sourceInfo?.scope,
 					skillName: skill.name,
 					sourcePath,
+					provenance: skill.provenance,
+					allowedSet: skill.allowedSet,
+					skillPath: skill.filePath,
 				});
 				continue;
 			}
@@ -97,9 +112,16 @@ function fileStamp(path: string): string {
  */
 function readSkillServers(skill: SkillLike): SkillServers {
 	const sidecarPath = join(skill.baseDir, "mcp.json");
-	const key = `${fileStamp(sidecarPath)}|${fileStamp(skill.filePath)}`;
+	const key = `${fileStamp(sidecarPath)}|${fileStamp(skill.filePath)}|${JSON.stringify(skill.provenance)}|${skill.allowedSet?.digest ?? ""}`;
 	const cached = skillServersCache.get(skill.filePath);
-	if (cached?.key === key) return cached.servers;
+	if (cached?.key === key) {
+		try {
+			authorizeSkillPath(cached.servers.sourcePath, skill.provenance, skill.allowedSet);
+			return cached.servers;
+		} catch {
+			// Authorization is not cached: re-reading below produces the retained warning.
+		}
+	}
 	const servers = readSkillServersFromDisk(skill);
 	skillServersCache.set(skill.filePath, { key, servers });
 	return servers;
@@ -107,27 +129,39 @@ function readSkillServers(skill: SkillLike): SkillServers {
 
 function readSkillServersFromDisk(skill: SkillLike): SkillServers {
 	const sidecarPath = join(skill.baseDir, "mcp.json");
+	const project =
+		skill.provenance === undefined ? skill.sourceInfo?.scope === "project" : skill.provenance.kind !== "user";
 	if (existsSync(sidecarPath)) {
 		try {
-			const parsed: unknown = JSON.parse(readFileSync(sidecarPath, "utf8"));
+			const parsed: unknown = JSON.parse(readSkillFileCheckedSync(sidecarPath, skill.provenance, skill.allowedSet));
 			return { declared: unwrapServerMap(parsed), sourcePath: sidecarPath };
 		} catch (error) {
+			if (error instanceof BlockedSkillLinkError)
+				return { declared: {}, sourcePath: sidecarPath, warning: error.message };
 			return {
 				declared: {},
 				sourcePath: sidecarPath,
-				warning: `Skill '${skill.name}': invalid mcp.json sidecar skipped (${error instanceof Error ? error.message : String(error)}); the skill itself still loads.`,
+				warning: project
+					? `Skill '${skill.name}': invalid mcp.json sidecar skipped; the skill itself still loads.`
+					: `Skill '${skill.name}': invalid mcp.json sidecar skipped (${error instanceof Error ? error.message : String(error)}); the skill itself still loads.`,
 			};
 		}
 	}
 	try {
-		const { frontmatter } = parseFrontmatter<{ mcp?: unknown }>(readFileSync(skill.filePath, "utf8"));
+		const { frontmatter } = parseFrontmatter<{ mcp?: unknown }>(
+			readSkillFileCheckedSync(skill.filePath, skill.provenance, skill.allowedSet),
+		);
 		if (frontmatter.mcp === undefined) return { declared: {}, sourcePath: skill.filePath };
 		return { declared: unwrapServerMap(frontmatter.mcp), sourcePath: skill.filePath };
 	} catch (error) {
+		if (error instanceof BlockedSkillLinkError)
+			return { declared: {}, sourcePath: skill.filePath, warning: error.message };
 		return {
 			declared: {},
 			sourcePath: skill.filePath,
-			warning: `Skill '${skill.name}': unreadable frontmatter mcp block skipped (${error instanceof Error ? error.message : String(error)}); the skill itself still loads.`,
+			warning: project
+				? `Skill '${skill.name}': unreadable frontmatter mcp block skipped; the skill itself still loads.`
+				: `Skill '${skill.name}': unreadable frontmatter mcp block skipped (${error instanceof Error ? error.message : String(error)}); the skill itself still loads.`,
 		};
 	}
 }

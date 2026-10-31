@@ -40,6 +40,8 @@ export class ToolExecutionComponent extends Container {
 	private argsComplete = false;
 	private result?: ToolExecutionResult;
 	private lastDisplaySignature?: string;
+	/** Built content was dropped by `invalidate`; the next render rebuilds it. */
+	private displayReleased = false;
 	private readonly renderCache = new ToolExecutionRenderCache();
 	private readonly animation = new ToolExecutionAnimation({
 		invalidate: () => this.invalidateRenderCache(),
@@ -79,8 +81,11 @@ export class ToolExecutionComponent extends Container {
 			this.renderer = new ToolExecutionRenderer(
 				this.identity,
 				initialState,
+				// A renderer asking for a rerender (`context.invalidate()`, e.g. after an async load it cached on its
+				// own component) rebuilds now and keeps that component as `lastComponent`; only invalidation from
+				// the TUI tree releases the content.
 				() => {
-					this.invalidate();
+					this.rebuildNow();
 					this.ui.requestRender();
 				},
 				// Left-clicking a finished tool card toggles it like the expand keybinding does.
@@ -169,10 +174,30 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	/**
+	 * Drops the built call and result content (and its styled output) instead of rebuilding it here;
+	 * `render` rebuilds it from the card's state the next time the card is painted (#2537). Every card
+	 * in the transcript is invalidated together (theme or terminal-capability changes, and the cards
+	 * that scroll above the kept main-screen history), so an eager rebuild kept every finished card's
+	 * output for the rest of the session. Grok rows and animating cards are rebuilt at once, as before.
+	 */
+	private rebuildNow(): void {
+		this.invalidateRenderCache();
+		super.invalidate();
+		this.lastDisplaySignature = undefined;
+		this.updateDisplay();
+	}
+
 	override invalidate(): void {
 		this.invalidateRenderCache();
 		super.invalidate();
 		this.lastDisplaySignature = undefined;
+		const renderer = this.renderer;
+		if (renderer !== undefined && !this.animation.running) {
+			renderer.releaseContent();
+			this.displayReleased = true;
+			return;
+		}
 		this.updateDisplay();
 	}
 
@@ -197,6 +222,10 @@ export class ToolExecutionComponent extends Container {
 	override render(width: number): string[] {
 		if (this.presentation === "grok") return super.render(width);
 
+		if (this.displayReleased) {
+			this.displayReleased = false;
+			this.updateDisplay();
+		}
 		const signature = this.createRenderSignature();
 		const cached = this.renderCache.read(width, signature);
 		if (cached) return cached;
@@ -218,6 +247,12 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private updateDisplay(): void {
+		// A released card (expand-all, show-images, a new image width) only records the change; `render`
+		// rebuilds it if the card is painted again, so cards far above the kept history stay released.
+		if (this.displayReleased) {
+			this.invalidateRenderCache();
+			return;
+		}
 		const displaySignature = this.createRenderSignature();
 		if (this.lastDisplaySignature === displaySignature) return;
 		this.lastDisplaySignature = displaySignature;

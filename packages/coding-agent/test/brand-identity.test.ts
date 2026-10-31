@@ -12,6 +12,7 @@ import { buildGpt56Prompt } from "../src/core/extensions/builtin/prompt-preset/g
 import { buildGpt6AstraPrompt } from "../src/core/extensions/builtin/prompt-preset/gpt-6-astra.ts";
 import { buildGrok45Prompt } from "../src/core/extensions/builtin/prompt-preset/grok-4.5.ts";
 import { buildKimiK3Prompt } from "../src/core/extensions/builtin/prompt-preset/kimi-k3.ts";
+import { buildKimiK31Prompt } from "../src/core/extensions/builtin/prompt-preset/kimi-k3-1.ts";
 
 const OPTIONS: BuildDynamicSystemPromptOptions = {
 	cwd: "/test/project",
@@ -49,6 +50,7 @@ const PRESET_BUILDERS = [
 	["gpt-6-astra", buildGpt6AstraPrompt],
 	["grok-4.5", buildGrok45Prompt],
 	["kimi-k3", buildKimiK3Prompt],
+	["kimi-k3-1", buildKimiK31Prompt],
 ] as const;
 
 describe("agent identity", () => {

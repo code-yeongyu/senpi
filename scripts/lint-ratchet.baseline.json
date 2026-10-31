@@ -1,0 +1,1779 @@
+{
+  "crates/senpi-grep/index.d.ts": {
+    "disable-directive": 1
+  },
+  "crates/senpi-grep/index.js": {
+    "disable-directive": 1
+  },
+  "crates/senpi-pty/index.d.ts": {
+    "disable-directive": 1
+  },
+  "crates/senpi-pty/index.js": {
+    "disable-directive": 1
+  },
+  "packages/agent/docs/mobile-handoff/01-harness/01-delta/delta-impl.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/agent/docs/mobile-handoff/01-harness/01-delta/delta.examples.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/agent/docs/mobile-handoff/01-harness/01-delta/delta.test.ts": {
+    "typescript/no-explicit-any": 8,
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/docs/mobile-handoff/01-harness/03-execenv/output-capture.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/docs/mobile-handoff/02-plugins/02-sandbox/src/iso-vs-ctx.ts": {
+    "typescript/no-explicit-any": 3
+  },
+  "packages/agent/docs/mobile-handoff/02-plugins/02-sandbox/src/property-test.ts": {
+    "typescript/no-explicit-any": 5
+  },
+  "packages/agent/src/agent-loop.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/agent/src/agent.ts": {
+    "typescript/no-explicit-any": 2,
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/harness/pico3/chord.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/agent/src/harness/pico3/context.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/agent/src/harness/pico3/harness.ts": {
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/agent/src/harness/pico3/jsonl.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/agent/src/harness/pico3/kinds/collapse.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/agent/src/harness/pico3/kinds/generation.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/src/harness/pico3/kinds/job.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/src/harness/pico3/kinds/post-tools.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/src/harness/pico3/kinds/tool.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/agent/src/harness/pico3/memory.ts": {
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/agent/src/harness/pico3/scheduler.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/harness/pico3/session.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/agent/src/harness/pico3/system.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/src/harness/pico3/view.ts": {
+    "typescript/no-non-null-assertion": 11
+  },
+  "packages/agent/src/harness/prompt-templates.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/harness/runtime/drive/boundary.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/harness/runtime/drive/response.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/src/harness/runtime/drive/structural.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/agent/src/harness/runtime/drive/tool-placement.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/agent/src/harness/runtime/drive/tools.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/harness/runtime/lane.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/agent/src/harness/runtime/progress.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/harness/runtime/transcript.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/harness/session/fork.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/harness/session/in-memory-storage-state.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/agent/src/harness/session/jsonl/fork.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/agent/src/harness/session/jsonl/legacy-v3.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/src/harness/session/jsonl/storage.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/harness/session/testing/benchmark/session-repo.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/src/harness/session/testing/benchmark/storage.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/harness/session/testing/conformance/session-repo.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/agent/src/harness/session/testing/conformance/storage.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/agent/src/harness/session/testing/gating-storage.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/harness/utils/shell-output.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/proxy.ts": {
+    "typescript/no-explicit-any": 4,
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/src/types.ts": {
+    "typescript/no-explicit-any": 17
+  },
+  "packages/agent/test/harness/compaction.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/agent/test/harness/jsonl-session-repo.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/agent/test/harness/jsonl-storage.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/agent/test/harness/jsonl-v3-migration.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/agent/test/harness/jsonl-v3-stream.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/agent/test/harness/nodejs-env.test.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/agent/test/harness/pico3/atomicity.test.ts": {
+    "typescript/no-non-null-assertion": 32
+  },
+  "packages/agent/test/harness/pico3/authority.test.ts": {
+    "typescript/no-non-null-assertion": 12
+  },
+  "packages/agent/test/harness/pico3/busy.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/test/harness/pico3/hardening.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/test/harness/pico3/helpers.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/agent/test/harness/pico3/kinds.test.ts": {
+    "typescript/no-non-null-assertion": 42
+  },
+  "packages/agent/test/harness/pico3/legacy-tracker.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/agent/test/harness/pico3/membrane.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/test/harness/pico3/reads.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/agent/test/harness/pico3/recovery.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/agent/test/harness/pico3/retention.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/test/harness/pico3/spec-context-capabilities.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/agent/test/harness/pico3/spec-plugins-lifecycle.test.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/agent/test/harness/pico3/spec-scheduler-process.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/agent/test/harness/pico3/spec-storage-history.test.ts": {
+    "typescript/no-non-null-assertion": 17
+  },
+  "packages/agent/test/harness/pico3/spec-transactions.test.ts": {
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/agent/test/harness/pico3/spec-view-events.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/agent/test/harness/pico3/subagent.test.ts": {
+    "typescript/no-non-null-assertion": 17
+  },
+  "packages/agent/test/harness/pico3/tool-bounds.test.ts": {
+    "typescript/no-non-null-assertion": 9
+  },
+  "packages/agent/test/harness/pico3/turn.test.ts": {
+    "typescript/no-non-null-assertion": 27
+  },
+  "packages/agent/test/harness/pico3/view.test.ts": {
+    "typescript/no-non-null-assertion": 13
+  },
+  "packages/agent/test/harness/pico3/waiters.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/test/harness/pico3/watch.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/agent/test/harness/runtime/accept.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/test/harness/runtime/drive-reconcile.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/test/harness/runtime/drive-structural.test.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/agent/test/harness/runtime/drive-tools.test.ts": {
+    "typescript/no-non-null-assertion": 21
+  },
+  "packages/agent/test/harness/runtime/progress.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/agent/test/harness/session-test-utils.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/test/harness/tools.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/agent/test/harness/types.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/agent/test/utils/calculate.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/ai/scripts/generate-models-opengateway.ts": {
+    "typescript/no-explicit-any": 3
+  },
+  "packages/ai/scripts/generate-models.ts": {
+    "typescript/no-explicit-any": 9
+  },
+  "packages/ai/src/api/anthropic-messages.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/src/api/bedrock-converse-stream.ts": {
+    "typescript/no-explicit-any": 2,
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/ai/src/api/constrained-sampling.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/src/api/cursor-agent.ts": {
+    "typescript/no-explicit-any": 1,
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/ai/src/api/cursor-agent/gen/agent_pb.ts": {
+    "disable-directive": 1
+  },
+  "packages/ai/src/api/cursor-agent/measure.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/ai/src/api/devin-agent/gen/cascade_pb.ts": {
+    "disable-directive": 1
+  },
+  "packages/ai/src/api/google-generative-ai.ts": {
+    "typescript/no-explicit-any": 1,
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/src/api/google-vertex.ts": {
+    "typescript/no-explicit-any": 1,
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/src/api/mistral-conversations.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/src/api/openai-codex-responses.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/src/api/openai-completions.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/ai/src/api/openai-responses-prompt-cache.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/ai/src/api/pi-messages.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/ai/src/api/simple-options.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/src/api/system-one-shared.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/src/api/warm-prompt-cache.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/ai/src/providers/ollama.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/ai/src/tool-call-middleware/protocols/anthropic-xml/recovery-stream.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/src/utils/event-stream.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/src/utils/node-http-proxy.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/src/utils/overflow.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/src/utils/retry.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/src/utils/typebox-helpers.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/ai/src/utils/validation.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/ai/test/abort.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/anthropic-adjacent-user-tool-result-coalesce.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/test/anthropic-tool-reference-native-search.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/test/assistant-message-frame.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/test/bai-live.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/bedrock-convert-messages.test.ts": {
+    "typescript/no-explicit-any": 4,
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/bedrock-redacted-reasoning.test.ts": {
+    "typescript/no-explicit-any": 2,
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/ai/test/bedrock-thinking-payload.test.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/ai/test/cache-retention.test.ts": {
+    "typescript/no-explicit-any": 17,
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/context-overflow.test.ts": {
+    "typescript/no-explicit-any": 1,
+    "typescript/no-non-null-assertion": 32
+  },
+  "packages/ai/test/cursor-agent.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/ai/test/cursor-conversation-blob-pinning.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/cursor-conversation-cache-eviction.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/cursor-conversation-rotation-stream.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/cursor-model-capabilities.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/cursor-run-request.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/ai/test/faux-provider.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/test/github-copilot-anthropic.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/test/glm-5.3-thinking.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/ai/test/gpt-6-astra-catalog.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/test/gpt-6-family-catalog.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/test/images-models.test.ts": {
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/ai/test/max-thinking.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/ai/test/message-types.test.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/ai/test/model-types.test.ts": {
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/ai/test/openai-completions-empty-tools.test.ts": {
+    "typescript/no-non-null-assertion": 11
+  },
+  "packages/ai/test/openai-completions-tool-choice.test.ts": {
+    "typescript/no-non-null-assertion": 54
+  },
+  "packages/ai/test/openai-config-update.test.ts": {
+    "typescript/no-explicit-any": 6
+  },
+  "packages/ai/test/openai-fast-models.test.ts": {
+    "typescript/no-non-null-assertion": 48
+  },
+  "packages/ai/test/openai-responses-cache-affinity-e2e.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/openai-responses-foreign-toolcall-id.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/openai-responses-reasoning-replay-e2e.test.ts": {
+    "typescript/no-explicit-any": 11
+  },
+  "packages/ai/test/openai-responses-tool-choice.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/openrouter-cache-write-repro.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/openrouter-oauth.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/opus-4-7.test.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/ai/test/pi-messages.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/test/providers.test.ts": {
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/ai/test/responseid.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/stream.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/supports-xhigh.test.ts": {
+    "typescript/no-non-null-assertion": 39
+  },
+  "packages/ai/test/telemetry-options.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/test/tokens.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/tool-call-id-normalization.test.ts": {
+    "typescript/no-explicit-any": 2,
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/tool-call-middleware/context-transformer.test.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/ai/test/tool-call-middleware/e2e.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/ai/test/tool-call-middleware/invoke-recovery-content-exclusion-cases.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/tool-call-middleware/invoke-recovery-native-lifecycle-cases.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/ai/test/tool-call-middleware/invoke-recovery-snapshot-cancel-cases.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/ai/test/tool-call-middleware/invoke-recovery-terminal-edge-cases.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/tool-call-middleware/invoke-recovery-termination-cases.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/tool-call-without-result.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/total-tokens.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/ai/test/xai-responses.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/ai/test/xiaomi-token-plan-ams-anthropic-empty-signature-smoke.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/ai/test/zen.test.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/chord/src/delta/apply-immutable-trusted.ts": {
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/chord/src/delta/diff.ts": {
+    "typescript/no-non-null-assertion": 47
+  },
+  "packages/chord/src/delta/index.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/chord/src/delta/revision-validator.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/chord/src/delta/tracker.ts": {
+    "typescript/no-non-null-assertion": 76
+  },
+  "packages/chord/src/facets/host.ts": {
+    "typescript/no-non-null-assertion": 9
+  },
+  "packages/chord/src/json.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/chord/src/node/bundle-loader.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/chord/src/node/bundle.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/chord/src/services/consumer.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/chord/src/services/provider.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/chord/src/services/state.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/chord/test/boundary.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/chord/test/bundle.test.ts": {
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/chord/test/delta-apply-immutable.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/chord/test/delta-benchmark/benchmark.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/chord/test/delta-benchmark/benchmark.worker.ts": {
+    "typescript/no-non-null-assertion": 17
+  },
+  "packages/chord/test/delta-benchmark/conversation-view-benchmark.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/chord/test/delta-benchmark/conversation-view-benchmark.worker.ts": {
+    "typescript/no-non-null-assertion": 14
+  },
+  "packages/chord/test/delta-benchmark/memory-benchmark.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/chord/test/delta-benchmark/memory-benchmark.worker.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/chord/test/delta-clone.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/chord/test/delta-diff.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/chord/test/delta-tracker/retention.worker.ts": {
+    "typescript/no-non-null-assertion": 12
+  },
+  "packages/chord/test/delta-tracker/tracker.test.ts": {
+    "typescript/no-non-null-assertion": 44
+  },
+  "packages/chord/test/delta-traversal.bench.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/chord/test/delta.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/chord/test/facet-loader.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/chord/test/facets.test.ts": {
+    "typescript/no-non-null-assertion": 23
+  },
+  "packages/chord/test/service-delivery.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/chord/test/services.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/chord/test/state-draft.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/chord/test/state-fuzz.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/chord/test/state.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/client/test/client.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/client/test/support.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/examples/extensions/custom-provider-anthropic/index.ts": {
+    "typescript/no-explicit-any": 28,
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/examples/extensions/doom-overlay/doom-engine.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/examples/extensions/doom-overlay/index.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/examples/extensions/handoff.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/examples/extensions/modal-editor.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/examples/extensions/overlay-qa-tests.ts": {
+    "typescript/no-non-null-assertion": 11
+  },
+  "packages/coding-agent/examples/extensions/overlay-test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/examples/extensions/qna.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/examples/extensions/rainbow-editor.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/examples/extensions/subagent/index.ts": {
+    "typescript/no-explicit-any": 3
+  },
+  "packages/coding-agent/examples/extensions/tool-override.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/examples/extensions/truncated-tool.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/examples/extensions/working-indicator.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/examples/rpc-extension-ui.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/src/cli/credential-print.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/cli/experimental/command.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/cli/experimental/commands/client.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/src/core/agent-session-services.ts": {
+    "typescript/no-explicit-any": 3
+  },
+  "packages/coding-agent/src/core/agent-session.ts": {
+    "typescript/no-explicit-any": 35,
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/src/core/compaction/branch-summarization.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/core/compaction/compaction-execution.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/core/compaction/compaction.ts": {
+    "typescript/no-explicit-any": 6
+  },
+  "packages/coding-agent/src/core/export-html/tool-renderer.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/bounded-queue.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/custom-tools-schema.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-stream.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/core/extensions/builtin/btw/side-query.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/core/extensions/builtin/cache-keepalive/index.ts": {
+    "typescript/no-explicit-any": 5
+  },
+  "packages/coding-agent/src/core/extensions/builtin/cache-keepalive/session-prewarm.ts": {
+    "typescript/no-explicit-any": 4
+  },
+  "packages/coding-agent/src/core/extensions/builtin/compaction/speculative-summary.ts": {
+    "typescript/no-explicit-any": 4
+  },
+  "packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts": {
+    "typescript/no-explicit-any": 3
+  },
+  "packages/coding-agent/src/core/extensions/builtin/config-reload/index.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/src/core/extensions/builtin/cursor-cli-oauth/session-router.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/src/core/extensions/builtin/goal/turn-end-liveness.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/core/extensions/builtin/herdr/herdr-client.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/core/extensions/builtin/terminal/file-monitor-check.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/src/core/extensions/builtin/video-in/index.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/core/extensions/context-dispatch.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/core/extensions/runner.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/core/extensions/types.ts": {
+    "typescript/no-explicit-any": 21
+  },
+  "packages/coding-agent/src/core/package-manager.ts": {
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/coding-agent/src/core/provider-composer.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/src/core/sdk.ts": {
+    "typescript/no-explicit-any": 4
+  },
+  "packages/coding-agent/src/core/session-manager.ts": {
+    "typescript/no-non-null-assertion": 11
+  },
+  "packages/coding-agent/src/core/settings-manager.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/src/core/skill-invocation.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/core/system-prompt.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/core/timings.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/core/tool-dispatch/tool-dispatcher.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/core/tools/grep/index.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/core/tools/index.ts": {
+    "typescript/no-explicit-any": 3
+  },
+  "packages/coding-agent/src/core/tools/ls.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/core/tools/read.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/core/tools/renderers/bash.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/core/tools/renderers/edit.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/core/tools/renderers/find.ts": {
+    "typescript/no-explicit-any": 4
+  },
+  "packages/coding-agent/src/core/tools/renderers/grep.ts": {
+    "typescript/no-explicit-any": 3
+  },
+  "packages/coding-agent/src/core/tools/renderers/index.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/core/tools/renderers/ls.ts": {
+    "typescript/no-explicit-any": 4
+  },
+  "packages/coding-agent/src/core/tools/renderers/read.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/core/tools/renderers/write.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts": {
+    "typescript/no-explicit-any": 8
+  },
+  "packages/coding-agent/src/core/turn-deadline.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/experimental/client-tui.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/src/experimental/client.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/src/experimental/coordinator.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/experimental/micro/tui.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/src/experimental/server.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/experimental/services/slash-commands-provider.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/experimental/session-worker.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/src/main.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/src/migrations.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/modes/interactive/components/config-selector.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/modes/interactive/components/favorite-models-selector.ts": {
+    "typescript/no-explicit-any": 6
+  },
+  "packages/coding-agent/src/modes/interactive/components/model-favorites.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/modes/interactive/components/model-selector.ts": {
+    "typescript/no-explicit-any": 10
+  },
+  "packages/coding-agent/src/modes/interactive/components/progressive-transcript-container.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/src/modes/interactive/components/scoped-models-selector.ts": {
+    "typescript/no-explicit-any": 4,
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/modes/interactive/components/session-selector-search.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/modes/interactive/components/session-selector-tree.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/src/modes/interactive/components/session-selector.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/modes/interactive/components/tool-execution-types.ts": {
+    "typescript/no-explicit-any": 9
+  },
+  "packages/coding-agent/src/modes/interactive/components/tool-execution.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/src/modes/interactive/components/tree-selector.ts": {
+    "typescript/no-non-null-assertion": 11
+  },
+  "packages/coding-agent/src/modes/interactive/interactive-mode.ts": {
+    "typescript/no-explicit-any": 12,
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/coding-agent/src/modes/interactive/model-search-rank.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/src/modes/interactive/risky-main-model-warning.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/modes/rpc/connection-handler.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/modes/rpc/host-ensure-start.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/modes/rpc/rpc-client.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/src/modes/rpc/rpc-mutation-response-types.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/modes/rpc/rpc-read-response-types.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/modes/rpc/rpc-session-event-types.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/src/modes/rpc/rpc-session-state-types.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/src/modes/rpc/session-event-writer.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/src/package-manager-cli.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/src/utils/image-resize-core.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/agent-session-auto-compaction-queue.test.ts": {
+    "typescript/no-non-null-assertion": 9
+  },
+  "packages/coding-agent/test/agent-session-branching.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/agent-session-concurrent.test.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/coding-agent/test/agent-session-dynamic-provider.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/agent-session-dynamic-tools.test.ts": {
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/coding-agent/test/agent-session-retry.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/agent-session-runtime-events.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/agent-session-stats.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/agent-session-system-prompt.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/agent-session-tree-navigation.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/anthropic-subscription-affinity.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/anthropic-subscription-credential-refresh.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/anthropic-subscription-failover.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/anthropic-subscription-pump-result-failure.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/anthropic-subscription-session-registry-wiring.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/anthropic-subscription-session-registry.test.ts": {
+    "typescript/no-non-null-assertion": 12
+  },
+  "packages/coding-agent/test/anthropic-subscription-stream.test.ts": {
+    "typescript/no-non-null-assertion": 18
+  },
+  "packages/coding-agent/test/anthropic-subscription-unconfirmed-binding.test.ts": {
+    "typescript/no-non-null-assertion": 10
+  },
+  "packages/coding-agent/test/builtin-tool-strict-mode.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/claude-xml-toolcall-recovery-anthropic.test.ts": {
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/coding-agent/test/claude-xml-toolcall-recovery-openai.test.ts": {
+    "typescript/no-non-null-assertion": 9
+  },
+  "packages/coding-agent/test/clipboard-image-bmp-conversion.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/clipboard.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/compaction-extensions-example.test.ts": {
+    "typescript/no-explicit-any": 3,
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/compaction.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/compaction/canonical-routes.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/compaction/fixtures/estimate-cache-key-bun.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/compaction/openai-remote-compaction.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/compaction/required-compaction-deterministic-fallback.test.ts": {
+    "typescript/no-non-null-assertion": 54
+  },
+  "packages/coding-agent/test/compaction/speculative-abort-cancellation.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/compaction/summarization-provider-failure-recovery.test.ts": {
+    "typescript/no-explicit-any": 3,
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/compaction/summarization-reasoning-payload.test.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/test/compaction/summarization-tooluse-retry.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/compaction/warm-start-marker.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/config-value-migration.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/credential-pool-state-store.test.ts": {
+    "typescript/no-explicit-any": 4
+  },
+  "packages/coding-agent/test/cursor-cli-oauth/affinity.test.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/coding-agent/test/cursor-cli-oauth/fixture.test.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/test/default-tools-setting.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/edit-tool-legacy-input.test.ts": {
+    "typescript/no-non-null-assertion": 9
+  },
+  "packages/coding-agent/test/experimental-client-tui.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/experimental-presentation-facets.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/experimental-radius-relay.test.ts": {
+    "typescript/no-non-null-assertion": 11
+  },
+  "packages/coding-agent/test/experimental-remote-runtime.test.ts": {
+    "typescript/no-non-null-assertion": 21
+  },
+  "packages/coding-agent/test/experimental-session-support.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/experimental-session-worker-manager.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/extensions-input-event.test.ts": {
+    "typescript/no-explicit-any": 7
+  },
+  "packages/coding-agent/test/extensions-runner.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/favorite-model-pattern-merge.test.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/test/filesystem-policy.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/fixtures/rpc-classic-harness.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/test/git-merge-and-resolve-extension.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/grep/engine-parity.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/grep/tool.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/helpers/rpc-host-daemon-sandbox.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/high-reasoning-warning-event.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/high-reasoning-warning-tui.test.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/test/image-processing.test.ts": {
+    "typescript/no-non-null-assertion": 22
+  },
+  "packages/coding-agent/test/input-transform-streaming-example.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/integration/compaction-real-api.test.ts": {
+    "typescript/no-explicit-any": 15,
+    "typescript/no-non-null-assertion": 10
+  },
+  "packages/coding-agent/test/interactive-mode-anthropic-warning.test.ts": {
+    "typescript/no-explicit-any": 9
+  },
+  "packages/coding-agent/test/interactive-mode-clipboard-paste.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/interactive-mode-status.test.ts": {
+    "typescript/no-explicit-any": 77
+  },
+  "packages/coding-agent/test/interactive-mode-tree-navigation.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/interactive-w3.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/jev-router-example.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/manual-qa/auto-compaction-input-surface.mts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/manual-qa/goal-blocked-resume-restart.test.ts": {
+    "typescript/no-explicit-any": 3
+  },
+  "packages/coding-agent/test/manual-qa/persistent-monitor-restart.test.ts": {
+    "typescript/no-explicit-any": 5
+  },
+  "packages/coding-agent/test/model-registry.test.ts": {
+    "typescript/no-explicit-any": 1,
+    "typescript/no-non-null-assertion": 9
+  },
+  "packages/coding-agent/test/model-resolver.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/model-runtime-auth-options.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/model-runtime-catalog-service-tier.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/model-runtime-classifiers.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/model-runtime-cloudflare-compat.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/model-runtime-credential-rotation.test.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/test/model-runtime-images.test.ts": {
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/coding-agent/test/model-runtime-modify-models-compat.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/model-runtime-text-toolcall-recovery-boundaries.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/model-runtime-text-toolcall-recovery.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/model-selector.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/package-manager-ssh.test.ts": {
+    "typescript/no-explicit-any": 10
+  },
+  "packages/coding-agent/test/package-manager.test.ts": {
+    "typescript/no-explicit-any": 85
+  },
+  "packages/coding-agent/test/prompt-templates.test.ts": {
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/coding-agent/test/provider-rename-coexistence.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/recovered-toolcall-session-roundtrip.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/risky-main-model-warning-tui.test.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/test/rpc-classic-compat.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/rpc-event-coalescing.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/rpc-get-media.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/rpc-host-ensure.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/rpc-host-handoff-clientless.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/rpc-loaded-surfaces.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/rpc-media-placeholders.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/rpc-multi-session-events.test.ts": {
+    "typescript/no-non-null-assertion": 21
+  },
+  "packages/coding-agent/test/rpc-multi-session-isolation.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/rpc-opening-entry-refusals.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/rpc-prompt-response-semantics.test.ts": {
+    "typescript/no-explicit-any": 1,
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/rpc-reopen-parked-defaults.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/rpc-session-occupancy.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/rpc-session-registry.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/rpc-teardown-crash.test.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/test/sdk-session-manager.test.ts": {
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/coding-agent/test/session-id-readonly.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/session-info-modified-timestamp.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/session-manager/2537-reduce-history.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/session-manager/3519-reopen-full-history-readers.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/session-manager/3519-reopen-keeps-compaction-window.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/session-manager/build-context.test.ts": {
+    "typescript/no-explicit-any": 21
+  },
+  "packages/coding-agent/test/session-manager/compacted-session-reopen.test.ts": {
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/coding-agent/test/session-manager/custom-session-id.test.ts": {
+    "typescript/no-non-null-assertion": 11
+  },
+  "packages/coding-agent/test/session-manager/file-operations.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/session-manager/load-entries.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/session-manager/materialize-cache.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/session-manager/migration.test.ts": {
+    "typescript/no-explicit-any": 6
+  },
+  "packages/coding-agent/test/session-manager/session-mirror-budget.test.ts": {
+    "typescript/no-non-null-assertion": 9
+  },
+  "packages/coding-agent/test/session-manager/session-open-state.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/session-manager/tree-traversal.test.ts": {
+    "typescript/no-explicit-any": 4,
+    "typescript/no-non-null-assertion": 12
+  },
+  "packages/coding-agent/test/session-manager/usage-totals.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/session-resident-store.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/session-selector-path-delete.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/session-selector-rename.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/startup-thinking-resolution.test.ts": {
+    "typescript/no-non-null-assertion": 30
+  },
+  "packages/coding-agent/test/status-indicator.test.ts": {
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/coding-agent/test/streaming-reveal.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/agent-session-compaction-model-overrides.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/suite/agent-session-compaction.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/agent-session-model-extension.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/suite/agent-session-prompt.test.ts": {
+    "typescript/no-explicit-any": 1,
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/agent-session-runtime.test.ts": {
+    "typescript/no-non-null-assertion": 15
+  },
+  "packages/coding-agent/test/suite/ask-user-answer-chip.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/suite/ask-user-arrival-signals.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/suite/ask-user-characterization.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/ask-user-keyboard-model.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/suite/ask-user-mouse-host.test.ts": {
+    "typescript/no-non-null-assertion": 10
+  },
+  "packages/coding-agent/test/suite/ask-user-question-component.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/suite/ask-user-widget-mouse.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/ask-user-widget-submit-answered.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/background-event-burst.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/suite/cache-keepalive.test.ts": {
+    "typescript/no-explicit-any": 5
+  },
+  "packages/coding-agent/test/suite/extension-edit-user-message.test.ts": {
+    "typescript/no-non-null-assertion": 10
+  },
+  "packages/coding-agent/test/suite/extension-runner-herdr.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/fast-mode-persistence.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/goal-continuation-context-exclusion.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/goal-extension.test.ts": {
+    "typescript/no-explicit-any": 3
+  },
+  "packages/coding-agent/test/suite/goal-turn-usage.test.ts": {
+    "typescript/no-explicit-any": 3
+  },
+  "packages/coding-agent/test/suite/gpt-apply-patch-extension.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/suite/handoff-hint.test.ts": {
+    "typescript/no-explicit-any": 6,
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/suite/herdr-reporter.test.ts": {
+    "typescript/no-non-null-assertion": 11
+  },
+  "packages/coding-agent/test/suite/huge-transcript-render.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/loop-scheduler.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/loop-status.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/reasoning-commands.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/suite/regressions/1432-anthropic-subscription-failover-reattach.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/suite/regressions/1472-anthropic-subscription-resident-eval-summary.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/suite/regressions/1495-account-display-commands.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/1495-account-display-identity.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/regressions/1495-account-display-names.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/1560-initial-model-provenance.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/1891-prefixed-gpt-patch-tools.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/1971-queued-input-dequeue-edit.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/suite/regressions/2441-bedrock-ambient-compaction.test.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/test/suite/regressions/2537-tool-card-release.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/regressions/2651-startup-resource-fold.test.ts": {
+    "typescript/no-explicit-any": 20
+  },
+  "packages/coding-agent/test/suite/regressions/2653-tool-cards.test.ts": {
+    "typescript/no-explicit-any": 5,
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/regressions/2781-skill-collision-precedence.test.ts": {
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/coding-agent/test/suite/regressions/2835-tools-allowlist-filters-extension-tools.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/2860-replaced-session-context.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/regressions/308-skill-composition.test.ts": {
+    "typescript/no-non-null-assertion": 19
+  },
+  "packages/coding-agent/test/suite/regressions/3459-queued-input-expected-revision.test.ts": {
+    "typescript/no-non-null-assertion": 18
+  },
+  "packages/coding-agent/test/suite/regressions/3462-anthropic-subscription-usage-limit-block-guards.test.ts": {
+    "typescript/no-non-null-assertion": 15
+  },
+  "packages/coding-agent/test/suite/regressions/3534-get-entries-pages.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/regressions/3591-account-order-selection.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/suite/regressions/3592-no-builtin-tools-keeps-extension-tools.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/regressions/3853-engine-turn-window.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/3853-rpc-unattended.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/regressions/3863-queued-person-input.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/5661-uppercase-header-values.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/6647-compaction-retries-transient-stream-drop.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/7027-credential-refresh-hang.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/7209-model-selector-filter-resets-selection.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/suite/regressions/8724-in-memory-fork-active-tool.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/8964-extension-provider-streaming.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/auto-compaction-input-admission.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/auto-compaction-input-toctou.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/compaction-generation-stale-revision.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/suite/regressions/issue-1778-inline-skill-mentions.test.ts": {
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/coding-agent/test/suite/regressions/issue-1894-inprocess-theme-init.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/suite/regressions/issue-3811-goal-stop-pause.test.ts": {
+    "typescript/no-explicit-any": 3
+  },
+  "packages/coding-agent/test/suite/regressions/issue-447-goal-continuation.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/regressions/model-config-controls.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/model-select-feedback-before-auth.test.ts": {
+    "typescript/no-explicit-any": 2
+  },
+  "packages/coding-agent/test/suite/regressions/model-selector-favorites-search.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/suite/regressions/post-compaction-queued-input-resume.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/retry-profile-default-parity.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/regressions/stale-fast-mode-after-model-switch.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/regressions/warp-wsl-clipboard-keybinding.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/retry-fallback-engine.test.ts": {
+    "typescript/no-non-null-assertion": 11
+  },
+  "packages/coding-agent/test/suite/retry-fallback-hint-tiers.test.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/coding-agent/test/suite/retry-fallback-stall-shared-budget.test.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/coding-agent/test/suite/rpc-docs-parity.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/rpc-edit-user-message.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/suite/rpc-fast-mode-and-model-events.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/rpc-session-status-mirror.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/rpc-session-status.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/rpc-socket-stall.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/rpc-worker-routing.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/service-tier-extension.test.ts": {
+    "typescript/no-non-null-assertion": 10
+  },
+  "packages/coding-agent/test/suite/service-tier-model-config.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/settings-terminal-mouse.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/terminal-extension.test.ts": {
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/coding-agent/test/suite/todo-extension.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/suite/tool-dispatcher-seam.test.ts": {
+    "typescript/no-explicit-any": 4
+  },
+  "packages/coding-agent/test/suite/ultrafast-service-tier.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/suite/video-in-extension.test.ts": {
+    "typescript/no-explicit-any": 6,
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/suite/virtual-models.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/system-prompt-updates.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/coding-agent/test/system-theme.test.ts": {
+    "typescript/no-non-null-assertion": 9
+  },
+  "packages/coding-agent/test/test-harness.test.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/coding-agent/test/test-harness.ts": {
+    "typescript/no-explicit-any": 4
+  },
+  "packages/coding-agent/test/theme-controller.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/theme-export.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/coding-agent/test/theme-picker.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/thinking-selection-provenance.test.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/tool-execution-component.test.ts": {
+    "typescript/no-explicit-any": 1,
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/coding-agent/test/tool-result-reveal.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/tool-search/definition-metadata.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/tools.test.ts": {
+    "typescript/no-explicit-any": 4,
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/coding-agent/test/tree-selector.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/coding-agent/test/tui-vertical-jitter-lifecycle.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/tui-vertical-jitter.test.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/coding-agent/test/utilities.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/coding-agent/test/virtual-models.test.ts": {
+    "typescript/no-non-null-assertion": 20
+  },
+  "packages/evals/src/harness.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/evals/src/report.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/protocol/src/cbor/decoder.ts": {
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/protocol/src/framing.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/protocol/test/protocol.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/senpi-codemode/src/extension/skill-contribution.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/server/src/session-router.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/server/src/testing/host.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/server/test/server.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/server/test/unix-connection.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/session-backends/sqlite-node/src/sqlite/repo.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/session-backends/sqlite-node/src/sqlite/sql.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/session-backends/sqlite-node/test/close-hardening.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/session-backends/sqlite-node/test/repo.test.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/tui/src/alt-screen-search.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/tui/src/autocomplete.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/tui/src/components/box.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/tui/src/components/editor.ts": {
+    "typescript/no-non-null-assertion": 11
+  },
+  "packages/tui/src/components/h-stack.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/tui/src/components/stack.ts": {
+    "typescript/no-non-null-assertion": 7
+  },
+  "packages/tui/src/components/v-stack.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/tui/src/fuzzy.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/tui/src/image-markers.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/tui/src/keybindings.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/tui/src/keys.ts": {
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/tui/src/kill-ring.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/tui/src/layout.ts": {
+    "typescript/no-non-null-assertion": 8
+  },
+  "packages/tui/src/paste-markers.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/tui/src/stdin-buffer.ts": {
+    "typescript/no-non-null-assertion": 5
+  },
+  "packages/tui/src/terminal.ts": {
+    "typescript/no-non-null-assertion": 4
+  },
+  "packages/tui/src/tui-alt-screen.ts": {
+    "typescript/no-non-null-assertion": 6
+  },
+  "packages/tui/src/tui.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/tui/src/utils.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/tui/src/word-navigation.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/tui/test/autocomplete-dollar.test.ts": {
+    "typescript/no-non-null-assertion": 18
+  },
+  "packages/tui/test/autocomplete-skill-slash.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/tui/test/autocomplete-slash.test.ts": {
+    "typescript/no-non-null-assertion": 3
+  },
+  "packages/tui/test/autocomplete.test.ts": {
+    "typescript/no-non-null-assertion": 12
+  },
+  "packages/tui/test/editor.test.ts": {
+    "typescript/no-non-null-assertion": 63
+  },
+  "packages/tui/test/image-test.ts": {
+    "typescript/no-explicit-any": 1
+  },
+  "packages/tui/test/keys.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "packages/tui/test/layout.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "packages/tui/test/native-platform.test.ts": {
+    "typescript/no-non-null-assertion": 2
+  },
+  "scripts/cost.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "scripts/node-bundle-smoke.test.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "scripts/session-transcripts.ts": {
+    "typescript/no-non-null-assertion": 1
+  },
+  "scripts/stats.ts": {
+    "typescript/no-non-null-assertion": 2
+  }
+}

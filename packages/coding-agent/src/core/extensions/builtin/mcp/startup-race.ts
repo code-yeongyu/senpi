@@ -135,6 +135,7 @@ async function refreshConnectedMcpCatalog(
 	try {
 		await entry.authPlan?.refresh?.ensureFresh();
 	} catch (error) {
+		if (entry.connection.state === "disabled") return;
 		const authError = markMcpConnectionNeedsAuth(entry.connection, error);
 		if (authError !== undefined) {
 			entry.logger.warn(authError.message);
@@ -170,7 +171,7 @@ async function refreshConnectedMcpCatalog(
 		const catalog = await collectServerCatalogForCache(
 			entry.connection,
 			serverConfig,
-			entry.configHash,
+			entry.generationHash ?? entry.configHash,
 			entry.credentialIdentity,
 		);
 		if (!ownsCatalog()) {
@@ -192,9 +193,15 @@ async function refreshConnectedMcpCatalog(
 }
 
 async function connectMcpServer(connection: ServerConnection, logger?: McpConnectionEntry["logger"]): Promise<void> {
+	const generation = connection.generation;
 	try {
 		await connection.connect();
 	} catch (error) {
+		// Dispose/disable or a renew superseded this attempt: its transport can close after that returned, so the late
+		// rejection is our own teardown, not a server failure, and must neither degrade nor log (senpi#4013).
+		// The generation check relies on reconnect being timer-scheduled (reconnect.ts scheduleReconnect): a degrade
+		// raised inside this attempt cannot bump the generation before this catch runs and hide a real failure.
+		if (connection.state === "disabled" || connection.generation !== generation) return;
 		const failure = error instanceof Error ? error : new Error(String(error));
 		if (connection.lastError === undefined) connection.markDegraded(failure);
 		logger?.warn(failure.message);

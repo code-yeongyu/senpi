@@ -75,7 +75,7 @@ export function hermeticProviderEnv(): Record<string, string> {
 	return Object.fromEntries(PROVIDER_ENV_KEYS.map((key) => [key, ""]));
 }
 
-export function writeRpcModelsJson(agentDir: string, baseUrl: string): void {
+export function writeRpcModelsJson(agentDir: string, baseUrl: string, extraModelIds: readonly string[] = []): void {
 	writeFileSync(
 		join(agentDir, "models.json"),
 		`${JSON.stringify(
@@ -85,17 +85,15 @@ export function writeRpcModelsJson(agentDir: string, baseUrl: string): void {
 						baseUrl,
 						apiKey: MOCK_API_KEY,
 						api: "anthropic-messages",
-						models: [
-							{
-								id: MOCK_MODEL,
-								baseUrl,
-								api: "anthropic-messages",
-								reasoning: true,
-								contextWindow: 128000,
-								maxTokens: 4096,
-								cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-							},
-						],
+						models: [MOCK_MODEL, ...extraModelIds].map((id) => ({
+							id,
+							baseUrl,
+							api: "anthropic-messages",
+							reasoning: true,
+							contextWindow: 128000,
+							maxTokens: 4096,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						})),
 					},
 				},
 			},

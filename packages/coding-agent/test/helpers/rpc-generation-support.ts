@@ -19,6 +19,7 @@ import {
 } from "../../src/modes/rpc/socket-transport.ts";
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER } from "./rpc-hermetic.ts";
 
+export { MOCK_MODEL, MOCK_PROVIDER } from "./rpc-hermetic.ts";
 export { processAlive, reapProcessesUnder, waitForPidGone } from "./spawned-host-reaper.ts";
 
 export type WireRecord = Record<string, unknown>;

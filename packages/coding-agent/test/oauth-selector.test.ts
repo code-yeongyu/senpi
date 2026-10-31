@@ -48,6 +48,10 @@ describe("OAuthSelectorComponent", () => {
 					getProviderAuthStatus: () => ({ configured: false }),
 					isUsingOAuth: () => false,
 				},
+				modelRegistry: {
+					authStorage: { get: () => undefined },
+					resolveProviderAuth: () => ({ status: { configured: false }, signIn: false }),
+				},
 			},
 		};
 

@@ -1,17 +1,10 @@
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import lockfile from "proper-lockfile";
 import { z } from "zod";
 import { getAgentDir } from "../../config.ts";
-import {
-	CredentialStoreBusyError,
-	FILE_STORAGE_LOCK_OPTIONS,
-	FILE_STORAGE_LOCK_RETRY_BUDGET_MS,
-	FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
-	FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS,
-	isLockError,
-} from "../lockfile-policy.ts";
+import { CredentialStoreBusyError, FILE_STORAGE_LOCK_RETRY_BUDGET_MS } from "../lockfile-policy.ts";
+import { acquireStateFileLock, readStateFile, writeStateFileAtomic } from "./state-file.ts";
 
 export const CREDENTIAL_POOL_STATE_FILENAME = "credential-pool-state.json";
 
@@ -59,23 +52,23 @@ export function credentialPoolStatePath(agentDir: string = getAgentDir()): strin
 	return join(agentDir, CREDENTIAL_POOL_STATE_FILENAME);
 }
 
-const FILE_WRITE_OPTIONS = { encoding: "utf-8", mode: 0o600 } as const;
-
 function freshDocument(): CredentialPoolStateDocument {
 	return { schemaVersion: 1, installationKey: randomBytes(32).toString("hex"), providers: {} };
 }
 
-/**
- * The sidecar holds only health, so an unreadable or invalid document resets to
- * a fresh one instead of failing auth resolution; the worst outcome of a reset
- * is a cleared cooldown, never lost credential material.
- */
-function parseDocument(content: string): CredentialPoolStateDocument {
+function serialize(document: CredentialPoolStateDocument): string {
+	return JSON.stringify(document, null, 2);
+}
+
+/** The valid document in `content`, or undefined when it is missing, unreadable or invalid. */
+function parseDocument(content: string | undefined): CredentialPoolStateDocument | undefined {
+	if (content === undefined) return undefined;
 	try {
 		const parsed = documentSchema.safeParse(JSON.parse(content));
-		return parsed.success ? parsed.data : freshDocument();
-	} catch {
-		return freshDocument();
+		return parsed.success ? parsed.data : undefined;
+	} catch (error) {
+		if (error instanceof SyntaxError) return undefined;
+		throw error;
 	}
 }
 
@@ -84,8 +77,9 @@ export type SlotHealth = "ready" | "blocked" | "half_open";
 /** Deadlines are absolute so a restart never re-enables a cooling credential early. */
 export function slotHealth(state: CredentialSlotState | undefined, now: number): SlotHealth {
 	if (!state) return "ready";
-	// Auth and billing blocks have no expiry; only credential replacement clears them.
-	if (state.blockReason === "auth_error" || state.blockReason === "account_disabled") return "blocked";
+	// A billing block has no expiry; only credential replacement clears it. An auth
+	// block lasts until its re-probe time (senpi#3264), like a cooldown.
+	if (state.blockReason === "account_disabled") return "blocked";
 	if (state.blockedUntil !== undefined && state.blockedUntil > now) return "blocked";
 	if (state.blockedUntil !== undefined && state.lease !== undefined && state.lease.expiresAt > now) {
 		return "half_open";
@@ -101,57 +95,58 @@ export function slotHealth(state: CredentialSlotState | undefined, now: number):
  */
 export class CredentialSlotRepository {
 	private readonly path: string;
+	private readonly lockWaitBudgetMs: number;
 
-	constructor(path: string = credentialPoolStatePath()) {
+	constructor(path: string = credentialPoolStatePath(), options: { readonly lockWaitBudgetMs?: number } = {}) {
 		this.path = path;
+		this.lockWaitBudgetMs = options.lockWaitBudgetMs ?? FILE_STORAGE_LOCK_RETRY_BUDGET_MS;
 	}
 
-	private ensureFile(): void {
-		if (existsSync(this.path)) return;
-		mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-		writeFileSync(this.path, JSON.stringify(freshDocument(), null, 2), FILE_WRITE_OPTIONS);
-	}
-
-	private async withDocument<T>(
-		fn: (document: CredentialPoolStateDocument) => { result: T; next?: CredentialPoolStateDocument },
-	): Promise<T> {
-		this.ensureFile();
-		const release = await this.acquire();
+	/**
+	 * Reads take no lock: writes land by atomic rename, so the file always holds
+	 * one complete document. Only a missing or invalid file falls through to the
+	 * locked path, which creates or resets it (senpi#3285). When that lock stays
+	 * busy too, the read answers with an empty, unsaved document: health is
+	 * advisory, and its random installation key matches no stored revision, so
+	 * every slot simply reads as healthy for this one request.
+	 */
+	private async readDocument(): Promise<CredentialPoolStateDocument> {
+		const stored = parseDocument(readStateFile(this.path));
+		if (stored !== undefined) return stored;
 		try {
-			const document = parseDocument(readFileSync(this.path, "utf-8"));
-			const { result, next } = fn(document);
-			if (next) writeFileSync(this.path, JSON.stringify(next, null, 2), FILE_WRITE_OPTIONS);
-			return result;
-		} finally {
-			await release();
+			return await this.withDocument((document) => ({ result: document }));
+		} catch (error) {
+			if (error instanceof CredentialStoreBusyError) return freshDocument();
+			throw error;
 		}
 	}
 
-	private async acquire(): Promise<() => Promise<void>> {
-		const startedAt = Date.now();
-		let attempt = 0;
-		while (true) {
-			try {
-				return await lockfile.lock(this.path, FILE_STORAGE_LOCK_OPTIONS);
-			} catch (error) {
-				if (!isLockError(error)) throw error;
-				const waitedMs = Date.now() - startedAt;
-				if (waitedMs >= FILE_STORAGE_LOCK_RETRY_BUDGET_MS) {
-					throw new CredentialStoreBusyError(this.path, waitedMs, error);
-				}
-				const delayMs = Math.min(
-					FILE_STORAGE_LOCK_RETRY_MIN_DELAY_MS * 2 ** attempt,
-					FILE_STORAGE_LOCK_RETRY_MAX_DELAY_MS,
-					FILE_STORAGE_LOCK_RETRY_BUDGET_MS - waitedMs,
-				);
-				attempt++;
-				await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+	/**
+	 * The sidecar holds only health, so an unreadable or invalid document resets to
+	 * a fresh one instead of failing auth resolution; the worst outcome of a reset
+	 * is a cleared cooldown, never lost credential material.
+	 */
+	private async withDocument<T>(
+		fn: (document: CredentialPoolStateDocument) => { result: T; next?: CredentialPoolStateDocument },
+	): Promise<T> {
+		if (!existsSync(this.path)) mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+		const lock = await acquireStateFileLock(this.path, this.lockWaitBudgetMs);
+		try {
+			const stored = parseDocument(readStateFile(this.path));
+			const document = stored ?? freshDocument();
+			const { result, next } = fn(document);
+			if (next !== undefined || stored === undefined) {
+				lock.assertHeld();
+				await writeStateFileAtomic(this.path, serialize(next ?? document));
 			}
+			return result;
+		} finally {
+			await lock.release();
 		}
 	}
 
 	async installationKey(): Promise<string> {
-		return this.withDocument((document) => ({ result: document.installationKey, next: document }));
+		return (await this.readDocument()).installationKey;
 	}
 
 	/**
@@ -184,9 +179,23 @@ export class CredentialSlotRepository {
 	}
 
 	async listSlots(providerId: string, laneId: string): Promise<Record<string, CredentialSlotState>> {
-		return this.withDocument((document) => ({
-			result: { ...document.providers[providerId]?.lanes[laneId]?.slots },
-		}));
+		const document = await this.readDocument();
+		return { ...document.providers[providerId]?.lanes[laneId]?.slots };
+	}
+
+	/**
+	 * Drops every health entry recorded for a provider and reports whether there was one. A clean
+	 * file is only read, never locked or written. Used when a provider's own lane becomes the only
+	 * owner of its account selection, so health the generic pool recorded earlier (often a block
+	 * pinned on the wrong account) cannot outlive the change (senpi#2081).
+	 */
+	async clearProvider(providerId: string): Promise<boolean> {
+		if ((await this.readDocument()).providers[providerId] === undefined) return false;
+		return this.withDocument((document) => {
+			if (document.providers[providerId] === undefined) return { result: false };
+			const { [providerId]: _retired, ...providers } = document.providers;
+			return { result: true, next: { ...document, providers } };
+		});
 	}
 
 	/**
@@ -246,7 +255,7 @@ export async function acquireHalfOpenLease(
 		if (!current) return current;
 		const expired = current.blockedUntil !== undefined && current.blockedUntil <= now;
 		const leaseLive = current.lease !== undefined && current.lease.expiresAt > now;
-		if (!expired || leaseLive || current.blockReason === "auth_error") return current;
+		if (!expired || leaseLive) return current;
 		lease = { leaseId: randomUUID(), expiresAt: now + leaseTtlMs };
 		return { ...current, lease: { id: lease.leaseId, expiresAt: lease.expiresAt } };
 	});

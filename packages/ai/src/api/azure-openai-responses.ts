@@ -18,7 +18,7 @@ import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
-import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import { deriveOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
@@ -73,7 +73,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
 	context: TranscriptContext,
 	options?: AzureOpenAIResponsesOptions,
 ): AssistantMessageEventStream => {
-	const stream = new AssistantMessageEventStream();
+	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const normalizedContext = resolveTranscript(context, model.compat?.supportsMidConvoSystemMessages);
 
 	// Start async processing
@@ -320,7 +320,7 @@ function buildParams(
 		stream: true,
 		...((options?.cacheRetention ?? model.cacheRetention) === "none"
 			? {}
-			: { prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId) }),
+			: { prompt_cache_key: deriveOpenAIPromptCacheKey(model.id, context) }),
 		store: false,
 	};
 

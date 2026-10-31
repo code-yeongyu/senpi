@@ -53,6 +53,7 @@ export function createWriteToolDefinition(
 	const readBaseline = options?.operations ? undefined : readLocalWriteBaseline;
 	const filesystemPolicy = options?.filesystemPolicy;
 	return {
+		...(options?.operations !== undefined || filesystemPolicy !== undefined ? { serverPinned: true } : {}),
 		name: "write",
 		label: "write",
 		description:

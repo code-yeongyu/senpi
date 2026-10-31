@@ -14,17 +14,81 @@ on:
       - pnpm-lock.yaml
       - '**/*.lock.json'
       - .github/workflows/session-worker-compile.yml
+  push:
+    branches: [main]
+    paths:
+      - packages/coding-agent/src/modes/rpc/**
+      - packages/coding-agent/src/bun/**
+      - packages/coding-agent/package.json
+      - scripts/build-binaries.sh
+      - scripts/build-binaries-flags.test.mjs
+      - scripts/session-worker-compile.test.ts
+      - bun.lock
+      - package-lock.json
+      - pnpm-lock.yaml
+      - '**/*.lock.json'
+      - .github/workflows/session-worker-compile.yml
+  # ci-full-label.yml calls this workflow for the run-full-ci label (senpi#3957).
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# One group per pull request, so a new push cancels the superseded run and its queued jobs instead of leaving them in
+# the shared runner queue; main pushes get one group per commit and are never cancelled (senpi#3957).
+concurrency:
+  group: session-worker-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  platform-scope:
+    name: Platform scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      full: ${{ steps.classify.outputs.full }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            scripts/ci-platform-scope.mjs
+            .github/workflows/session-worker-compile.yml
+          sparse-checkout-cone-mode: false
+
+      - name: List the pull request's changed files
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed-files"; then
+            echo "CHANGED_FILES=$RUNNER_TEMP/changed-files" >> "$GITHUB_ENV"
+          else
+            echo "::warning::could not list the changed files; running the full macOS/Windows set"
+          fi
+
+      - name: Classify
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: node scripts/ci-platform-scope.mjs classify --event "$EVENT_NAME" --labels "$PR_LABELS" --changed "${CHANGED_FILES:-}" --workflow .github/workflows/session-worker-compile.yml
+
+  # Linux on every matching PR; macOS and Windows only when ci-platform-scope.mjs decides the run is full: a push to
+  # main, the run-full-ci label (ci-full-label.yml) or a platform-specific diff (senpi#3957).
   relocated-worker:
+    needs: platform-scope
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.platform-scope.outputs.full == 'true' && '["ubuntu-latest", "macos-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -34,7 +98,7 @@ jobs:
           node-version: "24"
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.4.2"
+          bun-version: "1.4.4"
       - name: Install locked dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
       - name: Verify standalone compile arguments

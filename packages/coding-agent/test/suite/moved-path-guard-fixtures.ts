@@ -25,9 +25,20 @@ export interface MovedLayout {
 export const MOVED_WORKTREE = "worktrees/app/w1";
 export const MOVED_SESSIONS = "userdata/omo-sessions";
 
+/**
+ * The modes the OmO desktop creates its data-home folders and records with (`mkdirSync(..., { mode: 0o700 })` and a
+ * 0600 atomic write), so the layout does not depend on the host's umask: the guard ignores a breadcrumb or marker in a
+ * group- or world-writable folder or file, and a umask of 002 (Ubuntu's default for a user with a private group) would
+ * otherwise create 0775 folders and 0664 files that the guard rightly refuses (code-yeongyu/senpi#3431).
+ */
+export const DESKTOP_DIR_MODE = 0o700;
+export const DESKTOP_FILE_MODE = 0o600;
+
 export function writeBreadcrumb(oldRoot: string, body: Record<string, unknown>): void {
-	mkdirSync(oldRoot, { recursive: true });
-	writeFileSync(join(oldRoot, "omo-desktop-moved.json"), `${JSON.stringify(body, null, 2)}\n`);
+	mkdirSync(oldRoot, { recursive: true, mode: DESKTOP_DIR_MODE });
+	writeFileSync(join(oldRoot, "omo-desktop-moved.json"), `${JSON.stringify(body, null, 2)}\n`, {
+		mode: DESKTOP_FILE_MODE,
+	});
 }
 
 export const HOME_ID = "0199f0d4-0000-7000-8000-000000000000";
@@ -46,7 +57,7 @@ export function breadcrumbBody(newRoot: string, moved: readonly string[], schema
 
 /** The desktop's ownership marker (plan section 2) that binds a breadcrumb to a real home. */
 export function writeHomeMarker(home: string, homeId: string = HOME_ID): void {
-	mkdirSync(home, { recursive: true });
+	mkdirSync(home, { recursive: true, mode: DESKTOP_DIR_MODE });
 	writeFileSync(
 		join(home, "omo-desktop-home.json"),
 		`${JSON.stringify({
@@ -60,6 +71,7 @@ export function writeHomeMarker(home: string, homeId: string = HOME_ID): void {
 			placement: "final",
 			origin: { type: "moved", from: "/elsewhere", method: "rename", ledgerMaxId: 69, proof: "ledger" },
 		})}\n`,
+		{ mode: DESKTOP_FILE_MODE },
 	);
 }
 
@@ -79,9 +91,9 @@ export function createMovedLayout(
 	const newRoot = join(home, ".omo", "desktop");
 	const newWorktree = join(newRoot, MOVED_WORKTREE);
 	const newSessions = join(newRoot, MOVED_SESSIONS);
-	mkdirSync(oldRoot, { recursive: true });
-	mkdirSync(newWorktree, { recursive: true });
-	mkdirSync(newSessions, { recursive: true });
+	mkdirSync(oldRoot, { recursive: true, mode: DESKTOP_DIR_MODE });
+	mkdirSync(newWorktree, { recursive: true, mode: DESKTOP_DIR_MODE });
+	mkdirSync(newSessions, { recursive: true, mode: DESKTOP_DIR_MODE });
 	if (options.marker !== "missing")
 		writeHomeMarker(newRoot, options.marker === "other-home" ? "another-home" : HOME_ID);
 	if (options.breadcrumb !== false) {

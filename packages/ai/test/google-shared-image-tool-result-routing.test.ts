@@ -24,13 +24,16 @@ function makeModel<TApi extends "google-generative-ai">(
 
 function makeContext(model: { api: string; provider: string; id: string }): Context {
 	const now = Date.now();
+	// Same-model tool calls carry a thoughtSignature on the first part (Gemini 3 parallel-call
+	// shape), so the structured functionResponse routing under test stays on the wire path.
+	const thoughtSignature = model.id.startsWith("gemini-3") ? { thoughtSignature: "AAAAAAAAAAAAAAAAAAAAAA==" } : {};
 	return {
 		messages: [
 			{ role: "user", content: "read the files", timestamp: now },
 			{
 				role: "assistant",
 				content: [
-					{ type: "toolCall", id: "call_a", name: "read", arguments: { path: "a.txt" } },
+					{ type: "toolCall", id: "call_a", name: "read", arguments: { path: "a.txt" }, ...thoughtSignature },
 					{ type: "toolCall", id: "call_img", name: "read", arguments: { path: "image.png" } },
 					{ type: "toolCall", id: "call_b", name: "read", arguments: { path: "b.txt" } },
 				],

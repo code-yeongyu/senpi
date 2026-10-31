@@ -12,6 +12,437 @@
 
 ### Removed
 
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Compaction relies on declared message and tool-call argument types instead of redundant assertions; runtime behavior is unchanged ([#4979](https://github.com/code-yeongyu/senpi/pull/4979)).
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-1] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+- `@earendil-works/pi-agent-core/testing/win32-sim`: a win32 simulation profile for code-level Windows tests ([#4510](https://github.com/code-yeongyu/senpi/pull/4510))
+- `@earendil-works/pi-agent-core/conformance`: the durable-core conformance case registry, a suite hash over case IDs and implementation hashes, a manifest export, and a suite runner that reports pass or fail per case and never skips ([#4727](https://github.com/code-yeongyu/senpi/pull/4727), fixes [#4726](https://github.com/code-yeongyu/senpi/issues/4726)).
+- Durable core: the DurableStore contract (atomic commit with adopt-on-durable, owner-epoch claim that raises the epoch by exactly one, ID minting, record and document scans, claim + import between hosts), an in-memory backend, the single admission line above the store, and the STORE-01..07 and KILL-STORE-01..06 conformance cases, registered in the `@earendil-works/pi-agent-core/conformance` registry and exported from it with the store contract and the host adapter interface, so other packages' host adapters run the same cases ([#4730](https://github.com/code-yeongyu/senpi/pull/4730), fixes [#4729](https://github.com/code-yeongyu/senpi/issues/4729)).
+- Durable core: the WakeHost contract (a recovery alarm armed before admitted work and kept armed while any admission is in flight, so a concurrent update or fire cannot clear it before the work commits, updated from the loop's wake after each commit, re-armed before resume on fire, and a fallback on every new instance), a Bun timer host serving many sessions with alarms persisted in each session's DurableStore under the owner epoch and re-checked across machine sleep, and the WAKE-01..03, WAKE-RET-01, KILL-WAKE-01..08 and MULTI-HOST-01 conformance cases, registered in the `@earendil-works/pi-agent-core/conformance` registry and exported from it together with the WakeHost contract, the Bun timer host, the store-backed alarm persistence, the wake conformance adapter types and manual timers, so other hosts run the same cases ([#4735](https://github.com/code-yeongyu/senpi/pull/4735), fixes [#4733](https://github.com/code-yeongyu/senpi/issues/4733)).
+- Durable core: the Transport contract (opaque frames on named lanes with per-lane order, exactly-once delivery, resume from each lane's last ACK after the carrier re-attaches, per-lane backpressure, and a per-lane retransmit deadline, so ACK progress on one lane never postpones a lost frame's resend on another) with a carrier seam, a reference transport over an in-process carrier addressed by local endpoints (owner-only Unix sockets on POSIX, named pipes on Windows), and the TRANSPORT-01..03, MULTI-LANE-01, MULTI-FAIR-01..02 and FAULT-TRANSPORT-01..05 conformance cases with five deterministic fault profiles, exported with the adapter types from `@earendil-works/pi-agent-core/conformance` ([#4741](https://github.com/code-yeongyu/senpi/pull/4741), fixes [#4738](https://github.com/code-yeongyu/senpi/issues/4738)).
+
+### Changed
+
+### Fixed
+
+- Share tree-sitter runtime initialization across concurrent grammar loads, including uncached parsers, and serialize different runtime paths through pending grammar loads. Retain missing-grammar cache entries and allow later loads after failures without evicting newer cache entries ([#4752](https://github.com/code-yeongyu/senpi/pull/4752)).
+
+### Removed
+
+## [2026.10.27-2] - 2026-10-27
+
+### Breaking Changes
+
+### Added
+
+- Assistant stream-start events carry an optional `streaming` marker so consumers can distinguish live model streams from prepared and synthetic messages ([#4231](https://github.com/code-yeongyu/senpi/pull/4231)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.27-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- Empty-assistant recovery forwards captured records for the kept attempt only, so recovered streams (including Claude models) reach the internal agent channel ([#4307](https://github.com/code-yeongyu/senpi/pull/4307))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+- An internal-only, ordered agent channel carries captured stream records; public listeners and extensions do not see it and their events are unchanged ([#4277](https://github.com/code-yeongyu/senpi/pull/4277))
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Settle response stop reasons before `message_end` so `turn_end` handlers resolve the persisted assistant entry when a provider ends with `stop` and pending tool calls or `toolUse` without tool calls ([#3029](https://github.com/code-yeongyu/senpi/issues/3029)).
+
+### Removed
+
+## [2026.10.24-3] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-2] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-1] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-3] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Harness compaction uses request-level context when a provider reports cumulative billing for multiple internal requests ([omo#10792](https://github.com/code-yeongyu/oh-my-openagent/issues/10792)).
+
+### Removed
+
+## [2026.10.21-2] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+- Every assistant response the agent loop streams carries `timing`: when the request was issued, its first and last streamed token, when it ended, and its streamed generation time. It is saved with the session, so time to first token and a reply's generation rate can be shown after a reload and by RPC clients ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
+
+- A run that fails on an error from the `queuedInputPort` (`claim`, `release`, `commitConsumption`) ends with a failure message marked `failureSource: "local"`, so callers can tell a local failure from a provider one ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-1] - 2026-10-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.20-1] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-2] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- The `pico3` harness bash tool no longer SIGKILLs its own process group when a run is aborted after `bash` failed to start (Node < 24.22 / 26.10 signals the caller's group for a child without a pid) ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
+
+### Removed
+
+## [2026.10.19] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+- `AgentOptions.queuedInputPort`: the owner of queued input claims every drain, releases every restore, and commits consumption before any queued message reaches a provider request; a rejected commit keeps it queued ([#3549](https://github.com/code-yeongyu/senpi/issues/3549)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.18-1] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.18] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A turn you stop with a reason (`abort("user stop")`, or an object with a `message`) shows that reason, capped at 500 characters, not "Request was aborted" ([#3510](https://github.com/code-yeongyu/senpi/issues/3510)).
+- A turn you stop while its context transform or API key lookup is still running ends with your stop, not with "Provider stream start timed out" and advice to raise a timeout setting ([#3481](https://github.com/code-yeongyu/senpi/issues/3481)).
+
+### Removed
+
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Aborting a turn while its context transform or API key lookup is still running behaves as it did before the start bound covered that work: the request still goes out with the aborted signal and the turn ends aborted; the bound only ends a step that nothing else ended.
+
+- A turn no longer waits forever when the context transform, the API key lookup or the provider's stream function never finishes: the start bound (or the idle bound when none is set) now covers that work and ends the turn with a provider timeout ([#3471](https://github.com/code-yeongyu/senpi/issues/3471)).
+
+### Removed
+
+## [2026.10.16-3] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.13] - 2026-10-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.12] - 2026-10-12
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.11] - 2026-10-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.10-12] - 2026-10-10
 
 ### Breaking Changes

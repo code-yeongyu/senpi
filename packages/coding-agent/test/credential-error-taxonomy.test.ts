@@ -5,7 +5,10 @@ import {
 	classifyCredentialFailure,
 	rateLimitCooldown,
 } from "../src/core/credential-pool/classify.ts";
-import { allAccountsBlockedGuidance } from "../src/core/extensions/builtin/anthropic-subscription/guidance.ts";
+import {
+	allAccountsBlockedGuidance,
+	singleAccountUnavailableGuidance,
+} from "../src/core/extensions/builtin/anthropic-subscription/guidance.ts";
 
 // 2026-09-30 12:00 in Asia/Seoul, so reset prose resolves to fixed cooldowns.
 // A zoneless reset reads as the host's local time, so its distance, and whether
@@ -215,14 +218,86 @@ describe("credential error taxonomy", () => {
 		expect(capped.retryAfterWasCapped).toBe(true);
 	});
 
-	test("lane all-blocked guidance for an auth-dominated pool classifies as auth_error, not rate_limit (omo#8383)", () => {
-		const action = classifyCredentialFailure(new Error(allAccountsBlockedGuidance(undefined, "auth_error")));
-		expect(action).toEqual({ kind: "failover", block: { reason: "auth_error" } });
+	test("lane all-blocked guidance never blocks the outer slot, auth-dominated or not (omo#8383, senpi#2081)", () => {
+		// The lane's own pool holds each account's reason and deadline; pinning its verdict on the outer
+		// slot that ran the attempt blocked every slot until re-login.
+		expect(classifyCredentialFailure(new Error(allAccountsBlockedGuidance(undefined, "auth_error")))).toEqual({
+			kind: "fail_request",
+		});
+		expect(classifyCredentialFailure(new Error(allAccountsBlockedGuidance(undefined)))).toEqual({
+			kind: "fail_request",
+		});
 	});
 
-	test("lane all-blocked guidance without an auth block stays a rate-limit cooldown", () => {
-		const action = classifyCredentialFailure(new Error(allAccountsBlockedGuidance(undefined)));
+	test("single-account guidance with fallback off fails the request like the pool guidance (senpi#3465, senpi#2081)", () => {
+		const account = { name: "primary", configured: true };
+		const auth = classifyCredentialFailure(
+			new Error(singleAccountUnavailableGuidance(account, undefined, "auth_error")),
+		);
+		expect(auth).toEqual({ kind: "fail_request" });
+		const limited = classifyCredentialFailure(
+			new Error(singleAccountUnavailableGuidance(account, Date.now() + 60_000)),
+		);
+		expect(limited).toEqual({ kind: "fail_request" });
+	});
+
+	test("fails the request for an account that is not configured instead of rotating to a cooldown (senpi#3672)", () => {
+		// No cooldown brings a missing account back, so the guidance carries no rate-limit or auth cause words.
+		const missing = singleAccountUnavailableGuidance({ name: "retired", configured: false }, undefined);
+		expect(classifyCredentialFailure(new Error(missing)).kind).toBe("fail_request");
+	});
+});
+
+describe("transient failures never classify as a permanent credential verdict (senpi#2081)", () => {
+	test.each([
+		["503 whose body mentions unauthorized", status(503, "503 Service Unavailable: upstream unauthorized")],
+		["502 whose body names an invalid key upstream", status(502, "Bad Gateway: invalid api key at upstream proxy")],
+		["504 whose body mentions billing", status(504, "Gateway Timeout while contacting billing service")],
+		["408 whose body mentions authentication_error", status(408, "Request Timeout (authentication_error)")],
+		["529 overloaded with an authentication_error type", status(529, "overloaded authentication_error")],
+	] as const)("%s retries the same slot instead of blocking it", (_label, error) => {
+		expect(classifyCredentialFailure(error, { nowMs: NOW_MS })).toEqual({ kind: "retry_same", maxAttempts: 2 });
+	});
+
+	test("a 429 whose body mentions an authentication error is a cooldown, not an auth block", () => {
+		const action = classifyCredentialFailure(status(429, "Too Many Requests: authentication_error upstream"), {
+			nowMs: NOW_MS,
+		});
 		expect(action.kind).toBe("failover");
 		if (action.kind === "failover") expect(action.block.reason).toBe("rate_limit");
+	});
+
+	test("a 403 that reports a rate limit for the token is a cooldown, not an auth block", () => {
+		const action = classifyCredentialFailure(status(403, "rate limit exceeded for this token"), { nowMs: NOW_MS });
+		expect(action.kind).toBe("failover");
+		if (action.kind === "failover") expect(action.block.reason).toBe("rate_limit");
+	});
+
+	test.each([
+		["mixed pool", allAccountsBlockedGuidance(NOW_MS + 60_000)],
+		["auth-only pool", allAccountsBlockedGuidance(NOW_MS + 900_000, "auth_error")],
+		[
+			"single blocked account",
+			singleAccountUnavailableGuidance({ name: "primary", configured: true }, NOW_MS + 900_000, "auth_error"),
+		],
+	] as const)("an account pool's own %s refusal fails the request without blocking the outer slot", (_label, text) => {
+		expect(classifyCredentialFailure(new Error(text), { nowMs: NOW_MS })).toEqual({ kind: "fail_request" });
+	});
+
+	test("an unknown, codeless custom-provider error never blocks a slot", () => {
+		const action = classifyCredentialFailure(
+			new Error(
+				"The provider returned an unexpected error. Action: send the message again; if it repeats, choose another model.",
+			),
+		);
+		expect(action).toEqual({ kind: "fail_request" });
+	});
+
+	test.each([
+		["401", status(401, "Unauthorized")],
+		["401 authentication_error body", status(401, '{"type":"error","error":{"type":"authentication_error"}}')],
+		["403 revoked token", status(403, "OAuth token has been revoked")],
+	] as const)("a genuine %s still blocks the slot as auth_error", (_label, error) => {
+		expect(classifyCredentialFailure(error)).toEqual({ kind: "failover", block: { reason: "auth_error" } });
 	});
 });

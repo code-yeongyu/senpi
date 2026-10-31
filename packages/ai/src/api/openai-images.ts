@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ImageEditParamsNonStreaming, ImageGenerateParamsNonStreaming } from "openai/resources/images.js";
+import { readProviderDiagnostic } from "../provider-diagnostic.ts";
 import type {
 	AssistantImages,
 	ImageApi,
@@ -12,6 +13,10 @@ import type {
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import {
+	awaitProviderTransport,
+	openAICompatibleProviderDiagnosticFromError,
+} from "../utils/provider-diagnostic-sources.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { resolveOpenAIClientAuth } from "./openai-client-auth.ts";
 import { buildEditParams } from "./openai-images-edit.ts";
@@ -74,11 +79,14 @@ export const generateImages: ImagesFunction<OpenAIImagesOptions> = async (
 			() => {
 				// openai SDK pinned at 6.26.0 predates gpt-image-2.5 quality tiers
 				const sdkParams = params as ImageGenerateParamsNonStreaming & ImageEditParamsNonStreaming;
-				return (
-					method === "edit"
-						? client.images.edit(sdkParams, requestOptions)
-						: client.images.generate(sdkParams, requestOptions)
-				).withResponse();
+				return awaitProviderTransport(
+					() =>
+						(method === "edit"
+							? client.images.edit(sdkParams, requestOptions)
+							: client.images.generate(sdkParams, requestOptions)
+						).withResponse(),
+					openAICompatibleProviderDiagnosticFromError,
+				);
 			},
 			{
 				maxRetries: options?.maxRetries,
@@ -107,6 +115,8 @@ export const generateImages: ImagesFunction<OpenAIImagesOptions> = async (
 	} catch (error) {
 		output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 		output.errorMessage = formatProviderError(normalizeProviderError(error));
+		const providerDiagnostic = output.stopReason === "error" ? readProviderDiagnostic(error) : undefined;
+		if (providerDiagnostic !== undefined) output.providerDiagnostic = providerDiagnostic;
 		return output;
 	}
 };

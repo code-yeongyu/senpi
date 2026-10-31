@@ -25,9 +25,9 @@ import {
 	withCancel,
 } from "@earendil-works/pi-agent-core";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
-import lockfile from "proper-lockfile";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";
+import { lockWithLossHandling } from "../core/file-lock.ts";
 import { findInitialModel, resolveCliModel } from "../core/model-resolver.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
@@ -45,6 +45,7 @@ import {
 	type SessionWorkerServices,
 	type WorkerServiceScope,
 } from "./services/worker.ts";
+import { stopWorkerOnLostOwnership } from "./session-worker-ownership.ts";
 
 export type { SessionWorkerRuntime } from "./services/worker.ts";
 
@@ -530,11 +531,15 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 	const sessionKey = Buffer.from(process.env[SESSION_WORKER_SESSION_KEY_ENV]!, "base64url").toString();
 	failureControl = control;
 	const pluginManifestPaths = options.pluginManifestPaths;
-	const releaseOwnership = await lockfile.lock(metadata.path, {
+	const { release: releaseOwnership } = await lockWithLossHandling(metadata.path, {
 		realpath: true,
 		stale: 2_000,
 		update: 1_000,
 		retries: { retries: 320, factor: 1, minTimeout: 25, maxTimeout: 25, maxRetryTime: 8_000 },
+		onLost: stopWorkerOnLostOwnership({
+			report: (message) => control.send({ type: "worker_failed", token, sessionKey, message }),
+			exit: (code) => process.exit(code),
+		}),
 	});
 	const executionEnv = new NodeExecutionEnv({ cwd: metadata.cwd });
 	const repo = new JsonlSessionRepo({ fileSystem: executionEnv, sessionsRoot: sessionDir });

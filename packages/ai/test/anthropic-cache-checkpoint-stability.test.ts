@@ -290,4 +290,64 @@ describe("Anthropic cache checkpoints", () => {
 		expect(cacheBreakpointCount(params)).toBeLessThanOrEqual(4);
 		expect(cacheBreakpointCount(params)).toBe(2);
 	});
+
+	describe("stable-prefix checkpoints from context reduction (senpi#3242)", () => {
+		const ids = ["toolu_a", "toolu_b", "toolu_c", "toolu_d"];
+		function loop(marked: readonly string[], systemPrompt?: string): Context {
+			return {
+				...(systemPrompt === undefined ? {} : { systemPrompt }),
+				messages: [
+					{ role: "user", content: "Inspect the repository", timestamp: 1 },
+					...ids.flatMap((id) => [
+						{
+							...fauxAssistantMessage(fauxToolCall("read", {}, { id }), { stopReason: "toolUse" }),
+							...(marked.includes(id) ? { promptCacheBreakpoint: true as const } : {}),
+						},
+						toolResultMessage(id),
+					]),
+				],
+				tools: [{ name: "read", description: "Read a file", parameters: Type.Object({}) }],
+			};
+		}
+		function markedToolUseIds(params: ReturnType<typeof buildAnthropicWarmPromptCacheParams>): string[] {
+			return params.messages.flatMap((message) =>
+				Array.isArray(message.content)
+					? message.content.flatMap((block) =>
+							block.type === "tool_use" && block.cache_control !== undefined ? [block.id] : [],
+						)
+					: [],
+			);
+		}
+		const toolsMarked = (params: ReturnType<typeof buildAnthropicWarmPromptCacheParams>) =>
+			JSON.stringify(params.tools ?? []).includes("cache_control");
+
+		it("marks the stable prefix and gives it the preceding tool-loop checkpoint's slot", () => {
+			const model = getModel("anthropic", "claude-sonnet-4-5");
+			const params = buildAnthropicWarmPromptCacheParams(model, loop(["toolu_b"], "You are concise."));
+
+			expect(markedToolUseIds(params)).toEqual(["toolu_b"]);
+			expect(markedToolResultIds(params)).toEqual(["toolu_d"]);
+			expect(toolsMarked(params)).toBe(true);
+			expect(cacheBreakpointCount(params)).toBe(4);
+		});
+
+		it("keeps both boundaries of a frontier step when the system holds a checkpoint, freeing the tools slot", () => {
+			const model = getModel("anthropic", "claude-sonnet-4-5");
+			const params = buildAnthropicWarmPromptCacheParams(model, loop(["toolu_a", "toolu_c"], "You are concise."));
+
+			expect(markedToolUseIds(params)).toEqual(["toolu_a", "toolu_c"]);
+			expect(markedToolResultIds(params)).toEqual(["toolu_d"]);
+			expect(toolsMarked(params)).toBe(false);
+			expect(cacheBreakpointCount(params)).toBe(4);
+		});
+
+		it("keeps only the older boundary when nothing in the system prompt can cover the tools", () => {
+			const model = getModel("anthropic", "claude-sonnet-4-5");
+			const params = buildAnthropicWarmPromptCacheParams(model, loop(["toolu_a", "toolu_c"]));
+
+			expect(markedToolUseIds(params)).toEqual(["toolu_a"]);
+			expect(toolsMarked(params)).toBe(true);
+			expect(cacheBreakpointCount(params)).toBeLessThanOrEqual(4);
+		});
+	});
 });

@@ -70,7 +70,7 @@ Never use `__dirname` directly for package assets.
 ```bash
 bun run test            # Vitest across workspaces (skips live-API; default test runner)
 ./pi-test.sh        # Launch the CLI from source via tsx for manual testing (--no-env unsets API keys)
-bun run check       # Biome + tsc + browser-smoke check (pre-commit equivalent)
+bun run check       # oxlint + oxfmt + lint ratchet + tsc + browser-smoke check (pre-commit equivalent)
 ```
 
 Live-API tests are env-gated vitest tests. Set `PI_ENABLE_LIVE_API_TESTS=1` (or a per-provider flag from `packages/ai/test/live-api-gates.ts`) plus the provider API keys, then run `bun run test`.

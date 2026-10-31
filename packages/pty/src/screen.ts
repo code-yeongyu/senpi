@@ -15,6 +15,7 @@ import {
 	normalizeReplayHistoryLength,
 	normalizeScrollback,
 	readLine,
+	sanitizedTail,
 	sanitizeString,
 } from "./screen-text.ts";
 
@@ -165,6 +166,7 @@ export class TerminalScreen {
 		for (const operation of pending) {
 			settleOperation(operation.settlers, null);
 		}
+		this.terminal.reset();
 		this.terminal.dispose();
 	}
 
@@ -235,7 +237,7 @@ export class TerminalScreen {
 
 	private boundReplayPayload(payload: string): string {
 		if (payload.length <= this.maxReplayHistoryLength) return payload;
-		return sanitizeString(payload.slice(-this.maxReplayHistoryLength));
+		return sanitizedTail(payload, this.maxReplayHistoryLength);
 	}
 
 	private async drain(): Promise<void> {
@@ -312,7 +314,7 @@ export class TerminalScreen {
 		if (this.historyLength <= this.maxReplayHistoryLength) return;
 		const [onlyChunk] = this.history;
 		if (onlyChunk === undefined) return;
-		const trimmed = sanitizeString(onlyChunk.slice(-this.maxReplayHistoryLength));
+		const trimmed = sanitizedTail(onlyChunk, this.maxReplayHistoryLength);
 		this.history[0] = trimmed;
 		this.historyLength = trimmed.length;
 	}

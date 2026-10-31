@@ -1,6 +1,8 @@
 import type { Tool } from "@earendil-works/pi-ai";
 import type { CompactionResult } from "../../../compaction/index.ts";
 import { createWarmAnchorSnapshot, isWarmSummaryAnchorValid } from "../../../compaction/warm-anchor.ts";
+import { formatCompactionFailure } from "../../../compaction-failure-text.ts";
+import { AccountUsageLimitError } from "../../../retry-fallback/usage-limit.ts";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
@@ -12,7 +14,7 @@ import type {
 } from "../../types.ts";
 import * as checkpointState from "./checkpoint-state.ts";
 import * as breaker from "./circuit-breaker.ts";
-import { buildCompactionContext } from "./context-pipeline.ts";
+import { registerContextReductionLifecycle } from "./context-reduction-lifecycle.ts";
 import {
 	createDegradationMonitorState,
 	handleMessageEnd,
@@ -55,7 +57,6 @@ import {
 	resolveBeforeAgentStartMessage,
 	resolveCompactionGeometry,
 	resolveIdleWarmAction,
-	resolveReminderSystemPrompt,
 	shouldDeferGraceBand,
 } from "./orchestration.ts";
 import * as cap from "./per-turn-cap.ts";
@@ -84,6 +85,7 @@ import * as todoBridge from "./todo-bridge.ts";
 import {
 	computeTokenBudgetReminder,
 	createInitialReminderState,
+	getPersistedReminderEpoch,
 	type TokenBudgetReminderState,
 } from "./token-budget-reminder.ts";
 import { isTransientSummarizationFailure } from "./transient-failure.ts";
@@ -94,7 +96,6 @@ import {
 	createBlockingRemoteCompactionEvent,
 	endCompactionFeedback,
 	estimatePendingPromptTokens,
-	getPromptContextWindow,
 	isAbortedAssistantMessage,
 	isMonitorableMessageEvent,
 	linkAbortSignal,
@@ -509,7 +510,7 @@ export default function compactionExtension(
 		let feedbackSignal = ctx.beginCompaction?.({ reason: "extension" });
 		try {
 			let remoteFallbackReason: string | undefined;
-			if (isOpenAiRemoteCompactionModel(ctx.model)) {
+			if (isOpenAiRemoteCompactionModel(ctx.model) && (ctx.getCompactionModel?.() ?? ctx.model) === ctx.model) {
 				const remoteGeneration = speculativeGeneration + 1;
 				const remoteSnapshot = createSpeculativeCompactionSnapshot(ctx, {
 					generation: remoteGeneration,
@@ -592,7 +593,9 @@ export default function compactionExtension(
 							reason: "extension",
 							signal: feedbackSignal,
 							aborted: feedbackSignal?.aborted,
-							errorMessage: `Compaction failed: ${stripTurnRetrySuppressionPrefix(inheritedFailure.message)}`,
+							errorMessage: formatCompactionFailure("compaction", inheritedFailure.message, {
+								model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+							}),
 						});
 						state = breaker.recordFailure(state, Date.now(), { route: "extension" });
 						return { applied: false, reason: "failed" };
@@ -683,7 +686,9 @@ export default function compactionExtension(
 				reason: "extension",
 				signal: feedbackSignal,
 				aborted: feedbackSignal?.aborted,
-				errorMessage: `Compaction failed: ${stripTurnRetrySuppressionPrefix(message)}`,
+				errorMessage: formatCompactionFailure("compaction", message, {
+					model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+				}),
 			});
 			const transient = isTransientSummarizationFailure(error, message);
 			if (transient) {
@@ -741,16 +746,22 @@ export default function compactionExtension(
 			}
 			let remoteCompaction: Awaited<ReturnType<typeof runOpenAiRemoteCompaction>>;
 			try {
-				remoteCompaction = await runOpenAiRemoteCompaction(
-					ctx,
-					event,
-					(data) => {
-						reportRemoteCompactionTimeout(ctx, event.reason, event.signal, data);
-						pi.events.emit(SENPI_COMPACTION_EVENT, data);
-					},
-					remoteCompactionDependencies,
-				);
+				// Native remote compaction is tied to the active provider's replay origin.
+				// A different summary model must use the bounded local summary route.
+				remoteCompaction =
+					(ctx.getCompactionModel?.() ?? model) !== model
+						? undefined
+						: await runOpenAiRemoteCompaction(
+								ctx,
+								event,
+								(data) => {
+									reportRemoteCompactionTimeout(ctx, event.reason, event.signal, data);
+									pi.events.emit(SENPI_COMPACTION_EVENT, data);
+								},
+								remoteCompactionDependencies,
+							);
 			} catch (error) {
+				if (error instanceof AccountUsageLimitError) return { cancel: true, reason: error.message };
 				// The remote route deliberately rethrows once its signal aborts; the
 				// handler converts that into a silent stand-down so the abort is not
 				// reported as an extension error with a stack (issue #886).
@@ -802,6 +813,7 @@ export default function compactionExtension(
 				origin: "core-route" as const,
 				customInstructions: event.customInstructions,
 				systemPrompt: ctx.getSystemPrompt(),
+				systemPromptStablePrefix: ctx.getSystemPromptStablePrefix?.(),
 				tools: getSummarizationTools(),
 			};
 			let compaction: CompactionResult | undefined;
@@ -813,9 +825,15 @@ export default function compactionExtension(
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				const failureKind = classifyRequiredCompactionFallbackFailure(error);
+				// A terminal provider failure (dead model, dead credential) has no cheaper
+				// recovery on any compaction kind: without this, a soft-threshold pre_prompt
+				// compaction cancelled instead, the session rejected it, and the pending
+				// prompt failed with RequiredCompactionError while shouldCompact still said
+				// compact (the "Compaction rejected: compaction generator failed" wedge).
 				if (
 					(requiresDeterministicCompactionFallback(event, ctx.getContextUsage()) ||
-						failureKind === "unsafe-retained-content") &&
+						failureKind === "unsafe-retained-content" ||
+						failureKind === "summarization-provider-failure") &&
 					failureKind !== undefined &&
 					!event.signal.aborted
 				) {
@@ -866,6 +884,7 @@ export default function compactionExtension(
 		const compactEvent = event;
 		invalidateSpeculativeCompaction(ctx);
 		if (compactEvent.accepted) {
+			contextReduction.reset();
 			persistAcceptedMetadata(compactEvent.requestId);
 			const branchEntries = ctx.sessionManager.getBranch();
 			const firstKeptIndex = branchEntries.findIndex(
@@ -1014,69 +1033,41 @@ export default function compactionExtension(
 			startSpeculativeCompaction(ctx, PROACTIVE_COMPACTION_INSTRUCTIONS);
 		}
 
+		const persistedReminder = getPersistedReminderEpoch(ctx.sessionManager.getBranch());
 		const reminder = computeTokenBudgetReminder({
 			contextTokens: usageWithPendingPrompt?.tokens ?? 0,
 			contextWindow,
 			thresholdTokens,
 			leadTokens,
 			compactionEpoch: speculativeGeneration,
-			state: reminderState,
+			state: persistedReminder.delivered ? { lastFiredEpoch: speculativeGeneration } : reminderState,
 		});
 		reminderState = reminder.nextState;
 		const deliveredMessage = resolveBeforeAgentStartMessage({
 			message,
 			reminder: reminder.message,
 			reminderEnabled: settings.reminderEnabled,
+			reminderEpoch: persistedReminder.epoch,
 		});
-		const reminderSystemPrompt = resolveReminderSystemPrompt({
-			systemPrompt: event.systemPrompt,
-			reminder: !message ? reminder.message : undefined,
-			reminderEnabled: settings.reminderEnabled,
-		});
-		if (!deliveredMessage && !reminderSystemPrompt) return undefined;
-		return {
-			...(deliveredMessage ? { message: deliveredMessage } : {}),
-			...(reminderSystemPrompt ? { systemPrompt: reminderSystemPrompt } : {}),
-		};
+		if (!deliveredMessage) return undefined;
+		return { message: deliveredMessage };
 	};
 	pi.on("before_agent_start", onBeforeAgentStart, { previewSafe: true });
 
-	pi.on(
-		"context",
-		(event, ctx) => {
-			const usage = ctx.getContextUsage();
-			const settings = ctx.getCompactionSettings();
-			const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-			const laneOwnsCompaction = lanePolicy.disablesSenpiCompaction(ctx);
-			const breakerFallback =
-				!laneOwnsCompaction &&
-				breaker.isTripped(state, Date.now()) &&
-				usage?.tokens !== null &&
-				usage !== undefined &&
-				usage.tokens >=
-					contextWindow * policy.computeEffectiveThreshold(contextWindow, state.lastYield ?? undefined);
-			if (breakerFallback)
-				getLogger(ctx).debug("breaker_deterministic_fallback", {
-					route: "context-event",
-					tokens: usage.tokens ?? 0,
-				});
-			return {
-				messages: buildCompactionContext({
-					event,
-					ctx,
-					contextWindow,
-					promptContextWindow: getPromptContextWindow(contextWindow, ctx.model?.maxTokens),
-					toolAdmissionEnabled: settings.toolAdmissionEnabled !== false,
-					breakerFallback,
-					laneOwnsCompaction,
-					appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
-					emergencyPruneLatch,
-					logEmergencyPrune: (fields) => getLogger(ctx).debug("emergency_prune", fields),
-				}),
-			};
-		},
-		{ mutatesMessages: false },
-	);
+	const contextReduction = registerContextReductionLifecycle(pi, {
+		emergencyPruneLatch,
+		emergencyInstructions: EMERGENCY_COMPACTION_INSTRUCTIONS,
+		getTools: getSummarizationTools,
+		getPolicy: (ctx) => ({
+			lastYield: state.lastYield ?? undefined,
+			breakerTripped: breaker.isTripped(state, Date.now()),
+			laneOwnsCompaction: lanePolicy.disablesSenpiCompaction(ctx),
+			appendOnlyTranscript: lanePolicy.hasAppendOnlyTranscript(ctx),
+		}),
+		logEmergencyPrune: (ctx, fields) => getLogger(ctx).debug("emergency_prune", fields),
+		logBreakerFallback: (ctx, tokens) =>
+			getLogger(ctx).debug("breaker_deterministic_fallback", { route: "context-event", tokens }),
+	});
 
 	pi.on("before_provider_request", async (event, ctx) => {
 		const model = event.model ?? ctx.model;

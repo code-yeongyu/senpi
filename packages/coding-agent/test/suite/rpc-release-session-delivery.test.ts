@@ -81,10 +81,68 @@ describe("release_session and gateway deliveries (real host)", () => {
 			success: true,
 			data: { released: true, dropped: { deliveries: [], user_messages: ["USER STEER TEXT", "USER FOLLOW TEXT"] } },
 		});
-		const file = readFileSync(sessionPath, "utf8");
-		expect(file).not.toContain("USER STEER TEXT");
-		expect(file).not.toContain("USER FOLLOW TEXT");
+		// The texts were handed back, so none is stored as a message, and the durable admission records
+		// that kept them while queued are closed (newest state not "queued"), so a reopen restores neither.
+		const entries = readFileSync(sessionPath, "utf8")
+			.split("\n")
+			.filter((line) => line !== "")
+			.map(
+				(line) =>
+					JSON.parse(line) as {
+						type: string;
+						customType?: string;
+						data?: Record<string, unknown>;
+						message?: unknown;
+					},
+			);
+		const messages = entries
+			.filter((entry) => entry.type === "message")
+			.map((entry) => JSON.stringify(entry.message));
+		expect(
+			messages.filter((message) => message.includes("USER STEER TEXT") || message.includes("USER FOLLOW TEXT")),
+		).toEqual([]);
+		const newest = new Map<string, unknown>();
+		for (const entry of entries)
+			if (entry.customType === "rpc_client_message_admission")
+				newest.set(String(entry.data?.clientMessageId), entry.data?.state);
+		expect([...newest.values()].filter((state) => state === "queued")).toEqual([]);
 		expect(afterReleased(sessionPath)).toEqual([]);
+	});
+
+	it("after an interrupt, the session journal and the RPC ledger agree on every identified input it handed back", async () => {
+		// Given: a turn running with identified user input queued behind it (senpi#3549 review M1).
+		const gateway = gatewayFixture();
+		await using host = await startReleaseHost(gateway.extension);
+		host.faux.setResponses([fauxAssistantMessage("seed reply"), heldTurn]);
+		const { sessionId, sessionPath, session } = await host.open("queued-identified");
+		const started = nextEvent(session, "agent_start");
+		await host.send({ type: "prompt", id: "work", sessionId, message: "long work" });
+		await started;
+		await host.send({ type: "steer", id: "s", sessionId, message: "ID STEER", clientMessageId: "c-steer" });
+		await host.send({ type: "follow_up", id: "f", sessionId, message: "ID FOLLOW", clientMessageId: "c-follow" });
+
+		// When: the release interrupts.
+		await host.release(sessionId, { interrupt: true });
+
+		// Then: both durable records read the same: neither input is still queued in either, so a reopen
+		// restores neither and no status reports one as waiting.
+		const entries = readFileSync(sessionPath, "utf8")
+			.split("\n")
+			.filter((line) => line !== "")
+			.map((line) => JSON.parse(line) as { customType?: string; data?: Record<string, unknown> });
+		const ledger = new Map<string, unknown>();
+		const journal = new Map<string, unknown>();
+		for (const entry of entries) {
+			if (entry.customType === "rpc_client_message_admission")
+				ledger.set(String(entry.data?.clientMessageId), entry.data?.state);
+			if (entry.customType === "pending_input_transition") {
+				type Recorded = { clientMessageId?: string; phase?: string };
+				const inputs = [entry.data?.input, ...((entry.data?.batch as Recorded[] | undefined) ?? [])] as Recorded[];
+				for (const input of inputs) journal.set(String(input?.clientMessageId), input?.phase);
+			}
+		}
+		expect(Object.fromEntries(ledger)).toEqual({ "c-steer": "completed", "c-follow": "completed" });
+		expect(Object.fromEntries(journal)).toEqual({ "c-steer": "removed", "c-follow": "removed" });
 	});
 
 	it("an interrupted release refused `attached` reopens admission and still hands back what it took", async () => {

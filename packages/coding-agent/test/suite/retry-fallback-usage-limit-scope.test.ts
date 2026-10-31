@@ -1,4 +1,5 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { RetryFallbackController, type RetryFallbackControllerDeps } from "../../src/core/retry-fallback/controller.ts";
@@ -13,7 +14,7 @@ const opus = model("anthropic-subscription", "claude-opus-5-5");
 const kimi = model("kimi-coding", "kimi-k3");
 const models = [fable, opus, kimi];
 
-function createController(chain: readonly string[]) {
+function createController(chain: readonly string[], now: () => number = () => 0, wallNow: () => number = now) {
 	let current: { model: Model<Api> } = { model: fable };
 	const events: unknown[] = [];
 	const deps: RetryFallbackControllerDeps = {
@@ -22,7 +23,7 @@ function createController(chain: readonly string[]) {
 			find: (provider, id) => models.find((entry) => entry.provider === provider && entry.id === id),
 			getAll: () => models,
 		},
-		cooldowns: new SelectorCooldowns(() => 0),
+		cooldowns: new SelectorCooldowns(now, undefined, wallNow),
 		logger: { debug: () => {}, info: () => {}, warn: () => {} },
 		switchModel: async (next) => {
 			current = { model: next };
@@ -86,7 +87,7 @@ describe("retry fallback usage-limit scope", () => {
 		});
 	});
 
-	it("#given an account-wide limit and only same-provider rungs left #when falling back #then the remaining rung is still tried as the last resort", async () => {
+	it("#given an account-wide limit and only same-provider rungs left #when falling back #then no spent account is tried", async () => {
 		const { controller, events } = createController(["anthropic-subscription/claude-opus-5-5"]);
 
 		const switched = await controller.tryFallback("transient", {
@@ -94,12 +95,12 @@ describe("retry fallback usage-limit scope", () => {
 		});
 
 		expect({ switched, events }).toEqual({
-			switched: true,
-			events: [expect.objectContaining({ to: "anthropic-subscription/claude-opus-5-5", limit: "account" })],
+			switched: false,
+			events: [],
 		});
 	});
 
-	it("#given an account-wide limit #when the other provider's rung is spent too #then the chain falls back to the same-provider rung before exhausting", async () => {
+	it("#given an account-wide limit #when the other provider's rung fails too #then the spent provider stays excluded", async () => {
 		const { controller, current } = createController([
 			"kimi-coding/kimi-k3",
 			"anthropic-subscription/claude-opus-5-5",
@@ -113,9 +114,9 @@ describe("retry fallback usage-limit scope", () => {
 		hops.push(await controller.tryFallback("hard-error", limit));
 
 		expect({ hops, afterFirst, afterSecond, exhausted: controller.exhaustedChainKey }).toEqual({
-			hops: [true, true, false],
+			hops: [true, false, false],
 			afterFirst: "kimi-coding/kimi-k3",
-			afterSecond: "anthropic-subscription/claude-opus-5-5",
+			afterSecond: "kimi-coding/kimi-k3",
 			exhausted: "anthropic-subscription/claude-fable-5-1",
 		});
 	});
@@ -128,5 +129,87 @@ describe("retry fallback usage-limit scope", () => {
 		expect(events.map((event) => [Reflect.get(Object(event), "to"), Object.hasOwn(Object(event), "limit")])).toEqual([
 			["anthropic-subscription/claude-opus-5-5", false],
 		]);
+	});
+
+	it("clears the spent account for a deliberate manual model probe", async () => {
+		// given
+		const { controller } = createController(fullChain);
+		await controller.tryFallback("transient", { errorMessage: "You've hit your session limit" });
+		// when
+		controller.clearForManualModelChange(opus);
+		// then
+		expect(controller.isProviderSpent(opus.provider)).toBe(false);
+	});
+
+	it("does not shorten or renew a remembered retry-after deadline when routing local refusals", async () => {
+		let now = 0;
+		const { controller } = createController(["anthropic-subscription/claude-opus-5-5"], () => now);
+		const failure = {
+			errorMessage: '429 {"type":"usage_limit_reached","message":"The usage limit has been reached"}',
+			retryAfterMs: 90_000,
+		};
+		controller.noteHealthFailure(fable, undefined, failure);
+		for (const elapsed of [30_000, 60_000, 89_999]) {
+			now = elapsed;
+			expect(await controller.tryFallback("transient", failure, false)).toBe(false);
+		}
+		now = 90_001;
+		expect(controller.isProviderSpent(fable.provider)).toBe(false);
+	});
+
+	it("caps an oversized provider retry-after hint", () => {
+		let now = 0;
+		const { controller } = createController(fullChain, () => now);
+		controller.noteHealthFailure(fable, undefined, {
+			errorMessage: "usage_limit_reached: the usage limit has been reached",
+			retryAfterMs: Number.MAX_SAFE_INTEGER,
+		});
+		expect(controller.isProviderSpent(fable.provider)).toBe(true);
+		now = MAX_SLOT_BLOCK_MS + 1;
+		expect(controller.isProviderSpent(fable.provider)).toBe(false);
+	});
+
+	it("does not forget a fresh account failure for zero or expired hints", () => {
+		const epoch = Date.UTC(2026, 9, 11);
+		const { controller } = createController(
+			fullChain,
+			() => 0,
+			() => epoch,
+		);
+		controller.noteHealthFailure(fable, undefined, {
+			errorMessage: JSON.stringify({
+				error: {
+					type: "usage_limit_reached",
+					message: "The usage limit has been reached",
+					resets_at: epoch / 1000 - 1,
+				},
+			}),
+			retryAfterMs: 0,
+		});
+		expect(controller.isProviderSpent(fable.provider)).toBe(true);
+	});
+
+	it("honors a later account reset even when retry-after is shorter", () => {
+		const epoch = Date.UTC(2026, 9, 11);
+		let now = 0;
+		const { controller } = createController(
+			fullChain,
+			() => now,
+			() => epoch + now,
+		);
+		controller.noteHealthFailure(fable, undefined, {
+			errorMessage: JSON.stringify({
+				error: {
+					type: "usage_limit_reached",
+					message: "The usage limit has been reached",
+					resets_at: epoch / 1000 + 60,
+				},
+			}),
+			retryAfterMs: 30_000,
+		});
+		now = 31_000;
+		expect(controller.isProviderSpent(fable.provider)).toBe(true);
+		now = 60_001;
+		expect(controller.isProviderSpent(fable.provider)).toBe(false);
 	});
 });

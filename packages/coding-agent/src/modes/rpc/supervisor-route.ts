@@ -5,7 +5,7 @@
  * and the answer is almost always no: the route is an internal launch surface used by
  * `ensureHost()` and by rebranded wrappers, never by a human CLI run. Asking through a static
  * import of `./host-lifecycle.ts` pulled the RPC host graph - multi-session host, socket
- * transport/ownership, the app-server daemon process helpers - into every launch, so the sentinel
+ * transport/ownership, the shared process helpers - into every launch, so the sentinel
  * scan lives here and the supervisor module is imported only once argv carries the sentinel.
  *
  * The sentinel literal is duplicated from `INTERNAL_SUPERVISOR_FLAG` on purpose: importing that

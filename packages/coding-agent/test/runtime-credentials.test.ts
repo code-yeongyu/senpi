@@ -18,14 +18,14 @@ describe("RuntimeCredentials", () => {
 
 	test("enumeration merges overrides without exposing keys", async () => {
 		const storage = AuthStorage.inMemory({
-			anthropic: { type: "oauth", access: "access", refresh: "refresh", expires: Date.now() + 60_000 },
+			"github-copilot": { type: "oauth", access: "access", refresh: "refresh", expires: Date.now() + 60_000 },
 		});
 		const credentials = new RuntimeCredentials(storage);
-		credentials.setRuntimeApiKey("anthropic", "runtime-key");
+		credentials.setRuntimeApiKey("github-copilot", "runtime-key");
 		credentials.setRuntimeApiKey("openai", "other-runtime-key");
 
 		expect(await credentials.list()).toEqual([
-			{ providerId: "anthropic", type: "api_key" },
+			{ providerId: "github-copilot", type: "api_key" },
 			{ providerId: "openai", type: "api_key" },
 		]);
 	});

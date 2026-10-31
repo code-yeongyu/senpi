@@ -13,8 +13,8 @@ compaction/        Compaction mechanics and policy (own AGENTS.md)
 session-manager/   Persistence, branching, context construction
 dynamic-prompt/    Dynamic system-prompt + workstation fact coverage
 tool-pair-guard/   Provider payload tool-pair sanitization tests
-client/            RPC/app-server client coverage
-server/            App-server/server surface coverage
+client/            RPC client coverage
+server/            Server surface coverage
 extensions/        Extension loading and API behavior
 cursor-cli-oauth/  Cursor CLI OAuth provider-lane coverage (own AGENTS.md)
 tool-search/       Shared tool-catalog / `tool_search` exposure coverage
@@ -25,7 +25,6 @@ helpers/           Shared subprocess/QA/fixture helpers
 benchmarks/        Perf-oriented probes (not part of the default correctness gate)
 examples/          Coverage for the shipped `examples/` extensions
 manual-qa/         Explicit manual QA scripts (excluded from the default suite; SENPI_MANUAL_QA=1 to run a *.test.ts)
-qa/app-server/     Real app-server surface drivers (own AGENTS.md)
 integration/       Explicitly gated real-provider tests
 fixtures/, goldens/ Shared deterministic inputs and snapshots
 model-runtime*.test.ts / models-store.test.ts / remote-catalog-provider.test.ts / runtime-credentials.test.ts
@@ -50,7 +49,7 @@ Legacy root helpers: `test-harness.ts` (superseded), `utilities.ts`, `model-runt
 - Use `suite/regressions/<issue>-<slug>.test.ts` for issue regressions.
 - Do not extend the legacy `test-harness.ts` unless the preferred harness lacks a required capability.
 - Keep fixtures deterministic, local, and secret-free. Spawned process tests must clean up children, sockets, and temporary directories.
-- Tests involving PTY, MCP, app-server, or other subprocess-heavy surfaces must remain reliable with `CI=1`, where Vitest uses one fork.
+- Tests involving PTY, MCP, RPC hosts, or other subprocess-heavy surfaces must remain reliable with `CI=1`, where Vitest uses one fork.
 
 ## QUARANTINE CONTRACT (load-bearing)
 
@@ -60,13 +59,12 @@ Legacy root helpers: `test-harness.ts` (superseded), `utilities.ts`, `model-runt
 - Guarding only the `SENPI_` lane is not enough: with the omo brand active, `brandEnvNames` resolves `OMO_CODING_AGENT_DIR` first, so `getAgentDir()` bypassed the quarantine and `settings-tips.test.ts` wiped the live `~/.omo/agent/settings.json` again on 2026-08-25 (reproduced pre-fix against a decoy dir; post-fix the decoy stays intact). The scrub of all lanes plus the brand marker is what closes this; never narrow it back to a single-lane guard, and never reintroduce an `if (!process.env.SENPI_CODING_AGENT_DIR)` short-circuit here.
 - Before this guard always won, an inherited env made the whole suite run against the real config and tests deleted `~/.omo/agent/settings.json` (proven live 2026-08-18: favorite-guard ENOENT crashes matched suite-run windows exactly).
 - To target a specific real directory in a test, pass the agent dir explicitly to `SettingsManager.create` / `SessionManager.create` rather than relying on the ambient env. Use `SENPI_TEST_USE_REAL_AGENT_DIR=1` only for the rare whole-suite opt-in.
-- `setup.ts` also calls `scrubHostLifecycleEnv`, which deletes every `SENPI_RPC_HOST_*` variable. A host generation exports its lifecycle (`GENERATION`, `INSTANCE_ID`, `DAEMON_DIR`, `PUBLIC_SOCKET`, `WATCH_PPID`, `WATCH_FD`, `SCRATCH_DIR`, `CLEANUP_PATHS`) to every session it runs, so a suite started from an omo session otherwise inherits it: `rpc-multi-session.test.ts` read generation 10 instead of 0, and spawned test hosts watched the outer supervisor's pid. The scrub is by prefix like the agent-dir lanes; a test that needs a host tuning variable (`SENPI_RPC_HOST_IDLE_EXIT_MS`, `SENPI_RPC_HOST_RSS_WARN_MB`) sets it explicitly.
+- `setup.ts` also calls `scrubHostLifecycleEnv`, which deletes every `SENPI_RPC_HOST_*` **and every `SENPI_RPC_INTERNAL_KEY*`** variable. A host generation exports its lifecycle (`GENERATION`, `INSTANCE_ID`, `DAEMON_DIR`, `PUBLIC_SOCKET`, `WATCH_PPID`, `WATCH_FD`, `SCRATCH_DIR`, `CLEANUP_PATHS`) to every session it runs, so a suite started from an omo session otherwise inherits it: `rpc-multi-session.test.ts` read generation 10 instead of 0, and spawned test hosts watched the outer supervisor's pid. The scrub is by prefix like the agent-dir lanes; a test that needs a host tuning variable (`SENPI_RPC_HOST_IDLE_EXIT_MS`, `SENPI_RPC_HOST_RSS_WARN_MB`) sets it explicitly. Internal-key bootstrap state is private to the outer host in the same way: an inherited `SENPI_RPC_INTERNAL_KEY_STDIN=1` made a spawned CLI child try to read a key from its unrelated stdin and die with `internal_key_unavailable` (senpi#4700), so the same scrub deletes the whole `SENPI_RPC_INTERNAL_KEY*` namespace. `quarantine.ts` imports that prefix from the module that declares it, `src/modes/rpc/host-identity-env.ts` (`INTERNAL_KEY_ENV_PREFIX`) rather than re-spelling it, so a rename of the namespace cannot leave the scrub behind.
 - Tests that spawn the CLI as a subprocess must set `SENPI_CODING_AGENT_DIR` to a temp dir in the child env explicitly (see `test/helpers/rpc-hermetic.ts`); never let the child inherit an unguarded ambient value.
 
 ## LIVE AND MANUAL SURFACES
 
 - `integration/` is opt-in only with `PI_RUN_INTEGRATION=1`; it may use real credentials and incur cost.
-- `qa/app-server/` contains focused real-surface drivers. The separate `bun run qa:app-server` command runs the packaged handshake, multiclient, approval, and real-client probes.
 - Runtime changes covered here still require the repository's `senpi-qa` evidence gate when the root guide requires it.
 
 ## VALIDATION

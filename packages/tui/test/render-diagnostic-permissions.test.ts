@@ -122,13 +122,14 @@ describe("TUI diagnostic log permissions", () => {
 		const randomValue = 0.123456789;
 		const originalDateNow = Date.now;
 		const originalMathRandom = Math.random;
-		const debugDir = path.join("/tmp", "tui");
+		const temp = fs.mkdtempSync(path.join(os.tmpdir(), "senpi-render-dump-"));
+		const debugDir = path.join(temp, "tui");
 		const debugPath = path.join(debugDir, `render-${timestamp}-${randomValue.toString(36).slice(2)}.log`);
 
 		Date.now = () => timestamp;
 		Math.random = () => randomValue;
 		try {
-			await withEnv({ PI_TUI_DEBUG: "1", PI_TUI_TEST_SEAMS: "1" }, async () => {
+			await withEnv({ PI_TUI_DEBUG: "1", PI_TUI_TEST_SEAMS: "1", TMPDIR: temp, TEMP: temp, TMP: temp }, async () => {
 				fs.mkdirSync(debugDir, { recursive: true });
 				fs.writeFileSync(debugPath, "existing debug dump\n", { encoding: "utf8", mode: 0o644 });
 				fs.chmodSync(debugPath, 0o644);
@@ -149,7 +150,7 @@ describe("TUI diagnostic log permissions", () => {
 		} finally {
 			Date.now = originalDateNow;
 			Math.random = originalMathRandom;
-			fs.rmSync(debugPath, { force: true });
+			fs.rmSync(temp, { recursive: true, force: true });
 		}
 	});
 });

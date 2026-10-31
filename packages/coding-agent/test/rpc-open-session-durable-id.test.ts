@@ -11,6 +11,7 @@ import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { SessionCommandRouter } from "../src/modes/rpc/session-command-router.ts";
 import { SessionEventWriter } from "../src/modes/rpc/session-event-writer.ts";
 import { type RpcSessionLaunchProfile, RpcSessionRegistry } from "../src/modes/rpc/session-registry.ts";
+import { fakeSessionBase } from "./helpers/fake-session-base.ts";
 
 /**
  * open_session.durableSessionId (#1951): the caller may name the durable session id so its
@@ -33,8 +34,7 @@ function makeFactory(calls: CapturedFactoryCall[]): CreateAgentSessionRuntimeFac
 		calls.push({ cwd: options.cwd, sessionManager: options.sessionManager });
 		return {
 			session: {
-				sessionManager: options.sessionManager,
-				agentDir: options.agentDir,
+				...fakeSessionBase(options),
 				extensionRunner: { hasHandlers: () => false, emit: async () => {} },
 				abort: async () => {},
 				abortBash: () => {},

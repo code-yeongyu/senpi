@@ -23,8 +23,8 @@
 	"exclude": [
 		"node_modules",
 		"dist",
-		"src/modes/app-server/protocol/generated/**/*.ts",
 		"src/experimental",
-		"src/cli/experimental"
+		"src/cli/experimental",
+		"**/*.test.ts"
 	]
 }

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Api, Model } from "@earendil-works/pi-ai";
 
 import { credentialHeaders, hostedRouteMapping } from "./hosted-routes.ts";
 import { isAllowedProviderBaseUrl } from "./provider-endpoints.ts";
@@ -9,6 +10,7 @@ export interface NativeModelInfo {
 	id: string;
 	baseUrl: string;
 	api?: string;
+	compat?: Model<Api>["compat"];
 	cost?: { input: number; output: number };
 	headers?: Record<string, string>;
 }

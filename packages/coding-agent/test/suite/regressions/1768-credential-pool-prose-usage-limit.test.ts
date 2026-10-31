@@ -74,6 +74,10 @@ describe("senpi#1768 prose usage limit through the credential pool", () => {
 	test.each([
 		["Codex SSE error", "Codex error: The usage limit has been reached"],
 		["ChatGPT friendly message", "You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min."],
+		[
+			"ChatGPT credits message (#3615)",
+			"You have hit your ChatGPT usage limit (pro plan). This account has ChatGPT credits, but ChatGPT did not apply them to this request. To keep going now, add an OpenAI API key, sign in with another ChatGPT account, or switch providers. Try again in ~42 min.",
+		],
 		["Claude session limit", "You've hit your session limit \u00b7 resets 12am (Asia/Seoul)"],
 	] as const)("%s on the first account: the request is retried on the second and succeeds", async (_label, text) => {
 		const { faux, runtime } = await runtimeWith(twoAccounts());

@@ -35,6 +35,7 @@ function branchIds(harness: Harness): string[] {
 function branchRoles(harness: Harness): string[] {
 	return harness.sessionManager
 		.getBranch()
+		.filter((entry) => entry.type !== "custom" || entry.customType !== "session-lifecycle")
 		.map((entry) => (entry.type === "message" ? entry.message.role : entry.type));
 }
 

@@ -32,6 +32,11 @@ export const MIN_WAITABLE_FLOOR_MS = 5_000;
 /** Default window: 2.5x the longest synchronous block the matrix exercises (12 s). */
 const DEFAULT_MIN_WAITABLE_MS = 30_000;
 const TICK_MS = 1_000;
+/**
+ * The tick while the host has no children at all (senpi#3747): nothing can be waitable, and a child that
+ * appears is only reaped after `minWaitableMs` (30 s by default) anyway, so a 5 s look costs nothing.
+ */
+export const CHILD_REAPER_IDLE_TICK_MS = 5_000;
 const WARN_INTERVAL_MS = 5 * 60_000;
 /** Below this many waiting children a quiet host stays quiet. */
 const WARN_AT_WAITING = 10;
@@ -55,6 +60,8 @@ export interface ChildReaper {
 	tick(): void;
 	/** Children seen exited and still unclaimed, oldest observation first. */
 	readonly waitingPids: readonly number[];
+	/** Direct children the last pass saw, live or exited. */
+	readonly childCount: number;
 }
 
 interface TrackedChild {
@@ -122,6 +129,9 @@ export function createChildReaper(options: ChildReaperOptions): ChildReaper {
 		get waitingPids() {
 			return [...tracked].filter(([, child]) => child.waitableSince !== undefined).map(([pid]) => pid);
 		},
+		get childCount() {
+			return tracked.size;
+		},
 	};
 }
 
@@ -159,9 +169,27 @@ export async function startHostChildReaper(log: (message: string) => void): Prom
 		return () => {};
 	}
 	const reaper = createChildReaper({ syscalls, minWaitableMs: config.minWaitableMs, log });
-	const timer = setInterval(() => reaper.tick(), config.tickMs);
-	timer.unref();
-	return () => clearInterval(timer);
+	return scheduleChildReaper(reaper, config.tickMs);
+}
+
+/** Ticks `reaper` every `tickMs` while it has children, every `CHILD_REAPER_IDLE_TICK_MS` while it has none. */
+export function scheduleChildReaper(reaper: ChildReaper, tickMs: number): () => void {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const arm = (): void => {
+		timer = setTimeout(
+			() => {
+				reaper.tick();
+				if (timer !== undefined) arm();
+			},
+			reaper.childCount > 0 ? tickMs : Math.max(tickMs, CHILD_REAPER_IDLE_TICK_MS),
+		);
+		timer.unref();
+	};
+	arm();
+	return () => {
+		if (timer !== undefined) clearTimeout(timer);
+		timer = undefined;
+	};
 }
 
 let orphanSyscalls: Promise<ChildReaperSyscalls | undefined> | undefined;

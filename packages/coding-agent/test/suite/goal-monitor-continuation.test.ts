@@ -429,6 +429,55 @@ describe("goal continuation while a monitor is active", () => {
 		expect(timerStates.at(-1)).toBe(false);
 	});
 
+	// senpi#3196: an RPC client (the OmO desktop) sees the wait the TUI shows, and can run it now.
+	it("publishes the scheduled wait to RPC clients and runs it at once on a fire-now request", async () => {
+		vi.useFakeTimers();
+		const notices: string[] = [];
+		const harness = createGoalHarness();
+		const { tools, handlers, sent, events, rpcEmitted, rpcHandlers } = harness;
+		const ctx = await makeGoalContext(notices, "thread-rpc-fire-now", {
+			pendingMessages: false,
+			cacheSafeWaitSeconds: 270,
+		});
+		await runGoalHandlers(handlers, "session_start", { type: "session_start", reason: "reload" }, ctx);
+		await tools
+			.get("create_goal")
+			?.execute("create", { objective: "Keep moving" }, undefined, undefined, ctx as ExtensionToolContext);
+		events.emit("terminal_monitor_state", { activeCount: 1 });
+		await events.flush();
+		await runGoalHandlers(handlers, "agent_start", { type: "agent_start" }, ctx);
+		await runGoalHandlers(handlers, "agent_end", { type: "agent_end", messages: [cleanAssistantStop()] }, ctx);
+
+		const scheduled = rpcEmitted.filter((event) => event.name === "goal_continuation_scheduled");
+		expect(scheduled).toHaveLength(1);
+		const schedule = scheduled[0]?.data as { dueAtMs: number; delayMs: number; wakeSources: Record<string, number> };
+		expect(schedule.delayMs).toBeGreaterThan(0);
+		expect(schedule.dueAtMs).toBe(Date.now() + schedule.delayMs);
+		expect(Object.values(schedule.wakeSources).reduce((sum, count) => sum + count, 0)).toBe(1);
+		expect(rpcEmitted.filter((event) => event.name === "goal_continuation_timer_state").at(-1)?.data).toEqual({
+			armed: true,
+			kind: "monitor",
+			dueAtMs: schedule.dueAtMs,
+		});
+		expect(sent).toHaveLength(0);
+
+		const fireNow = rpcHandlers.get("goal_continuation_fire_now");
+		const delivered = waitForSentCount(harness, 1);
+		await expect(fireNow?.(undefined)).resolves.toEqual({ fired: true, kind: "monitor" });
+		await delivered;
+		expect(sent).toHaveLength(1);
+		expect(rpcEmitted.filter((event) => event.name === "goal_continuation_timer_state").at(-1)?.data).toEqual({
+			armed: false,
+			kind: "monitor",
+		});
+		expect(rpcEmitted.some((event) => event.name === "goal_continuation_resumed")).toBe(true);
+
+		// Nothing is armed any more: a second request says so, and the old due time fires nothing.
+		await expect(fireNow?.(undefined)).resolves.toEqual({ fired: false, reason: "not_armed" });
+		await vi.advanceTimersByTimeAsync(schedule.delayMs * 2);
+		expect(sent).toHaveLength(1);
+	});
+
 	it("queues no continuation while a turn is awaiting a tool result", async () => {
 		vi.useFakeTimers();
 		const notices: string[] = [];

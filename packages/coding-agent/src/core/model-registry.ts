@@ -27,6 +27,7 @@ import type { ModelRuntime } from "./model-runtime.ts";
 import { ModelRuntime as DefaultModelRuntime } from "./model-runtime.ts";
 import type { AuthStatus, ProviderConfigInput } from "./provider-composer.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
+import type { ProviderOrigin } from "./provider-origin.ts";
 import type { VirtualModelDefinition } from "./virtual-models.ts";
 
 export type { ProviderConfigInput } from "./provider-composer.ts";
@@ -175,7 +176,20 @@ export class ModelRegistry {
 	}
 
 	getProviderAuthStatus(provider: string): AuthStatus {
-		return this.runtime.getProviderAuthStatus(provider);
+		return this.resolveProviderAuth(provider).status;
+	}
+
+	/** `getProviderAuthStatus` plus whether it is a non-stored sign-in, from one resolution (#3537). */
+	resolveProviderAuth(provider: string): { status: AuthStatus; signIn: boolean } {
+		this.retryBusyCredentialRead();
+		const resolved = this.runtime.resolveProviderAuth(provider);
+		if (resolved.status.configured || this.runtime.hasAvailabilitySnapshot()) return resolved;
+		// Until an availability pass succeeds the runtime's stored-provider set is empty, so answer
+		// from the live store, as getAvailable() does through hasAuth(); otherwise a store that was
+		// locked on its first read keeps reporting "not configured" while its models are usable
+		// (#2249). getAuthStatus() labels the source (stored, --api-key, environment) correctly.
+		const live = this.authStorage.getAuthStatus(provider);
+		return live.configured ? { status: live, signIn: false } : resolved;
 	}
 
 	getProvider(provider: string): Provider | undefined {
@@ -293,5 +307,9 @@ export class ModelRegistry {
 
 	getRegisteredProviderIds(): readonly string[] {
 		return this.runtime.getRegisteredProviderIds();
+	}
+
+	getProviderOrigin(providerName: string): ProviderOrigin | undefined {
+		return this.runtime.getProviderOrigin(providerName);
 	}
 }

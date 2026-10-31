@@ -456,7 +456,7 @@ so providers can interpret it independently.
 ## Detached cells
 
 `eval` accepts `on_timeout: "detach"|"error"`. The default is `"detach"` in
-interactive TUI, RPC, and app-server sessions; print and JSON one-shot runs
+interactive TUI and RPC sessions; print and JSON one-shot runs
 default to `"error"` so their result is never silently detached. A detached
 cell keeps only its own language kernel busy. New same-language cells are admitted
 into its FIFO queue; calls in other languages continue normally. Queued cells may
@@ -560,6 +560,21 @@ fresh interpreter dies too before it finished a cell, the queued cells fail with
 another. An interpreter whose exit cannot be confirmed is reported, never
 replaced by a second one. The JavaScript worker keeps its own restart path.
 
+A death is reported however the host first hears of it: a broken control pipe
+(EPIPE) counts the same as the exit. A SIGKILL senpi did not send reads
+`signal 9, probably killed by the system, most often under memory pressure`,
+with the host's memory state when it can be read (macOS memory pressure level
+and swap in use; Linux available memory and swap in use) and, for Python, the
+kernel's last memory reading. The Python prelude's parent watch names itself
+instead when it stops the kernel. Python results report the user globals
+defined so far (`globalNames`, at most 64, and `globalCount`); the notice lists
+the ones a dead kernel took with it (`Lost: helper, rows`). The session keeps
+that list in `<artifacts>/kernels/py-globals.json`, so the first result of a
+kernel started by a later generation of the same session (a reload, including
+the automatic config reload, a host restart, or a resume) says
+`[py kernel is new: ...; every global it held is gone. Lost: ...]`. A reset
+clears the list.
+
 Commands a cell runs through `Bun.$` never read the host's terminal: the worker
 thread shares the TUI's stdin, so the shell wrapper hands every template an
 empty pipe (`true | ( … )`) while a cell is active. Output, exit codes, `cwd`,
@@ -654,7 +669,7 @@ bun run --cwd packages/senpi-codemode gate --target <base-checkout> \
 ```
 
 Record with the canonical runtimes, so the baseline's runtime observations do not
-flip between recordings: Bun 1.4.2, Python 3.14, Julia 1.12 and Ruby 4.x from
+flip between recordings: Bun 1.4.3, Python 3.14, Julia 1.12 and Ruby 4.x from
 Homebrew (put `/opt/homebrew/opt/ruby/bin` first on `PATH`; macOS's system Ruby
 2.6 records a different runtime). Check `ruby --version` and `python3 --version`
 before `--write-baseline`.

@@ -4,6 +4,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CompactionResult } from "../../src/core/compaction/index.ts";
+import { registerFallbackModels } from "./fallback-provider-fixture.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const primary = "faux/faux-1";
@@ -178,10 +179,16 @@ describe("agent-session compaction refusal unpin + eager restore", () => {
 			],
 			fallbackNow: () => 0,
 			settings: {
-				retry: { enabled: true, maxRetries: 0, baseDelayMs: 1, fallbackChains: { [primary]: [fallback] } },
+				retry: {
+					enabled: true,
+					maxRetries: 0,
+					baseDelayMs: 1,
+					fallbackChains: { [primary]: ["faux-spare/faux-2"] },
+				},
 			},
 		});
 		harnesses.push(harness);
+		registerFallbackModels(harness, "faux-spare", ["faux-2"]);
 		harness.setResponses([billingError(), fauxAssistantMessage("fallback answer")]);
 
 		await harness.session.prompt("hello");

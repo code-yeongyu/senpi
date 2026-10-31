@@ -43,21 +43,50 @@ export class TuiSessionControlHost implements ControlEndpointHost {
 	private openTickets = 0;
 	private bufferedElsewhere = false;
 	private handoff: SubmissionTicket | undefined;
+	private registering: Promise<unknown> = Promise.resolve();
 	private readonly context: () => Omit<TuiControlContext, "editorRevision">;
 
 	constructor(context: () => Omit<TuiControlContext, "editorRevision">) {
 		this.context = context;
 	}
 
-	async register(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration> {
-		await this.disposeActive();
+	/**
+	 * One registration at a time: one still opening when another starts (a retiring extension
+	 * generation's, still in flight across a reload, and the new generation's) would otherwise finish
+	 * last and replace `active`, leaving the other endpoint serving with no host tracking it (senpi#3246).
+	 */
+	register(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration> {
+		const next = this.registering.then(() => this.registerNow(options));
+		this.registering = next.catch(() => undefined);
+		return next;
+	}
+
+	private async registerNow(options: RegisterControlEndpointOptions): Promise<SessionControlRegistration> {
+		// A previous endpoint whose teardown failed is gone from this host either way: the failure is
+		// reported, and the new registration still gets its endpoint.
+		await this.disposeActive().catch((error: unknown) =>
+			this.context().surface.notice(
+				`control endpoint teardown failed: ${error instanceof Error ? error.message : String(error)}`,
+			),
+		);
 		const { registerSessionControlEndpoint } = await import("./session-control-endpoint.ts");
 		const outcome = await registerSessionControlEndpoint(
 			{ ...this.context(), editorRevision: () => this.editorRevision },
 			options,
 		);
-		if ("endpoint" in outcome) this.active = outcome.endpoint;
-		return outcome.registration;
+		if (!("endpoint" in outcome)) return outcome.registration;
+		const endpoint = outcome.endpoint;
+		this.active = endpoint;
+		return {
+			...outcome.registration,
+			// Its owner disposing it (a retired extension generation, senpi#3246) also takes it off this host,
+			// but only once its teardown settled: until then the next registration's `disposeActive` awaits
+			// it, so the teardown's header-only discard never removes the file the next endpoint serves.
+			dispose: async () => {
+				await endpoint.dispose();
+				if (this.active === endpoint) this.active = undefined;
+			},
+		};
 	}
 
 	/** Wraps the editor's callbacks; call after both are assigned. `hasDraft` reads the composer now. */

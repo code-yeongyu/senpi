@@ -10,6 +10,7 @@ import {
 	resolveModelScope,
 	resolveModelScopeWithDiagnostics,
 } from "../src/core/model-resolver.ts";
+import { providersMissingDefault } from "./helpers/provider-defaults-check.ts";
 
 // Mock models for testing
 const mockModels: Model<"anthropic-messages">[] = [
@@ -696,6 +697,11 @@ describe("resolveCliModel", () => {
 });
 
 describe("default model selection", () => {
+	test("anthropic defaults track current models", () => {
+		expect(defaultModelPerProvider.anthropic).toBe("claude-opus-5-5");
+		expect(defaultModelPerProvider["anthropic-subscription"]).toBe("claude-opus-5-5");
+	});
+
 	test("openai defaults track current models", () => {
 		expect(defaultModelPerProvider.openai).toBe("gpt-6.1-sol");
 		expect(defaultModelPerProvider["chatgpt-subscription"]).toBe("gpt-6.1-sol");
@@ -711,19 +717,28 @@ describe("default model selection", () => {
 	});
 
 	test("every bundled provider default resolves in its catalog", () => {
-		for (const provider of Object.keys(defaultModelPerProvider)) {
-			// radius/ollama are dynamic catalogs; cursor is authentication-only until
-			// its chat protocol is ported.
-			if (provider === "radius" || provider === "ollama" || provider === "cursor") continue;
-			const defaultModelId = defaultModelPerProvider[provider];
+		const missing = providersMissingDefault(defaultModelPerProvider, (provider) => {
 			// The anthropic-subscription builtin extension serves the bundled anthropic catalog.
 			const catalogProvider = provider === "anthropic-subscription" ? "anthropic" : provider;
 			// `KnownProvider` deliberately retains the legacy `openai-codex` id, which is no longer a
 			// catalog key, so the catalog lookup takes its own narrower parameter type.
-			const modelIds = getModels(catalogProvider as Parameters<typeof getModels>[0]).map((model) => model.id);
-			expect(modelIds.length, `${provider} should expose a bundled catalog`).toBeGreaterThan(0);
-			expect(modelIds, `${provider} should include its default ${defaultModelId}`).toContain(defaultModelId);
-		}
+			return getModels(catalogProvider as Parameters<typeof getModels>[0]).map((model) => model.id);
+		});
+		expect(missing, "built-in defaults missing from their bundled catalog").toEqual([]);
+	});
+
+	// The release prepare runs this group as `check:provider-defaults`; both tests call the same check.
+	test("a default dropped from a regenerated catalog as deprecated is named by provider", () => {
+		// models.dev marked mimo-v2.5-pro deprecated, so a regenerated xiaomi catalog keeps only these ids.
+		const regenerated: Record<string, readonly string[]> = {
+			xiaomi: ["mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.6-pro-ultraspeed"],
+		};
+		expect(providersMissingDefault({ xiaomi: "mimo-v2.5-pro" }, (provider) => regenerated[provider] ?? [])).toEqual([
+			"xiaomi: mimo-v2.5-pro (catalog has 3 models)",
+		]);
+		expect(
+			providersMissingDefault({ xiaomi: defaultModelPerProvider.xiaomi }, (provider) => regenerated[provider] ?? []),
+		).toEqual([]);
 	});
 
 	test("built-in chat providers have defaults in their generated catalogs", () => {
@@ -741,8 +756,22 @@ describe("default model selection", () => {
 		}
 	});
 
+	test("kimi defaults pick kimi k3.1 pro where the provider serves it", () => {
+		expect(defaultModelPerProvider.moonshotai).toBe("kimi-k3.1-pro");
+		expect(defaultModelPerProvider["moonshotai-cn"]).toBe("kimi-k3.1-pro");
+		expect(defaultModelPerProvider["opencode-go"]).toBe("kimi-k3.1-pro");
+		expect(defaultModelPerProvider.opengateway).toBe("moonshotai/kimi-k3.1-pro");
+		// Fireworks and Together list no K3.1 Pro yet, so they stay on K3.
+		expect(defaultModelPerProvider.fireworks).toBe("accounts/fireworks/models/kimi-k3");
+		expect(defaultModelPerProvider.together).toBe("moonshotai/Kimi-K3");
+	});
+
 	test("ai-gateway default tracks current model", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("zai/glm-5.1");
+	});
+
+	test("amazon-bedrock default tracks current model", () => {
+		expect(defaultModelPerProvider["amazon-bedrock"]).toBe("us.anthropic.claude-opus-5-5");
 	});
 
 	test("ollama defaults to its current coding model", () => {

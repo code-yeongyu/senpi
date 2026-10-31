@@ -1,5 +1,6 @@
 /** The options and result of `ensureHost`, kept apart so the ensure's helpers can name them without a cycle. */
 import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
+import type { Duplex } from "node:stream";
 
 /**
  * What an ensure may do to a host that is already running.
@@ -12,8 +13,12 @@ import type { HostLifecyclePolicyInput } from "./host-lifecycle.ts";
 export type HostUpgradePolicy = "never" | "if-engine-differs";
 
 export interface EnsureHostOptions {
+	readonly presenterBootstrap?: Duplex;
+	/** Deployment opt-in, never a project setting or proof of enrollment. Defaults off for a new host. */
+	readonly mcpPresenterEnforcement?: boolean;
 	readonly socket: string;
 	readonly agentDir?: string;
+	readonly keyRoot?: string;
 	/** Opt in to this caller process's lifetime. Attach holds remain independently releasable. */
 	readonly owner?: "caller";
 	/** Host lifecycle policy recorded in settings.json (env overrides win at runtime). */
@@ -24,8 +29,12 @@ export interface EnsureHostOptions {
 	readonly env?: Readonly<Record<string, string | null>>;
 	/** Whether a newer build may take the socket over from the running host. Defaults to `never`. */
 	readonly upgrade?: HostUpgradePolicy;
+	/** Maximum wait for an already-stopping generation; capped by the normal stop budget. */
+	readonly stoppingTimeoutMs?: number;
 	readonly _test?: {
 		readonly readinessTimeoutMs?: number;
+		/** How long the existing-host probe waits for get_protocol_info; tests shorten it. */
+		readonly existingHostProbeTimeoutMs?: number;
 		readonly stopTimeoutMs?: number;
 		readonly spawn?: { readonly command: string; readonly args: readonly string[] };
 		/** Builds the spawnable command from supervisor argv; tests point it at the source entry. */

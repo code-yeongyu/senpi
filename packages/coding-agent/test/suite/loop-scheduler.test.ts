@@ -261,7 +261,7 @@ describe("onDue coalescing", () => {
 		const first = h.scheduler.onDue(loopId, h.now(), true);
 		expect(first.action).toBe("dispatch");
 		if (first.action !== "dispatch") return;
-		expect(first.tick.deliverAs).toBe("followUp");
+		expect(first.tick.deliverAs).toBe("steer");
 		expect(loopEntry(h, loopId).phase).toBe("queued");
 
 		h.advance(5 * MINUTE);

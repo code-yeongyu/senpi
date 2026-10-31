@@ -104,9 +104,9 @@ function cachedPrefix(body: Body): Body {
 	return { ...rest, developer: (input as unknown[])[0], prompt_cache_options: cacheOptions };
 }
 
-// senpi#2096: the session-start prewarm (HTTP) must write the exact prefix the first turn
+// senpi#2096: the first-activity prewarm (HTTP) must write the exact prefix the first turn
 // sends over the Responses WebSocket, or the platform never reads it.
-describe("session-start prewarm matches the first WebSocket turn (#2096)", () => {
+describe("first-activity prewarm matches the first WebSocket turn (#2096)", () => {
 	const roots: string[] = [];
 
 	afterEach(() => {
@@ -149,7 +149,9 @@ describe("session-start prewarm matches the first WebSocket turn (#2096)", () =>
 			noTools: "all",
 		});
 		try {
+			session.settingsManager.applyOverrides({ promptCache: { keepAlive: { enabled: true } } });
 			await session.bindExtensions({});
+			session.recordUserActivity("draft");
 			const prewarm = await within(prewarmSent.promise, "the prewarm request");
 			await within(session.prompt("Reply with exactly: A"), "the first turn");
 

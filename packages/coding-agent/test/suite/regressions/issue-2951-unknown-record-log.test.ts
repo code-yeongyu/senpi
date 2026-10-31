@@ -54,6 +54,8 @@ it.each([
 					PATH: process.env.PATH,
 					HOME: root,
 					TMPDIR: root,
+					TEMP: root,
+					TMP: root,
 					SENPI_CODING_AGENT_DIR: join(root, "agent"),
 				},
 			});
@@ -84,7 +86,14 @@ it("keeps the diagnostic budget separate for distinct pids in one caller process
 		const result = await run(process.execPath, ["--input-type=module", "-e", source], {
 			encoding: "utf8",
 			timeout: 20_000,
-			env: { PATH: process.env.PATH, HOME: root, SENPI_CODING_AGENT_DIR: join(root, "agent") },
+			env: {
+				PATH: process.env.PATH,
+				HOME: root,
+				TMPDIR: root,
+				TEMP: root,
+				TMP: root,
+				SENPI_CODING_AGENT_DIR: join(root, "agent"),
+			},
 		});
 		const pids: readonly number[] = JSON.parse(result.stdout);
 		expect(

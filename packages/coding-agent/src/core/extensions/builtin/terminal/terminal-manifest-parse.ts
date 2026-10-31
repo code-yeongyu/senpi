@@ -12,6 +12,7 @@ import {
 	TERMINAL_MANIFEST_VERSION,
 	type TerminalManifest,
 	type TerminalManifestCheckpoint,
+	type TerminalManifestRpcCheckpoint,
 } from "./terminal-manifest-model.ts";
 
 export class InvalidTerminalManifestError extends InvalidSidecarStoreError {
@@ -23,8 +24,8 @@ export class InvalidTerminalManifestError extends InvalidSidecarStoreError {
 
 type Raw = Record<string, unknown>;
 
-const RUNTIME_KINDS = ["command", "file"] as const;
-const DURABILITY_CLASSES = ["ephemeral", "restartable-command", "checkpointed-file"] as const;
+const RUNTIME_KINDS = ["command", "file", "rpc"] as const;
+const DURABILITY_CLASSES = ["ephemeral", "restartable-command", "checkpointed-file", "checkpointed-rpc"] as const;
 const FILE_EVENTS = ["create", "modify"] as const;
 const isStr = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 const isNum = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
@@ -57,6 +58,13 @@ function bool(raw: Raw, field: string): boolean {
 
 function opt<T>(raw: Raw, field: string, required: (raw: Raw, field: string) => T): T | undefined {
 	return raw[field] === undefined ? undefined : required(raw, field);
+}
+
+function wakeRate(raw: Raw, field: string): number {
+	const value = raw[field];
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 3600)
+		invalid(`field ${field} must be an integer from 1 to 3600`);
+	return value;
 }
 
 function oneOf<T extends string>(values: readonly T[], raw: Raw, field: string): T {
@@ -103,6 +111,28 @@ function runtimeIdentity(raw: Raw, field: string): ChildProcessIdentity {
 	};
 }
 
+function strings(entry: Record<string, unknown>, field: string): readonly string[] {
+	const value = entry[field];
+	if (!Array.isArray(value) || !value.every((item) => typeof item === "string"))
+		invalid(`field ${field} must be an array of strings`);
+	return value;
+}
+
+function rpcCheckpoint(value: unknown): TerminalManifestRpcCheckpoint {
+	if (!isObj(value) || !isObj(value.hosts) || !isObj(value.statuses)) invalid("field rpcCheckpoint must be an object");
+	const hosts: Record<string, { instanceId: string; generation: string }> = {};
+	for (const [socket, host] of Object.entries(value.hosts)) {
+		if (!isObj(host)) invalid("field rpcCheckpoint.hosts entries must be objects");
+		hosts[socket] = { instanceId: str(host, "instanceId"), generation: str(host, "generation") };
+	}
+	const statuses: Record<string, string> = {};
+	for (const [key, status] of Object.entries(value.statuses)) {
+		if (typeof status !== "string") invalid("field rpcCheckpoint.statuses values must be strings");
+		statuses[key] = status;
+	}
+	return { hosts, statuses };
+}
+
 function parseMonitor(entry: unknown): ManifestMonitor {
 	if (!isObj(entry)) invalid("a monitor entry must be an object");
 	return {
@@ -115,8 +145,14 @@ function parseMonitor(entry: unknown): ManifestMonitor {
 		path: opt(entry, "path", str),
 		event: opt(entry, "event", (raw, field) => oneOf(FILE_EVENTS, raw, field)),
 		filter: opt(entry, "filter", str),
+		humanInput: opt(entry, "humanInput", bool),
+		...(entry.wakesPerHour === undefined ? {} : { wakesPerHour: wakeRate(entry, "wakesPerHour") }),
 		cwd: opt(entry, "cwd", str),
 		approvedParent: opt(entry, "approvedParent", str),
+		target: opt(entry, "target", str),
+		events: entry.events === undefined ? undefined : entry.events === "all" ? "all" : strings(entry, "events"),
+		exclude: entry.exclude === undefined ? undefined : strings(entry, "exclude"),
+		...(entry.rpcCheckpoint === undefined ? {} : { rpcCheckpoint: rpcCheckpoint(entry.rpcCheckpoint) }),
 		createdAt: num(entry, "createdAt"),
 		expiresAt: entry.expiresAt === undefined || entry.expiresAt === null ? null : num(entry, "expiresAt"),
 		persistent: bool(entry, "persistent"),

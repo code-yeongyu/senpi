@@ -68,6 +68,11 @@ export interface SessionRegistrySweepOptions {
 
 export interface SessionRegistryOptions<TSession extends SessionRegistrySession = SessionRegistrySession> {
 	readonly maxSessions?: number;
+	/**
+	 * Inserted between the command prefix and the counter (`bash_<scope>_1`), so two registries whose ids reach the same
+	 * caller - a host's and its tool child's - never hand out the same id. Letters and digits only.
+	 */
+	readonly idScope?: string;
 	readonly initialSessions?: readonly InitialSessionRegistryEntry<TSession>[];
 	readonly createSession?: (options: SessionRegistryCreateContext) => MaybePromise<TSession>;
 	readonly killProcess?: (target: number, signal: TerminalSessionSignal) => void;

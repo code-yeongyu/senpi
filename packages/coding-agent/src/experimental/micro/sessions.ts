@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, realpath } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import lockfile from "proper-lockfile";
 import { getAgentDir } from "../../config.ts";
+import { type HeldFileLock, lockWithLossHandling } from "../../core/file-lock.ts";
 
 export interface MicroSessionLocation {
 	id: string;
@@ -10,6 +10,8 @@ export interface MicroSessionLocation {
 	cwd: string;
 	created: boolean;
 	release(): Promise<void>;
+	/** Throws FileLockLostError once another process reclaimed the session lock. */
+	assertHeld(): void;
 }
 
 function cwdKey(cwd: string): string {
@@ -17,7 +19,11 @@ function cwdKey(cwd: string): string {
 }
 
 /** Select a new session, or the newest session for this cwd, without opening any JSONL logs. */
-export async function selectSession(cwdInput: string, continueSession: boolean): Promise<MicroSessionLocation> {
+export async function selectSession(
+	cwdInput: string,
+	continueSession: boolean,
+	onLost: (error: Error) => void,
+): Promise<MicroSessionLocation> {
 	const cwd = await realpath(resolve(cwdInput));
 	const root = join(getAgentDir(), "experimental", "micro-sessions", cwdKey(cwd));
 	await mkdir(root, { recursive: true });
@@ -39,11 +45,11 @@ export async function selectSession(cwdInput: string, continueSession: boolean):
 		created = true;
 	}
 
-	let release: () => Promise<void>;
+	let lock: HeldFileLock;
 	try {
-		release = await lockfile.lock(path, { realpath: false, retries: 0 });
+		lock = await lockWithLossHandling(path, { realpath: false, retries: 0, onLost });
 	} catch (error) {
 		throw new Error(`Micro session is already open: ${path}`, { cause: error });
 	}
-	return { id: basename(path), path, cwd, created, release };
+	return { id: basename(path), path, cwd, created, release: lock.release, assertHeld: lock.assertHeld };
 }

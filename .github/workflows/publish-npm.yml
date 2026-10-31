@@ -8,6 +8,11 @@ name: Release
         required: false
         type: string
         default: ''
+      sha:
+        description: 'Release this exact commit (full 40-char sha, must be on main) instead of main at dispatch; later merges stay out of the tag. Empty = main.'
+        required: false
+        type: string
+        default: ''
       dry_run:
         description: 'Dry-run preview only (no publish or push)'
         required: false
@@ -15,6 +20,11 @@ name: Release
         default: false
       publish-only:
         description: 'Publish an already prepared version through GitHub OIDC; requires version.'
+        required: false
+        type: boolean
+        default: false
+      force_tests:
+        description: 'Run the CI=1 test suite inside this release job instead of waiting for the release commit''s green "Check and test" CI run (use when CI runners are backlogged; needs a full local suite receipt at the release sha).'
         required: false
         type: boolean
         default: false
@@ -29,9 +39,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  require-version:
+    # Runs before everything else in publish-only, so an empty version fails here with a clear message instead of as a
+    # checkout of refs/tags/v in native-prebuilds (which would also skip the release job and any later guard).
+    if: ${{ inputs.publish-only == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a version for publish-only
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          test -n "$EXPECTED_VERSION" || {
+            echo "::error::publish-only requires an explicit version" >&2
+            exit 1
+          }
+
   native-prebuilds:
+    needs: require-version
     if: ${{ inputs.publish-only == true }}
     uses: ./.github/workflows/native-prebuilds.yml
+    with:
+      # The native addons ship in the same npm tarball, so they are built from the same tagged commit as the JS.
+      ref: refs/tags/v${{ inputs.version }}
 
   release:
     needs: native-prebuilds
@@ -42,13 +71,31 @@ jobs:
     # first and CI tests it there. The job waits up to 40 min for that CI result (CI walls
     # measured at 7-22 min), plus about 10 min of install, build and push, so 60 min clears it.
     # A release whose HEAD already has green CI finishes in a few minutes.
-    timeout-minutes: 60
+    # force_tests runs the whole suite serially in this job instead (~55 min, estimated from the summed CI test jobs, bounded at 110 min by
+    # scripts/release-test-gate.mjs), so that mode gets 180 min.
+    timeout-minutes: ${{ inputs.force_tests && 180 || 60 }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+          # publish-only publishes the version a release run already tagged, so it must build that tag's tree. Without a
+          # ref it built main's tip, and npm shipped commits merged after the tag (senpi 2026.10.23-1).
+          ref: ${{ inputs.publish-only && format('refs/tags/v{0}', inputs.version) || '' }}
+
+      - name: Refuse to publish anything but the tagged commit
+        if: inputs.publish-only == true
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          tag_commit="$(git rev-parse --verify "refs/tags/v${EXPECTED_VERSION}^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+          test "$head_commit" = "$tag_commit" || {
+            echo "::error::publish-only must build tag v${EXPECTED_VERSION} (${tag_commit}) but HEAD is ${head_commit}" >&2
+            exit 1
+          }
+          echo "Publishing v${EXPECTED_VERSION} from its tagged commit ${tag_commit}"
 
       - name: Configure git identity
         run: |
@@ -65,7 +112,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: '1.4.2'
+          bun-version: '1.4.4'
 
       - name: Assert bun 1.4 toolchain
         run: bash scripts/assert-bun-toolchain.sh
@@ -110,11 +157,39 @@ jobs:
       - name: Reset auto-generated and npm-install drift files (not part of release diff)
         run: git checkout -- packages/ai/src/models.generated.ts package-lock.json
 
+      # The release's npm test runs the native grep probe tests, which refuse to build the
+      # senpi-grep addon inside a test hook in CI (#3978). Build it once here, as ci.yml does.
+      - name: Setup Rust
+        if: inputs.publish-only != true
+        run: |
+          toolchain=stable
+          if [ -f rust-toolchain.toml ]; then
+            toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          fi
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup default "$toolchain"
+
+      - name: Cache Rust
+        if: inputs.publish-only != true
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build native grep addon
+        if: inputs.publish-only != true
+        working-directory: crates/senpi-grep
+        run: |
+          npm exec --yes --package @napi-rs/cli@3.7.2 -- napi build --platform --release -- --locked
+          node_file=$(ls senpi_grep.*.node)
+          echo "SENPI_GREP_NATIVE_PATH=$PWD/$node_file" >> "$GITHUB_ENV"
+
       - name: Run release
         if: inputs.publish-only != true
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_AUTOMATION_TOKEN }}
           SENPI_SKIP_PM_VERIFY: '1'
+          RELEASE_SHA: ${{ inputs.sha }}
+          # The release runs the same `npm run check` as CI, so it needs CI's TypeScript heap (ci.yml Check,
+          # senpi#4022): on the default ~4 GB heap the check ran out of memory in the 2026.10.23-1 release.
+          NODE_OPTIONS: --max-old-space-size=10240
         run: |
           test -n "$GH_TOKEN" || {
             echo "::error::UPSTREAM_AUTOMATION_TOKEN is required to push release commits and tags through branch protection."
@@ -127,6 +202,12 @@ jobs:
           fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             ARGS+=(--dry-run)
+          fi
+          if [ -n "$RELEASE_SHA" ]; then
+            ARGS+=(--sha "$RELEASE_SHA")
+          fi
+          if [ "${{ inputs.force_tests }}" = "true" ]; then
+            ARGS+=(--force-tests)
           fi
           npm run release -- "${ARGS[@]}"
 
@@ -156,6 +237,11 @@ jobs:
         if: always()
         shell: bash
         run: |
+          if [ "${{ inputs.publish-only }}" = true ]; then
+            commit="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+          else
+            commit="${{ inputs.sha || github.sha }}"
+          fi
           {
             echo "## Release"
             echo
@@ -164,6 +250,7 @@ jobs:
             echo "| Job status | ${{ job.status }} |"
             echo "| Mode | ${{ inputs.publish-only && 'publish-only' || 'release' }} |"
             echo "| Dry run | ${{ inputs.dry_run }} |"
+            echo "| Force tests | ${{ inputs.force_tests }} |"
             echo "| Version | ${{ inputs.version || 'auto' }} |"
-            echo "| Commit | ${{ github.sha }} |"
+            echo "| Commit | $commit |"
           } >> "$GITHUB_STEP_SUMMARY"

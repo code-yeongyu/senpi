@@ -52,6 +52,7 @@ function createContext(model: Model<any>, capture: (payload: ReasoningPayload) =
 	});
 
 	return {
+		cwd: process.cwd(),
 		model,
 		modelRegistry,
 		sessionManager,

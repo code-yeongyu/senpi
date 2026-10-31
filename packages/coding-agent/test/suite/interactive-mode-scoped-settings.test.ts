@@ -81,7 +81,10 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 		expect(setModel).toHaveBeenCalledExactlyOnceWith(model, { source: "picker", actor: "model-selector" });
 	});
 
-	it("keeps the settings UI thinking selector on the global-setting setter", async () => {
+	it.each([
+		[true, "high"],
+		[false, "off"],
+	] as const)("preserves settings UI thinking saves with reasoning=%s", async (reasoning, level) => {
 		// Given: the settings selector is opened with both thinking-setting APIs observable.
 		const setThinkingLevel = vi.fn();
 		const setSessionThinkingLevel = vi.fn();
@@ -96,6 +99,7 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 				steeringMode: "all",
 				followUpMode: "all",
 				thinkingLevel: "low",
+				supportsThinking: () => reasoning,
 				getAvailableThinkingLevels: () => ["off", "low", "high"],
 				setThinkingLevel,
 				setSessionThinkingLevel,
@@ -106,6 +110,9 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 			footer: { invalidate: vi.fn() },
 			updateEditorBorderColor: vi.fn(),
 		};
+		setThinkingLevel.mockImplementation((level: ThinkingLevel) => {
+			fakeThis.session.thinkingLevel = level;
+		});
 		const showSettingsSelector = Reflect.get(InteractiveMode.prototype, "showSettingsSelector");
 		if (typeof showSettingsSelector !== "function") {
 			throw new Error("InteractiveMode.showSettingsSelector is missing");
@@ -117,10 +124,15 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 		await showSettingsSelector.call(fakeThis);
 		const callbacks = settingsCapture.callbacks;
 		if (callbacks === undefined) throw new Error("Settings callbacks were not captured");
-		callbacks.onThinkingLevelChange("high");
+		callbacks.onThinkingLevelChange(level);
 
 		// Then: established interactive behavior still updates the global default.
-		expect(setThinkingLevel).toHaveBeenCalledExactlyOnceWith("high");
+		expect(setThinkingLevel).toHaveBeenCalledExactlyOnceWith(level);
+		if (reasoning) {
+			expect(fakeThis.settingsManager.setDefaultThinkingLevel).toHaveBeenCalledExactlyOnceWith("high");
+		} else {
+			expect(fakeThis.settingsManager.setDefaultThinkingLevel).not.toHaveBeenCalled();
+		}
 		expect(setSessionThinkingLevel).not.toHaveBeenCalled();
 	});
 
@@ -169,6 +181,7 @@ describe("InteractiveMode scoped-setting caller compatibility", () => {
 
 function createSettingsManagerStub() {
 	return {
+		setDefaultThinkingLevel: vi.fn(),
 		getShowImages: () => false,
 		getImageWidthCells: () => 80,
 		getImageAutoResize: () => true,

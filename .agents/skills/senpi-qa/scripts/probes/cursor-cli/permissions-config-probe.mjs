@@ -31,6 +31,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { signalOwnedProcess } from "../../lib/common.mjs";
 
 const SENTINEL = "blocked-probe";
 const PROBE_PROMPT = "Run the shell command `echo blocked-probe` and show stdout";
@@ -273,13 +274,13 @@ function runCli(executable, { home, ws }, extraArgs, timeoutMs) {
 		const timer = setTimeout(() => {
 			timedOut = true;
 			try {
-				process.kill(-child.pid, "SIGTERM");
+				signalOwnedProcess({ pid: child.pid, spawned: child, group: true, signal: "SIGTERM" });
 			} catch {
 				/* already gone */
 			}
 			setTimeout(() => {
 				try {
-					process.kill(-child.pid, "SIGKILL");
+					signalOwnedProcess({ pid: child.pid, spawned: child, group: true, signal: "SIGKILL" });
 				} catch {
 					/* already gone */
 				}

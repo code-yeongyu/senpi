@@ -27,7 +27,16 @@ import { createMonitorTool, monitorSchema } from "../src/core/extensions/builtin
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const CODING_AGENT_ROOT = join(REPO_ROOT, "packages", "coding-agent");
 
-const CREATE_BRANCH_PROPERTIES = ["command", "path", "event", "filter", "persistent"] as const;
+const CREATE_BRANCH_PROPERTIES = [
+	"command",
+	"path",
+	"event",
+	"filter",
+	"persistent",
+	"target",
+	"events",
+	"exclude",
+] as const;
 
 /** Both eval-only renderings must teach both branches; neither may lose one to a call-form rewrite. */
 const PROMPT_SECTIONS = [true, false].map((evalOnly) => ({
@@ -36,7 +45,11 @@ const PROMPT_SECTIONS = [true, false].map((evalOnly) => ({
 }));
 
 /** A branch is documented only when its own call shape is shown, not merely its property names. */
-const BRANCH_CALL_SHAPES = [/monitor\(\{[^}]*\bcommand\b[^}]*\}\)/, /monitor\(\{[^}]*\bpath\b[^}]*\}\)/] as const;
+const BRANCH_CALL_SHAPES = [
+	/monitor\(\{[^}]*\bcommand\b[^}]*\}\)/,
+	/monitor\(\{[^}]*\bpath\b[^}]*\}\)/,
+	/monitor\(\{[^}]*type: "rpc"[^}]*\btarget\b[^}]*\}\)/,
+] as const;
 
 function stubTerminalCtx(): TerminalToolContext {
 	return {
@@ -50,7 +63,7 @@ function stubTerminalCtx(): TerminalToolContext {
 
 function monitorToolSurface(): string {
 	const tool = createMonitorTool(stubTerminalCtx());
-	return [tool.description, tool.promptSnippet ?? "", ...(tool.promptGuidelines ?? [])].join("\n");
+	return [tool.description, tool.promptSnippet ?? "", buildTerminalPromptSection({ evalOnly: false })].join("\n");
 }
 
 function terminalToolsDoc(): string {
@@ -58,7 +71,7 @@ function terminalToolsDoc(): string {
 }
 
 describe("monitor create-branch prompt coverage gate", () => {
-	it("every create-branch schema property is named by the tool's own surface", () => {
+	it("every create-branch schema property is named by the tool and canonical prompt guidance", () => {
 		const surface = monitorToolSurface();
 		const missing = CREATE_BRANCH_PROPERTIES.filter((property) => !surface.includes(property));
 		expect(missing, "monitor schema properties absent from its description/snippet/guidelines").toEqual([]);
@@ -88,11 +101,17 @@ describe("monitor create-branch prompt coverage gate", () => {
 		expect(terminalToolsDoc()).toMatch(/path:\s*"/);
 	});
 
-	it("the XOR rule is stated on the tool surface and in the prompt, not only in a runtime error", () => {
-		expect(monitorToolSurface()).toContain("XOR");
+	it("the one-source rule is stated on the tool surface and in the prompt, not only in a runtime error", () => {
+		expect(monitorToolSurface()).toMatch(/one source/);
 		for (const { label, text } of PROMPT_SECTIONS) {
-			expect(text, label).toContain("XOR");
+			expect(text, label).toMatch(/one source/);
 		}
+	});
+
+	it("the tool surface and the shipped doc show the rpc branch's call shape (senpi#3226)", () => {
+		const rpcShape = /monitor\(\{[^}]*type: "rpc"[^}]*\btarget\b[^}]*\}\)/;
+		expect(monitorToolSurface()).toMatch(rpcShape);
+		expect(terminalToolsDoc()).toMatch(rpcShape);
 	});
 
 	it("no create-branch property is advertised as unconditionally required", () => {

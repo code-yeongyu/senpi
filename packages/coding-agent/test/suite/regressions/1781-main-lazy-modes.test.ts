@@ -4,7 +4,7 @@
  * `dist/main.js` is imported by every launch, so every module statically reachable from it is
  * resolved, parsed, compiled and evaluated before the first argument is inspected - whether the run
  * is `senpi --help`, an interactive session or an RPC host. The modules pinned here belong to one
- * command or one mode: the app-server command tree (70 modules), the RPC host cluster, the package
+ * command or one mode: the RPC host cluster, the package
  * manager CLI, the `--list-tips` tip registry and the `--resume` session picker. They are now
  * `await import(...)`ed at the branch that uses them and must stay there.
  *
@@ -15,10 +15,7 @@
  * 1. `main.js` must not RESOLVE the deferred specifiers. This is the edge this lane owns, and it is
  *    exact: only `dist/main.js` can resolve `./modes/rpc/rpc-mode.js`, so the entry is proof that
  *    the static import came back.
- * 2. The subgraphs that nothing else drags in must be absent from the whole graph. `app-server`
- *    keeps one documented residual: `core/extensions/loader.ts` imports the package barrel
- *    (`src/index.ts` -> `modes/index.ts` -> `rpc/host-ensure.ts` -> `app-server/daemon/process.ts`),
- *    which is owned elsewhere and deliberately not touched here.
+ * 2. Deferred subgraphs and the retired app-server tree must be absent from the whole graph.
  */
 import { describe, expect, it } from "vitest";
 import { INTERNAL_SUPERVISOR_FLAG } from "../../../src/modes/rpc/host-lifecycle.ts";
@@ -32,7 +29,6 @@ const repoRoot = new URL("../../../../..", import.meta.url).pathname;
 
 /** Every specifier `dist/main.js` itself must no longer resolve, with the branch that owns it. */
 const DEFERRED_SPECIFIERS = [
-	{ specifier: "./cli/app-server-command.js", branch: "the `app-server` command (cli/deferred-commands.ts)" },
 	{ specifier: "./package-manager-cli.js", branch: "install/remove/update/list/config (cli/deferred-commands.ts)" },
 	{
 		specifier: "./modes/rpc/host-lifecycle.js",
@@ -51,13 +47,6 @@ const FORBIDDEN_SUBGRAPHS = [
 ] as const;
 
 const APP_SERVER_SUBGRAPH = /\/dist\/modes\/app-server\//u;
-
-/**
- * The single app-server module the package barrel still drags in through
- * `core/extensions/loader.ts` -> `index.ts` -> `modes/index.ts` -> `rpc/host-ensure.ts`. That edge
- * is owned outside this lane; allow it rather than pin it, so closing it elsewhere keeps this green.
- */
-const APP_SERVER_BARREL_RESIDUAL = /\/dist\/modes\/app-server\/daemon\/process\.js$/u;
 
 describe("main() lazy command and mode graphs", () => {
 	it("keeps command/mode-only modules out of the dist/main.js static import graph", () => {
@@ -86,13 +75,11 @@ describe("main() lazy command and mode graphs", () => {
 				.toEqual([]);
 		}
 
-		const appServer = result.entries
-			.filter((entry) => APP_SERVER_SUBGRAPH.test(entry.url) && !APP_SERVER_BARREL_RESIDUAL.test(entry.url))
-			.map((entry) => entry.url);
+		const appServer = result.entries.filter((entry) => APP_SERVER_SUBGRAPH.test(entry.url)).map((entry) => entry.url);
 		expect
 			.soft(
-				[...new Set(appServer)].length,
-				`the app-server tree is reachable from dist/main.js outside the package barrel: ${[...new Set(appServer)].slice(0, 3).join(", ")}`,
+				new Set(appServer).size,
+				`the retired app-server tree is reachable from dist/main.js: ${[...new Set(appServer)].slice(0, 3).join(", ")}`,
 			)
 			.toBe(0);
 	});

@@ -7,9 +7,10 @@
  * `loopfile.ts`, `status.ts`), so the runtime here is a thin, testable adapter.
  *
  * Load-bearing rules implemented here:
- * - A tick NEVER steers. Idle dispatch goes through `sendUserMessage(..., {
+ * - A tick STEERS. Idle dispatch goes through `sendUserMessage(..., {
  *   expandPromptTemplates: true })` so a slash payload reaches the real command path;
- *   a busy session receives the tick as a follow-up instead.
+ *   a busy session receives the tick as a steer, delivered into the running turn at its
+ *   next boundary, never parked as a follow-up behind it.
  * - Shutdown SUSPENDS: timers are cancelled, the ticker disposed, and the snapshot is
  *   persisted without a terminal reason (every senpi shutdown reason is resumable).
  * - Keepalive is applied only to an attributed dynamic iteration, never after an ordinary
@@ -35,6 +36,7 @@ import {
 	type LoopTick,
 	type LoopTimerPort,
 } from "./scheduler.ts";
+import { sessionHeld, userStopped } from "./session-hold.ts";
 import { formatLoopStatus, formatNoopFold, LoopStatusTicker } from "./status.ts";
 import { readLoopState, writeLoopState } from "./store.ts";
 import { buildTickMessage, type LoopFileSnapshot, type LoopMode, type TickDelivery } from "./tick-prompt.ts";
@@ -317,6 +319,8 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 		let attributedDeliveryId: DeliveryId | undefined;
 		/** True once the attributed iteration rescheduled or stopped itself. */
 		let attributionResolved = false;
+		/** True when the attributed tick was steered into a turn the loop did not start (keepalive is not charged). */
+		let attributedSteered = false;
 		/** Ticks held back because their slash payload cannot be queued while streaming. */
 		const deferredDispatches: LoopTick[] = [];
 		const deliveryStates = new Map<LoopId, SentinelDeliveryState>();
@@ -481,8 +485,8 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 
 		/**
 		 * Delivers one tick. Idle dispatch expands prompt templates so a slash payload
-		 * reaches its real command handler; a busy session gets a follow-up instead of
-		 * steering. A slash payload cannot be queued at all, so it waits for the turn to
+		 * reaches its real command handler; a busy session gets the tick steered into the
+		 * running turn. A slash payload cannot be queued at all, so it waits for the turn to
 		 * settle rather than being rewritten into plain text.
 		 */
 		async function dispatchTick(tick: LoopTick): Promise<void> {
@@ -508,7 +512,8 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			deliveryStates.set(entry.id, built.deliveryState);
 
 			const busy = !currentCtx.isIdle() || currentCtx.hasPendingMessages();
-			if (busy && isExtensionCommandPayload(built.text)) {
+			const held = sessionHeld(currentCtx);
+			if (busy && !held && isExtensionCommandPayload(built.text)) {
 				// Extension commands cannot be queued; hold this delivery until the turn settles.
 				deferredDispatches.push(tick);
 				return;
@@ -526,16 +531,24 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 				folded: noopStreak >= 2,
 			});
 
-			attributedLoopId = entry.id;
-			attributedDeliveryId = tick.deliveryId;
-			attributionResolved = false;
+			if (!held) {
+				attributedLoopId = entry.id;
+				attributedDeliveryId = tick.deliveryId;
+				attributionResolved = false;
+				attributedSteered = busy;
+			}
 			// The tick prompt tells the model to call schedule_wakeup, so the tool must be active
 			// before the tick is queued, not after the turn has already read its tool list.
 			syncScheduleWakeupActivation();
 			pi.sendUserMessage(built.text, {
 				expandPromptTemplates: true,
-				...(busy ? { deliverAs: "followUp" as const } : {}),
+				...(busy ? { deliverAs: tick.deliverAs } : {}),
 			});
+			if (held) {
+				// The session keeps this tick as a notice (senpi#3811): no iteration ran, so neither
+				// keepalive nor the tick budget is charged, and a fixed schedule stays armed.
+				active.onTickSettled({ loopId: entry.id, deliveryId: tick.deliveryId, outcome: "completed" });
+			}
 			await persist();
 			refreshStatus();
 		}
@@ -561,7 +574,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			const currentCtx = ctx;
 			if (active === undefined || currentCtx === undefined) return;
 			const busy = !currentCtx.isIdle() || currentCtx.hasPendingMessages();
-			const decision = active.onDue(loopId, clock.now(), busy);
+			const decision = active.onDue(loopId, clock.now(), busy, sessionHeld(currentCtx));
 			await persist();
 			if (decision.action === "dispatch") {
 				await dispatchTick(decision.tick);
@@ -805,7 +818,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			// A retrying turn is still in progress: neither settle it nor judge its liveness.
 			if (event.willRetry === true) return;
 			if (event.aborted === true && event.abortSource === "user") {
-				await pauseAttributedLoop();
+				await stopOrPauseAttributedLoop();
 				return;
 			}
 			await settleAttributedTick(event.aborted === true ? "error" : "completed");
@@ -818,8 +831,14 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 		});
 
 		pi.on("session_abort", async () => {
-			await pauseAttributedLoop();
+			await stopOrPauseAttributedLoop();
 		});
+
+		// Under a user Stop the session holds every later tick, so the loop is not paused itself.
+		async function stopOrPauseAttributedLoop(): Promise<void> {
+			if (ctx !== undefined && userStopped(ctx)) await settleAttributedTick("error", true);
+			else await pauseAttributedLoop();
+		}
 
 		pi.on("session_shutdown", async () => {
 			const active = scheduler;
@@ -866,7 +885,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 		 * `schedule_wakeup`. An ordinary user turn clears the attribution first, so keepalive
 		 * can never be charged to it, and a user abort takes the pause path instead.
 		 */
-		async function settleAttributedTick(outcome: "completed" | "error"): Promise<void> {
+		async function settleAttributedTick(outcome: "completed" | "error", userStopped = false): Promise<void> {
 			const active = scheduler;
 			const loopId = attributedLoopId;
 			const deliveryId = attributedDeliveryId;
@@ -874,6 +893,7 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			const entry = active.getState().entries[loopId];
 			if (entry === undefined) return;
 			const resolved = attributionResolved;
+			const steered = attributedSteered;
 			attributedLoopId = undefined;
 			attributedDeliveryId = undefined;
 			attributionResolved = false;
@@ -881,8 +901,8 @@ export function createLoopExtension(deps: LoopExtensionDeps = {}): ExtensionFact
 			const settled = deliveryId === undefined ? undefined : active.onTickSettled({ loopId, deliveryId, outcome });
 			await persist();
 
-			if (!resolved && entry.kind === "dynamic") {
-				const keepalive = active.onTurnEndedWithoutSchedule(loopId);
+			if (!resolved && entry.kind === "dynamic" && !userStopped) {
+				const keepalive = active.onTurnEndedWithoutSchedule(loopId, { chargeCredit: !steered });
 				await persist();
 				refreshStatus();
 				if (keepalive.action === "ended") {

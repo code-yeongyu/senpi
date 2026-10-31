@@ -1,50 +1,28 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import {
 	auditChangesMdCoverage,
-	isProductionPath,
 	isRuntimeSourceChange,
-	parseTrackerEntries,
 	restrictTrackerEntriesToAddedLines,
 	summarizeUncovered,
-	UPSTREAM_PIN_PATH,
 } from "./changes-md-policy.mjs";
-import {
-	ensureCommitExists,
-	filesInCommit,
-	listTrackerFiles,
-	readUpstreamPin,
-	resolvePrNameStatus,
-	runGit,
-	validateGitRevision,
-} from "./changes-md-git.mjs";
+import { validateGitRevision } from "./changes-md-git.mjs";
+
+import { changelogSections, collectPrFacts, isChangelogChange } from "./check-pr-changelog-facts.mjs";
 
 export { restrictTrackerEntriesToAddedLines, validateGitRevision };
 
-const CHANGELOG_PATTERN = /(^|\/)CHANGELOG\.md$/i;
-const TRACKER_PATTERN = /(^|\/)changes\.md$/;
 const NO_CHANGELOG_LABEL = "no-changelog";
 
 export { isRuntimeSourceChange };
 
-function isChangelogChange(path) {
-	return CHANGELOG_PATTERN.test(path);
-}
-
-function releasedChangelogViolation({ path, before, after }) {
-	const [previous, current] = [before, after].map((text) => {
-		const headings = [...text.matchAll(/^## \[([^\]]+)\].*$/gm)];
-		return headings.map((heading, index) => ({
-			name: heading[1],
-			line: text.slice(0, heading.index).split("\n").length,
-			text: text.slice(heading.index, headings[index + 1]?.index ?? text.length),
-			body: text.slice(heading.index + heading[0].length, headings[index + 1]?.index ?? text.length),
-		}));
-	});
-	const misplaced = current.findIndex((section, index) => index > 0 && section.name === "Unreleased");
-	if (misplaced > 0)
-		return `${path}:${current[misplaced].line}: released section [${current[misplaced - 1].name}] interrupted`;
+function releasedChangelogViolations({ path, before, after, taggedSections = {} }) {
+	const [previous, current] = [before, after].map(changelogSections);
+	const violations = [];
+	for (let index = 1; index < current.length; index += 1) {
+		if (current[index].name === "Unreleased")
+			violations.push(`${path}:${current[index].line}: released section [${current[index - 1].name}] interrupted`);
+	}
 	const oldReleased = previous.filter((section) => section.name !== "Unreleased");
 	const newReleased = current.filter((section) => section.name !== "Unreleased");
 	const unreleased = previous.find((section) => section.name === "Unreleased");
@@ -58,13 +36,15 @@ function releasedChangelogViolation({ path, before, after }) {
 		const oldSection = oldReleased[index];
 		const newSection = newReleased[index];
 		if (oldSection?.text === newSection?.text) continue;
+		if (newSection && oldSection?.name === newSection.name && newSection.text === taggedSections[newSection.name]) continue;
 		const oldLines = oldSection?.text.split("\n") ?? [];
 		const newLines = newSection?.text.split("\n") ?? [];
 		let offset = 0;
 		while (offset < Math.min(oldLines.length, newLines.length) && oldLines[offset] === newLines[offset]) offset += 1;
 		const section = newSection ?? oldSection;
-		return `${path}:${section.line + offset}: released section [${section.name}] changed`;
+		violations.push(`${path}:${section.line + offset}: released section [${section.name}] changed`);
 	}
+	return violations;
 }
 
 const UNRELEASED_SECTION = /^## \[Unreleased\][^\n]*\n([\s\S]*?)(?=^## \[|(?![\s\S]))/m;
@@ -114,10 +94,19 @@ function unreleasedRemovalViolation({ path, before, after }) {
 		: undefined;
 }
 
-export function checkPrChangelog({ changedFiles, labels, trackerPolicy, changelogChanges = [], trackerRemovals = [] }) {
+export function checkPrChangelog({
+	changedFiles,
+	labels,
+	trackerPolicy,
+	changelogChanges = [],
+	trackerRemovals = [],
+	fragmentChangelogs = [],
+	fragmentViolations = [],
+}) {
 	const normalizedLabels = (labels ?? []).map((label) => label.trim()).filter(Boolean);
 	const hasNoChangelogLabel = normalizedLabels.includes(NO_CHANGELOG_LABEL);
-	const changelogFiles = changedFiles.filter(isChangelogChange);
+	// A changes/unreleased/<pr>.md block for a package CHANGELOG.md is that package's entry (senpi#3610).
+	const changelogFiles = [...changedFiles.filter(isChangelogChange), ...fragmentChangelogs];
 	const runtimeFiles = changedFiles.filter(isRuntimeSourceChange);
 
 	// Release CHANGELOG.md verdict: unchanged legacy semantics. The
@@ -144,18 +133,19 @@ export function checkPrChangelog({ changedFiles, labels, trackerPolicy, changelo
 	// required package CHANGELOG.md entry.
 	const audit = trackerPolicy == null ? null : auditChangesMdCoverage({ changedFiles, trackerPolicy });
 	const uncovered = audit ? audit.uncovered.map((item) => item.path) : [];
-	const violation =
-		changelogChanges.map(releasedChangelogViolation).find(Boolean) ??
-		trackerRemovals
+	const violations = [
+		...fragmentViolations,
+		...changelogChanges.flatMap(releasedChangelogViolations),
+		...trackerRemovals
 			.filter(({ removed }) => removed > 0)
-			.map(({ path, removed }) => `${path}: removes ${removed} existing line(s); tracker entries may only be added`)
-			.at(0) ??
-		changelogChanges.map(unreleasedRemovalViolation).find(Boolean);
+			.map(({ path, removed }) => `${path}: removes ${removed} existing line(s); tracker entries may only be added`),
+		...changelogChanges.map(unreleasedRemovalViolation).filter(Boolean),
+	];
 	let pass;
 	let reason;
-	if (violation) {
+	if (violations.length > 0) {
 		pass = false;
-		reason = violation;
+		reason = violations.join("; ");
 	} else if (audit && uncovered.length > 0) {
 		pass = false;
 		reason = summarizeUncovered(audit.uncovered);
@@ -168,114 +158,13 @@ export function checkPrChangelog({ changedFiles, labels, trackerPolicy, changelo
 		reason = releaseReason;
 	}
 
-	return { pass, reason, runtimeFiles, changelogFiles, hasNoChangelogLabel, uncovered };
-}
-
-function diffPathsBetween(from, to) {
-	const what = `git diff --name-only ${from} ${to}`;
-	return runGit(["diff", "--name-only", from, to], what)
-		.split("\n")
-		.map((line) => line.trim())
-		.filter(Boolean);
-}
-
-// Counts base lines missing from the head by content (blank lines ignored), so diff alignment around a prepend never reads as a removal.
-function removedLineCount(before, after) {
-	const remaining = new Map();
-	for (const line of after.split("\n")) {
-		const key = line.trim();
-		if (key) remaining.set(key, (remaining.get(key) ?? 0) + 1);
-	}
-	let removed = 0;
-	for (const line of before.split("\n")) {
-		const key = line.trim();
-		if (!key) continue;
-		const count = remaining.get(key) ?? 0;
-		if (count > 0) remaining.set(key, count - 1);
-		else removed += 1;
-	}
-	return removed;
-}
-
-function addedDiffLines(base, path) {
-	const what = `git diff ${base}...HEAD -- ${path}`;
-	const text = runGit(["diff", `${base}...HEAD`, "--", path], what);
-	return new Set(
-		text
-			.split("\n")
-			.filter((line) => line.startsWith("+") && !line.startsWith("+++"))
-			.map((line) => line.slice(1).trim()),
-	);
-}
-
-/**
- * Collects the tracker policy for a real PR: reads the upstream pin (fails
- * closed on malformed metadata or a missing pinned commit), derives rename-aware
- * changed paths, separates fork-only paths from upstream-owned ones via the pin
- * tree, measures HEAD divergence from the new pin on pin-changing syncs, and
- * parses every tracker the PR touched into coverage entries.
- */
-function collectPrFacts(base) {
-	const pin = readUpstreamPin(UPSTREAM_PIN_PATH);
-	ensureCommitExists(pin.sha);
-	const { changedFiles, renames } = resolvePrNameStatus(base);
-	const mergeBase = runGit(["merge-base", base, "HEAD"], "resolving PR merge base").trim();
-	const baseFiles = filesInCommit(mergeBase);
-	const headFiles = filesInCommit("HEAD");
-	const changelogChanges = changedFiles.filter(isChangelogChange)
-		.filter((path) => !renames.some((rename) => rename.from === path && isChangelogChange(rename.to)))
-		.map((path) => {
-			const oldPath = renames.find((rename) => rename.to === path)?.from ?? path;
-			return {
-				path,
-				before: baseFiles.has(oldPath) ? runGit(["show", `${mergeBase}:${oldPath}`], `reading base ${oldPath}`) : "",
-				after: headFiles.has(path) ? runGit(["show", `HEAD:${path}`], `reading HEAD ${path}`) : "",
-			};
-		});
-	const trackerRemovals = changedFiles
-		.filter((path) => TRACKER_PATTERN.test(path) && baseFiles.has(path))
-		.map((path) => {
-			const after = headFiles.has(path) ? runGit(["show", `HEAD:${path}`], `reading HEAD ${path}`) : "";
-			return { path, removed: removedLineCount(runGit(["show", `${mergeBase}:${path}`], `reading base ${path}`), after) };
-		});
-	const pinChanged = changedFiles.includes(UPSTREAM_PIN_PATH);
-	const upstreamTree = filesInCommit(pin.sha);
-	const upstreamRenames = renames.filter((rename) => upstreamTree.has(rename.from));
-	const upstreamRenameTargets = new Set(upstreamRenames.map((rename) => rename.to));
-	const forkOnly = changedFiles.filter(
-		(path) => isProductionPath(path) && !upstreamTree.has(path) && !upstreamRenameTargets.has(path),
-	);
-	const divergentFiles = pinChanged ? diffPathsBetween(pin.sha, "HEAD").filter(isProductionPath) : [];
-	const trackerDiffs = {};
-	const existingTrackers = listTrackerFiles(".");
-	for (const tracker of existingTrackers) {
-		if (!changedFiles.includes(tracker)) continue;
-		const added = addedDiffLines(base, tracker);
-		const touched = restrictTrackerEntriesToAddedLines(
-			parseTrackerEntries(readFileSync(tracker, "utf8"), tracker),
-			added,
-			tracker,
-		);
-		if (touched.length > 0) trackerDiffs[tracker] = touched;
-	}
-	return {
-		changedFiles,
-		changelogChanges,
-		trackerRemovals,
-		trackerPolicy: {
-			forkOnly,
-			trackerDiffs,
-			existingTrackers,
-			renames: upstreamRenames,
-			upstreamSync: pinChanged ? { pinChanged: true, divergentFiles } : undefined,
-		},
-	};
+	return { pass, reason, violations, runtimeFiles, changelogFiles, hasNoChangelogLabel, uncovered };
 }
 
 function printUsage() {
 	console.log("usage: node scripts/check-pr-changelog.mjs --base <sha> [--labels a,b,c] [--help]");
 	console.log("");
-	console.log("Checks the PR for a CHANGELOG.md [Unreleased] entry (or the 'no-changelog'");
+	console.log("Checks the PR for a package CHANGELOG.md fragment block (or the 'no-changelog'");
 	console.log("label) and for coverage of every upstream-owned production change in its exact");
 	console.log("nearest changes.md tracker, with all four canonical sections. Exits 0 when");
 	console.log("both policies pass, 1 on failure or malformed upstream metadata.");
@@ -329,21 +218,36 @@ export function main(argv) {
 	let trackerPolicy;
 	let changelogChanges;
 	let trackerRemovals;
+	let fragmentChangelogs;
+	let fragmentViolations;
 	try {
 		const facts = collectPrFacts(args.base);
 		changedFiles = facts.changedFiles;
 		trackerPolicy = facts.trackerPolicy;
 		changelogChanges = facts.changelogChanges;
 		trackerRemovals = facts.trackerRemovals;
+		fragmentChangelogs = facts.fragmentChangelogs;
+		fragmentViolations = facts.fragmentViolations;
 	} catch (error) {
 		console.error(`changelog-gate: ERROR - ${error.message}`);
 		return 1;
 	}
 
-	const result = checkPrChangelog({ changedFiles, labels: args.labels, trackerPolicy, changelogChanges, trackerRemovals });
+	const result = checkPrChangelog({
+		changedFiles,
+		labels: args.labels,
+		trackerPolicy,
+		changelogChanges,
+		trackerRemovals,
+		fragmentChangelogs,
+		fragmentViolations,
+	});
 	const verdict = result.pass ? "PASS" : "FAIL";
-	console.log(`changelog-gate: ${verdict} - ${result.reason}`);
+	console.log(`changelog-gate: ${verdict} - ${result.violations[0] ?? result.reason}`);
 	if (!result.pass) {
+		for (const violation of result.violations) {
+			console.log(`  violation: ${violation}`);
+		}
 		for (const file of result.runtimeFiles) {
 			console.log(`  runtime change: ${file}`);
 		}
@@ -352,9 +256,9 @@ export function main(argv) {
 		}
 		console.log(
 			"Restore any changed released sections and any removed change-log entries. " +
-				"Add an entry under ## [Unreleased] in the affected package CHANGELOG.md, " +
+				"Add your entries to changes/unreleased/<pr>.md (one block per package CHANGELOG.md and changes.md), " +
 				`apply the '${NO_CHANGELOG_LABEL}' label if this change is not user-facing, ` +
-				"or cover the change in its exact nearest changes.md tracker.",
+				"and cover each change in a block for its exact nearest changes.md tracker.",
 		);
 	}
 	return result.pass ? 0 : 1;

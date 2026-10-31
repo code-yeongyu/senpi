@@ -12,6 +12,421 @@
 
 ### Removed
 
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.30-1] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+- `MarkdownTheme` gains optional `strong`, `emphasis`, and `deleted` hooks for inline `**strong**`, `*em*`, and `~~del~~` text, falling back to `bold`, `italic`, and `strikethrough`. A hook color takes precedence over the surrounding heading or `DefaultTextStyle` color; headings and blockquotes keep using the generic style functions ([#3195](https://github.com/code-yeongyu/senpi/pull/3195)).
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.27-2] - 2026-10-27
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.27-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-2] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.26-1] - 2026-10-26
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-4] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-3] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-2] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.25-1] - 2026-10-25
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-4] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-3] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-2] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.24-1] - 2026-10-24
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.23-1] - 2026-10-23
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- A Kitty key release no longer turns main-screen mouse capture back on after the wheel handed the mouse to the terminal; only a key press or paste does ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
+
+### Removed
+
+## [2026.10.21-3] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-2] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.21-1] - 2026-10-21
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.20-1] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-2] - 2026-10-20
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.19-1] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Aborting a path autocompletion whose `fd` failed to start no longer signals the caller's own process group on Node < 24.22 / 26.10 ([#3706](https://github.com/code-yeongyu/senpi/issues/3706)).
+
+- Inside herdr panes, inline images render again when the outer terminal supports the Kitty graphics protocol: image support is settled by a bounded Kitty graphics probe at TUI start instead of environment detection alone, and the `[image: <mime>]` placeholder stays when the probe fails or times out ([#3698](https://github.com/code-yeongyu/senpi/issues/3698)).
+
+### Removed
+
+## [2026.10.19] - 2026-10-19
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- In main-screen mode the mouse wheel scrolls the terminal's scrollback again while a component holds a mouse lease: the first wheel notch hands the mouse back to the terminal, and the next key press takes it back ([#3604](https://github.com/code-yeongyu/senpi/issues/3604)).
+
+- On Windows, a WezTerm build older than 20250208-160106 (including the 20240203 stable release) now shows the image placeholder with a hint to update WezTerm instead of a blank gap: its bundled ConPTY drops Kitty graphics before they reach WezTerm. Newer WezTerm nightly builds keep inline images ([#3596](https://github.com/code-yeongyu/senpi/issues/3596)).
+- Rows inserted at or above the viewport top (a running tool's expanded output above a tall live area such as the /btw panel) are no longer dropped, and stale copies of the live area are no longer pushed into the scrollback on every frame ([#3649](https://github.com/code-yeongyu/senpi/issues/3649))
+
+- Alt+key chords split across reads merge into one key when the bytes arrive within the escape reassembly window; WSL sessions get the 100ms remote window (detected by env markers or `/proc/version`) and an over-window gap is now deterministically treated as a lone Escape. The plain default rises from 10ms to the standard 50ms, so a local lone-Escape press (interrupt) settles up to 40ms later than before; explicit `escapeTimeout` and `PI_TUI_ESC_TIMEOUT` settings are unchanged ([#3628](https://github.com/code-yeongyu/senpi/issues/3628)).
+
+### Removed
+
+## [2026.10.18-1] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.18] - 2026-10-18
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-4] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-3] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16-2] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.16] - 2026-10-16
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.15] - 2026-10-15
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.13] - 2026-10-13
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [2026.10.12] - 2026-10-12
+
+### Breaking Changes
+
+### Added
+
+- `EditorTheme.keywordHighlight` (`EditorKeywordHighlight`) decorates keyword runs per character with the offset inside the run, so a gradient stays continuous across wrapped rows; a mention or the cursor grapheme takes precedence, and row widths never change ([#3160](https://github.com/code-yeongyu/senpi/issues/3160), requested by @code-yeongyu).
+
+### Changed
+
+### Fixed
+
+- `PI_TUI_DEBUG` render dumps honor the configured OS temporary directory instead of writing to a hard-coded `/tmp/tui` path ([#3103](https://github.com/code-yeongyu/senpi/pull/3103)).
+
+### Removed
+
+## [2026.10.11] - 2026-10-11
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 ## [2026.10.10-12] - 2026-10-10
 
 ### Breaking Changes

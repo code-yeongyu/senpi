@@ -1,5 +1,5 @@
 import { accessSync, constants, existsSync, readFileSync, realpathSync } from "fs";
-import { homedir } from "os";
+import { homedir, userInfo } from "os";
 import { basename, dirname, join, resolve, sep, win32 } from "path";
 import { fileURLToPath } from "url";
 import { createBunLauncherRepairCommand } from "./bun-global-launcher.ts";
@@ -597,12 +597,18 @@ export function expandTildePath(path: string): string {
 	return normalizePath(path);
 }
 
-const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";
+/**
+ * Base URL of an opt-in `/share` viewer, or undefined. There is no default: a
+ * viewer receives the gist id, so only one the user configured is used (#3524).
+ */
+export function getShareViewerBase(): string | undefined {
+	return envValue("SHARE_VIEWER_URL")?.trim() || undefined;
+}
 
-/** Get the share viewer URL for a gist ID. */
-export function getShareViewerUrl(gistId: string): string {
-	const baseUrl = envValue("SHARE_VIEWER_URL") || DEFAULT_SHARE_VIEWER_URL;
-	return `${baseUrl}#${gistId}`;
+/** True when `/share` is switched off for this machine (`<PREFIX>_DISABLE_SHARE=1`). */
+export function isShareDisabledByEnvironment(): boolean {
+	const value = envValue("DISABLE_SHARE")?.trim().toLowerCase();
+	return value !== undefined && value !== "" && value !== "0" && value !== "false";
 }
 
 // =============================================================================
@@ -631,9 +637,61 @@ export function resolveAgentDir(cwd: string, homeDir: string, envDir?: string): 
 	return projectConfigDir ? join(projectConfigDir, "agent") : join(homeDir, CONFIG_DIR_NAME, "agent");
 }
 
+/** Config directories of the shipped brands; the active brand's own directory is added at call time. */
+const KNOWN_BRAND_CONFIG_DIRS = [".senpi", ".omo", ".pi"] as const;
+
+/** A test run resolved the real user's agent directory, where its writes would land in live state (#3867). */
+export class RealAgentDirInTestError extends Error {
+	override readonly name = "RealAgentDirInTestError";
+	readonly agentDir: string;
+
+	constructor(agentDir: string) {
+		super(
+			`Refusing to use the real agent directory ${agentDir} from a test run. ` +
+				"Point <BRAND>_CODING_AGENT_DIR at a temp dir, or set SENPI_TEST_USE_REAL_AGENT_DIR=1 to opt in.",
+		);
+		this.agentDir = agentDir;
+	}
+}
+
+/** Set only by senpi's own test harness (scripts/test-agent-dir.mjs), never inferred from VITEST or NODE_ENV. */
+function isGuardedTestRun(env: NodeJS.ProcessEnv): boolean {
+	return env.SENPI_TEST_AGENT_DIR_GUARD === "1";
+}
+
+function realHomeDir(): string | undefined {
+	try {
+		return userInfo().homedir;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Throws `RealAgentDirInTestError` when a senpi test run (`SENPI_TEST_AGENT_DIR_GUARD=1`) resolves an agent
+ * directory inside the real user's brand config directory. The real home comes from the account
+ * database, not `$HOME`, so a test that redirects `$HOME` to a temp dir still resolves freely.
+ */
+export function assertAgentDirAllowedInTests(
+	agentDir: string,
+	activeConfigDirName: string,
+	env: NodeJS.ProcessEnv = process.env,
+): void {
+	if (!isGuardedTestRun(env) || env.SENPI_TEST_USE_REAL_AGENT_DIR === "1") return;
+	const home = realHomeDir();
+	if (!home) return;
+	const target = resolve(agentDir);
+	for (const configDir of new Set([...KNOWN_BRAND_CONFIG_DIRS, activeConfigDirName])) {
+		const root = join(home, configDir);
+		if (target === root || target.startsWith(root + sep)) throw new RealAgentDirInTestError(target);
+	}
+}
+
 /** Get the agent config directory (e.g., ~/.senpi/agent/) */
 export function getAgentDir(): string {
-	return resolveAgentDir(process.cwd(), homedir(), envValue("CODING_AGENT_DIR"));
+	const agentDir = resolveAgentDir(process.cwd(), homedir(), envValue("CODING_AGENT_DIR"));
+	assertAgentDirAllowedInTests(agentDir, CONFIG_DIR_NAME);
+	return agentDir;
 }
 
 /**

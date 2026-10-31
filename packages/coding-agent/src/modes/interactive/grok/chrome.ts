@@ -6,7 +6,7 @@ import type { KeybindingsManager } from "../../../core/keybindings.ts";
 import { CustomEditor } from "../components/custom-editor.ts";
 import { WorkingStatusIndicator } from "../components/status-indicator.ts";
 import type { ToolExecutionPresentation } from "../components/tool-execution.ts";
-import { theme } from "../theme/theme.ts";
+import { getReservedKeywordHighlight, theme } from "../theme/theme.ts";
 import { getGrokChromeTokens } from "./chrome-tokens.ts";
 import { GrokFooter } from "./footer.ts";
 import { GrokInputCard } from "./input-card.ts";
@@ -121,6 +121,7 @@ export class GrokChrome implements InteractiveChrome {
 		const tokens = getGrokChromeTokens();
 		return {
 			borderColor: tokens.inputBorder,
+			keywordHighlight: getReservedKeywordHighlight(),
 			selectList: {
 				selectedPrefix: (text) => theme.fg("accent", text),
 				selectedText: (text) => tokens.primaryText(text),

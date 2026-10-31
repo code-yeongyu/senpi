@@ -472,7 +472,7 @@ describe("AI Providers Empty Message Tests", () => {
 	});
 
 	describe.skipIf(!process.env.XIAOMI_API_KEY)("Xiaomi MiMo (API billing) Provider Empty Messages", () => {
-		const llm = getModel("xiaomi", "mimo-v2.5-pro");
+		const llm = getModel("xiaomi", "mimo-v2.6-pro");
 
 		it("should handle empty content array", { retry: 3, timeout: 30000 }, async () => {
 			await testEmptyMessage(llm);
@@ -494,7 +494,7 @@ describe("AI Providers Empty Message Tests", () => {
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_CN_API_KEY)(
 		"Xiaomi MiMo Token Plan (CN) Provider Empty Messages",
 		() => {
-			const llm = getModel("xiaomi-token-plan-cn", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi-token-plan-cn", "mimo-v2.6-pro");
 
 			it("should handle empty content array", { retry: 3, timeout: 30000 }, async () => {
 				await testEmptyMessage(llm);
@@ -517,7 +517,7 @@ describe("AI Providers Empty Message Tests", () => {
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_AMS_API_KEY)(
 		"Xiaomi MiMo Token Plan (AMS) Provider Empty Messages",
 		() => {
-			const llm = getModel("xiaomi-token-plan-ams", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi-token-plan-ams", "mimo-v2.6-pro");
 
 			it("should handle empty content array", { retry: 3, timeout: 30000 }, async () => {
 				await testEmptyMessage(llm);
@@ -540,7 +540,7 @@ describe("AI Providers Empty Message Tests", () => {
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_SGP_API_KEY)(
 		"Xiaomi MiMo Token Plan (SGP) Provider Empty Messages",
 		() => {
-			const llm = getModel("xiaomi-token-plan-sgp", "mimo-v2.5-pro");
+			const llm = getModel("xiaomi-token-plan-sgp", "mimo-v2.6-pro");
 
 			it("should handle empty content array", { retry: 3, timeout: 30000 }, async () => {
 				await testEmptyMessage(llm);

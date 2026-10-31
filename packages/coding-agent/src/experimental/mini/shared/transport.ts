@@ -8,6 +8,7 @@
 
 import { rm } from "node:fs/promises";
 import { createConnection as connectSocket, createServer, type Socket } from "node:net";
+import { signalSpawnedChild } from "../../../utils/child-signal.ts";
 
 export interface Connection {
 	send(message: unknown): void;
@@ -81,10 +82,12 @@ function socketConnection(socket: Socket): Connection {
 export function childConnection(child: {
 	stdin: NodeJS.WritableStream | null;
 	stdout: NodeJS.ReadableStream | null;
+	readonly pid?: number | undefined;
 	kill(): unknown;
 }): Connection {
 	if (!child.stdin || !child.stdout) throw new Error("Child process was spawned without pipes");
-	return jsonConnection(child.stdout, child.stdin, () => child.kill());
+	// Closing the connection of a worker whose spawn failed must not signal anything (senpi#3706).
+	return jsonConnection(child.stdout, child.stdin, () => signalSpawnedChild(child));
 }
 
 /** The child's own view of the pipes its parent created. */

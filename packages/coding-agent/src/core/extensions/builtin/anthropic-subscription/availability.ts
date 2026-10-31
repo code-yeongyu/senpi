@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { signalSpawnedChild } from "../../../../utils/child-signal.ts";
 import {
 	defaultExecutableDeps,
 	describeClaudeCodeExecutable,
@@ -80,6 +81,7 @@ function untilAborted(status: Promise<boolean>, signal: AbortSignal | undefined)
 }
 
 type ProbeChildProcess = {
+	readonly pid: number | undefined;
 	once(event: "error" | "close", listener: (code: number | null) => void): unknown;
 	kill(signal: "SIGKILL"): unknown;
 };
@@ -110,7 +112,7 @@ export async function probeAmbientClaudeAuthStatus(options: AmbientProbeOptions 
 		};
 		const child = spawnProbe(executable, ["auth", "status"]);
 		const deadline = setTimeout(() => {
-			child.kill("SIGKILL");
+			signalSpawnedChild(child, "SIGKILL");
 			finish(false);
 		}, timeoutMs);
 		deadline.unref?.();

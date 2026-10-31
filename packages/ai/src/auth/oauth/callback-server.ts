@@ -5,7 +5,7 @@
  * loaded OAuth flow modules, never from browser-facing entry points.
  */
 
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { oauthErrorHtml, oauthSuccessHtml } from "../../utils/oauth-page.ts";
 import type { ProviderAuthInteraction } from "../types.ts";
 
@@ -21,6 +21,11 @@ export interface OAuthCallbackServerOptions<T> {
 	redirectHost?: string;
 	/** Expected `state` parameter. Omit when the provider does not send one. */
 	state?: string;
+	/**
+	 * Path a newer login on this machine requests to take the port over (Codex CLI's `/cancel`). The
+	 * listener stops waiting for the browser and frees the port; its login keeps the paste prompt.
+	 */
+	cancelPath?: string;
 	/**
 	 * Finishes the sign-in with the received code before the browser page is sent, so the page can
 	 * show exchange failures. Pass `async (code) => code` to exchange the code later.
@@ -40,6 +45,20 @@ export interface OAuthCallbackServer<T> {
 	/** Stop waiting for the browser unless a callback is already being completed. */
 	cancel(): void;
 	close(): void;
+}
+
+/**
+ * Header a newer login on this machine sends with its takeover request. A web page cannot send it:
+ * a custom header on a cross-origin request needs a CORS preflight this server never approves, and a
+ * plain GET (an `<img>` tag) or form POST cannot carry it. Requests that carry `Origin` came from a
+ * page and are refused outright (senpi#3623 review).
+ */
+export const OAUTH_CANCEL_HEADER = "x-oauth-callback-cancel";
+
+function isLocalCancelRequest(request: IncomingMessage): boolean {
+	return (
+		request.method === "POST" && request.headers[OAUTH_CANCEL_HEADER] === "1" && request.headers.origin === undefined
+	);
 }
 
 function sendPage(response: ServerResponse, status: number, html: string): void {
@@ -78,12 +97,31 @@ export async function startOAuthCallbackServer<T>(
 	const server = createServer((request, response) => {
 		void (async () => {
 			const url = new URL(request.url ?? "/", "http://localhost");
+			if (options.cancelPath !== undefined && url.pathname === options.cancelPath) {
+				if (!isLocalCancelRequest(request)) {
+					sendPage(response, 403, oauthErrorHtml("Not allowed."));
+					return;
+				}
+				sendPage(response, 200, oauthErrorHtml("This sign-in was replaced by a newer one."));
+				if (!claimed) {
+					finish({ value: undefined });
+					server.close();
+				}
+				return;
+			}
 			if (request.method !== "GET" || url.pathname !== options.path) {
 				sendPage(response, 404, oauthErrorHtml("Callback route not found."));
 				return;
 			}
 			if (options.state !== undefined && url.searchParams.get("state") !== options.state) {
-				sendPage(response, 400, oauthErrorHtml("State mismatch."));
+				sendPage(
+					response,
+					400,
+					oauthErrorHtml(
+						"State mismatch.",
+						"This page belongs to a different sign-in than the one listening here. Copy this page's address and paste it into the session that is waiting for it, or start the sign-in again.",
+					),
+				);
 				return;
 			}
 			if (claimed || settled) {

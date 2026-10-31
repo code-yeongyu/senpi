@@ -35,6 +35,18 @@ export type { GoogleOptions } from "./api/google-generative-ai.ts";
 export type { GoogleApiThinkingLevel, ResolvedGoogleThinkingLevel } from "./api/google-shared.ts";
 export type { GoogleVertexOptions } from "./api/google-vertex.ts";
 export * from "./api/lazy.ts";
+export {
+	type AssistantProgress,
+	type AssistantRecord,
+	assistantEvents,
+	assistantRecords,
+	carryAssistantCapture,
+	getAssistantCapture,
+	isAssistantProgress,
+	pushAssistantProgress,
+	subscribeAssistantCapture,
+} from "./utils/assistant-capture.ts";
+export { SeedFrontierError, seedNextOffset } from "./utils/assistant-seed-frontier.ts";
 export type { MistralOptions } from "./api/mistral-conversations.ts";
 export type {
 	ChatGptSubscriptionWebSocketDebugStats,
@@ -96,6 +108,7 @@ export * from "./endpoint-reasoning-efforts.ts";
 export * from "./env-api-keys.ts";
 export * from "./legacy-provider-ids.ts";
 export { modelSupportsAssistantPrefill } from "./model.ts";
+export * from "./model-cost.ts";
 export * from "./models.ts";
 export * from "./models-store.ts";
 export { supportsAllowedToolChoice } from "./openai-responses-compat.ts";
@@ -129,6 +142,7 @@ export { estimateContextTokens } from "./utils/estimate.ts";
 export * from "./utils/event-stream.ts";
 export * from "./utils/json-parse.ts";
 export * from "./utils/overflow.ts";
+export * from "./utils/provider-error.ts";
 export {
 	isAnthropicApiBaseUrl,
 	PROMPT_CACHE_TTL_LONG_SECONDS,
