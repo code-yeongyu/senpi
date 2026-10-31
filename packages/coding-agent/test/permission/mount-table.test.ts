@@ -119,3 +119,104 @@ describe("mount table: a mount point listed more than once", () => {
 		expect(detect("/f")).toMatchObject({ alias: true, reasons: ["mount-point-ambiguous:/"] });
 	});
 });
+
+// senpi#4790: one row per filesystem type, each mounted at its own point under an overlay root. The confirmed rows
+// are the design's measured allowlist (local disk and the measured network/overlay types); every other type
+// keeps the inverted default and stays alias-bearing.
+const CONFIRMED_TYPES = [
+	"apfs",
+	"btrfs",
+	"exfat",
+	"ext4",
+	"hfs",
+	"nfs",
+	"nfs4",
+	"ntfs",
+	"overlay",
+	"tmpfs",
+	"virtiofs",
+	"xfs",
+	"zfs",
+] as const;
+const FLAGGED_TYPES = [
+	"devfs",
+	"fuse",
+	"fuseblk",
+	"fuse.sshfs",
+	"macfuse",
+	"autofs",
+	"proc",
+	"sysfs",
+	"devtmpfs",
+	"cgroup2",
+	"binfmt_misc",
+	"cifs",
+	"smb3",
+	"smbfs",
+	"9p",
+	"squashfs",
+	"ext3",
+	"ext2",
+	"vfat",
+	"msdos",
+	"unknown",
+] as const;
+const pointFor = (type: string) => `/m/${type.replace(/\./g, "_")}`;
+
+describe("alias detector: filesystem type classes (senpi#4790)", () => {
+	const types = [...CONFIRMED_TYPES, ...FLAGGED_TYPES];
+	const table = parseMountTable(
+		["overlay / overlay rw 0 0", ...types.map((type) => `src-${type} ${pointFor(type)} ${type} rw 0 0`)].join("\n"),
+		"linux",
+	);
+	const tree: Record<string, string[]> = {
+		"/": ["m"],
+		"/m": types.map((type) => pointFor(type).slice(3)),
+	};
+	for (const type of types) tree[pointFor(type)] = ["f"];
+	const detect = createDetector(table, budget, enumerable(tree), "linux");
+
+	it("parses every row without degrading", () => {
+		expect(table).toMatchObject({ degraded: false, rejected: [], ambiguous: [] });
+	});
+
+	it("confirms a plain path on an ext4 root", () => {
+		const ext4Root = createDetector(
+			parseMountTable("/dev/sda1 / ext4 rw,relatime 0 0", "linux"),
+			budget,
+			enumerable({ "/": ["home"], "/home": ["runner"], "/home/runner": [".bashrc"] }),
+			"linux",
+		);
+		expect(ext4Root("/home/runner/.bashrc")).toMatchObject({ alias: false, reasons: [] });
+	});
+
+	it.each(CONFIRMED_TYPES)("confirms a fully enumerated path on %s", (type) => {
+		expect(detect(`${pointFor(type)}/f`)).toMatchObject({ alias: false, reasons: [] });
+	});
+
+	it.each(FLAGGED_TYPES)("keeps a path on %s alias-bearing by its type", (type) => {
+		expect(detect(`${pointFor(type)}/f`)).toMatchObject({
+			alias: true,
+			reasons: [`fs-type:${type}@${pointFor(type)}`],
+		});
+	});
+
+	it("a spelling a case-folding ext4 directory resolves but does not list stays alias-bearing", () => {
+		const casefolded = createDetector(
+			parseMountTable("/dev/sda1 / ext4 rw 0 0", "linux"),
+			budget,
+			enumerable({ "/": ["srv"], "/srv": ["Data"], "/srv/Data": ["f"] }),
+			"linux",
+		);
+		expect(casefolded("/srv/Data/f")).toMatchObject({ alias: false, reasons: [] });
+		expect(casefolded("/srv/DATA/f")).toMatchObject({ alias: true, reasons: ["not-enumerable@/srv/DATA"] });
+	});
+
+	it("a path with no mount entry stays alias-bearing", () => {
+		const rootless = { mounts: [{ dev: "x", on: "/m", type: "ext4" }], degraded: false, rejected: [], ambiguous: [] };
+		expect(createDetector(rootless, budget, enumerable({ "/": ["m"] }), "linux")("/m")).toMatchObject({
+			alias: true,
+			reasons: ["fs-type:no-mount-entry"],
+		});
+	});
+});

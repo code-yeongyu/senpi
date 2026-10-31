@@ -10,16 +10,25 @@
 // (lib/equivalence-tui-cases.mjs) and compares their TUI captures against `golden-tui/<platform>`.
 //
 // The CLI child runs on Bun unless `--child` says otherwise (lib/common.mjs). Exit code 0 only when every selected
-// case matches its golden on every declared observable and its witness matches `--pipeline`.
+// case matches its golden on every declared observable and its witness matches `--pipeline`, except a cell listed in
+// fused-equivalence/deferred-goldens.mjs whose golden is missing: it is reported DEFERRED(<owner>, <issue>), never PASS,
+// and does not fail the run. A listed cell whose golden exists fails the run (lib/equivalence-deferred.mjs).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cases } from "../../scenarios/fused-equivalence/cases/index.mjs";
+import { deferredGoldens } from "../../scenarios/fused-equivalence/deferred-goldens.mjs";
 import { startCaseRun } from "../../scenarios/fused-equivalence/cases/support/case-run.mjs";
 import { baselineManifest, goldenDir, observe } from "../../scenarios/fused-equivalence/cases/support/observe.mjs";
 import { ownTsxCache } from "../../scenarios/fused-equivalence/cases/support/tsx-cache.mjs";
 import { expectedWitness, readWitness } from "../../scenarios/fused-equivalence/cases/support/witness.mjs";
 import { goldenPlatform } from "../../scenarios/fused-equivalence/cases/support/host.mjs";
 import { childRuntime, evidenceDir, guardRealAuth, installCleanupHooks, repoRoot } from "../lib/common.mjs";
+import {
+	goldenCellVerdict,
+	staleDeferredEntries,
+	summarizeRun,
+	validateDeferredList,
+} from "../lib/equivalence-deferred.mjs";
 import { diffNormalized } from "../lib/equivalence-normalize.mjs";
 import { tuiCaptureHash, tuiGoldenDir } from "../lib/equivalence-tui-capture.mjs";
 import { runTuiCase, TUI_CASE_IDS } from "../lib/equivalence-tui-cases.mjs";
@@ -107,8 +116,27 @@ async function main() {
 	// Read before any golden is written: the manifest names the tree the goldens were recorded from, so a record run's own
 	// output must not mark that tree dirty.
 	const manifest = baselineManifest({ repo: repoRoot(), childRuntime: childRuntime().label, command });
+	const problems = validateDeferredList(
+		deferredGoldens,
+		cases.map((c) => c.id),
+	);
+	if (problems.length) throw new Error(`deferred-goldens.mjs is invalid:\n${problems.join("\n")}`);
+	const stale = options.mode === "compare" ? staleDeferredEntries(deferredGoldens) : [];
+	for (const entry of stale)
+		process.stdout.write(
+			`[FAIL] deferred ${entry.platform} ${entry.case} ${entry.mode}: its golden exists - remove the deferred entry (${entry.issue})\n`,
+		);
+	const cell = { platform: goldenPlatform(), mode: tui ? "tui" : "rpc" };
 	const results = [];
 	for (const testCase of selected) {
+		const verdict =
+			options.mode === "compare" ? goldenCellVerdict(deferredGoldens, { ...cell, case: testCase.id }) : undefined;
+		if (verdict?.kind === "deferred") {
+			const { owner, issue, due } = verdict.entry;
+			results.push({ id: testCase.id, title: testCase.title, pass: false, deferred: { owner, issue, due } });
+			process.stdout.write(`[DEFERRED] ${testCase.id} ${testCase.title} - ${verdict.label}, due ${due}\n`);
+			continue;
+		}
 		const runs = [];
 		let error;
 		try {
@@ -164,10 +192,8 @@ async function main() {
 	guard.assertUnchanged();
 	if (tui) manifest.hashes.tuiCapture = tuiCaptureHash();
 	if (options.mode === "record") writeFileSync(join(dir, "baseline.json"), `${JSON.stringify(manifest, null, 1)}\n`);
-	const passed = results.filter((r) => r.pass).length;
-	process.stdout.write(
-		`\nfused-equivalence-qa ${options.mode}: ${passed}/${results.length} passed (child_runtime=${manifest.runtimes.child})\n`,
-	);
+	const summary = summarizeRun(results, stale, options.mode);
+	process.stdout.write(`\n${summary.line} (child_runtime=${manifest.runtimes.child})\n`);
 	if (options.evidence) {
 		const out = evidenceDir(options.evidence);
 		const receipt = {
@@ -175,6 +201,7 @@ async function main() {
 			child_runtime: manifest.runtimes.child,
 			manifest,
 			options,
+			staleDeferred: stale,
 			results: results.map(({ observed, ...rest }) => rest),
 		};
 		writeFileSync(join(out, "receipt.json"), `${JSON.stringify(receipt, null, 1)}\n`);
@@ -182,7 +209,7 @@ async function main() {
 			if (r.observed) writeFileSync(join(out, `${r.id}.observed.json`), `${JSON.stringify(r.observed, null, 1)}\n`);
 		process.stdout.write(`evidence: ${out}\n`);
 	}
-	process.exitCode = passed === results.length && results.length > 0 ? 0 : 1;
+	process.exitCode = summary.exitCode;
 }
 
 const releaseTsxCache = ownTsxCache();

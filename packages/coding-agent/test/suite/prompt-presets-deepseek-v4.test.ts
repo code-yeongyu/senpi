@@ -108,9 +108,9 @@ function expectedCatalogPreset(model: Model<Api>): string | undefined {
 
 function getDeepseekV4CatalogModels(): Array<{ model: Model<Api>; expected: string }> {
 	return getProviders().flatMap((provider) =>
-		(getModels(provider) as Model<Api>[])
+		getModels(provider)
 			.map((model) => ({ model, expected: expectedCatalogPreset(model) }))
-			.filter((entry): entry is { model: Model<Api>; expected: string } => entry.expected !== undefined),
+			.filter((entry): entry is typeof entry & { expected: string } => entry.expected !== undefined),
 	);
 }
 
