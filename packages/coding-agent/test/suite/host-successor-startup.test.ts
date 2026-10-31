@@ -98,16 +98,18 @@ describe("successor startup ordering (senpi#4602 N1)", () => {
 		expect(start.answerBudgets).toEqual([10_000]);
 	});
 
-	it("a presenter channel that closes without enrolling fails the candidate in P7 and never grants publication", async () => {
+	it("a presenter channel that closes without enrolling passes P7 as not enrolled (LEAD ruling 10-31, #4254)", async () => {
 		const start = successor(async () => "closed");
 		reachPresenter(start.clock, start.controller);
-		const result = await start.run;
-		expect(result.ready).toBe(false);
-		expect(!result.ready && result.outcome.phase).toBe("presenter_resolved");
-		expect(start.order).toEqual(["presenter"]);
+		await start.granted;
+		expect(start.controller.phase).toBe("public_published");
+		start.clock.advanceTo(63_000);
+		expect(start.controller.complete("public_published")).toBe("accepted");
+		expect((await start.run).ready).toBe(true);
+		expect(start.order).toEqual(["presenter", "grant", "answer"]);
 	});
 
-	it("an enrollment that expires at 92 s fails P7 at its own deadline and never grants publication", async () => {
+	it("an EXPIRED enrollment still fails P7 at its own 92 s deadline and never grants publication (design :114/:118)", async () => {
 		const start = successor(() => new Promise<PresenterResult>(() => {}));
 		reachPresenter(start.clock, start.controller);
 		await settleTurn();

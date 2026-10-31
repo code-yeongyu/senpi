@@ -2296,8 +2296,9 @@ exchange runs, the successor has only its own `<public>.next-<gen>` listener; th
 unchanged public socket, key and pointer. The launcher grants publication only after a validated presenter result:
 it writes `adoption-grant.json` (0600, naming the attempt) into the successor's generation directory and wakes the
 supervisor on the startup pipe. Only then does the successor publish its key and rename its entry over the public
-path. A presenter exchange that is rejected, closes without `enrolled` or `unavailable`, or misses its 30 s phase ends
-the successor before it touched the predecessor's endpoint, and the handoff is refused as before. When the
+path. A presenter exchange that misses its 30 s phase ends the successor before it touched the predecessor's endpoint,
+and the handoff is refused. A presenter channel that closes without `enrolled` (for example a refused enrollment for
+a foreign or stale predecessor) passes the phase as not enrolled, and the handoff proceeds as it always did. When the
 predecessor is a running host performing an idle handover, it asks its launch owner for the successor's fresh
 presenter permit only at that phase, so the 30 s permit covers the exchange and not the successor's boot. The
 presenter channel itself waits up to 180 s for its first frame; the existing 30 s exchange window starts with that

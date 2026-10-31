@@ -52,11 +52,9 @@ export async function driveSuccessorStartup(options: {
 		if (!(await controller.whenPhase("presenter_resolved"))) return failure();
 		if (options.presenter) {
 			const result = await Promise.race([options.presenter(), terminal]);
+			// LEAD ruling 10-31 (b): a channel that closes without enrolling passes P7 as "not enrolled" - preserves #4254's
+			// tested behaviour (a refused enrollment never blocks the handoff). Only P7's own expiry fails the candidate.
 			if (result === "terminal") return failure();
-			if (result === "closed") {
-				controller.fail(new Error("the successor's presenter channel closed before it enrolled"));
-				return failure();
-			}
 		}
 		if (controller.complete("presenter_resolved") !== "accepted") return failure();
 		try {
