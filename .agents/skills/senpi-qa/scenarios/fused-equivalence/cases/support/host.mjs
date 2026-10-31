@@ -3,11 +3,13 @@
 // The CLI renders the machine it runs on into its prompt (packages/coding-agent/src/core/dynamic-prompt/workstation.ts:
 // kernel, CPU, GPU). Those values name the runner, like the sandbox path does, so they are replaced by tokens. What the
 // CLI does differently per platform (which lines exist, which tools register) is behavior, so goldens are keyed by
-// `<platform>-<arch>` and never shared across platforms.
+// `<platform>-<arch>` and never shared across platforms. The EQ child renders pinned values for the kernel, CPU model
+// and core count (scripts/lib/equivalence-host-pin.mjs), so those are tokenized too, alongside the real ones.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import * as os from "node:os";
 import { childRuntime } from "../../../../scripts/lib/common.mjs";
+import { pinnedHostFacts } from "../../../../scripts/lib/equivalence-host-pin.mjs";
 
 function cpuModel() {
 	if (process.platform === "linux") {
@@ -34,6 +36,7 @@ export function hostFacts() {
 		facts.push({ value: cpu, token: "<host:cpu-model>" });
 	}
 	facts.push({ value: ` ${os.availableParallelism()} cores`, token: " <host:cores> cores" });
+	facts.push(...pinnedHostFacts());
 	// Where the runtimes are installed names the machine and its user, like the CPU does: the CLI child's executable
 	// (a tool result's `runtime.path`) and the harness's own node.
 	const child = childRuntime();
