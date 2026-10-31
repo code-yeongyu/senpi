@@ -2,7 +2,7 @@
 export type RpcRecord = Record<string, unknown>;
 export type CompactDeltaType = "text_delta" | "thinking_delta" | "toolcall_delta";
 export const MESSAGE_KEY = "message";
-export const COMPACT_DELTA_TYPES = new Set<CompactDeltaType>(["text_delta", "thinking_delta", "toolcall_delta"]);
+const COMPACT_DELTA_TYPES = new Set<CompactDeltaType>(["text_delta", "thinking_delta", "toolcall_delta"]);
 
 export function compactDelta(
 	value: RpcRecord,
