@@ -73,3 +73,19 @@ export type {
 	TransportSide,
 } from "../transport/transport.ts";
 export { TransportClosedError } from "../transport/transport.ts";
+export { createExecutionLedger } from "../execution/ledger.ts";
+export type { ExecutionLedger } from "../execution/ledger.ts";
+export type {
+	ExecutionAdmission,
+	ExecutionCommand,
+	ExecutionEntry,
+	ExecutionEvent,
+	ExecutionKey,
+	ExecutionOutcome,
+	ExecutionProgress,
+	FrozenCall,
+	LedgerReply,
+} from "../execution/ledger-types.ts";
+export { LEDGER_CASES } from "../execution/testing/ledger-cases.ts";
+export { KILL_LEDGER_CASES, KILL_LEDGER_DECLARATIONS } from "../execution/testing/kill-ledger.ts";
+export type { KillLedgerDeclaration } from "../execution/testing/kill-ledger.ts";
