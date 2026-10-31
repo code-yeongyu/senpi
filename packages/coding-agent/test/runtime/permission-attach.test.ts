@@ -49,6 +49,23 @@ async function createSessionlessRuntime(flags: Flags): Promise<ExtensionRunner> 
 	return runner;
 }
 
+async function runtimeWithoutSessionManager(flags: Flags): Promise<ExtensionRunner> {
+	const dir = mkdtempSync(join(tmpdir(), "pi-rt6-permission-runtime-"));
+	disposers.push(() => rmSync(dir, { recursive: true, force: true }));
+	const extensions = await createTestExtensionsResult([permissionSystemExtension], dir);
+	const runner = new ExtensionRunner(
+		extensions.extensions,
+		extensions.runtime,
+		dir,
+		undefined,
+		await createInMemoryModelRegistry(AuthStorage.inMemory()),
+		extensions.eventBus,
+	);
+	if (flags.permission !== undefined) runner.setFlagValue("permission", flags.permission);
+	if (flags.preset !== undefined) runner.setFlagValue("permission-preset", flags.preset);
+	return runner;
+}
+
 function runBash(runner: ExtensionRunner, command: string) {
 	return runner.emitToolCall({ type: "tool_call", toolName: "bash", input: { command }, toolCallId: "call-1" });
 }
@@ -106,6 +123,27 @@ describe("permission checks attach without a session (RT6)", () => {
 		expect(await runBash(second, "echo four")).toMatchObject({ block: true });
 		// Then each context attached exactly once.
 		expect(loads).toHaveBeenCalledTimes(2);
+	});
+
+	it("attaches once on a runtime whose contexts have no session manager", async () => {
+		// Given a runner built without a session manager, whose contexts carry none.
+		const runner = await runtimeWithoutSessionManager({ permission: "bash=deny" });
+		const loads = vi.spyOn(SettingsManager, "create");
+		const added = vi.spyOn(WeakSet.prototype, "add");
+		// When tool calls arrive.
+		expect(await runBash(runner, "echo one")).toMatchObject({ block: true });
+		expect(await runBash(runner, "echo two")).toMatchObject({ block: true });
+		expect(await runBash(runner, "echo three")).toMatchObject({ block: true });
+		// Then the runtime attached once, and no undefined key reached a WeakSet.
+		expect(loads).toHaveBeenCalledTimes(1);
+		expect(added.mock.calls.some(([value]) => value === undefined)).toBe(false);
+	});
+
+	it("refuses every call on a runtime with no session manager when the preset is invalid", async () => {
+		const runner = await runtimeWithoutSessionManager({ preset: "full-acess" });
+		const result = await runBash(runner, "echo hello");
+		expect(result).toMatchObject({ block: true });
+		expect(JSON.stringify(result)).toContain("Permission setup failed");
 	});
 
 	it("refuses every call when the preset is invalid", async () => {
