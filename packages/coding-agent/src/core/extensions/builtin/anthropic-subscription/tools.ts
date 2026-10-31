@@ -11,18 +11,23 @@ export const SDK_TO_PI_TOOL_NAME: Readonly<Record<string, string>> = {
 };
 
 /**
- * Senpi tools served to Claude Code as its built-ins. `write` and `edit` are deliberately absent:
- * Claude Code runs its own read-before-write validator on built-in Write/Edit BEFORE any
- * PreToolUse hook, and its read state is always empty here (senpi denies the SDK's Read), so the
- * SDK answered those calls itself while senpi still executed them (#2401). They go through the
- * custom-tools MCP server instead, where the host denial always answers and senpi alone executes.
+ * Claude Code built-in tool names a model may still emit (from habit, or because a skill document names
+ * them), each with the senpi tools that can serve it, in preference order. `resolveSdkTools` turns the
+ * active ones into `toolAliases`, so such a call resolves to the matching custom-tools MCP tool and ends
+ * the SDK turn at the host deny hook instead of becoming Claude Code's own `No such tool available`
+ * answer, which would have let the model run on inside the query while senpi also executed the call
+ * (the #2401 shape). The lowercase spellings are aliased too, since a bare `edit` otherwise takes the
+ * same `No such tool` path. Arguments are translated from the built-in shape only for the exact
+ * built-in spellings (`translatesBuiltinArguments`).
  */
-export const PI_TO_SDK_TOOL_NAME: Readonly<Record<string, string>> = {
-	read: "Read",
-	bash: "Bash",
-	grep: "Grep",
-	find: "Glob",
-	glob: "Glob",
+export const BUILTIN_TOOL_ALIASES: Readonly<Record<string, readonly string[]>> = {
+	Read: ["read"],
+	Write: ["write"],
+	Edit: ["edit"],
+	MultiEdit: ["edit"],
+	Bash: ["bash"],
+	Grep: ["grep"],
+	Glob: ["glob", "find"],
 };
 
 /**
@@ -34,9 +39,14 @@ export const PI_TO_SDK_TOOL_NAME: Readonly<Record<string, string>> = {
  * denial text is never served again. Bump when denial copy or hooks change so
  * wording-only edits cannot keep serving the old reason.
  */
-export const HOST_TOOL_POLICY_FINGERPRINT = "host-tool-denial-v4";
+export const HOST_TOOL_POLICY_FINGERPRINT = "host-tool-denial-v5";
 
-export const BUILTIN_SDK_TOOLS = ["Read", "Bash", "Grep", "Glob"] as const;
+/**
+ * Claude Code gets no built-in tool: every senpi tool is served through the custom-tools MCP server
+ * with its own schema, where no Claude Code validator runs ahead of the deny hook (#2401) and no
+ * built-in schema shadows a custom one (#4059). `tools: []` is what disables the built-ins.
+ */
+export const BUILTIN_SDK_TOOLS: readonly string[] = [];
 /**
  * The reason the host deny hook gives. Claude Code itself labels every PreToolUse deny as
  * "PreToolUse:<Tool> hook error: <reason>" with is_error true, and that label cannot be changed, so the
@@ -49,7 +59,7 @@ export const TOOL_EXECUTION_DENIED_MESSAGE =
 export const HOST_TOOL_EXECUTION_DENIED_MESSAGE = TOOL_EXECUTION_DENIED_MESSAGE;
 export const CUSTOM_TOOLS_MCP_SERVER_NAME = "custom-tools";
 export const CUSTOM_TOOLS_MCP_PREFIX = `mcp__${CUSTOM_TOOLS_MCP_SERVER_NAME}__`;
-export const HOST_CAPTURED_SDK_TOOL_MATCHER = "Bash|Write|Edit|Read|Grep|Glob|mcp__custom-tools__.*";
+export const HOST_CAPTURED_SDK_TOOL_MATCHER = `${CUSTOM_TOOLS_MCP_PREFIX}.*`;
 export const HOST_TOOL_DENIAL_HOOKS: NonNullable<Options["hooks"]> = {
 	PreToolUse: [
 		{
@@ -69,10 +79,11 @@ export const HOST_TOOL_DENIAL_HOOKS: NonNullable<Options["hooks"]> = {
 };
 
 export type ResolvedSdkTools = {
-	sdkTools: string[];
 	customTools: Tool[];
 	customToolNameToSdk: Map<string, string>;
 	customToolNameToPi: Map<string, string>;
+	/** Claude Code `toolAliases`: built-in name (both spellings) -> custom-tools MCP name of the active senpi tool. */
+	toolAliases: Record<string, string>;
 };
 
 function pascalCase(value: string): string {
@@ -84,23 +95,36 @@ function pascalCase(value: string): string {
 }
 
 export function mapPiToolNameToSdk(name: string, customToolNameToSdk?: ReadonlyMap<string, string>): string {
-	const normalized = name.toLowerCase();
-	return (
-		customToolNameToSdk?.get(name) ??
-		customToolNameToSdk?.get(normalized) ??
-		PI_TO_SDK_TOOL_NAME[normalized] ??
-		pascalCase(name)
-	);
+	return customToolNameToSdk?.get(name) ?? customToolNameToSdk?.get(name.toLowerCase()) ?? pascalCase(name);
 }
 
+/**
+ * The active context wins (an alias such as `Glob` follows the tool it was derived from); the static
+ * table only serves names from transcripts recorded while the built-ins were still offered.
+ */
 export function mapSdkToolNameToPi(name: string, customToolNameToPi?: ReadonlyMap<string, string>): string {
 	const normalized = name.toLowerCase();
 	return (
-		SDK_TO_PI_TOOL_NAME[normalized] ??
 		customToolNameToPi?.get(name) ??
 		customToolNameToPi?.get(normalized) ??
+		SDK_TO_PI_TOOL_NAME[normalized] ??
 		(normalized.startsWith(CUSTOM_TOOLS_MCP_PREFIX) ? name.slice(CUSTOM_TOOLS_MCP_PREFIX.length) : name)
 	);
+}
+
+/** Only a call the model emitted under an exact built-in spelling carries Claude Code's argument shape. */
+export function translatesBuiltinArguments(sdkToolName: string): boolean {
+	return Object.hasOwn(BUILTIN_TOOL_ALIASES, sdkToolName);
+}
+
+type EditEntry = { oldText: unknown; newText: unknown };
+
+function toEditEntry(entry: unknown): EditEntry {
+	const input = entry !== null && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+	return {
+		oldText: input.old_string ?? input.oldText ?? input.old_text,
+		newText: input.new_string ?? input.newText ?? input.new_text,
+	};
 }
 
 /** Translate Claude Code's built-in-tool inputs into senpi's active tool schemas. */
@@ -117,14 +141,7 @@ export function mapToolArgs(
 		case "edit":
 			return {
 				path: input.file_path ?? input.path,
-				edits: Array.isArray(input.edits)
-					? input.edits
-					: [
-							{
-								oldText: input.old_string ?? input.oldText ?? input.old_text,
-								newText: input.new_string ?? input.newText ?? input.new_text,
-							},
-						],
+				edits: Array.isArray(input.edits) ? input.edits.map(toEditEntry) : [toEditEntry(input)],
 			};
 		case "bash":
 			return {
@@ -149,34 +166,31 @@ export function mapToolArgs(
 }
 
 export function resolveSdkTools(context: Context): ResolvedSdkTools {
-	if (!context.tools) {
-		return {
-			sdkTools: [...BUILTIN_SDK_TOOLS],
-			customTools: [],
-			customToolNameToSdk: new Map(),
-			customToolNameToPi: new Map(),
-		};
-	}
-
-	const sdkTools = new Set<string>();
 	const customTools: Tool[] = [];
 	const customToolNameToSdk = new Map<string, string>();
 	const customToolNameToPi = new Map<string, string>();
-	for (const tool of context.tools) {
-		const normalized = tool.name.toLowerCase();
-		const sdkName = PI_TO_SDK_TOOL_NAME[normalized];
-		if (sdkName) {
-			sdkTools.add(sdkName);
-			continue;
-		}
+	const toolAliases: Record<string, string> = {};
+	for (const tool of context.tools ?? []) {
 		const customSdkName = `${CUSTOM_TOOLS_MCP_PREFIX}${tool.name}`;
 		customTools.push(tool);
 		customToolNameToSdk.set(tool.name, customSdkName);
-		customToolNameToSdk.set(normalized, customSdkName);
+		customToolNameToSdk.set(tool.name.toLowerCase(), customSdkName);
 		customToolNameToPi.set(customSdkName, tool.name);
 		customToolNameToPi.set(customSdkName.toLowerCase(), tool.name);
 	}
-	return { sdkTools: [...sdkTools], customTools, customToolNameToSdk, customToolNameToPi };
+	for (const [builtinName, candidates] of Object.entries(BUILTIN_TOOL_ALIASES)) {
+		const served = candidates.find((candidate) => customToolNameToSdk.has(candidate));
+		if (served === undefined) continue;
+		const target = customToolNameToSdk.get(served);
+		if (target === undefined) continue;
+		const piName = customToolNameToPi.get(target);
+		if (piName === undefined) continue;
+		for (const alias of [builtinName, builtinName.toLowerCase()]) {
+			toolAliases[alias] = target;
+			customToolNameToPi.set(alias, piName);
+		}
+	}
+	return { customTools, customToolNameToSdk, customToolNameToPi, toolAliases };
 }
 
 export const canUseTool: NonNullable<Options["canUseTool"]> = async () => ({

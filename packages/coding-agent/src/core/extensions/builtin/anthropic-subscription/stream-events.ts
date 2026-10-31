@@ -50,6 +50,7 @@ function startContentBlock(context: StreamEventContext, event: Extract<StreamEve
 			name: mapSdkToolNameToPi(event.content_block.name, context.customToolNameToPi),
 			arguments: asRecord(event.content_block.input),
 			partialJson: "",
+			sdkName: event.content_block.name,
 			index: event.index,
 		};
 		openBlock(context, block, "toolcall");
@@ -84,8 +85,13 @@ function closeContentBlock(context: StreamEventContext, event: Extract<StreamEve
 	} else if (block?.type === "thinking") {
 		stream.push({ type: "thinking_end", contentIndex, content: block.thinking, partial: output });
 	} else if (block?.type === "toolCall") {
-		block.arguments = mapToolArguments(block.name, parseStreamingJson<Record<string, unknown>>(block.partialJson));
+		block.arguments = mapToolArguments(
+			block.name,
+			parseStreamingJson<Record<string, unknown>>(block.partialJson),
+			block.sdkName ?? block.name,
+		);
 		delete block.partialJson;
+		delete block.sdkName;
 		stream.push({ type: "toolcall_end", contentIndex, toolCall: block as ToolCall, partial: output });
 	}
 	if (block) delete block.index;

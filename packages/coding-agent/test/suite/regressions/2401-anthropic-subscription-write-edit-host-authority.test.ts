@@ -132,12 +132,17 @@ describe("regression #2401: senpi is the single authority for subscription-lane 
 		).result();
 
 		const offered = query.options().tools;
-		expect(Array.isArray(offered)).toBe(true);
+		expect(offered).toEqual([]);
 		for (const builtin of PRE_HOOK_VALIDATED_BUILTINS) {
-			expect(offered).not.toContain(builtin);
 			expect(BUILTIN_SDK_TOOLS).not.toContain(builtin);
 		}
-		expect(offered).toContain("Read");
+		// A model that still emits the built-in name is routed to the senpi MCP tool, where the deny hook answers.
+		expect(query.options().toolAliases).toMatchObject({
+			Write: "mcp__custom-tools__write",
+			Edit: "mcp__custom-tools__edit",
+			MultiEdit: "mcp__custom-tools__edit",
+			Read: "mcp__custom-tools__read",
+		});
 	});
 
 	it("serves senpi write and edit through the custom-tools MCP server that the host deny hook answers", async () => {

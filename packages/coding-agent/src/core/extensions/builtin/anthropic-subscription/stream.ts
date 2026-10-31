@@ -99,7 +99,7 @@ export function streamAnthropicSubscription(
 					cwd,
 					providerSettings,
 					authLane,
-					tools: resolvedTools.sdkTools,
+					toolAliases: resolvedTools.toolAliases,
 					pathToClaudeCodeExecutable: executable,
 					sessionId: options?.sessionId,
 					onGuidance: (text) => {

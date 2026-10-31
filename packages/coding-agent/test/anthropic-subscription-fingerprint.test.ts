@@ -21,7 +21,7 @@ function options(overrides: Partial<Options> = {}): Options {
 	return {
 		cwd: "/repo",
 		model: "claude-opus-4-5",
-		tools: ["Read", "Bash"],
+		tools: [],
 		permissionMode: "dontAsk",
 		includePartialMessages: true,
 		systemPrompt: promptWith(),
@@ -108,7 +108,7 @@ describe("claude-sdk-oauth config fingerprint stability", () => {
 			"primary",
 		);
 
-		expect(HOST_TOOL_POLICY_FINGERPRINT).toBe("host-tool-denial-v4");
+		expect(HOST_TOOL_POLICY_FINGERPRINT).toBe("host-tool-denial-v5");
 		expect(withDifferentCallbackIdentity.toolsetHash).toBe(policyProbe.toolsetHash);
 	});
 

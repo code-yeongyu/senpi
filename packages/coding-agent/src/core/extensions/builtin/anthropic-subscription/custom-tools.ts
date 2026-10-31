@@ -13,8 +13,9 @@ export async function denyCustomToolExecution() {
 }
 
 /**
- * Exposes senpi-only tools to Claude Code's planner. The SDK handler is deliberately
- * unusable: senpi receives the matching streamed tool call and executes it itself.
+ * Exposes every active senpi tool to Claude Code's planner. The SDK handler is deliberately
+ * unusable: senpi receives the matching streamed tool call and executes it itself. `alwaysLoad`
+ * keeps every tool in the prompt, never deferred behind Claude Code's tool search.
  */
 export async function buildCustomToolServers(
 	customTools: readonly Tool[],
@@ -26,6 +27,7 @@ export async function buildCustomToolServers(
 	const server = getSdkBoundary().createSdkMcpServer({
 		name: CUSTOM_TOOLS_MCP_SERVER_NAME,
 		version: "1.0.0",
+		alwaysLoad: true,
 		tools: customTools.map((tool) => ({
 			name: tool.name,
 			description: tool.description,

@@ -10,7 +10,10 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk";
-import { HOST_TOOL_DENIAL_HOOKS } from "../../src/core/extensions/builtin/anthropic-subscription/tools.ts";
+import {
+	CUSTOM_TOOLS_MCP_PREFIX,
+	HOST_TOOL_DENIAL_HOOKS,
+} from "../../src/core/extensions/builtin/anthropic-subscription/tools.ts";
 
 export type LocalSdkTurnObservation = {
 	providerRequests: number;
@@ -100,7 +103,8 @@ function closeServer(server: Server): Promise<void> {
 export async function runInstalledSdkLocalTurn(toolName: string): Promise<LocalSdkTurnObservation> {
 	const tmpDir = await mkdtemp(join(tmpdir(), "senpi-494-"));
 	const markerPath = join(tmpDir, "hook-stop-marker.txt");
-	const toolInput = JSON.stringify(toolName === "Bash" ? { command: `echo hi > "${markerPath}"` } : {});
+	const bashCommand = `echo hi > "${markerPath}"`;
+	const toolInput = JSON.stringify(toolName.endsWith("bash") || toolName === "Bash" ? { command: bashCommand } : {});
 	const requestBodies: string[] = [];
 	const server = createServer((req, res) => {
 		if (req.method === "POST" && req.url?.startsWith("/v1/messages")) {
@@ -134,13 +138,21 @@ export async function runInstalledSdkLocalTurn(toolName: string): Promise<LocalS
 				cwd: tmpDir,
 				model: "opus",
 				hooks: HOST_TOOL_DENIAL_HOOKS,
-				// Mirrors the production adapter: custom Pi tools are exposed through an
-				// in-process SDK MCP server, so PreToolUse hooks match mcp__custom-tools__*.
+				// Mirrors the production adapter (senpi#5159): Claude Code gets no built-in tool, every Pi tool
+				// is an in-process SDK MCP tool the PreToolUse hook matches, and a built-in name the model
+				// still emits is routed to its MCP tool by toolAliases before the hook runs.
+				tools: [],
+				toolAliases: { Bash: `${CUSTOM_TOOLS_MCP_PREFIX}bash` },
 				mcpServers: {
 					"custom-tools": createSdkMcpServer({
 						name: "custom-tools",
+						alwaysLoad: true,
 						tools: [
 							tool("eval", "regression probe custom tool", {}, async () => {
+								customHandlerRuns++;
+								return { content: [{ type: "text" as const, text: "ok" }] };
+							}),
+							tool("bash", "regression probe host shell", {}, async () => {
 								customHandlerRuns++;
 								return { content: [{ type: "text" as const, text: "ok" }] };
 							}),

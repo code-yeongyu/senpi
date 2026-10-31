@@ -49,9 +49,12 @@ describe("issue #494: Claude SDK OAuth denied tool replay", () => {
 			{ signal: new AbortController().signal },
 		);
 
-		// Then: every Senpi-captured SDK tool is intercepted with a terminal, non-inciting denial.
+		// Then: every Senpi-captured SDK tool is intercepted with a terminal, non-inciting denial. Claude Code gets
+		// no built-in tool (`tools: []`), and a built-in name the model still emits resolves to its custom-tools
+		// alias before the matcher runs, so the matcher covers exactly the custom-tools namespace.
+		expect(options.tools).toEqual([]);
 		expect(
-			["Bash", "Write", "Edit", "Read", "Grep", "Glob", "mcp__custom-tools__eval"].every((name) =>
+			["mcp__custom-tools__bash", "mcp__custom-tools__edit", "mcp__custom-tools__eval"].every((name) =>
 				matches.test(name),
 			),
 		).toBe(true);
