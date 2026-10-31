@@ -723,6 +723,32 @@ export interface ExtensionContext {
 	updateToolHookStatus?(statusMessage: string): void;
 }
 
+/**
+ * The members of {@link ExtensionContext} a runtime serves without a session (senpi#5223). A context from an
+ * `ExtensionRunner` built without a session manager has no `sessionManager` or `goalStoreFile`, and every other
+ * member outside this set throws a "loop-side and not bound" error.
+ */
+export type ExtensionRuntimeContext = Pick<
+	ExtensionContext,
+	| "offload"
+	| "ui"
+	| "mode"
+	| "hasUI"
+	| "cwd"
+	| "agentDir"
+	| "loadedExtensionPaths"
+	| "modelRegistry"
+	| "isProjectTrusted"
+	| "kernelTools"
+	| "evalHandleHost"
+	| "shutdown"
+	| "getLookAtSettings"
+	| "getAskUserSettings"
+	| "getImageSettings"
+	| "getRegisteredMcpServers"
+	| "extensionConnectsMcpServers"
+>;
+
 /** Provider request prefix of the next user turn (see `ExtensionContext.getPromptCachePrefixRequest`). */
 export interface PromptCachePrefixRequest {
 	readonly model: Model<Api>;
