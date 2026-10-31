@@ -25,7 +25,7 @@ import {
 	HOST_WATCH_PSTART_ENV,
 	HOST_WATCH_PSTART_TICKS_ENV,
 } from "./host-watchdog.ts";
-import type { SocketFileIdentity } from "./socket-ownership.ts";
+import { parseSocketIdentity, type SocketFileIdentity } from "./socket-ownership.ts";
 import { SOCKET_SECRET_FILE_ENV } from "./socket-transport.ts";
 
 export interface SupervisorLaunch {
@@ -51,6 +51,11 @@ export interface SupervisorLaunch {
 	 * somebody else now, and replacing it would unlink an endpoint this process cannot prove it owns.
 	 */
 	readonly replaceIdentity?: SocketFileIdentity;
+	/**
+	 * The predecessor generation whose owner token the adoption must find (senpi#4602): passed only for a predecessor
+	 * that advertises the endpoint owner fence. Without it the adoption checks the entry identity alone, as before.
+	 */
+	readonly replaceOwner?: string;
 }
 
 export { resolveCliMainPath } from "./host-cli-entry.ts";
@@ -101,6 +106,7 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 	let presenterBootstrapFd: number | undefined;
 	let bindSocket: string | undefined;
 	let replaceIdentity: SocketFileIdentity | undefined;
+	let replaceOwner: string | undefined;
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index];
 		if (arg === "--mcp-presenter-fd" && argv[index + 1] === "4") {
@@ -142,6 +148,10 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 			replaceIdentity = parseSocketIdentity(argv[++index]);
 			continue;
 		}
+		if (arg === "--replace-owner" && index + 1 < argv.length) {
+			replaceOwner = argv[++index];
+			continue;
+		}
 		hostArgs.push(arg);
 	}
 	return socket === undefined
@@ -157,6 +167,7 @@ export function parseSupervisorArgs(argv: readonly string[]): SupervisorLaunch |
 					ownerFd,
 					bindSocket,
 					replaceIdentity,
+					replaceOwner,
 					presenterBootstrapFd,
 				};
 }
@@ -175,12 +186,6 @@ export function keepOwnerPipe(child: ChildProcess): void {
 		ownerPipes.delete(pipe);
 		pipe.destroy();
 	});
-}
-
-/** `<dev>:<ino>` as the ensure captured it; anything else is no identity at all, never a guess. */
-function parseSocketIdentity(value: string): SocketFileIdentity | undefined {
-	const match = /^(\d+):(\d+)$/.exec(value);
-	return match ? { dev: Number(match[1]), ino: Number(match[2]) } : undefined;
 }
 
 /**

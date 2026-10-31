@@ -32,15 +32,10 @@ import {
 	declareHostChild,
 	hostChildReportsStartup,
 	hostChildSpawned,
+	publishSupervisorEndpoint,
 	supervisorPublished,
 } from "./host-lifecycle-startup.ts";
-import {
-	adoptPublicSocket,
-	createPublicProxy,
-	ensurePublicSocketSecret,
-	listen,
-	prepareSocketPath,
-} from "./host-lifecycle-proxy.ts";
+import { createPublicProxy, ensurePublicSocketSecret } from "./host-lifecycle-proxy.ts";
 import { readSettingsFile, recordChildPid } from "./host-lifecycle-scratch.ts";
 import {
 	performShutdown,
@@ -107,15 +102,14 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 	};
 	// A direct launch has no ensure to provision its records before the child can write them.
 	await createGenerationDirectory(generation);
-	const policy = resolveHostPolicy(await readSettingsFile(paths.settingsFile), process.env);
+	const settings = await readSettingsFile(paths.settingsFile);
+	const policy = resolveHostPolicy(settings, process.env);
 	const publicSocket = launch.socket;
 	const publicEndpoint =
 		process.platform === "win32" ? undefined : new RpcPublicEndpoint(launch.agentDir ?? getAgentDir(), publicSocket);
 	// A successor generation binds its own name and adopts the public one by rename; an ordinary
 	// start binds the public name directly. Everything downstream - the child's environment, the
 	// ownership token, the teardown - is expressed in terms of the PUBLIC path either way.
-	const bindSocket = launch.bindSocket ?? publicSocket;
-	const successor = launch.bindSocket !== undefined;
 	// Direct-launch contract: the supervisor owns the public secret. ensureHost()
 	// writes it before spawning, but the hidden --internal-rpc-host-supervisor route
 	// has no such caller, so a fresh profile would otherwise die reading it (#1370).
@@ -160,7 +154,7 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 			generationPidFile: generation.pidFile,
 			settingsFile: paths.settingsFile,
 			publicSocket,
-			successor: Boolean(successor),
+			successor: launch.bindSocket !== undefined,
 			platform: process.platform,
 		}),
 		publicSocket,
@@ -273,11 +267,16 @@ export async function runHostSupervisor(launch: SupervisorLaunch): Promise<void>
 		if (state.shuttingDown) return;
 		// Shutdown stops the child immediately, but joins these writes before removing their directories.
 		state.startupComplete = (async () => {
-			await prepareSocketPath(bindSocket);
-			await listen(server, bindSocket, publicSecret);
-			await publicEndpoint?.publish();
-			state.publicSocketOwned = true;
-			if (successor) await adoptPublicSocket(bindSocket, publicSocket, launch.replaceIdentity);
+			await publishSupervisorEndpoint({
+				launch,
+				server,
+				publicSecret,
+				publicEndpoint,
+				generationDir: generation.dir,
+				instanceId,
+				settings,
+				state,
+			});
 			state.publicSocketIdentity = await statSocketIdentity(publicSocket);
 			// The child's crash cleanup compares the public entry against this generation's private token.
 			if (state.publicSocketIdentity && internal.dir) {

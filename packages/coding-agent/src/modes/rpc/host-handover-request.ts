@@ -117,7 +117,7 @@ function beginHandoverCommand(
 		if_generation: terms.ifGeneration,
 		target_runtime_build_id: terms.targetRuntimeBuildId,
 		agent_dir: target.agentDir,
-		launch: { command: launch.command, args: launch.args },
+		launch: { command: launch.command, args: launch.args, reports_startup: true },
 		host_args: spec.hostArgs,
 		env,
 		...(mcpPresenterEnforcement === true && { mcp_presenter_enforcement: true }),

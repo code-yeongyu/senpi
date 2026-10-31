@@ -18,6 +18,12 @@ export const STARTUP_EVENT_PROTOCOL_VERSION = 1;
 export const MAX_STARTUP_EVENT_BYTES = 4096;
 /** In the candidate's own generation directory: its attempt nonce and identity, for a later holder's recovery. */
 export const STARTUP_ATTEMPT_FILE = "startup-attempt.json";
+/**
+ * In a successor's own generation directory: the launcher's grant to take the public name, for one attempt. The
+ * supervisor re-reads it inside the endpoint fence right before the adoption rename; the launcher's cleanup removes
+ * it inside the same fence, so a revoked grant can never be followed by an adoption (senpi#4602 N1).
+ */
+export const ADOPTION_GRANT_FILE = "adoption-grant.json";
 
 export type StartupProducerRole = "supervisor" | "host";
 /** `host_opaque`: the supervisor's declaration, made before it spawns a host child that cannot report. */
@@ -136,6 +142,11 @@ export function startupEventLine(
 	milestone: StartupMilestone,
 ): string {
 	return `${JSON.stringify({ v: STARTUP_EVENT_PROTOCOL_VERSION, binding, role, seq, milestone })}\n`;
+}
+
+/** The launcher's wake-up to a successor supervisor on the same pipe, in the other direction: P7 resolved. */
+export function startupGrantLine(attempt: string): string {
+	return `${JSON.stringify({ grant: "public_published", attempt })}\n`;
 }
 
 /** The supervisor's frame around one host-child record line (without its LF). */

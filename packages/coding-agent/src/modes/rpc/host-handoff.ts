@@ -45,7 +45,11 @@ import { startSuccessor } from "./host-successor.ts";
 const HANDOFF_PROBE_TIMEOUT_MS = 10_000;
 
 export interface HandoffHostOptions {
-	readonly presenterBootstrap?: Duplex;
+	/**
+	 * The launch owner's enrollment channel. A provider (a running host's deferred handover) is called only when the
+	 * successor reaches its presenter phase, so its permit is fresh for the exchange (senpi#4602).
+	 */
+	readonly presenterBootstrap?: Duplex | (() => Promise<Duplex | undefined>);
 	/** Deployment opt-in. An enforcing predecessor never downgrades during replacement. */
 	readonly mcpPresenterEnforcement?: boolean;
 	readonly socket: string;
@@ -61,11 +65,11 @@ export interface HandoffHostOptions {
 	 * How the successor is launched from supervisor argv. Defaults to THIS process's runtime; a
 	 * running host performing an idle handover passes the runtime of the CLI that asked for it.
 	 */
-	readonly launch?: (args: readonly string[]) => { command: string; args: readonly string[] };
+	readonly launch?: (args: readonly string[]) => SuccessorLaunch;
 	readonly _test?: {
 		readonly readinessTimeoutMs?: number;
 		/** Builds the spawnable command from supervisor argv; tests point it at the source entry. */
-		readonly launch?: (args: readonly string[]) => { command: string; args: readonly string[] };
+		readonly launch?: (args: readonly string[]) => SuccessorLaunch;
 		/** Runs after the public socket identity is captured and before the successor is spawned. */
 		readonly beforeSpawn?: () => Promise<void>;
 		/** Runs once the successor is spawned and its generation recorded, before its answer is awaited. */
@@ -74,6 +78,13 @@ export interface HandoffHostOptions {
 		readonly beforeRegistration?: () => Promise<void>;
 		readonly platform?: NodeJS.Platform;
 	};
+}
+
+/** `reportsStartup`: the command is the engine's own supervisor, which reports its startup phases (senpi#4602). */
+export interface SuccessorLaunch {
+	readonly command: string;
+	readonly args: readonly string[];
+	readonly reportsStartup?: boolean;
 }
 
 /** Why a handoff did not happen. Every one of them leaves the running host untouched. */

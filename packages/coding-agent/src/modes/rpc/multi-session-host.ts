@@ -24,7 +24,7 @@ import { parseClientCapabilities } from "./custom-capability.ts";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { HostCoreGate, type HostCoreHooks } from "./host-core-gate.ts";
 import { createHostDaemonPaths } from "./host-daemon-paths.ts";
-import { GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
+import { ENDPOINT_OWNER_FENCE_CAPABILITY, GENERATION_HANDOFF_CAPABILITY } from "./host-decision.ts";
 import { HandoffAnnouncement } from "./host-handoff-announcement.ts";
 import { reopenHandoverParkedSessions } from "./host-handover-reopen.ts";
 import { performIdleHandover } from "./host-handover-wire.ts";
@@ -51,11 +51,10 @@ import {
 	PUBLIC_SOCKET_IDENTITY_FILE,
 	readSocketIdentityFile,
 	type SocketFileIdentity,
-	shieldSocketDuringClose,
 	socketEntryReplaced,
-	unlinkOwnedSocket,
 	waitForSocketIdentityFile,
 } from "./socket-ownership.ts";
+import { closeShieldedEndpoint, unlinkOwnedEndpoint } from "./host-endpoint-owner.ts";
 import { formatSocketAddress, listen, resolveSocketPath } from "./host-socket-bind.ts";
 import { socketSink } from "./socket-sink.ts";
 import { ensureSocketSecret, SOCKET_SECRET_FILE_ENV, socketSecretPath } from "./socket-transport.ts";
@@ -314,6 +313,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			// generation instead of being killed. A host that does not advertise this is never
 			// signalled - SIGUSR1 would simply terminate it, sessions and all.
 			GENERATION_HANDOFF_CAPABILITY,
+			// Every rename/remove of its public entry runs under the endpoint fence (senpi#4602 Q1).
+			ENDPOINT_OWNER_FENCE_CAPABILITY,
 			// The host reports the runtime it loaded and can hand over at its next idle point.
 			...(canHandOver ? [RUNTIME_IDENTITY_HANDOVER_CAPABILITY] : []),
 		],
@@ -356,7 +357,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 					}),
 					perform: async (request) =>
 						performIdleHandover({
-							presenterBootstrap: await presenterControl?.successorBootstrap(),
+							// Prepared only when the successor reaches its P7, never before it boots (senpi#4602).
+							presenterBootstrap: presenterControl?.successorBootstrapProvider(),
 							request,
 							socket: hostWatchdogBinding()?.publicSocket ?? socketPath,
 							agentDir: options.agentDir,
@@ -520,7 +522,7 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			// libuv unlinks the bound NAME when the listening handle closes - which
 			// would delete a newer host's entry renamed over this path. Shield the
 			// current entry for the close, then let the ownership check decide.
-			await shieldSocketDuringClose(socketPath, () =>
+			await closeShieldedEndpoint(socketPath, () =>
 				process.platform === "win32"
 					? Promise.race([closeServer(server), delay(WINDOWS_SHUTDOWN_HARD_EXIT_MS)])
 					: closeServer(server),
@@ -528,9 +530,9 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 			// Ownership-checked: unlink only the entry THIS process bound. After a
 			// takeover renamed a newer host's socket over the same path, the
 			// identity no longer matches and the replacement stays published.
-			await unlinkOwnedSocket(socketPath, boundIdentity, hostLog);
+			await unlinkOwnedEndpoint(socketPath, boundIdentity, hostInstanceId(), hostLog);
 			if (supervisorPublicSocketPath) {
-				await unlinkOwnedSocket(supervisorPublicSocketPath, supervisorPublicIdentity, hostLog);
+				await unlinkOwnedEndpoint(supervisorPublicSocketPath, supervisorPublicIdentity, hostInstanceId(), hostLog);
 			}
 			if (watchdogCleanup) await watchdogCleanup;
 		} finally {

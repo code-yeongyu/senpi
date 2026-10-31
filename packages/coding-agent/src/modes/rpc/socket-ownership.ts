@@ -52,6 +52,12 @@ export function generationBindPath(publicSocket: string, generation: number): st
 	return `${publicSocket}.next-${generation}`;
 }
 
+/** `<dev>:<ino>` as the ensure captured it; anything else is no identity at all, never a guess. */
+export function parseSocketIdentity(value: string): SocketFileIdentity | undefined {
+	const match = /^(\d+):(\d+)$/.exec(value);
+	return match ? { dev: Number(match[1]), ino: Number(match[2]) } : undefined;
+}
+
 function sameSocketIdentity(a: SocketFileIdentity, b: SocketFileIdentity): boolean {
 	return a.dev === b.dev && a.ino === b.ino;
 }

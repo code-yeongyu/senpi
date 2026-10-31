@@ -81,7 +81,7 @@ export async function startHost(
 	let child: ReturnType<typeof spawn> | undefined;
 	let exitedEarly: ChildExit | undefined;
 	let childExit: Promise<ChildExit> | undefined;
-	let presenterEnrollment: Promise<void> | undefined;
+	let presenterEnrollment: Promise<unknown> | undefined;
 	let attempt: StartupAttempt | undefined;
 	try {
 		const supervisorArgs = [
