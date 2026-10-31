@@ -79,12 +79,16 @@ test("a run without TUI frame samples is an error, never a run without the metri
 	assert.throws(() => runMetrics({ E01: [iteration(1, 5)] }, []), /tui_frame_ms samples/);
 });
 
-test("frame intervals are the gaps between frames, with the split pieces of one frame merged", () => {
-	const chunks = [100, 116.5, 116.9, 133, 150.25].map((at) => ({ at, bytes: 64 }));
-	assert.deepEqual(frameIntervals(chunks), [16.5, 16.5, 17.25]);
-	assert.throws(() => frameIntervals([{ at: 100 }, { at: 100.4 }]), /at least two frames, got 1/);
+test("frame intervals run between FRAME_END markers, so a frame split over chunks far apart is still one frame", () => {
+	const chunk = (at, frameEnds) => ({ at, bytes: 64, frameEnds });
+	// The second frame arrives in two chunks 6 ms apart (a loaded PTY read); only its marker chunk ends it.
+	const split = [chunk(100, 1), chunk(110, 0), chunk(116, 1), chunk(133, 1)];
+	assert.deepEqual(frameIntervals(split), [16, 17]);
+	// Two frames coalesced into one read both end at that read's arrival.
+	assert.deepEqual(frameIntervals([chunk(100, 1), chunk(120, 2)]), [20, 0]);
+	assert.throws(() => frameIntervals([chunk(100, 0), chunk(140, 1)]), /at least two frames, got 1/);
 	assert.throws(() => frameIntervals([]), /at least two frames, got 0/);
-	assert.throws(() => frameIntervals([{ at: 1 }, { bytes: 3 }]), /no arrival time/);
+	assert.throws(() => frameIntervals([{ at: 1 }, chunk(2, 1)]), /no arrival time or frame-end count/);
 });
 
 const run = (p50, p95) => ({ metrics: { dispatch_to_body_ms: { p50, p95, n: 9 } } });

@@ -18,8 +18,8 @@
 //
 // TUI frame time (`tui_frame_ms`): the E01 workload runs once more in the TUI (scripts/lib/equivalence-tui-capture.mjs).
 // Each iteration's answer turn is held on `perf-stream-<i>` and then streams STREAM.chunks deltas STREAM.chunkDelayMs
-// apart, faster than the renderer's frame throttle; the samples are the intervals between the frames that arrive from
-// that release until the screen shows the answer's last delta (latency-measure.mjs frameIntervals).
+// apart, faster than the renderer's frame throttle; the samples are the intervals between the frame ends (FRAME_END
+// markers) that arrive from that release through the frame that shows the answer's last delta (frameIntervals).
 // Exit: 0 in band, 1 out of band, 2 refused or broken (including a B0 recorded without a tui_frame_ms band).
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -225,8 +225,14 @@ async function measureTuiFrames(iterations) {
 			const from = tui.frames.length;
 			run.server.releaseBarrier(`perf-stream-${i}`);
 			const marker = `E01-STREAMED-${i}`;
-			await tui.waitFor((t) => t.screen().some((row) => row.includes(marker)), marker);
-			samples.push(...frameIntervals(tui.frames.slice(from)));
+			// The window closes at the chunk whose frame put the marker on screen; later spinner/footer repaints stay out.
+			let to;
+			await tui.waitFor((t) => {
+				const shown = t.screen().some((row) => row.includes(marker));
+				if (shown) to ??= t.parsedChunks();
+				return shown;
+			}, marker);
+			samples.push(...frameIntervals(tui.frames.slice(from, to)));
 			await tui.waitFor(idle, `iteration ${i} idle`);
 		}
 		return samples;

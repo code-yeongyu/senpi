@@ -15,12 +15,6 @@ import { pathToFileURL } from "node:url";
 const DISPATCH_METRICS = ["dispatch_to_body_ms", "body_to_next_request_ms"];
 /** TUI frame time (§6.5): the interval between consecutive rendered frames while E01's answer streams. */
 export const TUI_FRAME_METRIC = "tui_frame_ms";
-/**
- * The renderer writes each frame in one terminal write and throttles frames to at least 16 ms apart (packages/tui
- * tui.ts minRenderIntervalMs); a PTY read can still split one large write into back-to-back chunks. Chunks that
- * arrive closer than this are pieces of one frame, never two frames.
- */
-const SPLIT_FRAME_GAP_MS = 1;
 
 const QUANTILES = { p50: 0.5, p95: 0.95 };
 const round = (ms) => Math.round(ms * 100) / 100;
@@ -53,21 +47,21 @@ export function iterationSamples({ callAt, nextAt, bodies }) {
 }
 
 /**
- * Frame-time samples of one streaming window: `chunks` are the EQ.tui capture's output chunk arrivals (`{ at }`, the
- * capture's `frames`) from the stream's release to the frame that shows its last delta. Split pieces of one frame are
- * merged, then each interval between consecutive frames is one sample. A window with fewer than two frames is an
- * error, never an empty or zero sample.
+ * Frame-time samples of one streaming window. `chunks` are the EQ.tui capture's output chunks (`{ at, frameEnds }`, the
+ * capture's `frames`) from the stream's release through the chunk whose frame shows its last delta. A frame ends where
+ * the renderer's synchronized-output FRAME_END marker arrives, so a frame split over several PTY reads is one frame
+ * however far apart its pieces land; each interval between consecutive frame ends is one sample. A window with fewer
+ * than two frame ends is an error, never an empty or zero sample.
  */
 export function frameIntervals(chunks) {
-	const starts = [];
-	let last;
-	for (const { at } of chunks) {
-		if (typeof at !== "number") throw new Error("a frame chunk has no arrival time");
-		if (last === undefined || at - last >= SPLIT_FRAME_GAP_MS) starts.push(at);
-		last = at;
+	const ends = [];
+	for (const { at, frameEnds } of chunks) {
+		if (typeof at !== "number" || !Number.isInteger(frameEnds))
+			throw new Error("a frame chunk has no arrival time or frame-end count");
+		for (let k = 0; k < frameEnds; k++) ends.push(at);
 	}
-	if (starts.length < 2) throw new Error(`a streaming window needs at least two frames, got ${starts.length}`);
-	return starts.slice(1).map((at, index) => at - starts[index]);
+	if (ends.length < 2) throw new Error(`a streaming window needs at least two frames, got ${ends.length}`);
+	return ends.slice(1).map((at, index) => at - ends[index]);
 }
 
 /**
