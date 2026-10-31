@@ -10,17 +10,14 @@ import {
 import { rendezvousOrder, selectAccount } from "../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import { classifySdkError } from "../src/core/extensions/builtin/anthropic-subscription/errors.ts";
 import { ClassifiedSdkError, runFailover } from "../src/core/extensions/builtin/anthropic-subscription/failover.ts";
+import { cliSlot } from "./support/claude-cli-test-slots.ts";
 
 type AttemptEvent =
 	| { type: "text_delta"; delta: string }
 	| { type: "toolcall_delta"; delta: string }
 	| { type: "done"; value: string };
 
-const accountPool: AccountSlot[] = [
-	{ name: "alpha", refresh: "r-alpha", access: "a-alpha", expires: 1, source: "login" },
-	{ name: "bravo", refresh: "r-bravo", access: "a-bravo", expires: 1, source: "login" },
-	{ name: "charlie", refresh: "r-charlie", access: "a-charlie", expires: 1, source: "login" },
-];
+const accountPool: AccountSlot[] = [cliSlot("alpha"), cliSlot("bravo"), cliSlot("charlie")];
 const now = 10_000;
 
 async function storeWithAccounts(): Promise<CredentialStore> {

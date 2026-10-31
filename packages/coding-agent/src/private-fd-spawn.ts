@@ -3,6 +3,7 @@ import { closeSync } from "node:fs";
 import {
 	PRIVATE_FDS_FINAL_ENV,
 	type PrivateFdEntry,
+	type PrivateFdForward,
 	takePrivateDescriptors,
 	UNPARSEABLE_TABLE,
 } from "./private-fds.ts";
@@ -11,14 +12,14 @@ const TABLE_ENV = "SENPI_PRIVATE_FDS";
 
 /**
  * Transfers the captured table only on explicit engine spawns, never via ambient child environments.
- * A shell or Windows hop cannot carry a descriptor, so it receives the name as a null declaration.
+ * A shell cannot carry a descriptor, so it receives the name as a null declaration.
  * `final` marks the supervisor-to-engine hop: that engine claims its channels and forwards nothing.
  */
 export function preparePrivateFdSpawn<T extends SpawnOptions | SpawnSyncOptions>(
 	options: T,
 	hop: { readonly final?: boolean } = {},
+	forward: PrivateFdForward = takePrivateDescriptors(),
 ) {
-	const forward = takePrivateDescriptors();
 	const env = { ...(options.env ?? process.env) };
 	delete env[TABLE_ENV];
 	delete env[PRIVATE_FDS_FINAL_ENV];
@@ -27,13 +28,16 @@ export function preparePrivateFdSpawn<T extends SpawnOptions | SpawnSyncOptions>
 	const owned: number[] = [];
 	if (forward.kind === "unparseable") env[TABLE_ENV] = UNPARSEABLE_TABLE;
 	else if (forward.entries.size > 0) {
-		const carries = !options.shell && process.platform !== "win32";
+		const carries = !options.shell;
 		const table: Record<string, PrivateFdEntry> = {};
 		for (const [name, fd] of forward.entries) {
-			if (fd !== null) owned.push(fd);
+			const descriptors = fd === null ? [] : typeof fd === "number" ? [fd] : fd;
+			owned.push(...descriptors);
 			if (fd !== null && carries) {
-				while (stdio.length <= fd) stdio.push("ignore");
-				stdio[fd] = fd;
+				for (const descriptor of descriptors) {
+					while (stdio.length <= descriptor) stdio.push("ignore");
+					stdio[descriptor] = descriptor;
+				}
 				table[name] = fd;
 			} else {
 				table[name] = null;

@@ -1,4 +1,5 @@
-import { unwatchFile, watchFile } from "node:fs";
+import { unwatchFile, watch, watchFile } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { hostEnsureLockTarget } from "../src/modes/rpc/host-ensure.ts";
 import { handoffHost } from "../src/modes/rpc/host-handoff.ts";
@@ -7,6 +8,8 @@ import {
 	bootInstanceId,
 	ensureSupervised,
 	expectGoneWithin,
+	fileAppears,
+	generationDir,
 	hostChildOf,
 	registeredSupervisor,
 	removeSupervisedScratches,
@@ -17,7 +20,7 @@ import {
 	terminalRecords,
 	watchdogRecords,
 } from "./helpers/rpc-supervised-host.ts";
-import { processesUnder, waitForPidGone } from "./helpers/spawned-host-reaper.ts";
+import { processesUnder } from "./helpers/spawned-host-reaper.ts";
 
 /**
  * senpi#2566: a host the engine stops on purpose left no record (the supervisor's exit handler
@@ -92,15 +95,22 @@ describe.skipIf(process.platform === "win32")("host stop records", () => {
 describe.skipIf(process.platform === "win32")("a supervisor its caller had to SIGKILL", () => {
 	it("is recorded by the ensure whose readiness wait it failed", async () => {
 		const qa = await supervisedScratch("readiness");
+		using recordsWritten = observeStopRecords(qa);
 		const frozen = freezeSupervisorOnceRegistered(qa);
 		const failure = await ensureSupervised(qa, {
 			behavior: "silent",
 			env: NO_STALL_ENV,
-			test: { readinessTimeoutMs: 3_000, stopTimeoutMs: 300 },
+			test: {
+				// Start the deliberately short public-readiness budget only after the child can observe our kill.
+				beforePidFileWrite: () => waitForWatchdogArmed(qa, 10_000),
+				readinessTimeoutMs: 3_000,
+				stopTimeoutMs: 300,
+			},
 		}).catch((error: unknown) => error);
 		expect(failure).toBeInstanceOf(Error);
 		const { supervisor, child, instanceId } = await frozen;
 		await expectGoneWithin(supervisor, 5_000);
+		await recordsWritten.wait(instanceId, 10_000);
 		await expectGoneWithin(child, 10_000);
 
 		expectCallerRecord(qa, instanceId, "ensure", "readiness_timeout");
@@ -108,6 +118,7 @@ describe.skipIf(process.platform === "win32")("a supervisor its caller had to SI
 
 	it("is recorded by the ensure whose start failed before the pidfile was written", async () => {
 		const qa = await supervisedScratch("prepid");
+		using recordsWritten = observeStopRecords(qa);
 		let frozen: { supervisor: number; child: number; instanceId: string } | undefined;
 		const failure = await ensureSupervised(qa, {
 			env: NO_STALL_ENV,
@@ -115,7 +126,7 @@ describe.skipIf(process.platform === "win32")("a supervisor its caller had to SI
 				beforePidFileWrite: async () => {
 					const [supervisor] = processesUnder(qa.root);
 					if (supervisor === undefined) throw new Error("no supervisor under the sandbox");
-					const child = await hostChildWithin(supervisor, 10_000);
+					const child = await hostChildWithin(qa, supervisor, 10_000);
 					frozen = { supervisor, child, instanceId: await bootInstanceId(qa) };
 					process.kill(supervisor, "SIGSTOP");
 					throw new Error("registration failed");
@@ -125,6 +136,7 @@ describe.skipIf(process.platform === "win32")("a supervisor its caller had to SI
 		expect(failure).toBeInstanceOf(Error);
 		if (frozen === undefined) throw new Error("the start never reached its pidfile write");
 		await expectGoneWithin(frozen.supervisor, 5_000);
+		await recordsWritten.wait(frozen.instanceId, 10_000);
 		await expectGoneWithin(frozen.child, 10_000);
 
 		expectCallerRecord(qa, frozen.instanceId, "ensure", "start_failed");
@@ -132,6 +144,7 @@ describe.skipIf(process.platform === "win32")("a supervisor its caller had to SI
 
 	it("is recorded by the handoff that abandoned its successor", async () => {
 		const qa = await supervisedScratch("successor");
+		using recordsWritten = observeStopRecords(qa);
 		await ensureSupervised(qa, { env: NO_STALL_ENV }).then((ensured) => ensured.release());
 		let frozen: { supervisor: number; child: number; instanceId: string } | undefined;
 		const result = await handoffHost({
@@ -142,7 +155,7 @@ describe.skipIf(process.platform === "win32")("a supervisor its caller had to SI
 				launch: supervisorLaunch(),
 				readinessTimeoutMs: 2_000,
 				afterSpawn: async (supervisor) => {
-					const child = await hostChildWithin(supervisor, 10_000);
+					const child = await hostChildWithin(qa, supervisor, 10_000);
 					frozen = { supervisor, child, instanceId: await bootInstanceId(qa) };
 					process.kill(supervisor, "SIGSTOP");
 				},
@@ -151,11 +164,47 @@ describe.skipIf(process.platform === "win32")("a supervisor its caller had to SI
 		expect(result.action).toBe("refuse");
 		if (frozen === undefined) throw new Error("the successor was never spawned");
 		await expectGoneWithin(frozen.supervisor, 5_000);
+		await recordsWritten.wait(frozen.instanceId, 10_000);
 		await expectGoneWithin(frozen.child, 10_000);
 
 		expectCallerRecord(qa, frozen.instanceId, "successor", "successor_readiness_timeout");
 	}, 60_000);
 });
+
+/**
+ * senpi#4742: subscribe before triggering the stop, then read the asserted record itself.
+ * Process-table disappearance is neither the record's completion signal nor its shutdown boundary.
+ */
+function observeStopRecords(qa: SupervisedScratch) {
+	const watcher = watch(qa.root, { recursive: true });
+	return {
+		wait(generation: string, timeoutMs: number): Promise<void> {
+			return new Promise((resolve, reject) => {
+				const timer = setTimeout(
+					() => finish(new Error(`watchdog record for ${generation} missing after ${timeoutMs}ms`)),
+					timeoutMs,
+				);
+				const finish = (cause?: Error): void => {
+					clearTimeout(timer);
+					watcher.off("change", check);
+					watcher.off("error", finish);
+					if (cause) reject(cause);
+					else resolve();
+				};
+				const check = (): void => {
+					if (watchdogRecords(qa, generation).length > 0) finish();
+				};
+				watcher.on("change", check);
+				watcher.once("error", finish);
+				// The action can finish before wait is called; subscribe-then-read covers that too.
+				check();
+			});
+		},
+		[Symbol.dispose](): void {
+			watcher.close();
+		},
+	};
+}
 
 function expectCallerRecord(qa: SupervisedScratch, instanceId: string, kind: string, reason: string): void {
 	expect(terminalRecords(qa, instanceId)).toEqual([
@@ -185,7 +234,7 @@ function freezeSupervisorOnceRegistered(
 				.then(
 					async ({ pid, instanceId }) => {
 						unwatchFile(pointer, onChange);
-						const child = await hostChildWithin(pid, 10_000);
+						const child = await hostChildWithin(qa, pid, 10_000);
 						process.kill(pid, "SIGSTOP");
 						resolve({ supervisor: pid, child, instanceId });
 					},
@@ -201,14 +250,13 @@ function freezeSupervisorOnceRegistered(
 	});
 }
 
-/** The host child appears in the process table only once the supervisor spawned it. */
-async function hostChildWithin(supervisor: number, timeoutMs: number): Promise<number> {
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		try {
-			return hostChildOf(supervisor);
-		} catch (cause) {
-			if (Date.now() > deadline || (await waitForPidGone(supervisor, 25))) throw cause;
-		}
-	}
+/** Freeze only after the child can record supervisor loss, even when public readiness must fail. */
+async function hostChildWithin(qa: SupervisedScratch, supervisor: number, timeoutMs: number): Promise<number> {
+	await waitForWatchdogArmed(qa, timeoutMs);
+	return hostChildOf(supervisor);
+}
+
+async function waitForWatchdogArmed(qa: SupervisedScratch, timeoutMs: number): Promise<void> {
+	const instanceId = await bootInstanceId(qa);
+	await fileAppears(join(generationDir(qa, instanceId), "fixture-watchdog-ready"), timeoutMs);
 }
