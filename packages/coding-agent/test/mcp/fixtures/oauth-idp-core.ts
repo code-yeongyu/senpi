@@ -15,6 +15,10 @@ export interface IdpOptions {
 	iss: "omit" | "match" | "mismatch";
 	/** Advertise `authorization_response_iss_parameter_supported` in the server metadata. */
 	issSupported: boolean;
+	/** PRM `scopes_supported`; omitted or empty leaves the resource metadata without scopes. */
+	prmScopes?: string[];
+	/** AS metadata `scopes_supported`; defaults to `["mcp", "offline_access"]`. */
+	asScopes?: string[];
 }
 
 export interface HttpReply {
@@ -80,7 +84,15 @@ export class IdpState {
 
 	protectedResourceMetadata(): HttpReply {
 		this.discoveryHits++;
-		return { status: 200, body: { resource: `${this.baseUrl}/mcp`, authorization_servers: [this.baseUrl] } };
+		const prmScopes = this.options.prmScopes ?? [];
+		return {
+			status: 200,
+			body: {
+				resource: `${this.baseUrl}/mcp`,
+				authorization_servers: [this.baseUrl],
+				...(prmScopes.length > 0 ? { scopes_supported: prmScopes } : {}),
+			},
+		};
 	}
 
 	authorizationServerMetadata(kind: "oauth" | "oidc"): HttpReply {
@@ -94,7 +106,7 @@ export class IdpState {
 			response_types_supported: ["code"],
 			grant_types_supported: ["authorization_code", "refresh_token", "client_credentials"],
 			token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
-			scopes_supported: ["mcp", "offline_access"],
+			scopes_supported: this.options.asScopes ?? ["mcp", "offline_access"],
 		};
 		if (!this.options.noS256) base.code_challenge_methods_supported = ["S256"];
 		if (this.options.cimd) base.client_id_metadata_document_supported = true;
@@ -284,7 +296,20 @@ export function parseIdpOptions(argv: string[]): IdpOptions {
 		nullOptionalFields: argv.includes("--null-optional-fields"),
 		iss: parseIssMode(argv),
 		issSupported: argv.includes("--iss-supported"),
+		prmScopes: parseScopeList(argv, "--prm-scopes"),
+		asScopes: parseScopeList(argv, "--as-scopes"),
 	};
+}
+
+function parseScopeList(argv: string[], flag: string): string[] | undefined {
+	const index = argv.indexOf(flag);
+	if (index < 0) return undefined;
+	const value = argv[index + 1];
+	if (value === undefined || value.length === 0) throw new Error(`${flag} requires a comma-separated list`);
+	return value
+		.split(",")
+		.map((entry) => entry.trim())
+		.filter((entry) => entry.length > 0);
 }
 
 function parseIssMode(argv: string[]): IdpOptions["iss"] {
