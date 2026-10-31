@@ -165,7 +165,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const contextKey = (ctx: ExtensionContext): object => ctx.sessionManager ?? runtimeKey;
 
 	pi.on("session_start", async (_event, ctx) => {
-		attachedContexts.add(ctx.sessionManager);
+		attachedContexts.add(contextKey(ctx));
 		attach(ctx);
 		applyToolDenials();
 	});

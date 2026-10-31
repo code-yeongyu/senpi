@@ -139,6 +139,18 @@ describe("permission checks attach without a session (RT6)", () => {
 		expect(added.mock.calls.some(([value]) => value === undefined)).toBe(false);
 	});
 
+	it("handles session_start on a runner with no session manager", async () => {
+		// Given a runner without a session manager.
+		const runner = await runtimeWithoutSessionManager({ permission: "bash=deny" });
+		const errors: string[] = [];
+		runner.onError((error) => errors.push(error.error));
+		// When session_start reaches it, then a tool call.
+		await runner.emit({ type: "session_start", reason: "startup" });
+		// Then nothing passed undefined to a WeakSet, and the rules still decide.
+		expect(errors.filter((error) => error.includes("weak set"))).toEqual([]);
+		expect(await runBash(runner, "echo one")).toMatchObject({ block: true });
+	});
+
 	it("refuses every call on a runtime with no session manager when the preset is invalid", async () => {
 		const runner = await runtimeWithoutSessionManager({ preset: "full-acess" });
 		const result = await runBash(runner, "echo hello");
