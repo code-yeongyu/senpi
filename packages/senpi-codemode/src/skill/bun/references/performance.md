@@ -1,8 +1,14 @@
-# Bun 1.4 Performance
+# Bun 1.4.x Performance
 
-Blog: [#production](https://bun.com/blog/bun-v1.4#production), [#faster](https://bun.com/blog/bun-v1.4#faster)
+Blog: [#production](https://bun.com/blog/bun-v1.4#production), [#faster](https://bun.com/blog/bun-v1.4#faster), then the 1.4.1/1.4.3/1.4.4 posts
 
-All of this is free — no code changes. Use these numbers when justifying a Bun 1.4 upgrade.
+All of this is free — no code changes. Use these numbers when justifying a Bun upgrade; measure with `proc.resourceUsage()` / `process.memoryUsage().rss` (see [session-recipes](session-recipes.md)), and remember that `--cpu-prof-md` credits idle gaps to the last sampled frame — count samples before filing a hotspot (2026-10-17).
+
+## Since 1.4.0 (point releases)
+
+- 1.4.1: JIT code is dropped after an idle period — Next.js SSR idle RSS 222 MB → 142 MB; `AsyncLocalStorage.run` 2x faster with no per-`await` allocation; `Buffer` read/write up to 9x; first HTTPS request 3x faster (DER-embedded roots); `Bun.inspect` on 16k-key objects 43x; compiled executables start 20% faster and bytecode is 3x smaller.
+- 1.4.3: idle CPU down 67-89% (the GC timer no longer wakes every second); `Promise.allSettled` over 100k rejections 24 s → 148 ms; `JSON.parse` 1.2-1.5x on registry-shaped data; `node:http` large responses up to 2.7x; `Bun.gc(true)` returns memory to the OS immediately; `crypto.randomInt`, small zstd/zlib and `Bun.color` regressions from 1.4.0 recovered.
+- 1.4.4: `bun check` 1.4-7.8x faster (`-b` up to 15x); hoisted installs from a warm cache 3.2x on Linux; `Bun.SQL` 21-48% less client CPU; `toLocaleString()` 54x; `Headers` iteration up to 2.8x; in-memory `response.body` streams up to 2.6x; `Bun.Glob.match` 1.6-5x; `Bun.JSON5.parse` 1.6x.
 
 ## Production footprint
 

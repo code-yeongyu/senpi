@@ -63,7 +63,7 @@ function entry(value: StoreValue): value is ExecutionEntry {
 	);
 }
 
-export class ExecutionLedgerCorruptError extends Error {
+class ExecutionLedgerCorruptError extends Error {
 	constructor() {
 		super("invalid durable execution ledger row");
 		this.name = "ExecutionLedgerCorruptError";
