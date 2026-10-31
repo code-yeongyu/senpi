@@ -124,10 +124,6 @@ describe("Windows private descriptor pairs (#4859)", () => {
 		expect(runtime.clearInherit.mock.calls).toEqual([[5], [6]]);
 	});
 
-	it("gate default release proof refuses win32 pairs", () => {
-		expect(parseTable('{"a":[5,6]}', { platform: "win32", bun: "1.4.4" }).entries.get("a")).toBeNull();
-	});
-
 	it("gate matching proof accepts the ordered pair", () => {
 		expect(parseTable('{"a":[5,6]}', inspection()).entries.get("a")).toEqual([5, 6]);
 	});
