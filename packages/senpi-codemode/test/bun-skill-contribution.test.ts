@@ -10,8 +10,8 @@ import {
 	registerBunSkillContribution,
 } from "../src/extension/skill-contribution.ts";
 
-const bunSkillMd = join(import.meta.dirname, "..", "src", "skill", "bun-1-4", "SKILL.md");
-const bunSkillRefs = join(import.meta.dirname, "..", "src", "skill", "bun-1-4", "references");
+const bunSkillMd = join(import.meta.dirname, "..", "src", "skill", "bun", "SKILL.md");
+const bunSkillRefs = join(import.meta.dirname, "..", "src", "skill", "bun", "references");
 
 describe("bunVersionSupportsSkill", () => {
 	it.each([
@@ -28,7 +28,7 @@ describe("bunVersionSupportsSkill", () => {
 });
 
 describe("bundledBunSkillPath", () => {
-	it("returns the absolute bun-1-4 SKILL.md path that exists on disk", () => {
+	it("returns the absolute bun SKILL.md path that exists on disk", () => {
 		const result = bundledBunSkillPath();
 		expect(result).toBe(bunSkillMd);
 		expect(result !== undefined && existsSync(result)).toBe(true);
@@ -68,11 +68,11 @@ describe("bundledBunSkillPath in a compiled-binary layout", () => {
 			"senpi-codemode",
 			"src",
 			"skill",
-			"bun-1-4",
+			"bun",
 			"SKILL.md",
 		);
 		mkdirSync(dirname(sidecarSkill), { recursive: true });
-		writeFileSync(sidecarSkill, "---\nname: bun-1-4\n---\n# Bun 1.4\n");
+		writeFileSync(sidecarSkill, "---\nname: bun\n---\n# Bun 1.4\n");
 
 		const result = bundledBunSkillPath(join(tempDir, "embedded", "extension"), {
 			bunVersion: "1.4.0",
@@ -104,7 +104,7 @@ describe("bundledBunSkillPath in a compiled-binary layout", () => {
 			// The notice names BOTH probed locations: a compiled binary never has the
 			// module-relative asset, so the sidecar path is the actionable one.
 			const notice = String(errorSpy.mock.calls[0]?.[0] ?? "");
-			expect(notice).toContain(join(tempDir, "embedded", "skill", "bun-1-4", "SKILL.md"));
+			expect(notice).toContain(join(tempDir, "embedded", "skill", "bun", "SKILL.md"));
 			expect(notice).toContain(
 				join(
 					tempDir,
@@ -114,7 +114,7 @@ describe("bundledBunSkillPath in a compiled-binary layout", () => {
 					"senpi-codemode",
 					"src",
 					"skill",
-					"bun-1-4",
+					"bun",
 					"SKILL.md",
 				),
 			);
@@ -177,11 +177,11 @@ describe("registerBunSkillContribution", () => {
 	});
 });
 
-describe("bun-1-4 skill assets", () => {
-	it("pins the SKILL.md frontmatter the skill loader reads: one block carrying name: bun-1-4", () => {
+describe("bun skill assets", () => {
+	it("pins the SKILL.md frontmatter the skill loader reads: one block carrying name: bun", () => {
 		const text = readFileSync(bunSkillMd, "utf8");
 		expect(text.match(/^---$/gm)).toHaveLength(2);
-		expect(text).toContain("name: bun-1-4");
+		expect(text).toContain("name: bun");
 	});
 
 	it("ships English-only copy: no Hangul in SKILL.md or any reference", () => {

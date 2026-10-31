@@ -216,10 +216,10 @@ describe("buildEvalPrompt", () => {
 		expect(withoutHost).not.toContain("Host:");
 	});
 
-	it("describes the Bun kernel and points at the bun-1-4 skill only while it is active", () => {
+	it("describes the Bun kernel and points at the bun skill only while it is active", () => {
 		// Given: the same kernel set under a bun kernel with the skill, a bun kernel without it, and a node kernel.
 		const enabled = { py: true, js: true, rb: false, jl: false };
-		const bunSkillPath = "/opt/senpi/skill/bun-1-4/SKILL.md";
+		const bunSkillPath = "/opt/senpi/skill/bun/SKILL.md";
 		const bunWithSkill = buildEvalPrompt(enabled, {
 			spawns: false,
 			jsRuntime: { name: "bun", version: "1.4.0", path: "/usr/local/bin/bun" },
@@ -242,14 +242,14 @@ describe("buildEvalPrompt", () => {
 		// Then: only the bun kernel with an active skill carries the pointer; node keeps its wording.
 		expect(bunWithSkill).toContain("JS runs in-process on Bun 1.4.0");
 		expect(bunWithSkill).toContain(
-			`Before a cell that installs a package, spawns a server or PTY, or starts a long run, read the bun-1-4 skill at ${bunSkillPath}`,
+			`Before a cell that installs a package, spawns a process, server or PTY, runs tests, or starts a long run, read the bun skill at ${bunSkillPath}`,
 		);
 		expect(bunWithSkill).not.toContain("before your first js cell");
 		expect(bunWithSkill).not.toContain("Node.js worker");
 		expect(bunWithoutSkill).toContain("JS runs in-process on Bun 1.3.9");
-		expect(bunWithoutSkill).not.toContain("bun-1-4 skill");
+		expect(bunWithoutSkill).not.toContain("bun skill at");
 		expect(node).toContain("Node.js worker");
-		expect(node).not.toContain("bun-1-4 skill");
+		expect(node).not.toContain("bun skill at");
 		expect(node).not.toContain(bunSkillPath);
 		expect(jsDisabled).not.toContain("Bun");
 		expect(jsDisabled).not.toContain(bunSkillPath);
