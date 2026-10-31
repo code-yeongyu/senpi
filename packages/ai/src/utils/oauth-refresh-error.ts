@@ -9,6 +9,35 @@ export class OAuthTokenEndpointError extends Error {
 	}
 }
 
+export type OAuthReauthorizationCode =
+	| "invalid_grant"
+	| "invalid_refresh_token"
+	| "token_expired"
+	| "refresh_token_expired"
+	| "refresh_token_invalidated"
+	| "refresh_token_reused";
+
+/** The renewable session is unusable; sign in again with its saved client ID. */
+export class OAuthReauthorizationRequiredError extends OAuthTokenEndpointError {
+	readonly code: OAuthReauthorizationCode;
+
+	constructor(code: OAuthReauthorizationCode, status: number) {
+		super(`OAuth refresh requires reauthorization (${code})`, status);
+		this.name = "OAuthReauthorizationRequiredError";
+		this.code = code;
+	}
+}
+
+/** Repeating sign-in cannot repair an invalid client configuration. */
+export class OAuthClientConfigurationError extends OAuthTokenEndpointError {
+	readonly code = "invalid_client";
+
+	constructor(status: number) {
+		super("OAuth refresh failed: invalid client configuration (invalid_client)", status);
+		this.name = "OAuthClientConfigurationError";
+	}
+}
+
 const TRANSPORT_CODES = new Set([
 	"ConnectionRefused",
 	"FailedToOpenSocket",
