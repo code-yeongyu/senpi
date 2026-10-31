@@ -157,7 +157,29 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		type: "string",
 	});
 
+	// Boot point (senpi#5218): a session attaches at session_start; a runtime with no session attaches at
+	// the first tool call a context sees. Each context attaches once.
+	const attachedContexts = new WeakSet<object>();
+
 	pi.on("session_start", async (_event, ctx) => {
+		attachedContexts.add(ctx.sessionManager);
+		attach(ctx);
+		applyToolDenials();
+	});
+
+	// The active set is the session's tool projection, so a context with no session start skips that
+	// trim; its denied calls are still refused at tool_call.
+	const attachWithoutSession = (ctx: ExtensionContext): void => {
+		if (attachedContexts.has(ctx.sessionManager)) return;
+		attachedContexts.add(ctx.sessionManager);
+		try {
+			attach(ctx);
+		} catch {
+			// attach recorded the failure in setupError, which refuses this call and every later one.
+		}
+	};
+
+	const attach = (ctx: ExtensionContext): void => {
 		cellSession = ctx.sessionManager;
 		retireCellAuthorizers.get(ctx.sessionManager)?.();
 		retireCellAuthorizers.set(
@@ -200,8 +222,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		}
 		retireAuthorizers.get(ctx.sessionManager)?.();
 		retireAuthorizers.set(ctx.sessionManager, registerDispatchAuthorizer(ctx.sessionManager, dispatchAuthorizer));
-		applyToolDenials();
-	});
+	};
 
 	// `sessionApproved` carries this session's "Always" answers, not yet written to disk, across a reload.
 	const loadPermissionRules = (cwd: string, sessionApproved: Ruleset = [], agentDir?: string): void => {
@@ -279,6 +300,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 	const dispatchAuthorizer = createDispatchAuthorizer(
 		pi,
 		(ctx) => {
+			attachWithoutSession(ctx);
 			followPresetFlag(ctx.cwd, ctx.agentDir);
 			return { service, parsers: parserRegistry, preset: activePreset, setupError };
 		},
@@ -290,6 +312,7 @@ export default function permissionSystemExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		signal?: AbortSignal,
 	): Promise<ToolCallEventResult | undefined> => {
+		attachWithoutSession(ctx);
 		followPresetFlag(ctx.cwd, ctx.agentDir);
 		if (setupError !== null) {
 			return { block: true, reason: `Permission setup failed: ${setupError}` };
