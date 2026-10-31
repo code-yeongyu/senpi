@@ -53,6 +53,11 @@ export type FailoverOptions<TEvent> = {
 	onLongContextRefused?: () => void;
 	/** The session this turn belongs to: blocks that bind only this session are remembered under it. */
 	sessionKey?: string;
+	/**
+	 * False for a probe (the account connection test): its outcome is reported to the caller and never written as
+	 * account state, so it neither stores nor clears a block (senpi#4436).
+	 */
+	persistBlocks?: boolean;
 };
 
 type BlockFields = Pick<AccountSlot, "blockedUntil" | "blockReason" | "blockedAt" | "modelBlocks">;
@@ -287,10 +292,10 @@ function replaceAccount(accounts: readonly AccountSlot[], replacement: AccountSl
 
 /**
  * Persists a block onto the stored slot. An `auth_error` is a verdict on the
- * token that failed, so it is written only while the stored slot still holds
- * that token. When another writer replaced the material meanwhile (a refresh in
- * this or another process, or a re-login), nothing is written and the stored
- * slot is returned: locking it "until re-login" would strand a valid token.
+ * sign-in that failed, so it is written only while the stored slot still names
+ * that sign-in's account dir. When a re-login replaced it meanwhile, nothing is
+ * written and the stored slot is returned: locking it "until re-login" would
+ * strand a valid sign-in.
  */
 async function persistBlock(
 	store: CredentialStore,
@@ -298,6 +303,7 @@ async function persistBlock(
 	account: AccountSlot,
 	now: number,
 ): Promise<AccountSlot | undefined> {
+	const signInMaterial = (slot: AccountSlot): string | undefined => slot.dirId;
 	let superseded: AccountSlot | undefined;
 	await store.modify(providerId, async (current) => {
 		if (current?.type !== "oauth") return current;
@@ -325,7 +331,7 @@ async function persistBlock(
 		if (
 			account.blockReason === "auth_error" &&
 			stored !== undefined &&
-			(stored.access !== account.access || stored.refresh !== account.refresh)
+			signInMaterial(stored) !== signInMaterial(account)
 		) {
 			superseded = stored;
 			return current;
@@ -373,8 +379,8 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 	let retryAccountName: string | undefined;
 
 	for (let attempt = 0; attempt < attemptLimit; attempt++) {
-		// Each attempt gets its own copy: prepareSlot refreshes the slot in place, and a concurrent
-		// attempt holding the same stored object must still report the token it actually sent.
+		// Each attempt gets its own copy: an attempt may record a profile on its slot, and a concurrent
+		// attempt holding the same stored object must still report the account it actually ran on.
 		const retrySlot =
 			retryAccountName === undefined ? undefined : accounts.find((slot) => slot.name === retryAccountName);
 		retryAccountName = undefined;
@@ -430,9 +436,11 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			const blocked = blockedAccount(account, classification, now(), attempt, baseBlockMs, error, options.model);
 			// With no session to hold it, a block is shared as before: dropping it would re-send every
 			// sessionless request to the spent account until its window resets.
+			const persists = options.persistBlocks !== false;
 			const shared = isSharedVerdict(classification, error) || options.sessionKey === undefined;
-			if (!shared) rememberSessionBlock(options.sessionKey, blocked);
-			const superseded = shared ? await persistBlock(options.store, options.providerId, blocked, now()) : undefined;
+			if (persists && !shared) rememberSessionBlock(options.sessionKey, blocked);
+			const superseded =
+				persists && shared ? await persistBlock(options.store, options.providerId, blocked, now()) : undefined;
 			if (
 				superseded &&
 				!visibleDeltaEmitted &&
@@ -463,6 +471,7 @@ export async function* runFailover<TEvent>(options: FailoverOptions<TEvent>): As
 			if (visibleDeltaEmitted) throw classified;
 		}
 		if (completed) {
+			if (options.persistBlocks === false) return;
 			forgetSessionBlock(options.sessionKey, account.name);
 			// Outside the attempt's try: clearing is best-effort hygiene after a finished turn, so a store
 			// failure is logged and the block stays for the next success; it never fails or replays the turn.
