@@ -21,6 +21,7 @@ import {
 	resetSessionRegistryBoundary,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
 import { streamAnthropicSubscription } from "../../../src/core/extensions/builtin/anthropic-subscription/stream.ts";
+import { cliLaneEnv, cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const model: Model<Api> = {
 	id: "claude-sonnet-4-5",
@@ -93,16 +94,10 @@ for (const lane of ["ambient", "managed", "resident"] as const) {
 			const store = new InMemoryCredentialStore();
 			if (lane !== "ambient") {
 				await store.modify("anthropic-subscription", async () =>
-					addAccount(emptyCredential(), {
-						name: "synthetic-account",
-						access: "synthetic-access",
-						refresh: "synthetic-refresh",
-						expires: Number.MAX_SAFE_INTEGER,
-						source: "login",
-					}),
+					addAccount(emptyCredential(), cliSlot("synthetic-account")),
 				);
 			}
-			overrideAuthLaneBoundary({ createStore: () => store, env: () => ({}) });
+			overrideAuthLaneBoundary({ createStore: () => store, env: () => cliLaneEnv() });
 			const query: SdkQuery = ({ prompt }) => {
 				const attempt = ++attempts;
 				return {
