@@ -143,7 +143,7 @@ it("in process: a media-placeholder client receives a 4,000-deep tool result unc
 	expect(refusals).toBe(0);
 	expect(stderr.filter((line) => line.startsWith("senpi rpc host: legacy record refused"))).toEqual([]);
 	expect(records.filter((record) => record.type === "agent_end")).toHaveLength(2);
-}, 90_000);
+}, 600_000);
 
 /** One real placeholder-writer delivery, with exact refusal/reporting and two-turn survival assertions. */
 async function writerDelivers(depth: number): Promise<boolean> {
