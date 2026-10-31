@@ -64,7 +64,10 @@ it.each([
 
 	const structured: object[] = [];
 	cleanups.push(writer.structuredLanes.observe(sessionId, (record) => structured.push(record)));
-	const ended = socket.waitFor((record) => record.type === "agent_end" && record.sessionId === sessionId, EVENT_SAFETY_MS);
+	const ended = socket.waitFor(
+		(record) => record.type === "agent_end" && record.sessionId === sessionId,
+		EVENT_SAFETY_MS,
+	);
 	await router.handle({ id: "go", type: "prompt", sessionId, message: "hi" });
 	await ended;
 	await writer.flush();
