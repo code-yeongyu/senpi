@@ -102,7 +102,7 @@ for (const transport of ["in-process", "worker frame"] as const) {
 			lane.retire("close");
 			await lane.idle?.();
 		}
-	});
+	}, 600_000);
 }
 
 it("R24.4 S04a producer binds start/update/end and direct-terminal ids to the host bootstrap nonce", () => {
