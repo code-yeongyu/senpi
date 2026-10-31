@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { reportStartupMilestone } from "./host-startup-beacon.ts";
 import { createServer, type Server } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -600,6 +601,8 @@ async function runSocketHost(options: MultiSessionHostOptions, socketPath: strin
 		void shutdown(0, cleanup);
 		setImmediate(killTrackedDetachedChildren);
 	});
+	// Everything the internal listener needs is initialized: the runtime milestone of a coordinated start (senpi#4602).
+	reportStartupMilestone("host_runtime");
 	boundIdentity = await listen(server, socketPath, secret);
 	// A key record that cannot be published safely ends this host: held connections are refused, never served keyless.
 	await transport.publish(() => shutdown(1));

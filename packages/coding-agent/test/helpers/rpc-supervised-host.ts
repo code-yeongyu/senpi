@@ -62,6 +62,7 @@ export function supervisorLaunch(behavior: "answer" | "silent" = "answer") {
 			"--child-args",
 			JSON.stringify([childFixture, VERSION, SUPERVISED_CAPABILITIES, behavior]),
 		],
+		reportsStartup: true as const,
 	});
 }
 

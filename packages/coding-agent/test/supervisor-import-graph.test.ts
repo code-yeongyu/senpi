@@ -105,6 +105,21 @@ const PRIVATE_FD_LEAVES = new Set([
 	"packages/coding-agent/dist/utils/private-fd-inherit.js",
 ]);
 
+// senpi#4602: a coordinated start reports its phases on the dedicated startup pipe, which adds exactly these three
+// leaves. Measured at 73 modules (8 hop, 3 public auth, 4 private fd leaves): host-startup-beacon 3,839 source / 3,670
+// built bytes, 82 code lines (the stub every entry imports first; node builtins, host-identity-env and the wire);
+// host-startup-wire 6,931 / 5,909, 96 (the producer-side record format and filler pipes; node:fs only, its policy
+// import is type-only; the launcher-only relay parsing lives in host-startup-events, outside this graph);
+// host-lifecycle-startup 3,912 / 3,131, 73 (the supervisor's milestones, relay, in-phase retries and its host
+// child's stdio, over modules already in the graph). Their import-only phys_footprint cost on Bun was not measurable
+// (graph import, 15 alternating samples: base median 11.141 MiB, head 11.126). The base ceiling and every forbidden/core
+// import check remain unchanged.
+const STARTUP_EVENT_LEAVES = new Set(
+	["host-startup-beacon", "host-startup-wire", "host-lifecycle-startup"].map(
+		(name) => `packages/coding-agent/dist/modes/rpc/${name}.js`,
+	),
+);
+
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {
 	const repo = `file://${repoRoot}`;
 	return [
@@ -122,8 +137,9 @@ describe("RPC host supervisor import graph", () => {
 		const internalHopLeaves = modules.filter((url) => INTERNAL_HOP_LEAVES.has(url)).length;
 		const publicAuthLeaves = modules.filter((url) => PUBLIC_AUTH_LEAVES.has(url)).length;
 		const privateFdLeaves = modules.filter((url) => PRIVATE_FD_LEAVES.has(url)).length;
+		const startupEventLeaves = modules.filter((url) => STARTUP_EVENT_LEAVES.has(url)).length;
 		console.info(
-			`supervisor graph: ${modules.length} modules (base ceiling ${SUPERVISOR_MODULE_CEILING}, internal hop ${internalHopLeaves}, public auth ${publicAuthLeaves}, private fd ${privateFdLeaves})`,
+			`supervisor graph: ${modules.length} modules (base ceiling ${SUPERVISOR_MODULE_CEILING}, internal hop ${internalHopLeaves}, public auth ${publicAuthLeaves}, private fd ${privateFdLeaves}, startup events ${startupEventLeaves})`,
 		);
 
 		const core = modules.filter((url) => url.startsWith("packages/coding-agent/dist/core/"));
@@ -132,9 +148,9 @@ describe("RPC host supervisor import graph", () => {
 		).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/interactive/"))).toEqual([]);
 		expect(modules.filter((url) => url.startsWith("packages/coding-agent/dist/modes/app-server/"))).toEqual([]);
-		expect(modules.length - internalHopLeaves - publicAuthLeaves - privateFdLeaves).toBeLessThanOrEqual(
-			SUPERVISOR_MODULE_CEILING,
-		);
+		expect(
+			modules.length - internalHopLeaves - publicAuthLeaves - privateFdLeaves - startupEventLeaves,
+		).toBeLessThanOrEqual(SUPERVISOR_MODULE_CEILING);
 	});
 
 	// senpi#3743: a bundled install starts its supervisor through `dist/bundle/host-supervisor.js`. Before it
