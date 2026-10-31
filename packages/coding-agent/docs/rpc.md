@@ -489,6 +489,55 @@ the endpoint no longer waits on it (`question_already_resolved`,
 refused prompt or steer keeps its text in the editor. A width change sends
 `set_client_info {width}`.
 
+### Private secret input
+
+`get_protocol_info.capabilities` advertises `secret_input_v1`. A presenter must
+explicitly send `set_client_info` with both `secret_input_v1` and `interactive_user`
+on its own connection, including classic stdio. Launch options and
+`SENPI_RPC_CLIENT_CAPABILITIES` do not establish secret support.
+
+```json
+{"type":"set_client_info","width":80,"capabilities":["interactive_user","secret_input_v1"]}
+{"type":"extension_ui_request","id":"request-id","method":"input","secret":true,"title":"Credential","timeout":1800000,"deadlineAtMs":1900000000000}
+{"type":"extension_ui_response","id":"reply-id","uiRequestId":"request-id","answerId":"fresh-answer-id","secret":true,"value":"synthetic-example"}
+```
+
+Routed frames also carry `sessionId`. A cancellation replaces `value` with
+`cancelled:true`. Exactly one is required, along with a nonempty opaque `answerId`;
+`confirmed`, `answers`, `comment`, extra payload fields and progress updates are
+refused. The pending host record determines sensitivity even if the incoming
+`secret` marker is missing. Never put a value into an ID or send it as progress.
+
+Requests belong to one immutable presenter and live session incarnation. The
+initiating attached client must itself be eligible; it cannot borrow another
+client's declaration. Background calls choose an eligible attached presenter in
+registration order. Unsupported presentation raises `secret_input_unavailable`
+before emission. Worker isolates negotiate accepted/refused-with-reason with the
+parent before registering a request; a refusal is not user cancellation.
+
+The private transport bypasses replay, observer, transcript and trace-record
+publication. Generic `get_state`/`get_snapshot` and non-owner views contain no
+secret prompt or receipt. The owner can query its bounded, value-free
+`get_state.answeredUiRequests` receipts after acknowledgement loss. Discard the
+value instead of resending or saving it in a reconnect queue. A missing receipt
+after eviction/restart means unknown outcome, not proof the callback did not run.
+
+The owner receives `secret_input_settled` with `id` and
+`outcome: answered | cancelled | timed_out | unavailable`. It must destroy its
+field and editing buffers on that event, disconnect, or unmount. The original
+`deadlineAtMs` is authoritative across resize, snapshots and attach re-offers.
+Late or foreign answers are refused before human-input admission. Responses use
+the existing `extension_ui_response` acknowledgement with fixed errors
+`secret_answer_refused`, `invalid_secret_response` or
+`unknown_extension_ui_request`, and metadata-only dispositions.
+
+Clients must mask before rendering, retain values only in private live state,
+and never record raw response frames, parser inputs, validation actuals or error
+causes. A desktop integration needs its own authenticated, untraced transient
+response route; ordinary persisted question-answer commands are not suitable.
+Advertise the capability only after that route and the renderer support it.
+Role-carrying automated/control connections must omit `secret_input_v1`.
+
 ### RPC client lifecycle
 
 `RpcClient` accepts an `onDisconnect` callback for an established socket and rejects subsequent transport operations with the typed `RpcTransportGoneError` (also detectable with `isTransportGoneError`). Callers should use the callback to begin recovery and keep the error text out of user-facing output.
@@ -613,6 +662,21 @@ its epoch and its session handles. For each tagged marker, refresh that session 
 run state, and replace its streaming preview from `message`. A read-only request may be
 retried. A closed-handle snapshot retires that session, not the connection.
 Another overflow during recovery produces another gap and a newer snapshot.
+
+#### Compact recovery state limits
+
+Behind `SENPI_ENGINE_SOCKET_COMPACT_UPDATES` (off by default), the host also keeps a compact recovery state for
+each session. It has one protocol depth limit, `COMPACT_PROTOCOL_MAX_DEPTH` = 1,024 nested arrays or objects
+(`[[1]]` is 2 deep; the record object itself is the first level), set well below the native JSON limits of Node 24
+(about 6,185 levels) and Bun 1.4 (40,000). A record nested deeper is refused before any compact fold clones or
+serializes it (its canonical projection, its call or component fold, the settled terminal of a `message_end`), with
+`CompactWriteError` reason `unsupported_value` carrying `limit: 1024`. The refusal costs only that session event's
+compact fold, both projections of it: the session's compact state stays available, the legacy record is still
+delivered, the refusal is counted once per session event in the lane's `refusedRecords` status (however many of
+the event's projections exceed the limit) and the host reports it once on stderr as
+`senpi rpc acceptance: compact record refused: unsupported_value (depth above 1024)`. Any other loss of a record
+still ends that session epoch's compact state. Every refused record of the session is counted the same way whether
+or not the compact state is still live: after such a loss, refusals on either projection keep counting.
 
 #### interactive_user
 
@@ -2644,7 +2708,7 @@ Every `host_response` is acknowledged under its `id`: `{"type":"response","comma
 
 The agent's tool results are typed in `details`: `{ status: "listed", targets }`, `{ status: "scheduled", target, moveId }`, `{ status: "unavailable", reason, detail }`, or `{ status: "refused", reason, detail }` (the host's own `reason` and `detail` when it declined). Every outcome except `scheduled` leaves the session open and writable here.
 
-**When the move happens.** An accepted request is scheduled; it never interrupts the run that asked for it. The tool result tells the agent the work continues on the target when this turn ends, and the run goes on to its natural end (further tool calls, its closing reply, queued follow-ups). When that run settles (`agent_settled`) and every `prompt` call behind it has returned, the session sends one event:
+**When the move happens.** An accepted request is scheduled; it never interrupts the run that asked for it. The tool result tells the agent the work continues on the target when this turn ends, and the run goes on to its natural end (further tool calls, its closing reply, queued follow-ups). When that run settles and goes idle (`agent_idle`, after its settle-time extension handlers) and every `prompt` call behind it has returned, the session sends one event:
 
 ```json
 {"type":"relocation_due","moveId":"mv-a1","target":"Studio","reason":"heavy build","sessionId":"rpc-1"}
@@ -5006,7 +5070,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 |-------|-------------|
 | `agent_start` | Agent begins processing |
 | `agent_end` | One low-level agent run completes (may still be followed by retry, compaction, or queued continuations) |
-| `agent_settled` | Agent run is fully settled; no automatic retry, compaction retry, or queued continuation remains |
+| `agent_settled` | Agent run is fully settled; no automatic retry, compaction retry, or queued continuation remains. Extension `agent_settled` handlers may still be running: wait for `agent_idle` before tearing a session down |
 | `turn_start` | New turn begins |
 | `turn_end` | Turn completes (includes assistant message and tool results) |
 | `message_start` | Message begins |
