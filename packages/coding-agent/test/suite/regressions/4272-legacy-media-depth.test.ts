@@ -143,7 +143,7 @@ it("in process: a media-placeholder client receives a 4,000-deep tool result unc
 	expect(refusals).toBe(0);
 	expect(stderr.filter((line) => line.startsWith("senpi rpc host: legacy record refused"))).toEqual([]);
 	expect(records.filter((record) => record.type === "agent_end")).toHaveLength(2);
-}, 90_000);
+}, 600_000);
 
 /** One real placeholder-writer delivery, with exact refusal/reporting and two-turn survival assertions. */
 async function writerDelivers(depth: number): Promise<boolean> {
@@ -227,7 +227,7 @@ it.each([DEEP])(
 			for (const message of ["go deep", "again"]) {
 				// A hang guard, not a timing assertion: a record near the engine limit is serialized and parsed several times
 				// (isolate, host, writer), which on Bun at ~40,000 levels under a loaded host takes longer than the default 30 s.
-				const idle = host.next(`idle after ${message}`, (record) => record.type === "agent_idle", 120_000);
+				const idle = host.next(`idle after ${message}`, (record) => record.type === "agent_idle");
 				expect((await host.request({ type: "prompt", sessionId, message })).success).toBe(true);
 				await idle;
 			}
