@@ -157,10 +157,13 @@ describe("RPC fallback events", () => {
 		await handler.handleInputLine(JSON.stringify({ id: "fallback-exhausted", type: "prompt", message: "hello" }));
 		await exhausted.wait(2_000);
 
+		const primaryFailure = { model: primary, reason: "refusal", error: "misleading_success_output" };
 		expect(jsonLines(chunks)).toContainEqual({
 			type: "retry_fallback_exhausted",
 			chainKey: primary,
 			lastError: "misleading_success_output",
+			primaryError: primaryFailure,
+			failures: [primaryFailure, { model: fallback, reason: "refusal", error: "misleading_success_output" }],
 		});
 	});
 

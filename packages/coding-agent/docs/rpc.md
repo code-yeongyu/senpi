@@ -5004,6 +5004,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do no
 | `compaction_end` | Compaction completes |
 | `auto_retry_start` | Auto-retry begins (after transient error) |
 | `auto_retry_end` | Auto-retry completes (success or final failure) |
+| `retry_fallback_exhausted` | Every model in the fallback chain failed this turn (`chainKey`, `lastError`, optional `primaryError`, `failures`) |
 | `summarization_retry_scheduled` | Retry scheduled for a transient compaction or branch-summary summarization error |
 | `summarization_retry_attempt_start` | Retried summarization request starts |
 | `summarization_retry_finished` | Summarization retry loop completes |
@@ -5545,6 +5546,30 @@ On final failure (max retries exceeded):
   "finalError": "529 overloaded_error: Overloaded"
 }
 ```
+
+### retry_fallback_exhausted
+
+Emitted when the turn's model fallback chain runs out: the primary and every fallback rung failed.
+
+```json
+{
+  "type": "retry_fallback_exhausted",
+  "chainKey": "anthropic/claude-opus",
+  "lastError": "Connection error.",
+  "primaryError": { "model": "anthropic/claude-opus", "reason": "billing", "error": "400 out of extra usage" },
+  "failures": [
+    { "model": "anthropic/claude-opus", "reason": "billing", "error": "400 out of extra usage" },
+    { "model": "openai/gpt", "reason": "transient", "error": "Connection error." }
+  ]
+}
+```
+
+- `chainKey`: the `provider/model` key of the fallback chain that ran out.
+- `lastError`: the error of the rung that ran last.
+- `primaryError` (optional): the failure that started the fallback walk, the turn's first failed rung, as `{ model, reason, error }`. `reason` is `transient`, `refusal`, `hard-error` or `billing`.
+- `failures` (optional): every rung that failed this turn, in the order it ran, the primary first. An exact repeat of the previous entry is dropped.
+
+`primaryError` and `failures` are present together when the session recorded at least one rung failure, and absent otherwise. Account usage-limit text in `lastError` and in each `error` is replaced by its account-limit description. Clients that ignore unknown fields keep working with `chainKey` and `lastError`.
 
 ### summarization_retry_scheduled / summarization_retry_attempt_start / summarization_retry_finished
 
