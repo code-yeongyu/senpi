@@ -1,3 +1,41 @@
+## 2026-10-30 - Harness skill loader: ignore files no longer hide symlinked skills (senpi#5069)
+
+### What changed
+
+- `packages/agent/src/harness/skills.ts`: `loadSkillsFromDirInternal` skips the parent's ignore rules for an entry the environment reports as a symlink, and walks a linked directory with a fresh ignore matcher, matching the coding-agent skill walkers (senpi#5060).
+
+### Why
+
+- After senpi#5061 the two loaders disagreed: the coding-agent walkers loaded a git-ignored linked skill, the harness loader still dropped it silently.
+
+### Why an extension could not handle it
+
+- Skill discovery in the harness is a library function with no extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the directory loop of `loadSkillsFromDirInternal` in `skills.ts`.
+
+## 2026-10-27 - Agent state carries the stable system prefix to the provider context (senpi#4447)
+
+### What changed
+
+- `packages/agent/src/types.ts`: `AgentState.systemPromptStablePrefix` and `AgentContext.systemPromptStablePrefix`.
+- `packages/agent/src/agent.ts`: the initial state and the context snapshot copy it.
+- `packages/agent/src/agent-loop.ts`: `buildProviderContext` passes it to `normalizeContext`.
+
+### Why
+
+- The boundary computed when the system prompt is composed has to reach the provider request with the prompt.
+
+### Why an extension could not handle it
+
+- Provider context assembly in `packages/agent/src/agent-loop.ts` has no extension seam.
+
+### Expected merge conflict zones
+
+- LOW: `AgentState`/`AgentContext` in `packages/agent/src/types.ts`, `createMutableAgentState`/`createContextSnapshot` in `packages/agent/src/agent.ts`, `buildProviderContext` in `packages/agent/src/agent-loop.ts`.
+
 ## 2026-10-30 - Keep-alive bytes keep a slow first token alive; keep-alive-only silence is capped (senpi#4608)
 
 ### What changed

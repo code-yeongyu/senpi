@@ -28,6 +28,8 @@ async function setup() {
 			return { type: "result" };
 		},
 		post: () => {},
+		secretIds: new Set<string>(),
+		secretRoute: { accepts: () => false },
 		// bind captures each command's owner through the client's owner gates (#4728).
 		owners: new WorkerOwnerGates(),
 	} as unknown as SessionWorkerClient;
