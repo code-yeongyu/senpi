@@ -146,6 +146,7 @@ import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { formatProviderFailure } from "../../core/provider-failure.ts";
 import { failureAlreadyDescribed, headNoticeShownElsewhere } from "./provider-error-description.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
+import { describeFallbackExhaustion } from "../../core/retry-fallback/exhaustion.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { createSessionLogger, type SessionLogger } from "../../core/session-log.ts";
@@ -5966,19 +5967,23 @@ export class InteractiveMode {
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 				break;
 
-			case "retry_fallback_exhausted":
-				if (isRetryableProviderError(event.lastError)) {
+			case "retry_fallback_exhausted": {
+				// A walk that started on another failure must lead with it, not the last rung's (senpi#4084).
+				const startedElsewhere = (event.failures?.length ?? 0) > 1;
+				if (isRetryableProviderError(event.lastError) && !startedElsewhere) {
 					this.getProviderErrors().finish(event.lastError);
 					this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 					break;
 				}
+				if (isRetryableProviderError(event.lastError)) this.getProviderErrors().clear();
 				this.showNoticeBox({
 					title: `✕ Fallback chain exhausted · ${event.chainKey}`,
 					tone: "error",
-					why: event.lastError,
+					why: describeFallbackExhaustion(event),
 				});
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, undefined);
 				break;
+			}
 
 			case "server_fallback_aborted":
 				this.showNoticeBox({

@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
+import { describeFallbackExhaustion } from "../core/retry-fallback/exhaustion.ts";
 import { usageLimitCause, usageLimitScope } from "../core/retry-fallback/usage-limit.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
 import { toJsonEvent } from "./json-event.ts";
@@ -135,7 +136,9 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 					`Model fallback: ${event.from} -> ${event.to} (${usageLimitCause(event.from, event.limit) ?? event.reason})`,
 				);
 			} else if (event.type === "retry_fallback_exhausted") {
-				console.error(`Model fallback exhausted: ${event.chainKey} (${event.lastError})`);
+				console.error(
+					`Model fallback exhausted: ${event.chainKey} (${describeFallbackExhaustion(event).replaceAll("\n", "; ")})`,
+				);
 			} else if (event.type === "retry_fallback_reverted") {
 				const cause = event.cause === "fallback-unusable" ? ` (${event.from} cannot serve right now)` : "";
 				console.error(`Model fallback reverted: ${event.from} -> ${event.to}${cause}`);
