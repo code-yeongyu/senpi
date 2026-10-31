@@ -1,7 +1,11 @@
-import { PROVIDER_NOT_CONFIGURED_PREFIX } from "@earendil-works/pi-ai";
+import { PROVIDER_NOT_CONFIGURED_PREFIX, readProviderDiagnostic } from "@earendil-works/pi-ai";
 import { DEFAULT_SLOT_BLOCK_MS, MAX_SLOT_BLOCK_MS } from "@earendil-works/pi-ai/auth/pool/failover";
 import { normalizeProviderError } from "@earendil-works/pi-ai/utils/error-body";
-import { isOAuthRefreshUnavailableError } from "@earendil-works/pi-ai/utils/oauth-refresh-error";
+import { ModelsError } from "@earendil-works/pi-ai/utils/models-error";
+import {
+	isOAuthRefreshUnavailableError,
+	OAuthTokenEndpointError,
+} from "@earendil-works/pi-ai/utils/oauth-refresh-error";
 import { getOverflowPatterns } from "@earendil-works/pi-ai/utils/overflow";
 import { extract429RetryAfterMs } from "@earendil-works/pi-ai/utils/retry-hint";
 import { rateLimitModelFamily } from "./model-scope.ts";
@@ -67,6 +71,70 @@ export function usageLimitCooldown(
 }
 
 const INVALID_KEY_TEXT = /invalid[ _-]?(?:api[ _-]?)?key|authentication[_ ]?error|invalid x-api-key|unauthorized/i;
+// Last resort for a revoked or invalidated token reported as prose with no status and no code
+// (Codex: "Encountered invalidated oauth token for user, failing request", senpi#3037).
+// A token qualified as a session, page or request token is not the credential, so its invalidation
+// never blocks the account.
+const REVOKED_TOKEN_TEXT =
+	/invalidated (?:oauth )?token|(?<!\b(?:session|csrf|xsrf|page|pagination|continuation|cursor|sync|stream|upload|idempotency|request|nonce|state)[ _-])token(?:[ _-](?:invalidated|revoked)|\s(?:has been|was) (?:invalidated|revoked))/i;
+// OAuth error codes with which a token endpoint refuses the refresh grant itself (RFC 6749
+// `invalid_grant`, OpenAI's refresh_token_* and `token_revoked`). Besides a token endpoint's 401,
+// these make a failed refresh a verdict on the account.
+const REFUSED_GRANT_CODES: ReadonlySet<string> = new Set([
+	"invalid_grant",
+	"refresh_token_expired",
+	"refresh_token_invalidated",
+	"refresh_token_reused",
+	"token_revoked",
+]);
+const REFUSED_GRANT_TOKEN =
+	/(?<![a-z_])(invalid_grant|refresh_token_(?:expired|invalidated|reused)|token_revoked)(?![a-z_])/;
+// RFC 6749 section 5.2 codes that name a fault of the client application or of the request itself.
+// They are the same for every account, so even with a 401 they never block one.
+const CLIENT_FAULT_CODES: ReadonlySet<string> = new Set([
+	"invalid_client",
+	"invalid_request",
+	"invalid_scope",
+	"unauthorized_client",
+	"unsupported_grant_type",
+]);
+// Socket, DNS and HTTP-client codes (Node, undici, Bun) with which a refresh that never got an answer
+// from the token endpoint fails. Such a refresh retries the same account like any model request.
+const NETWORK_FAULT_CODES: ReadonlySet<string> = new Set([
+	"ECONNRESET",
+	"ECONNREFUSED",
+	"ECONNABORTED",
+	"ETIMEDOUT",
+	"EHOSTUNREACH",
+	"EHOSTDOWN",
+	"ENETUNREACH",
+	"ENETDOWN",
+	"ENETRESET",
+	"ENOTFOUND",
+	"EAI_AGAIN",
+	"EPIPE",
+	"EADDRNOTAVAIL",
+	"ERR_SOCKET_CONNECTION_TIMEOUT",
+	"UND_ERR_CONNECT_TIMEOUT",
+	"UND_ERR_HEADERS_TIMEOUT",
+	"UND_ERR_BODY_TIMEOUT",
+	"UND_ERR_SOCKET",
+	"UND_ERR_CLOSED",
+	"ConnectionRefused",
+	"ConnectionClosed",
+	"FailedToOpenSocket",
+]);
+// Provider error codes that name a refused credential on a model request: the auth allowlist of the
+// provider diagnostic vocabulary plus the token codes OpenAI's backends send (`token_revoked` arrives on
+// a statusless Codex frame). `token_expired` is absent on purpose: an expired token that can still be
+// refreshed must refresh, not block the account.
+const AUTH_ERROR_CODES: ReadonlySet<string> = new Set([
+	"authentication_error",
+	"invalid_api_key",
+	"token_invalidated",
+	...REFUSED_GRANT_CODES,
+]);
+const MAX_CAUSE_LINKS = 16;
 const ACCOUNT_SCOPED_403_TEXT = /account|credential|token|api[ _-]?key|organization|subscription/i;
 const RATE_LIMIT_TEXT = /rate[ _-]?limit|too many requests|resource_exhausted/i;
 const BILLING_TEXT =
@@ -92,6 +160,78 @@ const TEMPORARY_FAULT_TEXT =
 function isAbort(error: unknown, message: string): boolean {
 	if (error instanceof Error && error.name === "AbortError") return true;
 	return ABORT_TEXT.test(message);
+}
+
+/** The failed refresh this error reports (`ModelsError` code `oauth`, senpi#2304), if it is one. */
+function failedRefresh(error: unknown): ModelsError | undefined {
+	const seen = new Set<unknown>();
+	while (typeof error === "object" && error !== null && !seen.has(error) && seen.size < MAX_CAUSE_LINKS) {
+		seen.add(error);
+		if (error instanceof ModelsError) return error.code === "oauth" ? error : undefined;
+		error = Reflect.get(error, "cause");
+	}
+	return undefined;
+}
+
+/** The OAuth error code in a token endpoint's JSON body: `error` as a string, or `error.code`. */
+function oauthBodyErrorCode(message: string): string | undefined {
+	const start = message.indexOf("{");
+	const end = message.lastIndexOf("}");
+	if (start < 0 || end <= start) return undefined;
+	try {
+		const body: unknown = JSON.parse(message.slice(start, end + 1));
+		if (typeof body !== "object" || body === null) return undefined;
+		const field: unknown = Reflect.get(body, "error");
+		if (typeof field === "string") return field;
+		if (typeof field === "object" && field !== null) {
+			const code: unknown = Reflect.get(field, "code");
+			return typeof code === "string" ? code : undefined;
+		}
+		return undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The token endpoint refused this account's credential: the adapter says so (`credentialRefused`), or
+ * a 401, a 400 that names a refused-grant code, or a 403/404 whose OAuth code does. An OAuth code that
+ * names a client or request fault outranks both. A refresh that failed in any other way (TLS
+ * interception, a captive portal's HTML, a WAF page, a moved endpoint) is not a verdict on the login.
+ */
+function isRefusedGrant(refresh: ModelsError): boolean {
+	const cause: unknown = refresh.cause;
+	if (!(cause instanceof OAuthTokenEndpointError)) return false;
+	const code = cause.oauthError ?? oauthBodyErrorCode(cause.message);
+	if (code !== undefined && CLIENT_FAULT_CODES.has(code)) return false;
+	if (cause.credentialRefused || cause.status === 401) return true;
+	if (code !== undefined && REFUSED_GRANT_CODES.has(code)) return [400, 403, 404].includes(cause.status);
+	return cause.status === 400 && REFUSED_GRANT_TOKEN.test(cause.message);
+}
+
+/**
+ * A failed refresh that never got an answer from the token endpoint: the first error code in its cause
+ * chain is a network code, or, with no code at all, its text names a network fault. A token endpoint
+ * that answered with a status is never a network fault, whatever its body says.
+ */
+function isRefreshNetworkFault(refresh: ModelsError, text: string): boolean {
+	const seen = new Set<unknown>();
+	let error: unknown = refresh.cause;
+	while (typeof error === "object" && error !== null && !seen.has(error) && seen.size < MAX_CAUSE_LINKS) {
+		seen.add(error);
+		if (error instanceof OAuthTokenEndpointError) return false;
+		const code: unknown = Reflect.get(error, "code");
+		if (typeof code === "string") return NETWORK_FAULT_CODES.has(code);
+		error = Reflect.get(error, "cause");
+	}
+	return NETWORK_TEXT.test(text);
+}
+
+/** A structured provider diagnostic that names a refused credential, with or without a status. */
+function hasAuthDiagnostic(error: unknown): boolean {
+	const diagnostic = readProviderDiagnostic(error);
+	if (diagnostic === undefined) return false;
+	return diagnostic.category === "auth" || (diagnostic.code !== undefined && AUTH_ERROR_CODES.has(diagnostic.code));
 }
 
 function isOverflowText(text: string): boolean {
@@ -136,9 +276,27 @@ export function classifyCredentialFailure(
 	if (text.includes(PROVIDER_NOT_CONFIGURED_PREFIX)) {
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
+	// Structured auth evidence is a verdict on this one account, so it fails over to a sibling before
+	// any auth prose is read; a provider fault or rate-limit status still says the login did not fail.
+	const statusFault = status === 408 || status === 429 || (status !== undefined && status >= 500 && status < 600);
+	const refresh = failedRefresh(error);
+	if (refresh !== undefined) {
+		if (!statusFault && isRefusedGrant(refresh)) return { kind: "failover", block: { reason: "auth_error" } };
+		// Any other failed refresh is not a verdict on this account, so no branch below may block it; a
+		// network fault still retries the same account as it does for a model request (senpi#2081).
+		return isRefreshNetworkFault(refresh, text)
+			? { kind: "retry_same", maxAttempts: RETRY_SAME_MAX_ATTEMPTS }
+			: { kind: "fail_request" };
+	}
+	if (!providerFault && status !== 429 && hasAuthDiagnostic(error)) {
+		return { kind: "failover", block: { reason: "auth_error" } };
+	}
 	// Only a 401, or auth text on a response whose status cannot mean something temporary, is an auth
 	// rejection; a 429 that mentions authentication is still a rate limit and cools down.
-	if (status === 401 || (!providerFault && status !== 429 && INVALID_KEY_TEXT.test(text))) {
+	if (
+		status === 401 ||
+		(!providerFault && status !== 429 && (INVALID_KEY_TEXT.test(text) || REVOKED_TOKEN_TEXT.test(text)))
+	) {
 		return { kind: "failover", block: { reason: "auth_error" } };
 	}
 	if (status === 403 && !limitText) {

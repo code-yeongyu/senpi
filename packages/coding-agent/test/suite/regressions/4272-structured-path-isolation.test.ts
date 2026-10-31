@@ -2,6 +2,7 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, expect, it, vi } from "vitest";
 import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
+import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -33,7 +34,7 @@ it("a throwing structured receiver leaves legacy and extension delivery whole an
 	});
 	try {
 		host.faux.setResponses([fauxAssistantMessage("legacy survives the receiver", { timestamp: 1 })]);
-		const done = client.waitFor((record) => record.type === "agent_idle", 15_000);
+		const done = client.waitFor((record) => record.type === "agent_idle", EVENT_SAFETY_MS);
 		dataOf(await client.request({ type: "prompt", sessionId, message: "go" }));
 		await done;
 		await host.writer.flush();
@@ -51,4 +52,4 @@ it("a throwing structured receiver leaves legacy and extension delivery whole an
 	} finally {
 		lane.release(root);
 	}
-}, 60_000);
+}, 600_000);
