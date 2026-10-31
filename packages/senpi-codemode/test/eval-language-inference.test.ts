@@ -40,13 +40,20 @@ describe("classifyEvalCode", () => {
 		["import os\nos.getcwd()", "py"],
 		["import os.path as osp, sys", "py"],
 		["from pathlib import Path\nPath('.').resolve()", "py"],
-		["print(len('abc'))", "py"],
 		["const r = await read('a.txt')\nr", "js"],
 		["let total = 0\ntotal", "js"],
 		["[1, 2].map((x) => x * 2)", "js"],
 		["console.log(1)", "js"],
 		["return await tool.grep({ pattern: 'x' })", "js"],
 		['import { join } from "node:path"\njoin("a", "b")', "js"],
+		// `print(` is a prelude helper in both runtimes, so only the JS-only forms around it decide.
+		["print(await read('a.txt'))", "js"],
+		["print(JSON.stringify(data))", "js"],
+		["print(Object.keys(x))", "js"],
+		["print(`a ${b}`)", "js"],
+		["print(await tool.grep({ pattern: 'x' }))", "js"],
+		["const x = 1\nprint(x)", "js"],
+		["import fs from 'node:fs'\nprint(fs)", "js"],
 	] as const)("classifies %j as %s", (code, language) => {
 		expect(classifyEvalCode(code)).toBe(language);
 	});
@@ -54,14 +61,16 @@ describe("classifyEvalCode", () => {
 	it.each([
 		["no markers at all", "1 + 1"],
 		["no markers at all", "return 1"],
-		["python print beside a JS const", "const x = 1\nprint(x)"],
+		["print alone, shared by both runtimes", "print(result)"],
+		["print of a call, shared by both runtimes", "print(len('abc'))"],
+		["JS const beside a Python True", "const s = 'True'"],
+		["python def beside a trailing brace", "def f():\n    return {\n    }"],
 		["python import beside an arrow", "import os\nf = lambda: 1  # => one"],
 		["python def beside console.log", "def f():\n    console.log(1)"],
 		["print with a JS statement terminator", "print(1);"],
 		["print beside a JS null", "print(null)"],
 		["JS const beside a Python None", "const x = None"],
 		["arrow beside a Python block header", "if ok:\n    xs.map((x) => x)"],
-		["JS default import is not a Python import", "import fs from 'node:fs'\nprint(fs)"],
 	] as const)("refuses to classify %s", (_label, code) => {
 		expect(classifyEvalCode(code)).toBeUndefined();
 	});
@@ -106,7 +115,7 @@ describe("parseEvalRequest language inference", () => {
 	});
 
 	it("keeps the teaching error when js and py are enabled and the markers conflict", () => {
-		expect(() => parseEvalRequest({ code: "const x = 1\nprint(x)", summary: "Run" }, ["js", "py"])).toThrow(
+		expect(() => parseEvalRequest({ code: "const s = 'True'", summary: "Run" }, ["js", "py"])).toThrow(
 			TWO_LANGUAGE_TEACHING_ERROR,
 		);
 	});
@@ -136,7 +145,7 @@ describe("eval argument validation language inference", () => {
 	});
 
 	it("reports the missing language when the markers conflict", () => {
-		expect(() => validate(JS_AND_PY, { code: "let x = 1\nprint(x)", summary: "Run" })).toThrow(
+		expect(() => validate(JS_AND_PY, { code: "let s = None", summary: "Run" })).toThrow(
 			TWO_LANGUAGE_TEACHING_ERROR,
 		);
 	});
@@ -150,6 +159,21 @@ describe("eval argument validation language inference", () => {
 		});
 		expect(validated).toEqual({ language: "js", code: "import os", summary: "Run" });
 	});
+
+	it("reports the caller's own arguments when a filled call still fails validation", () => {
+		const args = { code: "1 + 1", summary: "Add", timeout: "abc" };
+		const message = (() => {
+			try {
+				validate(PY_ONLY, args);
+			} catch (error) {
+				if (error instanceof Error) return error.message;
+				throw error;
+			}
+			throw new Error("expected eval validation to fail");
+		})();
+		expect(message).toContain(`\n\nReceived arguments:\n${JSON.stringify(args, null, 2)}`);
+		expect(message).not.toContain('"language"');
+	});
 });
 
 describe("eval tool reports an inferred language", () => {
@@ -162,6 +186,31 @@ describe("eval tool reports an inferred language", () => {
 			undefined,
 			fakeExtensionContext(),
 		);
+		expect(output.content[0]).toEqual({
+			type: "text",
+			text: "language_inferred: js (only-enabled-language). This eval run omitted language; pass language explicitly.",
+		});
+	});
+
+	it("ignores an inference marker that argument validation did not set", async () => {
+		const tool = buildTool(JS_ONLY);
+		const output = await tool.execute(
+			"cell-1",
+			{ language: "js", code: "1", summary: "One", language_inferred: "code-markers" },
+			undefined,
+			undefined,
+			fakeExtensionContext(),
+		);
+		expect(JSON.stringify(output.content)).not.toContain("language_inferred");
+	});
+
+	it("keeps the inference line for arguments the validator filled", async () => {
+		const tool = buildTool(JS_ONLY);
+		const validated = validateToolArguments(
+			{ name: "eval", description: "eval", parameters: tool.parameters },
+			{ type: "toolCall", id: "call-1", name: "eval", arguments: { code: "1", summary: "One" } },
+		);
+		const output = await tool.execute("cell-1", validated, undefined, undefined, fakeExtensionContext());
 		expect(output.content[0]).toEqual({
 			type: "text",
 			text: "language_inferred: js (only-enabled-language). This eval run omitted language; pass language explicitly.",

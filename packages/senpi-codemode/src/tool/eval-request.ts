@@ -11,6 +11,7 @@ import {
 	type EvalLanguageInferenceBasis,
 	inferEvalLanguage,
 	isEvalLanguageInferenceBasis,
+	wasEvalLanguageFilled,
 } from "./eval-language-inference.ts";
 
 const NON_INTERACTIVE_MODES = new Set(["print", "json"]);
@@ -54,7 +55,7 @@ export function parseEvalRequest(
 		throw new TypeError(`eval run language must be one of: ${enabledLanguages.join(", ")}`);
 	const inferredBy: EvalLanguageInferenceBasis | undefined =
 		inference?.basis ??
-		(isEvalLanguageInferenceBasis(params[EVAL_LANGUAGE_INFERRED_KEY])
+		(wasEvalLanguageFilled(params) && isEvalLanguageInferenceBasis(params[EVAL_LANGUAGE_INFERRED_KEY])
 			? params[EVAL_LANGUAGE_INFERRED_KEY]
 			: undefined);
 	if (typeof params.code !== "string") throw new TypeError(evalRunFieldRequiredMessage("code", enabledLanguages));

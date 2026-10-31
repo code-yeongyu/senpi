@@ -11,6 +11,18 @@ export interface EvalLanguageInference {
 /** The argument key validation sets when it filled the language, so execution can tell the model. */
 export const EVAL_LANGUAGE_INFERRED_KEY = "language_inferred";
 
+// Argument objects whose language this module's validator filled; only these may carry a trusted inference marker.
+const filledArguments = new WeakSet<object>();
+
+export function markEvalLanguageFilled(args: object): void {
+	filledArguments.add(args);
+}
+
+/** True only when argument validation filled this object's language; a caller-sent marker is never trusted. */
+export function wasEvalLanguageFilled(args: object): boolean {
+	return filledArguments.has(args);
+}
+
 interface LanguageSignals {
 	/** Any one of these fills the language when the other language shows no signal at all. */
 	readonly strong: readonly RegExp[];
@@ -31,7 +43,6 @@ const SIGNALS: Readonly<Record<"js" | "py", LanguageSignals>> = {
 				"mu",
 			),
 			new RegExp(`^[ \\t]*from[ \\t]+\\.*${PYTHON_MODULE}[ \\t]+import[ \\t]+[\\w(*]`, "mu"),
-			/(?<![\w.$])print\(/u,
 		],
 		weak: [
 			/\b(?:None|True|False|elif|lambda|self)\b/u,
@@ -41,7 +52,10 @@ const SIGNALS: Readonly<Record<"js" | "py", LanguageSignals>> = {
 	},
 	js: {
 		strong: [
-			/\bawait[ \t]+tool\./u,
+			// `print(` is a prelude helper in both runtimes, so it is no signal at all; these forms are JS-only.
+			/\bawait[ \t]+[A-Za-z_$][\w$.]*[ \t]*\(/u,
+			/`/u,
+			/(?<![\w.$])(?:JSON|Object|Array)\.[A-Za-z_$]/u,
 			/^[ \t]*(?:const|let)[ \t]+[A-Za-z_$[{]/mu,
 			/=>/u,
 			/\bconsole\.log\(/u,
