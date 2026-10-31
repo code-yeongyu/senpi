@@ -1,3 +1,21 @@
+## 2026-10-12 - Optional inline emphasis hooks in MarkdownTheme
+
+### What changed
+
+- `packages/tui/src/components/markdown.ts`: `MarkdownTheme` gains optional `strong`, `emphasis`, and `deleted` hooks. Inline `**strong**`, `*em*`, and `~~del~~` tokens use them when present and fall back to `bold`, `italic`, and `strikethrough`. A present hook is also applied inside the surrounding inline style context (heading or `DefaultTextStyle`), so a color it sets wins over that context color; the fallback path renders exactly as before. Headings, blockquotes, table headers, and `DefaultTextStyle` keep using the generic style functions.
+
+### Why
+
+- `packages/tui/src/components/markdown.ts`: themes can color inline emphasis without also recoloring headings and quotes, which wrap their text in the same `bold`/`italic` functions.
+
+### Why an extension could not handle it
+
+- `packages/tui/src/components/markdown.ts`: inline token rendering is owned by the Markdown component.
+
+### Expected merge conflict zones
+
+- `packages/tui/src/components/markdown.ts`: the `MarkdownTheme` interface and the `strong`/`em`/`del` cases in `renderInlineTokens`.
+
 ## 2026-10-24 - The VS Code terminal is recognised when TERM_PROGRAM is missing (senpi#2826)
 
 ### What changed

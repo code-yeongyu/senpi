@@ -197,7 +197,8 @@ export async function open(
 			if (typeof entry.worker?.subscribeSettled === "function") entry.worker.subscribeSettled(settled);
 			else if (typeof entry.runtime?.session.subscribe === "function")
 				entry.runtime.session.subscribe((event) => {
-					if (event.type === "agent_settled" || event.type === "agent_idle") settled();
+					// agent_idle, not agent_settled: settle-time extension handlers may still be writing (omo#11419).
+					if (event.type === "agent_idle") settled();
 				});
 			if (entry.worker)
 				void entry.worker.exited.then(async () => {
