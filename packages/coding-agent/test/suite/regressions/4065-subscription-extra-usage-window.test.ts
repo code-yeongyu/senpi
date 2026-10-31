@@ -32,6 +32,7 @@ import {
 import { streamAnthropicSubscription } from "../../../src/core/extensions/builtin/anthropic-subscription/stream.ts";
 import { ContinuityNoticeTracker } from "../../../src/modes/interactive/components/continuity-notice.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { cliLaneEnv, cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const EXHAUSTED = "API Error: 400 You're out of extra usage. Add more at claude.ai/settings/usage and keep going.";
 const REQUIRED =
@@ -104,18 +105,10 @@ function refusingQuery({ body = EXHAUSTED, visible = false, alwaysRefuse = false
 
 async function runTurn(lane: "ambient" | "oauth-slots", id: string, turn: FakeTurn = {}, standardWindow = false) {
 	const store = new InMemoryCredentialStore();
-	await store.modify("anthropic-subscription", async () =>
-		addAccount(emptyCredential(), {
-			name: "main",
-			access: "fake-access",
-			refresh: "fake-refresh",
-			expires: Date.now() + 60 * 60_000,
-			source: "login",
-		}),
-	);
+	await store.modify("anthropic-subscription", async () => addAccount(emptyCredential(), cliSlot("main")));
 	overrideAuthLaneBoundary({
 		createStore: () => store,
-		env: () => ({ PATH: "/usr/bin" }),
+		env: () => cliLaneEnv(),
 		getAgentDir: () => directory,
 	});
 	const model = catalogModel(id);

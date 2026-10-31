@@ -1,3 +1,24 @@
+## 2026-10-27 - The hand-rolled Anthropic OAuth (PKCE) flow is removed (senpi#4436, S7)
+
+### What changed
+
+- `packages/ai/src/auth/oauth/anthropic.ts`: deleted (`loginAnthropic`, `loginAnthropicCopyCode`, `refreshAnthropicToken`, `anthropicOAuth`, the browser/copy-code login methods).
+- `packages/ai/src/auth/oauth/anthropic-callback-listener.ts`: deleted (the loopback listener on port 53692).
+- `packages/ai/src/auth/oauth/authorization-input.ts`, `packages/ai/src/auth/oauth/error-details.ts`: deleted; their only user was `anthropic.ts` (the other providers keep their own local parsers).
+- `packages/ai/src/auth/oauth/load.ts`: `loadAnthropicOAuth` and the `anthropic` key of the bundled loaders are removed.
+
+### Why
+
+- senpi#4436, owner ruling R7: Claude sign-in runs only through the bundled Claude Code CLI (`claude auth login`), which keeps and renews its own login. The PKCE direct-login route and all its code, token refresh included, are removed.
+
+### Why an extension could not handle it
+
+- These are pi-ai's own built-in OAuth flow modules and loader registry.
+
+### Expected merge conflict zones
+
+- MEDIUM: an upstream change to `auth/oauth/anthropic.ts` or its listener lands on deleted files; keep them deleted. LOW: the loader type and the removed `loadAnthropicOAuth` in `load.ts`.
+
 ## 2026-10-09 - Restore oauth-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed

@@ -15,6 +15,7 @@ import type {
 	SDKMessage,
 	SdkQuery,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
+import { cliAccountOf, cliLaneEnv, cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const directory = mkdtempSync(join(tmpdir(), "senpi-4065-account-"));
 afterEach(() => {
@@ -30,19 +31,13 @@ it("restores 1M when a standard-window retry fails over to a different account",
 	await store.modify("anthropic-subscription", async () => {
 		let credential = emptyCredential();
 		for (const name of ["a", "b"]) {
-			credential = addAccount(credential, {
-				name,
-				access: `fake-${name}`,
-				refresh: `fake-refresh-${name}`,
-				expires: Date.now() + 60 * 60_000,
-				source: "login",
-			});
+			credential = addAccount(credential, cliSlot(name));
 		}
 		return credential;
 	});
 	overrideAuthLaneBoundary({
 		createStore: () => store,
-		env: () => ({ PATH: "/usr/bin" }),
+		env: () => cliLaneEnv(),
 		getAgentDir: () => directory,
 	});
 	const attempts: Options[] = [];
@@ -86,7 +81,7 @@ it("restores 1M when a standard-window retry fails over to a different account",
 	})) {
 		messages.push(message);
 	}
-	expect(attempts.map((options) => options.env?.CLAUDE_CODE_OAUTH_TOKEN)).toEqual(["fake-a", "fake-a", "fake-b"]);
+	expect(attempts.map((options) => cliAccountOf(options.env))).toEqual(["a", "a", "b"]);
 	expect(attempts.map((options) => options.model)).toEqual([
 		"claude-opus-4-6[1m]",
 		"claude-opus-4-6",
