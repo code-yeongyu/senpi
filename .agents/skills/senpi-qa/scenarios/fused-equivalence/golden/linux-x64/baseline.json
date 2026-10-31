@@ -1,6 +1,6 @@
 {
  "repo": {
-  "head": "51e3aba974464cdc180276e99799455777a3ff67",
+  "head": "d58c68e24f3e7c257ae2b49eb51b34a42343ca0e",
   "dirty": false
  },
  "platform": "linux-x64",
@@ -15,5 +15,5 @@
   "cases": "sha256:23b83840d6861e611c34dcf2af655c983dd7b9023b8b69566cc79b5776eb2c44",
   "fixtures": "sha256:406b03cc838ea251953667f945a0bc821242c6d378bfb290fbbf76402890fc7e"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --placement fused --pipeline legacy --surface rpc --cases E01,E02,E03,E04,E05,E06,E07,E08,E09,E10,E11,E12,E13,E14,E15,E16,E17,E18,E19,E20,E26,E30 --repeat 3 --evidence runid2-linux-rec"
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --placement fused --pipeline legacy --surface rpc --cases E01,E02,E03,E04,E05,E06,E07,E08,E09,E10,E11,E12,E13,E14,E15,E16,E17,E18,E19,E20,E26,E30 --repeat 3 --evidence prf4838-linux-rec"
 }

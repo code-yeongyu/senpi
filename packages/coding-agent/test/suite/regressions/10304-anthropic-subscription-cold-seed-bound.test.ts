@@ -14,6 +14,7 @@ import {
 	runFailover,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
 import { providerRetryAt, providerRetryDelayMs } from "../../../src/core/extensions/builtin/goal/provider-retry.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 /**
  * oh-my-openagent#10304, root cause 4: Anthropic prompt caches are per organization and every subscription
@@ -33,13 +34,7 @@ const PROVIDER = "anthropic-subscription";
 /** The session's own turn retries on top of the first try (the default turn profile retries 5 times). */
 const SESSION_TURN_RETRIES = 5;
 
-const seats: AccountSlot[] = ["warm", "seat-b", "seat-c", "seat-d"].map((name) => ({
-	name,
-	refresh: `r-${name}`,
-	access: `a-${name}`,
-	expires: NOW + 10 * HOUR_MS,
-	source: "login" as const,
-}));
+const seats: AccountSlot[] = ["warm", "seat-b", "seat-c", "seat-d"].map((name) => cliSlot(name));
 
 type Event = { type: "done"; seat: string };
 /** The cold-seat inputs this regression drives; typed here so the file also compiles against the pre-fix sources. */
