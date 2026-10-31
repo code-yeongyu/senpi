@@ -116,25 +116,58 @@ export function checkNoDanglingCall(events) {
 }
 
 /** G1: PreToolUse and PostToolUse fire exactly once per call (top-level, nested-agent and eval-run calls alike). */
-export function checkHooksOncePerCall(hookTrace, entries, events) {
+export function checkHooksOncePerCall(hookTrace, entries, events, sessionTranscripts = []) {
 	const failures = [];
-	const calls = new Set([
-		...transcriptCalls(entries).map((call) => call.id),
-		...events.filter((e) => e.type === "tool_execution_start").map((e) => e.toolCallId),
-		...nestedCalls(events).map((call) => call.id),
-	]);
-	const fired = { PreToolUse: new Map(), PostToolUse: new Map() };
+	const sessions = new Map();
+	for (const transcript of [{ entries }, ...sessionTranscripts]) {
+		const id = transcript.entries.find((entry) => entry.type === "session")?.id;
+		if (!id || sessions.has(id)) {
+			failures.push(`missing or duplicate session transcript ${id}`);
+			continue;
+		}
+		const callIds = new Set(transcriptCalls(transcript.entries).map((call) => call.id));
+		// The trusted sandbox extension records engine tool_call ids in the owning session.
+		// Eval result details.toolCalls carry DIFFERENT kernel-local ids, not hook ids.
+		for (const entry of transcript.entries)
+			if (entry.type === "custom" && entry.customType === "live-tool-call" && entry.data?.id)
+				callIds.add(entry.data.id);
+		sessions.set(id, {
+			calls: callIds,
+			fired: { PreToolUse: new Map(), PostToolUse: new Map() },
+		});
+	}
+	// Eval dispatches are not assistant toolCall blocks. Keep their independent parent RPC execution
+	// evidence, but only under an eval call present in THIS parent's transcript, never under another session.
+	const parentId = entries.find((entry) => entry.type === "session")?.id;
+	const parent = sessions.get(parentId);
+	const evalIds = new Set(transcriptCalls(entries).filter((call) => call.name === "eval").map((call) => call.id));
+	for (const call of nestedCalls(events)) {
+		if (parent && evalIds.has(call.parentId)) parent.calls.add(call.id);
+		else if (![...sessions.values()].some((session) => session.calls.has(call.id)))
+			failures.push(`nested call ${call.id} has no owning session`);
+	}
 	for (const line of hookTrace) {
+		const session = sessions.get(line.session_id);
+		if (!session) {
+			failures.push(`${line.event} fired for unknown session ${line.session_id}, call ${line.toolCallId}`);
+			continue;
+		}
+		const { calls, fired } = session;
 		if (!fired[line.event]) failures.push(`unexpected hook event ${line.event}`);
 		else fired[line.event].set(line.toolCallId, (fired[line.event].get(line.toolCallId) ?? 0) + 1);
-		if (!calls.has(line.toolCallId)) failures.push(`${line.event} fired for unknown call ${line.toolCallId}`);
+		if (!calls.has(line.toolCallId))
+			failures.push(`${line.event} fired for unknown call ${line.toolCallId} in session ${line.session_id}`);
 	}
-	for (const id of calls)
-		for (const event of Object.keys(fired)) {
-			const count = fired[event].get(id) ?? 0;
-			if (count !== 1) failures.push(`${event} fired ${count} times for ${id}`);
-		}
-	return check("G1.hooks-once-per-call", failures, `${calls.size} calls, Pre and Post once each`);
+	let count = 0;
+	for (const [sessionId, { calls, fired }] of sessions) {
+		count += calls.size;
+		for (const id of calls)
+			for (const event of Object.keys(fired)) {
+				const count = fired[event].get(id) ?? 0;
+				if (count !== 1) failures.push(`${event} fired ${count} times for ${id} in session ${sessionId}`);
+			}
+	}
+	return check("G1.hooks-once-per-call", failures, `${count} calls in ${sessions.size} sessions, Pre and Post once each`);
 }
 
 /** O7: the transcript reopens with the same durable id and message count, and every persisted entry is kept. */
@@ -253,7 +286,7 @@ export function evaluateLiveRun(record) {
 		checkResultsOncePerCall(record.entries),
 		checkNoEngineError(record.events, record.entries),
 		checkNoDanglingCall(record.events),
-		checkHooksOncePerCall(record.hookTrace, record.entries, record.events),
+		checkHooksOncePerCall(record.hookTrace, record.entries, record.events, record.sessionTranscripts),
 		checkReopen(record.reopen, record.entries, record.entriesAfterReopen),
 		checkDeclarationsAcrossPlacements(record, record.otherPlacements, record.reference),
 		checkNoMarkers(record.placement, record.events, record.entries),
