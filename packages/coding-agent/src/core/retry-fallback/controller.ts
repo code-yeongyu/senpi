@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { type Api, clampThinkingLevel, type Model } from "@earendil-works/pi-ai";
+import { type Api, clampThinkingLevel, type Model, PROVIDER_NOT_CONFIGURED_PREFIX } from "@earendil-works/pi-ai";
+import { isBillingErrorMessage } from "./billing.ts";
 import { firstUsableCandidate, type UsableCandidate } from "./candidates.ts";
 import {
 	baseSelector,
@@ -35,6 +36,8 @@ export class RetryFallbackController {
 	private heldForNetworkBlip = false;
 	// The model a network blip just failed on: none of its rungs is tried in that walk (senpi#3344).
 	private blipModel: string | undefined;
+	// Whether the failure being handled opens `!last-resort` rungs for this walk (senpi#3845).
+	private lastResortOpen = false;
 	// Entries this session itself saw fail out of a chain: only these (or an entry spent for everyone)
 	// may move the session off its model at a turn boundary (senpi#3467).
 	private readonly ownFailures = new Set<string>();
@@ -97,8 +100,26 @@ export class RetryFallbackController {
 	}
 
 	/** `refusedProvider`: the provider whose request-level refusal is being decided, before the walk records it. */
-	canTryFallback(refusedProvider?: string): boolean {
-		return this.nextCandidate(false, false, refusedProvider) !== undefined;
+	canTryFallback(refusedProvider?: string, failure?: { errorMessage?: string }): boolean {
+		this.lastResortOpen = failure !== undefined && this.opensLastResort(undefined, failure.errorMessage);
+		try {
+			return this.nextCandidate(false, false, refusedProvider) !== undefined;
+		} finally {
+			this.lastResortOpen = false;
+		}
+	}
+
+	/**
+	 * A `!last-resort` rung is for a rung that cannot serve at all: a usage limit (account or
+	 * model scope, whatever reason it arrived under), a billing failure, or a signed-out
+	 * provider. Overloads, refusals and other hard errors never reach it (senpi#3845).
+	 */
+	private opensLastResort(reason: FallbackReason | undefined, errorMessage: string | undefined): boolean {
+		if (reason === "billing" || usageLimitScope(errorMessage) !== undefined) return true;
+		if (errorMessage !== undefined && isBillingErrorMessage(errorMessage)) return true;
+		if (errorMessage?.includes(PROVIDER_NOT_CONFIGURED_PREFIX)) return true;
+		const current = this.deps.getCurrentSelector();
+		return current !== undefined && !this.deps.isAuthAvailable(current.model.provider);
 	}
 
 	/**
@@ -286,10 +307,12 @@ export class RetryFallbackController {
 		const current = this.deps.getCurrentSelector();
 		const blip = reason === "transient" && isPureNetworkTransient(failure.errorMessage);
 		this.blipModel = blip && current ? formatSelector(current.model) : undefined;
+		this.lastResortOpen = this.opensLastResort(reason, failure.errorMessage);
 		try {
 			return await this.walkFallback(reason, failure, failureObserved);
 		} finally {
 			this.blipModel = undefined;
+			this.lastResortOpen = false;
 		}
 	}
 
@@ -411,6 +434,7 @@ export class RetryFallbackController {
 			isProviderSpent: (provider) => this.unusable.isProviderSpent(provider),
 			isProviderRefused: (provider) => provider === refusedProvider || this.refusedProviders.has(provider),
 			isModelSkipped: (base) => base === this.blipModel,
+			allowLastResort: this.lastResortOpen,
 			skip: (raw, skipReason) => this.skip(raw, skipReason),
 		});
 		if (candidate) {

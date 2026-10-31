@@ -26,6 +26,8 @@ export interface CandidateFilters {
 	isProviderSpent?(provider: string): boolean;
 	/** Provider-wide conservative skip after a request refusal; credentials are unavailable at this scan (senpi#2491). */
 	isProviderRefused?(provider: string): boolean;
+	/** The failure being handled opens `!last-resort` rungs: a usage limit, billing, or a signed-out provider (senpi#3845). */
+	allowLastResort?: boolean;
 	skip(candidate: string, skipReason: string): void;
 }
 
@@ -69,6 +71,10 @@ function scanCandidates(
 		const selector = parseFallbackSelector(raw, filters.registry);
 		if (!selector) {
 			filters.skip(raw, "unknown");
+			continue;
+		}
+		if (selector.lastResort && !filters.allowLastResort) {
+			filters.skip(raw, "last-resort-gated");
 			continue;
 		}
 		if (isCurrentRung(selector, current)) {

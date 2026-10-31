@@ -9,6 +9,18 @@ export interface FallbackSelector {
 	provider: string;
 	id: string;
 	thinkingLevel?: ThinkingLevel;
+	/** Marked `!last-resort`: reachable only when the failing rung hit a usage limit, billing, or is signed out (senpi#3845). */
+	lastResort?: boolean;
+}
+
+/** Entry suffix that makes a rung a last resort. */
+const LAST_RESORT_FLAG = "!last-resort";
+
+/** Splits the `!last-resort` suffix off a chain entry. */
+export function splitLastResort(raw: string): { entry: string; lastResort: boolean } {
+	const trimmed = raw.trim();
+	if (!trimmed.toLowerCase().endsWith(LAST_RESORT_FLAG)) return { entry: trimmed, lastResort: false };
+	return { entry: trimmed.slice(0, -LAST_RESORT_FLAG.length).trim(), lastResort: true };
 }
 
 export type FallbackChains = Readonly<Record<string, readonly string[]>>;
@@ -90,6 +102,13 @@ function selectorReference(raw: string): { reference: string; thinkingLevel?: Th
  * against the model-id portion while retaining the explicitly selected provider.
  */
 export function parseFallbackSelector(raw: string, lookup: FallbackModelLookup): FallbackSelector | undefined {
+	const { entry, lastResort } = splitLastResort(raw);
+	const parsed = parseSelectorText(entry, lookup);
+	if (!parsed) return undefined;
+	return lastResort ? { ...parsed, raw: raw.trim(), lastResort } : parsed;
+}
+
+function parseSelectorText(raw: string, lookup: FallbackModelLookup): FallbackSelector | undefined {
 	const models = availableModels(lookup);
 	const trimmed = raw.trim();
 	const parsedReference = selectorReference(trimmed);
@@ -169,17 +188,20 @@ export function canonicalizeFallbackChains(chains: FallbackChains, lookup: Fallb
 	const tombstones = new Set<string>();
 
 	const expandEntries = (entries: readonly string[], keySelector: string): string[] =>
-		entries.flatMap((entry) => {
+		entries.flatMap((raw) => {
+			const { entry, lastResort } = splitLastResort(raw);
+			const flag = lastResort ? LAST_RESORT_FLAG : "";
 			const bare = parseBareSelector(entry);
 			if (bare) {
 				return rankFamilyModels(models, bare.family, tiers, { limit: MAX_PROVIDERS_PER_FAMILY })
 					.map((model) =>
 						bare.thinkingLevel ? `${formatSelector(model)}:${bare.thinkingLevel}` : formatSelector(model),
 					)
-					.filter((selector) => normalizedBase(selector) !== normalizedBase(keySelector));
+					.filter((selector) => normalizedBase(selector) !== normalizedBase(keySelector))
+					.map((selector) => `${selector}${flag}`);
 			}
 			const parsedEntry = parseFallbackSelector(entry, models);
-			return parsedEntry ? [formatParsedSelector(parsedEntry)] : [];
+			return parsedEntry ? [`${formatParsedSelector(parsedEntry)}${flag}`] : [];
 		});
 
 	// Bare keys expand first so a same-named explicit key can overwrite them.
@@ -202,7 +224,7 @@ export function canonicalizeFallbackChains(chains: FallbackChains, lookup: Fallb
 	}
 
 	for (const [key, entries] of Object.entries(chains)) {
-		if (parseBareSelector(key)) continue;
+		if (parseBareSelector(key) || splitLastResort(key).lastResort) continue;
 		const parsedKey = parseFallbackSelector(key, models);
 		if (!parsedKey || !Array.isArray(entries)) continue;
 		const keySelector = formatParsedSelector(parsedKey);
@@ -270,7 +292,9 @@ export function candidatesAfter(
 	currentSelector: FallbackSelector | string,
 ): readonly string[] {
 	const exact = normalizedExact(currentSelector);
-	const exactIndex = chainEntries.findIndex((entry) => entry.toLowerCase() === exact);
+	// A session resting on a last-resort rung finds its position by the selector, not the flag.
+	const positions = chainEntries.map((entry) => splitLastResort(entry).entry);
+	const exactIndex = positions.findIndex((entry) => entry.toLowerCase() === exact);
 	if (exactIndex !== -1) return chainEntries.slice(exactIndex + 1);
 
 	const base = normalizedBase(currentSelector);
@@ -279,7 +303,7 @@ export function candidatesAfter(
 	// explicit level is a rung of its own - with `["X:off", "Y"]` and the session
 	// on X:high, matching on the base alone consumed X:off as the position and the
 	// chain skipped straight past it to Y.
-	const baseIndex = chainEntries.findIndex(
+	const baseIndex = positions.findIndex(
 		(entry) => normalizedBase(entry) === base && explicitThinkingLevel(entry) === undefined,
 	);
 	return baseIndex === -1 ? chainEntries : chainEntries.slice(baseIndex + 1);

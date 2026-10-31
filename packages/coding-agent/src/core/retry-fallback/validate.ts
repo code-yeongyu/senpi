@@ -1,7 +1,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "../thinking-levels.ts";
-import { baseSelector, type FallbackSelector, parseFallbackSelector } from "./chains.ts";
+import { baseSelector, type FallbackSelector, parseFallbackSelector, splitLastResort } from "./chains.ts";
 import { matchesFamily, parseBareSelector } from "./expansion.ts";
 
 export interface FallbackModelRegistry {
@@ -76,6 +76,10 @@ export function validateFallbackChains(chains: unknown, registry: FallbackModelR
 			warnings.push(`Fallback chain key "${key}" must use a provider/model selector; roles are unsupported.`);
 		}
 		if (hasWildcard && key !== "*") warnings.push(`Fallback chain key "${key}" cannot contain wildcards.`);
+		if (splitLastResort(key).lastResort) {
+			warnings.push(`Fallback chain key "${key}" cannot be marked last-resort; only entries can.`);
+			continue;
+		}
 
 		const parsedKey = hasProvider && !hasWildcard ? parseFallbackSelector(key, models) : undefined;
 		const keyModel = parsedKey ? registry.find(parsedKey.provider, parsedKey.id) : undefined;
@@ -97,7 +101,7 @@ export function validateFallbackChains(chains: unknown, registry: FallbackModelR
 		}
 
 		for (const entry of entries) {
-			const bareEntry = parseBareSelector(entry);
+			const bareEntry = parseBareSelector(splitLastResort(entry).entry);
 			if (bareEntry) {
 				if (!models.some((model) => matchesFamily(model, bareEntry.family))) {
 					warnings.push(invalidSelectorWarning("entry", entry, key));

@@ -333,6 +333,8 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 
 `retry.fallbackChains` maps a primary-model selector to an ordered list of fallback selectors. A selector is `provider/model` with an optional `:thinking-level` suffix, or a bare `model` id that applies to every provider serving that model family. Bare selectors expand against the models you actually have: providers holding an OAuth credential are preferred, then a fixed precedence order, and OpenRouter is never chosen by expansion. Senpi ships bare default chains for `claude-fable-5-1` and `claude-fable-5` - `claude-opus-5-5:max`, then `claude-opus-5:max` - and for `claude-opus-5-5` - `claude-opus-5:max` - so Fable 5.1, Fable 5 and Opus 5.5 keep a fallback chain whichever provider serves them, and a fallback never leaves the Anthropic family; set a key to `[]` to opt out entirely, or set one `provider/claude-fable-5-1` key to override just that provider. For example, this switches Fable 5.1 to Kimi K3 at `max` thinking when an eligible failure occurs:
 
+An entry ending in `!last-resort` (for example `"openai-codex/gpt-6-sol!last-resort"`) is a last resort: the chain moves to it only when the failing rung cannot serve at all because it hit a usage limit (account-wide or for that model), a billing failure, or its provider is not signed in. An overload after retries, a refusal or any other error ends the chain as before without trying it. A last-resort rung on an account that is already out is skipped like any other rung on that account. Chain keys cannot carry the flag.
+
 ```json
 {
   "retry": {
