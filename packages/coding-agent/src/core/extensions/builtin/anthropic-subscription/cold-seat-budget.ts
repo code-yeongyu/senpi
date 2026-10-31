@@ -9,7 +9,7 @@
 /** Sessions whose current turn a long-lived host remembers; the oldest-touched is dropped past it. */
 const MAX_TRACKED_SESSIONS = 256;
 /** A seat's copy of the prefix lasts no longer than the subscription lane's 1h prompt cache, so the record does not either. */
-export const COLD_SEAT_RECORD_TTL_MS = 60 * 60 * 1_000;
+const COLD_SEAT_RECORD_TTL_MS = 60 * 60 * 1_000;
 const coldSeatByTurn = new Map<string, { turnKey: string; seat: string; recordedAt: number }>();
 
 export function spentColdSeat(
