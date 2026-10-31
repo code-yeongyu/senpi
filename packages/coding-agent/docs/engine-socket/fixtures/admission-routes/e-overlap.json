@@ -1,0 +1,67 @@
+{
+	"requests": [
+		{
+			"type": "open_session",
+			"cwd": "<root>/cwd",
+			"sessionPath": "<root>/cwd/golden.jsonl",
+			"admissionId": "golden-a",
+			"id": "peer-1"
+		},
+		{
+			"type": "open_session",
+			"cwd": "<root>/cwd",
+			"sessionPath": "<root>/cwd/golden.jsonl",
+			"admissionId": "golden-b",
+			"id": "peer-3"
+		}
+	],
+	"answers": [
+		{
+			"type": "response",
+			"command": "open_session",
+			"success": true,
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1,
+			"data": {
+				"sessionId": "rpc-1",
+				"recovery": {
+					"token": "socket-1:1",
+					"componentRef": "manifest"
+				}
+			},
+			"id": "peer-1"
+		},
+		{
+			"type": "response",
+			"command": "open_session",
+			"success": true,
+			"sessionId": "rpc-1",
+			"admissionId": "golden-b",
+			"generation": 1,
+			"data": {
+				"sessionId": "rpc-1",
+				"attached": true,
+				"recovery": {
+					"token": "socket-1:1",
+					"componentRef": "manifest"
+				}
+			},
+			"id": "peer-3"
+		}
+	],
+	"suffix": [
+		{
+			"type": "agent_idle",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-a",
+			"generation": 1
+		},
+		{
+			"type": "agent_idle",
+			"sessionId": "rpc-1",
+			"admissionId": "golden-b",
+			"generation": 1
+		}
+	]
+}

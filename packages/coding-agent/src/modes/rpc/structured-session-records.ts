@@ -1,18 +1,18 @@
 import { getAssistantCapture, SeedFrontierError } from "@earendil-works/pi-ai";
-import { envValue } from "../../core/brand.ts";
 import type { AgentSession, AgentSessionEvent } from "../../core/agent-session.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { carryRecovery } from "../../core/session-recovery-identity.ts";
 import type { AgentSessionStructuredRecord } from "../../core/structured-session-lane.ts";
 import { type SeededJsonAgentSessionEvent, toJsonEvent } from "../json-event.ts";
 import { subscribeSessionRecords } from "./session-record-stream.ts";
 
 /**
- * The engine-socket compact-updates rollout flag (`<brand>_ENGINE_SOCKET_COMPACT_UPDATES`), explicit-true only.
- * Off, no session holds a structured subscription and every destination keeps its existing bytes.
+ * Internal structured capture (and the acceptance lane it feeds) is independent of public socket format negotiation:
+ * every session that has the lane captures. With the rollout flag off, a session whose Agent was built outside the
+ * session layer binds legacy-only, exactly as before S17; with it on, such a session still refuses the subscription.
  */
-export function structuredLaneEnabled(): boolean {
-	const value = envValue("ENGINE_SOCKET_COMPACT_UPDATES");
-	return value === "1" || value === "true";
+export function structuredLaneEnabled(session: AgentSession): boolean {
+	return compactUpdatesEnabled() || session.hasStructuredLane;
 }
 
 type BlockState = "open" | "ended" | "invalid";

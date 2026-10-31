@@ -678,6 +678,135 @@ the event's projections exceed the limit) and the host reports it once on stderr
 still ends that session epoch's compact state. Every refused record of the session is counted the same way whether
 or not the compact state is still live: after such a loss, refusals on either projection keep counting.
 
+The legacy JSONL stream has no protocol depth limit: a record deeper than 1,024 levels is delivered unchanged to a
+legacy client. This holds whether or not the client advertises `media_placeholders`: the placeholder transform
+walks a record without recursion. Only a record the runtime's own JSON engine cannot serialize (above about 6,185 levels on Node 24
+or 40,000 on Bun 1.4, less on a deep stack) is refused, as the typed `LegacyRecordDepthError`: it is not delivered,
+the session (and a worker session's isolate) keeps running, and the next record is delivered. The refusal is
+reported once on stderr as
+`senpi rpc host: legacy record refused: <type> nests deeper than this runtime's JSON engine limit (session <id>)`
+and counted by the writer that refused it. When the host's writer refuses it, the host counts it. When a worker
+session's isolate refuses it first (at the isolate's own engine limit, before the record leaves the isolate), the
+count stays in the isolate's writer and is not added to the host's count; only the stderr line reaches the host,
+through the worker's stderr.
+A worker session sends a record deeper than 1,024 levels to the host as JSON text, so the host's structured-clone
+reader (which stops near 4,000 levels on Node) never drops it.
+
+#### get_recovery_page
+
+Behind the same flag, one bounded page of a frozen checkpoint component, through the recovery-token owner
+(senpi#4272, R4.B3). The command is additive: with the flag off it answers exactly as any unknown session command.
+
+```json
+{"type": "get_recovery_page", "sessionId": "rpc-1", "token": "socket-3:7", "admissionId": "attach-9",
+ "componentRef": "c-0000000000000007:003", "requestId": "r-12", "cursor": "p1:1:131072:..."}
+```
+
+- `token` and `admissionId` name a checkpoint this connection holds (its manifest's `token` and `admissionId`);
+  `componentRef` is a catalog ref under that token; `requestId` is the client's own bounded id for this request;
+  `cursor` continues a component from the previous answer and is omitted for a component's first page. Every field
+  is an opaque bounded protocol id (ASCII `[A-Za-z0-9][A-Za-z0-9:_-]*`, at most 128 bytes), parsed before any use.
+- The answer's `data` is `{requestId, token, generation, componentRef, ordinal, offset, length, digest, bytes,
+  cursor, complete, repair}`: `bytes` is the base64 of exactly `length` raw stored bytes of the component at raw byte
+  `offset` (the component's stored UTF-16LE bytes, the representation the catalog's lengths and `leaf` digests
+  describe); `digest` is the catalog's `fragment`-domain SHA-256 over those raw bytes, so a client verifies it
+  AFTER base64 decoding, never over the base64 text; `cursor` is the opaque cursor of the next page or `null` once
+  `complete`. The page budget is `FRAGMENT_MAX_BYTES` = 131,072 raw bytes; its base64 envelope is
+  `FRAGMENT_ENVELOPE_MAX_BYTES` = 174,764 bytes (derived: four characters per three raw bytes), the one page the
+  worker transport's initial credit is also sized from.
+- `ordinal` advances by one per page served under a token, whichever component is paged, and never wraps: at the
+  53-bit bound the request is refused `recovery_ordinal_exhausted` (re-admit for a new token). One request is active
+  per token at a time; a second concurrent one is refused `recovery_busy` (`hint: "retry"`), takes no slot and
+  keeps no memory, and that includes a request whose component is still being verified. At most 8 page requests are
+  outstanding on one socket across its tokens; the ninth is refused `recovery_request_limit`. A connection that
+  closes while a component is still being verified for it stops that verification at the next stored leaf: its slot
+  and its token are freed then, not when the verification would have ended, and nothing is kept.
+- An exact retry (same `requestId`, `token`, `componentRef` and `cursor`) of the token's current page answers the
+  identical bytes from the one page the host keeps per token, without a read; that page is freed when the next
+  request advances the token or the token ends. A different request under the same `requestId` is refused
+  `recovery_request_mismatch`. A `requestId` used before the token advanced is a new request only when it carries
+  no `cursor` (a component's first page); with a cursor behind the token's current ordinal it is refused
+  `recovery_cursor_out_of_range`, never served as a fresh page.
+- A cursor is bound to the peer, routing session, token, generation and component it was minted for and
+  authenticated under a per-process key. It has exactly one encoding (its numbers carry no leading zero), so any
+  re-encoding is an altered cursor. Presented by another connection or session, altered, or minted by a previous
+  host process, it is refused `recovery_invalid_cursor` with `hint: "restart_from_catalog"`; an authentic cursor
+  whose ordinal is not the token's current one is refused `recovery_cursor_out_of_range` with the same hint. A token
+  minted for another connection, session or admission is `recovery_repair_needed` with `reason: "unknown_token"`
+  and nothing else. A token superseded by a newer admission of its stream answers `recovery_repair_needed` with
+  `reason: "superseded_token"` and `newerGeneration` while an operation still holds it, and `unknown_token` once
+  it is reclaimed. The owner's other typed failures arrive as `recovery_repair_needed` or
+  `recovery_storage_unavailable` with `errorData` carrying the failure. Every refusal happens before any byte is read.
+
+**S14 repair policy (RULING-84 and RULING-87).** Success carries `data.repair`; a typed recovery failure carries
+`errorData.repair`, using the same `RecoveryRepairAdviceSchema` as the client package's
+`RecoveryRepairController`. Advice contains `state` (`ok`, `repair_needed`, or `storage_unavailable`),
+`healthRevision` (a persisted decimal counter), `source` (`sessionEpoch`, accepted `sequence`),
+`hint: "restart_from_catalog"` and `retryAfterMs` (100 to 2,000 ms, jittered, or zero on success).
+An unknown or foreign token receives null revision and source, never another admission's state.
+Storage unavailability ends only the recovery attempt, not the connection, and does not resubmit a prompt or
+fall back to current-root content. For storage failures, repair restarts at the catalog with a fresh cut after
+the backoff and only when either health revision or accepted-source identity changes.
+An `unknown_token` or `released` refusal instead requests one immediate catalog restart, even with unchanged
+or null revision/source. The driver supplies `observe(advice, now, { token, reason })`, using the refused request's
+token ID (or event lease ID) and `errorData.reason`; these are request context, not extra advice fields.
+A token receives at most one restart from this controller. If the fresh cut's token is also refused immediately,
+the controller waits for the bounded backoff before restarting it, without requiring a health/source change.
+Repeated observations of an already restarted token wait and cannot spin; a successful page ends the consecutive
+gone-token chain. Other repair reasons and calls without gone-token context retain the change-gated policy.
+A freeze never advances health revision;
+a successful write/fsync or completed repair after a storage failure does, durably before publication.
+The controller implements this policy without transport wiring; S15a owns the blocking end-to-end test
+`the in-repo client honours the hint end to end`. The compact delta flag remains OFF by default until S15a
+lands; S14's crash reclaim is also a prerequisite for default-on (RULING-79).
+
+At compact-host startup the producer classifies direct transcript, settled, current and event spool children
+of its own temporary base. Each new spool has an atomically published 0600 marker with scratch/live kind,
+boot-session identity and process start identity. Only a scratch owner proven dead is reclaimed. Live,
+unmarked, unreadable, foreign and linked roots survive; unknown roots are counted with age and size (null
+when unreadable), and failed removals remain reported debt. Accepted engine content is ephemeral scratch,
+not evidence of desktop SQL/replay commitment. Windows startup reclaim is a reported no-op because this
+implementation cannot prove POSIX ownership and no-follow traversal there.
+
+**Event leases (senpi#4272, S13).** Behind the same flag, a connection that sends `compact_events` in its
+`set_client_info` capabilities (an internal opt-in, not advertised; the public selection comes later) receives a
+session record larger than F = 262,144 bytes (newline included) as an envelope
+`{"type": <the record's type>, "sessionId", "eventLease": {"kind": "event", "id", "admissionId", "sessionEpoch",
+"sequence", "componentRef": "record", "length", "digest"}}`. `sequence` is the record's accepted sequence in
+`sessionEpoch`; no recovery generation changes. Other connections still receive the complete record. The lease's
+one component, `record`, is the record's exact JSON line without its newline, paged as its stored UTF-16LE bytes
+(`length`, `leaf` digest `digest`) through this command with `lease` in place of `token`:
+
+```json
+{"type": "get_recovery_page", "sessionId": "rpc-1", "lease": {"kind": "event", "id": "event:socket-3:4"},
+ "admissionId": "attach-9", "componentRef": "record", "requestId": "r-13"}
+```
+
+The answer's `data` carries `lease` in place of `token` and `generation`; ordinals, the active request, the
+socket's eight outstanding requests, retries and cursors follow the rules above. A lease is scoped like a token: one
+minted for another connection, session or admission is `unknown_token` with nothing else. A connection holds at
+most 32 live event leases; past that it receives `{"type": "event_lease_refused", "sessionId", "reason":
+"lease_limit"}` and is closed, and a record the host cannot stage is refused the same way with
+`"storage_unavailable"`. Its end releases every lease it holds. Leases are released only by `release_recovery`.
+
+#### release_recovery
+
+Behind the same flag, the consumer's receipt for an event lease (senpi#4272, S13). Send it only once the leased
+content is committed on the consumer's side (for the desktop: after its command transaction's dispatch succeeded);
+decoding a page, queueing or staging it is not a release point.
+
+```json
+{"type": "release_recovery", "sessionId": "rpc-1", "lease": {"kind": "event", "id": "event:socket-3:4"},
+ "admissionId": "attach-9"}
+```
+
+The answer's `data` is `{lease: {kind: "event", id}, outcome, remaining}`: `released` when this admission's
+reference was the last (`remaining: 0`, the content goes once reads in flight unwind), `held` while another
+admission still references it, and `duplicate` for a receipt this admission already gave, which changes nothing, so
+a consumer may retry a receipt after a rollback. A lease of another connection or session, or an unknown one, is
+`recovery_repair_needed` with `reason: "unknown_token"`; a malformed request is `recovery_malformed_request`.
+With the flag off it answers as any unknown session command.
+
 #### interactive_user
 
 A client that advertises `interactive_user` in `set_client_info` declares that the connection belongs to a person's

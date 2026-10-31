@@ -137,7 +137,11 @@ export function multiSessionHostCapabilities(options: {
 			...toolRuntimeCapabilities(options.toolRuntime),
 			// The host alone says where tool work runs; a negotiated copy would make two answers.
 			...options.negotiated.filter(
-				(capability) => capability !== "mcp_form_presenter_v1" && !isHostOwnedToolRuntimeCapability(capability),
+				(capability) =>
+					capability !== "mcp_form_presenter_v1" &&
+					capability !== "compact_message_updates_v1" &&
+					capability !== "compact_events" &&
+					!isHostOwnedToolRuntimeCapability(capability),
 			),
 		]),
 	];

@@ -38,6 +38,10 @@ const HOST_METHODS = new Set(
  * keys, or `no:<errorCode>:<error>`. A method added to or removed from `RpcCommand` fails tsc here.
  */
 const TODAY: { readonly [M in RpcCommand["type"]]: string } = {
+	get_recovery_page: "no::Unknown command: get_recovery_page",
+	release_recovery: "no::Unknown command: release_recovery",
+	cancel_attempt: "no::Unknown command: cancel_attempt",
+	reset_stream: "no::Unknown command: reset_stream",
 	get_protocol_info:
 		"ok{agentDir,capabilities,engineOrdinal,engineVersion,generation,instanceId,launch_profile,memory_pressure,mode,path_identity_resolver,protocolVersion,serverVersion}",
 	open_session: "ok{sessionId,state}",

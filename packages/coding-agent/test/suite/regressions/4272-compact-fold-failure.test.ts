@@ -66,8 +66,8 @@ async function workerLane() {
 	expect(before.current, "a committed incarnation starts with compact state").toBeDefined();
 	lane.release(before);
 	const ordinal = (): number => {
-		const next: unknown = Reflect.get(worker, "expectedOrdinal");
-		if (typeof next !== "number") throw new Error("missing client ordinal seam");
+		const next = worker.intake?.nextOrdinal;
+		if (next === undefined) throw new Error("flag on: the worker client owns an intake");
 		return next;
 	};
 	const deliver = (message: SessionWorkerToHost & { signal: SharedArrayBuffer }) => {
