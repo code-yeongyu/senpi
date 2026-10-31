@@ -1,6 +1,13 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#5066": {
+			"additions": [
+				"legacyContracts/test/permission-slots.test.ts/permission slot ownership (#4309) bounds a held decision when the host claims before-wait (#4709)",
+				"legacyContracts/test/permission-slots.test.ts/permission slot ownership (#4309) bounds a held decision when the host claims during-wait (#4709)"
+			],
+			"reason": "senpi#4709 / senpi#4831: these requester-claim race regression tests were reviewed and merged in senpi#4831 without reviewed-addition records. They prove a held permission decision remains bounded when the host claims before or during the requester's wait. Record only these two additions; the frozen baseline is unchanged."
+		},
 		"senpi#4974": {
 			"additions": [
 				"legacyContracts/test/prompt.test.ts/buildEvalPrompt advertises the eval cell-control action syntax"
@@ -3386,6 +3393,518 @@
 				"legacyContracts/test/py-kernel-registry.test.ts/Python interpreter registry integrity refuses the next decision while a registry entry is swapped"
 			],
 			"reason": "Refs senpi#4309 and senpi#4392: reviewed Python permission, lifetime, and unsupported-kernel contracts, including stdlib rebinding, native aliases, extension loaders, registry mutations, and inactive continuation controls. It also approves the shared bridge permission-check module and the Python permission host joining the extension and first-kernel import scopes, and the import-registry integrity and engine-asset bytecode-cache contracts added by the CRITICAL fold (C-level imports with no rules, registry swap refusal). Existing baseline outcomes and all inherited stack entries remain unchanged."
+		},
+		"senpi#5158": {
+			"additions": [
+				"legacyContracts/test/bun-skill-contribution.test.ts/bundledBunSkillPath returns the absolute bun SKILL.md path that exists on disk",
+				"legacyContracts/test/bun-skill-contribution.test.ts/bun skill assets pins the SKILL.md frontmatter the skill loader reads: one block carrying name: bun",
+				"legacyContracts/test/bun-skill-contribution.test.ts/bun skill assets ships English-only copy: no Hangul in SKILL.md or any reference",
+				"legacyContracts/test/eval-tool-prompt-runtime.test.ts/createEvalTool prompt runtime line points at the active bun skill for installs, servers and long runs on a bun kernel",
+				"legacyContracts/test/prompt.test.ts/buildEvalPrompt describes the Bun kernel and points at the bun skill only while it is active"
+			],
+			"changes": [
+				{
+					"key": "prompts/default/false/false/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/false/false/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/false/true/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/false/true/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/true/false/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/true/false/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/true/true/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/true/true/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/false/false/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/false/false/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/false/true/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/false/true/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/true/false/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/true/false/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/true/true/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/true/true/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/false/false/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/false/false/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/false/true/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/false/true/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/true/false/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/true/false/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/true/true/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/true/true/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/false/false/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/false/true/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/true/false/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/true/true/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/false/false/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/false/true/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/true/false/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/true/true/js/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/false/false/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/false/true/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/true/false/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/true/true/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/false/false/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/false/true/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/true/false/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/true/true/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/false/false/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/false/true/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/true/false/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/true/true/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/false/false/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/false/true/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/true/false/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/true/true/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/false/false/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/false/true/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/true/false/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/true/true/js+py/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/false/false/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/false/false/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/false/true/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/false/true/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/true/false/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/true/false/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/true/true/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/default/true/true/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/false/false/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/false/false/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/false/true/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/false/true/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/true/false/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/true/false/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/true/true/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/claude/true/true/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/false/false/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/false/false/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/false/true/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/false/true/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/true/false/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/true/false/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/true/true/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/codex/true/true/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/false/false/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/false/true/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/true/false/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/gpt/true/true/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/false/false/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/false/true/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/true/false/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/bun",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "prompts/kimi/true/true/all/bun/host",
+					"reason": "senpi#5158: eval description pointer sentence renamed to the bun skill and widened to process spawns and test runs."
+				},
+				{
+					"key": "legacyContracts/test/bun-skill-contribution.test.ts/bundledBunSkillPath returns the absolute bun-1-4 SKILL.md path that exists on disk",
+					"reason": "senpi#5158: contract test retitled for the bun-1-4 -> bun rename; the new title is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/bun-skill-contribution.test.ts/bun-1-4 skill assets pins the SKILL.md frontmatter the skill loader reads: one block carrying name: bun-1-4",
+					"reason": "senpi#5158: contract test retitled for the bun-1-4 -> bun rename; the new title is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/bun-skill-contribution.test.ts/bun-1-4 skill assets ships English-only copy: no Hangul in SKILL.md or any reference",
+					"reason": "senpi#5158: contract test retitled for the bun-1-4 -> bun rename; the new title is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/eval-tool-prompt-runtime.test.ts/createEvalTool prompt runtime line points at the active bun-1-4 skill for installs, servers and long runs on a bun kernel",
+					"reason": "senpi#5158: contract test retitled for the bun-1-4 -> bun rename; the new title is listed under additions."
+				},
+				{
+					"key": "legacyContracts/test/prompt.test.ts/buildEvalPrompt describes the Bun kernel and points at the bun-1-4 skill only while it is active",
+					"reason": "senpi#5158: contract test retitled for the bun-1-4 -> bun rename; the new title is listed under additions."
+				}
+			],
+			"reason": "senpi#5158: the bundled bun-1-4 skill is renamed to bun and the eval prompt's pointer sentence names it and also fires before a cell that spawns a process or runs tests; the five contract tests are retitled for the rename."
 		}
 	}
 }

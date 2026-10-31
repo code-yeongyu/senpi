@@ -476,6 +476,10 @@ function createExtensionAPI(
 				extension.previewSafeHandlers ??= new WeakSet();
 				extension.previewSafeHandlers.add(registeredHandler);
 			}
+			if (event === "before_agent_start" && options?.runLast === true) {
+				extension.runLastHandlers ??= new WeakSet();
+				extension.runLastHandlers.add(registeredHandler);
+			}
 			if ((event === "context" || event === "context_with_system") && options?.mutatesMessages === false) {
 				extension.nonMutatingContextHandlers ??= new WeakSet();
 				extension.nonMutatingContextHandlers.add(registeredHandler);

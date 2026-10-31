@@ -47,12 +47,6 @@ import type {
 import { isVideoMimeType } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
 import { pushAssistantProgress } from "../utils/assistant-capture.ts";
-import {
-	claudeCodeVersionTooOldHint,
-	getClaudeCodeVersion,
-	isClaudeCodeVersionTooOldError,
-	recoverClaudeCodeVersion,
-} from "../utils/claude-code-version.ts";
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
@@ -77,6 +71,7 @@ import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "../utils/retry-hint.ts";
 import { normalizeAnthropicRetryFailure } from "../utils/retry-profile/failure.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
+import { anthropicSystemTextBlocks } from "./anthropic-system-blocks.ts";
 import {
 	applyServerFallbackAbort,
 	applyServerFallbackContinuation,
@@ -168,52 +163,6 @@ function getCacheControl(
 		cacheControl: { type: "ephemeral", ...(ttl && { ttl }) },
 	};
 }
-
-// Stealth mode: Mimic Claude Code's identity and tool naming exactly.
-// The bundled Claude Code version and the floor of the advertised `claude-cli/<version>`
-// (see utils/claude-code-version.ts). Keep this exact declaration: a downstream installer
-// (oh-my-openagent) rewrites it byte-for-byte in the installed dist and bundle.
-const claudeCodeVersion = "2.1.306";
-
-// Claude Code 2.x tool names (canonical casing)
-// Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
-// To update: https://github.com/badlogic/cchistory
-const claudeCodeTools = [
-	"Read",
-	"Write",
-	"Edit",
-	"Bash",
-	"Grep",
-	"Glob",
-	"AskUserQuestion",
-	"EnterPlanMode",
-	"ExitPlanMode",
-	"KillShell",
-	"NotebookEdit",
-	"Skill",
-	"Task",
-	"TaskOutput",
-	"TodoWrite",
-	"WebFetch",
-	"WebSearch",
-];
-
-const ccToolLookup = new Map(claudeCodeTools.map((t) => [t.toLowerCase(), t]));
-const ccToolAliases = new Map([["ask_user_question", "AskUserQuestion"]]);
-
-// Convert tool name to CC canonical casing if it matches (case-insensitive)
-export const toClaudeCodeName = (name: string) =>
-	ccToolAliases.get(name) ?? ccToolLookup.get(name.toLowerCase()) ?? name;
-export const fromClaudeCodeName = (name: string, tools?: Tool[]) => {
-	if (tools && tools.length > 0) {
-		const alias = [...ccToolAliases].find(([, wireName]) => wireName === name);
-		if (alias && tools.some((tool) => tool.name === alias[0])) return alias[0];
-		const lowerName = name.toLowerCase();
-		const matchedTool = tools.find((tool) => tool.name.toLowerCase() === lowerName);
-		if (matchedTool) return matchedTool.name;
-	}
-	return name;
-};
 
 /**
  * Convert content blocks to Anthropic API format
@@ -556,6 +505,36 @@ function assertRequestAuth(
 	if (!hasRequestAuth(apiKey, headers)) throw new Error(`No API key for provider: ${provider}`);
 }
 
+const CLAUDE_OAUTH_TOKEN_MARKER = "sk-ant-oat";
+
+/**
+ * A Claude OAuth token (`sk-ant-oat...`) offered as an API key. senpi no longer sends such a token
+ * to the Messages API while presenting itself as Claude Code (senpi#5131); the subscription path is
+ * the `anthropic-subscription` provider, which runs the official Claude Code CLI.
+ */
+export class ClaudeOAuthTokenRefusedError extends Error {
+	readonly code = "claude_oauth_token_refused";
+	readonly provider: string;
+	readonly modelId: string;
+
+	constructor(provider: string, modelId: string) {
+		super(
+			`${provider}/${modelId}: a Claude OAuth token (${CLAUDE_OAUTH_TOKEN_MARKER}...) is not accepted as an API key; senpi does not send Claude subscription tokens to the Anthropic API directly. For a Claude Pro/Max subscription sign in with /login anthropic-subscription (or set CLAUDE_CODE_OAUTH_TOKEN) and use anthropic-subscription/${modelId}; otherwise use an Anthropic API key.`,
+		);
+		this.name = "ClaudeOAuthTokenRefusedError";
+		this.provider = provider;
+		this.modelId = modelId;
+	}
+}
+
+export function isClaudeOAuthTokenRefusedError(error: unknown): error is ClaudeOAuthTokenRefusedError {
+	return error instanceof ClaudeOAuthTokenRefusedError;
+}
+
+function assertNotClaudeOAuthToken(model: Model<"anthropic-messages">, apiKey: string | undefined): void {
+	if (apiKey?.includes(CLAUDE_OAUTH_TOKEN_MARKER)) throw new ClaudeOAuthTokenRefusedError(model.provider, model.id);
+}
+
 /**
  * Anthropic SDK client that never runs the SDK's own credential chain
  * (ANTHROPIC_PROFILE config files, federation env vars). Without this, every
@@ -712,7 +691,6 @@ function collectProviderNativeToolPairing(
 	messages: Message[],
 	model: Model<"anthropic-messages">,
 	deferredToolNames: ReadonlySet<string>,
-	normalizeToolName: (name: string) => string,
 	discardedFallbackToolCallIds: ReadonlySet<string>,
 ): ProviderNativeToolPairing {
 	const resolvedUseIds = new Set<string>();
@@ -758,9 +736,8 @@ function collectProviderNativeToolPairing(
 			// and the pending use resumable.
 			let emitsReferences = false;
 			for (const name of message.addedToolNames ?? []) {
-				const normalizedName = normalizeToolName(name);
-				if (!deferredToolNames.has(normalizedName) || loadedReferenceNames.has(normalizedName)) continue;
-				loadedReferenceNames.add(normalizedName);
+				if (!deferredToolNames.has(name) || loadedReferenceNames.has(name)) continue;
+				loadedReferenceNames.add(name);
 				emitsReferences = true;
 			}
 			if (emitsReferences) pendingUseIds = new Set<string>();
@@ -1325,7 +1302,6 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 ): AssistantMessageEventStream => {
 	const stream = new AssistantMessageEventStream({ captureBlocks: true });
 	const normalizedContext = resolveTranscript(context, supportsMidConvoSystemMessages(model));
-	const currentTools = getCurrentTools(normalizedContext.messages);
 
 	(async () => {
 		const providerThinkingLevel = managedEffortForRequest(model, options);
@@ -1354,8 +1330,6 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 		const requestSignal = combinedAbort.signal;
 		try {
 			let client: Anthropic;
-			let isOAuth = false;
-			let advertisedClaudeCodeVersion: string | undefined;
 			let usageModel = model;
 			let inputTransformations: BetaInputTransformation[] | undefined;
 			let openClient: (() => void) | undefined;
@@ -1367,6 +1341,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				const optionsHeaders = providerHeadersToRecord(options?.headers);
 				const federation = getAnthropicFederation(model, apiKey, optionsHeaders, options?.env);
 				if (!federation) assertRequestAuth(model.provider, apiKey, optionsHeaders);
+				assertNotClaudeOAuthToken(model, apiKey);
 
 				let copilotDynamicHeaders: Record<string, string> | undefined;
 				if (model.provider === "github-copilot") {
@@ -1386,7 +1361,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					cacheRetention === "none" ? undefined : (options?.sessionAffinityKey ?? options?.sessionId);
 
 				openClient = () => {
-					const created = createClient(
+					client = createClient(
 						model,
 						apiKey,
 						options?.interleavedThinking ?? true,
@@ -1401,40 +1376,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						options?.env,
 						federation,
 					);
-					client = created.client;
-					isOAuth = created.isOAuthToken;
-					advertisedClaudeCodeVersion = created.claudeCodeVersion;
 				};
 				openClient();
 			}
-			// One retry per request: a `claude_code_version_too_old` 400 names the version Anthropic
-			// wants, so the fingerprint is raised and the same request goes out again with it.
-			let claudeCodeVersionRetried = false;
-			const retryWithNewerClaudeCode = async (error: unknown): Promise<boolean> => {
-				if (
-					claudeCodeVersionRetried ||
-					openClient === undefined ||
-					advertisedClaudeCodeVersion === undefined ||
-					!isClaudeCodeVersionTooOldError(error)
-				) {
-					return false;
-				}
-				const next = await recoverClaudeCodeVersion(
-					error,
-					claudeCodeVersion,
-					advertisedClaudeCodeVersion,
-					options?.env,
-				);
-				if (next === undefined) return false;
-				claudeCodeVersionRetried = true;
-				openClient();
-				return true;
-			};
-			const noteTooOldClaudeCode = (error: unknown): void => {
-				if (advertisedClaudeCodeVersion !== undefined && isClaudeCodeVersionTooOldError(error)) {
-					error.message = `${error.message}\n${claudeCodeVersionTooOldHint(advertisedClaudeCodeVersion)}`;
-				}
-			};
 			const fallbackKey = unsignedThinkingFallbackKey(model, options?.sessionId);
 			let unsignedThinkingReplay: UnsignedThinkingReplay =
 				fallbackKey && unsignedThinkingTextReplayFallbacks.has(fallbackKey)
@@ -1451,7 +1395,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			}
 			let lastSentParams: MessageCreateParamsStreaming | undefined;
 			const createRequest = async (): Promise<{ params: MessageCreateParamsStreaming; response: Response }> => {
-				let params = buildParams(model, normalizedContext, isOAuth, options, unsignedThinkingReplay);
+				let params = buildParams(model, normalizedContext, options, unsignedThinkingReplay);
 				const nextParams = await options?.onPayload?.(params, model);
 				if (nextParams !== undefined) {
 					params = nextParams as MessageCreateParamsStreaming;
@@ -1536,15 +1480,6 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 								return createRequest();
 							}
 							if (markNewlyExpiredSearches(error)) return createRequestDemotingExpiredSearches();
-							if (await retryWithNewerClaudeCode(error)) {
-								try {
-									return await createRequest();
-								} catch (retryError) {
-									noteTooOldClaudeCode(retryError);
-									throw retryError;
-								}
-							}
-							noteTooOldClaudeCode(error);
 							throw error;
 						}
 					},
@@ -1662,9 +1597,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 						const block: Block = {
 							type: "toolCall",
 							id: event.content_block.id,
-							name: isOAuth
-								? fromClaudeCodeName(event.content_block.name, currentTools)
-								: event.content_block.name,
+							name: event.content_block.name,
 							arguments: isRecord(event.content_block.input)
 								? (event.content_block.input as ToolCall["arguments"])
 								: {},
@@ -2051,6 +1984,7 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	if (!getAnthropicFederation(model, apiKey, optionsHeaders, options?.env)) {
 		assertRequestAuth(model.provider, apiKey, optionsHeaders);
 	}
+	assertNotClaudeOAuthToken(model, apiKey);
 
 	const base = {
 		...buildBaseOptions(model, context, options, options?.apiKey),
@@ -2093,10 +2027,6 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	} satisfies AnthropicOptions);
 };
 
-function isOAuthToken(apiKey: string): boolean {
-	return apiKey.includes("sk-ant-oat");
-}
-
 function createClient(
 	model: Model<"anthropic-messages">,
 	apiKey: string | undefined,
@@ -2109,7 +2039,7 @@ function createClient(
 	affinityKey?: string,
 	env?: ProviderEnv,
 	federation?: AnthropicFederationConfig,
-): { client: Anthropic; isOAuthToken: boolean; claudeCodeVersion?: string } {
+): Anthropic {
 	// Adaptive thinking models have interleaved thinking built in, so skip the beta header.
 	const needsInterleavedBeta = interleavedThinking && !supportsAdaptiveThinking(model);
 	const betaFeatures: string[] = [];
@@ -2147,7 +2077,7 @@ function createClient(
 			),
 		});
 
-		return { client, isOAuthToken: false };
+		return client;
 	}
 
 	// Copilot: Bearer auth, selective betas.
@@ -2174,36 +2104,7 @@ function createClient(
 			),
 		});
 
-		return { client, isOAuthToken: false };
-	}
-
-	// OAuth: Bearer auth, Claude Code identity headers
-	if (apiKey && isOAuthToken(apiKey)) {
-		const advertisedClaudeCodeVersion = getClaudeCodeVersion(claudeCodeVersion, env);
-		const client = new PiAnthropic({
-			apiKey: null,
-			authToken: apiKey,
-			baseURL: model.baseUrl,
-			dangerouslyAllowBrowser: true,
-			fetch,
-			defaultHeaders: sanitizeAdaptiveThinkingHeaders(
-				model,
-				mergeClientHeaders(
-					model,
-					{
-						accept: "application/json",
-						"anthropic-dangerous-direct-browser-access": "true",
-						"anthropic-beta": ["claude-code-20250219", "oauth-2025-04-20", ...betaFeatures].join(","),
-						"user-agent": `claude-cli/${advertisedClaudeCodeVersion}`,
-						"x-app": "cli",
-					},
-					model.headers,
-					optionsHeaders,
-				),
-			),
-		});
-
-		return { client, isOAuthToken: true, claudeCodeVersion: advertisedClaudeCodeVersion };
+		return client;
 	}
 
 	// API key, header-owned auth, or workload identity federation.
@@ -2242,10 +2143,10 @@ function createClient(
 			});
 			federationClient = { key, fetch, client };
 		}
-		return { client: federationClient.client.withOptions({ defaultHeaders }), isOAuthToken: false };
+		return federationClient.client.withOptions({ defaultHeaders });
 	}
 
-	const client = new PiAnthropic({
+	return new PiAnthropic({
 		apiKey: apiKey ?? null,
 		authToken: null,
 		baseURL: model.baseUrl,
@@ -2253,8 +2154,6 @@ function createClient(
 		fetch,
 		defaultHeaders,
 	});
-
-	return { client, isOAuthToken: false };
 }
 
 export function buildAnthropicWarmPromptCacheParams(
@@ -2265,7 +2164,7 @@ export function buildAnthropicWarmPromptCacheParams(
 	// Public fork entry (warmPromptCache, cache-keepalive): accepts a raw Context and builds
 	// the same transcript the turn's stream() resolves, so the warmed prefix matches.
 	const transcript = resolveTranscript(normalizeContext(context), supportsMidConvoSystemMessages(model));
-	const params = buildParams(model, transcript, false, {
+	const params = buildParams(model, transcript, {
 		...options,
 		maxTokens: 0,
 		thinkingEnabled: undefined,
@@ -2308,7 +2207,6 @@ interface BetaDependentShape {
 function getBetaFeatures(
 	model: Model<"anthropic-messages">,
 	context: TranscriptContext,
-	isOAuthToken: boolean,
 	shape: BetaDependentShape,
 	options?: AnthropicOptions,
 ): NonNullable<MessageCreateParamsStreaming["betas"]> {
@@ -2316,7 +2214,6 @@ function getBetaFeatures(
 	if (configured === null) return [];
 	// Betas the request body depends on: the API rejects the request without them.
 	const required: NonNullable<MessageCreateParamsStreaming["betas"]> = [];
-	if (isOAuthToken) required.push("claude-code-20250219", "oauth-2025-04-20");
 	if (shape.midConvoEffort) required.push(MID_CONVERSATION_OUTPUT_CONFIG_BETA);
 	if (shape.thinkingBinding) required.push(THINKING_BINDING_CONTROLS_BETA);
 	if (shape.nativeToolChanges) required.push(MID_CONVERSATION_TOOL_CHANGES_BETA);
@@ -2357,7 +2254,6 @@ function defaultOptionalBetas(
 function buildParams(
 	model: Model<"anthropic-messages">,
 	context: TranscriptContext,
-	isOAuthToken: boolean,
 	options?: AnthropicOptions,
 	unsignedThinkingReplay = getAnthropicCompat(model).unsignedThinkingReplay,
 ): MessageCreateParamsStreamingWithFallbacks {
@@ -2377,7 +2273,7 @@ function buildParams(
 	const stablePrefixMarkers = conversationMessages.filter(
 		(message) => message.role === "assistant" && message.promptCacheBreakpoint === true,
 	).length;
-	const systemHoldsCheckpoint = isOAuthToken || initialSystemText.length > 0;
+	const systemHoldsCheckpoint = initialSystemText.length > 0;
 	const stablePrefixCheckpointLimit =
 		stablePrefixMarkers >= 2 && systemHoldsCheckpoint ? 2 : Math.min(1, stablePrefixMarkers);
 	// Native tool changes reference tools by name, so a redefined name cannot be expressed,
@@ -2386,13 +2282,8 @@ function buildParams(
 	const initialTools = initialSystemMessage?.toolsAdded ?? [];
 	// A configured `anthropic-beta: null` asks for no betas at all, so the request takes a shape that needs none:
 	// the current tool list instead of native tool changes, top-level effort instead of per-message markers, and
-	// no server-side fallbacks (senpi#2957). OAuth still needs its identity betas; getBetaFeatures names them.
+	// no server-side fallbacks (senpi#2957).
 	const betasSuppressed = configuredBetaHeader(model, options) === null;
-	if (betasSuppressed && isOAuthToken) {
-		throw new Error(
-			`The anthropic-beta header is set to null, but ${model.provider}/${model.id} is called with an OAuth token, which needs the claude-code-20250219 and oauth-2025-04-20 betas. Remove the null, or list the betas you want instead; senpi adds the ones a request needs.`,
-		);
-	}
 	const midConvoEffort = model.compat?.supportsMidConvoEffort === true && !betasSuppressed;
 	const nativeToolChanges =
 		!betasSuppressed &&
@@ -2400,7 +2291,6 @@ function buildParams(
 		supportsMidConvoToolChanges(model) &&
 		initialTools.length > 0 &&
 		!hasToolRedefinitions(context.messages);
-	const normalizeToolName = isOAuthToken ? toClaudeCodeName : (name: string) => name;
 	// A marker on a discarded pre-fallback result must not defer its tool:
 	// convertMessages drops that result, so no tool_reference would replay to
 	// load the deferred definition.
@@ -2416,7 +2306,6 @@ function buildParams(
 		: splitDeferredTools(
 				{ tools: getCurrentTools(context.messages), messages: partitionMessages },
 				compat.supportsToolReferences,
-				normalizeToolName,
 			);
 	let immediateTools = toolPlacement.immediate;
 	let deferredTools = [...toolPlacement.deferred.values()];
@@ -2424,13 +2313,12 @@ function buildParams(
 		immediateTools = deferredTools;
 		deferredTools = [];
 	}
-	const deferredToolNames = new Set(deferredTools.map((tool) => normalizeToolName(tool.name)));
+	const deferredToolNames = new Set(deferredTools.map((tool) => tool.name));
 	const activeEffort = managedEffortForRequest(model, options) ?? "high";
 	const sendFallbacks = options?.refusalFallbacks !== undefined && !betasSuppressed;
 	const betaFeatures = getBetaFeatures(
 		model,
 		context,
-		isOAuthToken,
 		{
 			midConvoEffort,
 			thinkingBinding: midConvoEffort && options?.thinkingEnabled !== false,
@@ -2442,11 +2330,9 @@ function buildParams(
 	const convertedMessages = convertMessages(
 		conversationMessages,
 		model,
-		isOAuthToken,
 		cacheControl,
 		unsignedThinkingReplay,
 		deferredToolNames,
-		normalizeToolName,
 		midConvoEffort ? model.provider : undefined,
 		nativeToolChanges,
 		stablePrefixCheckpointLimit,
@@ -2476,31 +2362,8 @@ function buildParams(
 		...(betaFeatures.length > 0 ? { betas: betaFeatures } : {}),
 	};
 
-	// For OAuth tokens, we MUST include Claude Code identity
-	if (isOAuthToken) {
-		params.system = [
-			{
-				type: "text",
-				text: "You are Claude Code, Anthropic's official CLI for Claude.",
-				...(!initialSystemText && cacheControl ? { cache_control: cacheControl } : {}),
-			},
-		];
-		if (initialSystemText) {
-			params.system.push({
-				type: "text",
-				text: sanitizeSurrogates(initialSystemText),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			});
-		}
-	} else if (initialSystemText) {
-		// Add cache control to system prompt for non-OAuth tokens
-		params.system = [
-			{
-				type: "text",
-				text: sanitizeSurrogates(initialSystemText),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			},
-		];
+	if (initialSystemText) {
+		params.system = anthropicSystemTextBlocks(initialSystemText, initialSystemMessage?.stablePrefix, cacheControl);
 	}
 
 	// Temperature is incompatible with extended thinking and unsupported on Claude Opus 4.7+.
@@ -2525,7 +2388,6 @@ function buildParams(
 		params.tools = [
 			...convertTools(
 				initialTools,
-				isOAuthToken,
 				compat.supportsEagerToolInputStreaming,
 				compat.supportsStrictTools,
 				toolCacheControl,
@@ -2533,7 +2395,6 @@ function buildParams(
 			DEFERRED_TOOL_PLACEHOLDER,
 			...convertTools(
 				laterTools,
-				isOAuthToken,
 				compat.supportsEagerToolInputStreaming,
 				compat.supportsStrictTools,
 				undefined,
@@ -2544,14 +2405,12 @@ function buildParams(
 		params.tools = [
 			...convertTools(
 				immediateTools,
-				isOAuthToken,
 				compat.supportsEagerToolInputStreaming,
 				compat.supportsStrictTools,
 				toolCacheControl,
 			),
 			...convertTools(
 				deferredTools,
-				isOAuthToken,
 				compat.supportsEagerToolInputStreaming,
 				compat.supportsStrictTools,
 				undefined,
@@ -2689,20 +2548,14 @@ function finalAssistantTurnStartsWithToolUse(messages: AnthropicMessageParam[]):
 
 function convertToolResult(
 	msg: ToolResultMessage,
-	isOAuthToken: boolean,
 	deferredToolNames: ReadonlySet<string>,
 	loadedToolNames: Set<string>,
-	normalizeToolName: (name: string) => string,
 ): { toolResult: ContentBlockParam; siblingContent: ContentBlockParam[] } {
 	const references: Array<{ type: "tool_reference"; tool_name: string }> = [];
 	for (const name of msg.addedToolNames ?? []) {
-		const normalizedName = normalizeToolName(name);
-		if (!deferredToolNames.has(normalizedName) || loadedToolNames.has(normalizedName)) continue;
-		loadedToolNames.add(normalizedName);
-		references.push({
-			type: "tool_reference",
-			tool_name: isOAuthToken ? toClaudeCodeName(name) : name,
-		});
+		if (!deferredToolNames.has(name) || loadedToolNames.has(name)) continue;
+		loadedToolNames.add(name);
+		references.push({ type: "tool_reference", tool_name: name });
 	}
 	// The video block variant is not in the SDK's ContentBlockParam union, so the
 	// converted array is cast through the same escape hatch as tool_reference blocks.
@@ -2732,11 +2585,9 @@ interface ConvertedAnthropicMessages {
 function convertMessages(
 	transformedMessages: Message[],
 	model: Model<"anthropic-messages">,
-	isOAuthToken: boolean,
 	cacheControl?: CacheControlEphemeral,
 	unsignedThinkingReplay: UnsignedThinkingReplay = "text",
 	deferredToolNames: ReadonlySet<string> = new Set(),
-	normalizeToolName: (name: string) => string = (name) => name,
 	managedProvider?: string,
 	nativeToolChanges = false,
 	stablePrefixCheckpointLimit = 0,
@@ -2763,7 +2614,6 @@ function convertMessages(
 		transformedMessages,
 		model,
 		deferredToolNames,
-		normalizeToolName,
 		discardedFallbackToolCallIds,
 	);
 
@@ -2778,16 +2628,10 @@ function convertMessages(
 			if (text.length > 0) blocks.push({ type: "text", text: sanitizeSurrogates(text) });
 			if (nativeToolChanges) {
 				for (const tool of msg.toolsRemoved ?? []) {
-					blocks.push({
-						type: "tool_removal",
-						tool: { type: "tool_reference", name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name },
-					});
+					blocks.push({ type: "tool_removal", tool: { type: "tool_reference", name: tool.name } });
 				}
 				for (const tool of msg.toolsAdded ?? []) {
-					blocks.push({
-						type: "tool_addition",
-						tool: { type: "tool_reference", name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name },
-					});
+					blocks.push({ type: "tool_addition", tool: { type: "tool_reference", name: tool.name } });
 				}
 			}
 			if (blocks.length > 0) pendingSystemMessages.push({ role: "system", content: blocks });
@@ -2911,7 +2755,7 @@ function convertMessages(
 					blocks.push({
 						type: "tool_use",
 						id: block.id,
-						name: isOAuthToken ? toClaudeCodeName(block.name) : block.name,
+						name: block.name,
 						input: block.arguments ?? {},
 					});
 				} else if (block.type === "providerNative") {
@@ -2959,13 +2803,7 @@ function convertMessages(
 			while (j < transformedMessages.length && transformedMessages[j].role === "toolResult") {
 				const nextMsg = transformedMessages[j] as ToolResultMessage; // We know it's a toolResult
 				if (!discardedFallbackToolCallIds.has(nextMsg.toolCallId)) {
-					const converted = convertToolResult(
-						nextMsg,
-						isOAuthToken,
-						deferredToolNames,
-						loadedToolNames,
-						normalizeToolName,
-					);
+					const converted = convertToolResult(nextMsg, deferredToolNames, loadedToolNames);
 					toolResults.push(converted.toolResult);
 					siblingContent.push(...converted.siblingContent);
 				}
@@ -3072,7 +2910,6 @@ const isAnthropicStrictUnsupportedKeyword: UnsupportedStrictSchemaKeywordCheck =
 
 function convertTools(
 	tools: Tool[],
-	isOAuthToken: boolean,
 	supportsEagerToolInputStreaming: boolean,
 	supportsStrictTools: boolean,
 	cacheControl?: CacheControlEphemeral,
@@ -3103,7 +2940,7 @@ function convertTools(
 				: legacyInputSchema;
 
 		return {
-			name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name,
+			name: tool.name,
 			description: tool.description,
 			...(supportsEagerToolInputStreaming ? { eager_input_streaming: true } : {}),
 			...(strict === true ? { strict: true } : {}),
