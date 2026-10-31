@@ -117,7 +117,7 @@ describe("RPC interactive login prompts", () => {
 		cleanup = harness.cleanup;
 		const manual = outcomeRecorder();
 		registerScriptedProvider(harness, async (interaction) => {
-			// Mirrors loginAnthropic: the manual-code prompt races the local callback
+			// Mirrors the chatgpt-subscription login: the manual-code prompt races the local callback
 			// server and is aborted once the callback wins.
 			const manualAbort = new AbortController();
 			try {

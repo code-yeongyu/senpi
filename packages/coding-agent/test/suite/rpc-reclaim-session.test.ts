@@ -203,11 +203,18 @@ it("removes a reclaimed session from the caller's resync attached list", async (
 		});
 		const snapshot = recovery.mock.calls[0]?.[0];
 		if (!snapshot) throw new Error("Missing recovery snapshot");
-		expect(snapshot("overflow")()).toContainEqual(expect.objectContaining({ sessionId: ref.sessionId }));
+		const frames = async (reason: "overflow") => {
+			const cut = snapshot(reason);
+			const read: unknown[] = [];
+			for (let line = await cut.next(); line !== undefined; line = await cut.next()) read.push(JSON.parse(line));
+			cut.release();
+			return read;
+		};
+		expect(await frames("overflow")).toContainEqual(expect.objectContaining({ sessionId: ref.sessionId }));
 		expect(await rig.send("caller", { id: "reclaim", type: "reclaim_session", ...ref })).toMatchObject({
 			success: true,
 		});
-		expect(snapshot("overflow")()).toEqual([]);
+		expect(await frames("overflow")).toEqual([]);
 	} finally {
 		recovery.mockRestore();
 	}
