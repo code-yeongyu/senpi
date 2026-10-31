@@ -8,6 +8,7 @@ import {
 	type CompactContentStoreOptions,
 	type LeafId,
 } from "./compact-content-store.ts";
+import { assertProtocolDepth } from "./compact-protocol-depth.ts";
 
 export type SettledDiagnostic =
 	| "unknown_message"
@@ -68,7 +69,9 @@ export class CompactSettledMessages {
 
 	/**
 	 * Returns whether this end joined the message to its durable entry: the only end that settles persistence. `call`:
-	 * the projection of the outstanding call this toolResult settles, stored with the terminal (Q2).
+	 * the projection of the outstanding call this toolResult settles, stored with the terminal (Q2). The terminal is
+	 * serialized from `record`, so a record over the protocol depth limit is refused typed before anything changes
+	 * (RULING-59 C); the lane runs that check, and counts the refusal, before it calls this.
 	 */
 	end(
 		record: object,
@@ -77,6 +80,7 @@ export class CompactSettledMessages {
 		turnId: string | null,
 		call?: CallProjection,
 	): boolean {
+		assertProtocolDepth(record);
 		if (!this.valid(carrier)) return this.reject("unknown_message");
 		const id = carrier.messageId;
 		if (this.keys.has(`end:${id}`) || this.keys.has(`settled:${id}`)) return this.reject("duplicate_end");
