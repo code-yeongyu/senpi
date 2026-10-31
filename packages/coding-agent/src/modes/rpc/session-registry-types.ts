@@ -30,7 +30,7 @@ export interface RpcSessionEntry {
 	state: RpcSessionState;
 	runtime?: SessionRuntime;
 	worker?: SessionWorkerClient;
-	/** The in-process session's ordered acceptance lane, present only while the compact-updates flag is on. */
+	/** The in-process session's ordered acceptance lane, absent for a legacy-only session (`structuredLaneEnabled`). */
 	acceptance?: SessionAcceptanceLane;
 	/** Visibility class chosen by the open, frozen for the entry's life. */
 	readonly kind: SessionKind;

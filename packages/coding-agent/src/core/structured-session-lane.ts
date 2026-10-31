@@ -46,6 +46,11 @@ export class StructuredSessionLane {
 		return this.listeners.size > 0;
 	}
 
+	/** Whether this session's Agent was built with the internal channel, so `subscribe` can succeed. */
+	get available(): boolean {
+		return this.#channel !== undefined;
+	}
+
 	/** `failed` hears a record this lane could not build; that record is skipped, never the event's legacy delivery. */
 	subscribe(listener: StructuredListener, failed?: StructuredFailure): () => void {
 		if (!this.#channel) throw new StructuredLaneUnavailableError();

@@ -1,5 +1,6 @@
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
+import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { isSecurityNoticeState } from "../../core/security-notices.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
@@ -61,10 +62,10 @@ export class SessionWorkerClient {
 	private cancelUiPending = false;
 	private terminalFailure?: string;
 	private stopLimitMirror: () => void = () => {};
-	/** The host's ordered acceptance lane for this worker incarnation, present only while the flag is on. */
-	readonly acceptance: SessionAcceptanceLane | undefined;
+	/** The host's ordered acceptance lane for this worker incarnation; dropped when the commit declines it (legacy-only). */
+	acceptance: SessionAcceptanceLane | undefined;
 	/** The host half of this incarnation's payload transport: permits, physical frame order, fragment staging (S12b). */
-	readonly intake: WorkerIntake | undefined;
+	intake: WorkerIntake | undefined;
 	private readonly owners = new WorkerOwnerGates();
 
 	private readonly callbacks: SessionWorkerCallbacks;
@@ -153,10 +154,15 @@ export class SessionWorkerClient {
 			...(this.intake ? { acceptance: true, recoveryEpoch: nonce, permits: this.intake.permits.block } : {}),
 		});
 		if (result.type !== "ready") throw new Error("Invalid worker commit response");
-		if (this.acceptance) {
-			// Accepted before the open resolves, so the entry is admitted only after its baseline (R3.C1.1).
-			if (!result.bootstrap) throw new Error("Invalid worker commit response");
-			this.acceptance.bootstrap(result.bootstrap, nonce);
+		// Accepted before the open resolves, so the entry is admitted only after its baseline (R3.C1.1).
+		if (result.bootstrap) this.acceptance?.bootstrap(result.bootstrap, nonce);
+		else if (compactUpdatesEnabled()) throw new Error("Invalid worker commit response");
+		else {
+			// Flag off, a worker whose session has no structured lane declines the offer: this incarnation runs
+			// legacy-only, with no acceptance lane and no permit transport, exactly as before S17.
+			this.intake?.permits.close();
+			this.acceptance?.retire("close");
+			this.acceptance = this.intake = undefined;
 		}
 		this.snapshot = result.snapshot;
 		return result.snapshot;
