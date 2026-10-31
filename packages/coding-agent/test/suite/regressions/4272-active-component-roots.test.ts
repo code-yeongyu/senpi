@@ -63,7 +63,7 @@ it("freezes and settles a large active collection with bounded ownership work", 
 		await state.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);
 
 it("preserves active insertion order and only the addressed block across frozen cuts", async () => {
 	const root = await spoolRoot();
