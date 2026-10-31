@@ -43,6 +43,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { DsmlEnvelopeFilter, stripDsmlEnvelopes } from "../utils/dsml-envelope.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import {
@@ -465,6 +466,10 @@ function appendOpenAIReasoningDetail(details: OpenAIReasoningDetail[], detail: O
  * it validates inside them. `null` survives where the schema allows it, since the provider
  * sent it. The switch is exhaustive over the same union `isOpenAIReasoningDetail` validates,
  * so a new detail type or payload field fails to compile until both sides agree.
+ *
+ * Readable reasoning (`reasoning.text`, `reasoning.summary`) is replayed without DeepSeek DSML envelopes, as the
+ * thinking block is (senpi#4621). A signed `reasoning.text` is forwarded verbatim: the provider verifies the
+ * signature over that exact text, and changing it would reject the whole request.
  */
 function toReplayableReasoningDetail(detail: OpenAIReasoningDetail): OpenAIReasoningDetail {
 	const common: OpenAIReasoningDetailBase = {};
@@ -472,12 +477,14 @@ function toReplayableReasoningDetail(detail: OpenAIReasoningDetail): OpenAIReaso
 	if (detail.format !== undefined) common.format = detail.format;
 	switch (detail.type) {
 		case "reasoning.text": {
-			const replayable: OpenAIReasoningTextDetail = { ...common, type: "reasoning.text", text: detail.text };
+			const signed = typeof detail.signature === "string" && detail.signature.length > 0;
+			const text = signed ? detail.text : stripDsmlEnvelopes(detail.text);
+			const replayable: OpenAIReasoningTextDetail = { ...common, type: "reasoning.text", text };
 			if (detail.signature !== undefined) replayable.signature = detail.signature;
 			return replayable;
 		}
 		case "reasoning.summary":
-			return { ...common, type: "reasoning.summary", summary: detail.summary };
+			return { ...common, type: "reasoning.summary", summary: stripDsmlEnvelopes(detail.summary) };
 		case "reasoning.encrypted":
 			return { ...common, type: "reasoning.encrypted", data: detail.data };
 	}
@@ -660,6 +667,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 
 			let textBlock: TextContent | null = null;
 			let thinkingBlock: ThinkingContent | null = null;
+			const dsmlFilters = new Map<ThinkingContent, DsmlEnvelopeFilter>();
 			let activeBlock: StreamingBlock | null = null;
 			let deferMixedEvents = false;
 			let hasFinishReason = false;
@@ -705,6 +713,12 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						partial: output,
 					});
 				} else if (block.type === "thinking") {
+					const tail = dsmlFilters.get(block)?.finish() ?? "";
+					dsmlFilters.delete(block);
+					if (tail.length > 0) {
+						block.thinking += tail;
+						stream.push({ type: "thinking_delta", contentIndex, delta: tail, partial: output });
+					}
 					applyStreamedReasoningDetails(block);
 					stream.push({
 						type: "thinking_end",
@@ -959,14 +973,22 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 									? "reasoning_content"
 									: foundReasoningField;
 							const block = ensureThinkingBlock(thinkingSignature);
-							block.thinking += delta;
-							if (deferMixedEvents) {
-								deferredThinkingDeltas.push(delta);
-							} else {
+							// DeepSeek writes DSML tool-call envelopes into its reasoning; they are dropped here, before any
+							// consumer can show, store or replay them (senpi#4621).
+							let dsmlFilter = dsmlFilters.get(block);
+							if (dsmlFilter === undefined) {
+								dsmlFilter = new DsmlEnvelopeFilter();
+								dsmlFilters.set(block, dsmlFilter);
+							}
+							const reasoning = dsmlFilter.push(delta);
+							block.thinking += reasoning;
+							if (reasoning.length > 0 && deferMixedEvents) {
+								deferredThinkingDeltas.push(reasoning);
+							} else if (reasoning.length > 0) {
 								stream.push({
 									type: "thinking_delta",
 									contentIndex: getContentIndex(block),
-									delta,
+									delta: reasoning,
 									partial: output,
 								});
 							}
@@ -1756,7 +1778,10 @@ export function convertMessages(
 			const preservedReasoningDetails =
 				signedReasoningDetails ?? (legacyReasoningDetails.length > 0 ? legacyReasoningDetails : undefined);
 
-			const nonEmptyThinkingBlocks = thinkingBlocks.filter((block) => block.thinking.trim().length > 0);
+			// Sessions written before senpi#4621 can hold DSML envelopes in thinking; never replay them.
+			const nonEmptyThinkingBlocks = thinkingBlocks
+				.map((block) => ({ ...block, thinking: stripDsmlEnvelopes(block.thinking) }))
+				.filter((block) => block.thinking.trim().length > 0);
 			if (nonEmptyThinkingBlocks.length > 0) {
 				if (compat.requiresThinkingAsText) {
 					// Convert thinking blocks to plain text (no tags to avoid model mimicking them)

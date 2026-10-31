@@ -1,4 +1,21 @@
-export type TokenFamily = "ctrl" | "sgml" | "bracket";
+import {
+	DSML_NAME,
+	GREATER_THAN,
+	isAsciiLetter,
+	isAsciiUpper,
+	isBar,
+	isBracketNameChar,
+	isNameChar,
+	isSgmlControlTokenName,
+	LEFT_BRACKET,
+	LESS_THAN,
+	PIPE,
+	RIGHT_BRACKET,
+	SLASH,
+	SPACE_MARK,
+} from "./token-vocabulary.ts";
+
+export type TokenFamily = "ctrl" | "sgml" | "bracket" | "dsml";
 
 export interface ControlToken {
 	readonly family: TokenFamily;
@@ -23,87 +40,22 @@ type ParserMode =
 	| "sgmlFirst"
 	| "sgmlName"
 	| "bracketFirst"
-	| "bracketName";
+	| "bracketName"
+	| "dsmlTag";
 
 const MAX_CTRL_NAME = 32;
 const MAX_SGML_NAME = 16;
 const MAX_BRACKET_NAME = 16;
 const MIN_BRACKET_NAME = 2;
-
-const LESS_THAN = "<";
-const GREATER_THAN = ">";
-const PIPE = "|";
-const SLASH = "/";
-const LEFT_BRACKET = "[";
-const RIGHT_BRACKET = "]";
-const UNDERSCORE = "_";
-
-function isAsciiUpper(value: string): boolean {
-	const code = value.charCodeAt(0);
-	return code >= 65 && code <= 90;
-}
-
-function isAsciiLower(value: string): boolean {
-	const code = value.charCodeAt(0);
-	return code >= 97 && code <= 122;
-}
-
-function isAsciiDigit(value: string): boolean {
-	const code = value.charCodeAt(0);
-	return code >= 48 && code <= 57;
-}
-
-function isAsciiLetter(value: string): boolean {
-	return isAsciiUpper(value) || isAsciiLower(value);
-}
-
-function isNameChar(value: string): boolean {
-	return isAsciiLetter(value) || isAsciiDigit(value) || value === UNDERSCORE;
-}
-
-/**
- * Angle-bracket special tokens that tokenizers actually define (SentencePiece/Llama `<s>`,
- * BERT-style `<pad>`/`<unk>`/`<mask>`, Gemma turn markers, reasoning and tool-call delimiters).
- * Matched case-insensitively, with or without the closing slash. Anything else in angle
- * brackets is markup, not a control token.
- */
-export const SGML_CONTROL_TOKEN_NAMES: ReadonlySet<string> = new Set([
-	"s",
-	"pad",
-	"unk",
-	"mask",
-	"bos",
-	"eos",
-	"sep",
-	"cls",
-	"eot",
-	"eom",
-	"endoftext",
-	"think",
-	"start_of_turn",
-	"end_of_turn",
-	"start_of_image",
-	"end_of_image",
-	"im_start",
-	"im_end",
-	"tool_call",
-	"tool_response",
-]);
-
-export function isSgmlControlTokenName(rawName: string): boolean {
-	const name = rawName.startsWith(SLASH) ? rawName.slice(1) : rawName;
-	return SGML_CONTROL_TOKEN_NAMES.has(name.toLowerCase());
-}
-
-function isBracketNameChar(value: string): boolean {
-	return isAsciiUpper(value) || isAsciiDigit(value) || value === UNDERSCORE;
-}
+const MAX_DSML_TAG = 512;
 
 export class CandidateParser {
 	#mode: ParserMode = "ground";
 	#buffer = "";
 	#nameLength = 0;
 	#startOffset = 0;
+	#bar = PIPE;
+	#closing = false;
 
 	feed(value: string, offset: number): CandidateOutcome[] {
 		if (this.#mode === "ground") {
@@ -129,13 +81,20 @@ export class CandidateParser {
 		this.#buffer = value;
 		this.#nameLength = 0;
 		this.#startOffset = offset;
+		this.#bar = PIPE;
+		this.#closing = false;
+	}
+
+	#ctrlName(): string {
+		return this.#buffer.slice(this.#closing ? 3 : 2, -1);
 	}
 
 	#advance(value: string, offset: number): CandidateOutcome[] {
 		const mode = this.#mode;
 		if (mode === "angleOpen") {
-			if (value === PIPE) {
+			if (isBar(value)) {
 				this.#buffer += value;
+				this.#bar = value;
 				this.#mode = "ctrlFirst";
 				return [];
 			}
@@ -162,12 +121,12 @@ export class CandidateParser {
 			return this.#rejectWith(value, offset);
 		}
 		if (mode === "ctrlName") {
-			if (value === PIPE) {
+			if (value === this.#bar) {
 				this.#buffer += value;
 				this.#mode = "ctrlClose";
 				return [];
 			}
-			if (isNameChar(value)) {
+			if (isNameChar(value) || value === SPACE_MARK) {
 				if (this.#nameLength >= MAX_CTRL_NAME) {
 					return this.#rejectWith(value, offset);
 				}
@@ -178,12 +137,33 @@ export class CandidateParser {
 			return this.#rejectWith(value, offset);
 		}
 		if (mode === "ctrlClose") {
+			const isDsml = this.#ctrlName() === DSML_NAME;
 			if (value === GREATER_THAN) {
-				return [this.#emit("ctrl", 2, -1, value, offset)];
+				if (isDsml) return [this.#emitToken("dsml", DSML_NAME, value, offset)];
+				if (this.#closing) return this.#rejectWith(value, offset);
+				return [this.#emitToken("ctrl", this.#ctrlName(), value, offset)];
+			}
+			if (isDsml && value !== LESS_THAN) {
+				this.#buffer += value;
+				this.#mode = "dsmlTag";
+				return [];
 			}
 			return this.#rejectWith(value, offset);
 		}
+		if (mode === "dsmlTag") {
+			if (value === GREATER_THAN) return [this.#emitToken("dsml", DSML_NAME, value, offset)];
+			if (value === LESS_THAN || this.#buffer.length >= MAX_DSML_TAG) return this.#rejectWith(value, offset);
+			this.#buffer += value;
+			return [];
+		}
 		if (mode === "sgmlFirst") {
+			if (isBar(value)) {
+				this.#buffer += value;
+				this.#bar = value;
+				this.#closing = true;
+				this.#mode = "ctrlFirst";
+				return [];
+			}
 			if (isAsciiLetter(value)) {
 				this.#buffer += value;
 				this.#nameLength = 1;
@@ -245,7 +225,15 @@ export class CandidateParser {
 		closer: string,
 		offset: number,
 	): CandidateOutcome {
-		const name = this.#buffer.slice(nameStart, nameTrimEnd === 0 ? undefined : nameTrimEnd);
+		return this.#emitToken(
+			family,
+			this.#buffer.slice(nameStart, nameTrimEnd === 0 ? undefined : nameTrimEnd),
+			closer,
+			offset,
+		);
+	}
+
+	#emitToken(family: TokenFamily, name: string, closer: string, offset: number): CandidateOutcome {
 		const token: ControlToken = {
 			family,
 			name,
@@ -257,6 +245,8 @@ export class CandidateParser {
 		this.#mode = "ground";
 		this.#buffer = "";
 		this.#nameLength = 0;
+		this.#bar = PIPE;
+		this.#closing = false;
 		return { kind: "token", token };
 	}
 

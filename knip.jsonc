@@ -907,8 +907,6 @@
       "packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/collapse.ts": ["TAIL_RING_CAPACITY"],
       // pre-existing at origin main aceb1cc1d9: unused exports REPETITIVE_TURNS_SIMILARITY_THRESHOLD, REPETITIVE_TURNS_STREAK_LENGTH, REPETITIVE_TURNS_HISTORY_CAPACITY
       "packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/repetitive-turns.ts": ["REPETITIVE_TURNS_HISTORY_CAPACITY", "REPETITIVE_TURNS_SIMILARITY_THRESHOLD", "REPETITIVE_TURNS_STREAK_LENGTH"],
-      // pre-existing at origin main aceb1cc1d9: unused exports SGML_CONTROL_TOKEN_NAMES, isSgmlControlTokenName
-      "packages/coding-agent/src/core/extensions/builtin/ttsr/detectors/token-grammar.ts": ["SGML_CONTROL_TOKEN_NAMES", "isSgmlControlTokenName"],
       // pre-existing at origin main aceb1cc1d9: unused exports ANY_TOOL_NAME
       "packages/coding-agent/src/core/extensions/builtin/ttsr/scope.ts": ["ANY_TOOL_NAME"],
       // pre-existing at origin main aceb1cc1d9: unused exports VERTEX_MODEL_GARDEN_ADC_PATH

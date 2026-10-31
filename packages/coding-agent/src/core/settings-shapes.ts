@@ -25,6 +25,12 @@ export interface TodoSettings {
 	turnEndBackstop?: boolean; // default: true (a main-session turn that ends text-only with open todo tasks and no active goal gets a hidden nudge, at most two per chain)
 }
 
+/** Stream-rule (TTSR) settings; the only TTSR switch for hosts that start the runtime with fixed arguments (senpi#4621). */
+export interface TtsrSettingsConfig {
+	enabled?: boolean; // default: true; false turns every stream rule off, like --ttsr-disabled
+	disabledRules?: string[]; // rule names to turn off, merged with --ttsr-rules-disabled
+}
+
 export interface ImageSettings {
 	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
 	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
