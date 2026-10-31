@@ -1,7 +1,10 @@
 import type { AssistantMessage } from "../types.ts";
-import { sanitizeProviderDiagnostic } from "../provider-diagnostic.ts";
-import { FORWARDED_EMPTY_RESPONSE_ERROR, FORWARDED_EMPTY_TOOL_USE_ERROR } from "./empty-response-errors.ts";
-import { siwcRecoveryFromDiagnostic } from "./siwc-errors.ts";
+import { siwcRecoveryFromDiagnostic } from "./provider-diagnostic-carrier.ts";
+
+// Owned beside their classifier so retry stays a two-file entry graph. The stream
+// wrapper's empty-response-errors entry re-exports these same terminal texts.
+export const FORWARDED_EMPTY_RESPONSE_ERROR = "Model returned an empty response after streaming thinking";
+export const FORWARDED_EMPTY_TOOL_USE_ERROR = "Model returned tool_use without a tool call after streaming thinking";
 
 /**
  * Diagnostic type on a terminal assistant message whose request failed because an OAuth refresh failed
@@ -488,7 +491,7 @@ export async function retryAssistantCall(
  * before restarting the assistant turn.
  */
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
-	const siwc = siwcRecoveryFromDiagnostic(sanitizeProviderDiagnostic(message.providerDiagnostic));
+	const siwc = siwcRecoveryFromDiagnostic(message.providerDiagnostic);
 	if (
 		siwc !== undefined &&
 		message.stopReason === "error" &&

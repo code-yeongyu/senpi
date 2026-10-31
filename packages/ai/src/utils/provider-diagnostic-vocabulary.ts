@@ -3,7 +3,7 @@ import type {
 	ProviderDiagnosticCategory,
 	ProviderDiagnosticEvidence,
 } from "../provider-diagnostic.ts";
-import { siwcErrorForCode } from "./siwc-errors.ts";
+import { siwcErrorForCode } from "./provider-diagnostic-carrier.ts";
 
 /** Serialized UTF-8 budget for one emitted diagnostic. */
 export const PROVIDER_DIAGNOSTIC_MAX_BYTES = 512;

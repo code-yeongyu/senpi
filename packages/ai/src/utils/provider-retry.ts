@@ -1,5 +1,8 @@
-import { attachProviderDiagnostic, peekProviderDiagnostic } from "./provider-diagnostic-carrier.ts";
-import { siwcRecoveryFromDiagnostic } from "./siwc-errors.ts";
+import {
+	attachProviderDiagnostic,
+	peekProviderDiagnostic,
+	siwcRecoveryFromDiagnostic,
+} from "./provider-diagnostic-carrier.ts";
 import { appendRetryAfterMsMarker, extract429RetryAfterMs } from "./retry-hint.ts";
 
 const DEFAULT_MAX_RETRY_DELAY_MS = 60_000;
