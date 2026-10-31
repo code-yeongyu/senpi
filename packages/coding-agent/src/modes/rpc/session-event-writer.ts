@@ -10,6 +10,7 @@ import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { normalizeJsonValue } from "./json-normal-value.ts";
 import { SessionStructuredLanes } from "./session-structured-lanes.ts";
 import { serializeJsonLine } from "./jsonl.ts";
+import { LegacyRecordRefusals } from "./legacy-record-depth.ts";
 import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
 import { type MediaPersister, omitNormalInlineMedia } from "./media-placeholders.ts";
 import type {
@@ -100,6 +101,8 @@ export class SessionEventWriter {
 		this.secretPresentations.handshake(capabilities);
 	}
 	readonly structuredLanes = new SessionStructuredLanes();
+	/** Records refused at the engine's JSON depth limit on the legacy wire (RULING-68). */
+	readonly legacyRefusals = new LegacyRecordRefusals();
 	private presenterAuthority?: McpPresenterAuthority;
 	private readonly presenterConnections = new Map<string, McpPresenterConnection>();
 	private readonly presenterBindings = new Map<string, McpFormBinding>();

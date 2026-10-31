@@ -323,7 +323,7 @@ it("RULING-56 (4) retiring a route is idempotent: the admission's token is recla
 	const once = snapshot();
 	expect(once).toEqual({
 		stream: { sessionEpoch: lane.sessionEpoch, generation: 1, routes: [] },
-		status: { open: 0, streams: 1, frozen: 1, reclaimed: 1, refused: {} },
+		status: { open: 0, streams: 1, frozen: 1, reclaimed: 1, refused: {}, unavailable: {} },
 		liveRoots: 0,
 	});
 	checkpoints.retireRoute(caller, route.admissionId);
