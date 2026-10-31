@@ -89,6 +89,8 @@ it("rolls back a mid-publish ownership failure and runs the next compaction", as
 	}
 });
 
+// Since S03b-4 (S10-Q2, RULING-59 A) a string of any length is a legal value and index key, so the strict codec refuses
+// only non-JSON values and cycles: each write below makes a page for `a` before the codec refuses `b`.
 it.each(["key", "patch"])("releases partial %s writes when the strict codec refuses", async (kind) => {
 	const root = await spoolRoot();
 	const store = new CompactContentStore({ dir: root.dir });
@@ -100,7 +102,7 @@ it.each(["key", "patch"])("releases partial %s writes when the strict codec refu
 		const nodes = store.text.residentNodes;
 		expect(() =>
 			kind === "key"
-				? index.set("x".repeat(16 * 1024 * 1024 + 1), { a: "new".repeat(500) })
+				? index.set("new", { a: "new".repeat(500), b: undefined })
 				: index.patch("row", { a: "new".repeat(500), b: undefined }),
 		).toThrowError(expect.objectContaining({ name: "CompactWriteError" }));
 		await store.idle();
