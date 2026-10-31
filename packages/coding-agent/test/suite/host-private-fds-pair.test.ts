@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { closeDiscarded, parseTable } from "../../src/private-fds.ts";
 import { preparePrivateFdSpawn } from "../../src/private-fd-spawn.ts";
+import { inheritedDuplex } from "../../src/utils/inherited-duplex.ts";
 import { parseTable as oldParseTable } from "../fixtures/private-fd-old-parser.ts";
 
 vi.mock("node:fs", { spy: true });
@@ -51,6 +52,37 @@ describe("Windows private descriptor pairs (#4859)", () => {
 			expect(parseTable('{"a":[5,6]}', runtime).entries.get("a")).toEqual(accepted ? [5, 6] : null);
 		} finally {
 			fstat.mockReset();
+		}
+	});
+
+	// #5137: adoption must use the same pipe check as the parser, or Windows accepts a pair it never adopts.
+	it.each([
+		{ mode: 0o010600, adopted: true },
+		{ mode: 0o100600, adopted: false },
+	])("pair adoption classifies mode $mode without isFIFO", async ({ mode, adopted }) => {
+		const root = await mkdtemp(join(tmpdir(), "private-fd-adopt-"));
+		const readFd = fs.openSync(join(root, "pipe"), "w+");
+		const writeFd = fs.openSync(join(root, "pipe"), "r+");
+		const stat = Object.assign(fs.fstatSync(readFd), { mode, isFIFO: () => false, isSocket: () => false });
+		const fstat = vi.mocked(fs.fstatSync).mockReturnValue(stat);
+		let channel: ReturnType<typeof inheritedDuplex>;
+		try {
+			channel = inheritedDuplex([readFd, writeFd]);
+		} finally {
+			fstat.mockReset();
+		}
+		try {
+			expect(channel !== undefined).toBe(adopted);
+		} finally {
+			if (channel === undefined) {
+				fs.closeSync(readFd);
+				fs.closeSync(writeFd);
+			} else {
+				const done = once(channel, "close");
+				channel.destroy();
+				await done;
+			}
+			await rm(root, { recursive: true, force: true });
 		}
 	});
 

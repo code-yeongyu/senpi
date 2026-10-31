@@ -1,7 +1,7 @@
 import { closeSync, fstatSync } from "node:fs";
 import type { Duplex } from "node:stream";
 import { isMainThread } from "node:worker_threads";
-import { inheritedDuplex } from "./utils/inherited-duplex.ts";
+import { inheritedDuplex, isFifoMode } from "./utils/inherited-duplex.ts";
 import { clearPrivateFdInherit } from "./utils/private-fd-inherit.ts";
 
 const TABLE_ENV = "SENPI_PRIVATE_FDS";
@@ -87,8 +87,7 @@ function isSocket(fd: number): boolean {
 
 function isPipe(fd: number): boolean {
 	try {
-		// Windows can report FIFO mode bits while Stats.isFIFO() returns false.
-		return (fstatSync(fd).mode & 0o170000) === 0o010000;
+		return isFifoMode(fstatSync(fd).mode);
 	} catch {
 		return false;
 	}
