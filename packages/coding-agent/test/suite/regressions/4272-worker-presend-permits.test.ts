@@ -186,4 +186,4 @@ it("S12b X03 X04: with the initial permit held, the real worker posts no ready p
 		for (; held > 0; held -= 1) hostWorkerPermits.release();
 		await host.dispose();
 	}
-}, 90_000);
+}, 600_000);

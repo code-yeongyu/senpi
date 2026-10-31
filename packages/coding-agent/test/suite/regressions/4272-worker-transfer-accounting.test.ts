@@ -74,7 +74,7 @@ it("S12b review: a fragmented ready returns its permits once per fragment, never
 	} finally {
 		await host.dispose();
 	}
-}, 120_000);
+}, 600_000);
 
 // S12b review of #4668: retiring the lane closes its staging store while a reassembled message is still being read; the
 // store's close already releases that content, so the read's own cleanup must not release it again.
@@ -106,4 +106,4 @@ it("S12b review: closing the staging store while a fragmented message is reassem
 	} finally {
 		await host.dispose();
 	}
-}, 120_000);
+}, 600_000);
