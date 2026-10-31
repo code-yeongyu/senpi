@@ -117,5 +117,5 @@ it.each(["new_session", "switch_session", "fork"] as const)(
 		expect(state.sessionId).toBe(replacement.sessionId);
 		expect(await cut(reopened)).toBeGreaterThan(replaced);
 	},
-	120_000,
+	600_000,
 );

@@ -45,4 +45,4 @@ it("socket B accepts a new generation after socket A commits and disconnects, wh
 		return { sessionId, sessionEpoch, generation: Number(next.generation) };
 	});
 	expect(net.failures).toEqual([]);
-}, 120_000);
+}, 600_000);

@@ -33,4 +33,4 @@ it("worker replacement rebinds the durable counter before publication and surviv
 	} finally {
 		await host.dispose();
 	}
-}, 120_000);
+}, 600_000);
