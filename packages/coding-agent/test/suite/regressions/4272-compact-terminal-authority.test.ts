@@ -228,3 +228,17 @@ it("T6 rejects a restart after streaming, malformed cutoffs and a foreign epoch 
 	expect(state.acceptedSequence).toBe(sequence);
 	expect(await owner.view()).toEqual(before);
 });
+
+// #4425 LOW 3: a message an indexed start created binds its correlation on its first message-level record.
+it("T6 binds correlation on the first message record when an indexed start created the message", async () => {
+	await using owner = await seededOwner();
+	const { partial } = owner;
+	partial.content.push({ type: "text", text: "a" });
+	owner.push({ type: "text_start", contentIndex: 0, partial });
+	owner.message({ type: "done", reason: "stop", message: partial }, "message_end", {
+		correlation: { clientMessageId: "client-2" },
+	});
+	expect((await owner.view()).messages).toMatchObject([
+		{ messageId: "message", persistence: "pending", correlation: { clientMessageId: "client-2" } },
+	]);
+});
