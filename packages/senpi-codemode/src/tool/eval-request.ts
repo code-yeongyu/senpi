@@ -40,16 +40,12 @@ export function parseEvalRequest(
 	}
 	if (params.action !== undefined && params.action !== "run")
 		throw new TypeError(`Unknown eval action "${String(params.action)}"`);
-	if (params.language === undefined) throw new TypeError(evalRunRequiresLanguageMessage(enabledLanguages));
+	if (params.language === undefined) throw new TypeError(evalRunFieldRequiredMessage("language", enabledLanguages));
 	if (!isEvalLanguage(params.language))
 		throw new TypeError(`eval run language must be one of: ${enabledLanguages.join(", ")}`);
-	if (typeof params.code !== "string")
-		throw new TypeError("eval run requires code: the cell body to execute, verbatim");
+	if (typeof params.code !== "string") throw new TypeError(evalRunFieldRequiredMessage("code", enabledLanguages));
 	const summary = normalizeEvalSummary(params.summary);
-	if (summary === undefined)
-		throw new TypeError(
-			"eval run requires summary (one line in the user's language): what you are working on and for what purpose",
-		);
+	if (summary === undefined) throw new TypeError(evalRunFieldRequiredMessage("summary", enabledLanguages));
 	if (params.on_timeout !== undefined && params.on_timeout !== "detach" && params.on_timeout !== "error")
 		throw new TypeError(`Unknown eval on_timeout value "${String(params.on_timeout)}"`);
 	if (params.isolate !== undefined && params.isolate !== false) {
@@ -90,6 +86,16 @@ function isEvalLanguage(value: unknown): value is EvalToolInput["language"] {
 	return value === "py" || value === "js" || value === "rb" || value === "jl";
 }
 
-function evalRunRequiresLanguageMessage(languages: readonly EvalLanguage[]): string {
-	return `eval run requires language: one of ${languages.map((language) => `"${language}"`).join(", ")}`;
+export type EvalRunField = "language" | "code" | "summary";
+
+/** The teaching error for a run call missing one of its fields, shared by argument validation and execution. */
+export function evalRunFieldRequiredMessage(field: EvalRunField, languages: readonly EvalLanguage[]): string {
+	switch (field) {
+		case "language":
+			return `eval run requires language: one of ${languages.map((language) => `"${language}"`).join(", ")}`;
+		case "code":
+			return "eval run requires code: the cell body to execute, verbatim";
+		case "summary":
+			return "eval run requires summary (one line in the user's language): what you are working on and for what purpose";
+	}
 }
