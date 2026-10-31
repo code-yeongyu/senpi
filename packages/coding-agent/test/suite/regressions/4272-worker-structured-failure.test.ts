@@ -2,6 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { SessionWorkerToHost } from "../../../src/modes/rpc/session-worker-protocol.ts";
 import { builtFauxPath, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
 
+const BUN_NO_STRUCTURED_FRAMES = process.versions.bun !== undefined; // Bun worker isolates send no structured frames to the host: senpi#4667
+
 afterEach(() => {
 	vi.unstubAllEnvs();
 });
@@ -24,35 +26,39 @@ JSON.stringify = function (value, ...rest) {
 // senpi#4439 delta LOW-2 and LOW-3 (carry items 24.2, 24.3): a structured failure inside a real isolate travels
 // structuredFailed -> WorkerEventWriter.canonicalUnavailable -> the host lane, once per epoch however many records fail,
 // and every legacy record is still delivered.
-it("a real isolate's structured failures make the host lane unavailable with one frame and keep legacy delivery", async () => {
-	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
-	const host = await workerAcceptanceHost(builtFauxPath, seededRecordsFail);
-	try {
-		const { sessionId, worker } = await host.open();
-		const lane = worker.acceptance;
-		if (!lane) throw new Error("no worker lane");
-		const unavailable: string[] = [];
-		worker.worker.on("message", (message: SessionWorkerToHost) => {
-			if (message.type === "canonical_unavailable") unavailable.push(message.reason);
-		});
-		for (const message of ["first", "second"]) {
-			const done = host.next(`idle after ${message}`, (record) => record.type === "agent_idle");
-			expect((await host.request({ type: "prompt", sessionId, message })).success).toBe(true);
-			await done;
-		}
-		await host.writer.flush();
-		expect(unavailable).toEqual(["structured record failed in the isolate"]);
-		const ends = host.records.filter((record) => record.type === "message_end");
-		expect(JSON.stringify(ends).split("an answer streamed in a few deltas").length - 1).toBe(2);
-		expect(host.failures).toEqual([]);
-		expect(lane.retired).toBe(false);
-		const root = lane.freeze();
+it.skipIf(BUN_NO_STRUCTURED_FRAMES)(
+	"a real isolate's structured failures make the host lane unavailable with one frame and keep legacy delivery",
+	async () => {
+		vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
+		const host = await workerAcceptanceHost(builtFauxPath, seededRecordsFail);
 		try {
-			expect(root.current).toBeUndefined();
+			const { sessionId, worker } = await host.open();
+			const lane = worker.acceptance;
+			if (!lane) throw new Error("no worker lane");
+			const unavailable: string[] = [];
+			worker.worker.on("message", (message: SessionWorkerToHost) => {
+				if (message.type === "canonical_unavailable") unavailable.push(message.reason);
+			});
+			for (const message of ["first", "second"]) {
+				const done = host.next(`idle after ${message}`, (record) => record.type === "agent_idle");
+				expect((await host.request({ type: "prompt", sessionId, message })).success).toBe(true);
+				await done;
+			}
+			await host.writer.flush();
+			expect(unavailable).toEqual(["structured record failed in the isolate"]);
+			const ends = host.records.filter((record) => record.type === "message_end");
+			expect(JSON.stringify(ends).split("an answer streamed in a few deltas").length - 1).toBe(2);
+			expect(host.failures).toEqual([]);
+			expect(lane.retired).toBe(false);
+			const root = lane.freeze();
+			try {
+				expect(root.current).toBeUndefined();
+			} finally {
+				lane.release(root);
+			}
 		} finally {
-			lane.release(root);
+			await host.dispose();
 		}
-	} finally {
-		await host.dispose();
-	}
-}, 90_000);
+	},
+	90_000,
+);
