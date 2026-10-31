@@ -1,7 +1,7 @@
 /**
  * senpi#4602 fixture: runs in a fresh process so it controls its own descriptor table. It frees low
  * descriptors (the macOS libuv abort precondition), places a #4749 private descriptor at its own number
- * below 16, spawns a stub-loading child with the startup pipe at 16, and prints one JSON report: the exact
+ * below 16 where the runtime leaves such a slot free, spawns a stub-loading child with the startup pipe at 16, and prints one JSON report: the exact
  * descriptor sets of the parent before and after the spawn and of the child, plus a control child's.
  */
 import { type ChildProcess, spawn } from "node:child_process";
@@ -59,10 +59,8 @@ for (let attempt = 0; attempt < 64 && privateFd === undefined; attempt += 1) {
 	if (fd >= 5 && fd < STARTUP_EVENT_FD) privateFd = fd;
 	else opened.push(fd);
 }
-if (privateFd === undefined) {
-	process.stdout.write(`${JSON.stringify({ error: "no free descriptor in 5..15" })}\n`);
-	process.exit(3);
-}
+// Node on Linux already holds every descriptor from 3 to 17 for its own event loop and worker platform, so no
+// slot below the pipe can be free there: the spawn then carries no private descriptor and the report says so.
 for (const fd of opened) closeSync(fd);
 
 const control = spawn(process.execPath, [childScript], { stdio: ["ignore", "pipe", "inherit"] });
@@ -85,10 +83,13 @@ const handOff = encodeStartupHandOff({
 const transfer = preparePrivateFdSpawn(
 	{ stdio, env: { ...process.env, SENPI_RPC_HOST_STARTUP_EVENTS: handOff } },
 	{ final: true },
-	{ kind: "entries", entries: new Map([["fixture", privateFd]]) },
+	privateFd === undefined
+		? { kind: "entries", entries: new Map() }
+		: { kind: "entries", entries: new Map([["fixture", privateFd]]) },
 );
 const before = openFds();
-const child = spawn(process.execPath, [childScript, String(privateFd)], transfer.options);
+const childArgs = privateFd === undefined ? [childScript] : [childScript, String(privateFd)];
+const child = spawn(process.execPath, childArgs, transfer.options);
 releaseStartupFillers(child, fillers);
 transfer.close();
 await new Promise<void>((resolveTick) => setImmediate(resolveTick));
@@ -101,8 +102,8 @@ const code = await new Promise<number | null>((resolveExit) =>
 process.stdout.write(
 	`${JSON.stringify({
 		code,
-		privateFd,
-		privateSlot: (transfer.options.stdio as readonly unknown[])[privateFd],
+		privateFd: privateFd ?? null,
+		privateSlot: privateFd === undefined ? null : (transfer.options.stdio as readonly unknown[])[privateFd],
 		fillers,
 		before,
 		after,
@@ -110,6 +111,6 @@ process.stdout.write(
 		child: JSON.parse(childReport).fds,
 		control: JSON.parse(controlReport).fds,
 		startup,
-		privateWrote: readFileSync(privateFile, "utf8"),
+		privateWrote: privateFd === undefined ? null : readFileSync(privateFile, "utf8"),
 	})}\n`,
 );
