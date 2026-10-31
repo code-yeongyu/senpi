@@ -2,7 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { canonicalizeFallbackChains } from "../../src/core/retry-fallback/chains.ts";
-import * as expansion from "../../src/core/retry-fallback/expansion.ts";
+import { FIRST_PARTY_PROVIDERS } from "../../src/core/retry-fallback/expansion.ts";
 
 function model(provider: string, id: string): Model<Api> {
 	return {
@@ -174,12 +174,10 @@ describe("bare fallback entries expand only to the model vendor's first-party pr
 	});
 
 	it("names only providers the builtin catalog or a builtin extension registers", () => {
-		const table = (expansion as { FIRST_PARTY_PROVIDERS?: readonly { providers: readonly string[] }[] })
-			.FIRST_PARTY_PROVIDERS;
 		const known = new Set<string>([...getProviders(), "anthropic-subscription"]);
 
-		expect(table?.length ?? 0).toBeGreaterThan(0);
-		for (const { providers } of table ?? []) {
+		expect(FIRST_PARTY_PROVIDERS.length).toBeGreaterThan(0);
+		for (const { providers } of FIRST_PARTY_PROVIDERS) {
 			for (const provider of providers) expect(known.has(provider), provider).toBe(true);
 		}
 	});
