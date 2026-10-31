@@ -48,7 +48,8 @@ function validationLines(tool: EvalTool, args: JsonObject): ValidationLine[] {
 // senpi#5138: a run call missing a run field must get the eval-specific error, not the anyOf branch dump.
 describe("eval argument validator", () => {
 	const tool = buildTool();
-	const run = { language: "py", code: "print(1)", summary: "Print one." };
+	// Code with no language markers, so an omitted language stays missing with js and py enabled (senpi#5154).
+	const run = { language: "py", code: "1 + 1", summary: "Add one and one." };
 
 	it("reports a missing language first, naming the enabled languages", () => {
 		const actions: JsonObject[] = [{}, { action: "run" }];
