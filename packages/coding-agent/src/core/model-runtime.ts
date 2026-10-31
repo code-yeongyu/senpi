@@ -1374,7 +1374,13 @@ export class ModelRuntime implements Models {
 	): Promise<Credential> {
 		const signal = operationSignal(interaction.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
+			const store = this.credentials.backingStore;
+			const before = await store.read(providerId, { signal });
 			const credential = await this.models.login(providerId, type, { ...interaction, signal }, options);
+			if (this.poolStatePath !== undefined) {
+				const { retireLoginSlotHealth } = await import("./credential-pool/login-health.ts");
+				await retireLoginSlotHealth(this.poolStatePath, providerId, before, await store.read(providerId, { signal }));
+			}
 			await this.synchronizeCredentialState(providerId, "login", credential, signal);
 			// A fresh login is the remedy a usage-limit refusal names: holds sessions keep on this provider are stale.
 			emitProviderAccountsChanged(providerId, "login");
