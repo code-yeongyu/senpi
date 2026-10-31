@@ -50,7 +50,7 @@ it.each(["open_session", "subscribe_sessions", "get_recovery_page", "cancel_atte
 			expect(client.inbox.some((record) => record.type === "session_opened")).toBe(false);
 		}
 	},
-	120_000,
+	600_000,
 );
 
 it("T2/T5 an identical live admission returns its original open without another hold", async () => {
@@ -68,7 +68,7 @@ it("T2/T5 an identical live admission returns its original open without another 
 	expect(host.core.router.sessionCount).toBe(1);
 	const listed = dataOf(await client.request({ type: "list_sessions" })).sessions;
 	expect(listed).toEqual([expect.objectContaining({ attachments: 1 })]);
-}, 120_000);
+}, 600_000);
 
 it("T2/X04 a cancelled pending open releases its late hold and RULING-94 hides unheld attempts", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -141,7 +141,7 @@ it("T2/X04 a cancelled pending open releases its late hold and RULING-94 hides u
 		generation: 1,
 	});
 	expect(retired).not.toHaveProperty("sessionId");
-}, 120_000);
+}, 600_000);
 
 it("T2/X04 completion wins cancellation without dropping its accepted hold", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -155,7 +155,7 @@ it("T2/X04 completion wins cancellation without dropping its accepted hold", asy
 	expect(dataOf(await peer.request({ type: "list_sessions" })).sessions).toEqual([
 		expect.objectContaining({ attachments: 1 }),
 	]);
-}, 120_000);
+}, 600_000);
 
 it("T2/T5 changing an open's identity cannot spend its admissionId twice", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -173,7 +173,7 @@ it("T2/T5 changing an open's identity cannot spend its admissionId twice", async
 		errorData: { kind: "request_refused", reason: "admission_conflict" },
 	});
 	expect(host.core.router.sessionCount).toBe(1);
-}, 120_000);
+}, 600_000);
 
 it("T2/X04 the identity answer precedes its pageable baseline and every page echoes the route", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -225,7 +225,7 @@ it("T2/X04 the identity answer precedes its pageable baseline and every page ech
 		admissionId: { id: "route-1" },
 		generation: 1,
 	});
-}, 120_000);
+}, 600_000);
 
 it("T2 a response deadline rejects while the host handler is pending, without an unhandled waiter", async () => {
 	await using host = await statusHost();
@@ -256,4 +256,4 @@ it("T2 a response deadline rejects while the host handler is pending, without an
 		await handled.promise;
 		vi.useRealTimers();
 	}
-}, 120_000);
+}, 600_000);

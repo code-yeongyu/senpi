@@ -1108,7 +1108,7 @@
     "typescript/no-non-null-assertion": 10
   },
   "packages/coding-agent/test/interactive-mode-anthropic-warning.test.ts": {
-    "typescript/no-explicit-any": 9
+    "typescript/no-explicit-any": 8
   },
   "packages/coding-agent/test/interactive-mode-clipboard-paste.test.ts": {
     "typescript/no-non-null-assertion": 1
