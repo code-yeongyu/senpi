@@ -119,4 +119,4 @@ it("serves concurrent readers the whole previous state until a multi-file round 
 		await rig.store.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);

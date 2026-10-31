@@ -25,7 +25,8 @@ import { canonicalSessionPath } from "./session-path-key.ts";
 import type { RpcSessionEntry, RpcSessionRegistry } from "./session-registry.ts";
 import { resolveMovedProfile } from "./session-registry-moved-path.ts";
 import { createWorkerCredit } from "./session-worker-credit.ts";
-import { type CanonicalControl, carriedCanonical } from "./compact-canonical-pairing.ts";
+import { type CanonicalControl, carriedCanonical, carriedRefusal } from "./compact-canonical-pairing.ts";
+import { protocolDepthLimitOf } from "./compact-protocol-depth.ts";
 import { CompactProducerStamp } from "./compact-producer-stamp.ts";
 import {
 	type HostToSessionWorker,
@@ -37,6 +38,8 @@ import {
 import { createSessionWorkerRegistry } from "./session-worker-registry.ts";
 import { IssuedWorkerOwners } from "./session-worker-owners.ts";
 import { McpFormWorker } from "./mcp-form-worker.ts";
+import type { SecretInputRoute } from "./secret-input-requests.ts";
+import type { SecretInputUnavailableReason } from "../../core/extensions/secret-input.ts";
 
 if (isBunBinary) {
 	const { registerBunRuntimeModules } = await import("../../bun/runtime-modules.ts");
@@ -61,6 +64,48 @@ const { exchange, installWriteReservation } = createWorkerCredit(send, failWorke
 installWriteReservation(canonicalSessionPath);
 
 class WorkerEventWriter extends SessionEventWriter {
+	readonly secretCancels = new Map<string, () => void>();
+	override secretInputRoute(_sessionId: string): SecretInputRoute {
+		const presenters = new Map<string, string | undefined>();
+		return {
+			select: (id, unavailable) => {
+				const decision = new SharedArrayBuffer(8192);
+				exchange((signal) => ({
+					type: "secret_select",
+					id,
+					connection: this.currentConnection(),
+					decision,
+					signal,
+				}));
+				const length = new Int32Array(decision, 0, 1)[0];
+				const result = JSON.parse(new TextDecoder().decode(new Uint8Array(decision, 4, length))) as
+					| { accepted: true; connection?: string }
+					| { accepted: false; reason: SecretInputUnavailableReason };
+				if (!result.accepted) return result.reason;
+				presenters.set(id, result.connection);
+				this.secretCancels.set(id, unavailable);
+				return undefined;
+			},
+			presenter: (id) => presenters.get(id),
+			// The parent authorizes the actual sender before forwarding a response into this isolate.
+			accepts: (id) => presenters.has(id) && presenters.get(id) === this.currentConnection(),
+			available: (id) => presenters.has(id),
+			send: (id, record) => exchange((signal) => ({ type: "secret_frame", id, record, signal })),
+			settled: (id) => {
+				this.secretCancels.delete(id);
+				exchange((signal) => ({ type: "secret_settled", id, signal }));
+			},
+			forget: (id) => {
+				this.secretCancels.delete(id);
+				presenters.delete(id);
+				exchange((signal) => ({ type: "secret_forget", id, signal }));
+			},
+			handshake: (capabilities) => {
+				if (this.currentConnection() === undefined)
+					exchange((signal) => ({ type: "secret_handshake", capabilities, signal }));
+			},
+		};
+	}
 	override bindMcpForms(_sessionId: string, durableId: string, ui: object, admit: () => void) {
 		return privateFormsEnforced ? privateForms.bind(durableId, ui, admit) : undefined;
 	}
@@ -134,6 +179,7 @@ class WorkerEventWriter extends SessionEventWriter {
 					...stamp.stamp(recovery, canonical, record),
 					recovery,
 					...(canonical ? { canonical } : {}),
+					...(carriedRefusal(record) ? { canonicalRefused: true as const } : {}),
 					...(replaced
 						? {
 								bootstrap: {
@@ -167,12 +213,14 @@ class WorkerEventWriter extends SessionEventWriter {
 		exchange((signal) => ({ type: "canonical", ordinal, firstOrdinal, recovery, record, signal }));
 	}
 	override canonicalUnavailable(_sessionId: string, cause: unknown): void {
-		// The host's compact state for this epoch is already gone after the first; later ones would only cost exchanges.
-		if (!ordered || canonicalLost) return;
-		canonicalLost = true;
+		// The host's compact state for this epoch is already gone after the first real loss; later losses would only cost
+		// exchanges. A depth refusal is never that loss and is always sent: the host counts it, live state or not (RULING-59 C).
+		const limit = protocolDepthLimitOf(cause);
+		if (!ordered || (canonicalLost && limit === undefined)) return;
+		canonicalLost ||= limit === undefined;
 		const { ordinal } = stamp.stamp(undefined, undefined);
 		const reason = cause instanceof Error ? cause.message : String(cause);
-		exchange((signal) => ({ type: "canonical_unavailable", ordinal, reason, signal }));
+		exchange((signal) => ({ type: "canonical_unavailable", ordinal, reason, limit, signal }));
 	}
 }
 
@@ -209,9 +257,8 @@ function subscribeSession(): void {
 	unsubscribeWake = entry?.runtime?.session.extensionRunner.onBusEvent(WAKE_SOURCE_STATE_EVENT, () =>
 		publishSnapshot(),
 	);
-	unsubscribe = entry?.runtime?.session.subscribe((event) =>
-		publishSnapshot(event.type === "agent_settled" || event.type === "agent_idle"),
-	);
+	// Settled for the host's drain only at agent_idle: agent_settled can precede its extension handlers (omo#11419).
+	unsubscribe = entry?.runtime?.session.subscribe((event) => publishSnapshot(event.type === "agent_idle"));
 }
 
 function snapshot(): WorkerSnapshot {
@@ -310,6 +357,9 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			await binding?.handle({ type: "extension_ui_response", id: message.id, cancelled: true });
 			return;
 		}
+		case "cancel_secret":
+			writer.secretCancels.get(message.id)?.();
+			return;
 		case "command": {
 			const privileged =
 				"type" in message.command &&
