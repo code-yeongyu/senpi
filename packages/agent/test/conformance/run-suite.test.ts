@@ -11,6 +11,8 @@ import { KILL_WAKE_CASES } from "../../src/durable/testing/kill-wake.ts";
 import { MULTI_HOST_CASES } from "../../src/durable/testing/multi-host-cases.ts";
 import { STORE_CASES } from "../../src/durable/testing/store-cases.ts";
 import { WAKE_CASES } from "../../src/durable/testing/wake-cases.ts";
+import { KILL_LEDGER_CASES } from "../../src/execution/testing/kill-ledger.ts";
+import { LEDGER_CASES } from "../../src/execution/testing/ledger-cases.ts";
 import { FAULT_TRANSPORT_CASES } from "../../src/transport/testing/fault-cases.ts";
 import { MULTI_CASES } from "../../src/transport/testing/multi-cases.ts";
 import { TRANSPORT_CASES } from "../../src/transport/testing/transport-cases.ts";
@@ -117,10 +119,13 @@ describe("the ./conformance export", () => {
 			"DurableStoreError",
 			"FAULT_PROFILE_NAMES",
 			"FAULT_TRANSPORT_CASES",
+			"KILL_LEDGER_CASES",
+			"KILL_LEDGER_DECLARATIONS",
 			"KILL_STORE_CASES",
 			"KILL_STORE_DECLARATIONS",
 			"KILL_WAKE_CASES",
 			"KILL_WAKE_DECLARATIONS",
+			"LEDGER_CASES",
 			"MULTI_CASES",
 			"MULTI_HOST_CASES",
 			"STORE_CASES",
@@ -130,6 +135,7 @@ describe("the ./conformance export", () => {
 			"buildManifest",
 			"computeSuiteHash",
 			"createBunTimerHost",
+			"createExecutionLedger",
 			"createInProcessNetwork",
 			"createManualTimers",
 			"createReliableTransport",
@@ -154,6 +160,8 @@ const HOSTS: Readonly<Record<string, HostFactory>> = {
 	"bun-sqlite": async () => (await import("./hosts/bun-sqlite.ts")).createBunSqliteHost(),
 };
 const HOST_IMPLEMENTATIONS = new Map<string, CaseImplementation<BunSqliteHostAdapters>>([
+	...LEDGER_CASES,
+	...KILL_LEDGER_CASES,
 	...STORE_CASES,
 	...KILL_STORE_CASES,
 	...WAKE_CASES,

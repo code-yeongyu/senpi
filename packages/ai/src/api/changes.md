@@ -1,3 +1,22 @@
+## 2026-10-27 - Anthropic sends the cross-session stable system prefix as its own cached block (senpi#4447)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `buildParams` builds `params.system` through `anthropicSystemTextBlocks`, passing the leading system message's `stablePrefix`.
+- `packages/ai/src/api/anthropic-system-blocks.ts`: new. When the rendered prompt still starts with the recorded stable prefix it goes out as two text blocks whose concatenation is the prompt; the stable block carries the system `cache_control`, the tail none, so the breakpoint count is unchanged. A prompt that no longer starts with it (a later `context_with_system` rewrite) goes out as one block.
+
+### Why
+
+- One system block with one breakpoint missed whenever any byte of a volatile tail (memory, MCP instructions) differed between sessions, so a new session read only the tools prefix and re-wrote the ~20k-token stable prompt.
+
+### Why an extension could not handle it
+
+- System block construction and breakpoint placement happen inside `packages/ai/src/api/anthropic-messages.ts` after every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the `params.system` assignment in `buildParams` in `packages/ai/src/api/anthropic-messages.ts`.
+
 ## 2026-10-30 - Anthropic SSE reports transport activity (senpi#4608)
 
 ### What changed

@@ -12,6 +12,24 @@
 
 ### Removed
 
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+- Anthropic requests send the cross-session stable part of the system prompt as its own cached block, so a new session reads it from cache even when memory or MCP instructions differ ([#4455](https://github.com/code-yeongyu/senpi/pull/4455))
+
+### Fixed
+
+- A 429 that names its reset as a wall clock with a zone ("resets 12am (Asia/Seoul)") now yields a retry hint ([#5047](https://github.com/code-yeongyu/senpi/pull/5047)).
+
+### Removed
+
+- The built-in Anthropic OAuth (PKCE) login, its copy-code login, its loopback callback listener on port 53692, its token refresh, and `loadAnthropicOAuth` from `@earendil-works/pi-ai/oauth`; Claude subscription sign-in goes through the Claude Code CLI ([#4515](https://github.com/code-yeongyu/senpi/pull/4515))
+
 ## [2026.10.30-2] - 2026-10-30
 
 ### Breaking Changes
