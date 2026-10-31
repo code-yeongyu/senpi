@@ -1,7 +1,6 @@
 import { type JsonObject, registerToolArgumentValidator, validateToolArguments } from "@earendil-works/pi-ai";
 import type { TSchema } from "typebox";
-import { Compile } from "typebox/compile";
-import { EVAL_LANGUAGE_INFERRED_KEY, inferEvalLanguage } from "./eval-language-inference.ts";
+import { EVAL_LANGUAGE_INFERRED_KEY, inferEvalLanguage, markEvalLanguageFilled } from "./eval-language-inference.ts";
 import { type EvalRunField, evalRunFieldRequiredMessage, normalizeEvalSummary } from "./eval-request.ts";
 import type { EvalLanguage } from "./types.ts";
 
@@ -13,36 +12,45 @@ const RUN_FIELDS: readonly EvalRunField[] = ["language", "code", "summary"];
 /**
  * Owns eval argument validation (senpi#5138). A run call (action omitted or "run") missing a run field fails with
  * one teaching error per missing field, before the generic anyOf validation whose per-branch dump a model cannot act
- * on. Every other call goes through the generic validation and coercion unchanged.
+ * on. Every other call goes through the generic validation and coercion unchanged: a failure there rethrows the generic
+ * path's own error, so its message (and the `Received arguments` block) is byte-for-byte what an unregistered schema gets.
  */
 export function registerEvalArgumentValidator(schema: TSchema, languages: readonly EvalLanguage[]): void {
 	// The same schema under another identity, so the generic path validates it instead of calling back here.
 	const generic: TSchema = Object.create(Object.getPrototypeOf(schema), Object.getOwnPropertyDescriptors(schema));
-	const compiled = Compile(generic);
+	const genericValidate = (args: unknown): unknown =>
+		validateToolArguments(
+			{ name: "eval", description: "", parameters: generic },
+			{ type: "toolCall", id: "", name: "eval", arguments: args as JsonObject },
+		);
 	const validate: EvalArgumentValidator = (value) => {
+		const callerArguments = structuredClone(value);
 		const inferred = fillInferredLanguage(value, languages);
 		const missing = missingRunFieldErrors(value, languages);
 		if (missing.length > 0) {
 			validate.errors = missing;
 			return false;
 		}
+		let coerced: unknown;
 		try {
-			const coerced: unknown = validateToolArguments(
-				{ name: "eval", description: "", parameters: generic },
-				{ type: "toolCall", id: "", name: "eval", arguments: value as JsonObject },
-			);
-			// A registered validator's input is what the caller returns, so the generic coercion lands in place.
-			if (isRecord(value) && isRecord(coerced)) {
-				for (const key of Object.keys(value)) delete value[key];
-				Object.assign(value, coerced);
-				if (inferred !== undefined) value[EVAL_LANGUAGE_INFERRED_KEY] = inferred;
-			}
-			validate.errors = null;
-			return true;
-		} catch {
-			validate.errors = [...compiled.Errors(value)];
-			return false;
+			// Throws the generic validation error unchanged when the call is invalid for any other reason.
+			coerced = genericValidate(value);
+		} catch (error) {
+			// A filled language stands only for a call that validates; otherwise report what the caller sent.
+			if (inferred !== undefined) genericValidate(callerArguments);
+			throw error;
 		}
+		// A registered validator's input is what the caller returns, so the generic coercion lands in place.
+		if (isRecord(value) && isRecord(coerced)) {
+			for (const key of Object.keys(value)) delete value[key];
+			Object.assign(value, coerced);
+			if (inferred !== undefined) {
+				value[EVAL_LANGUAGE_INFERRED_KEY] = inferred;
+				markEvalLanguageFilled(value);
+			}
+		}
+		validate.errors = null;
+		return true;
 	};
 	registerToolArgumentValidator(schema, validate);
 }
