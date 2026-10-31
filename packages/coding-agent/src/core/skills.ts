@@ -530,3 +530,22 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 		diagnostics: [...allDiagnostics, ...collisionDiagnostics],
 	};
 }
+
+/**
+ * Warnings for skill folders an ignore file hid from discovery (senpi#5060). A folder whose name a loaded
+ * skill already carries is skipped: another root supplied that skill, so nothing is missing.
+ */
+export function ignoredSkillDiagnostics(
+	ignoredSkillFiles: readonly string[],
+	loadedSkills: readonly Skill[],
+): ResourceDiagnostic[] {
+	const loadedNames = new Set(loadedSkills.map((skill) => skill.name));
+	return ignoredSkillFiles
+		.filter((skillFile) => !loadedNames.has(basename(dirname(skillFile))))
+		.map((skillFile) => ({
+			type: "warning",
+			category: "skill-ignored",
+			path: skillFile,
+			message: `Skill not loaded: ${dirname(skillFile)} is listed in an ignore file (.gitignore, .ignore or .fdignore) of the folder above it. Remove that entry to load the skill; to keep git ignoring it, list it in .git/info/exclude instead.`,
+		}));
+}

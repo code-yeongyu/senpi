@@ -2,6 +2,7 @@ import type { McpFormBinding } from "../../core/mcp-form-types.ts";
 import type { McpPresenterAuthority, McpPresenterConnection } from "./mcp-presenter-authority.ts";
 import { LegacyRecordRefusals } from "./legacy-record-depth.ts";
 import type { MediaPersister } from "./media-placeholders.ts";
+import { SecretInputPresentations } from "./secret-input-presentations.ts";
 import { RpcSecurityPresentations } from "./security-presentations.ts";
 import { SessionEventFanout } from "./session-event-fanout.ts";
 import { SessionConnectionContext } from "./session-connection-context.ts";
@@ -21,6 +22,7 @@ export type FlushScheduler = (flush: () => Promise<void>) => void;
  * The writer's behaviour is split across the layers that extend this one (session-event-writer.ts).
  */
 export abstract class SessionEventWriterState {
+	protected readonly secretPresentations: SecretInputPresentations;
 	readonly structuredLanes = new SessionStructuredLanes();
 	/** Records refused at the engine's JSON depth limit on the legacy wire (RULING-68). */
 	readonly legacyRefusals = new LegacyRecordRefusals();
@@ -91,7 +93,14 @@ export abstract class SessionEventWriterState {
 		waitOrSchedule?: BackpressureWaiter | FlushScheduler,
 		scheduleFlush?: FlushScheduler,
 	) {
+		this.secretPresentations = new SecretInputPresentations(
+			this.fanout,
+			() => this.currentConnection(),
+			(line) => this.writeRaw(line),
+			() => this.requestFlush(),
+		);
 		this.fanout.onConnectionClosed = (id) => {
+			this.secretPresentations.detach(id);
 			this.securityPresentations.dropConnection(id);
 			const sender = this.presenterConnections.get(id);
 			if (sender) this.presenterAuthority?.detach(sender);
@@ -107,6 +116,8 @@ export abstract class SessionEventWriterState {
 	}
 
 	abstract withConnection<T>(id: string, task: () => T): T;
+
+	abstract currentConnection(): string | undefined;
 
 	protected abstract requestFlush(): void;
 }

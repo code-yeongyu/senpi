@@ -35,6 +35,8 @@ export interface SkillWalkOptions {
 	readonly allowedSet?: SkillAllowedSet;
 	readonly ancestry?: ReadonlySet<string>;
 	readonly onDirectory?: (path: string) => void;
+	/** Receives the SKILL.md of each skill folder an ignore file hid from the walk. */
+	readonly onIgnoredSkill?: (skillFile: string) => void;
 	/** Optional cache owned by a single discovery pass, never retained on a Skill. */
 	readonly realpath?: (path: string) => string;
 }
@@ -240,7 +242,11 @@ export function collectSkillEntries(
 				entries.push(...collectSkillEntries(fullPath, mode, ignore(), root, { ...options, ancestry }));
 				continue;
 			}
-			if (ig.ignores(`${relPath}/`)) continue;
+			if (ig.ignores(`${relPath}/`)) {
+				const skillFile = join(fullPath, "SKILL.md");
+				if (options.onIgnoredSkill && existsSync(skillFile)) options.onIgnoredSkill(skillFile);
+				continue;
+			}
 
 			entries.push(...collectSkillEntries(fullPath, mode, ig, root, { ...options, ancestry }));
 		}
