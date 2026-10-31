@@ -35,6 +35,27 @@ export interface NativeProviderMapping {
 interface NativeEntryOptions {
 	id?: string;
 	signal?: AbortSignal;
+	sessionId?: string;
+}
+
+const OPENCODE_HOST = "opencode.ai";
+
+function isOpenCodeHosted(model: NativeModelInfo): boolean {
+	if (model.provider === "opencode" || model.provider === "opencode-go") return true;
+	try {
+		return new URL(model.baseUrl).hostname === OPENCODE_HOST;
+	} catch {
+		return false;
+	}
+}
+
+/** OpenCode's required per-conversation routing header, mirroring provider-attribution.ts getSessionHeaders. */
+function openCodeSessionHeaders(
+	model: NativeModelInfo,
+	sessionId: string | undefined,
+): Record<string, string> | undefined {
+	if (!sessionId || !isOpenCodeHosted(model)) return undefined;
+	return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
 }
 
 export function nativeMapping(model: NativeModelInfo): NativeProviderMapping | null {
@@ -155,7 +176,7 @@ async function buildNativeEntryForModel(
 	options: NativeEntryOptions = {},
 ): Promise<SearchProviderEntry | null> {
 	if (!model || !modelRegistry) return null;
-	const { id, signal } = options;
+	const { id, signal, sessionId } = options;
 
 	const mapping = nativeMapping(model);
 	if (!mapping) return null;
@@ -188,6 +209,8 @@ async function buildNativeEntryForModel(
 	const requestBaseUrl = auth.baseUrl ? mappingEndpointUrl(mapping, auth.baseUrl) : baseUrl;
 	if (!isAllowedProviderBaseUrl(requestBaseUrl)) return null;
 	const headers = credentialHeaders(model.headers, auth.headers);
+	const sessionHeaders = openCodeSessionHeaders(model, sessionId);
+	const entryHeaders = sessionHeaders ? { ...sessionHeaders, ...(headers ?? {}) } : headers;
 
 	return {
 		id: entryId,
@@ -196,7 +219,7 @@ async function buildNativeEntryForModel(
 		baseUrl: requestBaseUrl,
 		model: model.id,
 		priority: -1,
-		...(headers ? { headers } : {}),
+		...(entryHeaders ? { headers: entryHeaders } : {}),
 	};
 }
 export async function buildNativeEntries(
@@ -204,6 +227,7 @@ export async function buildNativeEntries(
 	modelRegistry: NativeModelRegistry | undefined,
 	signal?: AbortSignal,
 	searchModel?: { model: string; fallbackModel?: string },
+	sessionId?: string,
 ): Promise<SearchProviderEntry[]> {
 	signal?.throwIfAborted();
 	if (!modelRegistry) return [];
@@ -214,7 +238,7 @@ export async function buildNativeEntries(
 	const activeRouteKey = model ? nativeRouteKey(model) : null;
 	if (activeRouteKey) {
 		seenRoutes.add(activeRouteKey);
-		const activeEntry = await buildNativeEntryForModel(model, modelRegistry, { signal });
+		const activeEntry = await buildNativeEntryForModel(model, modelRegistry, { signal, sessionId });
 		if (activeEntry) entries.push(searchModel ? { ...activeEntry, ...searchModel } : activeEntry);
 	}
 
@@ -228,6 +252,7 @@ export async function buildNativeEntries(
 		const entry = await buildNativeEntryForModel(availableModel, modelRegistry, {
 			id: "native-discovered",
 			signal,
+			sessionId,
 		});
 		if (!entry) continue;
 		entries.push({ ...entry, id: discoveredNativeEntryId(entry.provider, routeKey) });
@@ -240,6 +265,7 @@ export async function buildNativeEntry(
 	model: NativeModelInfo | undefined,
 	modelRegistry: NativeModelRegistry | undefined,
 	id = "native",
+	sessionId?: string,
 ): Promise<SearchProviderEntry | null> {
-	return buildNativeEntryForModel(model, modelRegistry, { id });
+	return buildNativeEntryForModel(model, modelRegistry, { id, sessionId });
 }
