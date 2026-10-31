@@ -1,3 +1,22 @@
+## 2026-10-30 - Check compaction values without redundant assertions (senpi#4973)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/utils.ts`: use the existing tool-argument record type for file-operation tracking and conversation serialization.
+- `packages/coding-agent/src/core/compaction/compaction-execution.ts`: check summary details with `satisfies CompactionDetails`.
+
+### Why
+
+- These values already have the required shape. The compiler now checks them without redundant assertions, and the emitted JavaScript is unchanged.
+
+### Why an extension could not handle it
+
+- Extensions cannot change the compile-time checks inside compaction's built-in implementation.
+
+### Expected merge conflict zones
+
+- LOW: the file-operation argument, tool-call serialization alias, and returned summary details.
+
 ## 2026-10-22 - Preserve message cut classification across bookkeeping (senpi#3864)
 
 ### What changed
