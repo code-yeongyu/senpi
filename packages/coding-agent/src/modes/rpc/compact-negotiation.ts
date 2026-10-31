@@ -4,8 +4,8 @@ import { CONNECTION_ROLE_FIXED } from "./connection-roles.ts";
 import type { RpcCommand } from "./rpc-types.ts";
 import { COMPACT_EVENTS_CAPABILITY } from "./custom-capability.ts";
 import { EVENT_RESYNC_CAPABILITY } from "./socket-peer-recovery.ts";
-export const COMPACT_UPDATES_CAPABILITY = "compact_message_updates_v1";
-export const COMPACT_PAIR = [COMPACT_UPDATES_CAPABILITY, EVENT_RESYNC_CAPABILITY] as const;
+const COMPACT_UPDATES_CAPABILITY = "compact_message_updates_v1";
+const COMPACT_PAIR = [COMPACT_UPDATES_CAPABILITY, EVENT_RESYNC_CAPABILITY] as const;
 
 /** A declaration belongs to one actual socket registration, never a session or launch profile. */
 export class CompactSelection {
