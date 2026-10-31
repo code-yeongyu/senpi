@@ -35,7 +35,10 @@ export interface ObservedFrame {
 	readonly previousCredit: number | undefined;
 }
 
-export function within<T>(name: string, promise: Promise<T>, ms = 30_000): Promise<T> {
+/** The bound on one wait for a real event (#4994): it only exists to fail a hung test, never to pace one. */
+export const EVENT_SAFETY_MS = 300_000;
+
+export function within<T>(name: string, promise: Promise<T>, ms = EVENT_SAFETY_MS): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	return Promise.race([
 		promise,
@@ -47,8 +50,8 @@ export function within<T>(name: string, promise: Promise<T>, ms = 30_000): Promi
 
 export async function creditOf(signal: SharedArrayBuffer): Promise<number> {
 	const state = new Int32Array(signal);
-	const waited = Atomics.waitAsync(state, 0, 0, 10_000);
-	if (waited.async) await waited.value;
+	const waited = Atomics.waitAsync(state, 0, 0, EVENT_SAFETY_MS);
+	if (waited.async && (await waited.value) === "timed-out") throw new Error("deadline: credit");
 	return Atomics.load(state, 0);
 }
 

@@ -121,4 +121,4 @@ it("bootstrap before admission, worker: accepted from 'ready' inside commit, bef
 	} finally {
 		await host.dispose();
 	}
-}, 60_000);
+}, 600_000);
