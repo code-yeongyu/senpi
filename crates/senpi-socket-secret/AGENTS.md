@@ -11,6 +11,8 @@ src/process_identity.rs   Pure observation table: a reopened PID is Live, Gone o
 src/process_handle.rs     Retained non-inheritable process handle: PID, creation FILETIME, TokenUser SID, exit wait
 src/session.rs            PID-4 creation FILETIME; `Unverified` never matches anything
 src/volume.rs             Volume facts read from ONE handle that follows reparse points
+src/publish.rs            First publication: CREATE_NEW staging with the owner-only DACL, flush, FileRenameInfo ReplaceIfExists=FALSE
+src/owner_dacl.rs         Protected DACL for the current user, SYSTEM and Administrators
 src/presence.rs           Presence guards: lock outcome rule, registry (no unlock while active), sticky pre-action fence
 src/presence_windows.rs   LockFileEx on byte [0,1) of an EXISTING object; overlapped wait cancelled by CancelIoEx
 src/lib.rs                N-API exports and the `__senpiSocketSecretAbi1` ABI sentinel
@@ -25,6 +27,7 @@ tests/native_presence.rs  Presence-guard receipts (contention, release, blocking
 - The classifying handle follows reparse points. Never open it with `FILE_FLAG_OPEN_REPARSE_POINT`.
 - A process record is PID + full creation FILETIME + TokenUser SID read on ONE handle; a different readable creation time is Gone, every unreadable or inconsistent answer is Unknown, and Gone never authorizes signalling the PID's current holder.
 - `SessionIdentity` has no `PartialEq` on purpose; compare with `same_session`, under which `Unverified` matches nothing.
+- Publication never writes the final path, never copies or truncates, and a collision is only ERROR_ALREADY_EXISTS/ERROR_FILE_EXISTS. One handle (`GENERIC_WRITE | DELETE`, share read only) writes, flushes and renames the staging file, and on any outcome but `Published` deletes it through that handle; nothing is reopened or deleted by path. A failed delete is part of the result (`Publication::staging_left_behind`, N-API `stagingLeftBehind { path, windowsError }`), never a log line, and never carries the bytes.
 - A presence guard proves release only by a successful exclusive acquisition; `ERROR_LOCK_VIOLATION` is occupied and every other failure is unknown. A guard leaves the registry only with a quiescence receipt, a failed pre-action check fences the registry permanently, and a missing presence object is never recreated.
 - Prebuilds and the loader are not wired yet; this crate ships no artifact until the packaging change lands.
 
