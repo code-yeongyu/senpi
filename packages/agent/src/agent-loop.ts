@@ -1204,8 +1204,14 @@ async function executeToolCalls(
 	);
 	const host: ToolHost = config.toolHost ?? {
 		execute: async (call, options) => {
-			for (const raw of call.calls) {
-				await options.recordWitness?.({ pipeline: "legacy", toolCallId: raw.id });
+			// Only yield when a witness sink is configured and returns a promise: an unconditional `await` adds a
+			// microtask per call and reorders lifecycle vs message events against today's fused path (EQ E03).
+			const recordWitness = options.recordWitness;
+			if (recordWitness) {
+				for (const raw of call.calls) {
+					const pending = recordWitness({ pipeline: "legacy", toolCallId: raw.id });
+					if (pending) await pending;
+				}
 			}
 			return call.mode === "sequential"
 				? executeToolCallsSequential(
