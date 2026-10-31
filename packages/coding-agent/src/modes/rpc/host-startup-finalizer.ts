@@ -5,8 +5,10 @@
  * `cleanup=incomplete` when that cleanup did not finish in time or failed. The original diagnostic
  * always comes first; a cleanup failure is appended after it, never instead of it.
  */
+import { childStalledStopMaxMs } from "./host-stalled-evidence.ts";
 import type { StartupClock, StartupOutcome } from "./host-startup-policy.ts";
-import { startupTimeoutDetail } from "./host-startup-policy.ts";
+import { startupEnvelope, startupTimeoutDetail } from "./host-startup-policy.ts";
+import { monotonicStartupClock } from "./host-startup-run.ts";
 
 export type StartupFailure = Exclude<StartupOutcome, { readonly kind: "ready" }>;
 
@@ -51,4 +53,16 @@ export function createStartupFinalizer(options: {
 					: "";
 		return { outcome, cleanup, detail: `${original}${appended}` };
 	}
+}
+
+/** One failed `startHost` attempt, settled once: owned cleanup inside the failed-start allowance C at the resolved stall setting. */
+export function finalizeFailedStart(
+	outcome: StartupFailure,
+	cleanup: () => Promise<void>,
+): Promise<StartupFinalReport> {
+	return createStartupFinalizer({
+		clock: monotonicStartupClock(),
+		cleanupBudgetMs: startupEnvelope(childStalledStopMaxMs()).cleanup,
+		cleanup,
+	})(outcome);
 }

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// First: report a coordinated host or supervisor start before anything else loads (senpi#4602).
+import "./modes/rpc/host-startup-beacon.ts";
 import "./valid-cwd.ts";
 // Second: capture the private descriptor table before anything can spawn (senpi#4749).
 import "./private-fds.ts";

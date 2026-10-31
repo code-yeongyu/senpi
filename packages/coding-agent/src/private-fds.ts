@@ -64,7 +64,7 @@ function isState(value: unknown): value is PrivateFdState {
  * at least 21 close-on-exec at startup, while Node on Linux leaks 24 and above into every child it
  * spawns. POSIX adopts only 5..15; Windows pairs instead clear inheritance explicitly at receipt.
  */
-const ADOPTABLE_MAX = 15;
+export const ADOPTABLE_MAX = 15;
 
 /**
  * The runtime's own IPC channel is an AF_UNIX socketpair too. Node names its descriptor; Bun exposes the

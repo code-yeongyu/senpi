@@ -10,12 +10,12 @@ import { describe, expect, it } from "vitest";
 import {
 	STARTUP_DECISION_BUDGET_MS,
 	STARTUP_PHASE_ALLOWANCE_MS,
-	type StartupClock,
 	type StartupPhase,
 	startStartupController,
 	startupEnvelope,
 	startupTimeoutDetail,
 } from "../../src/modes/rpc/host-startup-policy.ts";
+import { virtualClock } from "./host-startup-clock-support.ts";
 
 const INITIAL_PATH: readonly StartupPhase[] = [
 	"supervisor_bootstrap",
@@ -29,37 +29,6 @@ const INITIAL_PATH: readonly StartupPhase[] = [
 	"public_verified",
 ];
 
-function virtualClock(): StartupClock & { advanceTo(at: number): void } {
-	let now = 1_000_000;
-	const origin = now;
-	const scheduled = new Map<number, { at: number; fire: () => void }>();
-	let next = 0;
-	return {
-		now: () => now,
-		scheduleAt(at, fire) {
-			const id = next++;
-			scheduled.set(id, { at, fire });
-			return id;
-		},
-		cancel(handle) {
-			scheduled.delete(handle as number);
-		},
-		advanceTo(elapsed) {
-			const target = origin + elapsed;
-			for (;;) {
-				const due = [...scheduled.entries()]
-					.filter(([, entry]) => entry.at <= target)
-					.sort(([, a], [, b]) => a.at - b.at)[0];
-				if (!due) break;
-				now = Math.max(now, due[1].at);
-				scheduled.delete(due[0]);
-				due[1].fire();
-			}
-			now = target;
-		},
-	};
-}
-
 describe("startup policy constants (senpi#4602)", () => {
 	it("publishes the A-amended phase allowances and the 180 s spawn-origin ceiling", () => {
 		expect(STARTUP_DECISION_BUDGET_MS).toBe(180_000);
@@ -68,6 +37,7 @@ describe("startup policy constants (senpi#4602)", () => {
 			supervisor_setup: 15_000,
 			host_bootstrap: 30_000,
 			host_runtime: 60_000,
+			opaque_host: 90_000,
 			internal_ready: 15_000,
 			observer_ready: 15_000,
 			public_published: 15_000,

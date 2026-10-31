@@ -19,6 +19,7 @@ export type StartupPhase =
 	| "supervisor_setup"
 	| "host_bootstrap"
 	| "host_runtime"
+	| "opaque_host"
 	| "internal_ready"
 	| "observer_ready"
 	| "public_published"
@@ -30,6 +31,9 @@ export const STARTUP_PHASE_ALLOWANCE_MS: Readonly<Record<StartupPhase, number>> 
 	supervisor_setup: 15_000,
 	host_bootstrap: 30_000,
 	host_runtime: 60_000,
+	// A custom host-child command that cannot report progress: one phase from its spawn, completed only by
+	// the authenticated internal reply, replacing host_bootstrap + host_runtime.
+	opaque_host: 90_000,
 	internal_ready: 15_000,
 	observer_ready: 15_000,
 	public_published: 15_000,
@@ -37,7 +41,11 @@ export const STARTUP_PHASE_ALLOWANCE_MS: Readonly<Record<StartupPhase, number>> 
 	public_verified: 10_000,
 };
 
-export type StartupLaunchKind = "initial" | "successor";
+/**
+ * `legacy`: a supervisor command that is not known to report progress. It gets one public-ready phase of the
+ * whole decision budget from spawn, with no renewals, and keeps every inner limit of its own.
+ */
+export type StartupLaunchKind = "initial" | "successor" | "legacy";
 
 const SHARED_PREFIX: readonly StartupPhase[] = [
 	"supervisor_bootstrap",
@@ -52,7 +60,10 @@ const SHARED_PREFIX: readonly StartupPhase[] = [
 const PHASE_PATH: Readonly<Record<StartupLaunchKind, readonly StartupPhase[]>> = {
 	initial: [...SHARED_PREFIX, "public_published", "presenter_resolved", "public_verified"],
 	successor: [...SHARED_PREFIX, "presenter_resolved", "public_published", "public_verified"],
+	legacy: ["public_verified"],
 };
+
+const OPAQUE_REPLACES: readonly StartupPhase[] = ["host_bootstrap", "host_runtime", "internal_ready"];
 
 export interface StartupClock {
 	now(): number;
@@ -76,45 +87,68 @@ export type StartupOutcome =
 export interface StartupController {
 	/** `ignored`: a replay of a completed phase; `rejected`: terminal, expired, or not the current phase. */
 	complete(phase: StartupPhase): "accepted" | "ignored" | "rejected";
+	/**
+	 * The supervisor declares, before it spawns its host child, that the child cannot report progress. Only
+	 * an initial launch in supervisor_setup may switch; the opaque phase then replaces the child's phases.
+	 */
+	declareOpaqueHost(): "accepted" | "rejected";
 	fail(cause: Error): void;
 	readonly terminal: StartupOutcome | undefined;
+	readonly phase: StartupPhase;
+	/** Milliseconds left before the current phase's deadline; 0 once terminal. */
+	remainingMs(): number;
+	/** Resolves true once `phase` is the current phase, false once the attempt is terminal first. */
+	whenPhase(phase: StartupPhase): Promise<boolean>;
+	/** Resolves with the terminal outcome. */
+	settled(): Promise<StartupOutcome>;
 }
 
 /** Create the controller immediately BEFORE spawning: its creation instant is the spawn origin. */
 export function startStartupController(options: {
 	readonly launchKind: StartupLaunchKind;
 	readonly clock: StartupClock;
+	/** G for this attempt; only tests lower it. */
+	readonly decisionBudgetMs?: number;
 }): StartupController {
 	const { clock } = options;
-	const path = PHASE_PATH[options.launchKind];
+	const budget = options.decisionBudgetMs ?? STARTUP_DECISION_BUDGET_MS;
+	let path = PHASE_PATH[options.launchKind];
 	const t0 = clock.now();
-	const ceiling = t0 + STARTUP_DECISION_BUDGET_MS;
+	const ceiling = t0 + budget;
 	let index = 0;
 	let phaseLimit = 0;
 	let deadline = 0;
 	let timer: unknown;
 	let terminal: StartupOutcome | undefined;
+	const listeners = new Set<() => void>();
 
 	const current = (): StartupPhase => path[Math.min(index, path.length - 1)] ?? "supervisor_bootstrap";
+	const allowance = (phase: StartupPhase): number =>
+		options.launchKind === "legacy" ? budget : STARTUP_PHASE_ALLOWANCE_MS[phase];
+	const notify = (): void => {
+		for (const listener of [...listeners]) listener();
+	};
 	const settle = (outcome: StartupOutcome): void => {
 		if (terminal) return;
 		terminal = outcome;
 		clock.cancel(timer);
+		notify();
 	};
 	const expire = (): void => {
 		const phase = current();
 		settle({
 			kind: "timeout",
 			phase,
-			limit: phaseLimit <= ceiling ? "phase" : "overall",
-			phaseBudgetMs: STARTUP_PHASE_ALLOWANCE_MS[phase],
+			limit: phaseLimit < ceiling ? "phase" : "overall",
+			phaseBudgetMs: allowance(phase),
 			elapsedMs: deadline - t0,
 		});
 	};
 	const enter = (at: number): void => {
-		phaseLimit = at + STARTUP_PHASE_ALLOWANCE_MS[current()];
+		phaseLimit = at + allowance(current());
 		deadline = Math.min(phaseLimit, ceiling);
 		timer = clock.scheduleAt(deadline, expire);
+		notify();
 	};
 	/** Ingress sampling: at or past the deadline, expiry wins over whatever just arrived. */
 	const expiredAt = (now: number): boolean => {
@@ -122,11 +156,27 @@ export function startStartupController(options: {
 		return terminal !== undefined;
 	};
 
+	const waitFor = <T>(check: () => T | undefined): Promise<T> => {
+		const ready = check();
+		if (ready !== undefined) return Promise.resolve(ready);
+		return new Promise<T>((resolveWait) => {
+			const listener = (): void => {
+				const value = check();
+				if (value === undefined) return;
+				listeners.delete(listener);
+				resolveWait(value);
+			};
+			listeners.add(listener);
+		});
+	};
+
 	enter(t0);
 	return {
-		complete(phase) {
+		complete(requested) {
 			const now = clock.now();
 			if (expiredAt(now)) return "rejected";
+			// In the opaque path the supervisor's authenticated internal reply is what completes opaque_host.
+			const phase = requested === "internal_ready" && current() === "opaque_host" ? "opaque_host" : requested;
 			const position = path.indexOf(phase);
 			if (position >= 0 && position < index) return "ignored";
 			if (position !== index) return "rejected";
@@ -136,6 +186,13 @@ export function startStartupController(options: {
 			else enter(now);
 			return "accepted";
 		},
+		declareOpaqueHost() {
+			if (expiredAt(clock.now())) return "rejected";
+			if (options.launchKind !== "initial" || current() !== "supervisor_setup") return "rejected";
+			const [before = [], after = []] = [path.slice(0, index + 1), path.slice(index + 1)];
+			path = [...before, "opaque_host", ...after.filter((phase) => !OPAQUE_REPLACES.includes(phase))];
+			return "accepted";
+		},
 		fail(cause) {
 			const now = clock.now();
 			if (expiredAt(now)) return;
@@ -143,6 +200,18 @@ export function startStartupController(options: {
 		},
 		get terminal() {
 			return terminal;
+		},
+		get phase() {
+			return current();
+		},
+		remainingMs() {
+			return terminal ? 0 : Math.max(0, deadline - clock.now());
+		},
+		whenPhase(phase) {
+			return waitFor(() => (terminal ? false : current() === phase ? true : undefined));
+		},
+		settled() {
+			return waitFor(() => terminal);
 		},
 	};
 }

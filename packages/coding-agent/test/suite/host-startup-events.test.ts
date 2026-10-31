@@ -3,13 +3,12 @@
  * that phase, for the attempt the controller allocated, in strict per-producer sequence.
  */
 import { describe, expect, it } from "vitest";
+import { newStartupAttempt, startupEventIngress } from "../../src/modes/rpc/host-startup-events.ts";
 import {
 	MAX_STARTUP_EVENT_BYTES,
-	newStartupAttempt,
 	type StartupBinding,
-	startupEventIngress,
 	startupEventLine,
-} from "../../src/modes/rpc/host-startup-events.ts";
+} from "../../src/modes/rpc/host-startup-wire.ts";
 import { type StartupClock, startStartupController } from "../../src/modes/rpc/host-startup-policy.ts";
 
 const frozenClock: StartupClock = { now: () => 0, scheduleAt: () => undefined, cancel: () => {} };

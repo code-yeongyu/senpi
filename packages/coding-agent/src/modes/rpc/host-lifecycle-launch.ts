@@ -11,7 +11,9 @@ import { isBunBinary } from "../../config.ts";
 import { runtimeExecArgv } from "../../utils/runtime-exec-argv.ts";
 import { resolveCliMainPath } from "./host-cli-entry.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
-import { HOST_INSTANCE_ID_ENV, INTERNAL_KEY_STDIN_ENV } from "./host-identity-env.ts";
+import { HOST_INSTANCE_ID_ENV, HOST_STARTUP_EVENTS_ENV, INTERNAL_KEY_STDIN_ENV } from "./host-identity-env.ts";
+import { hostChildStartupHandOff } from "./host-startup-beacon.ts";
+import { startupEventStdio } from "./host-startup-wire.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
 	HOST_PUBLIC_SOCKET_ENV,
@@ -265,6 +267,8 @@ export function spawnHostChild(options: {
 	readonly instanceId: string;
 	readonly cleanupPaths: readonly string[];
 	readonly publicSocket: string;
+	/** Give the child the startup pipe and its hand-off (a coordinated start of the engine's own host, senpi#4602). */
+	readonly reportsStartup?: boolean;
 }): ChildProcess {
 	const { launch, internalSocket, internal, internalSecret, publicSocket } = options;
 	const childLaunch = spawnableChildLaunch(resolveHostChildLaunch(launch, internalSocket));
@@ -294,6 +298,7 @@ export function spawnHostChild(options: {
 				[INTERNAL_KEY_STDIN_ENV]: options.internalKey ? "1" : undefined,
 				[HOST_CLEANUP_PATHS_ENV]: options.cleanupPaths.join("\n"),
 				...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
+				[HOST_STARTUP_EVENTS_ENV]: options.reportsStartup ? hostChildStartupHandOff() : undefined,
 			},
 			// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
 			// wait on and keeps the write end owned by this process alone.
@@ -304,6 +309,7 @@ export function spawnHostChild(options: {
 				"inherit",
 				"pipe",
 				...(bootstrap ? ["pipe" as const] : []),
+				...(options.reportsStartup ? startupEventStdio(bootstrap ? 5 : 4) : []),
 			],
 			// The supervisor is spawned detached, so on win32 it owns no console. A
 			// console-subsystem child started from it would allocate a fresh one,

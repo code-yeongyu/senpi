@@ -1,16 +1,18 @@
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DaemonPidFile } from "../../src/utils/process-identity.ts";
 import {
 	clearStartupIntent,
+	readStartupAttemptRecord,
 	readStartupIntent,
 	reconcileStartupIntent,
 	type StartupIntent,
 	startupIntentPath,
 	writeStartupIntent,
 } from "../../src/modes/rpc/host-startup-intent.ts";
+import { STARTUP_ATTEMPT_FILE } from "../../src/modes/rpc/host-startup-wire.ts";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -23,15 +25,36 @@ async function daemonDir(): Promise<string> {
 	return dir;
 }
 
-const launcher: DaemonPidFile = { pid: 101, processStartTime: "launcher-start" };
+const SETTLED_MS = 284_000;
+const launcher: DaemonPidFile = { pid: 101, processStartTime: null };
 const child: DaemonPidFile = { pid: 202, processStartTime: "child-start" };
-const base: StartupIntent = { attempt: "a".repeat(32), instanceId: "instance-1", generation: 0, launcher };
+const supervisor: DaemonPidFile = { pid: 303, processStartTime: "supervisor-start" };
+const base: StartupIntent = {
+	attempt: "a".repeat(32),
+	instanceId: "instance-1",
+	generation: 0,
+	launcher,
+	writtenAt: 1_000,
+};
 
-function liveness(live: ReadonlySet<number>, unreadable: ReadonlySet<number> = new Set()) {
-	return async (record: DaemonPidFile) => {
-		if (unreadable.has(record.pid)) throw new Error("identity unreadable");
-		return live.has(record.pid);
-	};
+function reconcile(
+	intent: Awaited<ReturnType<typeof readStartupIntent>>,
+	options: {
+		readonly live?: readonly number[];
+		readonly unreadable?: readonly number[];
+		readonly recorded?: DaemonPidFile;
+		readonly now?: number;
+	} = {},
+) {
+	return reconcileStartupIntent(intent, {
+		matches: async (record) => {
+			if (options.unreadable?.includes(record.pid)) throw new Error("identity unreadable");
+			return options.live?.includes(record.pid) ?? false;
+		},
+		attemptRecord: async () => options.recorded,
+		expiryMs: SETTLED_MS,
+		now: options.now ?? 2_000,
+	});
 }
 
 describe("startup intent record (senpi#4602)", () => {
@@ -46,26 +69,54 @@ describe("startup intent record (senpi#4602)", () => {
 		expect(await readStartupIntent(dir)).toBeUndefined();
 	});
 
-	it("reads a torn or foreign-shaped intent as unreadable, not as absent", async () => {
+	it("reads a torn intent as unreadable with its file age, never as absent", async () => {
 		const dir = await daemonDir();
 		await writeFile(startupIntentPath(dir), "{not json");
-		expect(await readStartupIntent(dir)).toBe("unreadable");
-		await writeFile(startupIntentPath(dir), JSON.stringify({ version: 1, attempt: "x" }));
-		expect(await readStartupIntent(dir)).toBe("unreadable");
+		expect(await readStartupIntent(dir)).toMatchObject({ unreadable: true, writtenAt: expect.any(Number) });
+	});
+
+	it("finds a supervisor's attempt record only under the same attempt nonce", async () => {
+		const generation = await daemonDir();
+		await mkdir(generation, { recursive: true });
+		await writeFile(join(generation, STARTUP_ATTEMPT_FILE), JSON.stringify({ attempt: base.attempt, ...supervisor }));
+		expect(await readStartupAttemptRecord(generation, base.attempt)).toEqual(supervisor);
+		expect(await readStartupAttemptRecord(generation, "b".repeat(32))).toBeUndefined();
 	});
 });
 
 describe("startup intent reconciliation (senpi#4602)", () => {
 	it.each([
-		["no intent", undefined, liveness(new Set()), "none"],
-		["an unreadable intent", "unreadable", liveness(new Set()), "unknown"],
-		["a launcher still running", { ...base, child }, liveness(new Set([101])), "launcher_live"],
-		["a launcher whose identity cannot be read", { ...base, child }, liveness(new Set(), new Set([101])), "unknown"],
-		["a dead launcher that never bound its child", base, liveness(new Set()), "unknown"],
-		["a dead launcher whose child still runs", { ...base, child }, liveness(new Set([202])), "candidate_live"],
-		["a child whose identity cannot be read", { ...base, child }, liveness(new Set(), new Set([202])), "unknown"],
-		["a dead launcher and a provably gone child", { ...base, child }, liveness(new Set()), "candidate_gone"],
-	] as const)("%s reconciles to %s", async (_case, intent, matches, verdict) => {
-		expect(await reconcileStartupIntent(intent, matches)).toBe(verdict);
+		["no intent", undefined, {}, "none"],
+		["a live bound child", { ...base, child }, { live: [202] }, "candidate_live"],
+		["a provably gone bound child", { ...base, child }, {}, "candidate_gone"],
+		["a bound child whose identity cannot be read", { ...base, child }, { unreadable: [202] }, "unknown"],
+		["a live supervisor found by its attempt nonce", base, { recorded: supervisor, live: [303] }, "candidate_live"],
+		["a gone supervisor found by its attempt nonce", base, { recorded: supervisor }, "candidate_gone"],
+		["a candidate nobody recorded, inside the settled bound", base, { now: 1_000 + SETTLED_MS - 1 }, "unknown"],
+		["a candidate nobody recorded, at the settled bound", base, { now: 1_000 + SETTLED_MS }, "expired"],
+		[
+			"an unreadable intent past the settled bound",
+			{ unreadable: true, writtenAt: 0 },
+			{ now: SETTLED_MS },
+			"expired",
+		],
+		[
+			"a live candidate past the settled bound",
+			{ ...base, child },
+			{ live: [202], now: 10 * SETTLED_MS },
+			"candidate_live",
+		],
+	] as const)("%s reconciles to %s", async (_case, intent, options, verdict) => {
+		expect(await reconcile(intent, options)).toBe(verdict);
+	});
+
+	it("does not let a still-running launcher wedge the endpoint: only the candidate decides", async () => {
+		expect(await reconcile({ ...base, child }, { live: [101] })).toBe("candidate_gone");
+	});
+
+	it("no longer wedges the endpoint once a crashed launcher's unidentifiable intent outlives the settled bound", async () => {
+		const dir = await daemonDir();
+		await writeStartupIntent(dir, { ...base, writtenAt: Date.now() - SETTLED_MS });
+		expect(await reconcile(await readStartupIntent(dir), { now: Date.now() })).toBe("expired");
 	});
 });
