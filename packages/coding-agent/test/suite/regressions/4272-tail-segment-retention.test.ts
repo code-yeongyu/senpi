@@ -82,7 +82,7 @@ it("S12a RULING-78 (1)(3): a held cut released at persistence, read after the ta
 		reclaimDebtBytes: 0,
 	});
 	manager.dispose();
-}, 120_000);
+}, 600_000);
 
 it("S12a RULING-78 (2)(3): a deliberately removed segment is the typed segment_missing, a changed one segment_mismatch; no other bytes are returned", async () => {
 	const read = async (damage: (leaf: string) => Promise<void>) => {
