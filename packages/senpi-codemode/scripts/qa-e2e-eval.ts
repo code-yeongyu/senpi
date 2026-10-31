@@ -119,10 +119,11 @@ async function runDefaultScenario(
 	if (!result.details.truncated) throw new QaScenarioError("eval output was not truncated");
 	if (!spillExists) throw new QaScenarioError("eval spill artifact was not written");
 	if (!rubyRejected) throw new QaScenarioError("disabled Ruby input was accepted");
-	if (
-		!omittedLanguageError.includes('Validation failed for tool "eval"') ||
-		!omittedLanguageError.includes("required properties language, code")
-	)
+	// senpi#5138: one teaching error per missing run field, in field order, instead of the generic anyOf report.
+	const omittedFields = omittedLanguageError
+		.split("\n")
+		.flatMap((line) => /^ {2}- (language|code|summary): eval run requires \1\b.* \(required\)$/u.exec(line)?.[1] ?? []);
+	if (!omittedLanguageError.includes('Validation failed for tool "eval":\n') || omittedFields.join(",") !== "language,code")
 		throw new QaScenarioError(`omitted-language call did not fail schema validation: ${omittedLanguageError}`);
 }
 
