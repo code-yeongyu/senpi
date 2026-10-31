@@ -18,8 +18,7 @@ interface Seen {
 
 function hostWithoutTranscript(issuers: ReadonlyMap<string, AssistantMessage>) {
 	const seen: Seen[] = [];
-	let runner: NestedToolCallRunner;
-	runner = new NestedToolCallRunner({
+	const runner: NestedToolCallRunner = new NestedToolCallRunner({
 		getTools: () => [],
 		isSequential: () => false,
 		issuerOf: (toolCallId) => issuers.get(toolCallId),
