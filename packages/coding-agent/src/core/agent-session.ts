@@ -219,6 +219,8 @@ import {
 	type ResumeCompactionRequirement,
 } from "./extensions/builtin/compaction/resume-admission.ts";
 import {
+	chargeContextTokens,
+	contextTokenParts,
 	planResumeSlice,
 	RESUME_SLICE_ORIGIN,
 	RESUME_SLICE_SCHEMA,
@@ -353,7 +355,11 @@ import {
 	monotonicNow,
 } from "./retry-fallback/circuit.ts";
 import { isHealthExhaustionFailure } from "./retry-fallback/circuit-probes.ts";
-import { followProviderAccountChanges, RetryFallbackController } from "./retry-fallback/controller.ts";
+import {
+	type FallbackRungRefusal,
+	followProviderAccountChanges,
+	RetryFallbackController,
+} from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
 	classifyRateLimitedWait,
@@ -763,7 +769,13 @@ export type AgentSessionEvent =
 			/** `fallback-unusable`: the fallback could not serve (billing or an account limit), so the session returned early. */
 			cause?: "fallback-unusable";
 	  }
-	| { type: "retry_fallback_exhausted"; chainKey: string; lastError: string }
+	| {
+			type: "retry_fallback_exhausted";
+			chainKey: string;
+			lastError: string;
+			/** Rungs this turn's walk could not switch to (senpi#3447), each with the guard's reason and numbers. */
+			refusals?: readonly FallbackRungRefusal[];
+	  }
 	| ModelConfigErrorEvent
 	| {
 			type: "server_fallback_aborted";
@@ -1575,6 +1587,8 @@ export class AgentSession {
 	private _requiredCompactionTurnError: RequiredCompactionError | undefined;
 	private _resumeCompactionRequirement: ResumeCompactionRequirement | undefined;
 	private _pendingModelSwitch: PendingModelSwitch | undefined;
+	// Reported tokens per estimated token when the pending switch was admitted (senpi#3447).
+	private _pendingSwitchTokenScale = 1;
 	private _resumeSlice: ResumeSlicePlan | undefined;
 	// A retry continuation immediately follows an accepted compaction. Its first
 	// response must not retrigger threshold compaction from stale provider usage.
@@ -2948,6 +2962,10 @@ export class AgentSession {
 		this._logSessionEvent(event);
 		if (event.type === "entry_appended") {
 			event = { ...event, entry: describeUsageLimitEntry(event.entry) };
+		}
+		if (event.type === "retry_fallback_exhausted" && event.refusals === undefined) {
+			const refusals = this._retryFallback.turnRefusals;
+			if (refusals.length > 0) event = { ...event, refusals };
 		}
 		if (event.type === "retry_fallback_exhausted" && usageLimitScope(event.lastError) === "account") {
 			event = {
@@ -8830,6 +8848,7 @@ export class AgentSession {
 		const pending = createPendingModelSwitch({ model, projection, persistDefault, origin });
 		this._clearPendingModelSwitch();
 		this._pendingModelSwitch = pending;
+		this._pendingSwitchTokenScale = this._switchTokenScale(projection.liveContextTokens);
 		this._emit({
 			type: "model_change_pending",
 			model,
@@ -8863,26 +8882,49 @@ export class AgentSession {
 	 */
 	private _reduceForSwitchTarget(model: Model<Api>, liveContextTokens: number): number {
 		if (!this._getCompactionSettings().enabled) return liveContextTokens;
-		const projection = this._projectSwitchFit(model);
-		if (projection.usable || projection.verdict !== "fits-after-compaction") return liveContextTokens;
-		const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection });
-		if (!plan) return liveContextTokens;
+		// senpi#3447: on a downswitch the repair decision, the slice and the guard
+		// charge one measure, so the figure handed to the guard is the one the decision
+		// used. A rung that is not a downswitch carries no fit charge
+		// (`_getDownswitchLiveContextTokens` returns 0); it is still repaired on the
+		// plain estimate, and the guard is still handed that 0.
+		const notDownswitch = liveContextTokens <= 0;
+		const tokenScale = notDownswitch ? 1 : this._switchTokenScale(liveContextTokens);
+		const charged = (figure: number) => (notDownswitch ? liveContextTokens : figure);
+		const projection = this._projectSwitchFit(model, tokenScale);
+		if (projection.usable || projection.verdict !== "fits-after-compaction")
+			return charged(projection.liveContextTokens);
+		const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection, tokenScale });
+		if (!plan) return charged(projection.liveContextTokens);
 		this.applyResumeSlice(plan);
-		return this._projectSwitchFit(model).liveContextTokens;
+		return charged(this._projectSwitchFit(model, tokenScale).liveContextTokens);
 	}
 
-	private _projectSwitchFit(model: Model<Api>): ModelUsabilityBudgetProjection {
-		// Measured per message rather than through the context estimate: a retained
-		// turn keeps the usage it reported before the reduction, so a usage-derived
-		// total cannot observe the compaction that just ran (the sdk.ts convention).
-		const liveContextTokens = filterContextExcludedMessages(
-			this.sessionManager.buildSessionContext().messages,
-		).reduce((total, message) => total + estimateTokens(message), 0);
+	/**
+	 * Reported tokens per estimated token, never below 1 (senpi#3447): the reported
+	 * live context when it is above the per-message estimate, the estimate otherwise.
+	 * A reported figure implausibly above a large estimate (a Cursor cacheRead spike)
+	 * is ignored, as the compaction threshold already does.
+	 */
+	private _switchTokenScale(liveContextTokens: number): number {
+		const { summaryTokens, otherTokens } = contextTokenParts(this._switchContextMessages());
+		if (otherTokens <= 0) return 1;
+		const charged = resolveThresholdContextTokens(liveContextTokens, summaryTokens + otherTokens);
+		return Math.max(1, (charged - summaryTokens) / otherTokens);
+	}
+
+	// Measured per message rather than through the context estimate: a retained
+	// turn keeps the usage it reported before the reduction, so a usage-derived
+	// total cannot observe the compaction that just ran (the sdk.ts convention).
+	private _switchContextMessages(): AgentMessage[] {
+		return filterContextExcludedMessages(this.sessionManager.buildSessionContext().messages);
+	}
+
+	private _projectSwitchFit(model: Model<Api>, tokenScale = 1): ModelUsabilityBudgetProjection {
 		return projectModelUsabilityBudget({
 			model,
 			systemPrompt: this.agent.state.systemPrompt,
 			tools: this.agent.state.tools,
-			liveContextTokens,
+			liveContextTokens: chargeContextTokens(this._switchContextMessages(), tokenScale),
 			compaction: this._getCompactionSettings(),
 			includeSpeculationLead: false,
 			admission: "switch",
@@ -8914,12 +8956,15 @@ export class AgentSession {
 			pendingSwitchKeepRecentTokens(pending.projection),
 		);
 
-		let projection = this._projectSwitchFit(pending.model);
+		// The post-compaction transcript has no reported usage yet, so it is charged
+		// at the ratio the switch was admitted on (senpi#3447).
+		const tokenScale = this._pendingSwitchTokenScale;
+		let projection = this._projectSwitchFit(pending.model, tokenScale);
 		if (!projection.usable) {
-			const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection });
+			const plan = planResumeSlice({ entries: this.sessionManager.getBranch(), projection, tokenScale });
 			if (plan) {
 				this.applyResumeSlice(plan);
-				projection = this._projectSwitchFit(pending.model);
+				projection = this._projectSwitchFit(pending.model, tokenScale);
 			}
 		}
 
@@ -9033,8 +9078,13 @@ export class AgentSession {
 		const currentUsableContext = currentBudget.contextWindow - currentBudget.requiredTokens;
 		const targetUsableContext = targetBudget.contextWindow - targetBudget.requiredTokens;
 		if (targetUsableContext >= currentUsableContext) return 0;
-		const fixedPrefixTokens = currentBudget.systemPromptTokens + currentBudget.activeToolSchemaTokens;
-		return Math.max(0, (this.getContextUsage()?.tokens ?? 0) - fixedPrefixTokens);
+		// Reported usage includes the system prompt and tool schemas; a per-message
+		// estimate never did, so only a reported figure has them taken out (senpi#3447).
+		const measured = this._measureContextTokens();
+		const fixedPrefixTokens = measured.reported
+			? currentBudget.systemPromptTokens + currentBudget.activeToolSchemaTokens
+			: 0;
+		return Math.max(0, measured.tokens - fixedPrefixTokens);
 	}
 
 	/**
@@ -14235,6 +14285,16 @@ export class AgentSession {
 		const contextWindow = model.contextWindow ?? 0;
 		if (contextWindow <= 0) return undefined;
 
+		const { tokens } = this._measureContextTokens();
+		return {
+			tokens,
+			contextWindow,
+			percent: (tokens / contextWindow) * 100,
+		};
+	}
+
+	/** The live context in tokens, and whether a provider reported it (otherwise it is a per-message estimate). */
+	private _measureContextTokens(): { readonly tokens: number; readonly reported: boolean } {
 		const messages = filterContextExcludedMessages(this.messages);
 
 		// After compaction, kept assistant usage reflects pre-compaction context size.
@@ -14262,12 +14322,7 @@ export class AgentSession {
 			}
 
 			if (!hasPostCompactionUsage) {
-				const tokens = messages.reduce((sum, message) => sum + estimateTokens(message), 0);
-				return {
-					tokens,
-					contextWindow,
-					percent: (tokens / contextWindow) * 100,
-				};
+				return { tokens: messages.reduce((sum, message) => sum + estimateTokens(message), 0), reported: false };
 			}
 		}
 
@@ -14276,13 +14331,7 @@ export class AgentSession {
 		const estimate = branchEntries.some((entry) => entry.type === "context_edit")
 			? estimateProjectedContextTokens(this.sessionManager.buildSessionProjection(), branchEntries)
 			: estimateContextTokens(messages);
-		const percent = (estimate.tokens / contextWindow) * 100;
-
-		return {
-			tokens: estimate.tokens,
-			contextWindow,
-			percent,
-		};
+		return { tokens: estimate.tokens, reported: estimate.usageTokens > 0 };
 	}
 
 	/**
