@@ -95,6 +95,8 @@ export class SessionLifecycleController {
 			if (report.childSessionId === options.sessionId && report.taskId === options.spawnedBy?.taskId)
 				this.ownTask = report;
 		}
+		// Before crash recovery reads consumed custody as an interrupted run (senpi#4848).
+		this.obligations.settleEndedRuns(this.ledger.runId);
 	}
 
 	get snapshot(): SessionLifecycle {
