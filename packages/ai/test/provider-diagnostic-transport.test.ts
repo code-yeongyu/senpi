@@ -73,6 +73,33 @@ describe("transport provider diagnostic", () => {
 		expect(transportProviderDiagnosticFromError(sdkError)).toMatchObject({ code: "ETIMEDOUT" });
 	});
 
+	// senpi#5244: a TLS chain-verification code on the handshake error is a transport fact, so a
+	// verification failure stays distinguishable from a plain network failure. Bun puts the code one
+	// cause below the SDK error, Node's fetch two; either way it outranks the SDK class name.
+	it.each([
+		["UNABLE_TO_GET_ISSUER_CERT_LOCALLY", 1],
+		["UNABLE_TO_GET_ISSUER_CERT", 2],
+		["UNABLE_TO_VERIFY_LEAF_SIGNATURE", 1],
+		["SELF_SIGNED_CERT_IN_CHAIN", 2],
+		["DEPTH_ZERO_SELF_SIGNED_CERT", 1],
+		["CERT_UNTRUSTED", 2],
+	])("classifies the TLS chain-verification code %s (%i causes down) as network with that code", (code, depth) => {
+		class APIConnectionError extends Error {}
+		const handshake = Object.assign(new Error("certificate verify failed for tls.example.test"), { code });
+		const runtime = depth === 1 ? handshake : new TypeError("fetch failed", { cause: handshake });
+		const sdkError = new APIConnectionError("Connection error.", { cause: runtime });
+		const diagnostic = transportProviderDiagnosticFromError(sdkError);
+		expect(diagnostic).toEqual({ category: "network", code, evidence: "structured_transport" });
+		expect(sanitizeProviderDiagnostic(diagnostic)).toEqual(diagnostic);
+	});
+
+	it.each([
+		["hostname mismatch", "ERR_TLS_CERT_ALTNAME_INVALID"],
+		["expiry", "CERT_HAS_EXPIRED"],
+	])("leaves a TLS %s (%s) unclassified", (_kind, code) => {
+		expect(transportProviderDiagnosticFromError(withCode(code, true))).toBeUndefined();
+	});
+
 	it("stops after a bounded number of causes", () => {
 		let error: Error = Object.assign(new Error("deep"), { code: "ECONNRESET" });
 		for (let depth = 0; depth < 6; depth++) error = new Error(`wrap ${depth}`, { cause: error });
