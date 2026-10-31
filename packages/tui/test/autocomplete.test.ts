@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, it, test } from "node:test";
@@ -549,6 +549,145 @@ describe("CombinedAutocompleteProvider", () => {
 
 			const applied = provider.applyCompletion([line], 0, cursorCol, item!, result!.prefix);
 			assert.strictEqual(applied.lines[0], '@"my folder/test.txt" ');
+		});
+	});
+
+	describe("fd file index", { skip: process.platform === "win32" }, () => {
+		// Writes a fake fd that logs each listing (no --max-depth) and answers it with `listing`.
+		// The script and its log live beside the listed directory: a file created inside it would change
+		// the directory's mtime and make the provider re-list.
+		const fakeFd = (
+			t: { after: (fn: () => void) => void },
+			listing: string[],
+			oneLevel: string[] = [],
+		): { path: string; log: string } => {
+			const tools = mkdtempSync(join(tmpdir(), "pi-fake-fd-"));
+			t.after(() => rmSync(tools, { recursive: true, force: true }));
+			const log = join(tools, "fd.log");
+			const path = join(tools, "fake-fd.sh");
+			const lines = (entries: string[]) => entries.map((entry) => `echo "${entry}"`).join("; ") || ":";
+			writeFileSync(
+				path,
+				`#!/bin/sh\ncase " $* " in *" --max-depth "*) ${lines(oneLevel)}; exit 0;; esac\necho listing >> "${log}"\n${lines(listing)}\n`,
+				{ mode: 0o755 },
+			);
+			return { path, log };
+		};
+		const listings = (log: string): number => {
+			try {
+				return readFileSync(log, "utf-8").split("\n").filter(Boolean).length;
+			} catch {
+				return 0;
+			}
+		};
+		const values = (result: { items: { value: string }[] } | null) => result?.items.map((item) => item.value) ?? [];
+
+		it("answers a cold deep-only query from one listing and reuses it for the next keystroke", async (t) => {
+			// Freeze the clock so the 5 s background refresh cannot add a listing under load.
+			t.mock.timers.enable({ apis: ["Date"] });
+			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-index-"));
+			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+			const fd = fakeFd(t, ["packages/tui/src/editor.ts", "packages/tui/src/editor-row.ts", "README.md"]);
+			const provider = new CombinedAutocompleteProvider([], baseDir, fd.path);
+			const signal = new AbortController().signal;
+
+			const cold = await provider.getSuggestions(["@editor"], 0, 7, { signal });
+			const warm = await provider.getSuggestions(["@edito"], 0, 6, { signal });
+
+			assert.deepStrictEqual(values(cold), ["@packages/tui/src/editor.ts", "@packages/tui/src/editor-row.ts"]);
+			assert.deepStrictEqual(values(warm), ["@packages/tui/src/editor.ts", "@packages/tui/src/editor-row.ts"]);
+			assert.strictEqual(listings(fd.log), 1);
+		});
+
+		// #2740: no separate one-level fd per keystroke; the fake answers one-level calls with an entry
+		// that must never show up.
+		it("answers a bare @ from the listing, without a one-level walk", async (t) => {
+			// Freeze the clock so the 5 s background refresh cannot add a listing under load.
+			t.mock.timers.enable({ apis: ["Date"] });
+			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-index-"));
+			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+			const fd = fakeFd(t, ["Developer/", "deep/Dev.txt"], ["one-level-walk/"]);
+			const provider = new CombinedAutocompleteProvider([], baseDir, fd.path);
+
+			const result = await provider.getSuggestions(["@"], 0, 1, { signal: new AbortController().signal });
+
+			assert.deepStrictEqual(values(result), ["@Developer/", "@deep/Dev.txt"]);
+			assert.strictEqual(listings(fd.log), 1);
+		});
+
+		it("signals a change when a background refresh lists different entries", async (t) => {
+			t.mock.timers.enable({ apis: ["Date"] });
+			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-index-"));
+			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+			const listing = join(baseDir, "listing.txt");
+			writeFileSync(listing, "a/one.ts\n");
+			const fd = join(baseDir, "fake-fd.sh");
+			writeFileSync(fd, `#!/bin/sh\ncat "${listing}"\n`, { mode: 0o755 });
+			const provider = new CombinedAutocompleteProvider([], baseDir, fd);
+			const signal = new AbortController().signal;
+			let signals = 0;
+			let onSignal = () => {};
+			provider.onDidChangeSuggestions(() => {
+				signals++;
+				onSignal();
+			});
+
+			await provider.getSuggestions(["@one"], 0, 4, { signal });
+			assert.strictEqual(signals, 1);
+			writeFileSync(listing, "a/one.ts\na/one-more.ts\n");
+			t.mock.timers.tick(6000);
+			const changed = new Promise<void>((resolve) => {
+				onSignal = resolve;
+			});
+			const beforeRefresh = await provider.getSuggestions(["@one"], 0, 4, { signal });
+			await changed;
+			const afterRefresh = await provider.getSuggestions(["@one"], 0, 4, { signal });
+
+			assert.deepStrictEqual(values(beforeRefresh), ["@a/one.ts"]);
+			assert.deepStrictEqual(values(afterRefresh), ["@a/one.ts", "@a/one-more.ts"]);
+			assert.strictEqual(signals, 2);
+		});
+
+		// Tab from `@` into a directory must not wait for that directory's own listing.
+		it("answers a subdirectory from a cached ancestor listing at once", async (t) => {
+			// Freeze the clock so the 5 s background refresh cannot add a listing under load.
+			t.mock.timers.enable({ apis: ["Date"] });
+			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-index-"));
+			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+			mkdirSync(join(baseDir, "Developer"));
+			const fd = fakeFd(t, ["Developer/", "Developer/app/", "Developer/app/main.ts"]);
+			const provider = new CombinedAutocompleteProvider([], baseDir, fd.path);
+			const signal = new AbortController().signal;
+			await provider.getSuggestions(["@Dev"], 0, 4, { signal });
+			const listingsBefore = listings(fd.log);
+
+			const result = await provider.getSuggestions(["@Developer/mai"], 0, 14, { signal });
+
+			assert.strictEqual(listingsBefore, 1);
+			assert.deepStrictEqual(values(result), ["@Developer/app/main.ts"]);
+		});
+	});
+
+	describe("fd listing budget", { skip: process.platform === "win32" }, () => {
+		// A listing that runs past its budget (fd over a huge tree such as $HOME) is killed and the
+		// query answers with what was read, instead of waiting for the walk to finish.
+		it("answers from a listing that fd is still writing when its time budget runs out", {
+			timeout: 5000,
+		}, async (t) => {
+			const baseDir = mkdtempSync(join(tmpdir(), "pi-fd-latency-"));
+			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+			const fakeFd = join(baseDir, "fake-fd.sh");
+			writeFileSync(fakeFd, '#!/bin/sh\necho "Developer/"\necho "deep/Dev.txt"\nexec sleep 30\n', { mode: 0o755 });
+			const provider = new CombinedAutocompleteProvider([], baseDir, fakeFd);
+
+			const result = await provider.getSuggestions(["@Dev"], 0, 4, { signal: new AbortController().signal });
+
+			// Resolving at all proves the 30 s walk was not awaited (the budget is 3 s); both lines were
+			// written before fd stalled.
+			assert.deepStrictEqual(
+				result?.items.map((item) => item.value),
+				["@Developer/", "@deep/Dev.txt"],
+			);
 		});
 	});
 
