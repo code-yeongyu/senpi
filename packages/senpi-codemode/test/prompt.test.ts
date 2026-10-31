@@ -260,11 +260,11 @@ describe("buildEvalPrompt", () => {
 	});
 });
 
-// senpi#5067: SENPI_TEST_WORKSTATION's repoRoot pin shows the bun-1-4 skill path under a synthetic checkout root.
-describe("buildEvalPrompt bun-1-4 pointer under the test-only repoRoot pin", () => {
+// senpi#5067: SENPI_TEST_WORKSTATION's repoRoot pin shows the bun skill path under a synthetic checkout root.
+describe("buildEvalPrompt bun pointer under the test-only repoRoot pin", () => {
 	const PIN = { cpuModel: "Synthetic CPU", cores: 997, kernel: "Synthetic 0.0.0" };
 	const enabled = { py: false, js: true, rb: false, jl: false };
-	const bunSkillPath = "/work/checkout/packages/senpi-codemode/src/skill/bun-1-4/SKILL.md";
+	const bunSkillPath = "/work/checkout/packages/senpi-codemode/src/skill/bun/SKILL.md";
 	const render = () =>
 		buildEvalPrompt(enabled, {
 			spawns: false,
@@ -282,7 +282,7 @@ describe("buildEvalPrompt bun-1-4 pointer under the test-only repoRoot pin", () 
 		vi.stubEnv("SENPI_TEST_WORKSTATION", JSON.stringify({ ...PIN, repoRoot: { from: "/elsewhere", to: "/eq" } }));
 
 		expect(render()).toBe(production);
-		expect(production).toContain(`read the bun-1-4 skill at ${bunSkillPath}`);
+		expect(production).toContain(`read the bun skill at ${bunSkillPath}`);
 	});
 
 	it("a path inside the pinned checkout is shown under the pinned root", () => {
@@ -294,7 +294,7 @@ describe("buildEvalPrompt bun-1-4 pointer under the test-only repoRoot pin", () 
 		);
 
 		expect(render()).toBe(
-			production.replace(bunSkillPath, "/eq-synthetic/checkout/packages/senpi-codemode/src/skill/bun-1-4/SKILL.md"),
+			production.replace(bunSkillPath, "/eq-synthetic/checkout/packages/senpi-codemode/src/skill/bun/SKILL.md"),
 		);
 	});
 });
