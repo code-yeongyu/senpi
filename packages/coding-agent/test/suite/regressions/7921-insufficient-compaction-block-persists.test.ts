@@ -129,6 +129,71 @@ describe("#7921 case 6: an insufficient accepted compaction keeps its blocked st
 		expect(Reflect.get(harness.session, "_blockedPostCompactionAssistant")).toBeUndefined();
 	});
 
+	// senpi#4161: the automatic-loop latch must not prevent an explicit new turn from recovering.
+	it.each([true, false])("retries compaction on the next user prompt (recovery succeeds: %s)", async (recovers) => {
+		let attempts = 0;
+		let retryAllowed = false;
+		const harness = await createHarness({
+			models: [{ id: "faux-large", contextWindow: 20_000, maxTokens: 4_096 }],
+			settings: {
+				compaction: { enabled: true, reserveTokens: 1_000, keepRecentTokens: 1, speculativeEnabled: false },
+			},
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", (event) => {
+						attempts++;
+						if (!retryAllowed) return { cancel: true, reason: "summary unavailable" };
+						const retained = event.branchEntries.at(-1);
+						if (!retained) throw new Error("Expected a retained response");
+						return {
+							compaction: {
+								summary: "recovered context",
+								firstKeptEntryId: retained.id,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const timestamp = Date.now() - 1_000;
+		harness.sessionManager.appendMessage({ role: "user", content: "old work", timestamp });
+		const first = harness.sessionManager.getEntries()[0];
+		if (!first) throw new Error("Expected a seeded entry");
+		harness.sessionManager.appendCompaction("prior summary", first.id, 19_000);
+		harness.sessionManager.appendMessage({ role: "user", content: "x".repeat(80_000), timestamp });
+		const model = harness.getModel();
+		const assistant: AssistantMessage = {
+			...fauxAssistantMessage("progress", { timestamp }),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: createUsage(19_500),
+		};
+		harness.sessionManager.appendMessage(assistant);
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		const liveAssistant = harness.session.agent.state.messages.at(-1);
+		if (liveAssistant?.role !== "assistant") throw new Error("Expected the live assistant response");
+		await privateMethod(harness.session, "_checkCompaction")(liveAssistant, true);
+		expect(attempts).toBe(1);
+		expect(Reflect.get(harness.session, "_blockedPostCompactionAssistant")).toBeDefined();
+
+		retryAllowed = recovers;
+		harness.setResponses([fauxAssistantMessage("answered the next message")]);
+		const nextPrompt = harness.session.prompt("please continue");
+		if (recovers) {
+			await expect(nextPrompt).resolves.toBeUndefined();
+			expect(harness.faux.state.callCount).toBe(1);
+		} else {
+			await expect(nextPrompt).rejects.toThrow(/Run \/compact/);
+			expect(harness.faux.state.callCount).toBe(0);
+		}
+		expect(attempts).toBe(2);
+		expect(harness.session.isCompacting).toBe(false);
+		expect(harness.session.isStreaming).toBe(false);
+	});
+
 	it("clears the block once a real compaction reduces the context", async () => {
 		const { harness, assistant } = await createBlockedHarness();
 		harnesses.push(harness);

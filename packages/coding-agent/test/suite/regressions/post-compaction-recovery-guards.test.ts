@@ -2,9 +2,8 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
+import { REQUIRED_COMPACTION_ERROR_MESSAGE as REQUIRED_COMPACTION_ERROR } from "../../../src/core/agent-session.ts";
 import { createHarness, getAssistantTexts, getUserTexts, type Harness } from "../harness.ts";
-
-const REQUIRED_COMPACTION_ERROR = "Context remains above the compaction threshold because compaction did not complete";
 
 function largeResultTool(): AgentTool {
 	return {
