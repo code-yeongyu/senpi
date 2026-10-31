@@ -40,6 +40,8 @@ type AssistantRenderDescriptorOptions = {
 	/** Per-block click overrides of `expanded` for handoff folds, keyed by handoff block index. */
 	readonly handoffOpenOverrides?: ReadonlyMap<number, boolean>;
 	readonly hasToolCalls: boolean;
+	/** Shows the turn-ending error or abort notice even though the row holds tool calls (a replayed turn). */
+	readonly ownsTurnNotice?: boolean;
 };
 
 const SPACER_DESCRIPTOR = { kind: "spacer", text: "" } as const satisfies AssistantRenderDescriptor;
@@ -193,12 +195,13 @@ export function createAssistantRenderDescriptors(
 	};
 	switch (message.stopReason) {
 		case "length":
+			if (options.providerErrorOwned) break;
 			addError(
 				"Error: Model stopped because it reached the maximum output token limit. The response may be incomplete.",
 			);
 			break;
 		case "aborted": {
-			if (options.hasToolCalls) break;
+			if (options.hasToolCalls && !options.ownsTurnNotice) break;
 			if (options.providerErrorOwned) break;
 			const abortMessage =
 				message.errorMessage && message.errorMessage !== "Request was aborted"
@@ -208,7 +211,7 @@ export function createAssistantRenderDescriptors(
 			break;
 		}
 		case "error": {
-			if (options.hasToolCalls) break;
+			if (options.hasToolCalls && !options.ownsTurnNotice) break;
 			if (options.providerErrorOwned) break;
 			if (message.diagnostics?.some((entry) => entry.type === SERVER_FALLBACK_ABORTED_DIAGNOSTIC)) break;
 			// A provider-stream stall or transport drop carries the classifier's own
