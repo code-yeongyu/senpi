@@ -12,6 +12,75 @@
 
 ### Removed
 
+## [2026.10.31-1] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- Claude subscription accounts can live in the bundled Claude CLI's own credential store, with one config dir per account; removing such an account signs it out of the CLI first, and `get_provider_accounts` reports its email, plan and sign-in state ([#4451](https://github.com/code-yeongyu/senpi/pull/4451))
+- `before_agent_start` results accept `systemPromptCache: "stable" | "volatile"`; the prompt up to the first volatile change is cached separately where the provider supports it ([#4455](https://github.com/code-yeongyu/senpi/pull/4455))
+- Claude subscription accounts signed in through the Claude CLI now run turns on their own config dir with no inherited token, keep session continuity across accounts and restarts, recover an auth block through `claude auth status`, and refuse a turn the CLI initialized on an inherited environment credential ([#4458](https://github.com/code-yeongyu/senpi/pull/4458))
+- RPC `test_provider_account` re-runs the connection test on one Claude subscription account and returns its `check` (capability `provider_account_test`) ([#4497](https://github.com/code-yeongyu/senpi/pull/4497))
+- `/gpt-account unblock <id>` clears a live usage-limit or rate-limit block on a ChatGPT Subscription account, so a limit the user reset on the provider side is usable again without removing and re-adding the account. It clears only that block and the failure counter behind it, in both health sources; a rejected credential, a disabled account, per-model limits, an in-flight lease and the account's success history are left alone, and when a block it cannot lift is still standing the command says the account remains blocked and why. Reported by CodeRiever ([#4603](https://github.com/code-yeongyu/senpi/pull/4603))
+- Add the version-proven Windows private pipe-pair contract. It remains disabled until the pinned compiled-runtime proof passes; POSIX sockets and null declarations retain their existing behavior ([#4859](https://github.com/code-yeongyu/senpi/issues/4859)).
+- Added a JSONL import boundary for the future durable session store, preserving appended history and separating developer-hatch divergence from ordinary file edits. The current default session path is unchanged ([#5020](https://github.com/code-yeongyu/senpi/pull/5020)).
+- Startup warns when a skills root's `.gitignore`, `.ignore` or `.fdignore` hides a skill folder, naming the folder and how to keep git ignoring it without hiding the skill ([#5060](https://github.com/code-yeongyu/senpi/issues/5060))
+
+### Changed
+
+- Claude subscription sign-in (`/login anthropic-subscription`, `/claude-account add`, RPC `login_start`) now runs Claude Code's own `claude auth login`, keeps each account in its own Claude config dir, and tests the account with one turn right after sign-in; a failed test keeps the account with its reason ([#4461](https://github.com/code-yeongyu/senpi/pull/4461))
+- Claude subscription accounts signed in through the old senpi sign-in are signed out at startup and ask once per start to sign in again with Claude (`/login anthropic-subscription`); their name, pin and order are kept, and no old token is copied ([#4503](https://github.com/code-yeongyu/senpi/pull/4503))
+
+### Fixed
+
+- A finished turn no longer stays "Starting session..." or "Working" while an extension's `agent_settled` handler is slow: the settle reaches clients at once, a person's next prompt no longer waits for that handler, and nothing about it is shown as an error ([#4420](https://github.com/code-yeongyu/senpi/pull/4420))
+- TUI shutdown, host idle exit, session release and moves wait for `agent_idle`, so they never cut off a settle-time extension handler ([#4420](https://github.com/code-yeongyu/senpi/pull/4420))
+- MCP server instructions are now always the last block of the system prompt, after additions from extensions that load later, including their run-last handlers; `pi.on("before_agent_start", handler, { runLast: true })` runs a handler after every handler registered without it ([#4450](https://github.com/code-yeongyu/senpi/pull/4450))
+- A second Claude sign-in with a blank name no longer reuses an existing account named `account-N` ([#4497](https://github.com/code-yeongyu/senpi/pull/4497))
+- After the "Sign in again with Claude" error, a turn no longer retries or tries another Claude model that fails the same way ([#4522](https://github.com/code-yeongyu/senpi/pull/4522))
+- Signing a Claude account in again keeps a rename or model block made while the sign-in ran, and a cancelled sign-in no longer leaves the discarded login's profile or test result on the account ([#4522](https://github.com/code-yeongyu/senpi/pull/4522))
+- A Claude credential left only as a flat token by an old build no longer makes the Claude subscription look signed in when it has no account to use ([#4522](https://github.com/code-yeongyu/senpi/pull/4522))
+- RPC `test_provider_account` answers `needs_sign_in` for an account that must sign in again instead of running a test ([#4522](https://github.com/code-yeongyu/senpi/pull/4522))
+- Terminal guidance includes the required RPC monitor description and uses available tools for long jobs in both PTY and native-bash sessions ([#4838](https://github.com/code-yeongyu/senpi/pull/4838)).
+- Protect refused Windows private descriptors before adoption checks, fail closed on unopened descriptors and native-loader failures, and preserve POSIX channels when invalid-name entries reuse their descriptor ([#4859](https://github.com/code-yeongyu/senpi/issues/4859)).
+- Reject invalid native handle sentinels without calling `SetHandleInformation`, including signed and pointer-width all-ones values and null pointers ([#4859](https://github.com/code-yeongyu/senpi/issues/4859)).
+- A turn-ending notice shows once: a turn stopped at the output-token limit no longer repeats the notice on every text row, and a replayed turn shows its error or length notice exactly once, whatever its tool-call shape ([#4958](https://github.com/code-yeongyu/senpi/issues/4958))
+- A skill file symlinked into a skills root now loads even when that root's `.gitignore`, `.ignore` or `.fdignore` lists the link ([#5069](https://github.com/code-yeongyu/senpi/issues/5069))
+- A busy multi-session host no longer grows without bound while config-reload watches directories that change often: the watch worker holds one batch per subscription until the main thread takes it ([#5095](https://github.com/code-yeongyu/senpi/pull/5095))
+- Tool calls that never ran because the turn failed now read "Not run: the request failed." instead of repeating the raw provider error, live and on replay ([#5064](https://github.com/code-yeongyu/senpi/issues/5064))
+
+### Removed
+
+- The "Move it here" import of an `anthropic` OAuth login into Anthropic Subscription ([#4503](https://github.com/code-yeongyu/senpi/pull/4503))
+- senpi no longer refreshes Claude subscription tokens or serves an account that holds one: stored Claude accounts sign in through the Claude Code CLI, which keeps and renews its own login; `CLAUDE_CODE_OAUTH_TOKEN` env accounts are unchanged ([#4515](https://github.com/code-yeongyu/senpi/pull/4515))
+
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+- Optional `runId` on lifecycle snapshots, `agent_start`, and lifecycle state readback lets clients correlate snapshots with their producing run, including idle delivery and restart ([#4925](https://github.com/code-yeongyu/senpi/issues/4925)).
+
+### Changed
+
+- The experimental, OFF-by-default compact recovery path now folds each structured record into the session's acceptance lane together with its unchanged legacy record, at one sequence and with one producer numbering on worker sessions (S03b-3a, part of [#4272](https://github.com/code-yeongyu/senpi/issues/4272)).
+- The experimental, OFF-by-default compact recovery path now holds run state, lifecycle and open dialogs as frozen roots, follows message edits, removals, compactions and branch moves from the session's own transcript changes, and records each settled message's persistence (S03b-3b, part of [#4272](https://github.com/code-yeongyu/senpi/issues/4272)).
+- Coding-agent test children launched from source on Node share one compile cache per test run, so a repeated launch no longer re-strips and recompiles its whole TypeScript graph ([#4620](https://github.com/code-yeongyu/senpi/pull/4620))
+- Validate CLI runtime and thinking choices without type assertions, preserving accepted values ([#4971](https://github.com/code-yeongyu/senpi/pull/4971)).
+- Compaction uses existing value types instead of four redundant assertions, with unchanged runtime behavior ([#4973](https://github.com/code-yeongyu/senpi/pull/4973)).
+
+### Fixed
+
+- Provider `whitelist`, `blacklist`, and `hideFreeModels` settings in models.json now apply to extension-declared models, refreshed catalogs, and legacy OAuth model projections.
+- Earlier TUI status rows retain their own content when a later notice arrives before rendering or a theme redraw ([#4841](https://github.com/code-yeongyu/senpi/issues/4841)).
+- Caller-owned RPC supervisors and their hosts detect owner death when Bun leaves the inherited lifetime pipe silent, without interrupting retained peers or turns ([#4852](https://github.com/code-yeongyu/senpi/pull/4852)).
+- A provider request the server accepted and keeps alive with SSE pings or keep-alive comments is no longer cut by the stream-start or idle bound while the model is still producing its first token; keep-alives alone are bounded by the new `retry.provider.keepAliveTimeoutMs` (default 15 minutes, `0` disables) ([#4980](https://github.com/code-yeongyu/senpi/pull/4980))
+- A skill directory symlinked into a skills root now loads even when that root's `.gitignore`, `.ignore` or `.fdignore` lists the link; the linked tree's own ignore files still apply inside it ([#5060](https://github.com/code-yeongyu/senpi/issues/5060))
+
+### Removed
+
 ## [2026.10.30-1] - 2026-10-30
 
 ### Breaking Changes

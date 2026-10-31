@@ -8,11 +8,7 @@ import { join } from "node:path";
 import type { Api, AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-	type AccountSlot,
-	addAccount,
-	emptyCredential,
-} from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
+import { emptyCredential } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import {
 	overrideAuthLaneBoundary,
 	resetAuthLaneBoundary,
@@ -58,7 +54,9 @@ import { streamAnthropicSubscription } from "../../../src/core/extensions/builti
 
 const MODEL_ID = "claude-opus-5-5";
 const HOUR_MS = 3_600_000;
-const SEATS = { A: "seat-a", B: "seat-b" } as const;
+// The two accounts are CLAUDE_CODE_OAUTH_TOKEN env accounts: a stored account signs in through the Claude CLI
+// and carries no token the endpoint could tell apart (senpi#4436).
+const SEATS = { A: "env", B: "env-2" } as const;
 type Seat = keyof typeof SEATS;
 
 const model: Model<Api> = {
@@ -230,18 +228,11 @@ async function twoAccountPool(baseUrl: string): Promise<Pool> {
 	const dir = await mkdtemp(join(tmpdir(), "senpi-4304-"));
 	cleanup.push(() => rm(dir, { recursive: true, force: true }));
 	let clock = Date.now();
-	const slot = (seat: Seat): AccountSlot => ({
-		name: SEATS[seat],
-		access: `${SEATS[seat]}-token`,
-		refresh: `${SEATS[seat]}-refresh`,
-		expires: clock + 24 * HOUR_MS,
-		source: "login",
-		...(seat === "B" ? { blockedUntil: clock + 20_000, blockReason: "rate_limit", blockedAt: clock } : {}),
-	});
 	const store = new InMemoryCredentialStore();
 	await store.modify("anthropic-subscription", async () => ({
-		...addAccount(addAccount(emptyCredential(), slot("A")), slot("B")),
+		...emptyCredential(),
 		order: [SEATS.B, SEATS.A],
+		slotState: { [SEATS.B]: { blockedUntil: clock + 20_000, blockReason: "rate_limit", blockedAt: clock } },
 	}));
 	// Only what Claude Code needs to boot against the loopback endpoint: no inherited
 	// credentials, proxies or provider routing, and no traffic beyond 127.0.0.1.
@@ -251,6 +242,8 @@ async function twoAccountPool(baseUrl: string): Promise<Pool> {
 		TMPDIR: dir,
 		CLAUDE_CONFIG_DIR: join(dir, "claude-config"),
 		CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+		CLAUDE_CODE_OAUTH_TOKEN: `${SEATS.A}-token`,
+		CLAUDE_CODE_OAUTH_TOKEN_2: `${SEATS.B}-token`,
 	};
 	overrideAuthLaneBoundary({ createStore: () => store, env: () => env, now: () => clock });
 	// The managed lanes strip ANTHROPIC_BASE_URL from the subprocess, so it is added at the SDK boundary.

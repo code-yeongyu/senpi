@@ -3,6 +3,7 @@ import { serializeJsonLine } from "./jsonl.ts";
 import { observeLifecycleDelivery } from "./lifecycle-delivery.ts";
 import { declarationReply } from "./compact-negotiation.ts";
 import type { RpcHostLifecycleEvent, RpcOpenQueuedEvent } from "./rpc-types.ts";
+import type { SecretInputRoute } from "./secret-input-requests.ts";
 import type { RpcRecord } from "./session-event-writer-compaction.ts";
 import { RecordLine, SessionEventWriterDestinations } from "./session-event-writer-destinations.ts";
 import { causeOfRecord } from "./session-status.ts";
@@ -21,6 +22,12 @@ export { MAX_SHARED_STDIO_QUEUE_BYTES, MAX_SHARED_STDIO_QUEUE_RECORDS } from "./
  * scheduling boundary and violate D9.
  */
 export class SessionEventWriter extends SessionEventWriterDestinations {
+	secretInputRoute(sessionId: string): SecretInputRoute {
+		return this.secretPresentations.route(sessionId);
+	}
+	setSoleSecretCapabilities(capabilities: readonly string[]): void {
+		this.secretPresentations.handshake(capabilities);
+	}
 	/** Private records bypass event queues, snapshots, mirrors, replay, and overflow preview errors. */
 	handleMcpForm(value: unknown): boolean {
 		if (!this.presenterAuthority) return false;
@@ -103,7 +110,7 @@ export class SessionEventWriter extends SessionEventWriterDestinations {
 			);
 			return false;
 		}
-		this.openTurns.note(sessionId, record.type);
+		this.openTurns.note(sessionId, record.type, (record as { reason?: unknown }).reason);
 		const attached = this.fanout.targets(sessionId, targetId, isTargeted, record.type);
 		// Mirroring is an explicit per-subscription opt-in; it adds destinations, never an attachment.
 		const mirrors = isTargeted ? [] : this.status.mirrorTargets(sessionId, String(record.type));

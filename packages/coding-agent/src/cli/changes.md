@@ -1,3 +1,22 @@
+## 2026-10-30 - Check CLI choices without type assertions (senpi#4971)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: compare session runtime and thinking level strings directly with their allowed tuple members.
+- `packages/coding-agent/src/modes/rpc/session-worker-requests.test.ts`: use valid `commit` requests instead of casting obsolete `open` request fixtures to `never`.
+
+### Why
+
+- Preserve the accepted CLI choices and deadline assertions while removing four unsafe type assertions.
+
+### Why an extension could not handle it
+
+- These predicates and worker request fixtures belong to the engine's CLI parser and colocated regression tests.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/cli/args.ts`, `packages/coding-agent/src/modes/rpc/session-worker-requests.test.ts`, and this PR's fragment.
+
 ## 2026-10-28 - Prompt-size inventory follows the registered-server ownership rule (senpi#4604, fixes #4597)
 
 ### What changed
