@@ -246,7 +246,11 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 				const retryAt = soonestRetryAt(slots, now());
 				const refusal =
 					lastError !== undefined && lastOriginal !== undefined
-						? new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt })
+						? new CredentialFailoverError(
+								lastError.action,
+								lastOriginal,
+								retryAt === undefined ? {} : { retryAt },
+							)
 						: new CredentialFailoverError(
 								{ kind: "fail_request" },
 								new Error(noSlotsMessage(slots, now())),
