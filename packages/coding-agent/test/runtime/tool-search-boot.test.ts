@@ -143,6 +143,25 @@ describe("tool_search boots without a session start (RT5a)", () => {
 		await expect(toolCall(runtime, "call-2")).resolves.toBeUndefined();
 	});
 
+	it("handles session_start on a runner with no session manager", async () => {
+		// Given a runner without a session manager.
+		const { harness, extensionsResult } = await runtimeWithoutSessionStart(["records_lookup"]);
+		const runtime = new ExtensionRunner(
+			extensionsResult.extensions,
+			extensionsResult.runtime,
+			process.cwd(),
+			undefined,
+			harness.session.modelRegistry,
+			extensionsResult.eventBus,
+		);
+		const errors: string[] = [];
+		runtime.onError((error) => errors.push(error.error));
+		// When session_start reaches it.
+		await runtime.emit({ type: "session_start", reason: "startup" });
+		// Then tool-search keys it without passing undefined to a WeakSet.
+		expect(errors.filter((error) => error.includes("weak set"))).toEqual([]);
+	});
+
 	it("boots each context once", async () => {
 		// Given one extension load seen through two contexts with no session start.
 		const { harness, service, extensionsResult } = await runtimeWithoutSessionStart(["records_lookup"]);

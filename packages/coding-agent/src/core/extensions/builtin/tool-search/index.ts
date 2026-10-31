@@ -26,7 +26,7 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 		});
 
 		pi.on("session_start", async (_event, ctx) => {
-			bootedContexts.add(ctx.sessionManager);
+			bootedContexts.add(ctx.sessionManager ?? runtimeKey);
 			service.beginSession();
 			await service.maybeRehydrateFromHistoryInSlices(ctx.sessionManager.getEntries(), new EventLoopSlicer());
 		});
