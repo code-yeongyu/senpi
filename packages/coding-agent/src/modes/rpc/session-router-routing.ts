@@ -179,7 +179,7 @@ export async function dispatch(
 		if (connection !== undefined) {
 			host.pendingCapabilities.set(connection, command.capabilities ?? []);
 			host.writer.setConnectionCapabilities(connection, command.capabilities ?? []);
-		}
+		} else if (command.capabilities !== undefined) host.writer.setSoleSecretCapabilities(command.capabilities);
 		return { id: command.id, type: "response", command: "set_client_info", success: true } as RpcResponse;
 	}
 	if (command.type === "subscribe_sessions") {
