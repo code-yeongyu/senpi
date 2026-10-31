@@ -250,4 +250,12 @@ describe("ToolDispatcher seam (senpi#3566 todo 2)", () => {
 			harness.cleanup();
 		}
 	});
+
+	it("child dispatcher without a tool child fails bash closed", async () => {
+		const dispatcher = createToolDispatcher({ runtime: "child" });
+
+		await expect(dispatcher.bashOperations().exec("echo nope", tmpdir(), { onData: () => {} })).rejects.toThrow(
+			/tool_runtime_unavailable/,
+		);
+	});
 });
