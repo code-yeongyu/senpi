@@ -7,7 +7,7 @@ import type {
 /** Serialized UTF-8 budget for one emitted diagnostic. */
 export const PROVIDER_DIAGNOSTIC_MAX_BYTES = 512;
 
-export const CREDENTIAL_POOL_BLOCKED_CODE = "credential_pool_blocked";
+const CREDENTIAL_POOL_BLOCKED_CODE = "credential_pool_blocked";
 
 /** A credential pool whose every account is limited until `resetsAt`, the soonest one is due back. */
 export function credentialPoolBlockedDiagnostic(resetsAt: number): ProviderDiagnostic | undefined {

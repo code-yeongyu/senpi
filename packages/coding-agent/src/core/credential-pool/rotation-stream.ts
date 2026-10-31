@@ -87,7 +87,7 @@ function blockPatch(
  * an unclassified 429 becomes the pool's rate limit (senpi#3975). Anything else (auth, a 402/403/404 status)
  * is left exactly as the provider said, status included.
  */
-export function withPoolRetryAt(event: AssistantMessageEvent, retryAt: number): AssistantMessageEvent {
+function withPoolRetryAt(event: AssistantMessageEvent, retryAt: number): AssistantMessageEvent {
 	if (event.type !== "error") return event;
 	const own = sanitizeProviderDiagnostic(event.error.providerDiagnostic);
 	const limit = own?.category === "rate_limit" || own?.category === "quota";
