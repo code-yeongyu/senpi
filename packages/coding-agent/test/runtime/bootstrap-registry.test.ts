@@ -1,9 +1,10 @@
 // senpi#5219 (RT1, brain/hand split): the tool registry is built without a session, and a session builds the
-// same registry through the same functions. Guards the F01 core-registry and F02 extension-tools/wrappers surfaces.
+// same registry through the same functions. Guards the F01 core-registry surface and RT1's part of F02 (extension tools
+// and their wrappers in the registry). Running a wrapped tool without a session needs the context split (RT2).
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
-import type { ExtensionAPI, ExtensionContext } from "../../src/core/extensions/index.ts";
+import type { ExtensionAPI } from "../../src/core/extensions/index.ts";
 import { bootstrapRuntime, buildToolRegistry } from "../../src/core/runtime/bootstrap.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
 import { createHarness, type Harness } from "../suite/harness.ts";
@@ -17,8 +18,6 @@ interface ToolView {
 	path: string;
 }
 
-const seenContexts: ExtensionContext[] = [];
-
 function probeExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "probe",
@@ -26,8 +25,7 @@ function probeExtension(pi: ExtensionAPI): void {
 		description: "Echoes its input.",
 		parameters: Type.Object({ value: Type.String() }),
 		promptSnippet: "probe echoes",
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			seenContexts.push(ctx);
+		async execute(_toolCallId, params) {
 			return { content: [{ type: "text", text: `probe:${params.value}` }], details: {} };
 		},
 	});
@@ -65,7 +63,12 @@ function baseTool(name: string): AgentTool {
 
 const baseTools = (): AgentTool[] => [baseTool("base_a"), baseTool("base_b"), baseTool("base_c")];
 
-function view(entries: Iterable<{ definition: { name: string; description: string; parameters: unknown }; sourceInfo: { source: string; path: string } }>): ToolView[] {
+function view(
+	entries: Iterable<{
+		definition: { name: string; description: string; parameters: unknown };
+		sourceInfo: { source: string; path: string };
+	}>,
+): ToolView[] {
 	return [...entries].map(({ definition, sourceInfo }) => ({
 		name: definition.name,
 		description: definition.description,
@@ -79,7 +82,6 @@ let harness: Harness | undefined;
 afterEach(() => {
 	harness?.cleanup();
 	harness = undefined;
-	seenContexts.length = 0;
 });
 
 async function bootstrapLike(
@@ -104,10 +106,18 @@ async function bootstrapLike(
 
 describe("runtime bootstrap builds the session's tool registry without a session (senpi#5219)", () => {
 	it.each([
-		{ label: "no filter", filters: {} },
-		{ label: "excluded tools", filters: { excludedToolNames: ["hidden_probe", "base_c"] } },
-		{ label: "allowed tools", filters: { allowedToolNames: ["probe", "base_a", "base_b"] } },
-	])("matches AgentSession for the same inputs ($label)", async ({ filters }) => {
+		{ label: "no filter", filters: {}, expected: ["base_a", "base_b", "base_c", "probe", "hidden_probe"] },
+		{
+			label: "excluded tools",
+			filters: { excludedToolNames: ["hidden_probe", "base_c"] },
+			expected: ["base_a", "base_b", "probe"],
+		},
+		{
+			label: "allowed tools",
+			filters: { allowedToolNames: ["probe", "base_a", "base_b"] },
+			expected: ["base_a", "base_b", "probe"],
+		},
+	])("matches AgentSession for the same inputs ($label)", async ({ filters, expected }) => {
 		harness = await createHarness({ tools: baseTools(), extensionFactories: [probeExtension], ...filters });
 		const registry = await bootstrapLike(harness, filters);
 
@@ -119,11 +129,14 @@ describe("runtime bootstrap builds the session's tool registry without a session
 			path: tool.sourceInfo.path,
 		}));
 		expect(view(registry.definitions.values())).toEqual(sessionView);
+		expect(sessionView.map((tool) => tool.name)).toEqual(expected);
 		expect([...registry.toolRegistry.keys()]).toEqual(
 			sessionView.map((tool) => tool.name).filter((name) => harness?.session.getRegisteredTool(name) !== undefined),
 		);
 		for (const name of registry.toolRegistry.keys()) {
-			expect(harness.session.getRegisteredTool(name)?.description).toBe(registry.toolRegistry.get(name)?.description);
+			expect(harness.session.getRegisteredTool(name)?.description).toBe(
+				registry.toolRegistry.get(name)?.description,
+			);
 		}
 	});
 
@@ -134,18 +147,5 @@ describe("runtime bootstrap builds the session's tool registry without a session
 		expect([...registry.toolRegistry.keys()]).toEqual(["base_a", "base_b", "base_c", "probe", "hidden_probe"]);
 		expect(registry.definitions.get("base_b")?.definition.label).toBe("Override");
 		expect(registry.definitions.get("base_a")?.sourceInfo.source).toBe("builtin");
-	});
-
-	it("runs an extension tool through its wrapper with the runner's context and no session", async () => {
-		harness = await createHarness({ tools: baseTools() });
-		const registry = await bootstrapLike(harness, {});
-		const probe = registry.toolRegistry.get("probe");
-		if (probe === undefined) throw new Error("probe was not registered");
-
-		const result = await probe.execute("call-1", { value: "x" }, undefined, undefined);
-
-		expect(result.content).toEqual([{ type: "text", text: "probe:x" }]);
-		expect(seenContexts).toHaveLength(1);
-		expect(seenContexts[0]?.cwd).toBe(harness.tempDir);
 	});
 });
