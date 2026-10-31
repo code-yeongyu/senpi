@@ -2,7 +2,7 @@ import type { RecoveryRoute } from "./compact-recovery-state.ts";
 import type { RecoveryCaller, RecoveryStreamState } from "./compact-recovery-types.ts";
 
 /**
- * One peer + session stream (RULING-42 Q2 A): the session incarnation it materializes, S08a's generation counter,
+ * One peer + session stream (RULING-42 Q2 A): the session incarnation it materializes, its issued generation,
  * the admissions routed through it (RULING-46 item 1) and its current token. It lives while both its peer
  * incarnation and its routing session do (RULING-56 (2)).
  */
@@ -53,9 +53,9 @@ export class RecoveryStreams {
 
 	/**
 	 * Admits the route's token as the stream's next generation at `sessionEpoch`; a new session incarnation replaces
-	 * the record (carry 37). Returns the generation and the token this issuance retires: the previous current one.
+	 * the record (carry 37). RULING-99 supplies the session-owned generation; returns the previous current token.
 	 */
-	next(route: RecoveryRoute, sessionEpoch: string, tokenId: string): { generation: number; retired?: string } {
+	next(route: RecoveryRoute, sessionEpoch: string, tokenId: string, generation: number): { retired?: string } {
 		const key = keyOf(route);
 		const existing = this.streams.get(key);
 		const stream: RecoveryStream =
@@ -64,16 +64,16 @@ export class RecoveryStreams {
 				: {
 						sessionId: route.sessionId,
 						sessionEpoch,
-						generation: 0,
+						generation,
 						routes: new Set(),
 						current: undefined,
 					};
 		this.streams.set(key, stream);
-		stream.generation += 1;
+		stream.generation = generation;
 		stream.routes.add(route.admissionId);
 		const retired = existing?.current;
 		stream.current = tokenId;
-		return retired === undefined ? { generation: stream.generation } : { generation: stream.generation, retired };
+		return retired === undefined ? {} : { retired };
 	}
 
 	forgetPeer(socketEpoch: string): void {

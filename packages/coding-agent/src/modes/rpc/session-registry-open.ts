@@ -174,6 +174,7 @@ export async function openRegistrySession(
 		// Gated like a worker incarnation's lane: a legacy-only session (flag off, no structured lane) owns none.
 		if (host.options.workerIsolate !== true && structuredLaneEnabled(entry.runtime.session)) {
 			entry.acceptance = new SessionAcceptanceLane(undefined, undefined, host.options.agentDir);
+			await entry.acceptance.generations.bind(entry.durableSessionId);
 			entry.acceptance.bootstrap({ transcript: manager.beginTranscriptJournal() });
 			setSessionRecoveryEpoch(entry.runtime.session, entry.acceptance.recoveryEpoch);
 		}

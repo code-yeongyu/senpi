@@ -94,8 +94,14 @@ export async function createRpcSessionBinding(
 			if (property === "switchSession" && entry.switchSession) return entry.switchSession;
 			if (property === "setRebindSession")
 				return (callback?: Parameters<AgentSessionRuntime["setRebindSession"]>[0]) => {
-					entry.rebindSession = callback;
-					entry.runtime?.setRebindSession(callback);
+					entry.rebindSession =
+						lane && callback
+							? async (session) => {
+									await lane.generations.bind(session.sessionId);
+									await callback(session);
+								}
+							: callback;
+					entry.runtime?.setRebindSession(entry.rebindSession);
 				};
 			const runtime = entry.runtime;
 			if (!runtime) throw new Error("Session runtime was not created");

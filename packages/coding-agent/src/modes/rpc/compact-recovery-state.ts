@@ -92,10 +92,15 @@ export class RecoveryCheckpoints {
 			lane.release(root);
 			return this.refuse(storageUnavailable("compact_state_unavailable"));
 		}
+		const generation = lane.generations.next();
+		if (generation === undefined) {
+			lane.release(root);
+			return this.refuse(storageUnavailable("unavailable"));
+		}
 		const id = `${route.socketEpoch}:${++this.minted}`;
 		// One token per root (RULING-69 (2)): a root already pinned is a broken invariant, thrown before any stream moves.
 		this.manifests.pin(id, root);
-		const { generation, retired } = this.streams.next(route, root.sessionEpoch, id);
+		const { retired } = this.streams.next(route, root.sessionEpoch, id, generation);
 		const admission: RecoveryAdmission = Object.freeze({ ...route, sessionEpoch: root.sessionEpoch, generation });
 		const token: CheckpointToken = Object.freeze({
 			kind: "checkpoint",
