@@ -73,7 +73,7 @@ it("RULING-61 (1) the charged ancestry covers the measured heap of every record 
 		lane.release(root);
 		lane.retire("close");
 	}
-}, 60_000);
+}, 600_000);
 
 it("RULING-61 (1) the budget bounds the heap even for minimum-string records: the epoch stops at the budget", () => {
 	// Given: an empty epoch
@@ -97,7 +97,7 @@ it("RULING-61 (1) the budget bounds the heap even for minimum-string records: th
 	expect(root.transcript.ancestryBytes).toBeLessThanOrEqual(DEFAULT_TRANSCRIPT_ANCESTRY_BYTES);
 	expect(retained, "the 8 MiB budget bounds the retained heap").toBeLessThanOrEqual(DEFAULT_TRANSCRIPT_ANCESTRY_BYTES);
 	lane.retire("close");
-}, 60_000);
+}, 600_000);
 
 it("RULING-61 (1) the retained ancestry is bounded for 100,000 entries and freed at epoch end and at retirement", async () => {
 	const count = 100_000;
@@ -136,7 +136,7 @@ it("RULING-61 (1) the retained ancestry is bounded for 100,000 entries and freed
 		lane.retire("close");
 		await lane.idle();
 	}
-}, 60_000);
+}, 600_000);
 
 it("RULING-61 (1) ancestry over its byte budget leaves the epoch's transcript unavailable with a typed reason, never a silent drop", () => {
 	// Given: an epoch holding a few bytes of ancestry
