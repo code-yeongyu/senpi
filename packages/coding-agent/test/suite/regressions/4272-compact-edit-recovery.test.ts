@@ -61,7 +61,7 @@ async function views(client: RawClient, sessionId: string, lane: SessionAcceptan
 	const root = lane.freeze();
 	try {
 		const { messages } = await lane.readCurrent(root);
-		const transcript = readTranscriptRoot(root.transcript);
+		const transcript = await readTranscriptRoot(root.transcript);
 		if (!transcript.ok) throw new Error(`transcript read failed: ${transcript.error}`);
 		return {
 			shown,

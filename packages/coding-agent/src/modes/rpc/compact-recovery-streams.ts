@@ -38,6 +38,11 @@ export class RecoveryStreams {
 		return this.streams.get(keyOf(caller));
 	}
 
+	/** Another ordinary hold joins the installed cut without advancing its generation. */
+	join(route: RecoveryRoute): void {
+		this.streams.get(keyOf(route))?.routes.add(route.admissionId);
+	}
+
 	/** The bounded description a caller may hold: undefined once its peer incarnation or its session ended. */
 	describe(caller: RecoveryCaller): RecoveryStreamState | undefined {
 		const stream = this.get(caller);

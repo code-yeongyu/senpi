@@ -1,17 +1,13 @@
-import { VERSION } from "../../config.ts";
-import { sharedPathIdentityResolver } from "../../core/extensions/builtin/permission-system/path-identity-host.ts";
-
-import { subscriptionLimits } from "../../core/subscription-limits/limit-store.ts";
 import { detachConnection } from "./connection-detach.ts";
 import { CONNECTION_ROLE_FIXED, roleConnection } from "./connection-roles.ts";
+import { invalidCompactAdmission, unknownCompactAdmission } from "./compact-admission-validation.ts";
+import { withAdmissionRequest } from "./compact-admission-reply.ts";
+import { resetStream } from "./compact-reset-stream.ts";
 
 import { answerEffectFromTranscript } from "./effect-commands.ts";
 
-import { multiSessionHostCapabilities } from "./host-capabilities.ts";
-
 import { answerWarm } from "./host-warm.ts";
-import { pathIdentityResolverStatus } from "./path-identity-status.ts";
-import { protocolIdentity } from "./protocol-identity.ts";
+import { answerRecoveryPage, answerReleaseRecovery } from "./recovery-page-command.ts";
 
 import type { RpcCommand, RpcResponse } from "./rpc-types.ts";
 import { RPC_ERROR_MISSING_SESSION_ID } from "./rpc-types.ts";
@@ -25,7 +21,8 @@ import { releaseConnection } from "./session-router-attachments.ts";
 import { close, tearDownUnloaded } from "./session-router-close.ts";
 import type { RouterContext } from "./session-router-context.ts";
 import { code, detail, error } from "./session-router-errors.ts";
-import { acknowledgePrompt, otherRequestsSettled, sessionMemory } from "./session-router-observation.ts";
+import { answerListSessions, answerProtocolInfo, answerSubscriptionLimits } from "./session-router-host-reads.ts";
+import { acknowledgePrompt, otherRequestsSettled } from "./session-router-observation.ts";
 import { sweepDrain } from "./session-router-occupancy.ts";
 import { openWithBarrier } from "./session-router-open.ts";
 import {
@@ -42,6 +39,14 @@ import { unloadSession } from "./session-unload.ts";
  * caused it - and anything the command starts inherits the attribution.
  */
 export function handle(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
+	const malformed = invalidCompactAdmission(command);
+	if (malformed) return Promise.resolve(malformed);
+	const ownership = unknownCompactAdmission(host, command);
+	if (ownership instanceof Promise) return ownership.then((refusal) => refusal ?? admitted(host, command));
+	return ownership ? Promise.resolve(ownership) : admitted(host, command);
+}
+
+function admitted(host: RouterContext, command: RpcCommand): Promise<RpcResponse | undefined> {
 	const refusal = attachmentGate(host, command);
 	if (refusal) return Promise.resolve(refusal);
 	const sessionId = "sessionId" in command ? command.sessionId : undefined;
@@ -58,13 +63,16 @@ export function handle(host: RouterContext, command: RpcCommand): Promise<RpcRes
 			hostContext: host.defaults.hostContext,
 		});
 	host.activeRequests.set(sessionId, (host.activeRequests.get(sessionId) ?? 0) + 1);
-	return runWithSessionAttribution({ sessionId }, () => dispatch(host, command)).finally(() => {
-		const remaining = (host.activeRequests.get(sessionId) ?? 1) - 1;
-		if (remaining > 0) host.activeRequests.set(sessionId, remaining);
-		else host.activeRequests.delete(sessionId);
-		if (sessionId !== undefined) for (const listener of host.requestSettledListeners.get(sessionId) ?? []) listener();
-		if (host.draining) sweepDrain(host);
-	});
+	return withAdmissionRequest(command, host.writer.currentConnection(), () =>
+		runWithSessionAttribution({ sessionId }, () => dispatch(host, command)).finally(() => {
+			const remaining = (host.activeRequests.get(sessionId) ?? 1) - 1;
+			if (remaining > 0) host.activeRequests.set(sessionId, remaining);
+			else host.activeRequests.delete(sessionId);
+			if (sessionId !== undefined)
+				for (const listener of host.requestSettledListeners.get(sessionId) ?? []) listener();
+			if (host.draining) sweepDrain(host);
+		}),
+	);
 }
 
 /** Attachments held by connections other than the caller: every one of the caller's own holds is excluded. */
@@ -77,55 +85,17 @@ export async function dispatch(
 	host: RouterContext,
 	command: Exclude<RpcCommand, { type: "warm" }>,
 ): Promise<RpcResponse | undefined> {
-	if (command.type === "get_protocol_info") {
-		const capabilities = multiSessionHostCapabilities({
-			warm: host.registry.warm !== undefined,
-			toolRuntime: host.defaults.toolRuntime ?? "in-process",
-			negotiated: host.connectionOptions?.capabilities ?? [],
-			mcpPresenters: host.writer.mcpPresenters !== undefined,
-		});
-		return {
-			id: command.id,
-			type: "response",
-			command: "get_protocol_info",
-			success: true,
-			data: {
-				protocolVersion: 1,
-				serverVersion: VERSION,
-				capabilities,
-				mode: "multi",
-				...protocolIdentity(host.defaults.agentDir),
-				memory_pressure: host.memoryPressure,
-				path_identity_resolver: pathIdentityResolverStatus(sharedPathIdentityResolver()),
-			},
-		};
+	if (command.type === "reset_stream" && host.admissions) return resetStream(host, command);
+	if (command.type === "cancel_attempt" && host.admissions !== undefined) {
+		const peer = host.writer.currentConnection();
+		const epoch = peer === undefined ? undefined : host.writer.socketEpochOf(peer);
+		if (epoch === undefined) return error(command.id, command.type, "unsupported_transport");
+		const outcome = await host.admissions.cancel(epoch, command.admissionId);
+		return { id: command.id, type: "response", command: "cancel_attempt", success: true, data: { outcome } };
 	}
-	if (command.type === "get_subscription_limits") {
-		return {
-			id: command.id,
-			type: "response",
-			command: "get_subscription_limits",
-			success: true,
-			data: { accounts: subscriptionLimits.snapshot() },
-		};
-	}
-	if (command.type === "list_sessions") {
-		// Worker sessions are machine-driven work: a client sees them only by asking, and
-		// the opaque context blob travels only on that listing, never to every connection.
-		const rows = host.registry.list();
-		const withMemory = rows.map((row) => ({ ...row, memory: sessionMemory(host, row.sessionId) }));
-		const sessions =
-			command.include_workers === true
-				? withMemory
-				: withMemory.filter((row) => row.kind !== "worker").map(({ context: _context, ...row }) => row);
-		return {
-			id: command.id,
-			type: "response",
-			command: "list_sessions",
-			success: true,
-			data: { sessions },
-		};
-	}
+	if (command.type === "get_protocol_info") return answerProtocolInfo(host, command);
+	if (command.type === "get_subscription_limits") return answerSubscriptionLimits(command);
+	if (command.type === "list_sessions") return answerListSessions(host, command);
 	if (command.type === "detach_connection")
 		return detachConnection(command, host.writer.currentConnection(), (id) => releaseConnection(host, id));
 	if (command.type === "open_session") return openWithBarrier(host, command);
@@ -246,6 +216,11 @@ export async function dispatch(
 	// A receipt of a session this host has not loaded is read from its transcript, never by loading it.
 	if (command.type === "get_effect_status" && !command.sessionId && command.sessionPath !== undefined)
 		return answerEffectFromTranscript(command.id, command.sessionPath, command.effectId);
+	// The token owner's page route (S11b): host-level, before any session or worker forwarding; absent with the flag off.
+	if (command.type === "get_recovery_page" && host.writer.recoveryPages !== undefined)
+		return answerRecoveryPage(host.writer.recoveryPages, host.writer, command);
+	if (command.type === "release_recovery" && host.writer.recoveryEvents !== undefined)
+		return answerReleaseRecovery(host.writer.recoveryEvents, host.writer, command);
 	if (!command.sessionId) return error(command.id, command.type, RPC_ERROR_MISSING_SESSION_ID);
 	const sessionId = command.sessionId;
 	if (host.writer.isSessionSealed(sessionId) && host.registry.peek(sessionId)?.state === "open")
