@@ -42,17 +42,25 @@ const requiredNativePrebuildTargets = process.argv
 	.flatMap((arg) => arg.slice(arg.indexOf("=") + 1).split(","))
 	.map((target) => target.trim())
 	.filter((target) => target.length > 0);
+const requiredSocketSecretFlag = "--require-socket-secret-bridge=";
+const requiredSocketSecretTargets = process.argv
+	.slice(2)
+	.filter((arg) => arg.startsWith(requiredSocketSecretFlag))
+	.flatMap((arg) => arg.slice(requiredSocketSecretFlag.length).split(","))
+	.map((target) => target.trim())
+	.filter((target) => target.length > 0);
 const unknownArgs = process.argv
 	.slice(2)
 	.filter(
 		(arg) =>
 			arg !== "--dry-run" &&
 			!arg.startsWith(requiredNativePrebuildFlag) &&
-			!arg.startsWith(legacyRequiredNativePrebuildFlag),
+			!arg.startsWith(legacyRequiredNativePrebuildFlag) &&
+			!arg.startsWith(requiredSocketSecretFlag),
 	);
 
 if (unknownArgs.length > 0) {
-	console.error(`Usage: node scripts/publish.mjs [--dry-run] [--require-native-prebuilds=<platform>-<arch>[,...]]`);
+	console.error(`Usage: node scripts/publish.mjs [--dry-run] [--require-native-prebuilds=<platform>-<arch>[,...]] [--require-socket-secret-bridge=win32-<arch>[,...]]`);
 	process.exit(1);
 }
 
@@ -118,7 +126,7 @@ function validatePack(pkg) {
 	const result = run("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], { capture: true, cwd: pkg.publishDirectory });
 	const packed = parseNpmPackJson(result.stdout)[0];
 	if (pkg.directory === "packages/coding-agent") {
-		assertSenpiPackedWorkspaceFiles(packed, readPackageJson(pkg.publishDirectory));
+		assertSenpiPackedWorkspaceFiles(packed, readPackageJson(pkg.publishDirectory), { requiredSocketSecretTargets });
 	} else {
 		assertPublishedWorkspacePackFiles(packed, readPackageJson(pkg.directory).name, { requiredNativePrebuildTargets });
 	}
