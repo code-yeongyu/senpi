@@ -8,17 +8,12 @@ import type { AccountSlot } from "../../../src/core/extensions/builtin/anthropic
 import { selectAccount } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import { subscriptionLimits } from "../../../src/core/subscription-limits/limit-store.ts";
 import type { LimitWindow } from "../../../src/core/subscription-limits/limit-windows.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 // omo#9234: both account-selection owners prefer live subscription headroom.
 const NOW = Date.parse("2026-10-30T00:00:00Z");
 const names = ["alpha", "beta"];
-const accounts: AccountSlot[] = names.map((name) => ({
-	name,
-	access: `synthetic-${name}`,
-	refresh: "synthetic",
-	expires: NOW + 60_000,
-	source: "login",
-}));
+const accounts: AccountSlot[] = names.map((name) => cliSlot(name));
 let directory: string;
 let repository: CredentialSlotRepository;
 
