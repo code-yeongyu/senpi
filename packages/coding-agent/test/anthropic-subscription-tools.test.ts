@@ -13,7 +13,6 @@ import {
 	registerToolWatch,
 } from "../src/core/extensions/builtin/anthropic-subscription/tool-watch.ts";
 import {
-	BUILTIN_SDK_TOOLS,
 	canUseTool,
 	HOST_TOOL_EXECUTION_DENIED_MESSAGE,
 	mapPiToolNameToSdk,
@@ -34,16 +33,22 @@ function contextWithTools(...tools: Tool[]): Context {
 }
 
 describe("Claude SDK OAuth tool integration", () => {
-	it("derives the SDK allowlist and custom MCP mappings from active senpi tools", () => {
+	it("serves every active senpi tool as a custom MCP tool and maps the names both ways", () => {
 		const resolved = resolveSdkTools(contextWithTools(tool("read"), tool("bash"), tool("find"), tool("repoSearch")));
 
-		expect(resolved.sdkTools).toEqual(["Read", "Bash", "Glob"]);
-		expect(resolved.customTools.map(({ name }) => name)).toEqual(["repoSearch"]);
+		expect(resolved.customTools.map(({ name }) => name)).toEqual(["read", "bash", "find", "repoSearch"]);
 		expect(resolved.customToolNameToSdk.get("repoSearch")).toBe("mcp__custom-tools__repoSearch");
 		expect(resolved.customToolNameToPi.get("mcp__custom-tools__repoSearch")).toBe("repoSearch");
 		expect(mapPiToolNameToSdk("repoSearch", resolved.customToolNameToSdk)).toBe("mcp__custom-tools__repoSearch");
+		expect(mapPiToolNameToSdk("read", resolved.customToolNameToSdk)).toBe("mcp__custom-tools__read");
 		expect(mapSdkToolNameToPi("mcp__custom-tools__repoSearch", resolved.customToolNameToPi)).toBe("repoSearch");
-		expect(resolveSdkTools({ messages: [] }).sdkTools).toEqual(BUILTIN_SDK_TOOLS);
+		expect(mapSdkToolNameToPi("Bash", resolved.customToolNameToPi)).toBe("bash");
+		expect(resolveSdkTools({ messages: [] })).toEqual({
+			customTools: [],
+			customToolNameToSdk: new Map(),
+			customToolNameToPi: new Map(),
+			toolAliases: {},
+		});
 	});
 
 	it("builds one in-process custom-tools MCP server for active custom tools", async () => {

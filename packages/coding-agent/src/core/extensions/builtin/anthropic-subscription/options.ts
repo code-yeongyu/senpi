@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { Api, Context, Model, SimpleStreamOptions, ThinkingBudgets, ThinkingLevel } from "@earendil-works/pi-ai";
+import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { CONFIG_DIR_NAME, getAgentDir } from "../../../../config.ts";
 import {
 	PROJECT_RULES_END_MARKER,
@@ -13,7 +13,7 @@ import { sdkModelId } from "./context-window.ts";
 import { presetAppendDeprecationGuidance } from "./guidance.ts";
 import { claudeCodeQueryEnvironment } from "./query-environment.ts";
 import { requireAnthropicSubscriptionCwd } from "./session-cwd.ts";
-import type { EffortLevel, Options, SettingSource, ThinkingConfig } from "./sdk-boundary.ts";
+import type { Options, SettingSource } from "./sdk-boundary.ts";
 import {
 	type AnthropicSubscriptionProviderSettings,
 	type AnthropicSubscriptionSystemPromptMode,
@@ -23,7 +23,8 @@ import {
 	resolveSystemPromptMode,
 } from "./settings.ts";
 import { loadOverrideSystemPrompt, resolveCustomSystemPrompt } from "./system-prompt.ts";
-import { BUILTIN_SDK_TOOLS, canUseTool, HOST_TOOL_DENIAL_HOOKS } from "./tools.ts";
+import { thinkingQueryOptions } from "./thinking-options.ts";
+import { canUseTool, HOST_TOOL_DENIAL_HOOKS } from "./tools.ts";
 
 /** `claude-cli`: a CLI-store account, whose own config dir links `projects` to the shared transcript root (senpi#4436). */
 export type AnthropicSubscriptionAuthLane = AnthropicSubscriptionTokenInjection | "claude-cli";
@@ -35,91 +36,11 @@ export interface AnthropicSubscriptionQueryOptionsInput {
 	readonly cwd?: string;
 	readonly providerSettings?: AnthropicSubscriptionProviderSettings;
 	readonly authLane?: AnthropicSubscriptionAuthLane;
-	readonly tools?: readonly string[];
+	/** Built-in-name aliases from `resolveSdkTools`; only attached when a tool-carrying query has any. */
+	readonly toolAliases?: Readonly<Record<string, string>>;
 	readonly pathToClaudeCodeExecutable?: string;
 	readonly sessionId?: string;
 	readonly onGuidance?: (text: string) => void;
-}
-
-const ADAPTIVE_THINKING_MODEL_MARKERS = [
-	"opus-4-6",
-	"opus-4.6",
-	"opus-4-7",
-	"opus-4.7",
-	"opus-4-8",
-	"opus-4.8",
-	"opus-5",
-	"sonnet-4-6",
-	"sonnet-4.6",
-	"sonnet-5",
-	"fable-5",
-	"mythos-5",
-] as const;
-
-const NATIVE_XHIGH_EFFORT_MODEL_MARKERS = [
-	"opus-4-7",
-	"opus-4-8",
-	"opus-5",
-	"sonnet-5",
-	"fable-5",
-	"mythos-5",
-] as const;
-
-const DEFAULT_THINKING_BUDGETS: Required<ThinkingBudgets> = {
-	minimal: 2048,
-	low: 8192,
-	medium: 16384,
-	high: 31999,
-	max: 63999,
-};
-
-function includesModelMarker(model: Model<Api>, markers: readonly string[]): boolean {
-	const id = model.id.toLowerCase();
-	return markers.some((marker) => id.includes(marker));
-}
-
-function forcedAdaptiveThinking(model: Model<Api>): boolean | undefined {
-	const compat = model.compat;
-	if (!compat || !("forceAdaptiveThinking" in compat)) return undefined;
-	return typeof compat.forceAdaptiveThinking === "boolean" ? compat.forceAdaptiveThinking : undefined;
-}
-
-function supportsAdaptiveThinking(model: Model<Api>): boolean {
-	return forcedAdaptiveThinking(model) ?? includesModelMarker(model, ADAPTIVE_THINKING_MODEL_MARKERS);
-}
-
-function supportsNativeXhighEffort(model: Model<Api>): boolean {
-	return includesModelMarker(model, NATIVE_XHIGH_EFFORT_MODEL_MARKERS);
-}
-
-function isEffortLevel(value: string): value is EffortLevel {
-	return value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max";
-}
-
-function mapThinkingLevelToEffort(model: Model<Api>, level: ThinkingLevel): EffortLevel {
-	const mapped = model.thinkingLevelMap?.[level];
-	if (typeof mapped === "string" && isEffortLevel(mapped)) return mapped;
-	switch (level) {
-		case "minimal":
-		case "low":
-			return "low";
-		case "medium":
-			return "medium";
-		case "high":
-			return "high";
-		case "xhigh":
-			return supportsNativeXhighEffort(model) ? "xhigh" : "max";
-		case "max":
-			return "max";
-	}
-}
-
-function mapThinkingTokens(reasoning: ThinkingLevel, thinkingBudgets: ThinkingBudgets | undefined): number {
-	const budgetLevel = reasoning === "xhigh" ? "high" : reasoning;
-	const customBudget = thinkingBudgets?.[budgetLevel];
-	return typeof customBudget === "number" && Number.isFinite(customBudget) && customBudget > 0
-		? customBudget
-		: DEFAULT_THINKING_BUDGETS[budgetLevel];
 }
 
 function findAgentsMdInParents(cwd: string): string | undefined {
@@ -264,13 +185,13 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 				? loadOverrideSystemPrompt(providerSettings.systemPromptFile)
 				: resolveCustomSystemPrompt(input.context.systemPrompt);
 	const toolLessRequest = input.streamOptions?.toolChoice === "none";
-	const emptyToolContext = (input.context.tools?.length ?? 0) === 0;
 	const strictMcpConfig = toolLessRequest || (providerSettings.strictMcpConfig ?? !appendSystemPrompt);
 	const senpiOwnsCompaction = resolveCompactionOwner(providerSettings) === "senpi";
 	const queryOptions: Options = {
 		cwd,
 		model: sdkModelId(input.model),
-		tools: toolLessRequest || emptyToolContext ? [] : input.tools ? [...input.tools] : [...BUILTIN_SDK_TOOLS],
+		// No Claude Code built-in: every tool the model may call is a custom-tools MCP tool the host deny hook answers.
+		tools: [],
 		permissionMode: "dontAsk",
 		includePartialMessages: true,
 		canUseTool,
@@ -282,18 +203,18 @@ export function buildAnthropicSubscriptionQueryOptions(input: AnthropicSubscript
 		settings: { autoCompactEnabled: !senpiOwnsCompaction },
 		settingSources: resolveSettingSources(providerSettings, mode, authLane),
 	};
+	if (!toolLessRequest && input.toolAliases && Object.keys(input.toolAliases).length > 0) {
+		queryOptions.toolAliases = { ...input.toolAliases };
+	}
 	const environment = claudeCodeQueryEnvironment(input.model, senpiOwnsCompaction);
 	if (environment) queryOptions.env = environment;
 	if (input.pathToClaudeCodeExecutable) queryOptions.pathToClaudeCodeExecutable = input.pathToClaudeCodeExecutable;
 	if (toolLessRequest) queryOptions.maxTurns = 1;
 	if (strictMcpConfig) queryOptions.extraArgs = { "strict-mcp-config": null };
 
-	const reasoning = input.streamOptions?.reasoning;
-	if (reasoning && supportsAdaptiveThinking(input.model)) {
-		queryOptions.thinking = { type: "adaptive", display: "summarized" } satisfies ThinkingConfig;
-		queryOptions.effort = mapThinkingLevelToEffort(input.model, reasoning);
-	} else if (reasoning) {
-		queryOptions.maxThinkingTokens = mapThinkingTokens(reasoning, input.streamOptions?.thinkingBudgets);
-	}
+	Object.assign(
+		queryOptions,
+		thinkingQueryOptions(input.model, input.streamOptions?.reasoning, input.streamOptions?.thinkingBudgets),
+	);
 	return queryOptions;
 }

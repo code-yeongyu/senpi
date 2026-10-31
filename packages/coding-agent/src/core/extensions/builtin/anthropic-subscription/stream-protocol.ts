@@ -1,5 +1,11 @@
 import { type Api, type AssistantMessage, calculateCost, type Model } from "@earendil-works/pi-ai";
-import { BUILTIN_SDK_TOOLS, mapSdkToolNameToPi, mapToolArgs, TOOL_EXECUTION_DENIED_MESSAGE } from "./tools.ts";
+import {
+	BUILTIN_SDK_TOOLS,
+	mapSdkToolNameToPi,
+	mapToolArgs,
+	TOOL_EXECUTION_DENIED_MESSAGE,
+	translatesBuiltinArguments,
+} from "./tools.ts";
 
 /** @deprecated Resolve the active Context.tools allowlist through resolveSdkTools(). */
 export const sdkTools = [...BUILTIN_SDK_TOOLS];
@@ -14,6 +20,8 @@ export type ToolBlock = {
 	name: string;
 	arguments: Record<string, unknown>;
 	partialJson?: string;
+	/** The name the model emitted, kept until the block closes to pick the argument translation. */
+	sdkName?: string;
 	index?: number;
 };
 export type StreamBlock = TextBlock | ThinkingBlock | ToolBlock;
@@ -41,8 +49,17 @@ export function asRecord(value: unknown): Record<string, unknown> {
 		: {};
 }
 
-export function mapToolArguments(name: string, argumentsValue: Record<string, unknown>): Record<string, unknown> {
-	return mapToolArgs(name, argumentsValue);
+/**
+ * A call emitted under a built-in name carries Claude Code's argument shape and is translated into the
+ * senpi tool's contract; a call emitted under the MCP name was written against the senpi schema the model
+ * saw and passes through verbatim, so a custom schema survives (senpi#4059).
+ */
+export function mapToolArguments(
+	name: string,
+	argumentsValue: Record<string, unknown>,
+	sdkName: string,
+): Record<string, unknown> {
+	return translatesBuiltinArguments(sdkName) ? mapToolArgs(name, argumentsValue) : { ...argumentsValue };
 }
 
 export function updateUsage(

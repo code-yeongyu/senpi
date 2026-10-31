@@ -23,7 +23,8 @@ Generated: 2026-08-07 | Commit: `4f26b8282`
 | `session-observability.ts` | `ContinuityObservation` (kind, reason, delta count, `payloadBytes`, `collapsedDirectives`), `session.log` events |
 | `system-prompt.ts` | `systemPromptMode` handling (`full` default, `preset-append` deprecated, `override` from file); no array-splitting, the CLI joins arrays |
 | `prompt-directive-dedupe.ts` | `dedupeUltraworkBlocks`: collapses repeated `<ultrawork-mode>` spans in flatten output; never mutates `context.messages` |
-| `custom-tools.ts` | Senpi tools exposed as an SDK MCP server; execution denied SDK-side (`denyCustomToolExecution`), executed by senpi |
+| `custom-tools.ts` | Every active senpi tool exposed as an SDK MCP server (`alwaysLoad`); execution denied SDK-side (`denyCustomToolExecution`), executed by senpi |
+| `tools.ts` | `tools: []` (no Claude Code built-in), `BUILTIN_TOOL_ALIASES` -> `toolAliases`, name/argument mapping, deny hook matcher `mcp__custom-tools__.*`, `HOST_TOOL_POLICY_FINGERPRINT` |
 | `sdk-boundary.ts` | Single import boundary over `@anthropic-ai/claude-agent-sdk` (`query`, `createSdkMcpServer`, types) |
 | `options.ts` | `buildAnthropicSubscriptionQueryOptions`: settings + `SENPI_CLAUDE_SDK_OAUTH_*` env resolution, append assembly |
 | `executable.ts` | Claude Code executable resolution |

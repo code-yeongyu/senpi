@@ -15,7 +15,6 @@ import {
 	type SDKMessage,
 } from "../src/core/extensions/builtin/anthropic-subscription/sdk-boundary.ts";
 import { streamAnthropicSubscription } from "../src/core/extensions/builtin/anthropic-subscription/stream.ts";
-import { BUILTIN_SDK_TOOLS } from "../src/core/extensions/builtin/anthropic-subscription/tools.ts";
 import { generateSummaryMessage } from "../src/core/extensions/builtin/compaction/speculative-summary.ts";
 
 const model: Model<Api> = {
@@ -61,24 +60,28 @@ afterEach(() => resetSdkBoundary());
 
 describe("claude-sdk-oauth tool-less requests", () => {
 	it("builds no SDK tools for toolChoice none while preserving normal tool options", () => {
+		const aliases = { Read: "mcp__custom-tools__read" };
 		const normal = buildAnthropicSubscriptionQueryOptions({
 			cwd: process.cwd(),
 			model,
 			context: context([customTool]),
-			tools: ["mcp__custom-tools__lookup"],
+			toolAliases: aliases,
 			providerSettings: {},
 		});
 		const toolLess = buildAnthropicSubscriptionQueryOptions({
 			cwd: process.cwd(),
 			model,
 			context: context([customTool]),
-			tools: ["mcp__custom-tools__lookup"],
+			toolAliases: aliases,
 			providerSettings: {},
 			streamOptions: { toolChoice: "none" },
 		});
 
-		expect(normal.tools).toEqual(["mcp__custom-tools__lookup"]);
+		expect(normal.tools).toEqual([]);
+		expect(normal.toolAliases).toEqual(aliases);
+		expect(normal.maxTurns).toBeUndefined();
 		expect(toolLess.tools).toEqual([]);
+		expect(toolLess).not.toHaveProperty("toolAliases");
 		expect(toolLess.maxTurns).toBe(1);
 		// Strict MCP is forced for the request even when the operator opted out,
 		// so the CLI cannot re-expose configured MCP tools to the summarizer.
@@ -87,7 +90,7 @@ describe("claude-sdk-oauth tool-less requests", () => {
 			cwd: process.cwd(),
 			model,
 			context: context([customTool]),
-			tools: ["mcp__custom-tools__lookup"],
+			toolAliases: aliases,
 			providerSettings: { strictMcpConfig: false },
 			streamOptions: { toolChoice: "none" },
 		});
@@ -100,16 +103,9 @@ describe("claude-sdk-oauth tool-less requests", () => {
 			providerSettings: {},
 		});
 		expect(emptyContext.tools).toEqual([]);
+		expect(emptyContext).not.toHaveProperty("toolAliases");
 		expect(emptyContext.maxTurns).toBeUndefined();
 		expect(emptyContext.extraArgs).toBeUndefined();
-		expect(
-			buildAnthropicSubscriptionQueryOptions({
-				cwd: process.cwd(),
-				model,
-				context: context([customTool]),
-				providerSettings: {},
-			}).tools,
-		).toEqual([...BUILTIN_SDK_TOOLS]);
 	});
 
 	it("does not attach custom MCP tools to a tool-less stream", async () => {
@@ -160,7 +156,6 @@ describe("claude-sdk-oauth tool-less requests", () => {
 					model,
 					context: requestContext,
 					streamOptions: streamOptions as never,
-					tools: requestContext.tools?.map((tool) => `mcp__custom-tools__${tool.name}`),
 				});
 				calls.push(queryOptions);
 				const response = createAssistantMessageEventStream();
