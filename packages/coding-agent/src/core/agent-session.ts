@@ -4744,6 +4744,11 @@ export class AgentSession {
 		return this._structuredLane.subscribe(listener, failed);
 	}
 
+	/** Whether `subscribeStructured` can attach: false for an Agent constructed outside the session layer. */
+	get hasStructuredLane(): boolean {
+		return this._structuredLane.available;
+	}
+
 	/**
 	 * Temporarily disconnect from agent events.
 	 * User listeners are preserved and will receive events again after resubscribe().

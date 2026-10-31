@@ -50,7 +50,7 @@ describe("issue 2871: a reply written after its session's scope closed", () => {
 		});
 		const entry = {
 			scope: new ProviderScope(),
-			runtime: {} as AgentSessionRuntime,
+			runtime: { session: { hasStructuredLane: false } } as unknown as AgentSessionRuntime,
 		} as unknown as RpcSessionEntry;
 		await createRpcSessionBinding("rpc-1", entry, writer, () => {});
 		const sink = connectionHandler.sink;

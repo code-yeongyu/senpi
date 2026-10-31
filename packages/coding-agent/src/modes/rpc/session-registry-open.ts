@@ -1,6 +1,5 @@
 import { runWithProviderScope } from "@earendil-works/pi-ai/node/provider-scope";
 import { createAgentSessionRuntime } from "../../core/agent-session-runtime.ts";
-import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
 import { SessionManager } from "../../core/session-manager.ts";
 import { ClientAdmissions } from "./client-admissions.ts";
 import { EffectLedger } from "./effect-ledger.ts";
@@ -9,6 +8,7 @@ import { assertRequestedModelResolved } from "./open-session-model.ts";
 
 import { canonicalSessionPath } from "./session-path-key.ts";
 import { SessionAcceptanceLane } from "./session-acceptance-lane.ts";
+import { structuredLaneEnabled } from "./structured-session-records.ts";
 import { setSessionRecoveryEpoch } from "../../core/session-recovery-identity.ts";
 import { attachToOpenSession } from "./session-registry-attach.ts";
 import {
@@ -171,7 +171,8 @@ export async function openRegistrySession(
 		entry.durableSessionId = manager.getSessionId();
 		entry.sessionPath ??= manager.getSessionFile();
 		// The accepted baseline precedes the open, so router admission and its reply come after it (R3.C1.1).
-		if (compactUpdatesEnabled() && host.options.workerIsolate !== true) {
+		// Gated like a worker incarnation's lane: a legacy-only session (flag off, no structured lane) owns none.
+		if (host.options.workerIsolate !== true && structuredLaneEnabled(entry.runtime.session)) {
 			entry.acceptance = new SessionAcceptanceLane(undefined, undefined, host.options.agentDir);
 			await entry.acceptance.generations.bind(entry.durableSessionId);
 			entry.acceptance.bootstrap({ transcript: manager.beginTranscriptJournal() });
