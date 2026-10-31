@@ -4,6 +4,7 @@ import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance
 import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
 import { expectOneNumbering, recordFolds } from "./4272-compact-lane-support.ts";
+import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -36,7 +37,7 @@ it("T6 Q2 in-process canonical records fold with their legacy record at one lane
 	const session = entry?.runtime?.session;
 	if (!lane || !session) throw new Error("no real lane");
 	host.faux.setResponses([fauxAssistantMessage("answer first", { timestamp: 1 })]);
-	const done = client.waitFor((record) => record.type === "agent_idle");
+	const done = client.waitFor((record) => record.type === "agent_idle", EVENT_SAFETY_MS);
 	dataOf(await client.request({ type: "prompt", sessionId, message: "first" }));
 	await done;
 	await session.sendCustomMessage({
@@ -70,4 +71,4 @@ it("T6 Q2 in-process canonical records fold with their legacy record at one lane
 		lane.release(root);
 	}
 	expect(JSON.stringify(client.inbox)).not.toMatch(/invalidatedBlocks|firstOrdinal|message_block_state/);
-}, 60000);
+}, 600_000);

@@ -1,3 +1,40 @@
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/coding-agent/src/index.ts`.
+- Export the guarded secret-input option, unavailable error and settled RPC event from the public package.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-28 - Full access in a linked git worktree honours the main checkout's saved decision (senpi#4388)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: the CLI runtime factory reads the saved decision once through `getSavedProjectTrust` and uses it for the Full-access trust, the trusted-project fallback and `trustFromFullAccess`, instead of three `trustStore.get(cwd)` calls.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: without it, Full access in a worktree whose main checkout is saved as "do not trust" trusted the project anyway, and a worktree that inherits "trust" was marked as trusted only through Full access, so leaving Full access withdrew that trust.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: the Full-access trust decision is made while the runtime is built, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the trust-manager import line and the project-trust block of the CLI runtime factory in `main.ts`.
+
 ## 2026-10-29 - Version-proven Windows private descriptor pairs (#4859, PR #4864)
 
 ### What changed
