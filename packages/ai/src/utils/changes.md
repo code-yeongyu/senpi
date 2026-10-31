@@ -1,3 +1,75 @@
+## 2026-10-31 - Merged root unions keep branch-only required fields as a hint (senpi#5138)
+
+### What changed
+
+- `packages/ai/src/utils/tool-schema-compat.ts`: `mergeRootObjectUnion` appends one `REQUIRED for <branch>: <fields>.` sentence per anyOf/oneOf branch to the merged root's `description`, listing that branch's required names that the merged `required` (branch-common names only) dropped. A branch is named by its first literal-valued property (`action=run`, `action=peek|stop`), else `option <n>`. allOf merges are unchanged, since they already require every branch's names.
+
+### Why
+
+- senpi#5138: object-only OpenAI-compatible routes saw the eval tool with no required fields at all, so a weaker tool-calling model had no wire signal that a run needs `language`, `code` and `summary`.
+
+### Why an extension could not handle it
+
+- The root-union merge is the shared provider wire adaptation every OpenAI-compatible, Moonshot and Bedrock request goes through.
+
+### Expected merge conflict zones
+
+- LOW: the return block of `mergeRootObjectUnion` and the two helpers added after it.
+
+## 2026-10-31 - Tool argument validation reports only the addressed branch of a discriminated union (senpi#5141)
+
+### What changed
+
+- `packages/ai/src/utils/validation.ts`: when a tool's parameters are an `anyOf`/`oneOf` of object branches that all carry a const-valued property with disjoint values (a discriminator such as `action`), a failed validation picks the branch by that property (the argument's value; when omitted, the property's `default` or the single branch where it is optional) and reports that branch's errors plus root property errors as one line, e.g. `for action "run" (default when action is omitted): language: must have required properties language`. An unknown discriminator value yields one line naming the allowed values and the received one. Unions without such a property keep the full error list; validators registered through `registerToolArgumentValidator` still run first.
+
+### Why
+
+- The validator listed every branch's mismatch (`action: must be equal to constant`, `cell_id: must have required properties cell_id`, `root: must match a schema in anyOf`) next to the one line that mattered, so a model could not tell which field to fix and repeated the failing call.
+
+### Why an extension could not handle it
+
+- Argument validation runs inside `pi-ai` before any tool or extension code sees the call.
+
+### Expected merge conflict zones
+
+- LOW: the `JsonSchemaObject` interface, the new helpers above `validateToolCall`, and the `errors` expression at the end of `validateToolArguments` in `validation.ts`.
+
+## 2026-10-31 - The Claude Code version fingerprint resolver is removed (senpi#5131)
+
+### What changed
+
+- `packages/ai/src/utils/claude-code-version.ts`, `packages/ai/src/utils/claude-code-version-cache.ts`: deleted (`getClaudeCodeVersion`, `recoverClaudeCodeVersion`, `createClaudeCodeVersionResolver`, `fetchLatestClaudeCodeVersion`, `installClaudeCodeVersionStore`, `installClaudeCodeVersionFileStore`, `PI_CLAUDE_CODE_VERSION`, the six-hour release lookup and the `<agent dir>/claude-code-version.json` cache).
+
+### Why
+
+- senpi#5131: the resolver existed only to keep the `claude-cli/<version>` fingerprint of the removed impersonation path current.
+
+### Why an extension could not handle it
+
+- These were pi-ai's own utility modules and its `./utils/*` public subpath.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files; an upstream change that lands on them stays deleted.
+
+## 2026-10-30 - extractChatGptSubscriptionIdentity (senpi#5009)
+
+### What changed
+
+- `packages/ai/src/utils/chatgpt-subscription-auth.ts`: `extractChatGptSubscriptionIdentity(token)` returns the per-member `chatgpt_account_user_id`, or `chatgpt_user_id`/`user_id` scoped to `chatgpt_account_id`; `chatgpt_account_id` alone is never an identity (Team members share it). `extractChatGptSubscriptionAccountId` shares the same claim reader. The claim reading follows senpi#2048.
+
+### Why
+
+- oh-my-openagent#9633: tell one saved ChatGPT account from another, including slots stored by older builds.
+
+### Why an extension could not handle it
+
+- Shared, browser-safe token helper used by the provider definition.
+
+### Expected merge conflict zones
+
+- LOW: the body of `extractChatGptSubscriptionAccountId`.
+
 ## 2026-10-30 - The retry-hint extractor reads a zoned wall-clock reset (senpi#1771)
 
 ### What changed

@@ -1,3 +1,21 @@
+## 2026-10-30 - ChatGPT Subscription reports the signed-in account (senpi#5009)
+
+### What changed
+
+- `packages/ai/src/providers/chatgpt-subscription.ts`: the provider's lazy OAuth declares `accountIdentity` from the access token.
+
+### Why
+
+- oh-my-openagent#9633: login dedupe needs the identity without loading the Node-only flow module.
+
+### Why an extension could not handle it
+
+- The builtin provider definition owns its OAuth surface.
+
+### Expected merge conflict zones
+
+- LOW: the `lazyOAuth({...})` call in `chatgptSubscriptionProvider`.
+
 ## 2026-10-27 - The Anthropic provider comment names the CLI sign-in (senpi#4436, S7)
 
 ### What changed
