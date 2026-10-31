@@ -3,10 +3,15 @@ import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { Api, AssistantMessage, Context, Message, Model } from "@earendil-works/pi-ai";
-import { type AnthropicMessageParams, toAnthropicMessageParams } from "@earendil-works/pi-ai/api/anthropic-messages";
+import type { AnthropicMessageParams } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { bundledClaudeCodeVersion } from "./executable-version.ts";
 import type { PromptCacheTtl } from "./prompt-cache-ttl.ts";
 import { mapPiToolNameToSdk } from "./tools.ts";
+
+// A dynamic import, like pi-ai's own `anthropic-messages.lazy.ts`: a static edge would make the bundler move the module
+// into a shared chunk, and the release bundle must keep its `claudeCodeVersion` declaration in the
+// `anthropic-messages-*.js` chunk a downstream installer rewrites (scripts/node-bundle-smoke.test.ts).
+const { toAnthropicMessageParams } = await import("@earendil-works/pi-ai/api/anthropic-messages");
 
 type MessageParam = AnthropicMessageParams["messages"][number];
 type ContentBlock = Exclude<MessageParam["content"], string>[number];

@@ -1,7 +1,11 @@
+import { rmSync } from "node:fs";
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { type AuthenticatedAttemptInput, queryWithAuthLane } from "./auth-lane.ts";
 import { coldSeedCalibration, coldSeedOverflow, estimateColdSeedTokens } from "./cold-seed-budget.ts";
+import { buildColdSeedFrames, framesApply, seedConfigDir, withFlatFallbackOnce } from "./cold-seed-frames.ts";
+import { loadHistoryTranscript } from "./history-transcript.lazy.ts";
 import { buildPromptBlocks } from "./prompt-bridge.ts";
+import { pinnedPromptCacheTtl } from "./prompt-cache-ttl.ts";
 import { dedupeUltraworkBlocks, serializedPayloadBytes } from "./prompt-directive-dedupe.ts";
 import type { SDKMessage, SDKUserMessage } from "./sdk-boundary.ts";
 import { getSdkBoundary } from "./sdk-boundary.ts";
@@ -13,13 +17,15 @@ import {
 	consumePendingCloseCause,
 	emitContinuityObservation,
 	observeSessionSyncDecision,
+	recordPendingCloseCause,
 	sanitizeTerminalFailure,
 	stageContinuityDecision,
 } from "./session-observability.ts";
-import { bindingFromEntry, bindingInvalidationReason, getBinding } from "./session-reattach.ts";
+import { bindingFromEntry, bindingInvalidationReason, forgetBinding, getBinding } from "./session-reattach.ts";
 import {
 	type AnthropicSubscriptionSessionEntry,
 	closeSession,
+	createSessionUuid,
 	getOrCreateSession,
 	getSession,
 	isIdleExpired,
@@ -33,7 +39,7 @@ import {
 	sentMessages,
 } from "./session-sync.ts";
 import { createSessionTurnAttempt } from "./session-turn-attempt.ts";
-import type { AnthropicSubscriptionProviderSettings } from "./settings.ts";
+import { type AnthropicSubscriptionProviderSettings, resolveColdSeedReplay } from "./settings.ts";
 
 export type ResidentSessionStreamInput = {
 	model: Model<Api>;
@@ -48,7 +54,14 @@ export type ResidentSessionStreamInput = {
 	onContinuityDecision?: (observation: ContinuityObservation) => void;
 	/** Called once per attempt, before dispatch, with whether it re-sends the whole history and that re-send's bytes/4 estimate. */
 	onDispatchShape?: (coldSeed: boolean, estimatedTokens?: number) => void;
+	/** Called once when a native-frame seed was rejected and the turn falls back to the flat replay (senpi#1977). */
+	onFramesSeedRejected?: (error: unknown) => void;
+	/** Set by that fallback: this turn re-sends the history flat, for this reason, whatever continuity would decide. */
+	flatReplayReason?: "frames_seed_rejected";
 };
+
+/** The seeded transcript the latest attempt of a turn wrote, so a rejected seed can be cleaned up. */
+type FramesDispatch = { transcriptPath?: string };
 
 function userMessage(content: SDKUserMessage["message"]["content"]): SDKUserMessage["message"] {
 	return { role: "user", content } as SDKUserMessage["message"];
@@ -86,6 +99,7 @@ function entrySnapshot(entry: AnthropicSubscriptionSessionEntry, hashes: readonl
 async function createResidentAttempt(
 	input: ResidentSessionStreamInput,
 	auth: AuthenticatedAttemptInput,
+	dispatch: FramesDispatch,
 ): Promise<ReturnType<typeof createSessionTurnAttempt>> {
 	const sessionId = input.streamOptions.sessionId!;
 	const messages = sentMessages(input.context);
@@ -118,11 +132,17 @@ async function createResidentAttempt(
 	let observedReason =
 		"reason" in decision ? decision.reason : decision.kind === "bootstrap" ? "registry_miss" : undefined;
 	let observedKind: "incremental" | "resume" | "cold-seed" = OBSERVED_KIND[decision.kind];
-	let entry: AnthropicSubscriptionSessionEntry;
+	// A cold seed creates its entry only after the seed is sized (and written), so the spawn can resume it.
+	let entry: AnthropicSubscriptionSessionEntry | undefined;
 	let from = 0;
 	let flatten = decision.kind === "flatten" || decision.kind === "bootstrap";
 
-	if (decision.kind === "delta" && existing) {
+	if (input.flatReplayReason !== undefined) {
+		if (existing) closeSession(sessionId, input.flatReplayReason);
+		observedKind = "cold-seed";
+		observedReason = input.flatReplayReason;
+		flatten = true;
+	} else if (decision.kind === "delta" && existing) {
 		entry = existing;
 		from = decision.from;
 	} else if (decision.kind === "reattach" || decision.kind === "fork") {
@@ -156,33 +176,44 @@ async function createResidentAttempt(
 			observedKind = "cold-seed";
 			observedReason = "resume_initialization_failed";
 			flatten = true;
-			entry = getOrCreateSession({
-				senpiSessionId: sessionId,
-				accountName: auth.accountName,
-				modelId: input.model.id,
-				...fingerprint,
-				options: auth.options,
-			});
 		}
-	} else {
-		if (existing) closeSession(sessionId, observedReason ?? "registry_miss");
-		entry = getOrCreateSession({
-			senpiSessionId: sessionId,
-			accountName: auth.accountName,
-			modelId: input.model.id,
-			...fingerprint,
-			options: auth.options,
-		});
+	} else if (existing) {
+		closeSession(sessionId, observedReason ?? "registry_miss");
 	}
-	// Every branch above either reuses a subprocess whose token matched (delta)
-	// or spawned one with auth.options, so the entry now runs on this token.
-	entry.credentialDigest = auth.credentialDigest;
 
-	const flattenResult = flatten
-		? dedupeUltraworkBlocks(buildPromptBlocks(input.context, input.customToolNameToSdk, input.toolWatchNote))
-		: undefined;
-	const estimatedTokens = flattenResult ? estimateColdSeedTokens(input.context, flattenResult.blocks) : undefined;
-	input.onDispatchShape?.(flattenResult !== undefined, estimatedTokens);
+	const cwd = auth.options.cwd;
+	const configDir = seedConfigDir(auth.options.env);
+	const historyTranscript =
+		flatten &&
+		input.flatReplayReason === undefined &&
+		resolveColdSeedReplay(input.providerSettings) === "frames" &&
+		cwd !== undefined &&
+		configDir !== undefined &&
+		framesApply(input.context)
+			? await loadHistoryTranscript()
+			: undefined;
+	const cacheTtl = pinnedPromptCacheTtl(auth.options.env);
+	const framesSeed =
+		historyTranscript && cwd !== undefined
+			? buildColdSeedFrames(historyTranscript, input.context, {
+					sdkSessionId: createSessionUuid(),
+					cwd,
+					model: input.model,
+					customToolNameToSdk: input.customToolNameToSdk,
+					...(input.toolWatchNote === undefined ? {} : { toolWatchNote: input.toolWatchNote }),
+					...(cacheTtl === undefined ? {} : { cacheTtl }),
+				})
+			: undefined;
+	const flattenResult =
+		flatten && framesSeed === undefined
+			? dedupeUltraworkBlocks(buildPromptBlocks(input.context, input.customToolNameToSdk, input.toolWatchNote))
+			: undefined;
+	const estimatedTokens = framesSeed
+		? estimateColdSeedTokens(input.context, framesSeed.estimateBlocks)
+		: flattenResult
+			? estimateColdSeedTokens(input.context, flattenResult.blocks)
+			: undefined;
+	input.onDispatchShape?.(flatten, estimatedTokens);
 	const overBudget =
 		estimatedTokens !== undefined
 			? coldSeedOverflow(input.model, estimatedTokens, coldSeedCalibration(sessionId))
@@ -192,14 +223,36 @@ async function createResidentAttempt(
 		// exchange, so the overflow must reach senpi's own compaction instead. The
 		// calibration learned from this session's earlier rejection sizes it the way
 		// the API counts, so a compacted re-send that is still too long is refused
-		// here instead of costing another round trip.
-		closeSession(sessionId, "cold_seed_over_budget");
+		// here instead of costing another round trip. Nothing was spawned or written yet.
+		recordPendingCloseCause(sessionId, "cold_seed_over_budget");
 		throw overBudget;
 	}
-	const blocks = flattenResult
-		? flattenResult.blocks
-		: buildDeltaPromptBlocks(messages.slice(from), input.customToolNameToSdk);
-	const payloadBytes = flattenResult ? serializedPayloadBytes(flattenResult.blocks) : undefined;
+	if (framesSeed && historyTranscript && cwd !== undefined) {
+		dispatch.transcriptPath = historyTranscript.writeSeedTranscript(configDir, cwd, framesSeed.entries);
+	}
+	entry ??= getOrCreateSession({
+		senpiSessionId: sessionId,
+		accountName: auth.accountName,
+		modelId: input.model.id,
+		...fingerprint,
+		options: auth.options,
+		...(framesSeed ? { resume: { sdkSessionId: framesSeed.sdkSessionId } } : {}),
+	});
+	// The seeded lineage is resumable at every replayed assistant, so a later divergence can fork instead of re-seeding.
+	for (const [index, uuid] of framesSeed?.assistantUuidBySentCount ?? []) entry.assistantUuidByIndex.set(index, uuid);
+	// Every branch above either reuses a subprocess whose token matched (delta)
+	// or spawned one with auth.options, so the entry now runs on this token.
+	entry.credentialDigest = auth.credentialDigest;
+	const blocks = framesSeed
+		? framesSeed.prompt
+		: flattenResult
+			? flattenResult.blocks
+			: buildDeltaPromptBlocks(messages.slice(from), input.customToolNameToSdk);
+	const payloadBytes = framesSeed
+		? framesSeed.payloadBytes
+		: flattenResult
+			? serializedPayloadBytes(flattenResult.blocks)
+			: undefined;
 	const divergedPath =
 		observedReason === "assistant_rewritten" ? (existing?.pendingForkDivergedPath ?? undefined) : undefined;
 	const staged = stageContinuityDecision(
@@ -215,6 +268,7 @@ async function createResidentAttempt(
 					? { collapsedDirectives: flattenResult.collapsedDirectives }
 					: {}),
 				...(divergedPath === undefined ? {} : { divergedPath }),
+				...(flatten ? { replayMode: framesSeed ? ("frames" as const) : ("flat" as const) } : {}),
 			}),
 			...seat,
 		},
@@ -236,8 +290,22 @@ async function createResidentAttempt(
 }
 
 export async function* residentSessionMessages(input: ResidentSessionStreamInput): AsyncGenerator<SDKMessage> {
+	const dispatch: FramesDispatch = {};
 	try {
-		yield* residentAuthLaneMessages(input);
+		yield* withFlatFallbackOnce(
+			residentAuthLaneMessages(input, dispatch),
+			() => dispatch.transcriptPath !== undefined,
+			(rejection) => {
+				input.onFramesSeedRejected?.(rejection);
+				const sessionId = input.streamOptions.sessionId;
+				if (sessionId !== undefined) {
+					closeSession(sessionId, "frames_seed_rejected");
+					forgetBinding(sessionId);
+				}
+				if (dispatch.transcriptPath !== undefined) rmSync(dispatch.transcriptPath, { force: true });
+				return residentAuthLaneMessages({ ...input, flatReplayReason: "frames_seed_rejected" }, {});
+			},
+		);
 	} catch (error) {
 		// Every attempt failed: the turn yields exactly one terminal observation. It is `failed`,
 		// not `flatten`: nothing was re-sent, and the retry checkpoint still resumes the lineage.
@@ -250,7 +318,10 @@ export async function* residentSessionMessages(input: ResidentSessionStreamInput
 	}
 }
 
-function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncIterable<SDKMessage> {
+function residentAuthLaneMessages(
+	input: ResidentSessionStreamInput,
+	dispatch: FramesDispatch,
+): AsyncIterable<SDKMessage> {
 	const sessionId = input.streamOptions.sessionId;
 	const preferredAccount =
 		sessionId === undefined ? undefined : (getSession(sessionId)?.accountName ?? getBinding(sessionId)?.accountName);
@@ -265,6 +336,6 @@ function residentAuthLaneMessages(input: ResidentSessionStreamInput): AsyncItera
 		pinnedAccount: input.pinnedAccount,
 		...(preferredAccount === undefined ? {} : { preferredAccount }),
 		buildOptions: input.buildOptions,
-		createAttempt: (auth) => createResidentAttempt(input, auth),
+		createAttempt: (auth) => createResidentAttempt(input, auth, dispatch),
 	});
 }

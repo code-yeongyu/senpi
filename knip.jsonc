@@ -603,8 +603,6 @@
       "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry-state.ts": ["transitionToBroken", "transitionToStarting"],
       // pre-existing at origin main aceb1cc1d9: unused exports SESSION_REGISTRY_MAX_ENTRIES
       "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-registry.ts": ["SESSION_REGISTRY_MAX_ENTRIES"],
-      // pre-existing at origin main aceb1cc1d9: unused exports isTransmittedMessage
-      "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-sync.ts": ["isTransmittedMessage"],
       // pre-existing at origin main aceb1cc1d9: unused exports isAutonomousResult
       "packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-turn-claim.ts": ["isAutonomousResult"],
       // pre-existing at origin main aceb1cc1d9: unused exports sdkTools, toolExecutionDeniedMessage, mapToolName
