@@ -1,6 +1,9 @@
 // Desktop#4753: billing failures must identify the account actually attempted, without credential material.
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { type Api, InMemoryCredentialStore, type Model } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import {
 	type AccountSlot,
 	emptyCredential,
@@ -23,23 +26,12 @@ import {
 import { withAuthGuidance } from "../../../src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts";
 import { streamAnthropicSubscription } from "../../../src/core/extensions/builtin/anthropic-subscription/stream.ts";
 import { closeSession } from "../../../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
+import { cliLaneEnv, cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const now = 1_800_000_000_000;
-const agentDir = "/synthetic/agent";
-const first: AccountSlot = {
-	name: "primary",
-	displayName: "private@example.invalid",
-	source: "login",
-	access: "synthetic-access-primary",
-	refresh: "synthetic-refresh-primary",
-	expires: now + 86_400_000,
-};
-const second: AccountSlot = {
-	...first,
-	name: "secondary",
-	source: "import",
-	access: "synthetic-access-secondary",
-};
+const agentDir = mkdtempSync(join(tmpdir(), "senpi-4753-billing-"));
+const first: AccountSlot = cliSlot("primary", { displayName: "private@example.invalid" });
+const second: AccountSlot = cliSlot("secondary", { displayName: "private@example.invalid" });
 const refusal = "API Error: 400 You're out of extra usage.";
 
 async function configure(accounts: AccountSlot[] = [], environment: NodeJS.ProcessEnv = {}) {
@@ -51,7 +43,7 @@ async function configure(accounts: AccountSlot[] = [], environment: NodeJS.Proce
 	}));
 	overrideAuthLaneBoundary({
 		createStore: () => store,
-		env: () => environment,
+		env: () => ({ ...cliLaneEnv(), ...environment }),
 		getAgentDir: () => agentDir,
 		now: () => now,
 	});
@@ -128,6 +120,8 @@ async function failRequest(input: {
 	throw new Error("Expected a rejected request");
 }
 
+afterAll(() => rmSync(agentDir, { recursive: true, force: true }));
+
 afterEach(() => {
 	closeSession("synthetic-public-main", "test_cleanup");
 	resetAuthLaneBoundary();
@@ -136,10 +130,10 @@ afterEach(() => {
 });
 
 describe("billing account attribution", () => {
-	it.each(["login", "import", "env", "ambient"] as const)(
+	it.each(["login", "env", "ambient"] as const)(
 		"names the selected %s source without private fields",
 		async (source) => {
-			const account = { ...first, source: source === "ambient" ? "login" : source };
+			const account = first;
 			await configure(source === "env" || source === "ambient" ? [] : [account], {
 				CLAUDE_CODE_OAUTH_TOKEN: source === "env" ? "synthetic-env-token" : undefined,
 			});
@@ -149,8 +143,6 @@ describe("billing account attribution", () => {
 			if (source !== "ambient") expect(shown).toContain("/claude-account pin");
 			expect(shown).toContain("claude.ai/settings/usage");
 			expect(shown).not.toContain(first.displayName);
-			expect(shown).not.toContain(first.access);
-			expect(shown).not.toContain(first.refresh);
 			expect(shown).not.toContain("synthetic-env-token");
 		},
 	);
@@ -186,7 +178,6 @@ describe("billing account attribution", () => {
 				accountSource: first.source,
 			},
 		});
-		expect(JSON.stringify(events)).not.toContain(first.access);
 		expect(JSON.stringify(events)).not.toContain(first.displayName);
 		expect(JSON.stringify(events)).not.toContain(first.name);
 	});

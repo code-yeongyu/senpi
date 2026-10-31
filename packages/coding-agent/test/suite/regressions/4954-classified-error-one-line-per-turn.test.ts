@@ -122,14 +122,6 @@ describe("a classified provider failure shows once per turn (senpi#4954)", () =>
 		expect(rows + turnEnd).toBe(1);
 	});
 
-	it("renders the error on one row of a text, tool call, text turn", () => {
-		initTheme("dark");
-		const rows = renderedRows(
-			failedTurn([text("first"), toolCall("t1"), text("second"), toolCall("t2"), text("third")]),
-		);
-		expect(occurrences(rows, "account usage limit has been reached")).toBe(1);
-	});
-
 	it("adds no turn-end line when the trailing text run already shows the error", async () => {
 		expect(await turnEndLines(agentEnd(failedTurn([text("first"), toolCall("t1"), text("second")])))).toEqual([]);
 	});

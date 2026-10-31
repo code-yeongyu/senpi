@@ -45,11 +45,11 @@ import {
 	resetSessionRegistryBoundary,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/session-registry.ts";
 import { streamAnthropicSubscription } from "../../../src/core/extensions/builtin/anthropic-subscription/stream.ts";
+import { cliAccountOf, cliLaneEnv, cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const SESSION_ID = "issue-1432-emit-once";
 const ACCOUNT_PRIMARY = "primary";
 const ACCOUNT_SECONDARY = "secondary";
-const ACCESS_PRIMARY = "access-primary";
 
 const model: Model<Api> = {
 	id: "claude-test",
@@ -71,8 +71,8 @@ function sdkMessage(value: unknown): SDKMessage {
 type AttemptOutcome = "success" | "rate-limit";
 type QueryRecord = { account: string; options: Options; submitted: SDKUserMessage[] };
 
-function slot(name: string, access: string): AccountSlot {
-	return { name, access, refresh: `r-${name}`, expires: Date.now() + 3_600_000, source: "login" };
+function slot(name: string): AccountSlot {
+	return cliSlot(name);
 }
 
 // Resident scripted query: answers each submission with a replay echo, then either
@@ -158,7 +158,7 @@ function residentBoundary(scriptFor: (account: string, submission: number) => At
 	const queries: QueryRecord[] = [];
 	const query: SdkQuery = ({ prompt, options = {} }) => {
 		if (typeof prompt === "string") throw new Error("Expected streaming input");
-		const account = options.env?.CLAUDE_CODE_OAUTH_TOKEN === ACCESS_PRIMARY ? ACCOUNT_PRIMARY : ACCOUNT_SECONDARY;
+		const account = cliAccountOf(options.env) === ACCOUNT_PRIMARY ? ACCOUNT_PRIMARY : ACCOUNT_SECONDARY;
 		const handle = new ScriptedResidentQuery(prompt, account, (submission) => scriptFor(account, submission));
 		queries.push({ account, options, submitted: handle.submitted });
 		return handle;
@@ -173,7 +173,7 @@ const temporaryDirectories: string[] = [];
 
 // Two-account managed OAuth pool on the oauth-slots lane, pinned to primary.
 async function configureTwoAccountPool(): Promise<void> {
-	const slots = [slot(ACCOUNT_PRIMARY, ACCESS_PRIMARY), slot(ACCOUNT_SECONDARY, "access-secondary")];
+	const slots = [slot(ACCOUNT_PRIMARY), slot(ACCOUNT_SECONDARY)];
 	const store = new InMemoryCredentialStore();
 	await store.modify("anthropic-subscription", async () => ({
 		...slots.reduce<AnthropicSubscriptionCredential>(
@@ -191,7 +191,7 @@ async function configureTwoAccountPool(): Promise<void> {
 	);
 	overrideAuthLaneBoundary({
 		createStore: () => store,
-		env: () => ({ PATH: "/usr/bin" }),
+		env: () => cliLaneEnv(),
 		getAgentDir: () => agentDir,
 	});
 }

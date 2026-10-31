@@ -31,6 +31,7 @@ export type {
 	SwitchSessionHandler,
 } from "./runner.ts";
 export { ExtensionRunner } from "./runner.ts";
+export { SecretInputUnavailableError, type SecretInputUnavailableReason } from "./secret-input.ts";
 export * from "./session-control-types.ts";
 export type {
 	AfterProviderResponseEvent,
@@ -110,6 +111,7 @@ export type {
 	ExtensionToolContext,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionUIInputOptions,
 	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
 	FilesystemOperation,
