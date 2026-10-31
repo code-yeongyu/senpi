@@ -5,7 +5,7 @@
 //   - golden exists                    -> compare it (a listed cell whose golden exists is STALE and fails the run)
 //   - golden missing, cell listed      -> DEFERRED(<owner>, <issue>): never a PASS, never a failure
 //   - golden missing, cell not listed  -> missing: the case FAILS
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -68,6 +68,21 @@ export function unrecordedGoldens({ goldenIds, results, leaveUnrecorded = [] }) 
 			const why = !result ? "not selected" : result.skipped ? `skipped: ${result.skipped}` : "its run failed";
 			return `${id}: golden exists but this record run did not rewrite it (${why}); record it or name it in --leave-unrecorded`;
 		});
+}
+
+/**
+ * The end of a record run (senpi#5189): every golden in `dir` the run left unrecorded, and `baseline.json` written only
+ * when there is none, since the baseline names the tree the goldens in `dir` were recorded from.
+ */
+export function finishRecord({ dir, results, leaveUnrecorded, manifest }) {
+	const goldenIds = existsSync(dir)
+		? readdirSync(dir)
+				.filter((name) => /^E\d+\.json$/.test(name))
+				.map((name) => name.slice(0, -".json".length))
+		: [];
+	const unrecorded = unrecordedGoldens({ goldenIds, results, leaveUnrecorded });
+	if (unrecorded.length === 0) writeFileSync(join(dir, "baseline.json"), `${JSON.stringify(manifest, null, 1)}\n`);
+	return unrecorded;
 }
 
 /**

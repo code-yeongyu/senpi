@@ -16,7 +16,7 @@
 // A `--record` run fails when a golden already on disk was not rewritten (not selected, failed, or skipped, e.g. E29
 // without a gondolin image store) unless `--leave-unrecorded <ids>` names it: a partial re-record is said out loud
 // (senpi#5189).
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cases } from "../../scenarios/fused-equivalence/cases/index.mjs";
 import { deferredGoldens } from "../../scenarios/fused-equivalence/deferred-goldens.mjs";
@@ -27,10 +27,10 @@ import { expectedWitness, readWitness } from "../../scenarios/fused-equivalence/
 import { goldenPlatform } from "../../scenarios/fused-equivalence/cases/support/host.mjs";
 import { childRuntime, evidenceDir, guardRealAuth, installCleanupHooks, repoRoot } from "../lib/common.mjs";
 import {
+	finishRecord,
 	goldenCellVerdict,
 	staleDeferredEntries,
 	summarizeRun,
-	unrecordedGoldens,
 	validateDeferredList,
 } from "../lib/equivalence-deferred.mjs";
 import { diffNormalized } from "../lib/equivalence-normalize.mjs";
@@ -202,19 +202,10 @@ async function main() {
 	guard.assertUnchanged();
 	if (tui) manifest.hashes.tuiCapture = tuiCaptureHash();
 	const unrecorded =
-		options.mode === "record" && existsSync(dir)
-			? unrecordedGoldens({
-					goldenIds: readdirSync(dir)
-						.filter((name) => /^E\d+\.json$/.test(name))
-						.map((name) => name.slice(0, -".json".length)),
-					results,
-					leaveUnrecorded: options.leaveUnrecorded,
-				})
+		options.mode === "record"
+			? finishRecord({ dir, results, leaveUnrecorded: options.leaveUnrecorded, manifest })
 			: [];
 	for (const line of unrecorded) process.stdout.write(`[FAIL] unrecorded golden ${line}\n`);
-	// The baseline names the tree the goldens were recorded from: a run that left one unrecorded keeps the old baseline.
-	if (options.mode === "record" && unrecorded.length === 0)
-		writeFileSync(join(dir, "baseline.json"), `${JSON.stringify(manifest, null, 1)}\n`);
 	const summary = summarizeRun(results, stale, options.mode, unrecorded);
 	process.stdout.write(`\n${summary.line} (child_runtime=${manifest.runtimes.child})\n`);
 	if (options.evidence) {
