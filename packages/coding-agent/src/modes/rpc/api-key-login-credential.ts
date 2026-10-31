@@ -21,7 +21,8 @@ export async function apiKeyLoginCredential(
 	let regionAsked = false;
 	const answer = async (prompt: AuthPrompt): Promise<string> => {
 		if (prompt.type === "secret") return key;
-		if (prompt.type === "select") {
+		// Only one select is the region: a provider asking a second one is asking something else.
+		if (prompt.type === "select" && !regionAsked) {
 			if (!prompt.options.some((option) => option.id === region)) {
 				throw new Error(`Unknown region "${region}" for ${provider.name}.`);
 			}
@@ -35,10 +36,17 @@ export async function apiKeyLoginCredential(
 		prompt: answer,
 		notify: () => {},
 	});
-	// The login may settle the region from the host's env and never ask: it still stored one. A login
-	// that neither asked nor stored any env has no region to take.
-	if (!regionAsked && credential.env === undefined) {
-		throw new Error(`${provider.name} does not take a region for its API key.`);
+	// The login may settle the region from the host's env and never ask. The key is stored only when
+	// that settled region is the one requested; a login with no region at all takes none.
+	if (!regionAsked) {
+		if (credential.env === undefined) {
+			throw new Error(`${provider.name} does not take a region for its API key.`);
+		}
+		if (!Object.values(credential.env).includes(region)) {
+			throw new Error(
+				`This host's environment sets the ${provider.name} region, so "${region}" cannot be chosen here.`,
+			);
+		}
 	}
 	return { ...credential, type: "api_key", key };
 }

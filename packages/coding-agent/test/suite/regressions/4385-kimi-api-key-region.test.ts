@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRpcConnectionHandler } from "../../../src/modes/rpc/connection-handler.ts";
 import { makeHarness, makeSink } from "../rpc-connection-harness.ts";
 
@@ -21,6 +21,7 @@ describe("a Kimi Code API key saved with its region over RPC (omo-desktop-app#43
 	});
 
 	afterEach(() => {
+		vi.unstubAllEnvs();
 		cleanup();
 		rmSync(tempDir, { recursive: true, force: true });
 	});
@@ -84,5 +85,39 @@ describe("a Kimi Code API key saved with its region over RPC (omo-desktop-app#43
 		});
 		expect(response).toMatchObject({ success: false });
 		expect(stored).toBeUndefined();
+	});
+
+	it("refuses a region the host's environment overrides, and accepts the one it pins", async () => {
+		vi.stubEnv("KIMI_CODE_REGION", "mainland-cn");
+		const unknown = await send({
+			type: "login_api_key",
+			provider: "kimi-coding",
+			key: "sk-kimi-synthetic",
+			region: "moon",
+		});
+		expect(unknown.response).toMatchObject({ success: false });
+		expect(unknown.stored).toBeUndefined();
+
+		const other = await send({
+			type: "login_api_key",
+			provider: "kimi-coding",
+			key: "sk-kimi-synthetic",
+			region: "global",
+		});
+		expect(other.response).toMatchObject({ success: false });
+		expect(other.stored).toBeUndefined();
+
+		const pinned = await send({
+			type: "login_api_key",
+			provider: "kimi-coding",
+			key: "sk-kimi-synthetic",
+			region: "mainland-cn",
+		});
+		expect(pinned.response).toMatchObject({ success: true });
+		expect(pinned.stored).toEqual({
+			type: "api_key",
+			key: "sk-kimi-synthetic",
+			env: { KIMI_CODE_REGION: "mainland-cn" },
+		});
 	});
 });
