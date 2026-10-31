@@ -197,7 +197,7 @@ export function subscriptionMatches(
 	}
 }
 
-export function mirrorsRecord(mirror: MirrorSelection, recordType: string): boolean {
+function mirrorsRecord(mirror: MirrorSelection, recordType: string): boolean {
 	switch (mirror.kind) {
 		case "none":
 			return false;
