@@ -68,6 +68,22 @@ export async function runSelfTest({ evidence, command }) {
 		full.verdict.pass,
 		`${full.session.meter.used} tokens, ${full.session.turns} turns`,
 	);
+	// senpi#5088: the first idle after delegation is not completion; only the delivered continuation writes notes.
+	const events = full.session.events;
+	const delegated = events.findIndex((e) => e.type === "tool_execution_end" && e.toolName === "task");
+	const firstIdle = events.findIndex((e, i) => i > delegated && e.type === "agent_idle");
+	const resumed = events.findIndex((e, i) => i > firstIdle && e.type === "agent_start");
+	const notes = events.findIndex(
+		(e, i) => i > resumed && e.type === "tool_execution_end" && e.toolCallId === "p8_edit_notes",
+	);
+	const finalIdle = events.findIndex((e, i) => i > notes && e.type === "agent_idle");
+	const waiting = events.slice(delegated, firstIdle).findLast((e) => e.type === "session_lifecycle");
+	checks.ok(
+		"background child finishes and the parent's delivered continuation writes notes before disconnect",
+		delegated >= 0 && firstIdle > delegated && waiting?.lifecycle.waitingOn?.children > 0 &&
+			resumed > firstIdle && notes > resumed && finalIdle > notes,
+		`delegate ${delegated}, first idle ${firstIdle}, resumed ${resumed}, notes ${notes}, final idle ${finalIdle}`,
+	);
 	const fidelity = proxyFidelity(full);
 	checks.ok(
 		"the proxy records O3/O4 exactly as the provider received them",

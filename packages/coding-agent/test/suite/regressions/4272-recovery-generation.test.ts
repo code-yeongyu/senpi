@@ -4,7 +4,8 @@ import type { RecoveryAdmission } from "../../../src/modes/rpc/compact-recovery-
 import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { EVENT_RESYNC_CAPABILITY } from "../../../src/modes/rpc/socket-peer-recovery.ts";
-import { type HeldPeer, heldPeer, LaneProducer, usage } from "./4272-legacy-view-support.ts";
+import { heldPeer } from "./4272-legacy-view-support.ts";
+import { recoveryRig as rig, streaming } from "./4272-recovery-support.ts";
 
 // Part of #4272 (S08a, RULING-50 (1) and the S08a review LOW-1/LOW-2): the fanout's attach and shed mint one
 // generation sequence per peer + session incarnation, in either order; it restarts only with a new incarnation, and
@@ -14,47 +15,6 @@ afterEach(() => {
 	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
-
-const start = { role: "assistant", content: [], api: "faux", provider: "faux", model: "fixture", usage };
-
-function streaming(writer: SessionEventWriter, lane: SessionAcceptanceLane): LaneProducer {
-	const producer = new LaneProducer(writer, lane, "s");
-	producer.assistant({ type: "message_start", message: start }, { type: "message_start", message: start });
-	producer.blockStart("text", 0);
-	return producer;
-}
-
-function rig() {
-	const writer = new SessionEventWriter(() => {});
-	const lane = new SessionAcceptanceLane();
-	lane.bootstrap({ transcript: [] });
-	writer.registerAcceptance("s", lane);
-	let producer = streaming(writer, lane);
-	let offset = 0;
-	const checkpoints = writer.recoveryCheckpoints;
-	const frozenBy = async (peer: HeldPeer, step: () => void): Promise<RecoveryAdmission> => {
-		peer.hold();
-		step();
-		const tokens = checkpoints.tokens();
-		expect(tokens, "the step froze exactly one cut").toHaveLength(1);
-		peer.release();
-		await writer.flush();
-		expect(checkpoints.open).toBe(0);
-		return tokens[0]?.admission ?? expect.unreachable();
-	};
-	const attach = (peer: HeldPeer) => frozenBy(peer, () => writer.attachConnectionToSession("held", "s"));
-	const shed = (peer: HeldPeer) =>
-		frozenBy(peer, () => {
-			for (let index = 0; index < 200 && checkpoints.open === 0; index++)
-				producer.blockDelta("text", 0, "x", offset++);
-		});
-	const replace = () => {
-		lane.bootstrap({ transcript: [] });
-		producer = streaming(writer, lane);
-		offset = 0;
-	};
-	return { writer, lane, checkpoints, attach, shed, replace };
-}
 
 it("RULING-50 (1) generations increase strictly within one peer + session incarnation across attach and shed in both orders, and restart only with a new incarnation", async () => {
 	vi.useFakeTimers();
@@ -122,6 +82,13 @@ it.each(["unregistered", "dropped by its failed queue"] as const)(
 		const [token] = checkpoints.tokens();
 		if (!token) return expect.unreachable();
 		expect(lane.liveRoots).toBe(1);
+		const rootsReleased = new Promise<void>((resolve) => {
+			const release = lane.release.bind(lane);
+			vi.spyOn(lane, "release").mockImplementation((root) => {
+				release(root);
+				if (lane.liveRoots === 0) resolve();
+			});
+		});
 		const reading = checkpoints.readActive(token, token.admission);
 		if (how === "unregistered") writer.unregisterConnection("late");
 		else {
@@ -131,6 +98,8 @@ it.each(["unregistered", "dropped by its failed queue"] as const)(
 			expect(writer.hasConnection("late"), "the plain peer's overflow failed its queue").toBe(false);
 		}
 		expect(await reading).toEqual({ ok: false, failure: { kind: "repair_needed", reason: "peer_gone" } });
+		// The queued attach view's own read is an operation in flight too (S08b review MEDIUM): the root goes once it unwinds.
+		await rootsReleased;
 		expect(checkpoints.open).toBe(0);
 		expect(lane.liveRoots).toBe(0);
 		expect(await checkpoints.readActive(token, token.admission)).toEqual({
