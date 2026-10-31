@@ -75,7 +75,18 @@ export function estimateMessageTokens(message: Message): number {
 	return Math.ceil(chars / CHARS_PER_TOKEN);
 }
 
-function getLastAssistantUsageInfo(messages: readonly Message[]): { usage: Usage; index: number } | undefined {
+export interface ContextEstimateOptions {
+	/**
+	 * Ignore usage from assistant messages stamped before this time (Unix ms): the session switched models then,
+	 * so that usage was counted by another tokenizer (oh-my-openagent#11684). Their content is still estimated.
+	 */
+	usageNotBefore?: number;
+}
+
+function getLastAssistantUsageInfo(
+	messages: readonly Message[],
+	usageNotBefore: number,
+): { usage: Usage; index: number } | undefined {
 	let latestPrefixTimestamp = Number.NEGATIVE_INFINITY;
 	let usageInfo: { usage: Usage; index: number } | undefined;
 
@@ -88,6 +99,7 @@ function getLastAssistantUsageInfo(messages: readonly Message[]): { usage: Usage
 			const usageAppliesToPrefix = assistant.timestamp >= latestPrefixTimestamp;
 			if (
 				usageAppliesToPrefix &&
+				assistant.timestamp >= usageNotBefore &&
 				assistant.stopReason !== "aborted" &&
 				assistant.stopReason !== "error" &&
 				calculateContextTokens(assistant.usage) > 0
@@ -101,9 +113,12 @@ function getLastAssistantUsageInfo(messages: readonly Message[]): { usage: Usage
 	return usageInfo;
 }
 
-export function estimateContextTokens(context: TranscriptContext | readonly Message[]): ContextUsageEstimate {
+export function estimateContextTokens(
+	context: TranscriptContext | readonly Message[],
+	options: ContextEstimateOptions = {},
+): ContextUsageEstimate {
 	const messages = "messages" in context ? context.messages : context;
-	const usageInfo = getLastAssistantUsageInfo(messages);
+	const usageInfo = getLastAssistantUsageInfo(messages, options.usageNotBefore ?? Number.NEGATIVE_INFINITY);
 	if (usageInfo) {
 		const usageTokens = calculateContextTokens(usageInfo.usage);
 		let trailingTokens = estimateLazilyAddedToolsTokens(messages, usageInfo.index);

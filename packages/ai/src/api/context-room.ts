@@ -29,15 +29,21 @@ export class ContextWindowExhaustedError extends Error {
  * For windows of at least {@link CONTEXT_GUARD_MIN_WINDOW} tokens this throws
  * {@link ContextWindowExhaustedError} instead of shrinking the budget below
  * {@link MIN_ANSWER_TOKENS}: such a request can only return a truncated tool call or an
- * empty "length" stop while still billing the whole prompt.
+ * empty "length" stop while still billing the whole prompt. Usage stamped before `contextUsageNotBefore` (a model
+ * switch) is not trusted for the estimate.
  */
-export function clampMaxTokensToContext(model: Model<Api>, context: TranscriptContext, maxTokens: number): number {
+export function clampMaxTokensToContext(
+	model: Model<Api>,
+	context: TranscriptContext,
+	maxTokens: number,
+	contextUsageNotBefore?: number,
+): number {
 	if (model.contextWindow <= 0) {
 		return Number.isFinite(maxTokens) && maxTokens > 0
 			? Math.max(MIN_MAX_TOKENS, Math.floor(maxTokens))
 			: MIN_MAX_TOKENS;
 	}
-	const estimatedTokens = estimateContextTokens(context).tokens;
+	const estimatedTokens = estimateContextTokens(context, { usageNotBefore: contextUsageNotBefore }).tokens;
 	const available = model.contextWindow - estimatedTokens - CONTEXT_SAFETY_TOKENS;
 	if (model.contextWindow >= CONTEXT_GUARD_MIN_WINDOW && available < MIN_ANSWER_TOKENS) {
 		throw new ContextWindowExhaustedError(estimatedTokens, model.contextWindow);

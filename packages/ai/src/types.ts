@@ -273,6 +273,12 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 */
 	onProviderStreamEvent?: (data: unknown, model: Model<Api>) => void | Promise<void>;
 	/**
+	 * The session switched to this request's model at this time (Unix ms). Usage on earlier assistant messages was
+	 * counted by another model's tokenizer, so request-time context checks estimate those turns instead
+	 * (oh-my-openagent#11684).
+	 */
+	contextUsageNotBefore?: number;
+	/**
 	 * Called whenever the response body delivers bytes, keep-alives included (SSE `ping` events, `:` comments).
 	 * Liveness only: it says the connection is alive, not that the model produced anything. Adapter support is
 	 * explicit; unsupported adapters do not invoke it.

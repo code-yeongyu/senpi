@@ -676,6 +676,7 @@ async function streamAssistantResponse(
 			streamFunction(config.model, llmContext, {
 				...config,
 				streamKind: "main",
+				contextUsageNotBefore: config.resolveContextUsageNotBefore?.(),
 				apiKey: resolvedApiKey,
 				signal: requestAbortController.signal,
 				onTransportActivity: () => {

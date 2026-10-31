@@ -297,17 +297,28 @@ export interface ContextUsageEstimate {
 	usageTokens: number;
 	trailingTokens: number;
 	lastUsageIndex: number | null;
+	/** The latest usage was reported by another model (before the latest switch), so `tokens` is a transcript estimate. */
+	otherModelUsageIgnored?: true;
+}
+
+export interface ContextEstimateOptions {
+	/** False for an assistant whose usage another model reported: it predates the latest model switch (oh-my-openagent#11684). */
+	usageCounts?: (message: AssistantMessage) => boolean;
 }
 
 function getLastAssistantUsageInfo(
 	messages: AgentMessage[],
 	counted: ReadonlySet<AgentMessage>,
-): { usage: Usage; index: number } | undefined {
+	usageCounts: ContextEstimateOptions["usageCounts"],
+): { usage: Usage; index: number } | "other-model" | undefined {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const message = messages[i];
 		if (!counted.has(message)) continue;
 		const usage = getAssistantUsage(message);
-		if (usage) return { usage, index: i };
+		if (!usage) continue;
+		// Every older usage predates the same switch, so none of them describes the current model either.
+		if (usageCounts && !usageCounts(message as AssistantMessage)) return "other-model";
+		return { usage, index: i };
 	}
 	return undefined;
 }
@@ -316,15 +327,18 @@ function getLastAssistantUsageInfo(
  * Estimate context tokens from messages, using the last assistant usage when available.
  * If there are messages after the last usage, estimate their tokens with estimateTokens.
  */
-export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEstimate {
+export function estimateContextTokens(
+	messages: AgentMessage[],
+	options: ContextEstimateOptions = {},
+): ContextUsageEstimate {
 	// Count the same set the next provider request will carry: convertToLlm drops
 	// failed (error/aborted) assistant turns and their orphaned tool results.
 	// Indices stay relative to the INPUT array because callers read
 	// `messages[lastUsageIndex]` on the array they passed in.
 	const counted = new Set<AgentMessage>(dropFailedAssistantTurns(messages));
-	const usageInfo = getLastAssistantUsageInfo(messages, counted);
+	const usageInfo = getLastAssistantUsageInfo(messages, counted, options.usageCounts);
 
-	if (!usageInfo) {
+	if (usageInfo === undefined || usageInfo === "other-model") {
 		let estimated = 0;
 		for (const message of messages) {
 			if (counted.has(message)) estimated += estimateTokens(message);
@@ -334,6 +348,7 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 			usageTokens: 0,
 			trailingTokens: estimated,
 			lastUsageIndex: null,
+			...(usageInfo === "other-model" ? { otherModelUsageIgnored: true as const } : {}),
 		};
 	}
 
@@ -355,8 +370,9 @@ export function estimateContextTokens(messages: AgentMessage[]): ContextUsageEst
 export function estimateProjectedContextTokens(
 	projection: SessionProjection,
 	branchEntries: SessionEntry[],
+	options: ContextEstimateOptions = {},
 ): ContextUsageEstimate {
-	const estimate = estimateContextTokens(projection.messages);
+	const estimate = estimateContextTokens(projection.messages, options);
 	if (estimate.lastUsageIndex !== null) {
 		let projectedMessageIndex = 0;
 		let usageEntryId: string | undefined;
@@ -387,7 +403,13 @@ export function estimateProjectedContextTokens(
 	for (const message of dropFailedAssistantTurns(projection.messages)) {
 		if (message.role !== "system") tokens += estimateTokens(message);
 	}
-	return { tokens, usageTokens: 0, trailingTokens: tokens, lastUsageIndex: null };
+	return {
+		tokens,
+		usageTokens: 0,
+		trailingTokens: tokens,
+		lastUsageIndex: null,
+		...(estimate.otherModelUsageIgnored ? { otherModelUsageIgnored: true as const } : {}),
+	};
 }
 
 /**
