@@ -1,3 +1,60 @@
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/coding-agent/src/modes/rpc/connection-handler.ts`, `packages/coding-agent/src/modes/rpc/host-capabilities.ts`, `packages/coding-agent/src/modes/rpc/login-prompts.ts`, `packages/coding-agent/src/modes/rpc/multi-session-host.ts`, `packages/coding-agent/src/modes/rpc/rpc-client.ts`, `packages/coding-agent/src/modes/rpc/rpc-question-types.ts`, `packages/coding-agent/src/modes/rpc/rpc-types.ts`, `packages/coding-agent/src/modes/rpc/session-binding.ts`, `packages/coding-agent/src/modes/rpc/session-event-writer.ts`, `packages/coding-agent/src/modes/rpc/session-router-routing.ts`, `packages/coding-agent/src/modes/rpc/session-worker-client.ts`, `packages/coding-agent/src/modes/rpc/session-worker-protocol.ts`, `packages/coding-agent/src/modes/rpc/session-worker.ts`, `packages/coding-agent/src/modes/rpc/secret-input-presentations.ts`, `packages/coding-agent/src/modes/rpc/secret-input-requests.ts`.
+- Gate private input per explicit connection handshake and interactive role; negotiate worker acceptance before emission; bypass replay and observer publication; validate owner-bound answers before admission; retain only bounded owner-filtered receipt IDs.
+- Keep the worker-grant regression fakes aligned with the private request state that the real worker client initializes, preserving all existing forwarding and settlement assertions.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-30 - Every successful RPC login announces the provider's account change (senpi#3347)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `login_start` emits `accounts_changed` with the `login` remedy (forwarded as `auth_accounts_changed`) after any successful login, not only an Anthropic Subscription one.
+
+### Why
+
+- A session that fell back off a usage limit drops the provider's hold on that event; a login through RPC (the desktop) for any provider must reach it.
+
+### Why an extension could not handle it
+
+- The RPC login handler is core.
+
+### Expected merge conflict zones
+
+- LOW: the success branch of `login_start`.
+
+## 2026-10-26 - The first published socket secret wins on POSIX (senpi#4369)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/socket-transport.ts`: on POSIX, `createSocketSecret` returns a valid regular file already at the path; otherwise it publishes a fresh candidate through the private `publishSocketSecretIfAbsent` and, on a collision, returns the winner. An invalid winner throws `RPC socket secret is invalid and was not replaced` and is left as it is. A newly created parent directory is `0700`. `ensureSocketSecret` still repairs a wrong-sized file in place (the private `writeSocketSecretInPlace`, the former body of `createSocketSecret`) until serialized repair lands. Windows keeps that in-place writer until the native no-replace bridge (senpi#4310, loaded by senpi#4312) is wired.
+- `packages/coding-agent/src/modes/rpc/socket-transport.ts`: the private `publishSocketSecretIfAbsent(path, candidate)` writes the candidate to a same-directory staging file opened `O_CREAT | O_EXCL | O_NOFOLLOW`, forces mode `0600` on the descriptor, writes it in full and fsyncs it, then publishes with `link()`. `EEXIST` is `collision`; every other error propagates. The directory is fsynced after a publication, and `finally` removes only this attempt's staging file.
+
+### Why
+
+- `createSocketSecret` truncated and rewrote the final path, so two creators each returned their own key while the file kept the last one, and a reader could see a partial file (sisyphuslabs/omo-desktop-app#4199, design 4.3 and 4.5, tests 1 and 2).
+
+### Why an extension could not handle it
+
+- The RPC host, its supervisor and the terminal control endpoint provision the secret before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: `createSocketSecret` and `ensureSocketSecret` in `socket-transport.ts`.
+
 ## 2026-10-28 - Legal large values are owned and read incrementally by the compact store (S03b-4, part of senpi#4272)
 
 ### What changed

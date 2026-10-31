@@ -1,3 +1,23 @@
+## 2026-10-30 - Durable execution endpoint ledger (senpi#5004)
+
+### What changed
+
+- `packages/agent/src/execution/ledger.ts`, `ledger-types.ts`, `ledger-transition.ts`, and `ledger-codec.ts` implement the executor ledger over DurableStore.
+- `packages/agent/src/execution/testing/` supplies LEDGER-01..12 and KILL-LEDGER cases.
+- `packages/agent/src/conformance/registry.ts` and `packages/agent/src/conformance/index.ts` register and expose the portable cases.
+
+### Why
+
+- Execution identity, effect boundaries, terminal ordering and restart outcomes need one durable owner before prepared execution is integrated.
+
+### Why an extension could not handle it
+
+- The ledger is a host-neutral execution primitive below extension callbacks.
+
+### Expected merge conflict zones
+
+- LOW: the conformance registry and barrel exports; the execution modules are new.
+
 ## 2026-10-30 - Harness skill loader: ignore files no longer hide symlinked skills (senpi#5069)
 
 ### What changed
