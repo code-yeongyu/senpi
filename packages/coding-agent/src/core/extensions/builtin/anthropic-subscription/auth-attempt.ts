@@ -4,6 +4,7 @@ import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./account-management.ts";
 import { attemptAccountContext, logAttemptAccount, rememberAccountContext } from "./account-context.ts";
 import type { AccountSlot } from "./accounts.ts";
 import type { PinSource } from "./affinity.ts";
+import { withoutBareMode } from "./auth-environment.ts";
 import type { AnthropicSubscriptionAuthLane } from "./options.ts";
 import type { Options, SDKMessage, SdkQuery } from "./sdk-boundary.ts";
 
@@ -97,8 +98,9 @@ export async function createAttemptMessages(
 	const account = attemptAccountContext(auth);
 	logAttemptAccount(auth, input.sessionId);
 	// Claude Code loads auto memory independently of settingSources. Keep its private
-	// notes out of every subscription session, after all auth and caller overrides.
-	auth.options.env = { ...auth.options.env, CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" };
+	// notes out of every subscription session, after all auth and caller overrides. Bare mode is cleared at the
+	// same point, the one every lane's environment passes through, so no lane can lose its OAuth login to it.
+	auth.options.env = { ...withoutBareMode(auth.options.env ?? {}), CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" };
 	if (typeof auth.options.settings !== "string")
 		auth.options.settings = { ...auth.options.settings, autoMemoryEnabled: false };
 	try {
