@@ -12,7 +12,7 @@ import {
 	WORKER_PERMIT_BYTES,
 	WorkerPermitLedger,
 } from "../../../src/modes/rpc/session-worker-permits.ts";
-import { within, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
+import { EVENT_SAFETY_MS, within, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -22,7 +22,7 @@ afterEach(() => {
 const noop = () => {};
 
 /** Resolves once the isolate's own word says it is blocked waiting on a permit (it notifies when it starts). */
-async function workerWaiting(block: SharedArrayBuffer, ms = 20_000): Promise<void> {
+async function workerWaiting(block: SharedArrayBuffer, ms = EVENT_SAFETY_MS): Promise<void> {
 	const state = new Int32Array(block);
 	const waited = Atomics.waitAsync(state, PERMIT_WORD.worker, PERMIT_TAG.idle, ms);
 	if (waited.async) await waited.value;
@@ -108,7 +108,7 @@ it("S12b RULING-63 Q3 (4): a host that never grants leaves the worker with a typ
 it("S12b RULING-63 Q3: a deny is typed and recoverable: the waiting worker takes the permit a later release grants", async () => {
 	const { ledger, permits, state } = exhausted();
 	expect(Atomics.load(state, PERMIT_WORD.host), "the host denied before any payload exists").toBe(PERMIT_TAG.denied);
-	const { answer, exit } = gateIsolate(permits.block, 20_000);
+	const { answer, exit } = gateIsolate(permits.block, EVENT_SAFETY_MS);
 	await workerWaiting(permits.block);
 	ledger.release();
 	expect(await answer()).toEqual({ outcome: "granted", built: 1 });
@@ -127,7 +127,7 @@ it("S12b RULING-63 Q3: a deny that never clears ends the wait typed as denied, w
 // RULING-63 Q3 condition (3): close and termination notify every waiter; the blocked worker never hangs.
 it("S12b RULING-63 Q3 (3): a worker blocked on a permit wakes and exits cleanly when the host closes", async () => {
 	const { permits } = exhausted();
-	const { answer, exit } = gateIsolate(permits.block, 20_000);
+	const { answer, exit } = gateIsolate(permits.block, EVENT_SAFETY_MS);
 	await workerWaiting(permits.block);
 	permits.close();
 	expect(await answer()).toEqual({ outcome: "closed", built: 0 });
@@ -136,7 +136,7 @@ it("S12b RULING-63 Q3 (3): a worker blocked on a permit wakes and exits cleanly 
 
 it("S12b RULING-63 Q3 (3): a worker blocked on a permit ends when it is terminated (the host dying)", async () => {
 	const { permits } = exhausted();
-	const { isolate, exit } = gateIsolate(permits.block, 20_000);
+	const { isolate, exit } = gateIsolate(permits.block, EVENT_SAFETY_MS);
 	await workerWaiting(permits.block);
 	await isolate.terminate();
 	expect(await exit()).toBe(1);
@@ -168,7 +168,7 @@ it("S12b X03 X04: with the initial permit held, the real worker posts no ready p
 		const posted: string[] = [];
 		worker.worker.on("message", (message: SessionWorkerToHost) => posted.push(message.type));
 		// A real isolate first loads its module graph and opens its session (carry 13), well inside the test budget.
-		await workerWaiting(block, 60_000);
+		await workerWaiting(block);
 		expect(Atomics.load(new Int32Array(block), PERMIT_WORD.host)).toBe(PERMIT_TAG.denied);
 		expect(posted, "no payload frame before the permit").not.toContainEqual(
 			expect.stringMatching(/^(ready|snapshot|output|canonical|fragment)$/),
