@@ -21,6 +21,58 @@ export interface PathInputOptions {
 }
 
 /**
+ * macOS ships an `auto_home` automounter map on `/home`: the directory is an autofs trigger, not a
+ * real directory. Bun's `fs.realpath*` (sync, native and the promise form alike) resolves a path by
+ * `open(2)`-ing its components, and opening the trigger forces the automount. When the map is wedged
+ * the open never returns, and because it blocks in the kernel on the calling thread the promise form
+ * cannot be raced to a deadline either: the thread, and with it the host loop, is parked forever.
+ *
+ * `/home` is a real directory on Linux, so the rule is darwin-only, and a user whose home directory
+ * genuinely lives under `/home` has already resolved the trigger, so their own subtree is allowed.
+ */
+const AUTOMOUNT_TRIGGER_ROOT = "/home";
+
+/**
+ * Thrown instead of resolving a macOS automount trigger path. Resolution could block forever, and
+ * answering with the unresolved path would let a `/home` alias of a directory reach a containment
+ * check that the real `/Users` path would have failed, so the path is refused rather than guessed.
+ */
+export class UnresolvableAutomountPathError extends Error {
+	readonly code = "unresolvable_automount_path";
+	readonly path: string;
+	constructor(inputPath: string) {
+		super(
+			`unresolvable_automount_path: '${inputPath}' is under the macOS /home automount trigger, which cannot be resolved without risking an indefinite block; use the path under the real home directory instead`,
+		);
+		this.name = "UnresolvableAutomountPathError";
+		this.path = inputPath;
+	}
+}
+
+export interface AutomountPathOptions {
+	/** Platform to judge against. Defaults to the running platform. */
+	platform?: NodeJS.Platform;
+	/** Home directory of the current user. Defaults to `os.homedir()`. */
+	homeDir?: string;
+}
+
+/**
+ * True when resolving this path could block on a macOS automount trigger, so it must be treated as
+ * an opaque string instead of being handed to `realpath` or a stat traversal.
+ */
+export function isBlockingAutomountPath(inputPath: string, options?: AutomountPathOptions): boolean {
+	if ((options?.platform ?? process.platform) !== "darwin") return false;
+	// The default macOS filesystem is case-insensitive, so `/Home/x` reaches the same trigger, and an
+	// unnormalized spelling such as `/./home/x` names it too: normalize and case-fold before judging.
+	const normalized = nodeResolvePath(inputPath);
+	const folded = normalized.toLowerCase();
+	if (folded !== AUTOMOUNT_TRIGGER_ROOT && !folded.startsWith(`${AUTOMOUNT_TRIGGER_ROOT}/`)) return false;
+	const home = nodeResolvePath(options?.homeDir ?? homedir()).toLowerCase();
+	if (folded === home || folded.startsWith(home.endsWith("/") ? home : `${home}/`)) return false;
+	return true;
+}
+
+/**
  * Resolve a path to its canonical (real) form, following symlinks.
  * Falls back to the raw path if resolution fails (e.g. the target does
  * not exist yet), so that callers never crash on missing filesystem

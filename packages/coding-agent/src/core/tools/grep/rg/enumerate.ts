@@ -1,5 +1,6 @@
 import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
+import { isBlockingAutomountPath } from "../../../../utils/paths.ts";
 import { GrepEngineError, type GrepEngineRequest, type GrepEngineResult } from "../engine.ts";
 import { argvBudget, argvCost, packArgv, roomAfter } from "./argv.ts";
 import { pathOrder, slashPath } from "./paths.ts";
@@ -27,6 +28,12 @@ export interface Candidate {
 export async function resolveRoots(request: GrepEngineRequest, result: GrepEngineResult): Promise<Root[]> {
 	const roots: Root[] = [];
 	for (const path of new Set(request.paths)) {
+		// A macOS automount trigger blocks in open(2) on this thread, so it is reported as missing
+		// instead of resolved; the path under the real home directory searches normally.
+		if (isBlockingAutomountPath(path)) {
+			result.missingPaths.push(path);
+			continue;
+		}
 		try {
 			const [info, canonical] = await Promise.all([stat(path), realpath(path)]);
 			// Anchored rg globs use the OS cwd (canonical even for /var aliases on macOS).
