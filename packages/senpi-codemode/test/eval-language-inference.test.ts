@@ -145,9 +145,7 @@ describe("eval argument validation language inference", () => {
 	});
 
 	it("reports the missing language when the markers conflict", () => {
-		expect(() => validate(JS_AND_PY, { code: "let s = None", summary: "Run" })).toThrow(
-			TWO_LANGUAGE_TEACHING_ERROR,
-		);
+		expect(() => validate(JS_AND_PY, { code: "let s = None", summary: "Run" })).toThrow(TWO_LANGUAGE_TEACHING_ERROR);
 	});
 
 	it("never changes an explicit language and drops a caller-sent inference marker", () => {
