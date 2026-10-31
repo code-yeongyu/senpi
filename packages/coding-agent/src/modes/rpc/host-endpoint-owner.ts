@@ -86,16 +86,27 @@ async function writeEndpointOwner(socket: string, token: EndpointOwnerToken): Pr
 	await rename(staged, path);
 }
 
-/** An initial start: binds the public name (`bind`, with its stale-entry preparation) and claims it, in one fence. */
+/**
+ * An initial start: binds the public name (`bind`, with its stale-entry preparation) and claims it. The fence is
+ * taken only when an owner token already exists. A first start has no predecessor whose late rename or remove it
+ * could race, and the ensure lock its launcher holds already serialises concurrent first starts of this endpoint, so
+ * skipping the fence there keeps the SQLite driver out of every supervisor's boot (`rpc-supervisor-footprint`).
+ */
 export async function claimEndpoint(
 	socket: string,
 	token: EndpointOwnerToken,
 	bind?: () => Promise<void>,
 ): Promise<void> {
-	await withEndpointFence(socket, async () => {
+	const claim = async (): Promise<void> => {
 		await bind?.();
 		await writeEndpointOwner(socket, token);
-	});
+	};
+	if (await readEndpointOwner(socket)) {
+		await withEndpointFence(socket, claim);
+		return;
+	}
+	await mkdir(dirname(ownerFile(socket)), { recursive: true });
+	await claim();
 }
 
 /**
