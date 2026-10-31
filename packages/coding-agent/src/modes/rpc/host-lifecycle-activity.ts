@@ -9,7 +9,8 @@ import type { Duplex } from "node:stream";
 import { ClientOccupancy } from "./host-client-occupancy.ts";
 import { type HostLifetimeOwner, hostOwnerGone, readHostOwner, sameHostOwner } from "./host-daemon-state.ts";
 import { type HostActivity, IdleExitDecider, type IdleExitDecision } from "./host-lifecycle-policy.ts";
-import { SessionRunActivity } from "./host-run-activity.ts";
+import { holdIdleExitForSettling, SessionRunActivity } from "./host-run-activity.ts";
+import { supervisorLog } from "./host-supervisor-log.ts";
 import { connectInternalConnection } from "./internal-channel.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "./jsonl.ts";
 import { activeTurnsForIdleDecision, createObserverLink, type ObserverLink } from "./observer-link.ts";
@@ -37,7 +38,7 @@ export const INTERNAL_OBSERVER_HANDSHAKE_MS = 5_000;
 export class SupervisorActivity {
 	readonly decider: IdleExitDecider;
 	readonly clients: ClientOccupancy;
-	private readonly runs = new SessionRunActivity();
+	private readonly runs: SessionRunActivity;
 	private readonly observerLink: ObserverLink;
 	private observerSocket: Duplex | undefined;
 	private readonly options: SupervisorActivityOptions;
@@ -48,6 +49,14 @@ export class SupervisorActivity {
 		// during startup asks for the activity snapshot, and a successor's first `open_session` once
 		// failed on a binding read before its initializer ran.
 		this.decider = new IdleExitDecider(options.idleExitMs);
+		// A settled session's agent_settled handlers hold idle exit for at most one idle window (omo#11419).
+		this.runs = new SessionRunActivity({
+			settleHoldMs: options.idleExitMs,
+			onSettleHoldExpired: (sessionId, heldMs) =>
+				supervisorLog(
+					`session ${sessionId} settled ${heldMs} ms ago and its agent_settled extension handlers have not finished; idle exit no longer waits for them`,
+				),
+		});
 		this.clients = new ClientOccupancy(() => this.refresh(), options.instanceId);
 		this.observerLink = createObserverLink({
 			open: () => this.connectObserver(),
@@ -79,7 +88,7 @@ export class SupervisorActivity {
 		const current = this.current();
 		if (current.connections > 0 || current.activeTurns > 0 || this.clients.unclassifiedCount > 0)
 			this.options.onActivity?.();
-		return this.decider.update(current);
+		return holdIdleExitForSettling(this.decider.update(current), this.runs);
 	}
 
 	/** Owner death never turns an unknown observer snapshot into permission to stop a turn. */
@@ -87,6 +96,7 @@ export class SupervisorActivity {
 		return (
 			this.observerLink.healthy() &&
 			this.runs.busySessions === 0 &&
+			this.runs.settlingSessions === 0 &&
 			this.clients.attachedCount === 0 &&
 			this.clients.unclassifiedCount === 0
 		);
