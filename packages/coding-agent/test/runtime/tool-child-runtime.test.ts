@@ -1,7 +1,7 @@
 // senpi#5227 (RT12, brain/hand split): a runtime without a session builds the tool-child runtime (dispatcher, tool
 // child, host calls), and killing that child mid-call gives today's outcome (KILL-CHILD, plan 3.5). Guards the F27
 // tool-child offload surface. Real child process through the production role entry.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -82,7 +82,7 @@ describe.skipIf(process.platform === "win32")("tool-child runtime without a sess
 	});
 
 	it("runs a module job on the child it owns, keyed by its scope", async () => {
-		const { runtime, modulePath, workDir, records } = childRuntime("scope-a");
+		const { runtime, modulePath, workDir, agentDir, records } = childRuntime("scope-a");
 
 		const outcome = await runtime.dispatcher.offload(
 			{ modulePath, export: "survive", args: { log: join(workDir, "survive.log") } },
@@ -93,6 +93,7 @@ describe.skipIf(process.platform === "win32")("tool-child runtime without a sess
 		expect(outcome.generation).toBe(1);
 		expect(outcome.pid).not.toBe(process.pid);
 		expect(records.map((record) => record.state)).toEqual(["spawned"]);
+		expect(existsSync(join(agentDir, "tool-children", "scope-a"))).toBe(true);
 	}, 60_000);
 
 	it.each(KILL_CHILD_CASES)(
@@ -103,11 +104,7 @@ describe.skipIf(process.platform === "win32")("tool-child runtime without a sess
 			const outcome = await runKillChildCase(runtime.dispatcher, modulePath, workDir, killCase);
 
 			expect(outcome).toEqual(killCase.expected);
-			expect(records.map((record) => [record.state, record.generation])).toEqual([
-				["spawned", 1],
-				["exited", 1],
-				["respawned", 2],
-			]);
+			expect(records.map((record) => [record.state, record.generation])).toEqual(killCase.records);
 		},
 		90_000,
 	);

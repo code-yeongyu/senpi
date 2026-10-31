@@ -46,6 +46,8 @@ export interface KillChildCase {
 	readonly kill: string;
 	readonly steps: readonly KillChildStep[];
 	readonly expected: KillChildOutcome;
+	/** The tool child's lifecycle records, as `[state, generation]`. */
+	readonly records: readonly (readonly [string, number])[];
 }
 
 export const KILL_CHILD_CASES: readonly KillChildCase[] = [
@@ -55,6 +57,10 @@ export const KILL_CHILD_CASES: readonly KillChildCase[] = [
 		kill: "the child dies in the middle of a strict module job",
 		steps: [{ export: "dieOnce", idempotent: false }],
 		expected: { steps: [{ result: "tool_child_exited" }], runs: 1 },
+		records: [
+			["spawned", 1],
+			["exited", 1],
+		],
 	},
 	{
 		id: "KILL-CHILD-02",
@@ -62,6 +68,11 @@ export const KILL_CHILD_CASES: readonly KillChildCase[] = [
 		kill: "the child dies in the middle of an idempotent module job",
 		steps: [{ export: "dieOnce", idempotent: true }],
 		expected: { steps: [{ result: "ok", generation: 2 }], runs: 2 },
+		records: [
+			["spawned", 1],
+			["exited", 1],
+			["respawned", 2],
+		],
 	},
 	{
 		id: "KILL-CHILD-03",
@@ -72,6 +83,11 @@ export const KILL_CHILD_CASES: readonly KillChildCase[] = [
 			{ export: "survive", idempotent: false },
 		],
 		expected: { steps: [{ result: "tool_child_exited" }, { result: "ok", generation: 2 }], runs: 2 },
+		records: [
+			["spawned", 1],
+			["exited", 1],
+			["respawned", 2],
+		],
 	},
 ];
 
