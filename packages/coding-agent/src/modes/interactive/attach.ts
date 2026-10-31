@@ -131,7 +131,7 @@ export class AttachedTui extends Container implements Focusable {
 			await this.client.request({
 				type: "set_client_info",
 				width: this.width,
-				capabilities: ["interactive_user", "question", "grant_select"],
+				capabilities: ["interactive_user", "question", "grant_select", "secret_input_v1"],
 			});
 			const listing = await this.client.request({ type: "list_sessions", observe: true });
 			if (listing.command !== "list_sessions") throw new Error("Expected a session listing");
@@ -264,6 +264,7 @@ export class AttachedTui extends Container implements Focusable {
 				else this.dialogs.accept(record);
 				break;
 			case "question_resolved":
+			case "secret_input_settled":
 				this.dialogs.resolve(record.id);
 				break;
 			case "session_status":
