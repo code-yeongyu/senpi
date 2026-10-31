@@ -1,0 +1,14 @@
+diff --git a/packages/ai/src/api/openai-completions.ts b/packages/ai/src/api/openai-completions.ts
+index 7539dce93f..2b5dfc578e 100644
+--- a/packages/ai/src/api/openai-completions.ts
++++ b/packages/ai/src/api/openai-completions.ts
+@@ -1128,7 +1128,8 @@ function createClient(
+ 	sessionId?: string,
+ 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
+ ) {
+-	const headers: ProviderHeaders = { "User-Agent": getPiUserAgent(), ...model.headers };
++	// MUTATION (P0-05d O4): senpi's own User-Agent header is dropped from every OpenAI-completions request.
++	const headers: ProviderHeaders = { ...model.headers };
+ 	if (model.provider === "github-copilot") {
+ 		const hasImages = hasCopilotVisionInput(context.messages);
+ 		const copilotHeaders = buildCopilotDynamicHeaders({

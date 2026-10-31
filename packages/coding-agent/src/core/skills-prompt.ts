@@ -1,4 +1,5 @@
 import type { ResourceDiagnostic } from "./diagnostics.ts";
+import { pinnedDisplayPath } from "./dynamic-prompt/workstation.ts";
 import type { Skill } from "./skills.ts";
 
 export const COMPACT_SKILL_CATALOG_COUNT = 100;
@@ -166,7 +167,8 @@ function renderSkills(
 		"<skill_roots>",
 	];
 	for (const [dir, alias] of rootByPath) {
-		lines.push(`  <${alias}>${escapeXml(dir)}</${alias}>`);
+		// pinnedDisplayPath: the test-only checkout pin (senpi#5067); the path itself unless SENPI_TEST_WORKSTATION pins it.
+		lines.push(`  <${alias}>${escapeXml(pinnedDisplayPath(dir))}</${alias}>`);
 	}
 	const oneLine = options.compact || options.namesOnly;
 	lines.push(

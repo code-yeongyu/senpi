@@ -99,8 +99,6 @@ describe("createInternalSocketPath", () => {
 			const supervisor = childProcess.spawn(
 				process.execPath,
 				[
-					"--import",
-					import.meta.resolve("tsx"),
 					resolve(import.meta.dirname, "../../../src/cli.ts"),
 					"--internal-rpc-host-supervisor",
 					"--socket",

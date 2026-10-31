@@ -108,6 +108,7 @@ import { AgentRunContinuations } from "./agent-run-continuation.ts";
 import { AgentSettledDelivery, type DeferredAgentSettledAction, DeferredTurnClaim } from "./agent-settled-delivery.ts";
 import { resolveAssistantUsageScope } from "./assistant-usage-scope.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
+import { formatCompactionFailure } from "./compaction-failure-text.ts";
 import type { CredentialReplacement } from "./auth-storage.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { envValue } from "./brand.ts";
@@ -199,6 +200,7 @@ import {
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import { reportExtensionHandlerStall } from "./extension-handler-stall-report.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
+import { isSignInAgainError } from "./extensions/builtin/anthropic-subscription/sign-in-again.ts";
 import { askUserAnswerDisplayText } from "./extensions/builtin/ask-user/format.ts";
 import { getPromptCachePrewarmUsage } from "./extensions/builtin/cache-keepalive/prewarm-entry.ts";
 import {
@@ -319,6 +321,7 @@ import {
 	modelChangeLogFields,
 	SDK_MODEL_CHANGE,
 } from "./model-change-origin.ts";
+import { ModelNotReadyError } from "./model-not-ready-error.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { type AvailableModelsSource, getModelNarrowingPatterns, resolveModelScope } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -350,7 +353,7 @@ import {
 	monotonicNow,
 } from "./retry-fallback/circuit.ts";
 import { isHealthExhaustionFailure } from "./retry-fallback/circuit-probes.ts";
-import { RetryFallbackController } from "./retry-fallback/controller.ts";
+import { followProviderAccountChanges, RetryFallbackController } from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
 	classifyRateLimitedWait,
@@ -417,8 +420,10 @@ import {
 import { BlockedSkillLinkError, readSkillFileChecked } from "./skill-access.ts";
 import {
 	formatSkillInvocationPrompt,
+	formatSkillReferenceBody,
 	parseSkillInvocationTokens,
 	removeSkillInvocationTokens,
+	SKILL_INLINE_BUDGET_CHARS,
 	type SkillInvocationPromptSkill,
 	type SkillInvocationSyntax,
 	type SkillInvocationToken,
@@ -509,8 +514,6 @@ export const TURN_END_SKIPPED_AFTER_SHUTDOWN =
 
 export {
 	formatSkillInvocationPrompt,
-	MAX_SKILL_EXPANSIONS_PER_PROMPT,
-	MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT,
 	type ParsedSkillBlock,
 	parseSkillBlock,
 	parseSkillInvocationTokens,
@@ -565,7 +568,9 @@ function withProviderFailure(
 
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
-	| WithParentToolCallId<Exclude<AgentEvent, { type: "agent_end" | "message_update" }>>
+	| WithParentToolCallId<Exclude<AgentEvent, { type: "agent_start" | "agent_end" | "message_update" }>>
+	/** The lifecycle run identity, bound before asynchronous event delivery; older engines omit it. */
+	| { type: "agent_start"; runId?: string }
 	| AgentSessionAgentEndEvent
 	| SessionMessageUpdateEvent
 	| { type: "agent_settled" }
@@ -785,6 +790,10 @@ export type AgentSessionEvent =
 			replaced?: CredentialReplacement["replaced"];
 			/** Where the replaced credential was backed up, when it was. */
 			backupPath?: string;
+			/** The account a Claude CLI sign-in signed in (senpi#4436). */
+			account?: { name: string };
+			/** That account's sign-in connection test. */
+			check?: { model: string; outcome: "ok" | "failed"; reason?: string; at: number };
 	  }
 	| {
 			type: "summarization_retry_scheduled";
@@ -1037,14 +1046,6 @@ function isCompactionExecutionAborted(error: unknown): boolean {
 		error instanceof CompactionCancelledError ||
 		(error instanceof Error && error.name === "AbortError")
 	);
-}
-
-/** A turn cannot start: no model is selected, or its provider has no credentials. */
-class ModelNotReadyError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = "ModelNotReadyError";
-	}
 }
 
 /** The error a turn ends with when a required compaction could not bring the context back under the window. */
@@ -1391,6 +1392,7 @@ export class AgentSession {
 	private _unsubscribeRecovery: (() => void) | undefined;
 	readonly securityNotices = new SecurityNoticeSnapshot();
 	private _unsubscribeSecurityNotices?: () => void;
+	private readonly _unfollowProviderAccountChanges: () => void;
 	private _unsubscribeSettingsSource?: () => void;
 	private _unregisterMemoryReport: () => void = () => {};
 	private _eventListeners: AgentSessionEventListener[] = [];
@@ -1641,6 +1643,8 @@ export class AgentSession {
 	private readonly _abortProvenance = new AgentAbortProvenance();
 	private _deadlineTracker!: AgentDeadlineTracker;
 	private readonly _agentSettledDelivery = new AgentSettledDelivery();
+	/** Resolved when a person's input moves on while this settle's agent_settled handlers still run (omo#11419). */
+	private _settledHandlersYield: PromiseWithResolvers<void> | undefined;
 	private _suppressQueuedContinuationAfterUserAbort = false;
 	private _userAbortGeneration = 0;
 	/** Set when clearQueue({ abortWillFollow: true }) drains queues immediately before abort(). */
@@ -1957,6 +1961,7 @@ export class AgentSession {
 			getCurrentSelector: () => (this.model ? { model: this.model, thinkingLevel: this.thinkingLevel } : undefined),
 			isAuthAvailable: (provider) => this._modelRuntime.hasConfiguredAuth(provider),
 		});
+		this._unfollowProviderAccountChanges = followProviderAccountChanges(this._retryFallback);
 		this._probeBackScheduler = new ProbeBackScheduler({
 			now: this._fallbackNow,
 		});
@@ -3298,14 +3303,32 @@ export class AgentSession {
 		this._agentSettledDelivery.begin(this._userAbortGeneration);
 		const settlementEpoch = ++this._settlementEpoch;
 		try {
-			await this._extensionRunner.emit({ type: "agent_settled" });
+			// agent_settled is notification-only: the run has settled, so subscribers (RPC clients, the TUI) hear it now.
+			// Waiting on extension handlers first let one slow handler hold every client's settle edge (omo#11419);
+			// the handlers still run inside the deferral window, under the host budget that reports their stalls.
+			const settleYield = Promise.withResolvers<void>();
+			this._settledHandlersYield = settleYield;
 			this._emit({ type: "agent_settled" });
+			const handlers = this._extensionRunner.emit({ type: "agent_settled" });
+			// A subscriber above may already have sent a person's prompt, before any handler was held.
+			let yielded = false;
+			if (this._settledHandlersYield === undefined) this._yieldHeldSettledHandlers();
+			await Promise.race([handlers, settleYield.promise.then(() => (yielded = true))]);
+			if (yielded) {
+				// The walk goes on detached (each later handler still runs, logged by its budget); its failure is logged.
+				handlers.catch((error: unknown) =>
+					this._sessionLogger.warn("agent_settled_handlers_failed", {
+						error: error instanceof Error ? error.message : String(error),
+					}),
+				);
+			}
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 			({ actions: deferredActions, turnClaims: deferredTurnClaims } = this._agentSettledDelivery.finish(
 				this._userAbortGeneration,
 			));
 		} finally {
 			this._agentSettledDelivery.cancel();
+			this._settledHandlersYield = undefined;
 			this._abortProvenance.closeAgentEndBoundary();
 			this._resolveIdleWaitIfIdle();
 		}
@@ -3505,6 +3528,9 @@ export class AgentSession {
 			this._lifecycleBinding.startRun();
 			this._requestSelectedModel = undefined;
 		}
+		// Bind now: the core can start another run before this event's asynchronous delivery.
+		const queuedEvent =
+			event.type === "agent_start" ? { ...event, runId: this._lifecycleBinding.controller.ledger.runId } : event;
 		// Bound at emission: the core can start the next run before the queue reaches this end (senpi#3864).
 		if (event.type === "agent_end") {
 			this._lifecycleBinding.bindTurnEnd(event);
@@ -3584,8 +3610,8 @@ export class AgentSession {
 		}
 
 		const processing = this._agentEventQueue.then(
-			() => this._processAgentEvent(event, signal),
-			() => this._processAgentEvent(event, signal),
+			() => this._processAgentEvent(queuedEvent, signal),
+			() => this._processAgentEvent(queuedEvent, signal),
 		);
 		this._agentEventQueue =
 			pendingMessage !== undefined
@@ -4747,6 +4773,7 @@ export class AgentSession {
 	dispose(): void {
 		this._disposed = true;
 		this._unsubscribeSecurityNotices?.();
+		this._unfollowProviderAccountChanges();
 		this.securityNotices.dispose();
 		clearMcpGrantPresentations(this.sessionId);
 		this._engineTurnHold.invalidate();
@@ -5025,6 +5052,12 @@ export class AgentSession {
 		return this.agent.state.systemPrompt;
 	}
 
+	/** The stable prefix the turn request splits `systemPrompt` at, while the prompt still starts with it (senpi#4447). */
+	get systemPromptStablePrefix(): string | undefined {
+		const prefix = this.agent.state.systemPromptStablePrefix;
+		return prefix !== undefined && this.agent.state.systemPrompt.startsWith(prefix) ? prefix : undefined;
+	}
+
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
 		return this._retryAttempt;
@@ -5066,6 +5099,23 @@ export class AgentSession {
 		clearTimeout(graceTimer);
 		if (stillHeld) this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
 		await idle;
+	}
+
+	/**
+	 * A person's input arrived while the settled run's notification-only agent_settled handlers still run: stop waiting on
+	 * every one of them (omo#11419). The held one is released quietly (session.log stage "released", no extension error);
+	 * the rest of the walk runs detached. A prompt sent from inside an agent_settled subscriber, before any handler is
+	 * held, marks the yield so the settle releases the first handler as soon as it starts.
+	 */
+	private _yieldSettledHandlers(): void {
+		const settleYield = this._settledHandlersYield;
+		this._settledHandlersYield = undefined;
+		settleYield?.resolve();
+		this._yieldHeldSettledHandlers();
+	}
+
+	private _yieldHeldSettledHandlers(): void {
+		this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope, "yielded");
 	}
 
 	/** Adapter for the deadline owner interface: stop waiting on extension handlers that hold the turn (senpi#3650). */
@@ -5766,6 +5816,9 @@ export class AgentSession {
 				return;
 			}
 			if (origin === "person") {
+				// The last run already settled; its notification-only agent_settled handlers must not hold a person's next
+				// input. Stop waiting on them (they keep running, logged as released) so this turn starts now (omo#11419).
+				if (this._agentSettledDelivery.active) this._yieldSettledHandlers();
 				this._beginPersonInput();
 				// The held commands this input released run first, in the order typed, so its turn starts after them.
 				const heldCommands = this._takeHeldCommandRun();
@@ -6447,6 +6500,7 @@ export class AgentSession {
 				});
 			}
 		}
+		this.agent.state.systemPromptStablePrefix = result?.systemPromptStablePrefix;
 		if (result?.systemPrompt !== undefined) {
 			this._systemPromptOverride = result.systemPrompt;
 			this.agent.state.systemPrompt = result.systemPrompt;
@@ -6531,8 +6585,7 @@ export class AgentSession {
 		skills: readonly Skill[],
 		invocationTokens: readonly SkillInvocationToken[],
 	): Promise<string> {
-		const maxExpansions = this.settingsManager.getMaxSkillExpansionsPerPrompt();
-
+		let inlinedChars = 0;
 		const expandedSkillNames = new Set<string>();
 		const skillBlocks: SkillInvocationPromptSkill[] = [];
 		const invocationMetadata: Array<{
@@ -6541,8 +6594,6 @@ export class AgentSession {
 			syntax: SkillInvocationSyntax;
 		}> = [];
 		const removedTokens: SkillInvocationToken[] = [];
-		const unloadedTokens = new Set<SkillInvocationToken>();
-		const skippedSkillNames: string[] = [];
 
 		for (const token of invocationTokens) {
 			const skill = skills.find((candidate) => candidate.name === token.name);
@@ -6551,22 +6602,11 @@ export class AgentSession {
 				continue;
 			}
 
-			// A repeat of an already expanded skill adds no context, so it never counts
-			// against the cap and keeps its positional marker.
+			// A repeat of an already expanded skill adds no context and keeps its positional marker; it is
+			// handled, not an error, so it goes to the session debug log rather than the user.
 			if (expandedSkillNames.has(skill.name)) {
 				removedTokens.push(token);
-				this._extensionRunner.emitError({
-					extensionPath: skill.filePath,
-					event: "skill_expansion",
-					error: `Skipped duplicate skill invocation: ${skill.name}`,
-				});
-				continue;
-			}
-
-			if (skillBlocks.length >= maxExpansions) {
-				removedTokens.push(token);
-				unloadedTokens.add(token);
-				if (!skippedSkillNames.includes(skill.name)) skippedSkillNames.push(skill.name);
+				this._sessionLogger.debug("skill_expansion_duplicate", { name: skill.name });
 				continue;
 			}
 
@@ -6575,11 +6615,14 @@ export class AgentSession {
 			try {
 				const content = await readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet);
 				const body = stripFrontmatter(content).trim();
+				// Every invoked skill loads; past the inline budget it loads as a reference to its file.
+				const inline = inlinedChars === 0 || inlinedChars + body.length <= SKILL_INLINE_BUDGET_CHARS;
+				if (inline) inlinedChars += body.length;
 				skillBlocks.push({
 					name: skill.name,
 					filePath: skill.filePath,
 					baseDir: skill.baseDir,
-					body,
+					body: inline ? body : formatSkillReferenceBody(skill.filePath),
 				});
 				expandedSkillNames.add(skill.name);
 				invocationMetadata.push({
@@ -6600,16 +6643,8 @@ export class AgentSession {
 			}
 		}
 
-		if (skippedSkillNames.length > 0) {
-			const count = skippedSkillNames.length;
-			this._extensionRunner.emitError({
-				extensionPath: "skill:expansion",
-				event: "skill_expansion",
-				error: `Skipped ${count} skill${count === 1 ? "" : "s"} (${skippedSkillNames.join(", ")}): at most ${maxExpansions} skills load per prompt. Raise maxSkillExpansionsPerPrompt to load more.`,
-			});
-		}
 		if (skillBlocks.length === 0) return text;
-		const userRequest = removeSkillInvocationTokens(text, removedTokens, unloadedTokens);
+		const userRequest = removeSkillInvocationTokens(text, removedTokens);
 		this._emit({ type: "skill_invocation", skills: invocationMetadata });
 		return formatSkillInvocationPrompt(skillBlocks, userRequest);
 	}
@@ -9885,9 +9920,18 @@ export class AgentSession {
 
 		if (areExperimentalFeaturesEnabled()) {
 			const systemPrompt = this.agent.state.systemPrompt;
+			const systemPromptStablePrefix = this.systemPromptStablePrefix;
 			const tools = this.agent.state.tools.slice();
 			const buildSourceContext = (messages: AgentMessage[]) =>
-				this.agent.buildProviderContext({ systemPrompt, messages: messages.slice(), tools: tools.slice() }, signal);
+				this.agent.buildProviderContext(
+					{
+						systemPrompt,
+						...(systemPromptStablePrefix === undefined ? {} : { systemPromptStablePrefix }),
+						messages: messages.slice(),
+						tools: tools.slice(),
+					},
+					signal,
+				);
 			const fullContext = await buildSourceContext(this.agent.state.messages);
 			const isExactPrefix = (candidate: Context): boolean =>
 				candidate.messages.length > 0 &&
@@ -9983,7 +10027,7 @@ export class AgentSession {
 			const error = new Error(
 				lastEntry?.type === "compaction" ? "Already compacted" : "Nothing to compact (session too small)",
 			);
-			const errorMessage = `Compaction failed: ${error.message}`;
+			const errorMessage = formatCompactionFailure("compaction", error.message);
 			this._emit({ type: "compaction_start", reason: "manual", requestId });
 			this._emit({
 				type: "compaction_end",
@@ -10042,7 +10086,9 @@ export class AgentSession {
 			}
 			const message = error instanceof Error ? error.message : String(error);
 			const aborted = isCompactionExecutionAborted(error);
-			const errorMessage = aborted ? undefined : `Compaction failed: ${message}`;
+			const errorMessage = aborted
+				? undefined
+				: formatCompactionFailure("compaction", message, { model: this._compactionFailureModel() });
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -10133,7 +10179,9 @@ export class AgentSession {
 				aborted,
 				willRetry: false,
 				requestId,
-				errorMessage: aborted ? undefined : `Compaction failed: ${message}`,
+				errorMessage: aborted
+					? undefined
+					: formatCompactionFailure("compaction", message, { model: this._compactionFailureModel() }),
 			});
 			return { applied: false, reason: "rejected" };
 		} finally {
@@ -10648,7 +10696,7 @@ export class AgentSession {
 	 */
 	private async _assertModelReadyForTurn(): Promise<void> {
 		if (!this.model) {
-			throw new ModelNotReadyError(formatNoModelSelectedMessage());
+			throw new ModelNotReadyError(formatNoModelSelectedMessage(), "no_model_selected");
 		}
 		const hasConfiguredAuth =
 			this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
@@ -10663,9 +10711,15 @@ export class AgentSession {
 				`Authentication failed for "${this.model.provider}". ` +
 					`Credentials may have expired or network is unavailable. ` +
 					`Run '/login ${this.model.provider}' to re-authenticate.`,
+				"provider_credentials_expired",
+				this.model.provider,
 			);
 		}
-		throw new ModelNotReadyError(formatNoApiKeyFoundMessage(this.model.provider));
+		throw new ModelNotReadyError(
+			formatNoApiKeyFoundMessage(this.model.provider),
+			"provider_credentials_missing",
+			this.model.provider,
+		);
 	}
 
 	/** Shows the provider guidance for a refused background turn once until a turn is admitted again. */
@@ -11536,9 +11590,9 @@ export class AgentSession {
 			const aborted = isCompactionExecutionAborted(error);
 			const formattedErrorMessage = aborted
 				? undefined
-				: reason === "overflow"
-					? `Context overflow recovery failed: ${errorMessage}`
-					: `Auto-compaction failed: ${errorMessage}`;
+				: formatCompactionFailure(reason === "overflow" ? "overflow-recovery" : "auto-compaction", errorMessage, {
+						model: this._compactionFailureModel(),
+					});
 			this._emit({
 				type: "compaction_end",
 				reason,
@@ -12032,7 +12086,9 @@ export class AgentSession {
 								aborted,
 								willRetry: false,
 								requestId,
-								errorMessage: aborted ? undefined : `Compaction failed: ${message}`,
+								errorMessage: aborted
+									? undefined
+									: formatCompactionFailure("compaction", message, { model: this._compactionFailureModel() }),
 							});
 							const err = error instanceof Error ? error : new Error(String(error));
 							options?.onError?.(err);
@@ -12057,6 +12113,7 @@ export class AgentSession {
 				getMessageRevision: () => this.getMessageRevision(),
 				applyCompaction: (precomputed, options) => this.applyCompaction(precomputed, options),
 				getSystemPrompt: () => this.systemPrompt,
+				getSystemPromptStablePrefix: () => this.systemPromptStablePrefix,
 				getLoadedHookSources: () =>
 					this._resourceLoader.getLoadedHookSources?.() ?? {
 						agentDir: this._cwd,
@@ -12701,12 +12758,15 @@ export class AgentSession {
 	 * The Claude SDK lane owns its own account pool: an auth miss there is
 	 * repaired or failed over inside the pool, so hopping to another provider
 	 * would abandon the user's Claude subscription on a recoverable miss. Every
-	 * other provider keeps the configured fallback-chain hop.
+	 * other provider keeps the configured fallback-chain hop. The sign-in-again
+	 * prompt (senpi#4436) is the same kind of miss: every model on the lane fails
+	 * it until the user signs in, so it neither retries nor hops.
 	 */
 	private _isClaudeSdkAuthMissError(message: AssistantMessage): boolean {
 		return (
 			this.model?.provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID &&
-			message.errorMessage === providerNotConfiguredMessage(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID)
+			(message.errorMessage === providerNotConfiguredMessage(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) ||
+				isSignInAgainError(message.errorMessage))
 		);
 	}
 
@@ -12799,6 +12859,10 @@ export class AgentSession {
 				this._emit({ type: "summarization_retry_finished" });
 			},
 		};
+	}
+
+	private _compactionFailureModel(): string | undefined {
+		return this.model ? `${this.model.provider}/${this.model.id}` : undefined;
 	}
 
 	/**
