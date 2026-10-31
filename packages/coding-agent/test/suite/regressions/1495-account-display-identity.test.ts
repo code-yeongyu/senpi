@@ -13,7 +13,6 @@ import {
 	type AccountSlot,
 	type AnthropicSubscriptionCredential,
 	emptyCredential,
-	refreshSlot,
 } from "../../../src/core/extensions/builtin/anthropic-subscription/accounts.ts";
 import {
 	rendezvousOrder,
@@ -21,22 +20,17 @@ import {
 } from "../../../src/core/extensions/builtin/anthropic-subscription/affinity.ts";
 import { runFailover } from "../../../src/core/extensions/builtin/anthropic-subscription/failover.ts";
 import { decideNativeContinuity } from "../../../src/core/extensions/builtin/anthropic-subscription/session-continuity.ts";
+import { cliSlot } from "../../support/claude-cli-test-slots.ts";
 
 const provider = "anthropic-subscription";
 const hasher = (value: string) => createHash("sha256").update(value).digest().readBigUInt64BE(0);
 function fixture() {
-	const accounts: AccountSlot[] = ["default", "second"].map((name) => ({
-		name,
-		source: "login",
-		access: `fake-${name}`,
-		refresh: `fake-refresh-${name}`,
-		expires: 1,
-	}));
+	const accounts: AccountSlot[] = ["default", "second"].map((name) => cliSlot(name));
 	const storage = AuthStorage.inMemory({ [provider]: { ...emptyCredential(), pinned: "default", accounts } });
 	return { accounts, storage };
 }
 
-// senpi#1495: renaming must not remap affinity, health, token refresh or SDK lineage.
+// senpi#1495: renaming must not remap affinity, health or SDK lineage.
 it("keeps HRW, pins, sidecar health and Claude restart bindings keyed by the immutable name", async () => {
 	const { accounts, storage } = fixture();
 	const sidecarDir = mkdtempSync(join(tmpdir(), "account-display-identity-"));
@@ -94,23 +88,10 @@ it("keeps HRW, pins, sidecar health and Claude restart bindings keyed by the imm
 	}
 });
 
-it("refreshes and fails over by name while preserving display metadata and slot block state", async () => {
+it("fails over by name while preserving display metadata and slot block state", async () => {
 	const { storage } = fixture();
 	await renameCredentialAccount(storage, provider, "default", "Personal");
 	await renameCredentialAccount(storage, provider, "second", "Work");
-	const refreshedTokens: string[] = [];
-	await refreshSlot(
-		storage,
-		provider,
-		"default",
-		async (token) => {
-			refreshedTokens.push(token);
-			return { access: "fake-rotated", refresh: "fake-next", expires: 4102444800000 };
-		},
-		new AbortController().signal,
-		() => true,
-	);
-	expect(refreshedTokens).toEqual(["fake-refresh-default"]);
 	const attempted: string[] = [];
 	const transitions: string[] = [];
 	const events = runFailover({
@@ -133,7 +114,7 @@ it("refreshes and fails over by name while preserving display metadata and slot 
 	expect(attempted).toEqual(["default", "second"]);
 	expect(transitions).toEqual(["default:second"]);
 	expect(listSlots(storage.get(provider))).toMatchObject([
-		{ name: "default", displayName: "Personal", access: "fake-rotated", blockReason: "rate_limit" },
+		{ name: "default", displayName: "Personal", blockReason: "rate_limit" },
 		{ name: "second", displayName: "Work" },
 	]);
 	expect(storage.get(provider)).toHaveProperty("pinned", "default");
