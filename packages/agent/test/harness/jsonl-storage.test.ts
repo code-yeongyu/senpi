@@ -192,17 +192,6 @@ describe("JsonlStorage torn tail", () => {
 		expect(getOrThrow(await fileSystem.readTextFile("session.jsonl", BACKGROUND_CONTEXT))).toBe(prefix);
 		await reopened.close(BACKGROUND_CONTEXT);
 	});
-
-	it("rejects a malformed interior line without rewriting", async () => {
-		const { fileSystem, options, prefix } = await seed();
-		const corrupted = `${prefix}not-json\n${JSON.stringify(storedValues.setValue(storedValues.sessionName, "after"))}\n`;
-		await fileSystem.writeFile("session.jsonl", corrupted, BACKGROUND_CONTEXT);
-
-		await expect(JsonlStorage.open(options, BACKGROUND_CONTEXT)).rejects.toThrow(/line 3/);
-		expect(getOrThrow(await fileSystem.readTextFile("session.jsonl", BACKGROUND_CONTEXT))).toBe(corrupted);
-		expect(getOrThrow(await fileSystem.exists("session.jsonl.tmp", BACKGROUND_CONTEXT))).toBe(false);
-	});
-
 	it("rejects the unsupported pre-WP01 scalar record spelling", async () => {
 		const { fileSystem, options, prefix } = await seed();
 		const legacyKind = ["reg", "ister"].join("");
@@ -220,13 +209,18 @@ describe("JsonlStorage torn tail", () => {
 		expect(getOrThrow(await fileSystem.readTextFile("session.jsonl", BACKGROUND_CONTEXT))).toBe(corrupted);
 	});
 
-	it("rejects a complete malformed final line without rewriting", async () => {
+	it("sets aside a complete final line that is not JSON and keeps the records before it", async () => {
 		const { fileSystem, options, prefix } = await seed();
 		const corrupted = `${prefix}not-json\n`;
 		await fileSystem.writeFile("session.jsonl", corrupted, BACKGROUND_CONTEXT);
 
-		await expect(JsonlStorage.open(options, BACKGROUND_CONTEXT)).rejects.toThrow(/line 3/);
-		expect(getOrThrow(await fileSystem.readTextFile("session.jsonl", BACKGROUND_CONTEXT))).toBe(corrupted);
+		const reopened = await JsonlStorage.open(options, BACKGROUND_CONTEXT);
+		expect((await reopened.getEntries(["kept"], BACKGROUND_CONTEXT)).has("kept")).toBe(true);
+		expect(getOrThrow(await fileSystem.readTextFile("session.jsonl", BACKGROUND_CONTEXT))).toBe(prefix);
+		expect(getOrThrow(await fileSystem.readTextFile(`session.jsonl.torn-${NOW}`, BACKGROUND_CONTEXT))).toBe(
+			"not-json\n",
+		);
+		await reopened.close(BACKGROUND_CONTEXT);
 	});
 
 	it("rejects a complete final line with invalid transaction framing", async () => {
