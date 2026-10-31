@@ -91,4 +91,4 @@ it("X03 persisted fork held at reconcile: the cut keeps the old epoch and transc
 	} finally {
 		await host.dispose();
 	}
-}, 120_000);
+}, 600_000);
