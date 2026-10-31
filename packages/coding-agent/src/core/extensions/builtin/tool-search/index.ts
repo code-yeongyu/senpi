@@ -13,7 +13,17 @@ export function createToolSearchExtension(service: ToolSearchService): Extension
 	return (pi: ExtensionAPI): void => {
 		service.bindRuntime(pi);
 
+		// Boot point (senpi#5217): a session boots the catalog at session_start; a runtime with no
+		// session boots it at the first tool call a context sees. Each context boots once.
+		const bootedContexts = new WeakSet<object>();
+		pi.on("tool_call", (_event, ctx) => {
+			if (bootedContexts.has(ctx.sessionManager) || service.isDisposed) return;
+			bootedContexts.add(ctx.sessionManager);
+			service.getCatalog();
+		});
+
 		pi.on("session_start", async (_event, ctx) => {
+			bootedContexts.add(ctx.sessionManager);
 			service.beginSession();
 			await service.maybeRehydrateFromHistoryInSlices(ctx.sessionManager.getEntries(), new EventLoopSlicer());
 		});
