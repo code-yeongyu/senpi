@@ -37,6 +37,8 @@ export type HandoverState = "handover_pending" | "handover_switching" | "handove
 export interface HandoverLaunch {
 	readonly command: string;
 	readonly args: readonly string[];
+	/** The requester's supervisor reports its startup phases, so the successor runs the bounded phase policy. */
+	readonly reportsStartup?: boolean;
 }
 
 export interface IdleHandoverRequest {

@@ -114,10 +114,19 @@ const PRIVATE_FD_LEAVES = new Set([
 // child's stdio, over modules already in the graph). Their import-only phys_footprint cost on Bun was not measurable
 // (graph import, 15 alternating samples: base median 11.141 MiB, head 11.126). The base ceiling and every forbidden/core
 // import check remain unchanged.
+// The successor path (senpi#4602, second PR) adds exactly two more: host-endpoint-owner 7,689 source / 6,417 built
+// bytes, 130 code lines (the endpoint owner token and the mutation fence every public-entry rename/remove runs under;
+// Node builtins, socket-ownership and ownership-safe-lock, both already in the graph) and host-ensure-lock 2,633 /
+// 2,605, 31 (the canonical endpoint key the fence shares with the ensure lock; its imports were already in the graph).
+// Measured: 75 modules.
 const STARTUP_EVENT_LEAVES = new Set(
-	["host-startup-beacon", "host-startup-wire", "host-lifecycle-startup"].map(
-		(name) => `packages/coding-agent/dist/modes/rpc/${name}.js`,
-	),
+	[
+		"host-startup-beacon",
+		"host-startup-wire",
+		"host-lifecycle-startup",
+		"host-endpoint-owner",
+		"host-ensure-lock",
+	].map((name) => `packages/coding-agent/dist/modes/rpc/${name}.js`),
 );
 
 function loadedModules(entries: readonly { phase: string; url: string }[]): string[] {

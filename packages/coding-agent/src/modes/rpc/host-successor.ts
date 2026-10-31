@@ -19,15 +19,10 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { spawnWithPrivateFds } from "../../private-fd-spawn.ts";
 import { randomUUID } from "node:crypto";
-import { open, rm, writeFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { waitForStartTime } from "../../utils/process-identity.ts";
-import { generationPaths, HOST_STATE_FILE_MODE, type HostDaemonPaths } from "./host-daemon-paths.ts";
-import {
-	type HostRegistration,
-	releaseGeneration,
-	writeGenerationRecord,
-	writeHostRegistration,
-} from "./host-daemon-registration.ts";
+import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
+import { type HostRegistration, writeGenerationRecord, writeHostRegistration } from "./host-daemon-registration.ts";
 import {
 	callerHostOwner,
 	readFileOrUndefined,
@@ -37,13 +32,23 @@ import {
 	writeHostOwner,
 	writeHostSettings,
 } from "./host-daemon-state.ts";
-import { announceStop, recordEscalation, type StopTarget, signalPid } from "./host-ensure-stop.ts";
 import type { HandoffHostOptions, HandoffRefusal, HandoffResult } from "./host-handoff.ts";
 import { defaultHostLaunch, PINNED_HOST_CLIENT_CAPABILITIES } from "./host-launch.ts";
 import { DEFAULT_HOST_IDLE_EXIT_MS } from "./host-lifecycle.ts";
 import { keepOwnerPipe, OWNER_WATCH_FD } from "./host-lifecycle-launch.ts";
 import { probeProtocolInfo } from "./host-probe.ts";
-import { relayPresenterBootstrap } from "./mcp-presenter-bootstrap.ts";
+import type { ChildExit } from "./host-readiness.ts";
+import { settleCandidateAdoption } from "./host-endpoint-owner.ts";
+import { abandonSuccessor } from "./host-successor-abandon.ts";
+import { newStartupAttempt } from "./host-startup-events.ts";
+import { beginStartupAttempt } from "./host-startup-run.ts";
+import {
+	adoptionGrant,
+	driveSuccessorStartup,
+	failureDetail,
+	predecessorOwnerArgs,
+	successorPresenter,
+} from "./host-successor-startup.ts";
 import type { HostProtocolInfo } from "./host-protocol-info.ts";
 import { successorHostEnvironment } from "./host-spawn-environment.ts";
 import { signalGeneration } from "./host-stop.ts";
@@ -54,12 +59,6 @@ import {
 	type SocketFileIdentity,
 	statSocketIdentity,
 } from "./socket-ownership.ts";
-
-/** How long the successor has to answer on the PUBLIC socket before the handoff is abandoned. */
-const DEFAULT_HANDOFF_READINESS_MS = 30_000;
-
-/** How long a refused handoff waits for the successor it killed to exit before releasing its record. */
-const SUCCESSOR_EXIT_WAIT_MS = 5_000;
 
 export async function startSuccessor(context: {
 	options: HandoffHostOptions;
@@ -110,6 +109,7 @@ export async function startSuccessor(context: {
 			bindSocket,
 			"--replace",
 			`${replaced.dev}:${replaced.ino}`,
+			...predecessorOwnerArgs(host),
 			...(inheritOwnerPipe ? ["--owner-fd", String(OWNER_WATCH_FD)] : []),
 			...(options.presenterBootstrap ? ["--mcp-presenter-fd", "4"] : []),
 			// Preserve the running host's policy even when an older caller omits the deployment option.
@@ -118,33 +118,51 @@ export async function startSuccessor(context: {
 				: []),
 			...(options.hostArgs ?? []),
 		];
-		const launch = (options._test?.launch ?? options.launch)?.(argv) ?? defaultHostLaunch(argv);
+		const launch = (options._test?.launch ?? options.launch)?.(argv) ?? {
+			...defaultHostLaunch(argv),
+			reportsStartup: true,
+		};
+		// The successor's own startup attempt (senpi#4602): its controller is created immediately before the spawn.
+		const attempt = beginStartupAttempt({
+			socket: options.socket,
+			instanceId,
+			generation,
+			attempt: newStartupAttempt(),
+			coordinated: launch.reportsStartup === true,
+			successorOf: host.instanceId ?? null,
+			...(options._test?.readinessTimeoutMs ? { decisionBudgetMs: options._test.readinessTimeoutMs } : {}),
+		});
 		const stderr = await open(paths.stderrLog, "a", 0o600);
-		const spawned = spawnWithPrivateFds(spawn, launch.command, [...launch.args], {
-			detached: true,
-			windowsHide: true,
-			env: successorHostEnvironment({
-				agentDir: options.agentDir,
-				env: options.env,
-				expectedRuntimeBuildId: options.expectedRuntimeBuildId,
-				paths,
-				generation,
-				instanceId,
-			}),
-			stdio: options.presenterBootstrap
+		const stdio = attempt.stdio<"ignore" | "pipe" | number>(
+			options.presenterBootstrap
 				? ["ignore", "ignore", stderr.fd, inheritOwnerPipe ? "pipe" : "ignore", "pipe"]
 				: inheritOwnerPipe
 					? ["ignore", "ignore", stderr.fd, "pipe"]
 					: ["ignore", "ignore", stderr.fd],
+		);
+		const spawned = spawnWithPrivateFds(spawn, launch.command, [...launch.args], {
+			detached: true,
+			windowsHide: true,
+			env: {
+				...successorHostEnvironment({
+					agentDir: options.agentDir,
+					env: options.env,
+					expectedRuntimeBuildId: options.expectedRuntimeBuildId,
+					paths,
+					generation,
+					instanceId,
+				}),
+				...attempt.env,
+			},
+			stdio,
 		});
-		const presenterEnrollment = options.presenterBootstrap
-			? relayPresenterBootstrap(options.presenterBootstrap, spawned, {
-					kind: "replacement",
-					predecessorHostInstance: host.instanceId,
-				})
-			: undefined;
+		const presenter = successorPresenter(options.presenterBootstrap, spawned, host, attempt.coordinated);
 		child = spawned;
-		exited = new Promise<void>((resolve) => spawned.once("exit", () => resolve()));
+		const childExit = new Promise<ChildExit>((resolve) =>
+			spawned.once("exit", (code, signal) => resolve({ code, signal })),
+		);
+		exited = childExit.then(() => {});
+		attempt.attach(spawned, childExit);
 		await stderr.close();
 		if (inheritOwnerPipe) keepOwnerPipe(spawned);
 		if (child.pid === undefined) throw new Error("failed to spawn the successor generation");
@@ -164,8 +182,21 @@ export async function startSuccessor(context: {
 		// NOT moved here - the predecessor still owns the socket until the rename lands.
 		await writeGenerationRecord(paths, registration);
 		await options._test?.afterSpawn?.(child.pid);
-		const answer = await awaitSuccessor(options, host, exited);
-		if (!answer) {
+		const grant = adoptionGrant(attempt.binding.attempt, generationPaths(paths, instanceId).dir, spawned);
+		const childGone = exited;
+		const run = await driveSuccessorStartup({
+			attempt: { controller: attempt.controller, coordinated: attempt.coordinated, grant: grant.grant },
+			presenter: attempt.coordinated ? presenter : undefined,
+			awaitAnswer: (budgetMs) => awaitSuccessor(options.socket, host, childGone, budgetMs),
+		});
+		// A failed attempt first revokes its grant and reads who owns the public name, inside the endpoint fence: an
+		// adoption that committed after its deadline is a completed handoff, never rolled back (senpi#4602).
+		const adopted = run.ready
+			? run.answer
+			: (await settleCandidateAdoption(options.socket, instanceId, grant.revoke)) === "completed"
+				? ((await probeProtocolInfo(options.socket, 2_000)) ?? null)
+				: undefined;
+		if (adopted === undefined) {
 			const reason = await abortReason(options.socket, replaced);
 			const cleanupFailure = await abandonSuccessor({
 				child,
@@ -175,13 +206,17 @@ export async function startSuccessor(context: {
 				bootSettings,
 				reason: "successor_readiness_timeout",
 			});
-			return { action: "refuse", reason, upgradeable: true, ...(cleanupFailure && { detail: cleanupFailure }) };
+			const detail = [run.ready ? undefined : failureDetail(run.outcome, cleanupFailure), cleanupFailure]
+				.filter(Boolean)
+				.join("; ");
+			return { action: "refuse", reason, upgradeable: true, ...(detail && { detail }) };
 		}
 		// The pointer moves to the successor only now: until the rename landed, the generation the
 		// clients reach is still the predecessor, and the pointer has to name whoever owns the socket.
 		await options._test?.beforeRegistration?.();
-		await writeHostRegistration(paths, { ...registration, ...successorBuild(answer) });
-		await presenterEnrollment;
+		await writeHostRegistration(paths, { ...registration, ...(adopted ? successorBuild(adopted) : {}) });
+		// An uncoordinated successor keeps today's order: its presenter result after the public answer.
+		if (!attempt.coordinated) await presenter?.();
 		child.unref();
 		// The successor owns the socket now: the predecessor may drain. SIGUSR1 is sent only here,
 		// to a pid the record proved and a host that advertised it can survive the signal. A
@@ -193,8 +228,8 @@ export async function startSuccessor(context: {
 			action: "handoff",
 			pid: child.pid,
 			socket: options.socket,
-			generation: answer.generation ?? generation,
-			instanceId: answer.instanceId ?? "",
+			generation: adopted?.generation ?? generation,
+			instanceId: adopted?.instanceId ?? instanceId,
 		};
 	} catch (cause) {
 		const cleanupFailure = await abandonSuccessor({
@@ -215,65 +250,6 @@ export async function startSuccessor(context: {
 	}
 }
 
-/**
- * Undoes what a refused handoff left: kills the successor, releases its generation once it has exited
- * (a successor that never got a pid never ran, so its directory goes at once; one that outlives the wait
- * keeps its record until pruning finds it dead), and puts the boot settings back as they were. A
- * successor that was never spawned leaves only the boot settings to undo. A cleanup that fails is
- * answered, not thrown: the handoff still refused, and the caller is told why
- * the endpoint may not be as it was.
- */
-async function abandonSuccessor(context: {
-	/** Undefined when the successor was never spawned: nothing to kill or release. */
-	child: ChildProcess | undefined;
-	exited: Promise<void> | undefined;
-	paths: HostDaemonPaths;
-	instanceId: string;
-	bootSettings: string | undefined;
-	/** Why the successor is being killed: the stop intent and the record name it. */
-	reason: string;
-}): Promise<string | undefined> {
-	const { child, exited, paths, instanceId, bootSettings } = context;
-	const target: StopTarget = {
-		daemonDir: paths.dir,
-		generation: generationPaths(paths, instanceId),
-		instanceId,
-		sender: { pid: process.pid, kind: "successor" },
-		reason: context.reason,
-	};
-	// A successor that cannot be asked to stop is killed outright; it runs no exit handler, so the
-	// record of it is this process's to write, BEFORE its generation is released below.
-	const killed =
-		child?.pid !== undefined && child.exitCode === null && child.signalCode === null
-			? await announceStop(target, child.pid)
-			: undefined;
-	if (killed !== undefined && child?.pid !== undefined) signalPid(child.pid, "SIGKILL");
-	try {
-		if (bootSettings === undefined) await rm(paths.settingsFile, { force: true });
-		else await writeFile(paths.settingsFile, bootSettings, { mode: HOST_STATE_FILE_MODE });
-		if (child?.pid === undefined) await rm(generationPaths(paths, instanceId).dir, { recursive: true, force: true });
-		else if (exited !== undefined && (await exitedWithin(exited, SUCCESSOR_EXIT_WAIT_MS))) {
-			if (killed !== undefined) await recordEscalation(target, killed);
-			await releaseGeneration(paths, { instanceId, pid: child.pid });
-		}
-		return undefined;
-	} catch (cause) {
-		return `successor cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
-	}
-}
-
-async function exitedWithin(exited: Promise<void>, ms: number): Promise<boolean> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const timedOut = new Promise<false>((resolve) => {
-		timer = setTimeout(() => resolve(false), ms);
-	});
-	try {
-		return await Promise.race([exited.then(() => true), timedOut]);
-	} finally {
-		clearTimeout(timer);
-	}
-}
-
 /** The successor's build as the successor itself reported it on the socket; never this process's build. */
 function successorBuild(answer: HostProtocolInfo): Pick<HostRegistration, "build"> {
 	if (answer.engineVersion === undefined || answer.engineOrdinal === undefined) return {};
@@ -286,17 +262,18 @@ function successorBuild(answer: HostProtocolInfo): Pick<HostRegistration, "build
  * the successor refused to replace the path (a foreign socket, a live bind path) and left it alone.
  */
 async function awaitSuccessor(
-	options: HandoffHostOptions,
+	socket: string,
 	previous: HostProtocolInfo,
 	exited: Promise<void>,
+	budgetMs: number,
 ): Promise<HostProtocolInfo | undefined> {
-	const deadline = Date.now() + (options._test?.readinessTimeoutMs ?? DEFAULT_HANDOFF_READINESS_MS);
+	const deadline = Date.now() + budgetMs;
 	let childGone = false;
 	void exited.then(() => {
 		childGone = true;
 	});
 	while (Date.now() <= deadline) {
-		const answer = await probeProtocolInfo(options.socket, 2_000);
+		const answer = await probeProtocolInfo(socket, Math.min(2_000, Math.max(1, deadline - Date.now())));
 		if (answer && answer.instanceId !== undefined && answer.instanceId !== previous.instanceId) return answer;
 		if (childGone) return undefined;
 		await delay(50);
