@@ -92,7 +92,11 @@ async function registerClient(fixture: IdpFixture, redirectUri: string): Promise
 
 async function seedClientInfo(harness: Harness, fixture: IdpFixture, redirectUri: string): Promise<string> {
 	const registration = await registerClient(fixture, redirectUri);
-	await harness.store.update((current) => ({ ...current, clientInfo: registration }));
+	// Stamp the fixture's issuer exactly as `saveClientInformation` does on a live flow: since
+	// senpi#4194 an unattributed registration is dropped when discovery binds to its issuer,
+	// which would hide the seeded client from the flow under test and force a re-registration.
+	const issuer = fixture.baseUrl;
+	await harness.store.update((current) => ({ ...current, clientInfo: { ...registration, issuer } }));
 	return registration.client_id;
 }
 
