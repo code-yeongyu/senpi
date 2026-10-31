@@ -71,4 +71,15 @@ describe("ambient cloud credentials", () => {
 			ambient: true,
 		});
 	});
+
+	it("#given empty stored vertex location #when env location present #then resolves via env fallback", async () => {
+		const credential = { type: "api_key" as const, env: { GOOGLE_CLOUD_PROJECT: "p", GOOGLE_CLOUD_LOCATION: "" } };
+		const env = { GOOGLE_CLOUD_LOCATION: "us-central1", GOOGLE_APPLICATION_CREDENTIALS: "/adc.json" };
+		const resolve = await googleVertexProvider().auth.apiKey?.resolve({
+			ctx: authContext(env, ["/adc.json"]),
+			credential,
+			signal: new AbortController().signal,
+		});
+		expect(resolve).toBeDefined();
+	});
 });
