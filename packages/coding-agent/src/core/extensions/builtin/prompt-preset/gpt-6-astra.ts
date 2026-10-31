@@ -171,6 +171,13 @@
 // edit in files you are not touching); `async-default` no longer opens its bold lead with child
 // tasks; `foreground-exception` drops the sentence that let a result needed next be a background
 // child plus a turn end. The bold set, the rule ids and their sections are unchanged.
+//
+// 2026-10-31 (senpi#5161): a session survey found this preset re-reading a path it had already
+// read on several times the rate of the other presets on the same read tool, most of it as
+// windows of 40 lines or fewer over a region an earlier call had returned. Nothing here said how
+// to read a file, and the read tool's own description invites offset/limit paging. `read-wide-once`
+// sits next to "Read a file before claiming what it contains": read the region once, wide, keep it,
+// and re-read only after the file changed.
 
 import { APP_NAME } from "../../../../config.ts";
 import {
@@ -200,6 +207,7 @@ export type Gpt6AstraRuleId =
 	| "perceived-state-loop"
 	| "bun-runtime"
 	| "stay-direct-exceptions"
+	| "read-wide-once"
 	| "lsp-symbol-routing"
 	| "delegation"
 	| "legible-messages"
@@ -274,6 +282,9 @@ const BUN_RUNTIME = "Default to js on Bun and reach for Bun builtins before addi
 const STAY_DIRECT_EXCEPTIONS =
 	"Skip the cell when it buys nothing: a lone call, an already-small result, a result you must read before choosing the next call, a judgment call between steps, or an action that needs approval.";
 
+const READ_WIDE_ONCE =
+	"Read wide once: open the whole region a question touches in one call - the whole file when it fits the read limit - and work from that copy while it stays in context. Re-read a file only after it changed; paging back through a file already read, a few dozen lines at a time, replays the whole context and adds nothing.";
+
 const LSP_SYMBOL_ROUTING =
 	"Where LSP tools exist, let the language server answer symbol questions - a definition, its callers, the blast radius of a rename, the diagnostics on a file you just touched. Plain text search earns its place on literal strings, filenames, and commit history.";
 
@@ -339,6 +350,7 @@ export const GPT6_ASTRA_RULES = [
 	{ id: "perceived-state-loop", concern: "tool-orchestration", directive: PERCEIVED_STATE_LOOP },
 	{ id: "bun-runtime", concern: "tool-orchestration", directive: BUN_RUNTIME },
 	{ id: "stay-direct-exceptions", concern: "tool-orchestration", directive: STAY_DIRECT_EXCEPTIONS },
+	{ id: "read-wide-once", concern: "tool-orchestration", directive: READ_WIDE_ONCE },
 	{ id: "lsp-symbol-routing", concern: "symbol-routing", directive: LSP_SYMBOL_ROUTING },
 	{ id: "delegation", concern: "delegation", directive: DELEGATION },
 	{ id: "legible-messages", concern: "delegation", directive: LEGIBLE_MESSAGES },
@@ -416,7 +428,7 @@ ${INSTRUCTION_PRECEDENCE} ${PAUSE_TRANSPARENCY}
 
 ${EVAL_FIRST_ROUTING} ${PERCEIVED_STATE_LOOP} ${BUN_RUNTIME} ${STAY_DIRECT_EXCEPTIONS} ${buildGptEvalRoutingTuning()} Without a code-execution tool, send the independent calls in one message, one command per call. Never fill a missing parameter with a placeholder.
 
-Read a file before claiming what it contains. ${LSP_SYMBOL_ROUTING} Stop searching once a wave answers the question or two waves add nothing new, and fix the root cause rather than the symptom.
+Read a file before claiming what it contains. ${READ_WIDE_ONCE} ${LSP_SYMBOL_ROUTING} Stop searching once a wave answers the question or two waves add nothing new, and fix the root cause rather than the symptom.
 
 ${DELEGATION} ${LEGIBLE_MESSAGES}
 
