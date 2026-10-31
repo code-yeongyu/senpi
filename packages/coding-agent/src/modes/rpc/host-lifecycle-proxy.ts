@@ -15,7 +15,6 @@ import { PublicRpcConnection } from "./rpc-public-auth.ts";
 import type { RpcPublicEndpoint } from "./rpc-public-key.ts";
 import { type ListenerState, MAX_SOCKET_PATH_BYTES, socketEntryListenerState } from "./socket-ownership.ts";
 
-export { adoptPublicSocket } from "./socket-ownership.ts";
 import {
 	authenticateSocket,
 	ensureSocketSecret,
