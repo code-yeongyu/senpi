@@ -1,6 +1,7 @@
 import type { BrowserEngine } from "../../core/browser-engine.ts";
 import type { PromptSurface } from "../../core/dynamic-prompt/types.ts";
 import { compactUpdatesEnabled } from "../../core/engine-socket-flag.ts";
+import { StructuredLaneUnavailableError } from "../../core/structured-session-lane.ts";
 import { isSecurityNoticeState } from "../../core/security-notices.ts";
 import { createWebViewBroker } from "../../core/webview/webview-broker.ts";
 import type { CliRuntimeConfiguration } from "../../main.ts";
@@ -62,18 +63,18 @@ export class SessionWorkerClient {
 	private cancelUiPending = false;
 	private terminalFailure?: string;
 	private stopLimitMirror: () => void = () => {};
-	/** The host's ordered acceptance lane for this worker incarnation; dropped when the commit declines it (legacy-only). */
+	/** The host's ordered acceptance lane for this worker incarnation, present only once `commit()` negotiated it. */
 	acceptance: SessionAcceptanceLane | undefined;
-	/** The host half of this incarnation's payload transport: permits, physical frame order, fragment staging (S12b). */
+	/** The host half of the negotiated payload transport: permits, physical frame order, fragment staging (S12b). */
 	intake: WorkerIntake | undefined;
 	private readonly owners = new WorkerOwnerGates();
 
 	private readonly callbacks: SessionWorkerCallbacks;
+	private readonly agentDir: string;
 
 	constructor(callbacks: SessionWorkerCallbacks, agentDir = recoveryAgentDir) {
 		this.callbacks = callbacks;
-		this.acceptance = new SessionAcceptanceLane(undefined, undefined, agentDir);
-		this.intake = this.acceptance && new WorkerIntake(this.acceptance.staging, (error) => this.fail(error));
+		this.agentDir = agentDir;
 		// Spawned here, with nothing between it and the exit listener that owns its cleanup (senpi#4728).
 		this.spawned = startSessionWorker(this.webviewBroker);
 		this.worker = this.spawned.result;
@@ -149,23 +150,38 @@ export class SessionWorkerClient {
 
 	async commit(): Promise<WorkerSnapshot> {
 		const nonce = randomUUID();
-		const result = await this.request({
-			type: "commit",
-			...(this.intake ? { acceptance: true, recoveryEpoch: nonce, permits: this.intake.permits.block } : {}),
-		});
-		if (result.type !== "ready") throw new Error("Invalid worker commit response");
-		// Accepted before the open resolves, so the entry is admitted only after its baseline (R3.C1.1).
-		if (result.bootstrap) this.acceptance?.bootstrap(result.bootstrap, nonce);
-		else if (compactUpdatesEnabled()) throw new Error("Invalid worker commit response");
-		else {
-			// Flag off, a worker whose session has no structured lane declines the offer: this incarnation runs
-			// legacy-only, with no acceptance lane and no permit transport, exactly as before S17.
-			this.intake?.permits.close();
-			this.acceptance?.retire("close");
-			this.acceptance = this.intake = undefined;
+		// Offered here, never earlier: until commit the incarnation holds no permit and its frames are unordered. The offer
+		// needs both halves up front, since a bootstrap `ready` is permit-paid and may arrive as staged fragments.
+		const acceptance = new SessionAcceptanceLane(undefined, undefined, this.agentDir);
+		const intake = new WorkerIntake(acceptance.staging, (error) => this.fail(error));
+		this.acceptance = acceptance;
+		this.intake = intake;
+		let negotiated = false;
+		try {
+			const result = await this.request({
+				type: "commit",
+				acceptance: true,
+				recoveryEpoch: nonce,
+				permits: intake.permits.block,
+			});
+			if (result.type !== "ready") throw new Error("Invalid worker commit response");
+			// RULING-106: flag on, a worker that cannot bootstrap acceptance has no structured lane to offer.
+			if (!result.bootstrap && compactUpdatesEnabled()) throw new StructuredLaneUnavailableError();
+			// Accepted before the open resolves, so the entry is admitted only after its baseline (R3.C1.1).
+			if (result.bootstrap) {
+				acceptance.bootstrap(result.bootstrap, nonce);
+				negotiated = true;
+			}
+			this.snapshot = result.snapshot;
+			return result.snapshot;
+		} finally {
+			// Flag off, a session with no structured lane declines (legacy-only, as before S17); a failed commit withdraws too.
+			if (!negotiated) {
+				intake.permits.close();
+				acceptance.retire("close");
+				this.acceptance = this.intake = undefined;
+			}
 		}
-		this.snapshot = result.snapshot;
-		return result.snapshot;
 	}
 
 	async bind(
@@ -178,6 +194,7 @@ export class SessionWorkerClient {
 		this.writer = writer;
 		this.secretRoute = writer.secretInputRoute(sessionId);
 		if (this.acceptance) writer.registerAcceptance(sessionId, this.acceptance);
+		process.stderr.write(`senpi rpc worker ${sessionId}: bound mode=${this.acceptance ? "acceptance" : "legacy"}\n`);
 		this.requestClose = requestClose;
 		this.options = options;
 		await this.request({

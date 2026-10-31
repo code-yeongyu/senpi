@@ -9,7 +9,10 @@ type StructuredFailure = (cause: unknown) => void;
 
 export class StructuredLaneUnavailableError extends Error {
 	constructor() {
-		super("Structured lane unavailable: Agent was constructed outside the session layer");
+		super(
+			"Structured lane unavailable: Agent was constructed outside the session layer; construct the session via the " +
+				"session layer, or turn the engine-socket compact-updates flag off",
+		);
 		this.name = "StructuredLaneUnavailableError";
 	}
 }
