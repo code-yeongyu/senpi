@@ -432,6 +432,7 @@ export class Input implements Component, Focusable {
 
 	/** Drop every private editing reference; this cannot promise erasure of immutable JS strings. */
 	dispose(): void {
+		if (!this.secret) return;
 		this.value = "";
 		this.cursor = 0;
 		this.pasteBuffer = "";
