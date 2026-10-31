@@ -21,7 +21,8 @@ const entry = (id: string, parentId: string | null = null, data = id) => ({
 	customType: "fixture",
 	data,
 });
-const text = (id: string, entries: ReturnType<typeof entry>[]) =>
+type Entry = ReturnType<typeof entry>;
+const text = (id: string, entries: Entry[]) =>
 	[header(id), ...entries].map((value) => JSON.stringify(value)).join("\n") + "\n";
 
 async function fixture(options: DurableStoreOptions = {}) {
@@ -97,7 +98,12 @@ describe("JSONL import", () => {
 		await f.reopen().importFile(path);
 		const other = await f.put("renamed", text("s", [a, entry("x", "a"), b, entry("c", "b")]));
 		expect(await f.reopen().importFile(other)).toMatchObject({ outcome: "extended", imported: 2 });
-		expect((await f.reopen().getSession("s"))?.entries.map((value) => value.id)).toEqual(["a", "x", "b", "c"]);
+		expect((await f.reopen().getSession("s"))?.entries.map((value) => (value as Entry).id)).toEqual([
+			"a",
+			"x",
+			"b",
+			"c",
+		]);
 	});
 
 	it.each(["hatch", "other", "stale-marker"] as const)(
@@ -204,7 +210,9 @@ describe("JSONL import", () => {
 		expect((await stat(path)).size).toBe(original.size);
 		expect((await f.files.stat(path)).mtimeMs).toBe(stamp.mtimeMs);
 		expect(await importer.importFile(path)).toMatchObject({ outcome: "adopted" });
-		expect((await importer.getSession("s"))?.entries.find((value) => value.id === edited)?.data).toBe("z");
+		expect((await importer.getSession("s"))?.entries.find((value) => (value as Entry).id === edited)).toMatchObject({
+			data: "z",
+		});
 	});
 
 	it("probes only the HWM bytes for an unchanged same-tick file and reads zero settled files", async () => {
