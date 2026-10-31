@@ -1358,7 +1358,12 @@ export class ModelRuntime implements Models {
 	): Promise<Credential> {
 		const signal = operationSignal(interaction.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
-			const credential = await this.models.login(providerId, type, { ...interaction, signal }, options);
+			const credential = await this.models.login(
+				providerId,
+				type,
+				{ ...interaction, signal },
+				{ ...options, appName: APP_NAME },
+			);
 			await this.synchronizeCredentialState(providerId, "login", credential, signal);
 			// A fresh login is the remedy a usage-limit refusal names: holds sessions keep on this provider are stale.
 			emitProviderAccountsChanged(providerId, "login");
