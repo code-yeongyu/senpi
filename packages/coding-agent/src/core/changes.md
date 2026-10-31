@@ -1,3 +1,355 @@
+## 2026-10-31 - Every invoked skill loads; no per-prompt skill cap (senpi#5151)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_expandSkillTokens()` no longer caps how many distinct skills one prompt expands and no longer emits the `skill:expansion` "Skipped N skills" error. Skill bodies are inlined while their running total stays within `SKILL_INLINE_BUDGET_CHARS` (the first skill is always inlined); a later skill past the budget is still expanded, as the same `<skill-instruction>` block whose body is `formatSkillReferenceBody(filePath)`, so `parseSkillBlock` and every renderer keep recognizing it. A repeated invocation keeps its `[skill: name]` marker and is logged at debug level (`skill_expansion_duplicate`) instead of going to the extension-error channel. The `MAX_SKILL_EXPANSIONS_PER_PROMPT` and `MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT` re-exports are gone.
+- `packages/coding-agent/src/core/settings-manager.ts`: the `maxSkillExpansionsPerPrompt` setting and `getMaxSkillExpansionsPerPrompt()` are removed, with the `MAX_SKILL_EXPANSIONS_PER_PROMPT` import. A value left in `settings.json` is ignored without a warning.
+- `packages/coding-agent/src/core/skill-invocation.ts`: `MAX_SKILL_EXPANSIONS_PER_PROMPT` and `MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT` are removed, so `parseSkillInvocationTokens()` returns every token; `SKILL_INLINE_BUDGET_CHARS` (128K characters) and `formatSkillReferenceBody()` are added; `removeSkillInvocationTokens()` drops its `unloaded` parameter and the `[skill not loaded: name]` marker.
+
+### Why
+
+- The count cap dropped skills the user explicitly invoked and told them to raise a setting. It was a proxy for prompt size, which count does not bound; a size budget with a read-the-file reference bounds the prompt and never skips a skill.
+
+### Why an extension could not handle it
+
+- Explicit skill expansion runs inside `AgentSession` prompt preprocessing before any extension sees the text, and the setting lives in the core settings schema.
+
+### Expected merge conflict zones
+
+- LOW: `_expandSkillTokens()` in `packages/coding-agent/src/core/agent-session.ts`, the skill-invocation import/re-export blocks there, and the skill-command settings in `packages/coding-agent/src/core/settings-manager.ts`.
+
+## 2026-10-31 - No Claude Code version cache beside models.json (senpi#5131)
+
+### What changed
+
+- `packages/coding-agent/src/core/model-runtime.ts`: `installClaudeCodeVersionCache` and the `@earendil-works/pi-ai/utils/claude-code-version-cache` import are removed from `ModelRuntime.create` and `createSync`; nothing writes `<agent dir>/claude-code-version.json` any more.
+
+### Why
+
+- senpi#5131: the cache fed the removed `claude-cli/<version>` fingerprint.
+
+### Why an extension could not handle it
+
+- The runtime bootstrap is core.
+
+### Expected merge conflict zones
+
+- LOW: the two `create*` heads in `model-runtime.ts`.
+
+## 2026-10-30 - Restoring the primary waits for its own account hold; login or explicit reset drops it (senpi#3347)
+
+### What changed
+
+- `packages/coding-agent/src/core/retry-fallback/controller.ts`: `maybeRestorePrimary` does not restore an original that `UnusableEntries` still holds (an account usage limit with the reset it named, or a model-scoped exhaustion). The stranded-fallback exception (senpi#2376) still wins. New `noteProviderAccountsChanged(provider)` drops that provider's holds, and `followProviderAccountChanges(controller)` feeds it only `accounts_changed` events explicitly marked as a successful login or block reset. Pool block/release writes and listing-only mutations do not clear another session's hold.
+- `packages/coding-agent/src/core/retry-fallback/unusable.ts`: `clearProvider(provider, models)` clears the provider's `account:` hold, its recorded account error and every `exhausted:` entry of its models.
+- `packages/coding-agent/src/core/agent-session.ts`: the session follows provider account changes for its controller and stops following on `dispose()`.
+- `packages/coding-agent/src/core/model-runtime.ts`: `login()` emits `accounts_changed` with the `login` remedy for the provider after a successful login.
+- `packages/coding-agent/src/core/credential-account-reset.ts`: an explicit account reset emits the `reset` remedy after clearing the account's block.
+
+### Why
+
+- senpi#3347: the shared circuit caps an open at 30 minutes, while the account hold lasts until the reset the provider named. With a 2-hour reset the session went back to the primary at about 31 minutes, hit the same spent account, and fell back again at every circuit window.
+- Waiting out the hold must not outlast the remedy the refusal names: after `/login` (a re-login or an added account) nothing cleared the session's hold, so a weekly limit kept the session on the fallback until the 48-hour cap.
+- Account notifications are process-global and also announce ordinary health writes; a sibling session persisting a block or releasing its own block is not evidence that this session's refused account recovered.
+
+### Why an extension could not handle it
+
+- The restore decision and the hold it reads are internal to the retry-fallback controller; no extension hook runs between the circuit check and the switch back, and the login path is core.
+
+### Expected merge conflict zones
+
+- LOW: the restore guard and account-event listener in `controller.ts`, the controller construction and `dispose()` in `agent-session.ts`, `login()` in `model-runtime.ts`, and the publish in `credential-account-reset.ts`.
+
+## 2026-10-30 - AuthStorage.set replaces a re-logged-in saved account (senpi#5009)
+
+### What changed
+
+- `packages/coding-agent/src/core/auth-storage.ts`: `set` passes the provider's `accountIdentity` to `appendLoginSlot`; `login` and `set` share a private `oauthAuth(providerId)` lookup.
+
+### Why
+
+- oh-my-openagent#9633: RPC OAuth login writes through `AuthStorage.set`.
+
+### Why an extension could not handle it
+
+- The write runs inside the auth store's file lock.
+
+### Expected merge conflict zones
+
+- LOW: the `appendLoginSlot` call in `set` and the start of `login`.
+
+## 2026-10-28 - Test-only date pin for the environment context (senpi#4662, fixes #4660)
+
+### What changed
+
+- `packages/coding-agent/src/core/environment-context.ts`: `resolveEnvironmentContext` takes `currentDate` from `SENPI_TEST_CURRENT_DATE` when it is set to a calendar date `YYYY-MM-DD`, and throws an error naming the variable for any other non-empty value, including an out-of-range month or day such as `2030-13-01` (checked before `toISOString()`, which would throw an anonymous `RangeError`). Unset or empty, the date still comes from `now.toISOString().slice(0, 10)`, so production output is unchanged.
+
+### Why
+
+- `packages/coding-agent/src/core/environment-context.ts`: a harness that drives the real CLI as a child process (the fused-path equivalence harness, #4639) cannot pin the clock inside that process, so the environment-context bytes, and every hash over them (Cursor root-prompt blob ids, case E19), change every day.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/environment-context.ts`: the date is resolved by the session core before a turn; no extension hook sees or replaces it.
+
+### Expected merge conflict zones
+
+- LOW: `resolveEnvironmentContext` and the lines above it in `environment-context.ts`.
+
+## 2026-10-26 - A linked git worktree inherits its main checkout's project trust (senpi#4388)
+
+### What changed
+
+- `packages/coding-agent/src/core/trust-manager.ts`: new exported `getSavedProjectTrust(store, cwd)` returns the store's own decision for `cwd` (the folder or the nearest folder above it) and, only when it has none and `cwd` is inside a linked git worktree, the main checkout's decision for the matching folder. The new `linkedWorktreeMainCheckoutDir` reads the `.git` pointer file, the admin dir's `commondir` and `gitdir` back-pointer with `node:fs/promises`, resolves every pointer against the admin dir's real path (so `git worktree add --relative-paths` layouts work), and accepts only an admin dir whose real parent is `<common dir>/worktrees` and a common dir named `.git` that is the main checkout's own `.git` directory; no git is spawned, and any unreadable or mismatched layout answers "no main checkout". `ProjectTrustStore.get` is unchanged.
+- `packages/coding-agent/src/core/project-trust.ts`: `resolveProjectTrusted` reads the saved decision through `getSavedProjectTrust` instead of `trustStore.get`.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: `syncFullAccessTrust` reads the saved decision through `getSavedProjectTrust`. Because that read is asynchronous, each sync is chained after the previous `projectTrustChange` and becomes the new one at once, so preset changes still apply in order and `projectTrustChange` still settles after the rebuild. A sync whose trust read fails is recorded as a runtime diagnostic and never blocks the next one, and a session retired during the read is not rebuilt.
+
+### Why
+
+- `packages/coding-agent/src/core/trust-manager.ts`: tools that run one agent per worktree (Orca's `~/orca/workspaces/<repo>/<name>`) create the worktree outside the main checkout, so every new worktree of a trusted repository stopped at "Trust project folder?" before its first turn; in Orca the dialog is not visible in the pane, so `worktree create --agent pi --prompt` looked hung. The admin-dir location check stops a folder that is not a worktree of the repository (for example an extracted archive with its own consistent pointer files) from inheriting a trusted repository's decision.
+- `packages/coding-agent/src/core/project-trust.ts`: `resolveProjectTrusted` is where a session's trust is decided, and it is already asynchronous, so the git layout is read without adding synchronous file I/O to the RPC session path (`no-sync-in-session-path` baseline).
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: a saved "do not trust" must win on every path, including the main checkout's decision a worktree inherits, and leaving Full access must not withdraw trust the worktree inherits.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/trust-manager.ts`: an extension can answer the `project_trust` event, but every user would need that extension for a fact about git's own layout, and a remembered answer is saved for the worktree path instead of following the main checkout.
+- `packages/coding-agent/src/core/project-trust.ts`: the saved-decision lookup inside `resolveProjectTrusted` is core code; an extension cannot change which store entry it reads.
+- `packages/coding-agent/src/core/agent-session-runtime.ts`: the Full-access trust sync is core runtime code that rebuilds the session; no extension hook decides which saved decision it reads.
+
+### Expected merge conflict zones
+
+- LOW: the `node:fs/promises`/`node:path` import lines and the end of `trust-manager.ts`; the import block and the saved-decision line in `resolveProjectTrusted`; the trust-manager import and the body of `syncFullAccessTrust` in `agent-session-runtime.ts`.
+
+## 2026-10-30 - A skills root's ignore files no longer hide symlinked root skill files (senpi#5069)
+
+### What changed
+
+- `packages/coding-agent/src/core/skills.ts`: `loadSkillsFromDirInternal` no longer applies the parent's ignore rules to any symlinked entry, so a linked root-level `*.md` skill file loads like a linked skill directory.
+- `packages/coding-agent/src/core/skill-discovery.ts`: `collectSkillEntries` keeps a symlinked root-level `*.md` file as a candidate even when the root's ignore files list it.
+
+### Why
+
+- The review of senpi#5061 found the same root cause as senpi#5060 for files: a linked root `.md` skill git-ignored by its skills root was dropped with no diagnostic.
+
+### Why an extension could not handle it
+
+- Skill discovery and its ignore matcher run in core before extensions load.
+
+### Expected merge conflict zones
+
+- LOW: the root-file branch of `loadSkillsFromDirInternal` and `shouldIncludeMarkdownFile` in `collectSkillEntries`.
+
+## 2026-10-30 - Warn when an ignore file hides a skill folder (senpi#5060)
+
+### What changed
+
+- `packages/coding-agent/src/core/skill-discovery.ts`: `SkillWalkOptions.onIgnoredSkill` reports the `SKILL.md` of each skill folder an ignore file hid from the walk.
+- `packages/coding-agent/src/core/package-manager.ts`: auto-discovered skill roots collect those files into `ResolvedPaths.ignoredSkills`.
+- `packages/coding-agent/src/core/skills.ts`: `ignoredSkillDiagnostics` builds one `skill-ignored` warning per hidden folder, skipping a folder whose name a loaded skill already carries.
+- `packages/coding-agent/src/core/resource-loader.ts`: keeps the hidden files across `extendResources` passes and appends their warnings to the skill diagnostics.
+- `packages/coding-agent/src/core/diagnostics.ts`: `ResourceDiagnostic.category` gains `skill-ignored`.
+
+### Why
+
+- A skill folder listed in a skills root's `.gitignore`, `.ignore` or `.fdignore` was dropped with no diagnostic, so a missing `$skill` hint was the only symptom (senpi#5060).
+
+### Why an extension could not handle it
+
+- Skill discovery and its ignore matcher run in core before extensions load; no extension sees which folders the walk skipped.
+
+### Expected merge conflict zones
+
+- LOW: `ResolvedPaths` / `ResourceAccumulator` in `package-manager.ts`, and the `skillDiagnostics` assembly in `resource-loader.ts`, if upstream adds fields there.
+
+## 2026-10-30 - Import JSONL histories into the durable store (senpi#5020)
+
+### What changed
+
+- `packages/coding-agent/src/core/session-import/jsonl-import.ts`: add an inert importer keyed by session ID, an atomic session-and-file ledger, store projection recording, and the `.k9f2` hatch marker writer. Strict extensions import missing entries once in order; matching hatch divergence forks, while other edits replace the imported session in place. The ledger tracks size, mtime, ctime, and a high-water entry hash.
+
+### Why
+
+- `packages/coding-agent/src/core/session-import/jsonl-import.ts`: preserve JSONL history and later hatch writes at the durable-store boundary without changing the current default store. The ctime signal detects earlier-entry edits that leave the high-water entry unchanged.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/session-import/jsonl-import.ts`: session data and import progress must commit atomically through the core durable-store admission line, before a session or its projection is opened.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/session-import/jsonl-import.ts` is new. S20/S21b will integrate this boundary with projection writes and default-store opening.
+
+## 2026-10-27 - The Claude sign-in-again error ends the turn (senpi#4436)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_isClaudeSdkAuthMissError` also matches the Claude subscription's sign-in-again turn error (`isSignInAgainError`), so that error is never retried and never hops to another model in the fallback chain, like the lane's "not configured" miss.
+
+### Why
+
+- senpi#4436 S6 QA: after a turn failed with "Claude sign-in changed. Sign in again with Claude ...", the turn-level fallback ran a sibling Claude model once, which failed the same way and repeated the error.
+
+### Why an extension could not handle it
+
+- Retry and fallback eligibility is decided in the session's retry path; the provider can only report the error.
+
+### Expected merge conflict zones
+
+- LOW: the `_isClaudeSdkAuthMissError` docblock and body, and one import beside the `account-management.ts` import.
+
+## 2026-10-27 - The usage poll reads Claude only through env tokens (senpi#4436, S7)
+
+### What changed
+
+- `packages/coding-agent/src/core/subscription-limits/usage-accounts.ts`: a Claude account is polled only with its `CLAUDE_CODE_OAUTH_TOKEN[_N]` env token; the stored-token read, refresh and `auth_error` lock (`tokenEndpointRejected`, `markAuthRejected`) are removed, and `AccountSources` has no `refresher`.
+- `packages/coding-agent/src/core/subscription-limits/usage-poller.ts`: no refresher is wired in.
+- `packages/coding-agent/src/core/credential-accounts.ts`: the generic Claude account listing (used by RPC) filters stored slots with the Claude lane's `isListedStoredSlot`, so it no longer lists a token-holding account the lane hides and both listings agree.
+
+### Why
+
+- senpi#4436 (R7): senpi refreshes no Claude token; a Claude CLI account's token lives in the CLI's own store.
+
+### Why an extension could not handle it
+
+- The poller is core subscription-limits plumbing.
+
+### Expected merge conflict zones
+
+- LOW: `claudeAccounts` and `AccountSources` in `usage-accounts.ts`; the `listPollAccounts` call in `usage-poller.ts`.
+
+## 2026-10-27 - Claude logins from the retired sign-in are signed out at load (senpi#4436, S6)
+
+### What changed
+
+- `packages/coding-agent/src/core/anthropic-legacy-sign-out.ts` (new): `signOutLegacyClaudeLogins` replaces the senpi#3259 grant copy at the auth.json load seam. Every `anthropic-subscription` slot holding a token from the retired senpi-owned sign-in (`source` `login` or `import`) becomes a Claude CLI slot with `signInRequired: "legacy_sign_in_retired"`, a new `dirId`, and its name, display name and model blocks; every token field and block is dropped. The OAuth part of an `anthropic` entry is dropped with no copy, its API-key slots kept as an API-key credential. Env and CLI slots are untouched; an entry it cannot parse is left as stored and reported once; a second load writes nothing.
+- `packages/coding-agent/src/core/anthropic-oauth-migration.ts`: deleted (`copyGrants`, `IMPORTED_GRANTS_FIELD`, `importedSlotName`).
+- `packages/coding-agent/src/core/auth-storage.ts`: the load seam calls `signOutLegacyClaudeLogins`; its skip message says the old sign-in is no longer used. A new notice names the accounts that must sign in again; `AuthNotice` gains `repeats`, and a repeating notice is pending at every start while the problem lasts instead of once per change.
+
+### Why
+
+- senpi#4436, owner ruling R1: accounts from the old sign-in are signed out with a clear prompt to sign in with Claude again. No silent migration and no token copy.
+
+### Why an extension could not handle it
+
+- The migration runs inside AuthStorage's locked load before any extension sees a credential, and the credential notices are AuthStorage's own.
+
+### Expected merge conflict zones
+
+- MEDIUM: the `parseStorageContent` load seam and the notice helpers in `auth-storage.ts` (senpi#4430 also edits the deleted `anthropic-oauth-migration.ts`; resolve by deleting its hunk there).
+
+## 2026-10-27 - Removal docs match the code (senpi#4436, #4458 review LOWs 1-2)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: comments only. The sign-out docblock moves onto `signOutClaudeCliSlot` (which signs out and removes the dir; its caller drops the slot), `claudeCliAgentDir` gets its own line, and `signOutAndDropSlot` says a slot outlives its dir only when the store write itself fails, until the next removal drops it.
+
+### Why
+
+- The #4458 review found the docblock on the wrong function and a "never outlives its dir" claim the code does not guarantee.
+
+### Why an extension could not handle it
+
+- Documentation of core account removal.
+
+### Expected merge conflict zones
+
+- LOW: the docblocks above `signOutAndDropSlot`, `claudeCliAgentDir` and `signOutClaudeCliSlot`.
+
+## 2026-10-27 - The auth_login_end event can name a Claude account and its check (senpi#4436, S5)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: the `auth_login_end` member of the session event union gains optional `account` and `check`.
+
+### Why
+
+- senpi#4436: the RPC event carries the account a Claude CLI sign-in signed in and its connection test.
+
+### Why an extension could not handle it
+
+- The event union is core's public session event type.
+
+### Expected merge conflict zones
+
+- LOW: the `auth_login_end` member of the event union in `agent-session.ts`.
+
+## 2026-10-27 - Claude CLI account removal reports a sign-out that could not run (senpi#4436, S4)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: `removeCredentialAccount` drops a `claude-cli` slot even when `claude` cannot be resolved or its sign-out fails, removing the account dir, and returns a `notice` that the CLI's stored sign-in may remain. New `signOutClaudeCliSlotsForLogout` runs that per-slot sign-out for every `claude-cli` slot of the provider. Every entry point shares one sign-out-then-drop step: each account is dropped from the store as soon as it is signed out (and also when a failure left its dir already removed), so a stored slot never outlives its dir; the caller's abort signal reaches every sign-out.
+- `packages/coding-agent/src/core/model-runtime.ts`: a provider logout signs every Anthropic Subscription `claude-cli` account out of the Claude CLI before the credential is deleted. `logout` keeps the `Models` contract (`Promise<void>`); the new `logoutProvider` returns the notices.
+
+### Why
+
+- Removal must never get stuck on the CLI, and the user must learn when its sign-out did not run (#4451 review). A provider logout dropped every account at once with no CLI sign-out, orphaning each CLI store entry (same class, #4458 lead review).
+
+### Why an extension could not handle it
+
+- Account removal is a core credential surface shared by every provider.
+
+### Expected merge conflict zones
+
+- LOW: `signOutClaudeCliSlot` and `signOutClaudeCliSlotsForLogout` in `credential-accounts.ts`; `logout`/`logoutProvider` in `model-runtime.ts`.
+
+## 2026-10-27 - Real turns and the prewarm prefix carry the stable system prefix (senpi#4447)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_applyBeforeAgentStartResult` stores the runner's `systemPromptStablePrefix` on the agent state; `systemPromptStablePrefix` (valid while the prompt starts with it) backs `ctx.getSystemPromptStablePrefix()`; experimental cache-friendly compaction builds its summary request with it.
+- `packages/coding-agent/src/core/prompt-cache-prefix-request.ts`: the preview composition passes the prefix into `buildProviderContext`, and `toPrefixContext` returns it on the prefix `Context`.
+
+### Why
+
+- The real request, the prewarm and the keep-alive ping must split the system prompt the same way to share one cache entry.
+
+### Why an extension could not handle it
+
+- Session state and the prewarm request are core-owned.
+
+### Expected merge conflict zones
+
+- LOW: `_applyBeforeAgentStartResult` in `packages/coding-agent/src/core/agent-session.ts`; `composeTurnSystemPrompt` and `toPrefixContext` in `packages/coding-agent/src/core/prompt-cache-prefix-request.ts`.
+
+## 2026-10-27 - Claude CLI-store accounts in the account listing and removal (senpi#4436, S3)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-accounts.ts`: `removeCredentialAccount` signs a `claude-cli` slot out (`removeAccountDir`, resolved `claude`, agent dir from the auth path) before the slot is dropped; a failed sign-out throws and keeps the account. A `claude-cli` slot with no or a malformed `dirId`, or whose dir is a link or file, is dropped without a sign-out and the result carries a `notice` saying so (shown by `/account remove`), so a malformed slot can never get stuck. `CredentialAccountSummary` gains optional `store`, `signedInAt`, `email`, `orgName`, `subscriptionType`, `check` and `signIn`, read defensively from stored slots.
+- `packages/coding-agent/src/core/subscription-limits/usage-accounts.ts`: the usage poller skips `claude-cli` slots (no token to poll with); `anthropic-oauth-migration.ts` matches grants only against token-holding slots.
+
+### Why
+
+- Clients need the email, plan and sign-in state to render an account row, and removal must not orphan the CLI's credential store entry (senpi#4436).
+
+### Why an extension could not handle it
+
+- Account listing and removal are core credential surfaces shared by every provider.
+
+### Expected merge conflict zones
+
+- LOW: `summarizeInStoredOrder` summary literal and `removeCredentialAccount` in `credential-accounts.ts`.
+
+## 2026-10-27 - Publish agent_settled before its extension handlers (senpi#4420, oh-my-openagent#11419)
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session.ts`: `_emitAgentSettled` publishes `agent_settled` to session subscribers before it runs the extension `agent_settled` handlers; they still run inside the deferral window, so turns they request start after every settled handler finishes. When a person's input arrives while that window is open, `prompt()` yields: the held handler is released with the new `yielded` verdict, the session stops waiting on the rest of the walk (later handlers run detached, a late walk failure is logged as `agent_settled_handlers_failed`), and the prompt's turn starts at once. A prompt sent from inside an `agent_settled` subscriber, before any handler is held, marks the yield so the first handler is released as soon as it starts.
+- `packages/coding-agent/src/core/extension-handler-stall-report.ts`: a slow `agent_settled` handler is logged to `session.log` only; the "this turn is waiting on it" notice stays for events the turn really waits on.
+
+### Why
+
+- One slow or hung `agent_settled` handler held every client's settle edge (desktop "Starting session...", TUI "Working") for up to the 20 min host cap, and held the person's next prompt behind it. `agent_settled` is notification-only, and a self-recovering condition is diagnostics, not a notice the user cannot act on.
+
+### Why an extension could not handle it
+
+- The order of the session's own event publication and its prompt admission are owned by `AgentSession`; an extension cannot publish the settle earlier or release another extension's held wait.
+
+### Expected merge conflict zones
+
+- LOW: `_emitAgentSettled` and the person-input branch of `prompt()` in `agent-session.ts`; the new `_yieldSettledHandlers` helpers beside `releaseHeldExtensionHandlers`.
+- LOW: the warn branch of `reportExtensionHandlerStall`.
+
 ## 2026-10-30 - DEFAULT_STREAM_KEEP_ALIVE_TIMEOUT_MS is module-private again (senpi#5074)
 
 ### What changed

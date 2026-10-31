@@ -1158,6 +1158,8 @@ export interface OpenAICompletionsCompat {
 	supportsMidConvoToolAdditions?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: false; generated capable models enable it explicitly. */
 	supportsStrictMode?: boolean;
+	/** Whether function tools may mix strict and non-strict sampling in one request. Default: true. */
+	mixedStrictTools?: boolean;
 	/**
 	 * Provider-specific JSON Schema flavor for tool parameters. `"moonshot-mfjs"`
 	 * normalizes schemas for Moonshot / Kimi backends that enforce a stricter subset.
