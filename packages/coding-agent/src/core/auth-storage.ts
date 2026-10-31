@@ -37,8 +37,6 @@ import { raceWithAbortSignal } from "../utils/abort.ts";
 import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { signOutLegacyClaudeLogins } from "./anthropic-legacy-sign-out.ts";
-import { writeHealthUnlessStoreBusy } from "./credential-pool/health-write.ts";
-import { CredentialSlotRepository, credentialPoolStatePath } from "./credential-pool/state-store.ts";
 import {
 	resolveReadOnlyCredential,
 	resolveStoredCredential,
@@ -1062,6 +1060,11 @@ export class AuthStorage implements CredentialStore {
 			);
 		});
 		if (replaced.length === 0) return;
+		// Lazy like ModelRuntime.loadCredentialPool: the pool store pulls zod, which must stay out of the
+		// model-runtime import graph that every auth-storage importer shares.
+		const [{ writeHealthUnlessStoreBusy }, { CredentialSlotRepository, credentialPoolStatePath }] = await Promise.all(
+			[import("./credential-pool/health-write.ts"), import("./credential-pool/state-store.ts")],
+		);
 		const repository = new CredentialSlotRepository(credentialPoolStatePath(dirname(this.authPath)));
 		for (const slot of replaced) {
 			await writeHealthUnlessStoreBusy(`re-login of ${slot.name}`, () =>
