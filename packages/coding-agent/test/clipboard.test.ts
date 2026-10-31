@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import type * as FsModule from "node:fs";
 import type * as OsModule from "node:os";
 import type { NativeClipboard } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -20,8 +21,19 @@ const mocks = vi.hoisted(() => ({
 			) => Promise<Buffer | undefined>
 		>(),
 	platform: vi.fn<() => NodeJS.Platform>(),
+	openTty: vi.fn(),
+	writeTty: vi.fn(),
+	closeTty: vi.fn(),
 }));
-vi.mock("@earendil-works/pi-tui", () => ({ getNativeClipboard: mocks.getNativeClipboard }));
+vi.mock("node:fs", async () => {
+	const actual = await vi.importActual<typeof FsModule>("node:fs");
+	const injected = { ...actual, openSync: mocks.openTty, writeSync: mocks.writeTty, closeSync: mocks.closeTty };
+	return { ...injected, default: injected };
+});
+vi.mock("@earendil-works/pi-tui", async () => ({
+	...(await vi.importActual<typeof import("@earendil-works/pi-tui")>("@earendil-works/pi-tui")),
+	getNativeClipboard: mocks.getNativeClipboard,
+}));
 vi.mock("../src/utils/clipboard-command.ts", () => ({ runClipboardCommand: mocks.command }));
 vi.mock("node:os", async () => ({
 	...(await vi.importActual<typeof OsModule>("node:os")),
@@ -32,8 +44,12 @@ let originalWrite: typeof process.stdout.write;
 let osc52Writes: string[];
 beforeEach(() => {
 	vi.resetAllMocks();
+	mocks.openTty.mockImplementation(() => {
+		throw new Error("no controlling tty");
+	});
 	for (const name of [
 		"SSH_CONNECTION",
+		"TMUX",
 		"SSH_CLIENT",
 		"MOSH_CONNECTION",
 		"WAYLAND_DISPLAY",
@@ -111,6 +127,31 @@ describe("readClipboardText", () => {
 });
 
 describe("copyToClipboard", () => {
+	// #4263: ipmaru traced clipboard escapes disappearing into redirected stdout.
+	test("sends remote OSC 52 to the controlling tty instead of redirected stdout", async () => {
+		vi.stubEnv("SSH_CONNECTION", "client server");
+		mocks.openTty.mockReturnValue(42);
+		await copyToClipboard("hello");
+		expect(mocks.openTty).toHaveBeenCalledWith("/dev/tty", "w");
+		expect(mocks.writeTty).toHaveBeenCalledWith(42, "\x1b]52;c;aGVsbG8=\x07");
+		expect(mocks.closeTty).toHaveBeenCalledExactlyOnceWith(42);
+		expect(osc52Writes).toEqual([]);
+	});
+	test("wraps remote OSC 52 for tmux and doubles its escape", async () => {
+		vi.stubEnv("SSH_CONNECTION", "client server");
+		vi.stubEnv("TMUX", "/tmux,1,0");
+		mocks.openTty.mockReturnValue(42);
+		await copyToClipboard("hello");
+		expect(mocks.writeTty).toHaveBeenCalledWith(42, "\x1bPtmux;\x1b\x1b]52;c;aGVsbG8=\x07\x1b\\");
+		expect(osc52Writes).toEqual([]);
+	});
+	test("falls back to plain stdout without a controlling tty or tmux", async () => {
+		vi.stubEnv("SSH_CONNECTION", "client server");
+		await copyToClipboard("hello");
+		expect(osc52Writes).toEqual(["\x1b]52;c;aGVsbG8=\x07"]);
+		expect(mocks.writeTty).not.toHaveBeenCalled();
+		expect(mocks.closeTty).not.toHaveBeenCalled();
+	});
 	test("local native success skips OSC 52 and commands", async () => {
 		await copyToClipboard("hello");
 		expect(mocks.clipboard.setText).toHaveBeenCalledWith("hello");
