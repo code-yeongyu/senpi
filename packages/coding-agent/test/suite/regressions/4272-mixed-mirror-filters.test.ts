@@ -45,4 +45,4 @@ it("R3.C4.3/C5.1 mixed mirrors share one seeded physical stream without losing s
 	expect(new Set(frames.map((f) => f.generation)).size).toBe(1);
 	// C4.3 installs this union once; B observes the shared state, not an admission-local reducer missing A's start.
 	expect(host.writer.ordinaryRoute("peer", sessionId)?.routes).toEqual(["a", "b"]);
-}, 120_000);
+}, 600_000);

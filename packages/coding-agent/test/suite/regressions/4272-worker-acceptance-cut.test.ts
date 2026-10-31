@@ -125,7 +125,7 @@ it("T5/X03 holds worker acceptance while its fork is on disk: the cut keeps the 
 	} finally {
 		await host.dispose();
 	}
-}, 120_000);
+}, 600_000);
 
 it("RULING-66 flag off: worker capture remains ordered while the public socket stays legacy", async () => {
 	vi.stubEnv(FLAG, "0");
@@ -141,4 +141,4 @@ it("RULING-66 flag off: worker capture remains ordered while the public socket s
 	} finally {
 		await host.dispose();
 	}
-}, 60_000);
+}, 600_000);

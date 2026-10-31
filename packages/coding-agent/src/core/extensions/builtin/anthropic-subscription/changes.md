@@ -1,3 +1,42 @@
+## 2026-10-30 - Account remedies are distinct from health and listing notices (senpi#3347)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-events.ts`: `accounts_changed` can carry an explicit `login` or `reset` remedy; ordinary account notifications keep their existing shape.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/account-management.ts`: a successful explicit unblock publishes the `reset` remedy.
+
+### Why
+
+- The process-global account event bus also carries pool health writes and metadata edits. Only a successful login (including adding an account) or an explicit block reset invalidates the waiting session's provider hold.
+
+### Why an extension could not handle it
+
+- The shared account event bus and this builtin's unblock operation own the remedy signal consumed by the core restore guard.
+
+### Expected merge conflict zones
+
+- LOW: the `accounts_changed` event shape and emitter in `account-events.ts`, and the unblock publish in `account-management.ts`.
+
+## 2026-10-30 - A pool blocked for one model reaches the fallback chain as a model-scoped limit (senpi#5007)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/stream-guidance.ts`: `withAuthGuidance` leads with the `AllAccountsBlockedError` message ("... have hit the usage limit for model <id> until <time>.") when `limitedModel` is set, followed by the same pool guidance as before. The sentence states the reset as relative prose ("resets in H hours M minutes, at <ISO>"), which `usageLimitResetMs` reads, and the text ends with the `(retry-after-ms: N)` marker the session's retry delay reads; with account fallback off and the pinned account out for the model, the sentence names that account instead of all accounts. Account-wide and auth-blocked refusals are unchanged.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/failover.ts`: when the last account in a turn fails with an account-wide limit (or any failure that is not model-scoped) while another account is out for the requested model only, `runFailover` throws the pool's own `AllAccountsBlockedError` (model-scoped, via `selectFn`) instead of that last account's text.
+
+### Why
+
+- In the turn where the last account went out, the pool rethrew that account's own text, so the order accounts were tried in decided between "provider spent for hours" and "only this model limited".
+- The guidance replaced the error's message, so the model-limit sentence that `limitedModel` exists to carry never reached the session. `usageLimitScope()` found no usage limit, the fallback chain recorded no model-scoped exhaustion, and `retry_fallback_applied` carried no `limit`.
+
+### Why an extension could not handle it
+
+- The text is produced by this builtin provider's stream error path before any other extension sees the failed message.
+
+### Expected merge conflict zones
+
+- LOW: the `AllAccountsBlockedError` branch of `withAuthGuidance` in `stream-guidance.ts` (also touched by senpi#4674), and the exhausted-loop tail of `runFailover` in `failover.ts`.
+
 ## 2026-10-27 - Claude CLI login stack review LOWs (senpi#4436)
 
 ### What changed

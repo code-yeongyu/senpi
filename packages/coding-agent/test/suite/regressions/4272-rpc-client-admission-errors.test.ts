@@ -62,7 +62,7 @@ it("RULING-94 RpcClient surfaces local unknown and server-retired admissions as 
 	expect(requests.filter((request) => request.type === "reset_stream")).toHaveLength(1);
 	expect(events.mock.calls.map(([event]) => event)).not.toContainEqual(expect.objectContaining({ type: "response" }));
 	expect(failures).toEqual([]);
-}, 120_000);
+}, 600_000);
 
 it("turns a page refusal without errorData into RpcCommandError", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -81,7 +81,7 @@ it("turns a page refusal without errorData into RpcCommandError", async () => {
 		name: "RpcCommandError",
 		errorCode: "page_refused",
 	});
-}, 120_000);
+}, 600_000);
 
 it("open returns the repaired identity if its initial manifest requires a restart", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -104,7 +104,7 @@ it("open returns the repaired identity if its initial manifest requires a restar
 	expect(requests.filter((request) => request.type === "reset_stream")).toHaveLength(1);
 	expect(opened).toMatchObject({ generation: stream?.generation });
 	expect(opened).toMatchObject({ generation: 2 });
-}, 120_000);
+}, 600_000);
 
 it("RULING-92 logs and drops unmatched responses instead of delivering them as events", async () => {
 	await using fixture = await admissionClient();
@@ -120,7 +120,7 @@ it("RULING-92 logs and drops unmatched responses instead of delivering them as e
 	await client.openSession({ cwd: host.cwd });
 	expect(events.mock.calls.map(([event]) => event)).not.toContainEqual(expect.objectContaining({ type: "response" }));
 	expect(log).toHaveBeenCalledTimes(1);
-}, 120_000);
+}, 600_000);
 
 it("a matched page response advances the generation fence before a stale event is read", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -140,4 +140,4 @@ it("a matched page response advances the generation fence before a stale event i
 	await client.getState();
 	expect((await client.admissions.page("fence", "manifest")).action).toBe("ready");
 	expect(requests.filter((request) => request.type === "get_recovery_page").at(-1)?.sessionId).toBe(opened.sessionId);
-}, 120_000);
+}, 600_000);

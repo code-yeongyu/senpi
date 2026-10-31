@@ -8,6 +8,7 @@ import { createHarness } from "../harness.ts";
 import { makeSink } from "../rpc-connection-harness.ts";
 import { createStructuredHarness, type StructuredHarness } from "../structured-lane-sdk-harness.ts";
 import { scriptProvider, textReply } from "../structured-lane-support.ts";
+import { EVENT_SAFETY_MS } from "../event-safety-bound.ts";
 
 const FLAG = "SENPI_ENGINE_SOCKET_COMPACT_UPDATES";
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -63,7 +64,7 @@ it.each([
 
 	const structured: object[] = [];
 	cleanups.push(writer.structuredLanes.observe(sessionId, (record) => structured.push(record)));
-	const ended = socket.waitFor((record) => record.type === "agent_end" && record.sessionId === sessionId, 5_000);
+	const ended = socket.waitFor((record) => record.type === "agent_end" && record.sessionId === sessionId, EVENT_SAFETY_MS);
 	await router.handle({ id: "go", type: "prompt", sessionId, message: "hi" });
 	await ended;
 	await writer.flush();

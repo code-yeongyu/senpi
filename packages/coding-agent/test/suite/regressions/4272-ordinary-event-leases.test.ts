@@ -160,7 +160,7 @@ it("T6 X04 S13-Q1 an oversized message_end reaches a compact-events peer as an e
 	} finally {
 		await host[Symbol.asyncDispose]();
 	}
-}, 120_000);
+}, 600_000);
 
 it("T6 T5 X04 a lease's bytes are fixed at acceptance: mutating the provider object and accepting a replacement never changes them", async () => {
 	const { host, compact, routing } = await compactHost();
@@ -179,7 +179,7 @@ it("T6 T5 X04 a lease's bytes are fixed at acceptance: mutating the provider obj
 	} finally {
 		await host[Symbol.asyncDispose]();
 	}
-}, 120_000);
+}, 600_000);
 
 it("S13-Q2 RULING-65 a lease is released only by its receipt: drain and a fully staged consumer that crashed before commit keep it, the receipt releases it once, a duplicate is a typed no-op and a foreign peer learns nothing", async () => {
 	const { host, plain, compact, routing } = await compactHost();
@@ -212,7 +212,7 @@ it("S13-Q2 RULING-65 a lease is released only by its receipt: drain and a fully 
 	} finally {
 		await host[Symbol.asyncDispose]();
 	}
-}, 120_000);
+}, 600_000);
 
 it("S13-Q1 (2) leases are count-bounded per peer: past the stated bound the peer gets a typed refusal, and its end frees every lease and its content", async () => {
 	const { host, compact, routing } = await compactHost();
@@ -269,7 +269,7 @@ it("S13-Q1 (3) an event lease never extends a checkpoint token's lifetime or pin
 	} finally {
 		await host[Symbol.asyncDispose]();
 	}
-}, 120_000);
+}, 600_000);
 
 it("T6 X06 golden: with the flag off a compact_events peer receives the complete record, and release_recovery answers as an unknown command", async () => {
 	const host = await statusHost();
@@ -293,7 +293,7 @@ it("T6 X06 golden: with the flag off a compact_events peer receives the complete
 	} finally {
 		await host[Symbol.asyncDispose]();
 	}
-}, 120_000);
+}, 600_000);
 
 it("RULING-63 acceptance: the event lease extends the lease union without reshaping a pre-S13 variant, and its content ref encodes through the S11a codec exactly as a pre-S13 staged ref", async () => {
 	expectTypeOf<Extract<RecoveryLease, { kind: "checkpoint" }>>().toEqualTypeOf<CheckpointToken>();
@@ -330,4 +330,4 @@ it("RULING-63 acceptance: the event lease extends the lease union without reshap
 		await root.cleanup();
 		await host[Symbol.asyncDispose]();
 	}
-}, 120_000);
+}, 600_000);

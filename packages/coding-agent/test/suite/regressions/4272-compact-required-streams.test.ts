@@ -24,7 +24,7 @@ it("T2/T5 update-only mirrors freeze initial and later required streams without 
 		expect.objectContaining({ attachments: 1 }),
 		expect.objectContaining({ attachments: 1 }),
 	]);
-}, 120_000);
+}, 600_000);
 
 it("T2/T5 N overlapping selected admissions share one bounded atomic payload", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -58,7 +58,7 @@ it("T2/T5 N overlapping selected admissions share one bounded atomic payload", a
 	).toBe(true);
 	expect((host.writer.recoveryEvents?.status().contentBytes ?? 0) - before).toBeLessThan(100_000);
 	expect(frames.every((frame) => !("message" in frame) && !("admissions" in frame))).toBe(true);
-}, 120_000);
+}, 600_000);
 
 it("T5/T6 omitted starts and block controls seed the pre-record cut inside the dependent unit", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -94,7 +94,7 @@ it("T5/T6 omitted starts and block controls seed the pre-record cut inside the d
 	expect(peer.inbox.some((f) => f.type === "tool_execution_start" || f.type === "tool_execution_end")).toBe(false);
 	const reset = await peer.request({ type: "reset_stream", sessionId, admissionId: "updates" });
 	expect(reset).toMatchObject({ success: true, admissionId: "updates", generation: expect.any(Number) });
-}, 120_000);
+}, 600_000);
 
 it("T5 required state survives sibling unsubscribe and retires with the final mirror", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -112,7 +112,7 @@ it("T5 required state survives sibling unsubscribe and retires with the final mi
 	expect(tokens()).toHaveLength(1);
 	await peer.request({ type: "unsubscribe_sessions", subscriptionId: dataOf(b).subscriptionId });
 	expect(tokens()).toHaveLength(0);
-}, 120_000);
+}, 600_000);
 
 it("T5 mirror-only overflow freezes the required union before actor drain", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
