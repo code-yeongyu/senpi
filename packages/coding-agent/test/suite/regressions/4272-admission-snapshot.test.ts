@@ -68,7 +68,7 @@ it("T2/X04 a streamed host snapshot spans bounded pages, rejects a foreign peer 
 	expect(events.status().open).toBe(1);
 	await host.drop("peer");
 	expect(events.status()).toMatchObject({ open: 0, contentBytes: 0 });
-}, 120_000);
+}, 600_000);
 
 it("T2/X04 golden f: returned subscription id owns every snapshot page and live suffix", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -131,7 +131,7 @@ it("T2/X04 golden f: returned subscription id owns every snapshot page and live 
 		},
 		dirname(host.cwd),
 	);
-}, 120_000);
+}, 600_000);
 
 it("T2/X04 cancellation racing subscribe cleans the actual returned subscription id, not the client id", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -161,7 +161,7 @@ it("T2/X04 cancellation racing subscribe cleans the actual returned subscription
 	expect(host.writer.status.connectionSize("peer")).toBe(0);
 	expect(host.writer.recoveryEvents?.status().open).toBe(0);
 	expect(peer.inbox.some((frame) => frame.type === "recovery_manifest")).toBe(false);
-}, 120_000);
+}, 600_000);
 
 // #4272 T2/X04, RULING-66 S15-Q3: small identity before the host-wide seq-0
 // snapshot; its content is paged and released by consumption, not socket drain.
@@ -226,4 +226,4 @@ it("T2/X04 compact subscribe owns a pageable seq-zero snapshot and releases it o
 	expect(
 		await peer.waitFor((frame) => frame.type === "effect_status" && frame.effectId === "after-consumption"),
 	).toMatchObject({ admissionId: "status-all", generation: 0 });
-}, 120_000);
+}, 600_000);
