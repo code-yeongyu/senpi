@@ -4,6 +4,8 @@
  */
 
 import * as fs from "node:fs";
+import { resolveSecretInputTimeout } from "../../core/extensions/secret-input.ts";
+import type { ExtensionUIInputOptions } from "../../core/extensions/types.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -142,7 +144,7 @@ import {
 } from "../../core/model-resolver.ts";
 import { CredentialSynchronizationError } from "../../core/model-runtime.ts";
 import { formatProviderFailure } from "../../core/provider-failure.ts";
-import { failureAlreadyDescribed } from "./provider-error-description.ts";
+import { failureAlreadyDescribed, headNoticeShownElsewhere } from "./provider-error-description.ts";
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { describeFallbackExhaustion } from "../../core/retry-fallback/exhaustion.ts";
 import { usageLimitCause } from "../../core/retry-fallback/usage-limit.ts";
@@ -180,7 +182,7 @@ import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
 import { checkForNewPiVersion, getReleaseChangelogUrl } from "../../utils/version-check.ts";
-import { abortedMessageForRendering } from "./aborted-error-label.ts";
+import { abortedMessageForRendering, unrunToolCallText } from "./aborted-error-label.ts";
 import { createChatViewport } from "./chat-viewport.ts";
 import {
 	type CompactionQueuedMessage,
@@ -600,10 +602,6 @@ export function formatCrashExtensionHint(extensionMatches: readonly string[] | u
 
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
 	"Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage. Disable this warning in /settings.";
-
-function isAnthropicSubscriptionAuthKey(apiKey: string | undefined): boolean {
-	return typeof apiKey === "string" && apiKey.startsWith("sk-ant-oat");
-}
 
 function isUnknownModel(model: Model<any> | undefined): boolean {
 	return !!model && model.provider === "unknown" && model.id === "unknown" && model.api === "unknown";
@@ -1137,6 +1135,7 @@ export class InteractiveMode {
 	// Extension UI state
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
 	private extensionInput: ExtensionInputComponent | undefined = undefined;
+	private secretInputCleanup: (() => void) | undefined;
 	private extensionEditor: ExtensionEditorComponent | undefined = undefined;
 	private askUserQuestion: AskUserQuestionComponent | undefined = undefined;
 	private pendingQuestions = new Map<string, AsyncQuestionState>();
@@ -2709,8 +2708,22 @@ export class InteractiveMode {
 				);
 			}
 
+			const ignoredSkillDiagnostics = skillsResult.diagnostics.filter(
+				(diagnostic) => diagnostic.category === "skill-ignored",
+			);
+			if (ignoredSkillDiagnostics.length > 0) {
+				addDiagnosticNotice(
+					"Skills hidden by ignore files",
+					ignoredSkillDiagnostics,
+					"An ignore file in a skills folder lists these skill folders, so they did not load.",
+				);
+			}
+
 			const skillDiagnostics = skillsResult.diagnostics.filter(
-				(diagnostic) => diagnostic.category !== "size-limit" && diagnostic.category !== "skill-link-blocked",
+				(diagnostic) =>
+					diagnostic.category !== "size-limit" &&
+					diagnostic.category !== "skill-link-blocked" &&
+					diagnostic.category !== "skill-ignored",
 			);
 			if (skillDiagnostics.length > 0) {
 				addDiagnosticNotice("Skill conflicts", skillDiagnostics);
@@ -3691,7 +3704,7 @@ export class InteractiveMode {
 	): () => void {
 		const subscription = {
 			handler,
-			unsubscribe: this.ui.addInputListener(handler),
+			unsubscribe: this.ui.addInputListener((data) => (this.extensionInput?.secret ? undefined : handler(data))),
 		};
 		this.extensionTerminalInputSubscriptions.add(subscription);
 		return () => {
@@ -3703,7 +3716,9 @@ export class InteractiveMode {
 	private rebindExtensionTerminalInputListeners(): void {
 		for (const subscription of this.extensionTerminalInputSubscriptions) {
 			subscription.unsubscribe();
-			subscription.unsubscribe = this.ui.addInputListener(subscription.handler);
+			subscription.unsubscribe = this.ui.addInputListener((data) =>
+				this.extensionInput?.secret ? undefined : subscription.handler(data),
+			);
 		}
 	}
 
@@ -3734,6 +3749,7 @@ export class InteractiveMode {
 		this.mcpMrtrPresentationLifetime ??= new AbortController();
 		if (this.isShuttingDown) this.mcpMrtrPresentationLifetime.abort();
 		const context: ExtensionUIContext = {
+			capabilities: { secretInput: true },
 			select: (title, options, opts) =>
 				this.withBlockedHostDialog(
 					crypto.randomUUID(),
@@ -3753,7 +3769,7 @@ export class InteractiveMode {
 					crypto.randomUUID(),
 					title,
 					() => this.showExtensionInput(title, placeholder, opts),
-					opts,
+					opts?.secret ? { ...opts, ephemeral: true } : opts,
 				),
 			// Async answers are delivered by the ask-user extension, not here: the
 			// widget only resolves the question, so the model sees exactly one
@@ -3923,8 +3939,10 @@ export class InteractiveMode {
 	private showExtensionInput(
 		title: string,
 		placeholder?: string,
-		opts?: ExtensionUIDialogOptions,
+		opts?: ExtensionUIInputOptions,
 	): Promise<string | undefined> {
+		const timeout = opts?.secret && !opts.signal?.aborted ? resolveSecretInputTimeout(opts) : opts?.timeout;
+		if (this.extensionInput?.secret) this.hideExtensionInput();
 		return new Promise((resolve) => {
 			if (opts?.signal?.aborted) {
 				resolve(undefined);
@@ -3932,6 +3950,7 @@ export class InteractiveMode {
 			}
 
 			const onAbort = () => {
+				this.secretInputCleanup = undefined;
 				this.hideExtensionInput();
 				resolve(undefined);
 			};
@@ -3943,18 +3962,25 @@ export class InteractiveMode {
 				(value) => {
 					if (!opts?.ephemeral || !this.options?.mcpPresenterEnforcement) this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
+					this.secretInputCleanup = undefined;
 					this.hideExtensionInput();
 					resolve(value);
 				},
 				() => {
 					opts?.signal?.removeEventListener("abort", onAbort);
+					this.secretInputCleanup = undefined;
 					this.hideExtensionInput();
 					resolve(undefined);
 				},
-				{ tui: this.ui, timeout: opts?.timeout },
+				{ tui: this.ui, timeout, secret: opts?.secret },
 			);
 
 			this.disposeActiveSelector();
+			if (opts?.secret)
+				this.secretInputCleanup = () => {
+					opts.signal?.removeEventListener("abort", onAbort);
+					resolve(undefined);
+				};
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.extensionInput);
 			this.ui.setFocus(this.extensionInput);
@@ -3966,7 +3992,10 @@ export class InteractiveMode {
 	 * Hide the extension input.
 	 */
 	private hideExtensionInput(): void {
+		const cleanup = this.secretInputCleanup;
+		this.secretInputCleanup = undefined;
 		this.extensionInput?.dispose();
+		cleanup?.();
 		this.editorContainer.clear();
 		this.editorContainer.addChild(this.editor);
 		this.extensionInput = undefined;
@@ -5519,18 +5548,15 @@ export class InteractiveMode {
 						this.providerErrors?.clear();
 						this.clearStatusIndicator("retry");
 					}
-					let errorMessage = renderedMessage.errorMessage;
 					this.syncTrailingAssistantText(renderedMessage);
 					this.assistantTextSegments.clear();
 					this.addContinuityNotice(renderedMessage);
 
 					if (this.streamingMessage.stopReason === "aborted" || this.streamingMessage.stopReason === "error") {
-						if (!errorMessage) {
-							errorMessage = this.streamingMessage.errorMessage || "Error";
-						}
+						const text = unrunToolCallText(renderedMessage);
 						for (const [, component] of this.pendingTools.entries()) {
 							component.updateResult({
-								content: [{ type: "text", text: errorMessage }],
+								content: [{ type: "text", text }],
 								isError: true,
 							});
 						}
@@ -5640,10 +5666,6 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 
-			case "agent_settled":
-				await this.checkShutdownRequested();
-				break;
-
 			case "agent_idle":
 				this.agentIdle = true;
 				this.providerErrors?.finish();
@@ -5651,6 +5673,8 @@ export class InteractiveMode {
 					this.clearStatusIndicator("working");
 				}
 				this.ui.requestRender();
+				// After the settle-time extension handlers drained, not at agent_settled while they may still run (omo#11419).
+				await this.checkShutdownRequested();
 				break;
 
 			case "session_recovered":
@@ -6143,17 +6167,18 @@ export class InteractiveMode {
 		const end = streamingIndex >= 0 ? streamingIndex : children.length;
 		const last = end > 0 ? children[end - 1] : undefined;
 		const secondLast = end > 1 ? children[end - 2] : undefined;
+		this.lastStatusMessage = message;
+		// Each row owns its content, even if its first render or a theme invalidation happens after another notice.
+		const text = new ThemedText(() => theme.fg("dim", message), 1, 0);
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
-			this.lastStatusMessage = message;
-			this.lastStatusText.invalidate();
+			children[end - 1] = text;
+			this.lastStatusText = text;
 			this.ui.requestRender();
 			return;
 		}
 
 		const spacer = new Spacer(1);
-		this.lastStatusMessage = message;
-		const text = new ThemedText(() => theme.fg("dim", this.lastStatusMessage), 1, 0);
 		if (streamingIndex >= 0) {
 			children.splice(streamingIndex, 0, spacer, text);
 		} else {
@@ -6239,7 +6264,10 @@ export class InteractiveMode {
 		};
 	}
 
-	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
+	private addMessageToChat(
+		message: AgentMessage,
+		options?: { populateHistory?: boolean; replayOwnsTurnNotice?: boolean },
+	): void {
 		if (message.role === "user") this.providerErrors?.newTurn();
 		switch (message.role) {
 			case "bashExecution": {
@@ -6348,6 +6376,8 @@ export class InteractiveMode {
 				);
 				assistantComponent.setExpanded(this.toolOutputExpanded);
 				assistantComponent.setProviderErrorOwned(isNetworkProviderMessage(message));
+				if (options?.replayOwnsTurnNotice === true) assistantComponent.setOwnsTurnNotice(true);
+				if (options?.replayOwnsTurnNotice === false) assistantComponent.setProviderErrorOwned(true);
 				this.chatContainer.addChild(assistantComponent);
 				break;
 			}
@@ -6367,7 +6397,9 @@ export class InteractiveMode {
 
 	private syncTrailingAssistantText(message: AssistantMessage): void {
 		if (!this.streamingComponent) return;
-		this.streamingComponent.setProviderErrorOwned(isNetworkProviderMessage(message));
+		this.streamingComponent.setProviderErrorOwned(
+			isNetworkProviderMessage(message) || headNoticeShownElsewhere(message),
+		);
 		const head = assistantStreamingHeadMessage(message);
 		// Single writer: while smooth streaming paces the head (no toolCall block),
 		// streamingReveal owns the streaming component. Overwriting the full head
@@ -6519,7 +6551,8 @@ export class InteractiveMode {
 			if (message.role === "assistant") {
 				replayAssistantTools(message, {
 					expanded: this.toolOutputExpanded,
-					addMessage: (part) => this.addMessageToChat(part),
+					addMessage: (part, ownsTurnNotice) =>
+						this.addMessageToChat(part, { replayOwnsTurnNotice: ownsTurnNotice }),
 					addChild: (component) => this.chatContainer.addChild(component),
 					createTool: (name, id, args) => this.createToolExecutionComponent(name, id, args),
 					pending: renderedPendingTools,
@@ -7804,6 +7837,7 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private disposeActiveSelector(): void {
+		if (this.secretInputCleanup) this.hideExtensionInput();
 		const dispose = this.activeSelectorDispose;
 		this.activeSelectorToken = undefined;
 		this.activeSelectorDispose = undefined;
@@ -8385,13 +8419,7 @@ export class InteractiveMode {
 		}
 
 		try {
-			if ((await this.session.modelRuntime.checkAuth("anthropic"))?.type === "oauth") {
-				this.anthropicSubscriptionWarningShown = true;
-				this.showWarning(ANTHROPIC_SUBSCRIPTION_AUTH_WARNING);
-				return;
-			}
-			const apiKey = (await this.session.modelRuntime.getAuth(model.provider))?.auth.apiKey;
-			if (!isAnthropicSubscriptionAuthKey(apiKey)) {
+			if ((await this.session.modelRuntime.checkAuth("anthropic"))?.type !== "oauth") {
 				return;
 			}
 			this.anthropicSubscriptionWarningShown = true;
@@ -9254,7 +9282,7 @@ export class InteractiveMode {
 					}
 
 					try {
-						await this.session.modelRuntime.logout(providerOption.id, {
+						const { notices } = await this.session.modelRuntime.logoutProvider(providerOption.id, {
 							signal: AbortSignal.timeout(15_000),
 						});
 						this.updateAvailableProviderCount();
@@ -9262,7 +9290,7 @@ export class InteractiveMode {
 							providerOption.authType === "oauth"
 								? `Logged out of ${providerOption.name}`
 								: `Removed stored API key for ${providerOption.name}. Environment variables and models.json config are unchanged.`;
-						this.showStatus(message);
+						this.showStatus([message, ...notices].join(" "));
 					} catch (error: unknown) {
 						const message = error instanceof Error ? error.message : String(error);
 						this.showError(
@@ -9489,6 +9517,21 @@ export class InteractiveMode {
 	}
 
 	private async showAuthPrompt(dialog: LoginDialogComponent, prompt: AuthPrompt): Promise<string> {
+		if (prompt.type === "secret") {
+			try {
+				const value = await this.showExtensionInput(prompt.message, prompt.placeholder, {
+					secret: true,
+					signal: prompt.signal,
+				});
+				if (value === undefined) throw new Error("Login cancelled");
+				return value;
+			} finally {
+				this.editorContainer.clear();
+				this.editorContainer.addChild(dialog);
+				this.ui.setFocus(dialog);
+				this.ui.requestRender();
+			}
+		}
 		let response: Promise<string>;
 		if (prompt.type === "select") {
 			response = this.showAuthSelect(dialog, prompt);
