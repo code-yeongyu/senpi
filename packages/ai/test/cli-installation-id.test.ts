@@ -32,7 +32,8 @@ vi.mock("../src/providers/all.ts", () => ({
 			auth: {
 				oauth: {
 					login: async (_interaction: unknown, options: LoginOptions) => {
-						fixture.deviceIds.push(options.getDeviceId!());
+						if (!options.getDeviceId) throw new Error("login options lack getDeviceId");
+						fixture.deviceIds.push(options.getDeviceId());
 						return { type: "oauth", access: "synthetic", refresh: "synthetic", expires: 0 };
 					},
 				},
