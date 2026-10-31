@@ -1,3 +1,101 @@
+## 2026-10-30 - Unrun tool cards of a failed turn say not run instead of the raw error (senpi#5064)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: at `message_end` of an aborted or error-stopped turn, each pending tool card gets `unrunToolCallText(renderedMessage)` instead of the raw `errorMessage`: "Not run: the request failed." for an error stop, the abort label for an abort.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: every unrun tool card repeated the raw provider error body next to the one classified turn notice, so one upstream failure printed one unclassified line per card.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: pending tool cards are built-in `InteractiveMode` transcript rows; extensions cannot set their result text.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the aborted/error branch of the `message_end` handler and the `aborted-error-label.ts` import line.
+
+## 2026-10-30 - Startup lists skills hidden by ignore files (senpi#5060)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `skill-ignored` diagnostics get their own startup notice, "Skills hidden by ignore files", and are kept out of "Skill conflicts".
+
+### Why
+
+- A hidden skill is not a name collision; grouping it under "Skill conflicts" would mislead the reader (see also senpi#4940).
+
+### Why an extension could not handle it
+
+- The startup resource notices are rendered by interactive mode itself.
+
+### Expected merge conflict zones
+
+- LOW: the diagnostic filters in `showLoadedResources`.
+
+## 2026-10-30 - A turn-ending notice shows once, live and on replay (senpi#4958)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the live head row is marked as showing its turn-ending notice elsewhere when a trailing text run exists (`headNoticeShownElsewhere`). Session replay (`replayAssistantTools`) renders a turn as several parts that all keep its `stopReason`; exactly one part now owns the turn-ending notice (`setOwnsTurnNotice`): the text run that closes the message after a tool call, as in live mode, else the head row; an aborted turn that ends in a tool call shows it on the tool card. Every other part is marked as shown elsewhere.
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: new `setOwnsTurnNotice(owned)` passes `ownsTurnNotice` to the render descriptors, so a replayed turn can show its error or abort notice although it holds tool calls.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a length-stopped turn printed its max-token notice on the head and on every text run, and on replay every part of a turn with text after a tool call showed the notice, while a turn ending in a tool call showed none.
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: the component had no way to show a turn-ending notice on a row that holds tool calls, which a replayed turn needs.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: transcript row ownership is built-in `InteractiveMode` rendering that extensions do not own.
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: the component renders transcript rows inside built-in `InteractiveMode`; extensions cannot change its notice gating.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the head line of `syncTrailingAssistantText`, the `addMessageToChat` signature and `assistant` case, the `replayAssistantTools` call in `renderSessionItems`, and the import block.
+
+- `packages/coding-agent/src/modes/interactive/components/assistant-message.ts`: the private field block, the setter next to `setProviderErrorOwned`, and the descriptor options passed in `updateContent`.
+
+## 2026-10-27 - /logout reports Claude CLI accounts it could not sign out (senpi#4436, S4)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `/logout` calls `modelRuntime.logoutProvider` and appends its notices to the status line.
+
+### Why
+
+- A logout of Anthropic Subscription signs each Claude CLI account out first; when one could not be signed out the user must be told.
+
+### Why an extension could not handle it
+
+- `/logout` is owned by interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: the logout selector callback in `interactive-mode.ts`.
+
+## 2026-10-27 - TUI deferred shutdown waits for agent_idle (senpi#4420, oh-my-openagent#11419)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a deferred extension shutdown runs at `agent_idle` instead of `agent_settled`.
+
+### Why
+
+- `agent_settled` can now arrive while extension `agent_settled` handlers still run; shutting down then disposed the runtime under them.
+
+### Why an extension could not handle it
+
+- The TUI's shutdown sequencing is core interactive mode.
+
+### Expected merge conflict zones
+
+- LOW: the `agent_settled` / `agent_idle` cases of `handleEvent`.
+
 ## 2026-10-29 - Preserve each status row across deferred renders (senpi#4841)
 
 ### What changed
