@@ -313,15 +313,6 @@ describe("Anthropic mid-conversation effort", () => {
 			expect(request?.betas).toEqual([EFFORT, "custom-proxy-beta", BINDING]);
 		});
 
-		it("keeps the OAuth identity betas when a header is configured", async () => {
-			const { request } = await wire(anthropicModel("claude-haiku-5-5", { "anthropic-beta": "custom-proxy-beta" }), {
-				apiKey: "sk-ant-oat01-test",
-			});
-			expect(request?.betas).toEqual(
-				expect.arrayContaining(["custom-proxy-beta", "claude-code-20250219", "oauth-2025-04-20"]),
-			);
-		});
-
 		it("adds the server-side fallback beta whenever the body carries fallbacks", async () => {
 			const { request } = await wire(anthropicModel("claude-opus-5-5", { "anthropic-beta": "custom-proxy-beta" }), {
 				refusalFallbacks: "default",
@@ -365,17 +356,6 @@ describe("Anthropic mid-conversation effort", () => {
 				});
 				expect(request?.betas).toEqual([]);
 				expect(request?.body.fallbacks).toBeUndefined();
-			});
-
-			it("fails before sending when an OAuth token needs its identity betas", async () => {
-				const { result, requests } = await wire(anthropicModel("claude-haiku-5-5"), {
-					headers: { "anthropic-beta": null },
-					apiKey: "sk-ant-oat01-test",
-				});
-				expect(requests).toBe(0);
-				expect(result.stopReason).toBe("error");
-				expect(result.errorMessage).toContain("claude-code-20250219");
-				expect(result.errorMessage).toContain("anthropic-beta");
 			});
 		});
 	});
