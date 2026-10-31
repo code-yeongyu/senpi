@@ -48,7 +48,7 @@ type TokenResponse = {
 	scope?: unknown;
 };
 
-export class OpenAIReauthorizationError extends Error {
+class OpenAIReauthorizationError extends Error {
 	readonly code: "invalid_account" | "client_mismatch" | "subject_mismatch";
 
 	constructor(code: "invalid_account" | "client_mismatch" | "subject_mismatch") {
