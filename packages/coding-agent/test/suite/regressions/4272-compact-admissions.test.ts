@@ -4,6 +4,7 @@ import { EVENT_RESYNC_CAPABILITY } from "../../../src/modes/rpc/socket-peer-reco
 import { RpcSessionRegistry } from "../../../src/modes/rpc/session-registry.ts";
 import type { RecoveryAdmission } from "../../../src/modes/rpc/compact-recovery-types.ts";
 import { join } from "node:path";
+import { EVENT_SAFETY_MS } from "../event-safety-bound.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
 
 afterEach(() => {
@@ -248,7 +249,7 @@ it("T2 a response deadline rejects while the host handler is pending, without an
 		});
 	try {
 		await entered.promise;
-		await vi.advanceTimersByTimeAsync(30_000);
+		await vi.advanceTimersByTimeAsync(EVENT_SAFETY_MS);
 		expect(settled, "the response waiter is observed before the handler finishes").toBe(true);
 		await refused;
 	} finally {
