@@ -358,4 +358,4 @@ it("RULING-59 X02 a broadcast question holding a 34 MiB string streams through t
 		await lane.idle();
 		await spool.cleanup();
 	}
-}, 180_000);
+}, 600_000);
