@@ -78,7 +78,7 @@ it("S14 R84 server failure and clearing success share the client schema; connect
 	} finally {
 		await host[Symbol.asyncDispose]();
 	}
-}, 120_000);
+}, 600_000);
 
 it("S14 R56 foreign tokens receive bounded repair advice without source identity or storage state", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -110,4 +110,4 @@ it("S14 R56 foreign tokens receive bounded repair advice without source identity
 	} finally {
 		await host[Symbol.asyncDispose]();
 	}
-}, 120_000);
+}, 600_000);

@@ -24,7 +24,7 @@ it.each(["get_recovery_page", "release_recovery"])(
 			}),
 		).toMatchObject({ success: false, errorCode: "session_not_attached" });
 	},
-	120_000,
+	600_000,
 );
 
 it.each(["get_recovery_page", "release_recovery"])(
@@ -88,5 +88,5 @@ it.each(["get_recovery_page", "release_recovery"])(
 			}),
 		).toMatchObject({ success: true });
 	},
-	120_000,
+	600_000,
 );

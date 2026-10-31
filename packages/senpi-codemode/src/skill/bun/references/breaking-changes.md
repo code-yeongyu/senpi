@@ -1,6 +1,29 @@
-# Upgrading to Bun 1.4 — Behavior Changes
+# Upgrading to Bun 1.4.x — Behavior Changes
 
-Blog: [#upgrading-to-1-4](https://bun.com/blog/bun-v1.4#upgrading-to-1-4). Most code is unaffected. Scan the Top 5, then the table for whatever subsystem you touched.
+Blog: [#upgrading-to-1-4](https://bun.com/blog/bun-v1.4#upgrading-to-1-4), then the 1.4.1-1.4.4 posts. Most code is unaffected. Scan the Top 5, then the 1.4.1-1.4.4 table, then the 1.4.0 tables for whatever subsystem you touched.
+
+## 1.4.1 → 1.4.4 — changes that bit our repos
+
+| Change | Version | Migration |
+|---|---|---|
+| `Bun.Glob`: `?( )`, `*( )`, `+( )`, `@( )`, `!( )` and `{1..3}` are extglob/ranges (were literal); applies to `--filter`, `workspaces`, `files`, `sideEffects` | 1.4.4 | a pattern with `*(1).txt` now means "zero or more 1"; escape as `*[(]1).txt`. An 11-group `{a,b}` allowlist that 1.4.3 refused matched on 1.4.4 — re-test auth boundaries after a Bun bump (2026-10-25) |
+| `bun check` / `bun fmt` run a same-named package.json script first | 1.4.3 / 1.4.4 | `--no-script` for the builtin; probe features in an empty directory, since `bun lint --help` exits 0 via a script on a Bun with no linter (2026-10-22) |
+| `bun install` rejects unknown flags (was: silently ran) | 1.4.4 | fix the typo; npm/Yarn/pnpm spellings are translated |
+| Linux installs skip the other libc's native builds; `file:` folders are hardlinked (were per-file symlinks) | 1.4.4 | tools that filter optional deps by os/cpu must also filter `libc` (desktop stage-lock broke); "no links" checks see hardlinks |
+| WebSocket client `close` waits for the closing handshake: `1005` not `1000` without a code, `1006` after 30 s; failed connects fire `error` then `close(1006)` | 1.4.4 | await the `close` event; `BUN_CONFIG_WS_CLOSE_TIMEOUT`; `ws.terminate()` to skip |
+| `ws` is a port of ws 8.22: an `'error'` without a listener is an uncaught exception; `close` reason is a `Buffer`; no default idle timeout/ping on `ws` servers; `maxPayload` 100 MiB | 1.4.4 | add `'error'` listeners everywhere |
+| Servers request a client certificate only with `requestCert: true` (`ca` alone no longer does) | 1.4.4 | set both for mTLS |
+| `Bun.hash()`/`CryptoHasher`/`crypto.hash()` of a `Bun.file`/S3 file throw `TypeError` (was: hash of empty input) | 1.4.4 | read the bytes first |
+| `Bun.SQL` ignores `PASSWORD`; `affectedRows` is a number on PG/SQLite (was `null`); `sql.array([...])` no longer casts to `JSON[]` | 1.4.4 | `PGPASSWORD` / URL / option |
+| `fetch()` TLS name comes from the URL, not a custom `Host` header | 1.4.1 | `tls.servername` for IP + name |
+| `fs.rmdir(p, { recursive: true })` works again (1.4.0 threw) | 1.4.1 | — |
+| `--disallow-code-generation-from-strings=strict` also blocks plugins returning source, macros, and on-disk `.ts/.js` inside compiled binaries | 1.4.4 | return exports objects from plugins |
+| Coverage counts skipped branches/`await` continuations/implicit constructors as uncovered | 1.4.4 | `% Lines`/`% Funcs` drop; re-check thresholds |
+| PID 1 in a container exits `128 + signal` on Ctrl+C / `docker stop` | 1.4.4 | match on the new code |
+| `bun add -E react@18` writes the installed exact version (was `18`) | 1.4.4 | — |
+| `bun.lock` gains `hasInstallScript` / `libc`; older Bun drops them on save | 1.4.4 | pin one Bun per repo (CI `bun-version`) |
+| Windows: `expect(p).rejects` after a socket close segfaulted the runner in 1.4.3 (upstream fix reverted) | fixed 1.4.4 | stay on 1.4.4+ on Windows CI |
+| Still open on 1.4.4: `fs.rm` ignores `maxRetries`/`retryDelay` (bun#41480); `expect(p).rejects` after a Worker reply deadlocks (bun#37189) | — | explicit retry helper; capture rejections with `.then()` |
 
 ## Top 5 most likely to bite
 
@@ -52,7 +75,6 @@ Blog: [#upgrading-to-1-4](https://bun.com/blog/bun-v1.4#upgrading-to-1-4). Most 
 
 | Change | Migration |
 |---|---|
-| `fs.rmdir` rejects `{ recursive: true }` | `fs.rm(path, { recursive: true, force: true })` |
 | `dns.lookup()` uses the system resolver (getaddrinfo) on Linux — split-DNS/VPN names now resolve | `Bun.dns.lookup(name, { backend: "c-ares" })` for old behavior |
 | fs/dns/pbkdf2 callback exceptions are `uncaughtException` (was unhandledRejection) | move the handler |
 | `dgram`: second `bind()` and post-`close()` calls throw synchronously | try/catch |
@@ -72,4 +94,4 @@ Blog: [#upgrading-to-1-4](https://bun.com/blog/bun-v1.4#upgrading-to-1-4). Most 
 - `Temporal` defined by default (`BUN_JSC_useTemporal=0` to disable).
 - `bun.lock` is `lockfileVersion: 2`; nested/version-scoped overrides produce v3 (older Bun can't read v3).
 - `bun feedback` removed; `Bun.password.hash()` argon2 requires `memoryCost >= 8`.
-- Full exhaustive list: [Other behavior changes](https://bun.com/blog/bun-v1.4#other-behavior-changes) and the [Changelog](https://bun.com/blog/bun-v1.4#changelog).
+- Full exhaustive lists: [1.4.0 Other behavior changes](https://bun.com/blog/bun-v1.4#other-behavior-changes) and the Bugfixes sections of the [1.4.1](https://bun.com/blog/bun-v1.4.1), [1.4.3](https://bun.com/blog/bun-v1.4.3) and [1.4.4](https://bun.com/blog/bun-v1.4.4) posts.

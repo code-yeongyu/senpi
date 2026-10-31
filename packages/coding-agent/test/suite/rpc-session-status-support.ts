@@ -14,6 +14,7 @@ import { ModelRuntime } from "../../src/core/model-runtime.ts";
 import { createCliRuntimeFactory } from "../../src/main.ts";
 import { createHostCore } from "../../src/modes/rpc/multi-session-host.ts";
 import { SessionEventWriter } from "../../src/modes/rpc/session-event-writer.ts";
+import { EVENT_SAFETY_MS } from "./event-safety-bound.ts";
 
 export type WireRecord = Record<string, unknown> & { id?: string; type?: string; sessionId?: string };
 
@@ -26,7 +27,7 @@ export interface RawClient {
 	waitFor(predicate: (record: WireRecord) => boolean, ms?: number): Promise<WireRecord>;
 }
 
-const DEADLINE_MS = 30_000;
+const DEADLINE_MS = EVENT_SAFETY_MS;
 
 export async function statusHost() {
 	const scratch = await mkdtemp(join(tmpdir(), "senpi-session-status-"));
