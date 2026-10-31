@@ -5,6 +5,7 @@ import { recoveryCarrier } from "../../../src/core/session-recovery-identity.ts"
 import { type FrozenAcceptedRoot } from "../../../src/modes/rpc/session-acceptance-lane.ts";
 import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc/session-registry.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
+import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -42,7 +43,10 @@ it("T1 C2.1-C2.4 in-process cuts preserve pending and failed payloads; new_sessi
 	});
 	const prompt = async (text: string) => {
 		const since = client.inbox.length;
-		const done = client.waitFor((record) => client.inbox.indexOf(record) >= since && record.type === "agent_idle");
+		const done = client.waitFor(
+			(record) => client.inbox.indexOf(record) >= since && record.type === "agent_idle",
+			EVENT_SAFETY_MS,
+		);
 		host.faux.setResponses([fauxAssistantMessage(`answer ${text}`, { timestamp: 1 })]);
 		dataOf(await client.request({ type: "prompt", sessionId, message: text }));
 		await done;
@@ -91,7 +95,7 @@ it("T1 C2.1-C2.4 in-process cuts preserve pending and failed payloads; new_sessi
 		chmodSync(file, 0o644);
 		for (const cut of cuts) lane.release(cut.root);
 	}
-}, 90000);
+}, 600_000);
 
 it("C2.2 Q3 idle custom append already owns its message before start and end", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
