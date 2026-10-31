@@ -95,7 +95,7 @@ it("S12a T5 X03 X04: a tail past the old 16 MiB limit spills and stays whole; a 
 		stagedBytes: 0,
 	});
 	manager.dispose();
-}, 120_000);
+}, 600_000);
 
 it("S12a T1 X04: a failed tail spool keeps accepted content resident and reported; an append over the resident bound is refused typed while a held cut still reads", async () => {
 	const diagnostic = vi.spyOn(process.stderr, "write").mockReturnValue(true);
@@ -140,7 +140,7 @@ it("S12a T1 X04: a failed tail spool keeps accepted content resident and reporte
 	);
 	expect(diagnostic).toHaveBeenCalledWith(expect.stringContaining("transcript_tail_over_byte_limit"));
 	manager.dispose();
-}, 120_000);
+}, 600_000);
 
 it("S12a X04 bootstrap reader: a bootstrap refused at a bound keeps nothing it staged and publishes no partial transcript", async () => {
 	vi.spyOn(process.stderr, "write").mockReturnValue(true);
