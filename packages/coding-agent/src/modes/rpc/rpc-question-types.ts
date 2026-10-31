@@ -56,6 +56,8 @@ export type RpcExtensionUIRequest =
 			type: "extension_ui_request";
 			id: string;
 			method: "input";
+			secret?: boolean;
+			deadlineAtMs?: number;
 			title: string;
 			placeholder?: string;
 			timeout?: number;
@@ -111,10 +113,17 @@ export type RpcExtensionUIRequest =
  * `uiRequestId` names the request answered, and without it `id` does (the short form).
  */
 export type RpcExtensionUIResponseFrame = {
+	secret?: boolean;
 	type: "extension_ui_response";
 	id: string;
 	uiRequestId?: string;
 	answerId?: string;
+};
+
+export type RpcSecretInputSettledEvent = {
+	type: "secret_input_settled";
+	id: string;
+	outcome: "answered" | "cancelled" | "timed_out" | "unavailable";
 };
 
 export type RpcExtensionUIResponse =

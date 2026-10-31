@@ -353,7 +353,7 @@ import {
 	monotonicNow,
 } from "./retry-fallback/circuit.ts";
 import { isHealthExhaustionFailure } from "./retry-fallback/circuit-probes.ts";
-import { RetryFallbackController } from "./retry-fallback/controller.ts";
+import { followProviderAccountChanges, RetryFallbackController } from "./retry-fallback/controller.ts";
 import { SelectorCooldowns } from "./retry-fallback/cooldown.ts";
 import {
 	classifyRateLimitedWait,
@@ -421,8 +421,10 @@ import {
 import { BlockedSkillLinkError, readSkillFileChecked } from "./skill-access.ts";
 import {
 	formatSkillInvocationPrompt,
+	formatSkillReferenceBody,
 	parseSkillInvocationTokens,
 	removeSkillInvocationTokens,
+	SKILL_INLINE_BUDGET_CHARS,
 	type SkillInvocationPromptSkill,
 	type SkillInvocationSyntax,
 	type SkillInvocationToken,
@@ -513,8 +515,6 @@ export const TURN_END_SKIPPED_AFTER_SHUTDOWN =
 
 export {
 	formatSkillInvocationPrompt,
-	MAX_SKILL_EXPANSIONS_PER_PROMPT,
-	MAX_SKILL_INVOCATION_TOKENS_PER_PROMPT,
 	type ParsedSkillBlock,
 	parseSkillBlock,
 	parseSkillInvocationTokens,
@@ -1393,6 +1393,7 @@ export class AgentSession {
 	private _unsubscribeRecovery: (() => void) | undefined;
 	readonly securityNotices = new SecurityNoticeSnapshot();
 	private _unsubscribeSecurityNotices?: () => void;
+	private readonly _unfollowProviderAccountChanges: () => void;
 	private _unsubscribeSettingsSource?: () => void;
 	private _unregisterMemoryReport: () => void = () => {};
 	private _eventListeners: AgentSessionEventListener[] = [];
@@ -1963,6 +1964,7 @@ export class AgentSession {
 			getCurrentSelector: () => (this.model ? { model: this.model, thinkingLevel: this.thinkingLevel } : undefined),
 			isAuthAvailable: (provider) => this._modelRuntime.hasConfiguredAuth(provider),
 		});
+		this._unfollowProviderAccountChanges = followProviderAccountChanges(this._retryFallback);
 		this._probeBackScheduler = new ProbeBackScheduler({
 			now: this._fallbackNow,
 		});
@@ -4807,6 +4809,7 @@ export class AgentSession {
 	dispose(): void {
 		this._disposed = true;
 		this._unsubscribeSecurityNotices?.();
+		this._unfollowProviderAccountChanges();
 		this.securityNotices.dispose();
 		clearMcpGrantPresentations(this.sessionId);
 		this._engineTurnHold.invalidate();
@@ -6618,8 +6621,7 @@ export class AgentSession {
 		skills: readonly Skill[],
 		invocationTokens: readonly SkillInvocationToken[],
 	): Promise<string> {
-		const maxExpansions = this.settingsManager.getMaxSkillExpansionsPerPrompt();
-
+		let inlinedChars = 0;
 		const expandedSkillNames = new Set<string>();
 		const skillBlocks: SkillInvocationPromptSkill[] = [];
 		const invocationMetadata: Array<{
@@ -6628,8 +6630,6 @@ export class AgentSession {
 			syntax: SkillInvocationSyntax;
 		}> = [];
 		const removedTokens: SkillInvocationToken[] = [];
-		const unloadedTokens = new Set<SkillInvocationToken>();
-		const skippedSkillNames: string[] = [];
 
 		for (const token of invocationTokens) {
 			const skill = skills.find((candidate) => candidate.name === token.name);
@@ -6638,22 +6638,11 @@ export class AgentSession {
 				continue;
 			}
 
-			// A repeat of an already expanded skill adds no context, so it never counts
-			// against the cap and keeps its positional marker.
+			// A repeat of an already expanded skill adds no context and keeps its positional marker; it is
+			// handled, not an error, so it goes to the session debug log rather than the user.
 			if (expandedSkillNames.has(skill.name)) {
 				removedTokens.push(token);
-				this._extensionRunner.emitError({
-					extensionPath: skill.filePath,
-					event: "skill_expansion",
-					error: `Skipped duplicate skill invocation: ${skill.name}`,
-				});
-				continue;
-			}
-
-			if (skillBlocks.length >= maxExpansions) {
-				removedTokens.push(token);
-				unloadedTokens.add(token);
-				if (!skippedSkillNames.includes(skill.name)) skippedSkillNames.push(skill.name);
+				this._sessionLogger.debug("skill_expansion_duplicate", { name: skill.name });
 				continue;
 			}
 
@@ -6662,11 +6651,14 @@ export class AgentSession {
 			try {
 				const content = await readSkillFileChecked(skill.filePath, skill.provenance, skill.allowedSet);
 				const body = stripFrontmatter(content).trim();
+				// Every invoked skill loads; past the inline budget it loads as a reference to its file.
+				const inline = inlinedChars === 0 || inlinedChars + body.length <= SKILL_INLINE_BUDGET_CHARS;
+				if (inline) inlinedChars += body.length;
 				skillBlocks.push({
 					name: skill.name,
 					filePath: skill.filePath,
 					baseDir: skill.baseDir,
-					body,
+					body: inline ? body : formatSkillReferenceBody(skill.filePath),
 				});
 				expandedSkillNames.add(skill.name);
 				invocationMetadata.push({
@@ -6687,16 +6679,8 @@ export class AgentSession {
 			}
 		}
 
-		if (skippedSkillNames.length > 0) {
-			const count = skippedSkillNames.length;
-			this._extensionRunner.emitError({
-				extensionPath: "skill:expansion",
-				event: "skill_expansion",
-				error: `Skipped ${count} skill${count === 1 ? "" : "s"} (${skippedSkillNames.join(", ")}): at most ${maxExpansions} skills load per prompt. Raise maxSkillExpansionsPerPrompt to load more.`,
-			});
-		}
 		if (skillBlocks.length === 0) return text;
-		const userRequest = removeSkillInvocationTokens(text, removedTokens, unloadedTokens);
+		const userRequest = removeSkillInvocationTokens(text, removedTokens);
 		this._emit({ type: "skill_invocation", skills: invocationMetadata });
 		return formatSkillInvocationPrompt(skillBlocks, userRequest);
 	}

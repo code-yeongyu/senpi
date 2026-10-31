@@ -3588,6 +3588,64 @@ const text = await ctx.ui.editor("Edit:", "prefilled text");
 ctx.ui.notify("Done!", "info");  // "info" | "warning" | "error"
 ```
 
+#### Private secret input
+
+`ctx.ui.input(title, placeholder, { secret: true })` collects a single-line secret
+without putting it into model messages, session history, ordinary answer ledgers,
+or replay buffers. The string goes only to the requesting extension. The TUI masks
+it; RPC requires the presenting connection's explicit `secret_input_v1` and
+`interactive_user` handshake. Ordinary input is unchanged.
+
+Check the descriptor first: older JavaScript hosts silently ignore unknown options.
+The descriptor promises the guarded contract, not a currently connected presenter.
+
+```typescript
+if (ctx.ui.capabilities?.secretInput !== true) {
+  return { applied: false, reason: "host_unsupported" };
+}
+let value: string | undefined;
+try {
+  value = await ctx.ui.input("Credential", undefined, { secret: true });
+} catch (error: unknown) {
+  if (typeof error === "object" && error !== null &&
+      "code" in error && error.code === "secret_input_unavailable" &&
+      "reason" in error &&
+      (error.reason === "headless" || error.reason === "client_unsupported" ||
+       error.reason === "no_presenter")) {
+    return { applied: false, reason: error.reason };
+  }
+  throw error;
+}
+if (value === undefined) return { applied: false, reason: "cancelled" };
+// Consume value privately here. Never log, notify, throw, or return the value.
+return { applied: true, length: value.length };
+```
+
+Empty strings, Unicode and leading/trailing spaces are preserved. Control characters
+and multiline input are refused, never normalized. Cancellation, abort and timeout
+return `undefined`. Secret input defaults to a 30-minute deadline; a supplied timeout
+must be finite and positive. Repainting, progress or re-presentation cannot renew it.
+An already-aborted signal returns `undefined` without opening a dialog.
+
+Print/JSON mode throws `SecretInputUnavailableError` with code
+`secret_input_unavailable` and reason `headless`, while `ctx.hasUI` remains false.
+An unsupported RPC client gets `client_unsupported`; an ownerless call with no
+eligible presenter gets `no_presenter`. There is no plaintext or stdin fallback.
+The `ephemeral` option does not weaken secret privacy.
+
+Typed-secret login prompts use this API on supporting contexts. A new host refuses
+API-key `/login` from an old external client or attach binary, with fixed guidance:
+“This client cannot collect a secret; use the TUI or the host's settings route.”
+Older contexts without the descriptor retain their existing plain login call, an
+explicit legacy gap. Text, manual-code and select prompts retain their behavior.
+
+This is not taint tracking or a sandbox for extensions. Trusted extension code can
+leak the returned string. Keep labels and placeholders non-secret. File staging,
+if needed, belongs to the extension on the agent host, with private permissions,
+exclusive creation and explicit cleanup. The engine creates no secret file and
+cannot promise erasure of immutable JavaScript strings or protection from OS-level
+terminal recording, debuggers or a malicious client.
+
 #### Timed Dialogs with Countdown
 
 Dialogs support a `timeout` option that auto-dismisses with a live countdown display:

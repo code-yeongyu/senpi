@@ -11,6 +11,7 @@ import type {
 	RpcExtensionUIResponse,
 	RpcQuestionResolvedEvent,
 	RpcQuestionUpdatedEvent,
+	RpcSecretInputSettledEvent,
 	RpcResponse,
 	RpcSessionStatusEvent,
 } from "../rpc/rpc-types.ts";
@@ -22,6 +23,7 @@ export type AttachRecord = (
 	| RpcSessionStatusEvent
 	| RpcQuestionResolvedEvent
 	| RpcQuestionUpdatedEvent
+	| RpcSecretInputSettledEvent
 ) & { readonly sessionId?: string; readonly entryId?: string };
 type Answer = Extract<RpcResponse, { success: true }>;
 
