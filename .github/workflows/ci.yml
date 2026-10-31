@@ -369,8 +369,8 @@ jobs:
         shell: bash
         run: node scripts/test-temp-guard.mjs snapshot local-ignore/test-temp-before.json --export-env
 
-      - name: Normalizer unit tests
-        run: node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs
+      - name: Normalizer and TUI comparator unit tests
+        run: node --test .agents/skills/senpi-qa/scripts/lib/equivalence-normalize.test.mjs .agents/skills/senpi-qa/scripts/lib/equivalence-tui-compare.test.mjs
 
       - name: EQ compare against the B0 goldens
         timeout-minutes: 25
