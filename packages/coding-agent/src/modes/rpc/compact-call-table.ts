@@ -94,8 +94,10 @@ export class CompactCallTable {
 		return keys.flatMap((key) => this.get(key) ?? []);
 	}
 
+	/** Measured before owning: a value the engine cannot serialize (too deep) throws with nothing owned yet (RULING-59). */
 	own(value: unknown): Slot {
-		return { ref: this.values.own(value), bytes: Buffer.byteLength(JSON.stringify(value) ?? "") };
+		const bytes = Buffer.byteLength(JSON.stringify(value) ?? "");
+		return { ref: this.values.own(value), bytes };
 	}
 
 	/** X07 `slotBytes` counts one copy per slot: the replaced value's bytes leave with it. */
@@ -116,11 +118,13 @@ export class CompactCallTable {
 	/** Publishes a created or changed call at its creation ordinal and refreshes every index it is reachable by. */
 	put(call: OutstandingCall, creation: { readonly sequence: number; readonly k: number }): void {
 		const order = callOrder(creation.sequence, creation.k);
+		// Measured before anything changes, so a header the engine cannot serialize leaves the table as it was.
+		const bytes = headerBytes(call);
 		const previous = this.entries.get(call.runtimeItemKey)?.call;
 		if (previous) this.unindex(previous);
 		this.root = this.roots.set(this.root, order, call);
 		this.counters.replacements++;
-		this.headerBytes += headerBytes(call) - (previous ? headerBytes(previous) : 0);
+		this.headerBytes += bytes - (previous ? headerBytes(previous) : 0);
 		this.entries.set(call.runtimeItemKey, { call, order });
 		this.index(call);
 	}
