@@ -1,3 +1,21 @@
+## 2026-10-30 - Keep-alive timeout is a provider stream stall (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/utils/retry.ts`: `PROVIDER_STREAM_STALL_ERROR_PATTERN` and `PROVIDER_STALL_PHASES` recognize `Provider stream sent only keep-alives and timed out after <n>ms (...)`; users read "kept the connection alive but sent no response", with `retry.provider.keepAliveTimeoutMs` as the setting to raise.
+
+### Why
+
+- The new bound must take the same same-model retry and fallback path as the other stream bounds, and explain itself in plain words.
+
+### Why an extension could not handle it
+
+- The stall classifier is the shared retry gate.
+
+### Expected merge conflict zones
+
+- LOW: the stall pattern alternation and the phase table.
+
 ## 2026-10-27 - Explicit producer-time seed frontier (part of #4272)
 
 ### What changed

@@ -1,3 +1,22 @@
+## 2026-10-30 - Anthropic SSE reports transport activity (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `iterateSseMessages` calls an `onBytes` callback for every non-empty body chunk, before parsing, so `ping` events and `:` comments count; `iterateAnthropicEvents` and the stream pass `options.onTransportActivity` into it.
+- `packages/ai/src/api/simple-options.ts`: `buildBaseOptions` forwards `onTransportActivity`.
+
+### Why
+
+- Keep-alives are dropped by the SSE parser (comments) or the event filter (`ping`), so the agent loop could not see that an accepted request was still alive while the model thought before its first token.
+
+### Why an extension could not handle it
+
+- The SSE reader is internal to the adapter.
+
+### Expected merge conflict zones
+
+- LOW: `iterateSseMessages` read loop and signature; `iterateAnthropicEvents` call site; `buildBaseOptions` field list.
+
 ## 2026-10-26 - The remaining provider families capture block seeds at emission (senpi#4285, part of #4272)
 
 ### What changed
