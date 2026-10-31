@@ -23,7 +23,7 @@ export function declareSocketClient(
 		const caps = selection?.capabilities ?? command.capabilities ?? host.pendingCapabilities.get(peer) ?? [];
 		host.pendingCapabilities.set(peer, [...caps]);
 		host.writer.setConnectionCapabilities(peer, caps);
-	}
+	} else if (command.capabilities !== undefined) host.writer.setSoleSecretCapabilities(command.capabilities);
 	return {
 		id: command.id,
 		type: "response",

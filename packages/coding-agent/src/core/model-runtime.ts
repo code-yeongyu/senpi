@@ -77,7 +77,9 @@ import { APP_NAME, BRAND, getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
 import { envValue } from "./brand.ts";
+import { signOutClaudeCliSlotsForLogout } from "./credential-accounts-logout.lazy.ts";
 import { discoverEnvSlots } from "./credential-pool/env-slots.ts";
+import { emitProviderAccountsChanged } from "./extensions/builtin/anthropic-subscription/account-events.ts";
 import { retryOnceOnRejectedToken } from "./credential-pool/rejected-token-retry.ts";
 import type { RotationSources } from "./credential-pool/rotation-stream.ts";
 import { ModelConfig } from "./model-config.ts";
@@ -1374,15 +1376,32 @@ export class ModelRuntime implements Models {
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
 			const credential = await this.models.login(providerId, type, { ...interaction, signal }, options);
 			await this.synchronizeCredentialState(providerId, "login", credential, signal);
+			// A fresh login is the remedy a usage-limit refusal names: holds sessions keep on this provider are stale.
+			emitProviderAccountsChanged(providerId, "login");
 			return credential;
 		});
 	}
 
-	logout(providerId: string, options: AuthOperationOptions = {}): Promise<void> {
+	async logout(providerId: string, options: AuthOperationOptions = {}): Promise<void> {
+		await this.logoutProvider(providerId, options);
+	}
+
+	/**
+	 * {@link logout}, answering what the user should know: an Anthropic Subscription `claude-cli` account is signed out
+	 * of the Claude CLI's own store before the credential is deleted (senpi#4436), and `notices` names any account that
+	 * could not be signed out cleanly.
+	 */
+	logoutProvider(
+		providerId: string,
+		options: AuthOperationOptions = {},
+	): Promise<{ readonly notices: readonly string[] }> {
 		const signal = operationSignal(options.signal);
 		return this.enqueueCredentialOperation(providerId, signal, async () => {
+			const storage = this.authStorage;
+			const notices = storage === undefined ? [] : await signOutClaudeCliSlotsForLogout(storage, providerId, process.env, signal);
 			await this.models.logout(providerId, { signal });
 			await this.synchronizeCredentialState(providerId, "logout", undefined, signal);
+			return { notices };
 		});
 	}
 

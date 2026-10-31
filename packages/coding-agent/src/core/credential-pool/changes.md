@@ -1,3 +1,21 @@
+## 2026-10-30 - The pool's reset reader uses the shared wall-clock parser (senpi#1771)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/reset-time.ts`: reads a wall-clock reset with `clockResetMs` from `@earendil-works/pi-ai/utils/retry-hint` instead of its own copy; behavior unchanged.
+
+### Why
+
+- One parser for one text, so the pool and the retry-hint extractor cannot drift apart again.
+
+### Why an extension could not handle it
+
+- The reset reader is internal to the credential pool's classifier.
+
+### Expected merge conflict zones
+
+- LOW: the imports and `usageLimitReset` in `reset-time.ts`.
+
 ## 2026-10-29 - Committed pool health publishes an account change
 
 ### What changed

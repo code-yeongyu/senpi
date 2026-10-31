@@ -105,11 +105,16 @@ export type HostToSessionWorker =
 	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
 	| { type: "cancel_grant"; id: string }
+	| { type: "cancel_secret"; id: string }
 	/** A change to the host's subscription limit records after `prepare`, mirrored into the isolate (senpi#3695). */
 	| { type: "subscription_limits"; accounts: readonly MirroredLimits[] }
 	| { type: "close" };
 
 export type SessionWorkerToHost =
+	| { type: "secret_select"; id: string; connection?: string; decision: SharedArrayBuffer; signal: SharedArrayBuffer }
+	| { type: "secret_frame"; id: string; record: object; signal: SharedArrayBuffer }
+	| { type: "secret_settled" | "secret_forget"; id: string; signal: SharedArrayBuffer }
+	| { type: "secret_handshake"; capabilities: readonly string[]; signal: SharedArrayBuffer }
 	| { type: "mcp_form_bind"; id: string; durableId: string }
 	| { type: "mcp_form_ready"; id: string; epoch: string }
 	| { type: "mcp_form_release"; epoch: string }

@@ -1,3 +1,41 @@
+## 2026-10-27 - Anthropic sends the cross-session stable system prefix as its own cached block (senpi#4447)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `buildParams` builds `params.system` through `anthropicSystemTextBlocks`, passing the leading system message's `stablePrefix`.
+- `packages/ai/src/api/anthropic-system-blocks.ts`: new. When the rendered prompt still starts with the recorded stable prefix it goes out as two text blocks whose concatenation is the prompt; the stable block carries the system `cache_control`, the tail none, so the breakpoint count is unchanged. A prompt that no longer starts with it (a later `context_with_system` rewrite) goes out as one block.
+
+### Why
+
+- One system block with one breakpoint missed whenever any byte of a volatile tail (memory, MCP instructions) differed between sessions, so a new session read only the tools prefix and re-wrote the ~20k-token stable prompt.
+
+### Why an extension could not handle it
+
+- System block construction and breakpoint placement happen inside `packages/ai/src/api/anthropic-messages.ts` after every extension hook.
+
+### Expected merge conflict zones
+
+- LOW: the `params.system` assignment in `buildParams` in `packages/ai/src/api/anthropic-messages.ts`.
+
+## 2026-10-30 - Anthropic SSE reports transport activity (senpi#4608)
+
+### What changed
+
+- `packages/ai/src/api/anthropic-messages.ts`: `iterateSseMessages` calls an `onBytes` callback for every non-empty body chunk, before parsing, so `ping` events and `:` comments count; `iterateAnthropicEvents` and the stream pass `options.onTransportActivity` into it.
+- `packages/ai/src/api/simple-options.ts`: `buildBaseOptions` forwards `onTransportActivity`.
+
+### Why
+
+- Keep-alives are dropped by the SSE parser (comments) or the event filter (`ping`), so the agent loop could not see that an accepted request was still alive while the model thought before its first token.
+
+### Why an extension could not handle it
+
+- The SSE reader is internal to the adapter.
+
+### Expected merge conflict zones
+
+- LOW: `iterateSseMessages` read loop and signature; `iterateAnthropicEvents` call site; `buildBaseOptions` field list.
+
 ## 2026-10-26 - The remaining provider families capture block seeds at emission (senpi#4285, part of #4272)
 
 ### What changed
