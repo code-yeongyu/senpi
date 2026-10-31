@@ -333,7 +333,7 @@ it.each([true, false])("bootstrap precedes in-process admission (flag on: %s)", 
 		expect(opened?.success, JSON.stringify(opened)).toBe(true);
 		expect(atAdmission.length).toBeGreaterThan(0);
 		if (flag) expect(atAdmission[0]).toEqual({ sessionEpoch: expect.stringMatching(UUID), sequence: 0 });
-		else expect(atAdmission[0], "flag off: no lane").toBeNull();
+		else expect(atAdmission[0], "a session without a structured lane: no acceptance lane").toBeNull();
 	} finally {
 		rig.teardown.release();
 		await rig[Symbol.asyncDispose]();
