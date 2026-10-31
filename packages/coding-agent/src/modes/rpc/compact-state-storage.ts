@@ -14,6 +14,10 @@ const messageLeaves = (row: MessageRoot) => [
 
 export interface CompactSessionStateOptions extends CompactContentStoreOptions {
 	readonly compactAboveRows?: number;
+	/** The registry nonce of the epoch this owner serves; the only epoch it accepts (RULING-39). */
+	readonly epoch?: string;
+	/** The lane's accepted-sequence epoch, the prefix of every runtime item key it mints (RULING-13 Q1). */
+	readonly sessionEpoch?: string;
 }
 
 /** Constructs the single storage graph shared by acceptance, settlement, and frozen reads. */
@@ -23,8 +27,12 @@ export class CompactStateStorage {
 	protected readonly cold: CompactColdOperations;
 	protected readonly blockRoots: CompactComponentRoots<FrozenBlock>;
 	protected readonly messageRoots: CompactComponentRoots<MessageRoot>;
+	protected readonly epoch: string | undefined;
+	protected readonly sessionEpoch: string;
 
 	constructor(options: CompactSessionStateOptions) {
+		this.epoch = options.epoch;
+		this.sessionEpoch = options.sessionEpoch ?? "";
 		this.store = new CompactContentStore(options);
 		this.blockRoots = new CompactComponentRoots(this.store, (block) => [
 			block.root,
