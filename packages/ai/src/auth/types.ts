@@ -284,6 +284,14 @@ export interface OAuthAuth {
 	login(interaction: ProviderAuthInteraction, options?: LoginOptions): Promise<OAuthCredential>;
 
 	/**
+	 * Side-effect-free: the signed-in account a credential's own material belongs to, or `undefined`
+	 * when it cannot tell. A login whose identity matches a saved account replaces that account's
+	 * credential instead of being added beside it (`appendLoginSlot`). Must be synchronous and must
+	 * not load the flow module, because it runs inside the credential store's write lock.
+	 */
+	accountIdentity?(credential: Pick<OAuthCredential, "access">): string | undefined;
+
+	/**
 	 * Exchange the refresh token. Network call; throws on failure
 	 * (invalid_grant etc.). `Models` uses the injected session refresh lock,
 	 * never the store's global write lock.
