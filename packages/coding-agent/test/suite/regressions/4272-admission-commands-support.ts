@@ -92,6 +92,7 @@ export const admissionCommands = [
 	"account_pin",
 	"account_remove",
 	"account_order",
+	"test_provider_account",
 	"set_client_info",
 	"cancel_attempt",
 	"reset_stream",
