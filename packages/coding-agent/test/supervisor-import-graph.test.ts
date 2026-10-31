@@ -106,11 +106,12 @@ const PRIVATE_FD_LEAVES = new Set([
 ]);
 
 // senpi#4602: a coordinated start reports its phases on the dedicated startup pipe, which adds exactly these three
-// leaves. Measured at 73 modules (8 hop, 3 public auth, 4 private fd leaves): host-startup-beacon 3,707 source / 3,547
-// built bytes, 80 code lines (the stub every entry imports first; node builtins, host-identity-env and the wire);
-// host-startup-wire 4,070 / 2,503, 64 (the record format; its only repo import is type-only and erased);
-// host-lifecycle-startup 3,337 / 2,566, 63 (the supervisor's milestones, relay and in-phase retries, over modules
-// already in the graph). The base ceiling and every forbidden/core import check remain unchanged.
+// leaves. Measured at 73 modules (8 hop, 3 public auth, 4 private fd leaves): host-startup-beacon 3,839 source / 3,670
+// built bytes, 82 code lines (the stub every entry imports first; node builtins, host-identity-env and the wire);
+// host-startup-wire 7,454 / 6,433, 107 (the record format and the filler pipes; node:fs only, its policy import is
+// type-only); host-lifecycle-startup 3,912 / 3,131, 73 (the supervisor's milestones, relay, in-phase retries and
+// its host child's stdio, over modules already in the graph). The base ceiling and every forbidden/core import check remain
+// unchanged.
 const STARTUP_EVENT_LEAVES = new Set(
 	["host-startup-beacon", "host-startup-wire", "host-lifecycle-startup"].map(
 		(name) => `packages/coding-agent/dist/modes/rpc/${name}.js`,

@@ -12,6 +12,7 @@ import {
 	encodeStartupHandOff,
 	MAX_STARTUP_EVENT_BYTES,
 	parseStartupHandOff,
+	releaseInheritedStartupFillers,
 	relayStartupLine,
 	STARTUP_EVENT_FD,
 	type StartupHandOff,
@@ -39,6 +40,7 @@ function isStartupPipe(fd: number): boolean {
 function captured(): BeaconState | null {
 	const previous: unknown = Reflect.get(globalThis, STATE);
 	if (previous !== undefined) return previous as BeaconState | null;
+	if (isMainThread) releaseInheritedStartupFillers(process.env);
 	const handOff = isMainThread ? parseStartupHandOff(process.env[HOST_STARTUP_EVENTS_ENV]) : undefined;
 	if (isMainThread) delete process.env[HOST_STARTUP_EVENTS_ENV];
 	const state = handOff && isStartupPipe(STARTUP_EVENT_FD) ? { handOff, seq: 0, open: true } : null;
@@ -74,8 +76,8 @@ export function reportStartupMilestone(milestone: StartupMilestone): void {
 }
 
 /** The environment value for the host child a coordinated supervisor spawns, or undefined when uncoordinated. */
-export function hostChildStartupHandOff(): string | undefined {
-	return state ? encodeStartupHandOff({ ...state.handOff, role: "host" }) : undefined;
+export function hostChildStartupHandOff(fillers: readonly number[]): string | undefined {
+	return state ? encodeStartupHandOff({ ...state.handOff, role: "host", fillers }) : undefined;
 }
 
 /**

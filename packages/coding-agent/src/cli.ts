@@ -24,7 +24,7 @@ import { prepareRuntimeSnapshot } from "./runtime-snapshot/enter.ts";
 import { handleBootstrapSelfUpdate } from "./self-update-bootstrap.ts";
 import { preparePrivateFdSpawn, spawnWithPrivateFds } from "./private-fd-spawn.ts";
 import { HOST_STARTUP_EVENTS_ENV } from "./modes/rpc/host-identity-env.ts";
-import { STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.ts";
+import { releaseInheritedStartupFillers, STARTUP_EVENT_FD } from "./modes/rpc/host-startup-wire.ts";
 
 /**
  * A coordinated host start keeps its startup pipe through CLI re-execution (senpi#4602): the hand-off variable
@@ -110,6 +110,9 @@ function reexecUnderBunIfNeeded(): boolean {
 	process.exitCode = result.status ?? 1;
 	return true;
 }
+
+// A coordinated host start's filler pipes are released before anything can spawn or re-execute (senpi#4602).
+releaseInheritedStartupFillers(process.env);
 
 if (reexecUnderBunIfNeeded()) {
 	process.exit();

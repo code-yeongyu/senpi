@@ -113,6 +113,13 @@ export async function startHost(
 			coordinated: "reportsStartup" in launch && launch.reportsStartup === true,
 			...(testOptions?.readinessTimeoutMs ? { decisionBudgetMs: testOptions.readinessTimeoutMs } : {}),
 		});
+		// The fillers are decided by the stdio, and the hand-off in the environment names them: stdio first.
+		const base: ("ignore" | "pipe" | number)[] = options.presenterBootstrap
+			? ["ignore", "ignore", stderr.fd, options.owner ? "pipe" : "ignore", "pipe"]
+			: options.owner
+				? ["ignore", "ignore", stderr.fd, "pipe"]
+				: ["ignore", "ignore", stderr.fd];
+		const stdio = attempt.stdio(base);
 		child = spawnWithPrivateFds(spawn, launch.command, [...launch.args], {
 			detached: true,
 			windowsHide: true,
@@ -126,11 +133,7 @@ export async function startHost(
 				}),
 				...attempt.env,
 			},
-			stdio: options.presenterBootstrap
-				? ["ignore", "ignore", stderr.fd, options.owner ? "pipe" : "ignore", "pipe", ...attempt.stdio(5)]
-				: options.owner
-					? ["ignore", "ignore", stderr.fd, "pipe", ...attempt.stdio(4)]
-					: ["ignore", "ignore", stderr.fd, ...attempt.stdio(3)],
+			stdio,
 		});
 		if (options.presenterBootstrap)
 			presenterEnrollment = relayPresenterBootstrap(options.presenterBootstrap, child, {

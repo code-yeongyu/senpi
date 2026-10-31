@@ -13,7 +13,8 @@ import { resolveCliMainPath } from "./host-cli-entry.ts";
 import { HOST_DAEMON_DIR_ENV } from "./host-daemon-paths.ts";
 import { HOST_INSTANCE_ID_ENV, HOST_STARTUP_EVENTS_ENV, INTERNAL_KEY_STDIN_ENV } from "./host-identity-env.ts";
 import { hostChildStartupHandOff } from "./host-startup-beacon.ts";
-import { startupEventStdio } from "./host-startup-wire.ts";
+import { hostChildStdio } from "./host-lifecycle-startup.ts";
+import { releaseStartupFillers } from "./host-startup-wire.ts";
 import {
 	HOST_CLEANUP_PATHS_ENV,
 	HOST_PUBLIC_SOCKET_ENV,
@@ -276,6 +277,7 @@ export function spawnHostChild(options: {
 	const bootstrap = launch.presenterBootstrapFd !== undefined && !childLaunch.shell;
 	if (bootstrap) childLaunch.args.push("--mcp-presenter-fd", "4");
 	// Property access also preserves OS-level instrumentation on runtimes with captured builtin exports.
+	const startupStdio = hostChildStdio(bootstrap, options.reportsStartup === true);
 	const child = spawnWithPrivateFds(
 		(command, args, options) => childProcess.spawn(command, args, options),
 		childLaunch.command,
@@ -298,19 +300,14 @@ export function spawnHostChild(options: {
 				[INTERNAL_KEY_STDIN_ENV]: options.internalKey ? "1" : undefined,
 				[HOST_CLEANUP_PATHS_ENV]: options.cleanupPaths.join("\n"),
 				...(process.platform === "win32" ? {} : { [HOST_PUBLIC_SOCKET_ENV]: publicSocket }),
-				[HOST_STARTUP_EVENTS_ENV]: options.reportsStartup ? hostChildStartupHandOff() : undefined,
+				[HOST_STARTUP_EVENTS_ENV]: options.reportsStartup
+					? hostChildStartupHandOff(startupStdio.fillers)
+					: undefined,
 			},
 			// Slot 3 is the lifetime pipe: "pipe" gives the child a read end it can
 			// wait on and keeps the write end owned by this process alone.
 			shell: childLaunch.shell,
-			stdio: [
-				process.platform === "win32" ? "ignore" : "pipe",
-				"ignore",
-				"inherit",
-				"pipe",
-				...(bootstrap ? ["pipe" as const] : []),
-				...(options.reportsStartup ? startupEventStdio(bootstrap ? 5 : 4) : []),
-			],
+			stdio: startupStdio.stdio,
 			// The supervisor is spawned detached, so on win32 it owns no console. A
 			// console-subsystem child started from it would allocate a fresh one,
 			// which Windows Terminal renders as an empty window that takes focus.
@@ -320,6 +317,7 @@ export function spawnHostChild(options: {
 		// The engine ends the private descriptor chain: a host it starts later never inherits them.
 		{ final: true },
 	);
+	releaseStartupFillers(child, startupStdio.fillers);
 	if (launch.presenterBootstrapFd !== undefined) {
 		const fd = launch.presenterBootstrapFd;
 		// The opt-in helper stays outside the supervisor's fixed startup import budget.

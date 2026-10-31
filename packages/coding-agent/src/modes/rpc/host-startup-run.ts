@@ -20,7 +20,13 @@ import {
 	type StartupOutcome,
 	startStartupController,
 } from "./host-startup-policy.ts";
-import { encodeStartupHandOff, STARTUP_EVENT_FD, type StartupBinding, startupEventStdio } from "./host-startup-wire.ts";
+import {
+	encodeStartupHandOff,
+	releaseStartupFillers,
+	STARTUP_EVENT_FD,
+	type StartupBinding,
+	withStartupPipe,
+} from "./host-startup-wire.ts";
 
 /** The launcher's monotonic clock: never the wall clock, never another process's timestamps. */
 export function monotonicStartupClock(): StartupClock {
@@ -35,9 +41,10 @@ export interface StartupAttempt {
 	readonly controller: StartupController;
 	readonly binding: StartupBinding;
 	readonly coordinated: boolean;
-	/** The supervisor's hand-off variable and the stdio slots of its startup pipe, for a coordinated launch. */
+	/** The supervisor's hand-off variable, for a coordinated launch; read it after `stdio()`, which decides the fillers. */
 	readonly env: Readonly<Record<string, string>>;
-	stdio(nextSlot: number): readonly ("ignore" | "pipe")[];
+	/** `base` with the startup pipe and its fillers, for a coordinated launch; `base` unchanged otherwise. */
+	stdio<T>(base: readonly T[]): (T | "pipe")[];
 	attach(child: ChildProcess, childExit: Promise<ChildExit>): void;
 }
 
@@ -69,15 +76,23 @@ export function beginStartupAttempt(options: {
 		decisionBudgetMs: budgetMs,
 	});
 	const coordinated = options.coordinated;
+	let fillers: readonly number[] = [];
 	return {
 		controller,
 		binding,
 		coordinated,
-		env: coordinated
-			? { [HOST_STARTUP_EVENTS_ENV]: encodeStartupHandOff({ binding, role: "supervisor", budgetMs }) }
-			: {},
-		stdio: (nextSlot) => (coordinated ? startupEventStdio(nextSlot) : []),
+		get env(): Readonly<Record<string, string>> {
+			if (!coordinated) return {};
+			return { [HOST_STARTUP_EVENTS_ENV]: encodeStartupHandOff({ binding, role: "supervisor", budgetMs, fillers }) };
+		},
+		stdio(base) {
+			if (!coordinated) return [...base];
+			const filled = withStartupPipe(base);
+			fillers = filled.fillers;
+			return filled.stdio;
+		},
 		attach(child, childExit) {
+			releaseStartupFillers(child, fillers);
 			const stream: unknown = (child.stdio as readonly unknown[])[STARTUP_EVENT_FD];
 			if (coordinated && stream instanceof Readable) attachStartupEvents(stream, controller, binding);
 			// Before public verification a supervisor exit ends the attempt; during it, the in-flight probe decides.

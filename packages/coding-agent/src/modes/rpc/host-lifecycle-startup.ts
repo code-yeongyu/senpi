@@ -12,7 +12,7 @@ import { Readable } from "node:stream";
 import { relayHostStartupEvents, reportStartupMilestone, startupHandOff } from "./host-startup-beacon.ts";
 import { waitForListener } from "./host-lifecycle-proxy.ts";
 import { writeJsonAtomic } from "./host-state-json.ts";
-import { STARTUP_ATTEMPT_FILE, STARTUP_EVENT_FD } from "./host-startup-wire.ts";
+import { STARTUP_ATTEMPT_FILE, STARTUP_EVENT_FD, withStartupPipe } from "./host-startup-wire.ts";
 
 const UNCOORDINATED_LISTENER_TIMEOUT_MS = 30_000;
 const OBSERVER_RETRY_DELAY_MS = 250;
@@ -76,4 +76,19 @@ export async function awaitInternalStartup(options: {
 
 export function supervisorPublished(): void {
 	reportStartupMilestone("public_published");
+}
+
+/**
+ * The host child's stdio: stdin for the internal key, inherited stderr, the lifetime pipe at 3, the presenter
+ * channel at 4 when bootstrapped, and on a coordinated start the startup pipe at 16 with its fillers.
+ */
+export function hostChildStdio(bootstrap: boolean, reportsStartup: boolean) {
+	const base = [
+		process.platform === "win32" ? "ignore" : "pipe",
+		"ignore",
+		"inherit",
+		"pipe",
+		...(bootstrap ? ["pipe" as const] : []),
+	] as const;
+	return reportsStartup ? withStartupPipe(base) : { stdio: [...base], fillers: [] as number[] };
 }
