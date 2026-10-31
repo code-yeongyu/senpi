@@ -1,6 +1,9 @@
 import type { TranscriptRoot } from "./accepted-transcript.ts";
 import { CompactReadError, CompactReadLease } from "./compact-read-lease.ts";
+import { RecoveryManifests } from "./compact-recovery-manifest.ts";
 import { RecoveryStreams } from "./compact-recovery-streams.ts";
+import type { FrozenCheckpoint } from "./compact-recovery-checkpoint-types.ts";
+export type { FrozenCheckpoint, RetainedRoot } from "./compact-recovery-checkpoint-types.ts";
 import {
 	type CheckpointToken,
 	type RecoveryCaller,
@@ -12,34 +15,13 @@ import {
 	type RecoveryStreamState,
 	type RecoveryToken,
 	type RefusalReason,
+	type StorageUnavailableReason,
 	recovered,
 	refusalReason,
 	repairNeeded,
 	storageUnavailable,
 } from "./compact-recovery-types.ts";
 import type { FrozenAcceptedRoot, SessionAcceptanceLane } from "./session-acceptance-lane.ts";
-
-/** A frozen checkpoint: its token, and the lane root the legacy view reader (S07b) reads under the lane. */
-export interface FrozenCheckpoint {
-	readonly token: CheckpointToken;
-	readonly lane: SessionAcceptanceLane;
-	readonly root: FrozenAcceptedRoot;
-	/** Runs a direct read of `root` as an operation in flight on this checkpoint: a reclaim waits for it to unwind. */
-	hold<T>(read: () => Promise<T>): Promise<T>;
-	/**
-	 * Keeps `root` for one consumer from now until `end`: a reclaim meanwhile (a supersession, a retired route, the
-	 * peer's end) invalidates the token but never takes the root from that consumer, whose reads never refuse.
-	 */
-	retain(): RetainedRoot;
-}
-
-/** A checkpoint's root kept for one consumer (the shed's resync cut) until it calls `end`. */
-export interface RetainedRoot {
-	readonly lane: SessionAcceptanceLane;
-	readonly root: FrozenAcceptedRoot;
-	hold<T>(read: () => Promise<T>): Promise<T>;
-	end(): void;
-}
 
 interface Checkpoint extends FrozenCheckpoint {
 	readonly lease: CompactReadLease;
@@ -60,7 +42,10 @@ export class RecoveryCheckpoints {
 	/** Every token minted here, with the admission it was minted for; a holder's copy or a forgery is not in it. */
 	private readonly issued = new WeakMap<RecoveryToken, RecoveryAdmission>();
 	private readonly streams = new RecoveryStreams();
+	private readonly manifests = new RecoveryManifests();
 	private readonly refusals = new Map<RefusalReason, number>();
+	private readonly unavailable = new Map<StorageUnavailableReason, number>();
+	private readonly ended = new Set<(tokenId: string) => void>();
 	private minted = 0;
 	private frozen = 0;
 	private reclaimed = 0;
@@ -78,6 +63,11 @@ export class RecoveryCheckpoints {
 		return this.streams.describe(caller);
 	}
 
+	/** Runs once per token when its lease ends, however it ended (a release, a reclaim, its peer's end). */
+	onTokenEnd(listener: (tokenId: string) => void): void {
+		this.ended.add(listener);
+	}
+
 	status(): RecoveryCounters {
 		return {
 			open: this.checkpoints.size,
@@ -85,18 +75,26 @@ export class RecoveryCheckpoints {
 			frozen: this.frozen,
 			reclaimed: this.reclaimed,
 			refused: Object.fromEntries(this.refusals),
+			unavailable: Object.fromEntries(this.unavailable),
 		};
 	}
 
 	/** The next generation of the route's stream: a failed freeze advances nothing and pins nothing. */
-	freeze(route: RecoveryRoute, lane: SessionAcceptanceLane): RecoveryOutcome<FrozenCheckpoint> {
+	freeze(route: RecoveryRoute, lane: SessionAcceptanceLane, join = false): RecoveryOutcome<FrozenCheckpoint> {
 		if (lane.retired) return this.refuse(repairNeeded("lane_retired"));
+		const current = join ? this.checkpoints.get(this.streams.get(route)?.current ?? "") : undefined;
+		if (current && this.check(current.token, route).ok) {
+			this.streams.join(route);
+			return recovered(current);
+		}
 		const root = lane.freeze();
 		if (root.current === undefined) {
 			lane.release(root);
 			return this.refuse(storageUnavailable("compact_state_unavailable"));
 		}
 		const id = `${route.socketEpoch}:${++this.minted}`;
+		// One token per root (RULING-69 (2)): a root already pinned is a broken invariant, thrown before any stream moves.
+		this.manifests.pin(id, root);
 		const { generation, retired } = this.streams.next(route, root.sessionEpoch, id);
 		const admission: RecoveryAdmission = Object.freeze({ ...route, sessionEpoch: root.sessionEpoch, generation });
 		const token: CheckpointToken = Object.freeze({
@@ -114,8 +112,10 @@ export class RecoveryCheckpoints {
 		});
 		const lease = new CompactReadLease(
 			() => {
+				this.manifests.release(token.id);
 				lane.release(root);
 				this.checkpoints.delete(token.id);
+				for (const listener of this.ended) listener(token.id);
 			},
 			() => {
 				const stale = this.staleness(token, lane);
@@ -167,12 +167,24 @@ export class RecoveryCheckpoints {
 	 * token it minted is reclaimed like a superseded one (RULING-56 (4)), with or without its stream record. Idempotent.
 	 */
 	retireRoute(caller: RecoveryCaller, admissionId: string): void {
+		const current = this.streams.get(caller)?.current;
 		this.streams.retireRoute(caller, admissionId);
+		if ((this.streams.get(caller)?.routes.size ?? 0) > 0) return;
+		this.reclaim(current);
 		for (const { token } of [...this.checkpoints.values()]) {
 			const { socketEpoch, sessionId, admissionId: minter } = token.admission;
 			if (socketEpoch === caller.socketEpoch && sessionId === caller.sessionId && minter === admissionId)
 				this.reclaim(token.id);
 		}
+	}
+
+	/**
+	 * The caller's claim on a token it named by id, before any request state is touched: a token superseded while an
+	 * operation still holds it answers `superseded_token` with the newer generation (RULING-70 (3), RULING-50 (2)).
+	 */
+	check(token: RecoveryToken, caller: RecoveryCaller): RecoveryOutcome<RecoveryToken> {
+		const claimed = this.claim(token, caller);
+		return claimed.ok ? recovered(token) : claimed;
 	}
 
 	/** The pinned transcript root (version, leaf, accepted ids, base identity); its bytes are read by S11's page route. */
@@ -205,16 +217,42 @@ export class RecoveryCheckpoints {
 		return this.read(token, caller, (lane, root) => lane.readCurrentCalls(root));
 	}
 
+	/** The bounded manifest of the cut (S09, R4.B1): built once per token from its pinned root, never a component list. */
+	catalog(token: RecoveryToken, caller: RecoveryCaller) {
+		return this.read(token, caller, (lane, root, lease) =>
+			this.manifests.manifest(token, lane, root, () => lease.assert()),
+		);
+	}
+
+	/** One catalog node or component under the token, verified against its parent's digest before it is decoded. */
+	readCatalog(token: RecoveryToken, caller: RecoveryCaller, ref: string) {
+		return this.read(token, caller, (lane, root) => this.manifests.read(token.id, lane, root, ref));
+	}
+
+	/**
+	 * One bounded page (at most `FRAGMENT_MAX_BYTES` raw bytes) of a catalog component at a raw byte offset, under the
+	 * same claim and lease as every read (S11a; the cursor, ordinal and request limits around it are S11b). `signal` is
+	 * the request's budget: a first open's verification is charged to it and stops, typed `aborted`, when it aborts.
+	 */
+	readCatalogPage(token: RecoveryToken, caller: RecoveryCaller, ref: string, offset: number, signal?: AbortSignal) {
+		return this.read(token, caller, (lane, root) => this.manifests.page(token, lane, root, ref, offset, signal));
+	}
+
+	/** Components verified under the live frozen roots (RULING-69 (2)); a root's entries go with its lease. */
+	get verifiedComponents(): number {
+		return this.manifests.verifiedComponents;
+	}
+
 	private async read<T>(
 		token: RecoveryToken,
 		caller: RecoveryCaller,
-		component: (lane: SessionAcceptanceLane, root: FrozenAcceptedRoot) => Promise<T>,
+		component: (lane: SessionAcceptanceLane, root: FrozenAcceptedRoot, lease: CompactReadLease) => Promise<T>,
 	): Promise<RecoveryOutcome<T>> {
 		const claimed = this.claim(token, caller);
 		if (!claimed.ok) return claimed;
 		const { lease, lane, root } = claimed.value;
 		try {
-			return recovered(await lease.run(() => component(lane, root)));
+			return recovered(await lease.run(() => component(lane, root, lease)));
 		} catch (cause) {
 			return this.refused(token, lane, cause);
 		}
@@ -279,10 +317,12 @@ export class RecoveryCheckpoints {
 		throw cause;
 	}
 
-	/** Every typed failure leaves through here, counted by its reason. */
+	/** Every typed failure leaves through here, counted by its reason; a storage refusal also by its detail. */
 	private refuse(failure: RecoveryFailure): RecoveryOutcome<never> {
 		const reason = refusalReason(failure);
 		this.refusals.set(reason, (this.refusals.get(reason) ?? 0) + 1);
+		if (failure.kind === "storage_unavailable")
+			this.unavailable.set(failure.reason, (this.unavailable.get(failure.reason) ?? 0) + 1);
 		return { ok: false, failure };
 	}
 }

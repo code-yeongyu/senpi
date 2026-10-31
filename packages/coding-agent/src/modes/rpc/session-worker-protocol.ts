@@ -69,8 +69,11 @@ export type HostToSessionWorker =
 			/** The host's subscription limit records when the isolate starts (senpi#3695). */
 			subscriptionLimits: readonly MirroredLimits[];
 	  }
-	/** `acceptance`: the host owns an acceptance lane, so the isolate sends a bootstrap and ordered output frames. */
-	| { type: "commit"; request: number; acceptance?: true; recoveryEpoch?: string }
+	/**
+	 * `acceptance`: the host owns an acceptance lane, so the isolate sends a bootstrap and ordered output frames;
+	 * `permits`: then the incarnation's payload permit block, already holding its fixed initial credit (S12b).
+	 */
+	| { type: "commit"; request: number; acceptance?: true; recoveryEpoch?: string; permits?: SharedArrayBuffer }
 	| {
 			type: "bind";
 			request: number;
@@ -133,6 +136,9 @@ export type SessionWorkerToHost =
 			/** One per output frame of this worker incarnation, from 0; continuity only, never the accepted sequence. */
 			ordinal?: number;
 			record: object;
+			/** A record nested past the protocol depth limit travels as its JSON text (`record` is then `{}`): the host parses
+			 * text without recursion, where its structured-clone reader drops a deep frame (Node ~4,000 levels; RULING-68). */
+			recordText?: string;
 			recovery?: RecoveryCarrier;
 			/** Transcript transitions the isolate's manager committed before this record, accepted just before it. */
 			transitions?: readonly TranscriptTransition[];
@@ -172,6 +178,23 @@ export type SessionWorkerToHost =
 	  }
 	| { type: "capabilities"; connection?: string; capabilities: readonly string[]; signal: SharedArrayBuffer }
 	| { type: "loaded_surfaces"; previous?: string; digest: string; signal: SharedArrayBuffer }
+	/**
+	 * One piece of a payload message too large for one frame (S12b): at most D stored bytes of its JSON (signals left out)
+	 * at `offset` of `length`, both in stored bytes. Ordered pieces take consecutive physical ordinals; the final piece is
+	 * the commit frame and carries the message's own ordinal, binding and signals (RULING-64).
+	 */
+	| {
+			type: "fragment";
+			/** The type of the message the fragments carry, so a refused transfer names its event (RULING-80 (3a)). */
+			of: string;
+			length: number;
+			offset: number;
+			text: string;
+			ordinal?: number;
+			firstOrdinal?: number;
+			signal?: SharedArrayBuffer;
+			epochSignal?: SharedArrayBuffer;
+	  }
 	| { type: "request_close" }
 	/** A record a turn in the isolate reported, mirrored into the host's store (senpi#3695). */
 	| { type: "subscription_limits"; limits: MirroredLimits }

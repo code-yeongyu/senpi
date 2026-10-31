@@ -18,6 +18,7 @@
 import type { EffectStatus } from "./effect-record.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { effectStatusRecord } from "./session-effect-status.ts";
+import { statusRecord } from "./session-status-record.ts";
 import {
 	type DerivedSessionStatus,
 	deriveSessionStatus,
@@ -107,6 +108,7 @@ export class SessionStatusStream {
 	subscribe(
 		connectionId: string,
 		options: SubscriptionOptions,
+		snapshotSink?: (rows: () => Iterable<SessionStatusRecord>, subscriptionId: string) => void,
 	): { readonly subscriptionId: string; readonly snapshot: readonly SessionStatusRecord[]; readonly seq: number } {
 		const pending: PendingSubscription = {
 			id: `sub-${++this.nextSubscription}`,
@@ -116,14 +118,24 @@ export class SessionStatusStream {
 			lines: [],
 		};
 		this.pendings.set(pending.id, pending);
-		const snapshot: SessionStatusRecord[] = [];
+		const at = snapshotSink ? (this.delivery.now?.() ?? new Date()).toISOString() : undefined;
+		const rows = () => this.snapshotRows(pending, at);
+		try {
+			if (snapshotSink) snapshotSink(rows, pending.id);
+		} catch (cause) {
+			this.pendings.delete(pending.id);
+			throw cause;
+		}
+		return { subscriptionId: pending.id, snapshot: snapshotSink ? [] : [...rows()], seq: pending.seq };
+	}
+
+	private *snapshotRows(pending: PendingSubscription, at?: string): Iterable<SessionStatusRecord> {
 		for (const sessionId of this.source?.sessionIds() ?? []) {
 			const view = this.currentView(sessionId);
-			if (view === undefined || !subscriptionMatches(options, sessionId, view.entry)) continue;
+			if (view === undefined || !subscriptionMatches(pending.options, sessionId, view.entry)) continue;
 			const derived = this.derive(sessionId, view);
-			snapshot.push(this.recordFor(pending, sessionId, derived, this.lastChangeOf(sessionId)));
+			yield this.recordFor(pending, sessionId, derived, this.lastChangeOf(sessionId, at));
 		}
-		return { subscriptionId: pending.id, snapshot, seq: pending.seq };
 	}
 
 	/** Flips the subscription live once its answer is on the connection's actor, flushing held deltas. */
@@ -270,10 +282,10 @@ export class SessionStatusStream {
 		);
 	}
 
-	private lastChangeOf(sessionId: string): LastChange {
+	private lastChangeOf(sessionId: string, at?: string): LastChange {
 		return (
 			this.lastChanges.get(sessionId) ?? {
-				at: (this.delivery.now?.() ?? new Date()).toISOString(),
+				at: at ?? (this.delivery.now?.() ?? new Date()).toISOString(),
 				cause: "open",
 				by: "host",
 			}
@@ -286,17 +298,6 @@ export class SessionStatusStream {
 		derived: DerivedSessionStatus,
 		lastChange: LastChange,
 	): SessionStatusRecord {
-		const { context, ...rest } = derived;
-		const lastEffect = this.lastEffect?.(sessionId);
-		return {
-			type: "session_status",
-			subscriptionId: subscription.id,
-			seq: subscription.seq,
-			sessionId,
-			...rest,
-			...(subscription.options.includeContext ? { context } : {}),
-			...(lastEffect !== undefined ? { lastEffect } : {}),
-			lastChange,
-		};
+		return statusRecord(subscription, sessionId, derived, lastChange, this.lastEffect?.(sessionId));
 	}
 }
