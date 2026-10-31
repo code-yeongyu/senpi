@@ -8,6 +8,7 @@ import {
 } from "../config/settings.ts";
 import { buildEvalPrompt } from "../prompt/eval-prompt.ts";
 import { EvalDetachedCellManager } from "./detached-cell-manager.ts";
+import { registerEvalArgumentValidator } from "./eval-argument-validator.ts";
 import { executeEvalControl } from "./detached-eval-result.ts";
 import {
 	EvalIsolateInvalidError,
@@ -66,6 +67,7 @@ export function createEvalTool(options: CreateEvalToolOptions) {
 		...(options.promptKernelPreludes === undefined ? {} : { kernelPreludes: options.promptKernelPreludes }),
 	});
 	const languages = enabledLanguageList(options.enabledLanguages);
+	registerEvalArgumentValidator(parameters, languages);
 	const cellManager =
 		options.cellManager ??
 		new EvalDetachedCellManager({
