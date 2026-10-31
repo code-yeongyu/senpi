@@ -9,7 +9,9 @@
  * re-acquires the lock and compare-and-swaps on the slot's refresh token, so a
  * slot rotated meanwhile by another process is adopted instead of overwritten.
  *
- * Within a process, concurrent refreshes of the same slot join one exchange.
+ * Persistent stores inject a session-scoped lock around read/exchange/write so
+ * two processes cannot consume the same rotating token. Within a process,
+ * concurrent refreshes of the same slot join one exchange.
  * Waiters that own the exchange (per-request resolution) cancel it once none of
  * them is waiting; the catalog-refresh lane joins without owning it, so a
  * superseded catalog refresh stops waiting but never aborts the exchange.
@@ -17,7 +19,7 @@
 
 import { raceWithAbortSignal } from "../utils/abort.ts";
 import { oauthRefreshFailureCause } from "../utils/oauth-refresh-error.ts";
-import { mergeRefreshed, mergeRefreshedSlot, projectSlot } from "./pool/slots.ts";
+import { DEFAULT_SLOT_NAME, listSlots, mergeRefreshed, mergeRefreshedSlot, projectSlot } from "./pool/slots.ts";
 import type { Credential, CredentialStore, OAuthAuth, OAuthCredential } from "./types.ts";
 
 export const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 15_000;
@@ -82,7 +84,7 @@ export function refreshOAuthCredential(request: OAuthRefreshRequest): Promise<Cr
 	if (!inflight) {
 		const controller = new AbortController();
 		const created: InflightRefresh = { controller, waiters: 0, owned: false, promise: Promise.resolve(undefined) };
-		created.promise = exchangeAndStore(request, controller.signal).finally(() => {
+		created.promise = serializeExchange(request, controller.signal).finally(() => {
 			if (registry.get(key) === created) registry.delete(key);
 		});
 		registry.set(key, created);
@@ -103,19 +105,61 @@ function join(inflight: InflightRefresh, signal: AbortSignal, owning: boolean): 
 	else signal.addEventListener("abort", leave, { once: true });
 }
 
-async function exchangeAndStore(request: OAuthRefreshRequest, signal: AbortSignal): Promise<Credential | undefined> {
+function refreshSlotName(credential: OAuthCredential, slotName?: string): string {
+	// Flat/catalog resolution and named resolution of its mirrored slot must
+	// acquire the same lock. Token equality locates the stable ID; it is not the key.
+	return (
+		slotName ??
+		listSlots(credential).find((slot) => slot.refresh === credential.refresh || slot.access === credential.access)
+			?.name ??
+		DEFAULT_SLOT_NAME
+	);
+}
+
+async function serializeExchange(request: OAuthRefreshRequest, signal: AbortSignal): Promise<Credential | undefined> {
+	const { credentials, providerId, slotName } = request;
+	let identity = refreshSlotName(request.stale, slotName);
+	let retry: boolean;
+	do {
+		retry = false;
+		const run = async (lockSignal: AbortSignal) => {
+			const latest = await credentials.read(providerId, { signal: lockSignal });
+			if (credentials.withRefreshLock && latest?.type === "oauth") {
+				const currentIdentity = refreshSlotName(latest, slotName);
+				if (currentIdentity !== identity) {
+					// A login/removal changed the flat projection while we waited.
+					// Release before acquiring that account's lock; never nest locks.
+					identity = currentIdentity;
+					retry = true;
+					return undefined;
+				}
+			}
+			return exchangeAndStore(request, lockSignal, latest);
+		};
+		try {
+			const result = credentials.withRefreshLock
+				? await credentials.withRefreshLock(providerId, identity, run, { signal })
+				: await run(signal);
+			if (!retry) return result;
+		} catch (error) {
+			if (error instanceof OAuthRefreshExchangeError || error instanceof OAuthRefreshStoreError) throw error;
+			throw new OAuthRefreshStoreError(error);
+		}
+	} while (retry);
+	return undefined;
+}
+
+async function exchangeAndStore(
+	request: OAuthRefreshRequest,
+	signal: AbortSignal,
+	latest: Credential | undefined,
+): Promise<Credential | undefined> {
 	const { credentials, providerId, oauth, slotName } = request;
 	const view = (credential: Credential | undefined): OAuthCredential | undefined => {
 		if (credential?.type !== "oauth") return undefined;
 		return slotName === undefined ? credential : projectOAuthSlot(credential, slotName);
 	};
 
-	let latest: Credential | undefined;
-	try {
-		latest = await credentials.read(providerId, { signal });
-	} catch (error) {
-		throw new OAuthRefreshStoreError(error);
-	}
 	const current = view(latest);
 	if (!current) return undefined; // logged out or slot removed meanwhile
 	if (!request.isStale(current)) return latest; // another process/request refreshed
