@@ -25,7 +25,9 @@ export function writeEvidence(slug, receipt, session) {
 			writeFileSync(join(out, file), transcript.text);
 			return { session_id: transcript.entries[0].id, path: transcript.path, file };
 		});
-		writeFileSync(join(out, "sessions.json"), `${JSON.stringify(manifest, null, 1)}\n`);
+		writeFileSync(join(out, "sessions.json"), `${JSON.stringify({
+			sessions: manifest, skippedPaths: session.skippedSessionPaths ?? [],
+		}, null, 1)}\n`);
 	}
 	return out;
 }

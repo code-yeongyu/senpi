@@ -173,6 +173,53 @@ for (const { name, trace, children = [], events = [], pass, failure } of [
 	});
 }
 
+test("non-eval nested ids require an owning session and its once-per-call hooks", () => {
+	const entries = [{ type: "session", id: "s1" }, assistant("a", [["task1", "task"]])];
+	const events = [
+		{ type: "tool_execution_start", toolCallId: "task1" },
+		{ type: "tool_hook_status", toolCallId: "c1", toolName: "read" },
+		{ type: "tool_execution_end", toolCallId: "task1" },
+	];
+	const missing = checkHooksOncePerCall(hooks("task1"), entries, events);
+	assert.equal(missing.pass, false);
+	assert.match(missing.detail.join("; "), /nested call c1 has no owning session/);
+	assert.equal(checkHooksOncePerCall([...hooks("task1"), ...childHooks], entries, events,
+		[{ entries: childEntries }]).pass, true);
+	assert.equal(checkHooksOncePerCall([...hooks("task1"), childHooks[0]], entries, events,
+		[{ entries: childEntries }]).pass, false);
+	assert.equal(checkHooksOncePerCall([...hooks("task1"), ...childHooks, childHooks[0]], entries, events,
+		[{ entries: childEntries }]).pass, false);
+});
+
+test("child eval calls use only that session's independent engine evidence", () => {
+	const entries = [
+		{ type: "session", id: "child" },
+		assistant("a", [["ev-child", "eval"]]),
+		{ ...result("r", "ev-child"), message: {
+			...result("r", "ev-child").message,
+			details: { toolCalls: [{ callId: "kernel-local", name: "read", ok: true }] },
+		} },
+		{ type: "custom", customType: "live-tool-call", data: { id: "cm-child", name: "read" } },
+	];
+	const trace = hooks("ev-child", "cm-child").map((line) => ({ ...line, session_id: "child" }));
+	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace], parentEntries, [], [{ entries }]).pass, true);
+	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace.slice(0, -1)], parentEntries, [],
+		[{ entries }]).pass, false);
+	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace, trace[2]], parentEntries, [],
+		[{ entries }]).pass, false);
+	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace, ...hooks("cm-child")], parentEntries, [],
+		[{ entries }]).pass, false);
+	const forged = entries.filter((entry) => entry.customType !== "live-tool-call");
+	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace], parentEntries, [],
+		[{ entries: forged }]).pass, false);
+	const unknown = hooks("ghost").map((line) => ({ ...line, session_id: "child" }));
+	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace, ...unknown], parentEntries, [],
+		[{ entries }]).pass, false);
+	const kernel = hooks("kernel-local").map((line) => ({ ...line, session_id: "child" }));
+	assert.equal(checkHooksOncePerCall([...hooks("c1"), ...trace, ...kernel], parentEntries, [],
+		[{ entries }]).pass, false);
+});
+
 test("calls run inside an eval cell are attributed to the running call and need their own hooks", () => {
 	const events = [
 		{ type: "tool_execution_start", toolCallId: "ev1" },

@@ -125,8 +125,14 @@ export function checkHooksOncePerCall(hookTrace, entries, events, sessionTranscr
 			failures.push(`missing or duplicate session transcript ${id}`);
 			continue;
 		}
+		const callIds = new Set(transcriptCalls(transcript.entries).map((call) => call.id));
+		// The trusted sandbox extension records engine tool_call ids in the owning session.
+		// Eval result details.toolCalls carry DIFFERENT kernel-local ids, not hook ids.
+		for (const entry of transcript.entries)
+			if (entry.type === "custom" && entry.customType === "live-tool-call" && entry.data?.id)
+				callIds.add(entry.data.id);
 		sessions.set(id, {
-			calls: new Set(transcriptCalls(transcript.entries).map((call) => call.id)),
+			calls: callIds,
 			fired: { PreToolUse: new Map(), PostToolUse: new Map() },
 		});
 	}
@@ -135,8 +141,11 @@ export function checkHooksOncePerCall(hookTrace, entries, events, sessionTranscr
 	const parentId = entries.find((entry) => entry.type === "session")?.id;
 	const parent = sessions.get(parentId);
 	const evalIds = new Set(transcriptCalls(entries).filter((call) => call.name === "eval").map((call) => call.id));
-	for (const call of nestedCalls(events))
+	for (const call of nestedCalls(events)) {
 		if (parent && evalIds.has(call.parentId)) parent.calls.add(call.id);
+		else if (![...sessions.values()].some((session) => session.calls.has(call.id)))
+			failures.push(`nested call ${call.id} has no owning session`);
+	}
 	for (const line of hookTrace) {
 		const session = sessions.get(line.session_id);
 		if (!session) {

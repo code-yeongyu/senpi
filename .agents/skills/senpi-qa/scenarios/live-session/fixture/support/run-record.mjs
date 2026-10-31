@@ -41,6 +41,7 @@ export function buildRunRecord({
 	// Only session-header JSONL files qualify; usage logs and the shared hook trace are not transcripts.
 	session.hookTrace = existsSync(setup.hookTrace) ? readFileSync(setup.hookTrace, "utf8") : "";
 	session.sessionTranscripts = [];
+	session.skippedSessionPaths = [];
 	const parentId = session.entries.find((entry) => entry.type === "session")?.id;
 	const pending = [setup.box.dir];
 	while (pending.length) {
@@ -50,7 +51,13 @@ export function buildRunRecord({
 			if (file.isDirectory()) pending.push(path);
 			else if (file.isFile() && file.name.endsWith(".jsonl")) {
 				const text = readFileSync(path, "utf8");
-				const header = JSON.parse(text.split("\n", 1)[0] || "null");
+				let header;
+				try {
+					header = JSON.parse(text.split("\n", 1)[0] || "null");
+				} catch {
+					session.skippedSessionPaths.push(relative(setup.box.dir, path));
+					continue;
+				}
 				if (header?.type !== "session" || header.id === parentId) continue;
 				session.sessionTranscripts.push({ path: relative(setup.box.dir, path), entries: readJsonl(text), text });
 			}

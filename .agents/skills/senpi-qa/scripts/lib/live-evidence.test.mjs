@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -53,9 +53,33 @@ test("raw hook provenance and every sandbox session survive evidence export and 
 	rmSync(dir, { recursive: true, force: true });
 	assert.equal(readFileSync(join(out, "hook-trace.jsonl"), "utf8"), raw);
 	const manifest = JSON.parse(readFileSync(join(out, "sessions.json"), "utf8"));
-	assert.deepEqual(manifest.map((entry) => entry.session_id).sort(), ["child", "grandchild"]);
-	for (const entry of manifest) {
+	assert.deepEqual(readdirSync(out, { withFileTypes: true }).filter((entry) => entry.isDirectory()), []);
+	assert.deepEqual(manifest.sessions.map((entry) => entry.session_id).sort(), ["child", "grandchild"]);
+	for (const entry of manifest.sessions) {
 		const saved = readFileSync(join(out, entry.file), "utf8").trim().split("\n").map(JSON.parse);
 		assert.deepEqual(saved, children.find((transcript) => transcript[0].id === entry.session_id));
 	}
+});
+
+test("malformed sandbox JSONL headers are skipped visibly without losing valid sessions", (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "live-headers-"));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	for (const [name, text] of Object.entries({
+		"broken.jsonl": "{broken\n",
+		"foreign.jsonl": "not JSON\n",
+		"usage.jsonl": '{"type":"usage"}\n',
+		"child.jsonl": '{"type":"session","id":"child"}\n',
+	})) writeFileSync(join(dir, name), text);
+	const session = { entries: [{ type: "session", id: "parent" }], events: [] };
+	const record = buildRunRecord({
+		setup: { box: { dir, cwd: dir }, hookTrace: join(dir, "hooks.jsonl") },
+		session, proxy: { records: [] }, placement: "fused",
+	});
+	assert.deepEqual(record.sessionTranscripts.map((transcript) => transcript.entries[0].id), ["child"]);
+	const out = writeEvidence(`live-headers-${process.pid}`, { kind: "test" }, session);
+	t.after(() => rmSync(out, { recursive: true, force: true }));
+	const manifest = JSON.parse(readFileSync(join(out, "sessions.json"), "utf8"));
+	assert.deepEqual(manifest.skippedPaths.sort(), ["broken.jsonl", "foreign.jsonl"]);
+	assert.deepEqual(manifest.sessions.map((entry) => entry.session_id), ["child"]);
+	assert.deepEqual(readdirSync(out, { withFileTypes: true }).filter((entry) => entry.isDirectory()), []);
 });
