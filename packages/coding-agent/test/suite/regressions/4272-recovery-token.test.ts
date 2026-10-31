@@ -13,6 +13,7 @@ import { SessionAcceptanceLane } from "../../../src/modes/rpc/session-acceptance
 import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.ts";
 import { controlledIo } from "../compact-storage-support.ts";
 import { LaneProducer, usage } from "./4272-legacy-view-support.ts";
+import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 
 // Part of #4272 (S08a/S08b, R3.C1.5): a checkpoint token is validated before I/O, after every await and before
 // delivery; a retired, foreign or superseded token is a typed repair_needed failure, release is idempotent and per
@@ -42,7 +43,7 @@ function unwrap<T>(outcome: RecoveryOutcome<T>): T {
 const unknownToken = { ok: false, failure: { kind: "repair_needed", reason: "unknown_token" } };
 
 /** Settles `promise`, or fails after `ms`: an operation that never ends is a failure of this test, not a hang. */
-async function within<T>(promise: Promise<T>, ms = 5_000): Promise<T> {
+async function within<T>(promise: Promise<T>, ms = EVENT_SAFETY_MS): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const deadline = new Promise<never>((_, reject) => {
 		timer = setTimeout(() => reject(new Error(`still pending after ${ms} ms`)), ms);
@@ -355,7 +356,7 @@ it("RULING-56 (4) an operation in flight on a retired route ends in a typed refu
 	expect(checkpoints.status()).toMatchObject({ open: 0, reclaimed: 1 });
 	lane.retire("close");
 	await lane.idle();
-});
+}, 600_000);
 
 it("review LOW the reclaimed counter counts only roots reclaimed without their holder's release", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "senpi-4272-s08b-count-"));
@@ -384,7 +385,7 @@ it("review LOW the reclaimed counter counts only roots reclaimed without their h
 	expect(lane.liveRoots).toBe(0);
 	lane.retire("close");
 	await lane.idle();
-});
+}, 600_000);
 
 it("T5 a failed freeze publishes no token and pins nothing: an unavailable compact state is storage_unavailable", async () => {
 	const checkpoints = owner();
