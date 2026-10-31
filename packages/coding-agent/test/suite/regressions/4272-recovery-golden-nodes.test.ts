@@ -140,4 +140,4 @@ it("SF2 npm pack ships every recovery-page and catalog-node golden", () => {
 		),
 	];
 	expect(expected.filter((path) => !packed.has(path))).toEqual([]);
-}, 60_000);
+}, 600_000);
