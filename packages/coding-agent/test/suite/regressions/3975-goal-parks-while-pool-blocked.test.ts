@@ -235,10 +235,9 @@ describe("goal parks while every pool slot is blocked (#3975)", () => {
 		const until = NOW + 2 * HOUR;
 		const accounts: AccountSlot[] = reasons.map((reason, index) => ({
 			name: `synthetic-${index}`,
-			refresh: "",
-			access: "",
-			expires: 0,
 			source: "login",
+			store: "claude-cli",
+			dirId: index.toString(16).padStart(32, "0"),
 			...(reason === "model_limit"
 				? { modelBlocks: { [MODEL.id]: { blockedUntil: until } } }
 				: { blockedUntil: until, blockReason: reason }),
