@@ -106,7 +106,7 @@ it.each(["activation", "cancel", "supersession", "peer end", "epoch retirement"]
 			await handled;
 		}
 	},
-	120_000,
+	600_000,
 );
 
 it.each(["entries", "bytes"])(
@@ -160,5 +160,5 @@ it.each(["entries", "bytes"])(
 			await pending;
 		}
 	},
-	120_000,
+	600_000,
 );

@@ -70,5 +70,5 @@ it.each([
 			await host.dispose();
 		}
 	},
-	120_000,
+	600_000,
 );

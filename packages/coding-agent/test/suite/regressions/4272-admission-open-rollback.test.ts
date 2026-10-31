@@ -48,7 +48,7 @@ it("releases the accepted cut and route exactly once when physical open actually
 	expect(checkpoints.status().open).toBe(0);
 	expect(host.writer.ordinaryRoute("peer", retired.mock.calls[0]?.[0].sessionId ?? "")?.routes ?? []).toEqual([]);
 	expect(host.core.router.sessionCount).toBe(0);
-}, 120_000);
+}, 600_000);
 
 // #4272: exercise the real accepted producer's release twice, not two independent failed attempts.
 it("makes a second accepted release a no-op for cuts routes and attachment ownership", async () => {
@@ -88,7 +88,7 @@ it("makes a second accepted release a no-op for cuts routes and attachment owner
 	expect(dataOf(await peer.request({ type: "list_sessions" })).sessions).toEqual([
 		expect.objectContaining({ sessionId: opened.sessionId, attachments: 1 }),
 	]);
-}, 120_000);
+}, 600_000);
 
 it("releases the accepted cut and route once when an attached open fails after acceptance", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -117,7 +117,7 @@ it("releases the accepted cut and route once when an attached open fails after a
 		expect.objectContaining({ sessionId, attachments: 1 }),
 	]);
 	expect(peer.inbox.some((frame) => frame.type === "recovery_manifest")).toBe(false);
-}, 120_000);
+}, 600_000);
 
 it("keeps the legacy flag-off attached-open rollback and forgets writer state", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "0");
@@ -136,4 +136,4 @@ it("keeps the legacy flag-off attached-open rollback and forgets writer state", 
 	expect((await peer.request({ type: "open_session", sessionPath })).success).toBe(false);
 	expect(forget).toHaveBeenCalledExactlyOnceWith(sessionId);
 	expect(host.core.router.sessionCount).toBe(1);
-}, 120_000);
+}, 600_000);

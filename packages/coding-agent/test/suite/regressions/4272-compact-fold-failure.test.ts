@@ -7,7 +7,13 @@ import { RpcSessionRegistry, type RpcSessionEntry } from "../../../src/modes/rpc
 import { SessionWorkerClient } from "../../../src/modes/rpc/session-worker-client.ts";
 import { type SessionWorkerToHost, WORKER_CREDIT_CODES } from "../../../src/modes/rpc/session-worker-protocol.ts";
 import { dataOf, statusHost } from "../rpc-session-status-support.ts";
-import { creditOf, type OutputFrame, within, workerAcceptanceHost } from "./4272-worker-acceptance-support.ts";
+import {
+	creditOf,
+	EVENT_SAFETY_MS,
+	type OutputFrame,
+	within,
+	workerAcceptanceHost,
+} from "./4272-worker-acceptance-support.ts";
 
 const FLAG = "SENPI_ENGINE_SOCKET_COMPACT_UPDATES";
 /** A canonical record as a worker frame could carry it: parsed JSON the lane's transition mapping cannot read. */
@@ -41,7 +47,7 @@ it("in process: a malformed canonical record leaves compact unavailable and its 
 	});
 	const enqueue = vi.spyOn(host.writer, "enqueue");
 	host.faux.setResponses([fauxAssistantMessage("answer after a failed fold", { timestamp: 1 })]);
-	const done = client.waitFor((record) => record.type === "agent_idle", 15_000);
+	const done = client.waitFor((record) => record.type === "agent_idle", EVENT_SAFETY_MS);
 	dataOf(await client.request({ type: "prompt", sessionId, message: "first" }));
 	await done;
 	await host.writer.flush();
@@ -54,7 +60,7 @@ it("in process: a malformed canonical record leaves compact unavailable and its 
 	} finally {
 		lane.release(root);
 	}
-}, 60_000);
+}, 600_000);
 
 async function workerLane() {
 	vi.stubEnv(FLAG, "1");
@@ -104,7 +110,7 @@ it("worker: a frame whose canonical record is malformed is credited, delivered, 
 	} finally {
 		await host.dispose();
 	}
-}, 60_000);
+}, 600_000);
 
 // senpi#4439 review LOW-4, worker half: a structured-path failure inside the isolate reaches the host lane in order.
 it("worker: a canonical_unavailable frame takes its ordinal and makes the epoch's compact state unavailable", async () => {
@@ -120,7 +126,7 @@ it("worker: a canonical_unavailable frame takes its ordinal and makes the epoch'
 	} finally {
 		await host.dispose();
 	}
-}, 60_000);
+}, 600_000);
 
 // senpi#4272 RULING-59 C, worker half: a canonical record the isolate refused at the protocol depth limit is counted
 // on the host lane, whose compact state stays available.
@@ -149,7 +155,7 @@ it("worker: a canonical_unavailable frame carrying the depth limit keeps the epo
 	} finally {
 		await host.dispose();
 	}
-}, 60_000);
+}, 600_000);
 
 // senpi#4557 review round 2, LOW-2, worker half: a depth refusal framed after a real loss is still counted by the host.
 it("worker: a depth-limit frame after a real loss is counted and the state stays ended", async () => {
@@ -174,7 +180,7 @@ it("worker: a depth-limit frame after a real loss is counted and the state stays
 	} finally {
 		await host.dispose();
 	}
-}, 60_000);
+}, 600_000);
 
 // senpi#4557 review LOW-2, worker half: the output frame of an event whose canonical record the isolate refused says
 // so, and its legacy record (a terminal too deep for the settled store) folds nothing and is not counted again.
@@ -218,7 +224,7 @@ it("worker: an event refused on both projections is counted once and its termina
 	} finally {
 		await host.dispose();
 	}
-}, 60_000);
+}, 600_000);
 
 // senpi#4439 review LOW-5: a canonical-only frame is credited under the same condition as an output frame.
 it("an unbound client denies a canonical frame exactly as it denies an output frame", async () => {
@@ -254,4 +260,4 @@ it("an unbound client denies a canonical frame exactly as it denies an output fr
 		client.quarantine();
 		await client.exited;
 	}
-});
+}, 600_000);

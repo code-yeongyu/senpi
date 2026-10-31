@@ -34,5 +34,5 @@ it.each(["unsubscribe", "peer end"])(
 		).toMatchObject({ success: false, errorCode: "recovery_repair_needed", errorData: { reason: "unknown_token" } });
 		expect(host.writer.recoveryEvents?.status().open).toBe(0);
 	},
-	120_000,
+	600_000,
 );

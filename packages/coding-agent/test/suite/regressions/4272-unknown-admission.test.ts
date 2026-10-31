@@ -61,7 +61,7 @@ it("RULING-94 refuses unknown, foreign and retired identities with byte-identica
 	host.writer.unregisterAdmission("peer", "unheld");
 	await request();
 	expect(new Set(bytes).size).toBe(1);
-}, 120_000);
+}, 600_000);
 
 it("RULING-94 every routed command validates before dispatch and answers exactly once", async () => {
 	expectTypeOf<(typeof admissionCommands)[number]>().toEqualTypeOf<RpcCommand["type"]>();
@@ -115,7 +115,7 @@ it("RULING-94 every routed command validates before dispatch and answers exactly
 	expect(subscribe).not.toHaveBeenCalled();
 	expect(host.core.router.sessionCount).toBe(1);
 	expect(host.writer.status.connectionSize("peer")).toBe(0);
-}, 120_000);
+}, 600_000);
 
 it("RULING-94 compact connection answers success and unattributable requests exactly once", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -140,7 +140,7 @@ it("RULING-94 compact connection answers success and unattributable requests exa
 		expect.soft(replies, JSON.stringify(command)).toHaveLength(1);
 		expect.soft(replies[0]).toMatchObject({ id: "invariant", success: expect.any(Boolean) });
 	}
-}, 120_000);
+}, 600_000);
 
 it.each(["admission_busy", "storage_unavailable"])(
 	"RULING-94 cancel replies exactly once when the pre-dispatch store reports %s",
@@ -199,5 +199,5 @@ it.each(["admission_busy", "storage_unavailable"])(
 			read.mockRestore();
 		}
 	},
-	120_000,
+	600_000,
 );

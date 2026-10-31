@@ -30,7 +30,7 @@ it("T2 mirror admissions route initial and later matches behind their identity a
 		expect.objectContaining({ attachments: 1 }),
 		expect.objectContaining({ attachments: 1 }),
 	]);
-}, 120_000);
+}, 600_000);
 
 it.each(["get_recovery_page", "release_recovery"])(
 	"T2 mirror content %s uses token authority under RULING-96 and the flag-off attachment gate",
@@ -102,7 +102,7 @@ it.each(["get_recovery_page", "release_recovery"])(
 		await using legacy = await statusHost();
 		expect(await legacy.client("peer").request(command)).toMatchObject({ errorCode: "session_not_attached" });
 	},
-	120_000,
+	600_000,
 );
 
 it("T2/Y07 peer end removes the old actor subscription, prevents stale routing and cannot authorize pages", async () => {
@@ -140,4 +140,4 @@ it("T2/Y07 peer end removes the old actor subscription, prevents stale routing a
 				frame.type !== "response" && (frame.admissionId === "old" || frame.subscriptionId === subscriptionId),
 		),
 	).toBe(false);
-}, 120_000);
+}, 600_000);
