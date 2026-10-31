@@ -2,8 +2,7 @@ import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { on, once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { createServer as createHttpServer, type Server as HttpServer, type ServerResponse } from "node:http";
-import { type AddressInfo, createConnection, createServer, type Socket } from "node:net";
+import { createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -41,6 +40,7 @@ import { processIsLive, processMatchesPidFile, readProcessStartTime } from "../s
 import { hermeticProviderEnv, MOCK_MODEL, MOCK_PROVIDER, writeRpcModelsJson } from "./helpers/rpc-hermetic.ts";
 import { processAlive, reapProcessesUnder } from "./helpers/spawned-host-reaper.ts";
 import { hostSpawnEnv } from "./helpers/rpc-host-spawn-env.ts";
+import { HeldAnthropicModel } from "./helpers/rpc-generation-support.ts";
 
 const roots: string[] = [];
 const peers: JsonlPeer[] = [];
@@ -400,8 +400,6 @@ describe("ensureHost-spawned host lifecycle", () => {
 		const supervisor = spawn(
 			process.execPath,
 			[
-				"--import",
-				"tsx",
 				hostLifecycleEntry(),
 				"--socket",
 				qa.socket,
@@ -678,7 +676,9 @@ function supervisorGone(supervisor: ChildProcess, type: string): Error {
 function clockSupervisor(qa: Scratch): { supervisor: ChildProcess; exited: Promise<unknown[]> } {
 	const supervisor = spawn(
 		process.execPath,
-		["--import", "tsx", join(import.meta.dirname, "fixtures", "rpc-lifecycle-clock.ts"), qa.socket, qa.agentDir],
+		// The real host child inherits exec argv. Use Node's built-in TypeScript handling,
+		// as in rpc-host-idle-exit-closed-turn, rather than paying for tsx at every cold start.
+		[join(import.meta.dirname, "fixtures", "rpc-lifecycle-clock.ts"), qa.socket, qa.agentDir],
 		{
 			env: {
 				...hostSpawnEnv(),
@@ -1297,78 +1297,6 @@ class JsonlPeer {
 			}
 		}
 	}
-}
-
-/**
- * Anthropic-Messages fake whose single response is held until release(), so a
- * real agent turn stays active past any idle window under test.
- */
-class HeldAnthropicModel {
-	private readonly server: HttpServer;
-	private readonly releaseHolds: () => void;
-
-	private constructor(server: HttpServer, releaseHolds: () => void) {
-		this.server = server;
-		this.releaseHolds = releaseHolds;
-	}
-
-	static async start(): Promise<HeldAnthropicModel> {
-		let releaseHolds: () => void = () => {};
-		const held = new Promise<void>((resolve) => {
-			releaseHolds = resolve;
-		});
-		const server = createHttpServer((req, res) => {
-			req.resume();
-			req.on("end", () => {
-				void held.then(() => writeHeldAnthropicResponse(res));
-			});
-		});
-		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-		return new HeldAnthropicModel(server, releaseHolds);
-	}
-
-	get origin(): string {
-		const address = this.server.address() as AddressInfo;
-		return `http://127.0.0.1:${address.port}`;
-	}
-
-	release(): void {
-		this.releaseHolds();
-	}
-
-	close(): Promise<void> {
-		return new Promise((resolve) => this.server.close(() => resolve()));
-	}
-}
-
-function writeHeldAnthropicResponse(res: ServerResponse): void {
-	res.writeHead(200, {
-		"content-type": "text/event-stream",
-		"cache-control": "no-cache",
-		connection: "keep-alive",
-	});
-	const send = (event: string, data: Record<string, unknown>): void => {
-		res.write(`event: ${event}\n`);
-		res.write(`data: ${JSON.stringify({ type: event, ...data })}\n\n`);
-	};
-	send("message_start", {
-		message: {
-			id: "msg-held-rpc",
-			type: "message",
-			role: "assistant",
-			model: MOCK_MODEL,
-			content: [],
-			stop_reason: null,
-			stop_sequence: null,
-			usage: { input_tokens: 1, output_tokens: 0 },
-		},
-	});
-	send("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
-	send("content_block_delta", { index: 0, delta: { type: "text_delta", text: "held turn complete" } });
-	send("content_block_stop", { index: 0 });
-	send("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } });
-	send("message_stop", {});
-	res.end();
 }
 
 function delay(ms: number): Promise<void> {

@@ -1,0 +1,13 @@
+diff --git a/packages/agent/src/agent-loop.ts b/packages/agent/src/agent-loop.ts
+index b046ab34f5..8dde7649cf 100644
+--- a/packages/agent/src/agent-loop.ts
++++ b/packages/agent/src/agent-loop.ts
+@@ -1296,7 +1296,7 @@ async function executeToolCallsParallel(
+ 	let previousSequential: Promise<FinalizedToolCallOutcome> | undefined;
+ 	let previousWave: Promise<FinalizedToolCallOutcome>[] = [];
+ 	for (const { preparation, isSequential } of preparedCalls) {
+-		const dependencies = isSequential
++		const dependencies = false
+ 			? [...(previousSequential ? [previousSequential] : []), ...previousWave]
+ 			: previousSequential
+ 				? [previousSequential]

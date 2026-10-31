@@ -4,7 +4,11 @@
 // its id a second time (O5 tree), and its own start event shows in O5's calls. Loaded unmodified by path.
 //
 // - eq_ledger {barrier}: parallel; append the id, hold on <barrier>, write the out file.
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+//
+// The append is synchronous: parallel bodies start in call order, but two `fs.promises.appendFile` calls run on separate
+// threadpool threads and land in either order, which made ledger.txt flip between runs.
+import { appendFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Type } from "typebox";
 
@@ -23,7 +27,7 @@ export default function ledgerTools(pi) {
 			"EQ fixture: record this call in ledger.txt, wait for barrier <barrier>, then write out/<call id>.txt.",
 		parameters: Type.Object({ barrier: Type.String() }),
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
-			await appendFile(resolve(ctx.cwd, "ledger.txt"), `${toolCallId}\n`);
+			appendFileSync(resolve(ctx.cwd, "ledger.txt"), `${toolCallId}\n`);
 			await hold(params.barrier, signal);
 			await mkdir(resolve(ctx.cwd, "out"), { recursive: true });
 			await writeFile(resolve(ctx.cwd, "out", `${toolCallId}.txt`), `${toolCallId}\n`);
