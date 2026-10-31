@@ -7,12 +7,26 @@ import type {
 /** Serialized UTF-8 budget for one emitted diagnostic. */
 export const PROVIDER_DIAGNOSTIC_MAX_BYTES = 512;
 
+const CREDENTIAL_POOL_BLOCKED_CODE = "credential_pool_blocked";
+
+/** A credential pool whose every account is limited until `resetsAt`, the soonest one is due back. */
+export function credentialPoolBlockedDiagnostic(resetsAt: number): ProviderDiagnostic | undefined {
+	return buildProviderDiagnostic({
+		category: "rate_limit",
+		code: CREDENTIAL_POOL_BLOCKED_CODE,
+		evidence: "structured_code",
+		resetsAt,
+	});
+}
+
 /**
  * Closed allowlist of provider error tokens and the family each one proves.
  * Exact tokens only: Anthropic `error.type` values, OpenAI-compatible
  * `error.code` values, and the precise OpenAI-compatible `error.type` values
  * that stand in for a missing code (`exceeded_current_quota_error`, senpi#4950).
  * `billing_error` proves a billing failure, not quota exhaustion, so it stays `unknown`.
+ * `credential_pool_blocked` is senpi's own token for a credential pool whose every account waits on a
+ * rate or usage limit (senpi#3975).
  */
 export function categoryForProviderCode(code: string): ProviderDiagnosticCategory | undefined {
 	switch (code) {
@@ -21,6 +35,7 @@ export function categoryForProviderCode(code: string): ProviderDiagnosticCategor
 			return "auth";
 		case "rate_limit_error":
 		case "rate_limit_exceeded":
+		case CREDENTIAL_POOL_BLOCKED_CODE:
 			return "rate_limit";
 		case "insufficient_quota":
 		case "exceeded_current_quota_error":
@@ -78,6 +93,7 @@ export function isProviderCodeStatusCompatible(code: string, status: number): bo
 			return status === 401;
 		case "rate_limit_error":
 		case "rate_limit_exceeded":
+		case CREDENTIAL_POOL_BLOCKED_CODE:
 		case "insufficient_quota":
 		case "exceeded_current_quota_error":
 		case "usage_limit_reached":

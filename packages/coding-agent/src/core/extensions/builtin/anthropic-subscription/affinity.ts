@@ -57,12 +57,15 @@ export class AllAccountsBlockedError extends Error {
 	readonly limitedModel: string | undefined;
 	/** Set only when account fallback is off, so the guidance names that account instead of the whole pool. */
 	readonly unavailableAccount: UnavailableAccount | undefined;
+	/** Every candidate is blocked only by an account-wide or requested-model rate limit (senpi#3975). */
+	readonly allRateLimited: boolean;
 
 	constructor(
 		soonestUnblockAt: number | undefined,
 		blockReason?: "auth_error",
 		limitedModel?: string,
 		unavailableAccount?: UnavailableAccount,
+		allRateLimited = false,
 	) {
 		const until = soonestUnblockAt === undefined ? undefined : new Date(soonestUnblockAt).toISOString();
 		super(
@@ -77,6 +80,7 @@ export class AllAccountsBlockedError extends Error {
 		this.soonestUnblockAt = soonestUnblockAt;
 		this.blockReason = blockReason;
 		this.unavailableAccount = unavailableAccount;
+		this.allRateLimited = allRateLimited;
 	}
 }
 
@@ -209,5 +213,11 @@ export function selectAccount(accounts: readonly AccountSlot[], options: Affinit
 			: undefined,
 		limitedModel(candidates, now, options.model),
 		unavailableAccount,
+		candidates.length > 0 &&
+			candidates.every((account) =>
+				isAccountBlocked(account, now)
+					? account.blockReason === "rate_limit"
+					: activeModelBlockUntil(account.modelBlocks, options.model, now) !== undefined,
+			),
 	);
 }
