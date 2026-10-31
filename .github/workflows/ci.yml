@@ -572,14 +572,14 @@ jobs:
 
       - name: Run tool child Windows tests under Bun
         shell: bash
-        run: node ../../scripts/run-tests.mjs bun --bun ../../node_modules/vitest/vitest.mjs run src/modes/rpc/tool-child/windows-job.win32.test.ts src/modes/rpc/tool-child/launch-barrier.win32.test.ts src/modes/rpc/tool-child/child-containment.test.ts src/modes/rpc/tool-child/windows-breakaway.test.ts src/modes/rpc/tool-child/windows-command-line.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tool-child-win32.json
+        run: node ../../scripts/run-tests.mjs bun --bun ../../node_modules/vitest/vitest.mjs run src/modes/rpc/tool-child/windows-job.win32.test.ts src/modes/rpc/tool-child/launch-barrier.win32.test.ts src/modes/rpc/tool-child/session-launch-supervisor.win32.test.ts src/modes/rpc/tool-child/child-containment.test.ts src/modes/rpc/tool-child/windows-breakaway.test.ts src/modes/rpc/tool-child/windows-command-line.test.ts --reporter=verbose --reporter=json --outputFile=vitest-tool-child-win32.json
         working-directory: packages/coding-agent
 
-      # A skipped suite exits 0: fail unless both real-kernel files executed and every test in them passed.
+      # A skipped suite exits 0: fail unless every real-kernel file executed and every test in it passed.
       - name: Require the real-kernel tests to have executed
         shell: bash
         run: |
-          for name in windows-job.win32.test.ts launch-barrier.win32.test.ts; do
+          for name in windows-job.win32.test.ts launch-barrier.win32.test.ts session-launch-supervisor.win32.test.ts; do
             node -e '
               const r = JSON.parse(require("fs").readFileSync("vitest-tool-child-win32.json", "utf8"));
               const file = r.testResults.find((t) => t.name.split("\\").join("/").endsWith(process.argv[1]));
