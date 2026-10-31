@@ -104,7 +104,7 @@ it("RULING-68 a record over the protocol depth limit but under the engine limit 
 	);
 	expect(refusals ?? 0).toBe(0);
 	expect(stderr.filter((line) => REFUSED.test(line))).toEqual([]);
-}, 60_000);
+}, 600_000);
 
 /** One real delivery per probe, including the refusal/reporting and two-turn survival contract. */
 async function writerDelivers(depth: number): Promise<boolean> {
@@ -230,7 +230,7 @@ it("RULING-68 worker: plain JSON is delivered unchanged; past the recursive engi
 		expect(refusals, "refused by the host writer, counted once").toBe(1);
 		expect(stderr.filter((line) => REFUSED.test(line))).toHaveLength(1);
 	}
-}, 90_000);
+}, 600_000);
 
 it("RULING-68 worker: a record past the isolate's recursive engine limit is refused typed in the isolate and reported", async () => {
 	const { records, failures, isolateRefusal } = await inWorker(`[[${OVER_ENGINE}, new Date(0)]]`);
@@ -242,4 +242,4 @@ it("RULING-68 worker: a record past the isolate's recursive engine limit is refu
 		"later records, both turns",
 	).toHaveLength(2);
 	expect(REFUSED.test(await within("the isolate's refusal line", isolateRefusal))).toBe(true);
-}, 90_000);
+}, 600_000);

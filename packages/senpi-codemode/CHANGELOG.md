@@ -12,6 +12,26 @@
 
 ### Removed
 
+## [2026.10.31-2] - 2026-10-31
+
+### Breaking Changes
+
+### Added
+
+- The eval prompt's `Host:` line honors the test-only `SENPI_TEST_WORKSTATION` pin (the same variable and shape coding-agent's workstation facts read, #4662): its CPU model and core count replace the real ones, so a harness driving the CLI gets the same prompt bytes on every host; unset or empty, nothing changes ([#4837](https://github.com/code-yeongyu/senpi/pull/4837))
+- The same pin's optional `repoRoot: {from, to}` field shows the bun-1-4 skill path under the checkout `from` under the synthetic root `to` instead, so the checkout location does not reach the prompt either (#5067) ([#4837](https://github.com/code-yeongyu/senpi/pull/4837))
+
+### Changed
+
+- The bundled `bun-1-4` skill is now `bun`: its capability map and operating rules cover Bun 1.4.1-1.4.4 (`bun check`, `bun fmt`, `Bun.FetchSession`, HTTP/2 in `Bun.serve`, offline installs) and the Bun.$ / Bun.spawn / bun test practices learned in agent sessions, with a new `references/session-recipes.md`; the eval prompt's pointer names the `bun` skill and also fires before a cell that spawns a process or runs tests ([#5158](https://github.com/code-yeongyu/senpi/pull/5158))
+
+### Fixed
+
+- An eval call that leaves out `language`, `code` or `summary` now gets one clear error per missing field (naming the enabled languages) instead of a list of every schema branch it failed ([#5150](https://github.com/code-yeongyu/senpi/pull/5150))
+- `eval` `peek`/`stop` with a mistyped `cell_id` now suggests the one close known cell id ([#5153](https://github.com/code-yeongyu/senpi/issues/5153))
+
+### Removed
+
 ## [2026.10.31-1] - 2026-10-31
 
 ### Breaking Changes

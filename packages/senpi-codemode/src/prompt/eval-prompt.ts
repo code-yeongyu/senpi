@@ -30,7 +30,7 @@ export interface EvalPromptOptions {
 	readonly hostLine?: string;
 	/** Identity of the in-process js kernel; a bun runtime swaps the Node.js worker line for the Bun one. */
 	readonly jsRuntime?: EvalRuntimeInfo;
-	/** Absolute path of the active bun-1-4 skill; rendered as a MUST READ pointer only on a bun kernel. */
+	/** Absolute path of the active bun skill; rendered as a MUST READ pointer only on a bun kernel. */
 	readonly bunSkillPath?: string;
 	/** Kill deadline for a cell's own execution time, as configured; the description states it. */
 	readonly runBudgetSeconds?: number;
