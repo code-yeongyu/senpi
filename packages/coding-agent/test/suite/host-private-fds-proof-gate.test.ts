@@ -17,6 +17,8 @@ describe("Windows pair release proof (#4898)", () => {
 
 	it.each([
 		{ label: "another Bun", platform: "win32" as const, bun: "1.4.5" },
+		{ label: "a Bun that extends the proven version", platform: "win32" as const, bun: "1.4.40" },
+		{ label: "a prerelease of the proven Bun", platform: "win32" as const, bun: "1.4.4-canary.1" },
 		{ label: "no Bun", platform: "win32" as const, bun: undefined },
 		{ label: "Linux", platform: "linux" as const, bun: "1.4.4" },
 		{ label: "macOS", platform: "darwin" as const, bun: "1.4.4" },
