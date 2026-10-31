@@ -1,3 +1,137 @@
+## 2026-10-29 - Export the account-level block predicate (senpi#4885)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/affinity.ts`: `isAccountBlocked` is exported (unchanged) so the generic account listing decides this lane's stored blocks with the lane's own rule, which re-probes an auth block whose deadline passed (senpi#3264).
+
+### Why
+
+- One source of truth for "selection skips this account" (senpi#4365 follow-up).
+
+### Why an extension could not handle it
+
+- The predicate is this builtin lane's own selection rule.
+
+### Expected merge conflict zones
+
+- LOW: the `isAccountBlocked` declaration in `affinity.ts`.
+
+## 2026-10-29 - A models.json baseUrl reaches Claude Code as ANTHROPIC_BASE_URL (senpi#4765)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/query-environment.ts` (new): `claudeCodeQueryEnvironment` builds the variables the lane layers over the subprocess environment. It holds the senpi-compaction variables that used to be inline in `options.ts`, and sets `ANTHROPIC_BASE_URL` to `model.baseUrl` whenever that is not the `CLAUDE_SDK_OAUTH_API_ID` registration sentinel.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/options.ts`: `buildAnthropicSubscriptionQueryOptions` takes `options.env` from `claudeCodeQueryEnvironment`. Both auth lanes already merge `options.env` last, so the user's URL wins over the host's `ANTHROPIC_BASE_URL` (ambient lane) and survives the managed lanes' strip.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/session-sync.ts`: `configFingerprint` hashes `options.env.ANTHROPIC_BASE_URL`, so a changed models.json baseUrl restarts the resident process. An unset value drops out of the digest, so existing fingerprints stay the same.
+
+### Why
+
+- senpi#4765: a models.json `baseUrl` for `anthropic-subscription` was ignored. The lane spawns Claude Code, which takes its endpoint from `ANTHROPIC_BASE_URL` and keeps the selected login as the credential, but the lane never passed the user's URL.
+
+### Why an extension could not handle it
+
+- This is the extension's own transport; the change lives in it.
+
+### Expected merge conflict zones
+
+- LOW: the `options.env` line of `buildAnthropicSubscriptionQueryOptions` in `options.ts` and the `contextWindow` neighbourhood of `configFingerprint` in `session-sync.ts`.
+
+## 2026-10-29 - Revoke the Claude browser sink before removing it (senpi#4705, fixes #4701)
+
+### What changed
+
+- `claude-cli-browser-capture.ts`: close the watcher and rename the private capture directory before recursively deleting it. A browser helper that already loaded its script cannot recreate the old absolute sink path during removal. Cleanup failures cannot escape `dispose` and discard the login result.
+- If rename fails (for example, an open Windows handle), removal still attempts the original path with three bounded filesystem retries. Rename and removal failures emit debug session-log events containing only the directory path.
+
+### Why
+
+- Cancellation can kill the CLI while its browser helper still runs with independent stdio. A late sink creation during recursive deletion produces `ENOTEMPTY`; throwing before `settle` resolves loses the cancellation outcome.
+
+### Why an extension could not handle it
+
+- This is the builtin provider's own browser-capture disposal, called inside its login settlement boundary.
+
+### Expected merge conflict zones
+
+- LOW: `claude-cli-browser-capture.ts`, the `dispose` implementation. No upstream counterpart.
+
+## 2026-10-28 - The Windows BROWSER helper leaves the account dir before it writes the URL (senpi#4654)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-browser-capture.ts`: the win32 `capture` helper leaves the account dir before `setlocal`, so `endlocal` restores `%SystemRoot%`; it never holds the account dir after senpi sees the URL.
+- `packages/coding-agent/test/anthropic-subscription-claude-cli-auth-windows.test.ts`: the case cancels the login and awaits `login.result` (the claude child's `close`) before teardown removes its temp root; a child still running 15 s after abort fails the case with its executable named.
+
+### Why
+
+- The bundled `claude auth login` starts `$BROWSER` in its own cwd (the account dir) and does not wait for it. Windows refuses to delete a directory that a live process has as its cwd, so the case's teardown raced both the just-aborted claude child and the helper's `cmd.exe` and failed with EPERM (senpi#4654). The helper leaves the account dir before `setlocal`, so the implicit `endlocal` restores `%SystemRoot%`; it never holds the account dir after senpi sees the URL. The claude child is awaited on its `close` event.
+
+### Why an extension could not handle it
+
+- The helper script is generated inside this builtin extension; nothing outside it controls the helper's cwd.
+
+### Expected merge conflict zones
+
+- LOW: `helperScript` in `claude-cli-browser-capture.ts` (fork-only file).
+
+## 2026-10-28 - The subscription lane rewrites skill roots again (senpi#4518)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/options.ts`: `rewriteSkillsLocations` rewrites the `<rN>` entries of the catalog's `<skill_roots>` table that sit at or under the global skills root (`~/.claude/skills`) or the project skills root (`.claude/skills`), keeping the path below the root. The absolute `<location>` rewrite stays for a catalog without the table. A root is matched by path containment, so a sibling such as `skills-extra` is no longer treated as inside `skills`.
+
+### Why
+
+- Since the catalog lists roots once in `<skill_roots>` and locates skills by `rN/` alias (and since #4456 large catalogs have no `<location>` at all), the old rewrite matched nothing and the lane kept senpi's own skill paths (#4518).
+
+### Why an extension could not handle it
+
+- This file is the extension; the rewrite is part of its `preset-append` assembly.
+
+### Expected merge conflict zones
+
+- None upstream: the directory is fork-only.
+
+## 2026-10-27 - Drive Claude sign-in through the bundled CLI's own auth commands (senpi#4436, S2)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-auth.ts` (new): `startClaudeCliLogin` runs `<claude> auth login --claudeai` (never `--console` or `--sso`) in the account dir with its `CLAUDE_CONFIG_DIR`. It captures the one-click URL through a `BROWSER` helper and the copy-code URL from stdout. A pasted code is normalized and written to stdin as one line, never to argv. Cancel and the 10-minute idle timeout send SIGTERM, then SIGKILL after 5 s. Success requires exit 0 plus `Login successful.`; exit-1 stderr maps to typed reasons.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-auth-status.ts` (new): `auth status --json` is accepted only for `loggedIn: true` with exit 0, `authMethod: "claude.ai"` and `apiProvider: "firstParty"`; `logoutClaudeCli` runs `auth logout`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-environment.ts` (new): the spawn environment strips the managed auth set (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN[_N]`, ...), `CLAUDE_SECURESTORAGE_CONFIG_DIR`, an inherited `CLAUDE_CONFIG_DIR` and `BROWSER`, then pins the account dir and `NO_COLOR=1`.
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/claude-cli-process.ts` and `claude-cli-browser-capture.ts` (new): spawn/stop of the CLI, and the per-login private helper (POSIX `sh` or Windows `.cmd`) that only appends its argument to a sink.
+- Not wired into `createOAuthConfig().login` yet; that is S5 of senpi#4436.
+
+### Why
+
+- senpi#4436 moves Claude subscription sign-in from the hand-rolled OAuth flow to the CLI's own login, store and refresh. This is the driver the later steps build on. An inherited token or API key would take precedence over the stored claude.ai login inside the CLI, so the strip is part of the driver.
+
+### Why an extension could not handle it
+
+- The driver belongs to this builtin provider's login and account lifecycle, and uses the provider's own executable resolution and environment strip.
+
+### Expected merge conflict zones
+
+- NONE: new files only.
+
+## 2026-10-27 - A lone healthy account is not a re-login recovery target (senpi#3619, senpi#4427)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/oauth-login.ts`: `recoveryTargetName` no longer returns the only slot when the pool holds one account. Its only target is the pool's single `auth_error`-blocked slot. A blank or headless login next to one healthy account now appends `account-2`; a blocked lone slot is still refreshed in place, and typing an existing name still refreshes that slot.
+
+### Why
+
+- Adding a second Claude account with the default name, or through a login with no name prompt (RPC, desktop), overwrote the first, working account. The omo#7084 recovery treated "exactly one account" as a dead account without checking its block state.
+
+### Why an extension could not handle it
+
+- The builtin provider owns its login flow and slot naming; no extension hook runs between the OAuth exchange and the slot write.
+
+### Expected merge conflict zones
+
+- LOW: `recoveryTargetName` in `oauth-login.ts` (senpi#3929 also edits it, adding identity checks).
+
 ## 2026-10-26 - Claude account listing reports the block reason too (senpi#4365)
 
 ### What changed

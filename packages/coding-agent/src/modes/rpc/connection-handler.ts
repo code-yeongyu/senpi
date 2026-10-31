@@ -45,6 +45,11 @@ import {
 } from "../../core/extensions/builtin/anthropic-subscription/account-events.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "../../core/extensions/builtin/anthropic-subscription/account-management.ts";
 import {
+	ProviderAccountTestError,
+	testClaudeCliAccount,
+} from "../../core/extensions/builtin/anthropic-subscription/claude-cli-account-test.ts";
+import { takeClaudeCliLoginOutcome } from "../../core/extensions/builtin/anthropic-subscription/claude-cli-login-outcome.ts";
+import {
 	isMcpControlInventoryChanged,
 	MCP_CONTROL_INVENTORY_CHANGED_EVENT,
 	MCP_CONTROL_INVENTORY_REQUEST_EVENT,
@@ -86,6 +91,7 @@ import {
 	ENTRIES_TAIL_CAPABILITY,
 	INTERACTIVE_USER_CAPABILITY,
 	MEDIA_PLACEHOLDERS_CAPABILITY,
+	PROVIDER_ACCOUNT_TEST_CAPABILITY,
 	QUESTION_CAPABILITY,
 	QUEUED_MESSAGE_REVISION_CAPABILITY,
 	RESUME_SESSION_CAPABILITY,
@@ -1151,7 +1157,9 @@ export function createRpcConnectionHandler(
 			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
 			// The client shows what this login replaced and where the previous credential is (senpi#3486).
 			const replacement = authStorage.takeReplacement(provider);
-			outputEvent({ type: "auth_login_end", provider, success: true, ...replacement });
+			// A Claude CLI sign-in names the account it signed in and its connection test (senpi#4436).
+			const signedIn = takeClaudeCliLoginOutcome(controller.signal);
+			outputEvent({ type: "auth_login_end", provider, success: true, ...replacement, ...signedIn });
 		} catch (loginError: unknown) {
 			const message = loginError instanceof Error ? loginError.message : String(loginError);
 			outputEvent({ type: "auth_login_end", provider, success: false, error: message });
@@ -1216,6 +1224,7 @@ export function createRpcConnectionHandler(
 								CONTINUE_FROM_LEAF_CAPABILITY,
 								EVAL_CELLS_CAPABILITY,
 								AUTH_KEY_VERIFY_CAPABILITY,
+								PROVIDER_ACCOUNT_TEST_CAPABILITY,
 								QUEUED_MESSAGE_REVISION_CAPABILITY,
 								TOOL_BARRIER_CAPABILITY,
 								USER_ACTIVITY_CAPABILITY,
@@ -2137,9 +2146,12 @@ export function createRpcConnectionHandler(
 			}
 
 			case "logout": {
-				session.modelRegistry.authStorage.logout(command.provider);
+				// The runtime's logout signs every Claude CLI account out of the CLI before deleting the credential
+				// (senpi#4436); the runtime key is dropped too, as `AuthStorage.logout` did.
+				const { notices } = await session.modelRuntime.logoutProvider(command.provider);
+				session.modelRegistry.authStorage.removeRuntimeApiKey(command.provider);
 				await session.modelRegistry.refresh();
-				return success(id, "logout");
+				return success(id, "logout", notices.length === 0 ? undefined : { notices });
 			}
 
 			case "get_provider_accounts": {
@@ -2153,8 +2165,28 @@ export function createRpcConnectionHandler(
 			}
 
 			case "account_remove": {
-				await removeCredentialAccount(session.modelRegistry.authStorage, command.provider, command.name);
-				return success(id, "account_remove");
+				const { notice } = await removeCredentialAccount(
+					session.modelRegistry.authStorage,
+					command.provider,
+					command.name,
+				);
+				return success(id, "account_remove", notice === undefined ? undefined : { notice });
+			}
+
+			case "test_provider_account": {
+				try {
+					const check = await testClaudeCliAccount({
+						provider: command.provider,
+						name: command.name,
+						cwd: session.cwd,
+						store: session.modelRegistry.authStorage,
+					});
+					return success(id, "test_provider_account", { check });
+				} catch (testError) {
+					if (testError instanceof ProviderAccountTestError)
+						return error(id, "test_provider_account", testError.code);
+					throw testError;
+				}
 			}
 
 			case "account_order": {
