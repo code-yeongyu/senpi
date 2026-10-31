@@ -200,6 +200,7 @@ import {
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import { reportExtensionHandlerStall } from "./extension-handler-stall-report.ts";
 import { ANTHROPIC_SUBSCRIPTION_PROVIDER_ID } from "./extensions/builtin/anthropic-subscription/account-management.ts";
+import { isSignInAgainError } from "./extensions/builtin/anthropic-subscription/sign-in-again.ts";
 import { askUserAnswerDisplayText } from "./extensions/builtin/ask-user/format.ts";
 import { getPromptCachePrewarmUsage } from "./extensions/builtin/cache-keepalive/prewarm-entry.ts";
 import {
@@ -790,6 +791,10 @@ export type AgentSessionEvent =
 			replaced?: CredentialReplacement["replaced"];
 			/** Where the replaced credential was backed up, when it was. */
 			backupPath?: string;
+			/** The account a Claude CLI sign-in signed in (senpi#4436). */
+			account?: { name: string };
+			/** That account's sign-in connection test. */
+			check?: { model: string; outcome: "ok" | "failed"; reason?: string; at: number };
 	  }
 	| {
 			type: "summarization_retry_scheduled";
@@ -1642,6 +1647,8 @@ export class AgentSession {
 	private readonly _abortProvenance = new AgentAbortProvenance();
 	private _deadlineTracker!: AgentDeadlineTracker;
 	private readonly _agentSettledDelivery = new AgentSettledDelivery();
+	/** Resolved when a person's input moves on while this settle's agent_settled handlers still run (omo#11419). */
+	private _settledHandlersYield: PromiseWithResolvers<void> | undefined;
 	private _suppressQueuedContinuationAfterUserAbort = false;
 	private _userAbortGeneration = 0;
 	/** Set when clearQueue({ abortWillFollow: true }) drains queues immediately before abort(). */
@@ -3318,17 +3325,35 @@ export class AgentSession {
 		const settlementEpoch = ++this._settlementEpoch;
 		const fallbackExhausted = this._takeRunFallbackExhaustion();
 		try {
-			await this._extensionRunner.emit({
+			// agent_settled is notification-only: the run has settled, so subscribers (RPC clients, the TUI) hear it now.
+			// Waiting on extension handlers first let one slow handler hold every client's settle edge (omo#11419);
+			// the handlers still run inside the deferral window, under the host budget that reports their stalls.
+			const settleYield = Promise.withResolvers<void>();
+			this._settledHandlersYield = settleYield;
+			this._emit({ type: "agent_settled" });
+			const handlers = this._extensionRunner.emit({
 				type: "agent_settled",
 				...(fallbackExhausted === undefined ? {} : { fallbackExhausted }),
 			});
-			this._emit({ type: "agent_settled" });
+			// A subscriber above may already have sent a person's prompt, before any handler was held.
+			let yielded = false;
+			if (this._settledHandlersYield === undefined) this._yieldHeldSettledHandlers();
+			await Promise.race([handlers, settleYield.promise.then(() => (yielded = true))]);
+			if (yielded) {
+				// The walk goes on detached (each later handler still runs, logged by its budget); its failure is logged.
+				handlers.catch((error: unknown) =>
+					this._sessionLogger.warn("agent_settled_handlers_failed", {
+						error: error instanceof Error ? error.message : String(error),
+					}),
+				);
+			}
 			if (this._abortProvenance.takeLateUserJoin()) await this._emitSessionAbort();
 			({ actions: deferredActions, turnClaims: deferredTurnClaims } = this._agentSettledDelivery.finish(
 				this._userAbortGeneration,
 			));
 		} finally {
 			this._agentSettledDelivery.cancel();
+			this._settledHandlersYield = undefined;
 			this._abortProvenance.closeAgentEndBoundary();
 			this._resolveIdleWaitIfIdle();
 		}
@@ -5060,6 +5085,12 @@ export class AgentSession {
 		return this.agent.state.systemPrompt;
 	}
 
+	/** The stable prefix the turn request splits `systemPrompt` at, while the prompt still starts with it (senpi#4447). */
+	get systemPromptStablePrefix(): string | undefined {
+		const prefix = this.agent.state.systemPromptStablePrefix;
+		return prefix !== undefined && this.agent.state.systemPrompt.startsWith(prefix) ? prefix : undefined;
+	}
+
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
 		return this._retryAttempt;
@@ -5101,6 +5132,23 @@ export class AgentSession {
 		clearTimeout(graceTimer);
 		if (stillHeld) this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope);
 		await idle;
+	}
+
+	/**
+	 * A person's input arrived while the settled run's notification-only agent_settled handlers still run: stop waiting on
+	 * every one of them (omo#11419). The held one is released quietly (session.log stage "released", no extension error);
+	 * the rest of the walk runs detached. A prompt sent from inside an agent_settled subscriber, before any handler is
+	 * held, marks the yield so the settle releases the first handler as soon as it starts.
+	 */
+	private _yieldSettledHandlers(): void {
+		const settleYield = this._settledHandlersYield;
+		this._settledHandlersYield = undefined;
+		settleYield?.resolve();
+		this._yieldHeldSettledHandlers();
+	}
+
+	private _yieldHeldSettledHandlers(): void {
+		this._extensionRunner.releaseHeldHandlers(this._handlerTurnScope, "yielded");
 	}
 
 	/** Adapter for the deadline owner interface: stop waiting on extension handlers that hold the turn (senpi#3650). */
@@ -5801,6 +5849,9 @@ export class AgentSession {
 				return;
 			}
 			if (origin === "person") {
+				// The last run already settled; its notification-only agent_settled handlers must not hold a person's next
+				// input. Stop waiting on them (they keep running, logged as released) so this turn starts now (omo#11419).
+				if (this._agentSettledDelivery.active) this._yieldSettledHandlers();
 				this._beginPersonInput();
 				// The held commands this input released run first, in the order typed, so its turn starts after them.
 				const heldCommands = this._takeHeldCommandRun();
@@ -6482,6 +6533,7 @@ export class AgentSession {
 				});
 			}
 		}
+		this.agent.state.systemPromptStablePrefix = result?.systemPromptStablePrefix;
 		if (result?.systemPrompt !== undefined) {
 			this._systemPromptOverride = result.systemPrompt;
 			this.agent.state.systemPrompt = result.systemPrompt;
@@ -9920,9 +9972,18 @@ export class AgentSession {
 
 		if (areExperimentalFeaturesEnabled()) {
 			const systemPrompt = this.agent.state.systemPrompt;
+			const systemPromptStablePrefix = this.systemPromptStablePrefix;
 			const tools = this.agent.state.tools.slice();
 			const buildSourceContext = (messages: AgentMessage[]) =>
-				this.agent.buildProviderContext({ systemPrompt, messages: messages.slice(), tools: tools.slice() }, signal);
+				this.agent.buildProviderContext(
+					{
+						systemPrompt,
+						...(systemPromptStablePrefix === undefined ? {} : { systemPromptStablePrefix }),
+						messages: messages.slice(),
+						tools: tools.slice(),
+					},
+					signal,
+				);
 			const fullContext = await buildSourceContext(this.agent.state.messages);
 			const isExactPrefix = (candidate: Context): boolean =>
 				candidate.messages.length > 0 &&
@@ -12104,6 +12165,7 @@ export class AgentSession {
 				getMessageRevision: () => this.getMessageRevision(),
 				applyCompaction: (precomputed, options) => this.applyCompaction(precomputed, options),
 				getSystemPrompt: () => this.systemPrompt,
+				getSystemPromptStablePrefix: () => this.systemPromptStablePrefix,
 				getLoadedHookSources: () =>
 					this._resourceLoader.getLoadedHookSources?.() ?? {
 						agentDir: this._cwd,
@@ -12748,12 +12810,15 @@ export class AgentSession {
 	 * The Claude SDK lane owns its own account pool: an auth miss there is
 	 * repaired or failed over inside the pool, so hopping to another provider
 	 * would abandon the user's Claude subscription on a recoverable miss. Every
-	 * other provider keeps the configured fallback-chain hop.
+	 * other provider keeps the configured fallback-chain hop. The sign-in-again
+	 * prompt (senpi#4436) is the same kind of miss: every model on the lane fails
+	 * it until the user signs in, so it neither retries nor hops.
 	 */
 	private _isClaudeSdkAuthMissError(message: AssistantMessage): boolean {
 		return (
 			this.model?.provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID &&
-			message.errorMessage === providerNotConfiguredMessage(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID)
+			(message.errorMessage === providerNotConfiguredMessage(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) ||
+				isSignInAgainError(message.errorMessage))
 		);
 	}
 

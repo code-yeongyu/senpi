@@ -1,3 +1,22 @@
+## 2026-10-28 - Source processes of one test run share a Node compile cache (senpi#4614)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/source-compile-cache.ts` (new): `enableSourceCompileCache()` enables Node's compile cache in the directory named by `SENPI_SOURCE_COMPILE_CACHE` (`SOURCE_COMPILE_CACHE_ENV`), read late-bound off `node:module` like `compile-cache.ts`; unset, it does nothing.
+- `packages/coding-agent/src/experimental/source-resolver.ts`: the `--import` preload form calls `enableSourceCompileCache()` after registering the workspace resolver. Library imports through `registerWorkspaceSourceResolver()` never enable it.
+
+### Why
+
+- senpi#4614: every test child launched through the source loader type-stripped and compiled its whole workspace graph again (the faux session worker loads 1,700 modules, 527 of them TypeScript). Node's compile cache keys entries by source content and also stores the strip result, so a repeated launch inside one run reuses that work while edited files are still recompiled. Measured on the Linux node 26 receipt image: faux session worker launch 1,588 ms -> 1,117 ms warm, with a one-time 0.4-0.5 s write at the first launch's exit.
+
+### Why an extension could not handle it
+
+- The preload runs before any entrypoint or extension loads; the cache has to be enabled there to cover the entry's own import graph.
+
+### Expected merge conflict zones
+
+- LOW: the import list and the preload block at the end of `packages/coding-agent/src/experimental/source-resolver.ts`; `source-compile-cache.ts` is fork-only.
+
 ## 2026-10-29 - Export the extension RPC request context type (senpi#4728, #4775)
 
 ### What changed

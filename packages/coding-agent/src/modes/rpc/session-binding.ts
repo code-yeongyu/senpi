@@ -70,6 +70,7 @@ export async function createRpcSessionBinding(
 	const enqueueRecord = (record: object): void => {
 		toolSpans.observe(record);
 		const canonical = pairing?.take(record);
+		const refused = pairing?.refused(record) === true;
 		// Accepted before the writer serializes or routes it; a replacement is the next incarnation's bootstrap.
 		if (lane && "type" in record && record.type === "session_replaced") {
 			journaled = entry.runtime?.session.sessionManager;
@@ -79,8 +80,8 @@ export async function createRpcSessionBinding(
 		} else if (lane) {
 			lane.applyTranscript(journaled?.drainTranscript() ?? []);
 			const carrier = recoveryCarrier(record);
-			lane.accept(record, carrier, unit(carrier, canonical, record));
-		} else if (canonical) carryCanonical(record, canonical);
+			lane.accept(record, carrier, unit(carrier, canonical, record), refused);
+		} else carryCanonical(record, canonical, refused);
 		writer.enqueue(sessionId, record);
 	};
 	// Attachments share one entry, so resolve the host from the live runtime. In

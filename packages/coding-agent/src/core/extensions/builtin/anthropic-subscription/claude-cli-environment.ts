@@ -6,6 +6,12 @@ import { stripManagedAuthEnvironment } from "./auth-environment.ts";
  */
 const HOST_REDIRECT_NAMES = ["CLAUDE_SECURESTORAGE_CONFIG_DIR", "CLAUDE_CONFIG_DIR", "BROWSER"] as const;
 
+/** Inherited credentials the CLI reads from a file descriptor; they would beat the account's own login (senpi#4436). */
+const INHERITED_CREDENTIAL_DESCRIPTORS = [
+	"CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+	"CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+] as const;
+
 export type ClaudeCliEnvironmentOptions = {
 	/** The account's own config dir; the CLI keys its credential store on this path. */
 	readonly configDir: string;
@@ -23,7 +29,7 @@ export function buildClaudeCliEnvironment(
 	options: ClaudeCliEnvironmentOptions,
 ): NodeJS.ProcessEnv {
 	const environment = stripManagedAuthEnvironment(parent);
-	for (const name of HOST_REDIRECT_NAMES) delete environment[name];
+	for (const name of [...HOST_REDIRECT_NAMES, ...INHERITED_CREDENTIAL_DESCRIPTORS]) delete environment[name];
 	environment.CLAUDE_CONFIG_DIR = options.configDir;
 	environment.NO_COLOR = "1";
 	if (options.browser !== undefined) environment.BROWSER = options.browser;

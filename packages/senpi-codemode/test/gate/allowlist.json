@@ -1,6 +1,13 @@
 {
 	"version": 1,
 	"nodes": {
+		"senpi#5066": {
+			"additions": [
+				"legacyContracts/test/permission-slots.test.ts/permission slot ownership (#4309) bounds a held decision when the host claims before-wait (#4709)",
+				"legacyContracts/test/permission-slots.test.ts/permission slot ownership (#4309) bounds a held decision when the host claims during-wait (#4709)"
+			],
+			"reason": "senpi#4709 / senpi#4831: these requester-claim race regression tests were reviewed and merged in senpi#4831 without reviewed-addition records. They prove a held permission decision remains bounded when the host claims before or during the requester's wait. Record only these two additions; the frozen baseline is unchanged."
+		},
 		"senpi#4974": {
 			"additions": [
 				"legacyContracts/test/prompt.test.ts/buildEvalPrompt advertises the eval cell-control action syntax"
