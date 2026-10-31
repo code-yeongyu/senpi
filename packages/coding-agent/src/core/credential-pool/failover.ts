@@ -82,7 +82,7 @@ export class CredentialFailoverError extends Error {
 	}
 }
 
-function isAvailable(slot: RunSlot, now: number): boolean {
+export function isAvailable(slot: Pick<RunSlot, "blockReason" | "blockedUntil">, now: number): boolean {
 	if (slot.blockReason === "account_disabled") return false;
 	if (slot.blockedUntil !== undefined && slot.blockedUntil > now) return false;
 	// A live lease marks the one caller admitted to run the half-open probe.
@@ -108,22 +108,48 @@ function coolingProbe<TSlot extends RunSlot>(slots: readonly TSlot[], attempted:
 }
 
 /**
+ * A slot's due-back time as the reader's local clock shows it, followed by the ISO instant that the goal
+ * provider-retry scan (`providerRetryAt`) and turn-end liveness read from this text (senpi#4329).
+ */
+function dueBack(epochMs: number): string {
+	return `${localTime(epochMs)} (${new Date(epochMs).toISOString()})`;
+}
+
+function localTime(epochMs: number): string {
+	return new Date(epochMs).toLocaleString("en-US", {
+		year: "numeric",
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+		timeZoneName: "short",
+	});
+}
+
+/**
  * Why the request had nowhere to go: each slot it could not use, with its reason and the time it is
  * due back, so a refusal is never a bare "no slots" that only a re-login seemed to fix (senpi#2081).
+ * It ends with the one step that works: wait for the first slot due back, or reconnect when none is
+ * due back on its own (senpi#4329).
  */
 function noSlotsMessage(slots: readonly RunSlot[], now: number): string {
 	const blocked = slots.map((slot) => {
 		const reason = slot.blockReason ?? "blocked";
 		if (slot.blockedUntil !== undefined && slot.blockedUntil > now) {
-			return `${slot.name} (${reason} until ${new Date(slot.blockedUntil).toISOString()})`;
+			return `${slot.name} (${reason} until ${dueBack(slot.blockedUntil)})`;
 		}
 		return reason === "account_disabled"
 			? `${slot.name} (account_disabled until re-login)`
 			: `${slot.name} (${reason})`;
 	});
+	const firstBack = soonestRetryAt(slots, now);
+	const step =
+		firstBack === undefined
+			? "Sign in again or add a new API key for this provider, or choose another model."
+			: `Wait until ${localTime(firstBack)}, or choose another model.`;
 	return blocked.length === 0
-		? "No credential slots available"
-		: `No credential slots available: ${blocked.join(", ")}`;
+		? `No credential slots available. ${step}`
+		: `No credential slots available: ${blocked.join(", ")}. ${step}`;
 }
 
 function soonestRetryAt(slots: readonly RunSlot[], now: number): number | undefined {
