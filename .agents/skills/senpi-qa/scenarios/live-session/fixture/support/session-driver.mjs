@@ -9,12 +9,20 @@ import { MCP_SERVER } from "./sandbox-setup.mjs";
 const OPEN_TIMEOUT_MS = 300_000;
 const COMMAND_TIMEOUT_MS = 120_000;
 
-/** Tokens one assistant message used: input + output + cached input (cache read and cache write). */
+/**
+ * Billable-weighted tokens one assistant message used, in input-token equivalents at the provider's relative prices:
+ * output x5, cache read x0.05, cache write x1.25 (anthropic/claude-opus-5-5: $4 in / $20 out / $0.20 cache read /
+ * $5 cache write per M). The --budget caps SPEND: raw counts let re-read system prompts (cache reads, 1/20 the price)
+ * exhaust it in a few turns (LIVE-P0 run 1: 915k of 1.0M raw tokens were cache reads, ~$0.80 spent).
+ */
+const TOKEN_WEIGHT = { input: 1, output: 5, cacheRead: 0.05, cacheWrite: 1.25 };
 export function messageTokens(usage) {
 	if (!usage || typeof usage !== "object") return 0;
-	return ["input", "output", "cacheRead", "cacheWrite"].reduce(
-		(total, key) => total + (Number.isFinite(usage[key]) ? usage[key] : 0),
-		0,
+	return Math.round(
+		Object.entries(TOKEN_WEIGHT).reduce(
+			(total, [key, weight]) => total + (Number.isFinite(usage[key]) ? usage[key] * weight : 0),
+			0,
+		),
 	);
 }
 
@@ -98,10 +106,33 @@ export async function driveSession({ setup, args, prompts, budget, answer, promp
 	let turns = 0;
 	for (const message of prompts) {
 		if (meter.stopped) break;
-		const seen = client.events.length;
-		const idle = client.waitForEvent((e) => client.events.indexOf(e) >= seen && e.type === "agent_idle", {
-			timeoutMs: promptTimeoutMs,
-		});
+		let seen = client.events.length;
+		// agent_idle ends a parent turn, not its delegated workflow (senpi#5088). Query the engine after
+		// each idle: its lifecycle update is emitted AFTER agent_idle, so a cached event can still say
+		// children=1 at the final idle. Custody covers both active children and their undelivered results.
+		const deadline = Date.now() + promptTimeoutMs;
+		const remaining = () => {
+			const ms = deadline - Date.now();
+			if (ms <= 0) throw new Error(`event wait timeout after ${promptTimeoutMs}ms`);
+			return ms;
+		};
+		const idle = (async () => {
+			for (;;) {
+				const event = await client.waitForEvent(
+					(e) => client.events.indexOf(e) >= seen && e.type === "agent_idle",
+					{ timeoutMs: remaining() },
+				);
+				seen = client.events.indexOf(event) + 1;
+				if (meter.stopped) return;
+				const state = await client.send(
+					{ type: "get_state" },
+					{ timeoutMs: Math.min(COMMAND_TIMEOUT_MS, remaining()) },
+				);
+				if (!state.success) throw new Error(`get_state failed: ${JSON.stringify(state).slice(0, 400)}`);
+				if ((state.data.lifecycle.waitingOn?.children ?? 0) === 0 && state.data.lifecycle.state !== "running")
+					return;
+			}
+		})();
 		idle.catch(() => {});
 		const sent = await client.send({ type: "prompt", message }, { timeoutMs: COMMAND_TIMEOUT_MS });
 		if (!sent.success) throw new Error(`prompt failed: ${JSON.stringify(sent).slice(0, 400)}`);
