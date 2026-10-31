@@ -29,8 +29,8 @@ async function session(lane: boolean): Promise<StructuredHarness> {
 	return harness;
 }
 
-// Part of #4272 (option B): with the rollout flag off, flag-off opens equal pre-S17 opens for every embedder. A session
-// without the structured lane opens and binds legacy-only; one with the lane keeps internal capture and acceptance.
+// Part of #4272 (option B): with the rollout flag off, a session without a structured lane opens and binds legacy-only,
+// as before S17; a session with the lane keeps internal capture and acceptance.
 it.each([
 	{ lane: false, name: "binds legacy-only without the structured lane" },
 	{ lane: true, name: "keeps internal capture and acceptance with the structured lane" },
