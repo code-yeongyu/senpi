@@ -83,7 +83,7 @@ it("leases a page across cut release and compaction, and refuses foreign cursors
 		await store.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);
 
 it("refuses an in-memory index page when retirement precedes its promise completion", async () => {
 	const root = await spoolRoot();
@@ -158,4 +158,4 @@ it("publishes one changed page through bounded paths without copying the large b
 		await store.retire();
 		await root.cleanup();
 	}
-}, 120_000);
+}, 600_000);

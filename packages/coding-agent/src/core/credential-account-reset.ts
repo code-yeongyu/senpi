@@ -61,5 +61,5 @@ export async function resetCredentialAccount(
 			current === undefined ? current : clearStoredBlock(current, name),
 		);
 	}
-	emitProviderAccountsChanged(provider);
+	emitProviderAccountsChanged(provider, "reset");
 }

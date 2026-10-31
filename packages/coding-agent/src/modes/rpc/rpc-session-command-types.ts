@@ -329,6 +329,7 @@ export type RpcSessionCommand =
 	| { id?: string; type: "account_remove"; provider: string; name: string }
 	| { id?: string; type: "account_reset"; provider: string; name: string }
 	| { id?: string; type: "account_order"; provider: string; names: string[] | null }
+	| { id?: string; type: "test_provider_account"; provider: string; name: string }
 	| { id?: string; type: "set_client_info"; width: number; capabilities?: string[] };
 
 /** What `steer`/`follow_up` do on an idle session: queue (default) or start a turn. */

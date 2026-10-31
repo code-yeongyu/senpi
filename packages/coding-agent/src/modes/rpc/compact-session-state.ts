@@ -1,12 +1,17 @@
 import { type ActiveBlock, adjustBlock, appendBlock, deltaBlock } from "./compact-active-block.ts";
 import { CompactActiveMessages } from "./compact-active-messages.ts";
+import { type CallFold, foldCallBlock, foldCallRecord, foldCallTerminal } from "./compact-call-fold.ts";
+import type { CallScope } from "./compact-call-model.ts";
+import { readCalls } from "./compact-call-view.ts";
 import { type CompactColdFlow, coldFlowOperations } from "./compact-cold-flows.ts";
 import type { CompactColdOperation } from "./compact-cold-operations.ts";
+import { CompactCurrentComponents } from "./compact-current-components.ts";
 import { CompactReadError, CompactReadLease } from "./compact-read-lease.ts";
 import { foldSeededBlock } from "./compact-seeded-block.ts";
 import { CompactSeededDraft } from "./compact-seeded-draft.ts";
 import { recordMessage, seedMessage, updateFields } from "./compact-seeded-messages.ts";
-import { type FrozenCompactState, readCompactState } from "./compact-state-view.ts";
+import { CompactSessionCalls } from "./compact-session-calls.ts";
+import { type FrozenCompactState, readActiveMessages, readCompactState } from "./compact-state-view.ts";
 import { type CompactTransition, CompactTransitionError } from "./compact-transition.ts";
 export type { CompactSessionStateOptions } from "./compact-state-storage.ts";
 
@@ -14,13 +19,25 @@ export type { CompactSessionStateOptions } from "./compact-state-storage.ts";
 export class CompactSessionState extends CompactActiveMessages {
 	private frozenTailBytes = 0;
 	private readonly cuts = new WeakMap<FrozenCompactState, CompactReadLease>();
+	private readonly components = new CompactCurrentComponents(this.store);
+	private readonly calls = new CompactSessionCalls(this.store);
 
 	get acceptedSequence(): number {
 		return this.sequence;
 	}
 
-	accept(t: CompactTransition): number {
+	/** Open broadcast questions right now, for synchronous status reads (R3.C6.4). */
+	get openBroadcastDialogs(): number {
+		return this.components.openBroadcast;
+	}
+
+	/**
+	 * `sequence` is the acceptance lane's own sequence for this unit (one numbering with the lane, RULING-26);
+	 * `turnId` is the lane-minted turn the unit belongs to, consumed by the calls component (RULING-13 Q6).
+	 */
+	accept(t: CompactTransition, sequence = this.sequence + 1, turnId: string | null = null): number {
 		if (t.type !== "message_remove") this.store.assertReadable();
+		const step = { sequence, scope: this.callScope(turnId) };
 		if ((t.type === "message_status" || t.type === "message_remove") && !this.active.has(t.messageId))
 			throw new CompactTransitionError("cold_operation_required", "use applyCold after acceptance");
 		switch (t.type) {
@@ -42,11 +59,17 @@ export class CompactSessionState extends CompactActiveMessages {
 				const block = foldSeededBlock(draft, old?.seeded, t.event);
 				this.publish(address, { ...block.body, seeded: block, epoch: t.epoch }, fields);
 				if (starting) this.identity.commit(t);
+				foldCallBlock(this.calls, t, step, this.active.get(t.messageId)?.blocks.get(address.contentIndex));
 				break;
 			}
-			case "seeded_message":
+			case "seeded_message": {
+				const { message, terminal } = recordMessage(t.record);
+				// The terminal replaces the live blocks, so the calls own their raw text from the blocks being replaced.
+				if (terminal)
+					foldCallTerminal(this.calls, t.messageId, message, step, this.active.get(t.messageId)?.blocks);
 				this.acceptMessage(t);
 				break;
+			}
 			case "block_start":
 				this.start(t);
 				break;
@@ -83,8 +106,20 @@ export class CompactSessionState extends CompactActiveMessages {
 			case "message_remove":
 				this.dropActive(t.messageId);
 				break;
+			case "component":
+				this.components.apply(t.record);
+				break;
 		}
-		return ++this.sequence;
+		this.sequence = sequence;
+		return sequence;
+	}
+
+	/** A call record at its lane step; `changed` is false when the record is ignored and takes no sequence (Q9). */
+	acceptCall(record: object, sequence: number, turnId: string | null): CallFold {
+		this.store.assertReadable();
+		const fold = foldCallRecord(this.calls, record, this.callScope(turnId), sequence);
+		if (fold.changed) this.sequence = sequence;
+		return fold;
 	}
 
 	applyCold(t: CompactColdOperation) {
@@ -102,13 +137,21 @@ export class CompactSessionState extends CompactActiveMessages {
 		const tails = this.residentTailBytes;
 		if (active) this.store.adjust(active.owner, 0, 1);
 		this.frozenTailBytes += tails;
-		const frozen = { sequence: this.sequence, active, settled: this.settled.freeze() };
+		const frozen = {
+			sequence: this.sequence,
+			active,
+			settled: this.settled.freeze(),
+			components: this.components.freeze(),
+			calls: this.calls.freeze(),
+		};
 		this.cuts.set(
 			frozen,
 			new CompactReadLease(() => {
 				if (active) this.store.adjust(active.owner, 0, -1);
 				this.frozenTailBytes -= tails;
 				this.settled.release(frozen.settled);
+				this.components.release(frozen.components);
+				this.calls.release(frozen.calls);
 			}),
 		);
 		return frozen;
@@ -120,30 +163,48 @@ export class CompactSessionState extends CompactActiveMessages {
 
 	/** Whole-view compatibility assembly; persistent nodes and text ranges are read separately. */
 	async read(frozen: FrozenCompactState) {
-		const lease = this.cutLease(frozen);
-		const valid = () => {
-			lease.assert();
-			this.store.assertReadable();
-		};
-		valid();
-		return lease.run(() =>
-			readCompactState(
-				frozen,
-				{
-					store: this.store,
-					settled: this.settled,
-					blockRoots: this.blockRoots,
-					messageRoots: this.messageRoots,
-				},
-				valid,
-			),
-		);
+		return this.under(frozen, (valid) => readCompactState(frozen, { ...this.roots, settled: this.settled }, valid));
+	}
+
+	/** The live messages at the cut with the current value of every block (R3.C6.4), never the settled history. */
+	readActive(frozen: FrozenCompactState) {
+		return this.under(frozen, (valid) => readActiveMessages(frozen, this.roots, valid));
+	}
+
+	/** Run state, lifecycle and open dialogs at the cut (RULING-26 Q4). */
+	readComponents(frozen: FrozenCompactState) {
+		return this.under(frozen, (valid) => this.components.read(frozen.components, valid));
+	}
+
+	/** The outstanding calls at the cut (R3.C3), raw text resolved from the slots the calls own. */
+	readCalls(frozen: FrozenCompactState) {
+		const owner = { calls: this.calls, ...this.roots };
+		return this.under(frozen, (valid) => readCalls(frozen, owner, valid));
+	}
+
+	private get roots() {
+		return { store: this.store, blockRoots: this.blockRoots, messageRoots: this.messageRoots };
+	}
+
+	private callScope(turnId: string | null): CallScope {
+		return { sessionEpoch: this.sessionEpoch, turnId };
 	}
 
 	private cutLease(frozen: FrozenCompactState): CompactReadLease {
 		const lease = this.cuts.get(frozen);
 		if (!lease) throw new CompactReadError("ownership");
 		return lease;
+	}
+
+	/** Every read runs under the cut's operation lease and re-checks it with the store at each step. */
+	private under<T>(frozen: FrozenCompactState, read: (valid: () => void) => Promise<T>): Promise<T> {
+		const lease = this.cutLease(frozen);
+		const valid = () => {
+			lease.assert();
+			this.store.assertReadable();
+		};
+		valid();
+		return lease.run(() => read(valid));
 	}
 
 	storageStatus() {
@@ -204,7 +265,8 @@ export class CompactSessionState extends CompactActiveMessages {
 		if (!live) this.identity.validate(t);
 		using draft = new CompactSeededDraft(this.store);
 		const next = seedMessage(draft, message, terminal, live?.blocks, t);
-		const correlation = live ? live.correlation : t.correlation && draft.fields(t.correlation);
+		// Bound once, by the first message-level record that carries it, even when an indexed start created the message.
+		const correlation = live?.correlation ?? (t.correlation && draft.fields(t.correlation));
 		this.install(t.messageId, { fields: next.fields, correlation, epoch: t.epoch }, next.blocks);
 		if (!live) this.identity.commit(t);
 		if (t.record.type === "message_end") this.settle(t.messageId, "pending");

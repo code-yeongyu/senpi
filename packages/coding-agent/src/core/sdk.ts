@@ -151,6 +151,8 @@ export interface CreateAgentSessionOptions {
 	promptSurface?: PromptSurface;
 	/** Browser engine this session's skills drive (`open_session.browserEngine`); omitted means none was chosen. */
 	browserEngine?: BrowserEngine;
+	/** Caller env for this session's tool subprocesses (`open_session.env`, senpi#4381); omitted means none. */
+	sessionEnv?: Readonly<Record<string, string>>;
 	/** Tool runtime for this session (senpi#3566); absent means `in-process`. */
 	toolRuntime?: ToolRuntimeKind;
 }
@@ -572,6 +574,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		timeoutMs: settingsManager.getAgentStreamIdleTimeoutMs(),
 		streamStartTimeoutMs: settingsManager.getAgentStreamStartTimeoutMs(),
+		streamKeepAliveTimeoutMs: settingsManager.getAgentStreamKeepAliveTimeoutMs(),
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
 		cursorExecHandlers: (runSignal: AbortSignal) => createSessionCursorExecBridge(sessionRef, () => agent, runSignal),
 	});
@@ -618,6 +621,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		autoTitleSessions: options.autoTitleSessions,
 		promptSurface: options.promptSurface,
 		browserEngine: options.browserEngine,
+		sessionEnv: options.sessionEnv,
 		initialThinkingLevelSource: thinkingLevelSource,
 		...(options.toolRuntime !== undefined ? { toolRuntime: options.toolRuntime } : {}),
 	});
