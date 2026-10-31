@@ -14,6 +14,7 @@ import { AgentSession } from "../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { LoadExtensionsResult } from "../src/core/extensions/index.ts";
+import type { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import {
@@ -115,6 +116,7 @@ async function createRuntimeHost(options: {
 	responseDelayMs?: number;
 	model?: Model<any>;
 	extensionsResult?: LoadExtensionsResult;
+	arrange?: (session: AgentSession, modelRuntime: ModelRuntime) => void;
 }): Promise<{
 	runtimeHost: AgentSessionRuntime;
 	cleanup: () => Promise<void>;
@@ -161,14 +163,16 @@ async function createRuntimeHost(options: {
 		? await createAuthenticatedModelRegistry(authStorage, tempDir)
 		: await createModelRegistry(authStorage, tempDir);
 
+	const modelRuntime = getModelRuntime(modelRegistry);
 	const session = new AgentSession({
 		agent,
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
-		modelRuntime: getModelRuntime(modelRegistry),
+		modelRuntime,
 		resourceLoader: createTestResourceLoader({ extensionsResult: options.extensionsResult }),
 	});
+	options.arrange?.(session, modelRuntime);
 
 	const runtimeHost = {
 		session,
@@ -258,6 +262,60 @@ describe("RPC prompt response semantics", () => {
 					),
 				});
 			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	// senpi#4411: a turn that cannot start for lack of a model or credentials is refused with a typed code.
+	const fakeProviderModel: Model<"openai-completions"> = {
+		id: "fake-model",
+		name: "Fake Model",
+		api: "openai-completions",
+		provider: "fake-provider",
+		baseUrl: "https://example.invalid",
+		reasoning: false,
+		input: [],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 0,
+		maxTokens: 0,
+	};
+	it.each([
+		{
+			case: "the provider has no credentials",
+			arrange: undefined,
+			errorCode: "provider_credentials_missing",
+			errorData: { provider: "fake-provider" },
+			error: "No API key found for fake-provider.",
+		},
+		{
+			case: "the provider's OAuth credentials could not be refreshed",
+			arrange: (_session: AgentSession, modelRuntime: ModelRuntime) => {
+				vi.spyOn(modelRuntime, "isUsingOAuth").mockImplementation((provider) => provider === "fake-provider");
+			},
+			errorCode: "provider_credentials_expired",
+			errorData: { provider: "fake-provider" },
+			error: 'Authentication failed for "fake-provider".',
+		},
+		{
+			case: "no model is selected",
+			arrange: (session: AgentSession) => {
+				(session.agent.state as { model: unknown }).model = undefined;
+			},
+			errorCode: "no_model_selected",
+			errorData: undefined,
+			error: "No model selected.",
+		},
+	])("refuses a prompt with errorCode $errorCode when $case", async ({ arrange, errorCode, errorData, error }) => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: false, model: fakeProviderModel, arrange });
+
+		try {
+			lineHandler(JSON.stringify({ id: "nk", type: "prompt", message: "Hello" }));
+
+			await vi.waitFor(() => expect(getPromptResponses(rpcIo.outputLines, "nk")).toHaveLength(1));
+			const [response] = getPromptResponses(rpcIo.outputLines, "nk");
+			expect(response).toMatchObject({ success: false, errorCode, error: expect.stringContaining(error) });
+			expect(response?.errorData).toEqual(errorData);
 		} finally {
 			await cleanup();
 		}

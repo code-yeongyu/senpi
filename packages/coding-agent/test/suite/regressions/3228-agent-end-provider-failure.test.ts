@@ -1,4 +1,9 @@
-import { type AssistantMessage, fauxAssistantMessage, type ProviderDiagnostic } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessage,
+	fauxAssistantMessage,
+	PROVIDER_NOT_CONFIGURED_PREFIX,
+	type ProviderDiagnostic,
+} from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import { describeProviderFailure, formatProviderFailure } from "../../../src/core/provider-failure.ts";
@@ -99,6 +104,17 @@ describe("agent_end provider failure", () => {
 		expectStructuredOnly(end.failure, "invalid api key");
 		if (end.failure === undefined) throw new Error("Missing provider failure");
 		expect(formatProviderFailure(end.failure).trim().length).toBeGreaterThan(0);
+	});
+
+	// senpi#4329: no request was sent, so a resend (the `unknown` action) cannot help; clients need the auth state.
+	it("reports the local auth-miss sentinel as auth without provider status or code", async () => {
+		for (const prefix of ["", "senpi:no-turn-retry:"]) {
+			const end = await agentEndOf(failedTurn(`${prefix}${PROVIDER_NOT_CONFIGURED_PREFIX}kiro`));
+			expect(end.failure).toMatchObject({ category: "auth", provider: "faux", model: "faux-1" });
+			expect(end.failure).not.toHaveProperty("httpStatus");
+			expect(end.failure).not.toHaveProperty("code");
+			expect(end.failure?.action).toContain("kiro");
+		}
 	});
 
 	it("falls back to unknown, not a guess from the message, when the error carries no diagnostic", async () => {
