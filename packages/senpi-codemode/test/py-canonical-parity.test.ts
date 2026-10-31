@@ -128,7 +128,8 @@ describe("Python canonical identity equals the JS native canonicalizer", () => {
 		const result = await execute(python.path, ["-c", code, asset], { cwd: root, timeout: 20_000 });
 		expect(JSON.parse(result.stdout)).toEqual([{}, {}]);
 	});
-	it("matches Win32 lexical joining without dropping earlier path components", async () => {
+	// #4955: CPython 3.12+ can implement ntpath.normpath as a C builtin.
+	it.each([false, true])("matches isolated Win32 lexical joining with builtin normpath=%s", async (builtin) => {
 		if (!python.ok) throw new Error("Python is required for canonical parity tests");
 		const inputs = [
 			["C:/real", "missing", "D:leaf"],
@@ -140,7 +141,10 @@ describe("Python canonical identity equals the JS native canonicalizer", () => {
 		// Only native DLL initialization is stubbed. These lexical operations are
 		// compared to node:path.win32 on every platform, including non-Windows CI.
 		const code = [
-			"import ctypes, json, sys, types",
+			"import ctypes, json, sys, types, ntpath, os",
+			// os.fspath is a builtin accepting one string; use normalized inputs
+			// below when simulating it, without replacing the reconstruction itself.
+			...(builtin ? ["ntpath.normpath = os.fspath"] : []),
 			"ctypes.WinDLL = lambda *a, **kw: types.SimpleNamespace(CreateFileW=lambda *a: 0,",
 			"    GetFinalPathNameByHandleW=lambda *a: 0, CloseHandle=lambda *a: 0)",
 			"ctypes.get_last_error = lambda: 0",
@@ -148,12 +152,21 @@ describe("Python canonical identity equals the JS native canonicalizer", () => {
 			"with open(sys.argv[1], 'rb') as source:",
 			"    exec(compile(source.read(), sys.argv[1], 'exec'), namespace)",
 			"join = namespace['windows_primitives'](OSError)[4]",
+			"ntpath.normpath = lambda *a: 'POISONED'",
+			"ntpath.splitdrive = lambda *a: ('POISONED', 'POISONED')",
+			"ntpath.os.fspath = lambda *a: 'POISONED'",
 			"print(json.dumps([join(*parts) for parts in json.loads(sys.argv[2])]))",
 		].join("\n");
-		const result = await execute(python.path, ["-c", code, asset, JSON.stringify(inputs)], {
+		const cases = builtin
+			? [
+					["C:\\real", "new", "leaf"],
+					["\\\\server\\share", "new", "leaf"],
+				]
+			: inputs;
+		const result = await execute(python.path, ["-c", code, asset, JSON.stringify(cases)], {
 			cwd: root,
 			timeout: 20_000,
 		});
-		expect(JSON.parse(result.stdout)).toEqual(inputs.map((parts) => win32.join(...parts)));
+		expect(JSON.parse(result.stdout)).toEqual(cases.map((parts) => win32.join(...parts)));
 	});
 });
