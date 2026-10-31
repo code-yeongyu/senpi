@@ -10,6 +10,12 @@ import { isAccountUsageLimitText } from "./usage-limit.ts";
 
 export const COOLDOWN_BASE_MS = DEFAULT_SLOT_BLOCK_MS;
 export const COOLDOWN_CAP_MS = MAX_SLOT_BLOCK_MS;
+/**
+ * The longest a guessed backoff may grow. A block with no provider-stated reset is only a guess, so
+ * the slot is re-probed at least this often: doubling to the 48 h cap across failed probes kept a
+ * spent account blocked for hours after its provider window had reset (senpi#4091).
+ */
+export const GUESSED_BACKOFF_CAP_MS = 30 * 60 * 1_000;
 export const RETRY_SAME_MAX_ATTEMPTS = 2;
 
 /**
@@ -39,8 +45,9 @@ export type CredentialAction =
 
 /**
  * Per-slot exponential cooldown with the server hint as a FLOOR, never an
- * override: a hint can only lengthen the wait the failure count already earned,
- * and everything caps at 48 hours with the capping recorded.
+ * override: a hint can only lengthen the wait the failure count already earned.
+ * The guessed backoff stops growing at GUESSED_BACKOFF_CAP_MS; everything caps at
+ * 48 hours with the capping recorded.
  */
 export function rateLimitCooldown(
 	failureCount: number,
@@ -49,7 +56,7 @@ export function rateLimitCooldown(
 ): { cooldownMs: number; retryAfterWasCapped: boolean } {
 	const cap = policy.capMs ?? COOLDOWN_CAP_MS;
 	const base = policy.baseMs ?? COOLDOWN_BASE_MS;
-	const backoff = Math.min(cap, base * 2 ** Math.max(0, failureCount));
+	const backoff = Math.min(cap, GUESSED_BACKOFF_CAP_MS, base * 2 ** Math.max(0, failureCount));
 	const floored = serverHintMs === undefined ? backoff : Math.max(backoff, serverHintMs);
 	return {
 		cooldownMs: Math.min(cap, floored),
