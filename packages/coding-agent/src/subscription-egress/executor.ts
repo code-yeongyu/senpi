@@ -1,5 +1,6 @@
 import type { AssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai/compat";
+import { CLAUDE_SDK_OAUTH_API_ID } from "../core/extensions/builtin/anthropic-subscription/api-id.ts";
 import { requireAnthropicSubscriptionCwd } from "../core/extensions/builtin/anthropic-subscription/session-cwd.ts";
 import { streamAnthropicSubscription } from "../core/extensions/builtin/anthropic-subscription/stream.ts";
 import { failure, projectAssistant, projectEvent } from "./projection.ts";
@@ -61,7 +62,12 @@ export function createSubscriptionEgressExecutor(
 				return;
 			}
 			stream = streamAnthropicSubscription(
-				{ ...model, provider: "anthropic-subscription", api: "claude-sdk-oauth", baseUrl: "claude-sdk-oauth" },
+				{
+					...model,
+					provider: "anthropic-subscription",
+					api: CLAUDE_SDK_OAUTH_API_ID,
+					baseUrl: CLAUDE_SDK_OAUTH_API_ID,
+				},
 				command.context,
 				{ ...command.options, cwd: scope.cwd, affinitySessionId: scope.affinityId, signal: call.controller.signal },
 			);
