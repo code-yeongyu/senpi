@@ -57,7 +57,7 @@ it.skipIf(process.platform === "win32")(
 			{ mode: 0o600 },
 		);
 		const start = await cli(["ensure", "--launch-spec", spec]);
-		expect(start.exitCode).toBe(0);
+		expect(start.exitCode, `${start.stdout}${start.stderr}`).toBe(0);
 		const paths = createHostDaemonPaths({ agentDir: qa.agentDir, socket: qa.socket });
 		const registration = await readHostRegistration(paths);
 		if (!registration || registration.record.processStartTime === null)
@@ -99,7 +99,7 @@ it.skipIf(process.platform === "win32")(
 			expect(await waitForPidGone(expected.pid, 30_000)).toBe(true);
 			expect(await waitForPidGone(child.pid, 30_000)).toBe(true);
 			const successor = await cli(["ensure"]);
-			expect(successor.exitCode).toBe(0);
+			expect(successor.exitCode, `${successor.stdout}${successor.stderr}`).toBe(0);
 			const current = onlyJsonLine(successor);
 			expect(current.instanceId).not.toBe(expected.instanceId);
 			const stale = await cli(["stop", "--force", "--expected-generation", JSON.stringify(expected)]);

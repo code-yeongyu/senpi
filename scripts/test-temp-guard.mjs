@@ -107,9 +107,10 @@ if (
 			]),
 		);
 		try {
-			// npm enables Node's default compile cache before launching the wrapped test.
-			// This is allocated by job setup and retired with the owned parent, not exempted.
-			if (scope) mkdirSync(join(scope, "node-compile-cache"));
+			// npm enables Node's default compile cache before launching the wrapped test, and jiti
+			// (the Node extension loader) writes its default cache to <TMPDIR>/jiti (#4916).
+			// Both are allocated by job setup and retired with the owned parent, not exempted.
+			if (scope) for (const cache of ["node-compile-cache", "jiti"]) mkdirSync(join(scope, cache));
 			const system = scope
 				? [...new Set([tmpdir(), ...(process.platform === "win32" ? [] : ["/tmp"])])]
 					.map((directory) => ({ directory, entries: tempEntries(directory) }))
