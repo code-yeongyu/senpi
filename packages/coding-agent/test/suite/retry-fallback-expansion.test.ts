@@ -220,8 +220,8 @@ describe("bare-key opt-out tombstones", () => {
 		expect(chains[`anthropic/${FABLE}`]).toEqual([`anthropic/${OPUS48}:max`]);
 		// The other provider variant keeps the shipped ladder, expanded OAuth-tier first.
 		expect(chains[`anthropic-subscription/${FABLE}`]).toEqual([
-			`anthropic-subscription/${OPUS5}:max`,
-			`anthropic/${OPUS5}:max`,
+			`anthropic-subscription/${OPUS5}`,
+			`anthropic/${OPUS5}`,
 		]);
 	});
 });
