@@ -55,21 +55,27 @@ describe("#5151 every invoked skill loads, with no per-prompt cap", () => {
 		return { harness, skills, tempDir, expansionErrors, invocations };
 	}
 
+	function nth<T>(items: readonly T[], index: number): T {
+		const item = items[index];
+		if (item === undefined) throw new Error(`missing skill fixture ${index}`);
+		return item;
+	}
+
 	const leading = (skills: readonly SkillFixture[]): string => skills.map((skill) => `/skill:${skill.name}`).join(" ");
 
 	it("loads seven skills in one prompt and reports no skill_expansion error, even for a repeat", async () => {
 		const { harness, skills, tempDir, expansionErrors, invocations } = await setup(numberedSkills(7));
 		const first = skills.slice(0, 6);
-		const seventh = skills[6]!;
+		const seventh = nth(skills, 6);
 
 		const actual = await promptAndCapture(
 			harness,
-			`${leading(first)} first line\nsecond line $${seventh.name} then $${skills[0]!.name} again`,
+			`${leading(first)} first line\nsecond line $${seventh.name} then $${nth(skills, 0).name} again`,
 		);
 
 		expect(actual).toBe(
 			`${skills.map((skill) => skillBlock(skill, tempDir)).join("\n\n")}\n\n${userRequest(
-				`first line\nsecond line [skill: ${seventh.name}] then [skill: ${skills[0]!.name}] again`,
+				`first line\nsecond line [skill: ${seventh.name}] then [skill: ${nth(skills, 0).name}] again`,
 			)}`,
 		);
 		expect(expansionErrors).toEqual([]);
@@ -109,10 +115,10 @@ describe("#5151 every invoked skill loads, with no per-prompt cap", () => {
 		const actual = await promptAndCapture(harness, `${leading(skills)} compose`);
 
 		expect(actual).toBe(
-			`${skillBlock(skills[0]!, tempDir)}\n\n${skillBlock(skills[1]!, tempDir)}\n\n${skillBlock(
-				skills[2]!,
+			`${skillBlock(nth(skills, 0), tempDir)}\n\n${skillBlock(nth(skills, 1), tempDir)}\n\n${skillBlock(
+				nth(skills, 2),
 				tempDir,
-				formatSkillReferenceBody(skills[2]!.filePath),
+				formatSkillReferenceBody(nth(skills, 2).filePath),
 			)}\n\n${userRequest("compose")}`,
 		);
 		expect(parseSkillBlock(actual)?.skills.map((skill) => [skill.name, skill.location])).toEqual(
@@ -130,10 +136,10 @@ describe("#5151 every invoked skill loads, with no per-prompt cap", () => {
 		]);
 
 		expect(await promptAndCapture(harness, `${leading(skills)} go`)).toBe(
-			`${skillBlock(skills[0]!, tempDir)}\n\n${skillBlock(
-				skills[1]!,
+			`${skillBlock(nth(skills, 0), tempDir)}\n\n${skillBlock(
+				nth(skills, 1),
 				tempDir,
-				formatSkillReferenceBody(skills[1]!.filePath),
+				formatSkillReferenceBody(nth(skills, 1).filePath),
 			)}\n\n${userRequest("go")}`,
 		);
 	});
