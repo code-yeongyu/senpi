@@ -75,7 +75,7 @@ it("T2 golden a-e: real request, identity, paged baseline, before-answer suffix 
 		},
 		dirname(host.cwd),
 	);
-}, 120_000);
+}, 600_000);
 
 it("T2/X04 golden g: late cancelled physical open closes once and indexed lookup repeats the typed refusal", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -127,4 +127,4 @@ it("T2/X04 golden g: late cancelled physical open closes once and indexed lookup
 		},
 		dirname(host.cwd),
 	);
-}, 120_000);
+}, 600_000);

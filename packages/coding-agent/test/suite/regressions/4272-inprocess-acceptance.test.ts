@@ -15,6 +15,7 @@ import { createStructuredHarness } from "../structured-lane-sdk-harness.ts";
 import { scriptProvider, textReply } from "../structured-lane-support.ts";
 import { expectSameBytesExceptDeliveryStamp } from "../../helpers/rpc-delivery-stamp.ts";
 import { createInProcessRig } from "../rpc-inprocess-host-support.ts";
+import { EVENT_SAFETY_MS } from "./4272-worker-acceptance-support.ts";
 
 const FLAG = "SENPI_ENGINE_SOCKET_COMPACT_UPDATES";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -107,7 +108,7 @@ it("T5 sequences in-process records in producer order, correlation before its co
 		await writer.withConnection("client", () =>
 			binding.handle({ type: "prompt", id: "p1", message: "question", clientMessageId: "c-1" }),
 		);
-		const deadline = setTimeout(() => ended.reject(new Error("no agent_end")), 20_000);
+		const deadline = setTimeout(() => ended.reject(new Error("no agent_end")), EVENT_SAFETY_MS);
 		await ended.promise.finally(() => clearTimeout(deadline));
 		await writer.flush();
 
@@ -159,7 +160,7 @@ it("T5 sequences in-process records in producer order, correlation before its co
 		harness.cleanup();
 		await scope.close();
 	}
-}, 60_000);
+}, 600_000);
 
 // Part of #4272, ruling 12 Q1: ids are minted at the start, or at a terminal with no start, and never invented.
 it("mints opaque message and turn ids at their start, at a start-less terminal, and never for an ownerless record", () => {

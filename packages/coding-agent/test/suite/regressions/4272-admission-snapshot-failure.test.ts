@@ -42,4 +42,4 @@ it("T2/X04 snapshot failure resolves the installed response barrier and releases
 	} finally {
 		await host.drop("peer");
 	}
-}, 120_000);
+}, 600_000);

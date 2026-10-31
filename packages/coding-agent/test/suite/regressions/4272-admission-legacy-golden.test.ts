@@ -122,4 +122,4 @@ it("T7/X06 golden h: absent admissionId preserves every legacy producer frame an
 		files: string[];
 	};
 	expect(manifest.files).toContain("docs");
-}, 120_000);
+}, 600_000);

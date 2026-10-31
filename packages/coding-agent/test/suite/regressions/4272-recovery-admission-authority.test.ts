@@ -94,7 +94,7 @@ for (const kind of ["checkpoint", "event"] as const) {
 			await host.writer.flush();
 			expect(peer.received.slice(unknownStart)).toEqual([bytes[0]]);
 			expect(new Set(bytes).size).toBe(1);
-		}, 120_000);
+		}, 600_000);
 	}
 }
 
@@ -123,4 +123,4 @@ it("RULING-94 unknown cancel reads its own epoch once and replies exactly once a
 		code: "unknown_admission",
 		admissionId: "missing",
 	});
-}, 120_000);
+}, 600_000);

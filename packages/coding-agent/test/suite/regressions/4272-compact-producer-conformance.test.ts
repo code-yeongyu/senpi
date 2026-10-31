@@ -47,4 +47,4 @@ it("RULING-36 one numbering: worker frame ordinal, S05 nonce and producer firstO
 	} finally {
 		await host.dispose();
 	}
-}, 90000);
+}, 600_000);

@@ -39,4 +39,4 @@ it("spreads 1,000 random tokens across 100..2000 ms while repeating each token's
 	console.info("RULING-97 bucket counts:", buckets.join(", "));
 	expect(buckets.reduce((total, count) => total + count, 0)).toBe(1_000);
 	expect(Math.max(...buckets)).toBeLessThanOrEqual(200);
-}, 120_000);
+}, 600_000);

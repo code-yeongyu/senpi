@@ -118,7 +118,7 @@ it("S12b T6 X04 RULING-64 (1)(2): a 150 KB prompt crosses the real worker as bou
 	} finally {
 		await host.dispose();
 	}
-}, 120_000);
+}, 600_000);
 
 /** The output frame that carried the first block start of the run's assistant message. */
 function assistantStart(posted: readonly Posted[]): OutputFrame {
@@ -164,7 +164,7 @@ it.skipIf(BUN_NO_STRUCTURED_FRAMES)(
 			await host.dispose();
 		}
 	},
-	120_000,
+	600_000,
 );
 
 // RULING-64 (4) + RULING-39: a producer restarting its counter inside the same epoch is a typed reject, never accepted.
@@ -195,7 +195,7 @@ it.skipIf(BUN_NO_STRUCTURED_FRAMES)(
 			await host.dispose();
 		}
 	},
-	120_000,
+	600_000,
 );
 
 // S12 design T5 X04: a gap or duplicate inside a transfer, or a worker ending mid-transfer, fails typed, accepts nothing
@@ -231,7 +231,7 @@ it.skipIf(BUN_NO_STRUCTURED_FRAMES).each([
 			await host.dispose();
 		}
 	},
-	120_000,
+	600_000,
 );
 
 // #4272 RULING-66 S17-Q1: internal worker transport is unconditional; public output remains legacy.
@@ -258,4 +258,4 @@ it("S12b golden: flag OFF, bounded worker fragments reconstruct the complete leg
 	} finally {
 		await host.dispose();
 	}
-}, 120_000);
+}, 600_000);

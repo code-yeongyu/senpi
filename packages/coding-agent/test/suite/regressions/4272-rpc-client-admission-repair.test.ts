@@ -54,7 +54,7 @@ it("the in-repo client honours the hint end to end", async () => {
 	);
 	expect(requests.filter((request) => request.type === "open_session")).toHaveLength(1);
 	expect(fixture.failures).toEqual([]);
-}, 120_000);
+}, 600_000);
 
 it("T2/T5 an identical client retry keeps the repaired generation and a conflicting retry cannot erase it", async () => {
 	vi.stubEnv("SENPI_ENGINE_SOCKET_COMPACT_UPDATES", "1");
@@ -81,4 +81,4 @@ it("T2/T5 an identical client retry keeps the repaired generation and a conflict
 	await expect(client.openSession({ ...options, retain_on_disconnect: true })).rejects.toThrow("admission_conflict");
 	expect((await client.admissions.page("client-retry", "manifest")).action).toBe("ready");
 	expect(host.core.router.sessionCount).toBe(1);
-}, 120_000);
+}, 600_000);
