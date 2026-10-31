@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { anthropicOAuth } from "../src/auth/oauth/anthropic.ts";
 import { chatgptSubscriptionOAuth } from "../src/auth/oauth/chatgpt-subscription.ts";
 import { cursorOAuth } from "../src/auth/oauth/cursor.ts";
 import { exchangeDevinAuthorizationCode } from "../src/auth/oauth/devin-token.ts";
@@ -29,7 +28,6 @@ describe("token endpoint HTTP error facts (#2893)", () => {
 	});
 
 	it.each([
-		["anthropic", anthropicOAuth],
 		["chatgpt-subscription", chatgptSubscriptionOAuth],
 		["cursor", cursorOAuth],
 		["github-copilot", githubCopilotOAuth],
@@ -50,7 +48,6 @@ describe("token endpoint HTTP error facts (#2893)", () => {
 	});
 
 	it.each([
-		["anthropic", anthropicOAuth],
 		["chatgpt-subscription", chatgptSubscriptionOAuth],
 		["cursor", cursorOAuth],
 		["github-copilot", githubCopilotOAuth],

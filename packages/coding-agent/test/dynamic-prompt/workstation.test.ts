@@ -1,8 +1,11 @@
+import * as os from "node:os";
 import { describe, expect, test } from "vitest";
 import { buildDynamicSystemPrompt } from "../../src/core/dynamic-prompt/build.ts";
 import {
 	buildWorkstationSection,
 	collectWorkstationFacts,
+	pinnedDisplayPath,
+	readWorkstationFacts,
 	type WorkstationFacts,
 } from "../../src/core/dynamic-prompt/workstation.ts";
 
@@ -57,29 +60,18 @@ describe("buildWorkstationSection", () => {
 		expect(section).toContain("</execution_context>");
 	});
 
-	test("codex dialect is terse without tags or shouting", () => {
+	test("codex dialect omits the execution_context tag", () => {
 		const section = buildWorkstationSection({ selectedTools: ["bash", "eval"], dialect: "codex", facts: FACTS });
 		const instruction = section.slice(section.indexOf("</workstation>"));
 
 		expect(instruction).not.toContain("<execution_context>");
-		expect(instruction).not.toContain("MUST");
-		expect(instruction).not.toContain("EXECUTION HAPPENS HERE");
 	});
 
-	test("kimi dialect uses positive constraints without all-caps directives", () => {
+	test("kimi dialect omits the execution_context tag", () => {
 		const section = buildWorkstationSection({ selectedTools: ["bash", "eval"], dialect: "kimi", facts: FACTS });
 		const instruction = section.slice(section.indexOf("</workstation>"));
 
-		expect(instruction).toContain("keep the code portable");
-		expect(instruction).not.toMatch(/\b[A-Z]{4,}\b/);
 		expect(instruction).not.toContain("<execution_context>");
-	});
-
-	test("default dialect carries maximum emphasis", () => {
-		const section = buildWorkstationSection({ selectedTools: ["bash", "eval"], facts: FACTS });
-
-		expect(section).toContain("**EXECUTION HAPPENS HERE.**");
-		expect(section).toContain("anything you RUN executes HERE");
 	});
 });
 
@@ -92,6 +84,104 @@ describe("collectWorkstationFacts", () => {
 		expect(first.arch.length).toBeGreaterThan(0);
 		expect(first.kernel.toLowerCase()).not.toContain("unknown");
 		expect(second).toBe(first);
+	});
+});
+
+// senpi#4660: SENPI_TEST_WORKSTATION pins the CPU model, core count and kernel so a harness driving the real
+// CLI gets the same prompt bytes on every host.
+function pinned(value: string): NodeJS.ProcessEnv {
+	return { ...process.env, SENPI_TEST_WORKSTATION: value };
+}
+
+describe("readWorkstationFacts SENPI_TEST_WORKSTATION", () => {
+	test("unset: the host's own kernel, CPU model and core count, equal to the cached snapshot", () => {
+		const env = { ...process.env };
+		delete env.SENPI_TEST_WORKSTATION;
+
+		const facts = readWorkstationFacts(env);
+
+		expect(facts.kernel).toBe(`${os.type()} ${os.release()}`.trim());
+		if (facts.cpu !== undefined) expect(facts.cpu.endsWith(` (${os.availableParallelism()} cores)`)).toBe(true);
+		expect(facts).toEqual(collectWorkstationFacts());
+	});
+
+	test("empty counts as unset", () => {
+		expect(readWorkstationFacts(pinned("")).kernel).toBe(`${os.type()} ${os.release()}`.trim());
+	});
+
+	test("set: the pinned kernel, CPU model and core count", () => {
+		const facts = readWorkstationFacts(
+			pinned(JSON.stringify({ cpuModel: "Test CPU", cores: 4, kernel: "TestOS 1.0" })),
+		);
+
+		expect(facts.kernel).toBe("TestOS 1.0");
+		expect(facts.cpu).toBe("Test CPU (4 cores)");
+		expect(facts.gpu).toBeUndefined();
+		expect(facts.osLine).toBe(os.platform());
+		expect(facts.arch).toBe(os.arch());
+	});
+
+	test("the Apple-Silicon GPU line follows the pinned CPU model", () => {
+		const facts = readWorkstationFacts(
+			pinned(JSON.stringify({ cpuModel: "Apple Test", cores: 2, kernel: "TestOS 1.0" })),
+		);
+
+		const appleSilicon = process.platform === "darwin" && os.arch() === "arm64";
+		expect(facts.gpu).toBe(appleSilicon ? "Apple Test" : undefined);
+	});
+
+	test.each([
+		"not json",
+		"[]",
+		JSON.stringify({ cpuModel: "Test CPU", cores: 4 }),
+		JSON.stringify({ cpuModel: "", cores: 4, kernel: "TestOS 1.0" }),
+		JSON.stringify({ cpuModel: "Test CPU", cores: 0, kernel: "TestOS 1.0" }),
+		JSON.stringify({ cpuModel: "Test CPU", cores: 1.5, kernel: "TestOS 1.0" }),
+		JSON.stringify({ cpuModel: "Test CPU", cores: 4, kernel: "TestOS 1.0", gpu: "x" }),
+	])("malformed %s throws naming the variable", (value) => {
+		expect(() => readWorkstationFacts(pinned(value))).toThrow(/SENPI_TEST_WORKSTATION/);
+	});
+});
+
+// senpi#5067: the optional repoRoot pin shows a path under the pinned checkout under a synthetic root, so the checkout
+// location does not reach the prompt. Rendering only; inert when unset.
+const HOST_PIN = { cpuModel: "Test CPU", cores: 4, kernel: "TestOS 1.0" };
+const REPO_PIN = JSON.stringify({ ...HOST_PIN, repoRoot: { from: "/work/checkout", to: "/eq-synthetic/checkout" } });
+
+describe("pinnedDisplayPath SENPI_TEST_WORKSTATION repoRoot", () => {
+	const inside = "/work/checkout/packages/coding-agent/skills";
+
+	test("unset, empty, or a pin without repoRoot: every path is returned unchanged", () => {
+		const env = { ...process.env };
+		delete env.SENPI_TEST_WORKSTATION;
+		expect(pinnedDisplayPath(inside, env)).toBe(inside);
+		expect(pinnedDisplayPath(inside, pinned(""))).toBe(inside);
+		expect(pinnedDisplayPath(inside, pinned(JSON.stringify(HOST_PIN)))).toBe(inside);
+	});
+
+	test("a path under from is shown under to, and from itself as to", () => {
+		expect(pinnedDisplayPath(inside, pinned(REPO_PIN))).toBe("/eq-synthetic/checkout/packages/coding-agent/skills");
+		expect(pinnedDisplayPath("/work/checkout", pinned(REPO_PIN))).toBe("/eq-synthetic/checkout");
+	});
+
+	test("a path outside from, including a sibling that shares its prefix, is unchanged", () => {
+		expect(pinnedDisplayPath("/work/checkout-2/skills", pinned(REPO_PIN))).toBe("/work/checkout-2/skills");
+		expect(pinnedDisplayPath("/opt/skills", pinned(REPO_PIN))).toBe("/opt/skills");
+	});
+
+	test("the host facts still apply alongside repoRoot", () => {
+		expect(readWorkstationFacts(pinned(REPO_PIN)).cpu).toBe("Test CPU (4 cores)");
+	});
+
+	test.each([
+		JSON.stringify({ ...HOST_PIN, repoRoot: "/work/checkout" }),
+		JSON.stringify({ ...HOST_PIN, repoRoot: { from: "work/checkout", to: "/eq" } }),
+		JSON.stringify({ ...HOST_PIN, repoRoot: { from: "/work/checkout", to: "eq" } }),
+		JSON.stringify({ ...HOST_PIN, repoRoot: { from: "/work/checkout" } }),
+		JSON.stringify({ ...HOST_PIN, repoRoot: { from: "/work/checkout", to: "/eq", extra: 1 } }),
+	])("malformed repoRoot %s throws naming the variable", (value) => {
+		expect(() => pinnedDisplayPath(inside, pinned(value))).toThrow(/SENPI_TEST_WORKSTATION/);
+		expect(() => readWorkstationFacts(pinned(value))).toThrow(/SENPI_TEST_WORKSTATION/);
 	});
 });
 
@@ -112,13 +202,11 @@ describe("buildDynamicSystemPrompt workstation integration", () => {
 		expect(workstation).toBeGreaterThanOrEqual(0);
 		// senpi#2093: no date/cwd footer follows it any more.
 		expect(prompt).not.toContain("Current working directory:");
-		expect(prompt).toContain("**EXECUTION HAPPENS HERE.**");
 	});
 
 	test("applies the preset-provided dialect", () => {
 		const prompt = buildDynamicSystemPrompt({ ...baseOptions, workstationDialect: "claude" });
 
 		expect(prompt).toContain("<execution_context>");
-		expect(prompt).not.toContain("EXECUTION HAPPENS HERE");
 	});
 });
