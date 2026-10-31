@@ -2482,6 +2482,7 @@ export class AgentSession {
 				}
 				return runToolCall(toolCall, {
 					tools: this._getCallableTools(),
+					toolHost: this.agent.toolHost,
 					assistantMessage,
 					context: { messages: this.agent.state.messages, tools: this.agent.state.tools },
 					// A nested call runs inside its caller's execution: waiting on the event queue here
