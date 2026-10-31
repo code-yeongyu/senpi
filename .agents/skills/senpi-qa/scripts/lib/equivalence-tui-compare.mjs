@@ -66,6 +66,17 @@ const maskObservation = (observation) =>
 		? { ...observation, O8: { ...observation.O8, tui: observation.O8.tui.map(maskHeaderVersion) } }
 		: observation;
 
+/**
+ * The EQ.tui verdict line (the MRUN manifest's `EQ.tui golden-tui` observable): printed by `--compare --surface tui`
+ * only when every selected case passed against `golden-tui/<platform>`, with none deferred or failed and no stale
+ * deferred entry. Otherwise undefined, so the observable is absent from the output of any run that is not a full pass.
+ */
+export function tuiVerdictLine(platform, results, staleCount) {
+	const passed = results.filter((r) => r.pass).length;
+	if (results.length === 0 || passed !== results.length || staleCount > 0) return undefined;
+	return `[PASS] EQ.tui golden-tui/${platform}: ${passed}/${results.length} TUI captures equal their goldens`;
+}
+
 /** Diff rows between two TUI observations (`{ O8: { tui: [checkpoint] } }`), empty when equal. */
 export function diffTuiObservations(golden, actual) {
 	return diffNormalized(maskObservation(golden), maskObservation(actual));

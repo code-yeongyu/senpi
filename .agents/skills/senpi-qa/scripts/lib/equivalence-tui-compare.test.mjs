@@ -2,7 +2,7 @@
 // every other difference, the header's own included, must still fail it (senpi#5180).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { diffTuiObservations } from "./equivalence-tui-compare.mjs";
+import { diffTuiObservations, tuiVerdictLine } from "./equivalence-tui-compare.mjs";
 
 const WIDTH = 100;
 const PLAIN = "0/-1 0/-1 000000";
@@ -51,6 +51,22 @@ test("a version on any other row is compared as rendered", () => {
 		diffTuiObservations(golden, actual).map((row) => row.path),
 		["$.O8.tui[0].lines[2]"],
 	);
+});
+
+test("the EQ.tui verdict line appears only for a full pass", () => {
+	const pass = (id) => ({ id, pass: true });
+	assert.equal(
+		tuiVerdictLine("darwin-arm64", [pass("E01"), pass("E04")], 0),
+		"[PASS] EQ.tui golden-tui/darwin-arm64: 2/2 TUI captures equal their goldens",
+	);
+	for (const [results, stale] of [
+		[[], 0],
+		[[pass("E01"), { id: "E04", pass: false }], 0],
+		[[pass("E01"), { id: "E04", pass: false, deferred: { owner: "x" } }], 0],
+		[[pass("E01")], 1],
+	]) {
+		assert.equal(tuiVerdictLine("darwin-arm64", results, stale), undefined);
+	}
 });
 
 test("a style change inside the header's version cells still fails the compare", () => {

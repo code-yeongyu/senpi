@@ -31,7 +31,7 @@ import {
 } from "../lib/equivalence-deferred.mjs";
 import { diffNormalized } from "../lib/equivalence-normalize.mjs";
 import { tuiCaptureHash, tuiGoldenDir } from "../lib/equivalence-tui-capture.mjs";
-import { diffTuiObservations } from "../lib/equivalence-tui-compare.mjs";
+import { diffTuiObservations, tuiVerdictLine } from "../lib/equivalence-tui-compare.mjs";
 import { runTuiCase, TUI_CASE_IDS } from "../lib/equivalence-tui-cases.mjs";
 
 /** Placements and surfaces whose producers come later in the plan; asking for them is an error, never a PASS. */
@@ -195,6 +195,8 @@ async function main() {
 	if (options.mode === "record") writeFileSync(join(dir, "baseline.json"), `${JSON.stringify(manifest, null, 1)}\n`);
 	const summary = summarizeRun(results, stale, options.mode);
 	process.stdout.write(`\n${summary.line} (child_runtime=${manifest.runtimes.child})\n`);
+	const verdict = tui && options.mode === "compare" ? tuiVerdictLine(cell.platform, results, stale.length) : undefined;
+	if (verdict) process.stdout.write(`${verdict}\n`);
 	if (options.evidence) {
 		const out = evidenceDir(options.evidence);
 		const receipt = {
