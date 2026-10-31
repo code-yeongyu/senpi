@@ -3905,6 +3905,29 @@
 				}
 			],
 			"reason": "senpi#5158: the bundled bun-1-4 skill is renamed to bun and the eval prompt's pointer sentence names it and also fires before a cell that spawns a process or runs tests; the five contract tests are retitled for the rename."
+		},
+		"senpi#4837": {
+			"additions": [
+				"legacyContracts/test/host-facts.test.ts/hostLine SENPI_TEST_WORKSTATION pin unset or empty: the real CPU model and core count",
+				"legacyContracts/test/host-facts.test.ts/hostLine SENPI_TEST_WORKSTATION pin set: the pinned CPU model and core count replace the real ones",
+				"legacyContracts/test/host-facts.test.ts/hostLine SENPI_TEST_WORKSTATION pin an invalid pin not json throws an error naming the variable",
+				"legacyContracts/test/host-facts.test.ts/hostLine SENPI_TEST_WORKSTATION pin an invalid pin [] throws an error naming the variable",
+				"legacyContracts/test/host-facts.test.ts/hostLine SENPI_TEST_WORKSTATION pin an invalid pin {\"cpuModel\":\"x\",\"cores\":2} throws an error naming the variable",
+				"legacyContracts/test/host-facts.test.ts/hostLine SENPI_TEST_WORKSTATION pin an invalid pin {\"cpuModel\":\"\",\"cores\":2,\"kernel\":\"k\"} throws an error naming the variable",
+				"legacyContracts/test/host-facts.test.ts/hostLine SENPI_TEST_WORKSTATION pin an invalid pin {\"cpuModel\":\"x\",\"cores\":0,\"kernel\":\"k\"} throws an error naming the variable",
+				"legacyContracts/test/host-facts.test.ts/hostLine SENPI_TEST_WORKSTATION pin an invalid pin {\"cpuModel\":\"x\",\"cores\":2.5,\"kernel\":\"k\"} throws an error naming the variable",
+				"legacyContracts/test/host-facts.test.ts/hostLine SENPI_TEST_WORKSTATION pin an invalid pin {\"cpuModel\":\"x\",\"cores\":2,\"kernel\":\"k\",\"extra\":1} throws an error naming the variable",
+				"legacyContracts/test/host-facts.test.ts/pinnedDisplayPath SENPI_TEST_WORKSTATION repoRoot unset, empty, or a pin without repoRoot: the path is unchanged",
+				"legacyContracts/test/host-facts.test.ts/pinnedDisplayPath SENPI_TEST_WORKSTATION repoRoot a path under from is shown under to; a path outside it, even sharing its prefix, is unchanged",
+				"legacyContracts/test/host-facts.test.ts/pinnedDisplayPath SENPI_TEST_WORKSTATION repoRoot the host line still honors the CPU pin alongside repoRoot",
+				"legacyContracts/test/host-facts.test.ts/pinnedDisplayPath SENPI_TEST_WORKSTATION repoRoot malformed repoRoot {\"cpuModel\":\"Synthetic CPU\",\"cores\":997,\"kernel\":\"Synthetic 0.0.0\",\"repoRoot\":\"/work/checkout\"} throws naming the variable",
+				"legacyContracts/test/host-facts.test.ts/pinnedDisplayPath SENPI_TEST_WORKSTATION repoRoot malformed repoRoot {\"cpuModel\":\"Synthetic CPU\",\"cores\":997,\"kernel\":\"Synthetic 0.0.0\",\"repoRoot\":{\"from\":\"work/checkout\",\"to\":\"/eq\"}} throws naming the variable",
+				"legacyContracts/test/host-facts.test.ts/pinnedDisplayPath SENPI_TEST_WORKSTATION repoRoot malformed repoRoot {\"cpuModel\":\"Synthetic CPU\",\"cores\":997,\"kernel\":\"Synthetic 0.0.0\",\"repoRoot\":{\"from\":\"/work/checkout\"}} throws naming the variable",
+				"legacyContracts/test/host-facts.test.ts/pinnedDisplayPath SENPI_TEST_WORKSTATION repoRoot malformed repoRoot {\"cpuModel\":\"Synthetic CPU\",\"cores\":997,\"kernel\":\"Synthetic 0.0.0\",\"repoRoot\":{\"from\":\"/work/checkout\",\"to\":\"/eq\",\"extra\":1}} throws naming the variable",
+				"legacyContracts/test/prompt.test.ts/buildEvalPrompt bun pointer under the test-only repoRoot pin production (unset) shows the real path, byte-identical to a pin whose checkout does not hold it",
+				"legacyContracts/test/prompt.test.ts/buildEvalPrompt bun pointer under the test-only repoRoot pin a path inside the pinned checkout is shown under the pinned root"
+			],
+			"reason": "senpi#4837 (fixes #5193): contract tests for the test-only SENPI_TEST_WORKSTATION host-fact and repoRoot pins (hostLine, pinnedDisplayPath, buildEvalPrompt bun pointer under the pin; titles as retitled by senpi#5158). Production leaves the pin unset, so no prompt cell moves; only the new contracts are recorded."
 		}
 	}
 }
