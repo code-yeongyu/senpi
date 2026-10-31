@@ -11,12 +11,15 @@ export const CREDENTIAL_POOL_STATE_FILENAME = "credential-pool-state.json";
 
 const HEX_256_BIT = /^[0-9a-f]{64}$/;
 
-const leaseSchema = z.strictObject({
+// Every object here is loose: the file is shared by every engine version on the machine (the CLI, the
+// desktop app's bundled engine, an older omo), so a field one version adds must be read past by the others,
+// not make them reset the whole document and its installation key (senpi#4090).
+const leaseSchema = z.looseObject({
 	id: z.string().min(1).max(128),
 	expiresAt: z.number().int().positive(),
 });
 
-const slotStateSchema = z.strictObject({
+const slotStateSchema = z.looseObject({
 	stateVersion: z.number().int().nonnegative(),
 	blockedUntil: z.number().int().positive().optional(),
 	blockReason: z.enum(["auth_error", "rate_limit", "account_disabled"]).optional(),
@@ -26,20 +29,43 @@ const slotStateSchema = z.strictObject({
 	lease: leaseSchema.optional(),
 	// Rate limits that bind one model family on this slot, not the slot (senpi#2555).
 	// Absent in files written before; `blockedUntil` keeps meaning "account blocked".
-	modelBlocks: z.record(z.string().min(1), z.strictObject({ blockedUntil: z.number().int().positive() })).optional(),
+	modelBlocks: z.record(z.string().min(1), z.looseObject({ blockedUntil: z.number().int().positive() })).optional(),
 });
 
-export type CredentialSlotState = Readonly<z.infer<typeof slotStateSchema>>;
+/**
+ * The slot fields this engine reads and writes. Declared, not inferred from the loose schema: an inferred
+ * type carries the schema's `[k: string]: unknown` index signature, which turned every writer's
+ * `Omit<CredentialSlotState, "stateVersion">` into an unchecked bag, so a wrong-typed field would be
+ * written and then reset the whole file on the next read. Parsing stays loose; writing stays typed.
+ */
+export type CredentialSlotState = Readonly<{
+	stateVersion: number;
+	blockedUntil?: number;
+	blockReason?: "auth_error" | "rate_limit" | "account_disabled";
+	failureCount?: number;
+	lastSuccessAt?: number;
+	credentialRevision?: string;
+	lease?: { id: string; expiresAt: number };
+	modelBlocks?: Record<string, { blockedUntil: number }>;
+}>;
 
-const documentSchema = z.strictObject({
+// Both directions are compile-time checks that the declared type and the parsing schema agree on
+// every known field.
+type ParsedSlotState = z.infer<typeof slotStateSchema>;
+const parsedSlotsAreDeclaredSlots = (slot: ParsedSlotState): CredentialSlotState => slot;
+const declaredSlotsAreParsedSlots = (slot: CredentialSlotState): ParsedSlotState => slot;
+void parsedSlotsAreDeclaredSlots;
+void declaredSlotsAreParsedSlots;
+
+const documentSchema = z.looseObject({
 	schemaVersion: z.literal(1),
 	installationKey: z.string().regex(HEX_256_BIT),
 	providers: z.record(
 		z.string(),
-		z.strictObject({
+		z.looseObject({
 			lanes: z.record(
 				z.string(),
-				z.strictObject({
+				z.looseObject({
 					slots: z.record(z.string(), slotStateSchema),
 				}),
 			),
@@ -295,7 +321,8 @@ export class CredentialSlotRepository {
 				...document,
 				providers: {
 					...document.providers,
-					[providerId]: { lanes: { ...provider.lanes, [laneId]: { slots } } },
+					// Spread, not rebuilt: fields another engine wrote on this provider or lane are kept.
+					[providerId]: { ...provider, lanes: { ...provider.lanes, [laneId]: { ...lane, slots } } },
 				},
 			};
 			return { result, next };
