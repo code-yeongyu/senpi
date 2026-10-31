@@ -16,7 +16,10 @@ afterEach(() => {
 // A failure guard on the exact teardown promise, not a delay used to make progress.
 function bounded<T>(pending: Promise<T>): Promise<T> {
 	return new Promise((resolve, reject) => {
-		const timer = deadline(() => reject(new Error("teardown did not settle after the controlled deadline")), EVENT_SAFETY_MS);
+		const timer = deadline(
+			() => reject(new Error("teardown did not settle after the controlled deadline")),
+			EVENT_SAFETY_MS,
+		);
 		void pending.then(
 			(value) => {
 				clearDeadline(timer);
