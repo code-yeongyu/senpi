@@ -19,8 +19,14 @@ it("frame accounting uses journal bytes at the limit without serializing transit
 	const budget = SESSION_WORKER_LIMITS.outputBytes - overhead;
 	const entry = '"\\\n'.repeat(Math.floor(budget / 3)) + "x".repeat(budget % 3);
 	expect(Buffer.byteLength(entry) + overhead).toBe(SESSION_WORKER_LIMITS.outputBytes);
-	const at: TranscriptTransition = { kind: "append", id: "at-limit", entry };
-	const over: TranscriptTransition = { kind: "append", id: "over-limit", entry: `${entry}한` };
+	const at: TranscriptTransition = { kind: "append", id: "at-limit", type: "message", parentId: null, entry };
+	const over: TranscriptTransition = {
+		kind: "append",
+		id: "over-limit",
+		type: "message",
+		parentId: null,
+		entry: `${entry}한`,
+	};
 	const stringify = vi.spyOn(JSON, "stringify");
 	const frames = withinFrameLimit([at, over]);
 	expect(stringify).not.toHaveBeenCalled();
@@ -51,7 +57,7 @@ it("Q5 a single pre-bind transition over the 16 MiB worker frame limit makes the
 	try {
 		const root = over.lane.freeze();
 		expect(root.transcript.unavailable).toBe("transition_over_worker_frame_limit");
-		expect(readTranscriptRoot(root.transcript), "no partial transcript is read").toEqual({
+		expect(await readTranscriptRoot(root.transcript), "no partial transcript is read").toEqual({
 			ok: false,
 			error: "transition_over_worker_frame_limit",
 		});
@@ -64,7 +70,7 @@ it("Q5 a single pre-bind transition over the 16 MiB worker frame limit makes the
 
 		const control = under.lane.freeze();
 		expect(control.transcript.unavailable, "a transition under the limit stays available").toBeNull();
-		const read = readTranscriptRoot(control.transcript);
+		const read = await readTranscriptRoot(control.transcript);
 		expect(read.ok && read.entries.map((entry) => entry.type)).toContain("custom");
 		over.lane.release(root);
 		under.lane.release(control);
