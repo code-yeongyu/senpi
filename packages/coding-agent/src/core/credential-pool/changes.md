@@ -1,3 +1,59 @@
+## 2026-10-30 - The health file reads past fields another engine version wrote (senpi#4090)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/state-store.ts`: the document, provider, lane, slot, lease and model-block schemas are `z.looseObject`. Unknown fields are read past, and a slot write keeps the unknown fields of the document, the provider, the lane and every other slot (`mutateSlotState` spreads the provider and lane instead of rebuilding them); a slot this engine rewrites holds only the fields this engine knows. Known fields keep their validation and `schemaVersion` stays `1`. `CredentialSlotState` is declared rather than inferred from the loose schema, so writers keep compile-time checks on the known fields.
+
+### Why
+
+- Every engine version on a machine shares `credential-pool-state.json`. A strict schema made a reader that met one unknown field replace the whole file, dropping every provider's blocks and the installation key, so no version could ever add a field safely.
+
+### Why an extension could not handle it
+
+- The health sidecar's parsing is internal to the credential pool.
+
+### Expected merge conflict zones
+
+- LOW: the schema declarations at the top of `state-store.ts` and the provider/lane rebuild in `mutateSlotState`.
+
+## 2026-10-30 - An unsettled probe hands its lease back; a leased slot names its retry time (senpi#4094)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/failover.ts`: `runCredentialFailover` takes an optional `releaseSlot(slot)`, run once in a `finally` when the request leaves a selected slot with neither a success nor a persisted block (an abort, a request-scoped failure, exhausted same-slot retries, the caller stopping the stream). A same-slot retry also runs it before listing slots again, so the retry is never refused by the request's own lease.
+- `packages/coding-agent/src/core/credential-pool/rotation-stream.ts`: `releaseSlot` hands back only the half-open probe lease this request took (`heldLeaseId`), matched by lease id; the `lease` copied from the shared file may be another request's and is never released.
+- `packages/coding-agent/src/core/credential-pool/rotation-slots.ts`: `releaseProbeLease` is shared with the model-block lease release. A listed slot carries the non-persisted `heldLeaseId` only when this listing took the lease and kept it. A slot whose probe another request holds stays listed, blocked until that lease expires with reason `probe_in_flight`, instead of being dropped.
+
+### Why
+
+- A probe that ended without a verdict kept its 30 s lease, and every other caller dropped the slot, so a one-slot pool refused with "No credential slots available" and no retry time.
+
+### Why an extension could not handle it
+
+- The probe lease and the slot listing are internal to the credential pool engine.
+
+### Expected merge conflict zones
+
+- LOW: the `try`/`finally` around the attempt loop in `runCredentialFailover`; the lease branches of `listRotationSlots` and `listEnvRotationSlots`.
+
+## 2026-10-30 - The pool's reset reader uses the shared wall-clock parser (senpi#1771)
+
+### What changed
+
+- `packages/coding-agent/src/core/credential-pool/reset-time.ts`: reads a wall-clock reset with `clockResetMs` from `@earendil-works/pi-ai/utils/retry-hint` instead of its own copy; behavior unchanged.
+
+### Why
+
+- One parser for one text, so the pool and the retry-hint extractor cannot drift apart again.
+
+### Why an extension could not handle it
+
+- The reset reader is internal to the credential pool's classifier.
+
+### Expected merge conflict zones
+
+- LOW: the imports and `usageLimitReset` in `reset-time.ts`.
+
 ## 2026-10-29 - Committed pool health publishes an account change
 
 ### What changed

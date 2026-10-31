@@ -1,3 +1,59 @@
+## 2026-10-30 - First-class private secret input (senpi#5108)
+
+### What changed
+
+- Covered files: `packages/coding-agent/src/index.ts`.
+- Export the guarded secret-input option, unavailable error and settled RPC event from the public package.
+
+### Why
+
+- Extension input previously exposed credentials through ordinary dialogs and RPC answer paths.
+
+### Why an extension could not handle it
+
+- Connection authorization, transport publication, host lifecycle and terminal focus are owned by the engine.
+
+### Expected merge conflict zones
+
+- MEDIUM: extension UI contracts, RPC binding/worker dispatch and interactive dialog lifecycle.
+
+## 2026-10-28 - Full access in a linked git worktree honours the main checkout's saved decision (senpi#4388)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: the CLI runtime factory reads the saved decision once through `getSavedProjectTrust` and uses it for the Full-access trust, the trusted-project fallback and `trustFromFullAccess`, instead of three `trustStore.get(cwd)` calls.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: without it, Full access in a worktree whose main checkout is saved as "do not trust" trusted the project anyway, and a worktree that inherits "trust" was marked as trusted only through Full access, so leaving Full access withdrew that trust.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: the Full-access trust decision is made while the runtime is built, before any extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the trust-manager import line and the project-trust block of the CLI runtime factory in `main.ts`.
+
+## 2026-10-29 - Version-proven Windows private descriptor pairs (#4859, PR #4864)
+
+### What changed
+
+- `packages/coding-agent/src/private-fds.ts`: represents a private channel as a POSIX socket or an ordered Windows pipe pair; flattens valid-name descriptor aliases before adoption. On Windows, clears inheritance once for every table-named in-range safe integer before any shape, alias, IPC, proof or type decision, including refused entries. Invalid-name keys do not alias valid POSIX channels. `WINDOWS_PRIVATE_FD_PAIR_PROVEN` ships as `false`; when enabled it records the exact proven Bun version, so any runtime bump fails closed until the Windows proof and old-parser compatibility control re-run.
+- `packages/coding-agent/src/private-fd-spawn.ts`: forwards both halves atomically on explicit hops, closes both owned copies after spawn, and carries consumed channels or shell spawns as null declarations.
+
+### Why
+
+- Windows private channels need separate read and write handles while preserving the existing declaration and one-shot ownership contract.
+
+### Why an extension could not handle it
+
+- Descriptor capture and inheritance clearing must finish during bootstrap, before extensions or unrelated children can start.
+
+### Expected merge conflict zones
+
+- Private descriptor parsing, ownership maps, and explicit-hop stdio construction.
+
 ## 2026-10-28 - Source processes of one test run share a Node compile cache (senpi#4614)
 
 ### What changed

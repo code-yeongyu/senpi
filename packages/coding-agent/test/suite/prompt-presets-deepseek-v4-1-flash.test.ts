@@ -2,6 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { DEEPSEEK_V4_RULES } from "../../src/core/extensions/builtin/prompt-preset/deepseek-v4.ts";
+import { DEEPSEEK_V41_FLASH_RULES } from "../../src/core/extensions/builtin/prompt-preset/deepseek-v4-1-flash.ts";
 import { EXECUTION_TOOLING_RULES } from "../../src/core/extensions/builtin/prompt-preset/execution-tooling.ts";
 import {
 	type PromptPresetSettings,
@@ -236,15 +237,46 @@ describe("DeepSeek V4.1 Flash prompt content", () => {
 		return preset.prompt;
 	}
 
-	it("carries none of the V4 Flash repair rules", () => {
+	function sectionOf(prompt: string, directive: string): string | undefined {
+		const at = prompt.indexOf(directive);
+		if (at === -1) return undefined;
+		const start = prompt.lastIndexOf("\n## ", at);
+		return prompt.slice(start + 1, prompt.indexOf("\n", start + 1));
+	}
+
+	const ALL_TOOLS = ["read", "edit", "bash", "eval", "todo", "task"];
+
+	it("renders each V4.1 rule exactly once, inside its owning section, when its tool is mounted", () => {
 		// given
-		const prompt = buildPrompt(["read", "edit", "bash", "eval", "todo"]);
+		const prompt = buildPrompt(ALL_TOOLS);
+
+		// then
+		for (const rule of DEEPSEEK_V41_FLASH_RULES) {
+			expect(prompt.split(rule.directive).length - 1, rule.id).toBe(1);
+			expect(sectionOf(prompt, rule.directive), rule.id).toBe(rule.section);
+		}
+	});
+
+	it("drops a tool-bound rule when its tool is not mounted", () => {
+		// given
+		const prompt = buildPrompt(["read", "edit", "bash"]);
+
+		// then
+		for (const rule of DEEPSEEK_V41_FLASH_RULES) {
+			expect(prompt.includes(rule.directive), rule.id).toBe(rule.requiresTool === undefined);
+		}
+	});
+
+	it("carries every V4 Flash-line repair and none of the Pro-only ones", () => {
+		// given
+		const carried = new Set(DEEPSEEK_V41_FLASH_RULES.flatMap((rule) => (rule.carriedFrom ? [rule.carriedFrom] : [])));
+		const prompt = buildPrompt(ALL_TOOLS);
 
 		// then
 		for (const rule of DEEPSEEK_V4_RULES) {
+			expect(carried.has(rule.id), rule.id).toBe(rule.presets.includes("deepseek-v4-flash"));
 			expect(prompt, rule.id).not.toContain(rule.directive);
 		}
-		expect(prompt).not.toContain("You are running on DeepSeek");
 	});
 
 	it("renders the claude-dialect eval-routing stance only when eval is selected", () => {
