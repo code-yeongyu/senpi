@@ -106,10 +106,33 @@ export async function driveSession({ setup, args, prompts, budget, answer, promp
 	let turns = 0;
 	for (const message of prompts) {
 		if (meter.stopped) break;
-		const seen = client.events.length;
-		const idle = client.waitForEvent((e) => client.events.indexOf(e) >= seen && e.type === "agent_idle", {
-			timeoutMs: promptTimeoutMs,
-		});
+		let seen = client.events.length;
+		// agent_idle ends a parent turn, not its delegated workflow (senpi#5088). Query the engine after
+		// each idle: its lifecycle update is emitted AFTER agent_idle, so a cached event can still say
+		// children=1 at the final idle. Custody covers both active children and their undelivered results.
+		const deadline = Date.now() + promptTimeoutMs;
+		const remaining = () => {
+			const ms = deadline - Date.now();
+			if (ms <= 0) throw new Error(`event wait timeout after ${promptTimeoutMs}ms`);
+			return ms;
+		};
+		const idle = (async () => {
+			for (;;) {
+				const event = await client.waitForEvent(
+					(e) => client.events.indexOf(e) >= seen && e.type === "agent_idle",
+					{ timeoutMs: remaining() },
+				);
+				seen = client.events.indexOf(event) + 1;
+				if (meter.stopped) return;
+				const state = await client.send(
+					{ type: "get_state" },
+					{ timeoutMs: Math.min(COMMAND_TIMEOUT_MS, remaining()) },
+				);
+				if (!state.success) throw new Error(`get_state failed: ${JSON.stringify(state).slice(0, 400)}`);
+				if ((state.data.lifecycle.waitingOn?.children ?? 0) === 0 && state.data.lifecycle.state !== "running")
+					return;
+			}
+		})();
 		idle.catch(() => {});
 		const sent = await client.send({ type: "prompt", message }, { timeoutMs: COMMAND_TIMEOUT_MS });
 		if (!sent.success) throw new Error(`prompt failed: ${JSON.stringify(sent).slice(0, 400)}`);

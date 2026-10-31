@@ -1,7 +1,7 @@
 {
  "repo": {
-  "head": "51e3aba974464cdc180276e99799455777a3ff67",
-  "dirty": true
+  "head": "7faa8a95db02b4e9704b0a501e35bb65ce3b3025",
+  "dirty": false
  },
  "platform": "darwin-arm64",
  "runtimes": {
@@ -15,5 +15,5 @@
   "cases": "sha256:23b83840d6861e611c34dcf2af655c983dd7b9023b8b69566cc79b5776eb2c44",
   "fixtures": "sha256:406b03cc838ea251953667f945a0bc821242c6d378bfb290fbbf76402890fc7e"
  },
- "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --cases E25 --repeat 3 --pipeline legacy --placement fused --surface rpc --evidence runid2-darwin-rec-e25"
+ "command": "node .agents/skills/senpi-qa/scripts/scenarios/fused-equivalence-qa.mjs --record --repeat 3 --pipeline legacy --placement fused --surface rpc --evidence eq4838on5083-darwin-rec"
 }

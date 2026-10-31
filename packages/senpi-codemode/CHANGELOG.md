@@ -12,6 +12,21 @@
 
 ### Removed
 
+## [2026.10.30-2] - 2026-10-30
+
+### Breaking Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+- Group-signal notices ignore inert quoted text and shell comments without hiding commands inside executable substitutions ([#3019](https://github.com/code-yeongyu/senpi/issues/3019)).
+- Keep held permission decisions parked until their two-second deadline when the host claims the shared slot before the worker waits (#4709).
+
+### Removed
+
 ## [2026.10.30-1] - 2026-10-30
 
 ### Breaking Changes
