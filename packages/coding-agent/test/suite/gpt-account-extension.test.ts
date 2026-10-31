@@ -95,7 +95,9 @@ describe("/gpt-account command", () => {
 			]);
 			const { ctx, notices } = createContext();
 			await registeredGptCommand().handler("", ctx);
-			const lines = notices.at(-1)!.message.split("\n");
+			const lastNotice = notices.at(-1);
+			if (!lastNotice) throw new Error("notice not found");
+			const lines = lastNotice.message.split("\n");
 			for (const account of listing.accounts) {
 				const line = lines.find((candidate) => candidate.includes(`${account.name} |`));
 				expect(line).toContain(account.route === "siwc" ? "SIWC" : "legacy");
@@ -103,7 +105,7 @@ describe("/gpt-account command", () => {
 			expect(lines.find((line) => line.includes("login-3 |"))).toContain(
 				"plan usage not enabled: enable it or use an API key",
 			);
-			expect(notices.at(-1)!.message).toContain("https://chatgpt.com/settings/usage");
+			expect(lastNotice.message).toContain("https://chatgpt.com/settings/usage");
 			expect(JSON.stringify(listing)).not.toContain("synthetic-");
 		} finally {
 			await handler.dispose();

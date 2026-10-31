@@ -24,7 +24,8 @@ afterEach(() => vi.unstubAllGlobals());
 // #5003 W12: the shared provider choice reaches CLI, TUI and RPC login clients.
 it("offers SIWC first and preserves the legacy sign-in choice", async () => {
 	let choices: readonly { id: string; label: string }[] = [];
-	const oauth = chatgptSubscriptionProvider().auth.oauth!;
+	const oauth = chatgptSubscriptionProvider().auth.oauth;
+	if (!oauth) throw new Error("chatgpt-subscription oauth is not configured");
 	await expect(
 		oauth.login(
 			{

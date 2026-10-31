@@ -66,11 +66,13 @@ describe("/gpt-account add", () => {
 		await storage.modify("chatgpt-subscription", async () => legacy);
 		const models = createModels({ credentials: storage });
 		const provider = chatgptSubscriptionProvider();
+		const oauth = provider.auth.oauth;
+		if (!oauth) throw new Error("chatgpt-subscription oauth is not configured");
 		models.setProvider({
 			...provider,
 			auth: {
 				oauth: {
-					...provider.auth.oauth!,
+					...oauth,
 					login: async () => ({
 						type: "oauth",
 						route: "siwc",
