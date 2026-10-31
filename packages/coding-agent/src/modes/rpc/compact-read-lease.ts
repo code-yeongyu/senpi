@@ -1,5 +1,16 @@
 export class CompactReadError extends Error {
-	readonly reason: "released" | "retired" | "range" | "size_limit" | "count_limit" | "ownership" | "unavailable";
+	/** `integrity`: stored bytes no longer match their recorded digest (S09); refused before any decode. */
+	readonly reason:
+		| "released"
+		| "retired"
+		| "range"
+		| "size_limit"
+		| "count_limit"
+		| "ownership"
+		| "unavailable"
+		| "integrity"
+		/** `aborted`: the request that asked for this read gave up (its budget ran out) before the read finished. */
+		| "aborted";
 
 	constructor(reason: CompactReadError["reason"]) {
 		super(`compact read refused (${reason})`);
