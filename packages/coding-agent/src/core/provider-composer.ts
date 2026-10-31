@@ -151,6 +151,8 @@ export interface ProviderConfigInput {
 	 * used and blocked all of them (senpi#2081).
 	 */
 	ownsAccountSelection?: boolean;
+	/** Capability flag (see `ProviderConfig.localOnly`): served only on the machine holding the binary and login. Metadata only. */
+	localOnly?: boolean;
 }
 
 /** Ambient api-key auth hook for extension providers (see `ProviderConfigInput.ambientAuth`). */

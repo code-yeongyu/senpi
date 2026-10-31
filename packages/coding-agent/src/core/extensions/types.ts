@@ -3141,6 +3141,12 @@ export interface ProviderConfig {
 	 * used and blocked all of them (senpi#2081).
 	 */
 	ownsAccountSelection?: boolean;
+	/**
+	 * Capability flag: every request runs through a binary on this machine, under a login stored on this
+	 * machine (for example a CLI driven as a subprocess), so the provider can only be served where that
+	 * binary and login exist. Metadata only: nothing reads it yet, and selection and resolution ignore it.
+	 */
+	localOnly?: boolean;
 }
 
 interface ProviderModelConfigBase {
