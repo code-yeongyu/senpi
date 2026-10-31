@@ -52,8 +52,10 @@ const BLOB_ID_FIELDS = new Set(["conversationState.rootPromptMessagesJson", "con
 /** Ids shorter than this are only tokenized under their key, never searched for inside other text. */
 const EMBEDDED_ID_MIN = 6;
 const TIME_KEY = /^(ts|at|since|time|timestamp|date)$|(Time|At|Timestamp|Since)(Ms)?$/;
+// `wall_time_seconds` is the bash tool's structured result field (packages/coding-agent/src/core/tools/bash.ts), the
+// command's wall time rounded to 0.1 s (P0-05e: E28 runs bash through the sandbox example).
 const DURATION_KEY =
-	/^(duration|elapsed|latency|generation|ttft|firstToken|waited|took|queued)(Ms|Us|Ns|Sec|Seconds|_ms)?$|(Duration|Elapsed|Latency|Generation|Ttft|FirstToken|Waited|Took|Queued)(Ms|Us|Ns|Sec|Seconds)?$/;
+	/^(duration|elapsed|latency|generation|ttft|firstToken|waited|took|queued)(Ms|Us|Ns|Sec|Seconds|_ms)?$|(Duration|Elapsed|Latency|Generation|Ttft|FirstToken|Waited|Took|Queued)(Ms|Us|Ns|Sec|Seconds)?$|^wall_time_seconds$/;
 /** Measured resource quantities (a kernel's live heap after a cell): the key is compared, the value is `<measured>`. */
 const MEASUREMENT_KEY = /^(liveBytes|rssBytes|heapUsedBytes|heapTotalBytes|externalBytes)$/;
 const MEASURED = "<measured>";

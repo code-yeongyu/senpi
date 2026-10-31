@@ -1,3 +1,21 @@
+## 2026-10-29 - Export the slot-selection block predicate (senpi#4885)
+
+### What changed
+
+- `packages/ai/src/auth/pool/select.ts`: the private `isBlocked` is exported as `isSlotBlocked`; `selectSlot` uses it unchanged.
+
+### Why
+
+- Account listings must answer "is this slot available" with the predicate selection uses, not a second copy that can drift (senpi#4365 follow-up).
+
+### Why an extension could not handle it
+
+- The predicate lives in the pool engine; callers outside it could only re-implement it, which is the bug.
+
+### Expected merge conflict zones
+
+- LOW: `isSlotBlocked` in `select.ts`.
+
 ## 2026-10-22 - Resolve slot-scoped requests through the store's own slot read (senpi#3858)
 
 ### What changed
