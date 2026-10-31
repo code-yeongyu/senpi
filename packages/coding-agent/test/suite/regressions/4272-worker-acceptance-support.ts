@@ -10,6 +10,7 @@ import { SessionEventWriter } from "../../../src/modes/rpc/session-event-writer.
 import { SessionWorkerClient } from "../../../src/modes/rpc/session-worker-client.ts";
 import type { SessionWorkerToHost } from "../../../src/modes/rpc/session-worker-protocol.ts";
 import { WorkerSessionRegistry } from "../../../src/modes/rpc/worker-session-registry.ts";
+import { EVENT_SAFETY_MS } from "../event-safety-bound.ts";
 
 const fauxPath = fileURLToPath(new URL("../../../../ai/src/providers/faux.ts", import.meta.url));
 /** The isolate's own build of the faux provider, so its provider capture is the one the isolate's session reads. */
@@ -35,8 +36,7 @@ export interface ObservedFrame {
 	readonly previousCredit: number | undefined;
 }
 
-/** The bound on one wait for a real event (#4994): it only exists to fail a hung test, never to pace one. */
-export const EVENT_SAFETY_MS = 300_000;
+export { EVENT_SAFETY_MS };
 
 export function within<T>(name: string, promise: Promise<T>, ms = EVENT_SAFETY_MS): Promise<T> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
