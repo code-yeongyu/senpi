@@ -1,3 +1,150 @@
+## 2026-10-28 - Source processes of one test run share a Node compile cache (senpi#4614)
+
+### What changed
+
+- `packages/coding-agent/src/experimental/source-compile-cache.ts` (new): `enableSourceCompileCache()` enables Node's compile cache in the directory named by `SENPI_SOURCE_COMPILE_CACHE` (`SOURCE_COMPILE_CACHE_ENV`), read late-bound off `node:module` like `compile-cache.ts`; unset, it does nothing.
+- `packages/coding-agent/src/experimental/source-resolver.ts`: the `--import` preload form calls `enableSourceCompileCache()` after registering the workspace resolver. Library imports through `registerWorkspaceSourceResolver()` never enable it.
+
+### Why
+
+- senpi#4614: every test child launched through the source loader type-stripped and compiled its whole workspace graph again (the faux session worker loads 1,700 modules, 527 of them TypeScript). Node's compile cache keys entries by source content and also stores the strip result, so a repeated launch inside one run reuses that work while edited files are still recompiled. Measured on the Linux node 26 receipt image: faux session worker launch 1,588 ms -> 1,117 ms warm, with a one-time 0.4-0.5 s write at the first launch's exit.
+
+### Why an extension could not handle it
+
+- The preload runs before any entrypoint or extension loads; the cache has to be enabled there to cover the entry's own import graph.
+
+### Expected merge conflict zones
+
+- LOW: the import list and the preload block at the end of `packages/coding-agent/src/experimental/source-resolver.ts`; `source-compile-cache.ts` is fork-only.
+
+## 2026-10-29 - Export the extension RPC request context type (senpi#4728, #4775)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: export the `ExtensionRpcRequestContext` type next to `ExtensionRpcRequestHandler`.
+
+### Why
+
+- Extension handlers that use the trusted owner context need its type from the package root.
+
+### Why an extension could not handle it
+
+- The type describes a host-issued capability; extensions consume it, they cannot declare it.
+
+### Expected merge conflict zones
+
+- LOW: the extension type export list in `packages/coding-agent/src/index.ts`.
+
+## 2026-10-29 - Named private descriptors reach exactly one engine launch (senpi#4771)
+
+### What changed
+
+- `packages/coding-agent/src/private-fds.ts` (new): reads and removes `SENPI_PRIVATE_FDS` (a JSON object mapping each name to a descriptor or to `null`) at startup, before anything can spawn. `null` means the launcher declared the channel but this spawn path has no descriptor (for example a Windows shell shim). Entries are parsed one by one: a valid lowercase-ASCII name is always declared, and only an integer from 5 to 15 that is an open socket, is not named twice and is not the runtime's own IPC channel becomes a channel; any other value keeps the name declared and unavailable. FIFOs are never adopted (runtime-internal pipes are FIFOs). A named socket above 15 or named twice is closed at capture. Measured: every runtime marks inherited descriptors up to at least 21 close-on-exec at startup, while Node on Linux leaks 24 and above into every child it spawns, so only 5..15 is adopted. A table that does not parse declares the names it still quotes, all unavailable. Windows adopts no descriptor and keeps only declarations. The table is read once, in the main thread, right after the valid-cwd guard in each entry (the guard stays the first import; in `bun/cli.ts` capture follows the sandbox environment restore); session Workers never read it. New queries: `privateChannelDeclared(name)`, `privateTablePresent()` (a table was present, even unparseable) and `privateFdTableUnparseable()` (present, but no name could be read). `takeInheritedPrivateChannel(name)` claims a named duplex once; the capture is shared through a process-wide symbol, so the bundled CLI and the public subpath see the same claims.
+- `packages/coding-agent/src/private-fd-spawn.ts` (new): `spawnWithPrivateFds` (called with the call site's own `spawn` reference) / `preparePrivateFdSpawn` add the captured descriptors to one explicit engine spawn's stdio table, restore the table only in that child's environment, and close this process's copies after the spawn. `null` entries forward hop to hop like descriptors, and a forwarded descriptor stays declared as `null` for any later hop (an ensure retry); a shell or Windows hop receives every name as `null`. An unparseable table is forwarded as the marker `unparseable`, so every hop reads the same state. The supervisor-to-engine hop is final (`SENPI_PRIVATE_FDS_FINAL`): the engine claims its channels but never forwards them, so a host it starts later inherits neither the table nor the descriptors.
+- `packages/coding-agent/src/cli.ts`, `packages/coding-agent/src/cli-main.ts`, `packages/coding-agent/src/bun/cli.ts`: import the capture first; the Bun re-exec and the full-CLI child forward through the helper.
+
+### Why
+
+- A launcher (the desktop app) needs a private, engine-lifetime duplex to one engine generation. The only extra startup descriptor was MCP enrollment, which closes after its bounded exchange (#4749).
+
+### Why an extension could not handle it
+
+- The descriptors must cross the CLI re-exec, `host ensure`, the supervisor and the engine spawn, all of which happen before any extension loads, and the table must leave the environment before unrelated children start.
+
+### Expected merge conflict zones
+
+- The second import (after the valid-cwd guard) of `cli.ts`, `cli-main.ts` and `modes/rpc/host-supervisor-entry.ts`, the first import of `modes/rpc/host-lifecycle.ts`, the import right after `sandbox-env-setup.ts` in `bun/cli.ts`; the re-exec block in `cli.ts`.
+
+## 2026-10-28 - Job widgets public host API (job widgets P3)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports `core/extensions/builtin/job-widgets/public.ts` (`registerJobWidgetSource`, `getJobWidgetState`, `setJobWidgetAuthorResolver`, `TextTap`, `JOB_WIDGET_STATE_EVENT` and the v1 contract types).
+
+### Why
+
+- Hosts (omo's task jobs) register jobs and their model route. The root entry is the path the extension loader maps to the running instance, so the registry's module state is shared with the host; a subpath export would load a second copy.
+
+### Why an extension could not handle it
+
+- The public entry point is `src/index.ts`.
+
+### Expected merge conflict zones
+
+- LOW: the line after the event-bus export in `src/index.ts`.
+
+## 2026-10-28 - Export the upstream MCP extension API types (senpi#4604, fixes #4597)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports the `RegisteredMcpServer` and `McpServersChangeEvent` types.
+
+### Why
+
+- `packages/coding-agent/src/index.ts`: extensions such as `pi-mcp-adapter` import `RegisteredMcpServer` from the package entry.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts`: the package entry is host-owned.
+
+### Expected merge conflict zones
+
+- LOW: the type export list; upstream exports the same names.
+
+## 2026-10-27 - Session launch profile carries a per-session caller env (fixes senpi#4381)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `createCliRuntimeFactory` passes `launchProfile.sessionEnv` to the session it creates, next to `promptSurface` and `browserEngine`.
+
+### Why
+
+- `open_session.env` must reach the session's tool subprocesses through the launch profile, the same per-session path every other open field takes; the process environment is the wrong scope on a shared host.
+
+### Why an extension could not handle it
+
+- The runtime factory is the only place that turns a launch profile into an `AgentSession`.
+
+### Expected merge conflict zones
+
+- LOW: the `createSession` option literal in `createCliRuntimeFactory`.
+
+## 2026-10-27 - Export the input attribution type (senpi#4482)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: re-exports `InputAttribution` beside `InputEvent` and `InputSource`.
+
+### Why
+
+- Extension authors type their `input` handlers against the package's public types (senpi#4471).
+
+### Why an extension could not handle it
+
+- The package's public type surface is defined here.
+
+### Expected merge conflict zones
+
+- LOW: the extension type export list in `src/index.ts`.
+
+## 2026-10-25 - Dispatch the attachment presentation before runtime creation (senpi#4269)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: dispatches the explicit attachment through a lazy interactive presentation boundary. A refusal or connection failure prints one `Error:` line and exits 1, without a stack trace.
+
+### Why
+
+- `packages/coding-agent/src/main.ts`: connecting, disconnecting, or failing to find a session must never initialize an in-process replacement.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/main.ts`: the CLI composition root owns mode dispatch before runtime and extension initialization.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: dispatch immediately after the version short circuit.
+
 ## 2026-10-27 - Preserve seed emission frontier in the staged projection (part of #4272)
 
 ### What changed
