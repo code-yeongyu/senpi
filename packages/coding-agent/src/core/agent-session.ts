@@ -1730,6 +1730,8 @@ export class AgentSession {
 	});
 	/** Created on the first `ctx.executeTool()` call. */
 	private _nestedToolCalls: NestedToolCallRunner | undefined;
+	/** The issuing assistant message of each model-issued call while it runs, for its nested calls (senpi#5234). */
+	private readonly _toolCallIssuers = new Map<string, AssistantMessage>();
 	private readonly _toolBarrier = new ToolBarrier((spec) => this._emit({ type: "tool_barrier_expired", ...spec }));
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
@@ -2317,16 +2319,19 @@ export class AgentSession {
 		};
 		this._bindToolSearchRemovedHints();
 
-		this.agent.beforeToolCall = async ({ toolCall, args }, signal) => {
+		this.agent.beforeToolCall = async ({ toolCall, args, assistantMessage }, signal) => {
 			this._toolExecutionDepth++;
+			this._toolCallIssuers.set(toolCall.id, assistantMessage);
 			try {
 				const result = await this.preflightToolCall(toolCall, args, { signal });
 				if (result?.block) {
 					this._toolExecutionDepth--;
+					this._toolCallIssuers.delete(toolCall.id);
 				}
 				return result;
 			} catch (err) {
 				this._toolExecutionDepth--;
+				this._toolCallIssuers.delete(toolCall.id);
 				throw err;
 			}
 		};
@@ -2337,6 +2342,7 @@ export class AgentSession {
 				return markInterrupted(this._stopInterrupt, isError, result.details, override);
 			} finally {
 				this._toolExecutionDepth--;
+				this._toolCallIssuers.delete(toolCall.id);
 			}
 		};
 	}
@@ -2446,8 +2452,10 @@ export class AgentSession {
 		this._nestedToolCalls ??= new NestedToolCallRunner({
 			getTools: () => this._getCallableTools(),
 			isSequential: () => this.agent.toolExecution === "sequential",
-			runToolCall: (toolCall, parentId, signal, onUpdate) => {
-				const assistantMessage = this._findLastAssistantMessage();
+			issuerOf: (rootToolCallId) => this._toolCallIssuers.get(rootToolCallId),
+			runToolCall: (toolCall, parentId, signal, onUpdate, issuedBy) => {
+				// Work that outlives its model-issued call has no recorded issuer and keeps today's transcript lookup.
+				const assistantMessage = issuedBy ?? this._findLastAssistantMessage();
 				if (!assistantMessage) {
 					return Promise.resolve({
 						toolCall,
